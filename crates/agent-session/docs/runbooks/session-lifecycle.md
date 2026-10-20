@@ -101,9 +101,11 @@ submission. `send` reads the pane back and reports
 While a session is `needs_input`, its pane belongs to a provider approval or
 question dialog, not to a prompt box. The routes that write to the pane refuse
 input carrying literal text with `agent-blocked` before anything reaches the
-terminal. Special keys stay admitted, because that is how the dialog gets
+terminal. Named special keys stay admitted, because that is how the dialog gets
 answered, and `send --allow-blocked` is the deliberate opt-in for typing into
-the dialog's own field. Routes that do not touch the pane, such as a Codex
+the dialog's own field. Printable `--key` values remain refused in this phase,
+even with `--allow-blocked`, because they always require idle admission.
+Routes that do not touch the pane, such as a Codex
 app-server prompt, are unaffected. This is a safety default rather than an
 authorization boundary: the attach socket remains an interactive terminal. The
 [Serve API v1 blocked-input contract](../specs/serve-api-v1.md) has the

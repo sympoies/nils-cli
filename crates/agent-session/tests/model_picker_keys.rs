@@ -161,13 +161,18 @@ fn printable_picker_keys_refuse_busy_unknown_and_pending_activity_without_input(
                 fs::write(path, serde_json::to_vec(&activity).unwrap()).unwrap();
             }
             let before = picker.json("live.json");
-            let output = picker.command("send", &["--key", "s", "--allow-blocked"]);
-            assert_ne!(output.code, 0, "{provider} {phase}");
-            assert_eq!(output.stdout_json()["ok"], false);
-            assert_ne!(output.stdout_json()["error"]["code"], "parse-error");
-            assert_eq!(picker.json("live.json"), before);
-            let calls = fs::read_to_string(picker.root().join("calls")).unwrap();
-            assert!(!calls.contains("send-keys"), "{provider} {phase}: {calls}");
+            for keys in [
+                &["--key", "s", "--allow-blocked"][..],
+                &["--key", "down", "--key", "s", "--allow-blocked"][..],
+            ] {
+                let output = picker.command("send", keys);
+                assert_ne!(output.code, 0, "{provider} {phase} {keys:?}");
+                assert_eq!(output.stdout_json()["ok"], false);
+                assert_ne!(output.stdout_json()["error"]["code"], "parse-error");
+                assert_eq!(picker.json("live.json"), before);
+                let calls = fs::read_to_string(picker.root().join("calls")).unwrap();
+                assert!(!calls.contains("send-keys"), "{provider} {phase}: {calls}");
+            }
         }
     }
 }

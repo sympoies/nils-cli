@@ -13,6 +13,9 @@ retain their existing meaning and completion candidates. Empty values,
 multiple characters, control characters, and unknown multi-character key names
 are rejected. The HTTP/WebSocket named-key contract is unchanged.
 
+Here, printable means a single non-control Unicode character. Unicode format
+characters, including U+200B and U+202E, are accepted and typed literally.
+
 A send containing any printable key always enables `--require-idle` for the
 whole request, including earlier named keys. It checks runtime identity,
 provider activity and pending ingress before delivery and again before each key.
