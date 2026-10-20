@@ -22,6 +22,7 @@ concurrency:
 
 env:
   CARGO_BUILD_JOBS: "4"
+  DEVLOG_LAYOUT: fragments
 
 jobs:
   changes:
@@ -138,6 +139,17 @@ jobs:
             echo "release_candidate=${release_candidate}"
           } >> "$GITHUB_OUTPUT"
           echo "docs_only=${docs_only} release_candidate=${release_candidate} release_mode=${release_mode} (base=${base}, head=${head})"
+
+      - name: Set up Rust for devlog policy
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check devlog ownership
+        env:
+          NILS_CLI_DEVLOG_BASE: ${{ steps.detect.outputs.base_sha }}
+        run: |
+          cargo build --locked -p nils-devlog
+          export PATH="$PWD/target/debug:$PATH"
+          python3 scripts/ci/devlog-check.py
 
       - name: Prove full CI on exact base main commit
         id: base_ci
@@ -295,9 +307,17 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus" >> "$GITHUB_ENV"
           test -S "/run/user/${uid}/systemd/private"
 
+      - name: Build repository devlog checker
+        run: |
+          cargo build --locked -p nils-devlog
+          devlog_bin_dir="$(mktemp -d "${RUNNER_TEMP}/devlog-bin.XXXXXX")"
+          cp target/debug/devlog "${devlog_bin_dir}/devlog"
+          echo "${devlog_bin_dir}" >> "$GITHUB_PATH"
+
       - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, docs-prose-audit, tempdir-leak-audit, test-stale-audit, file-size-audit)
         id: validation
         env:
+          NILS_CLI_DEVLOG_BASE: ${{ needs.changes.outputs.base_sha }}
           NILS_CLI_GATE_MIN_AVAILABLE_GIB: "2"
           NILS_CLI_GATE_MEMORY_MAX_GIB: "12"
           NILS_CLI_RUNNER_MAX: "2"

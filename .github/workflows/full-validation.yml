@@ -116,7 +116,9 @@ jobs:
       - name: Build devlog validator
         run: |
           cargo build --locked -p nils-devlog
-          echo "${GITHUB_WORKSPACE}/target/debug" >> "$GITHUB_PATH"
+          devlog_bin_dir="$(mktemp -d "${RUNNER_TEMP}/devlog-bin.XXXXXX")"
+          cp target/debug/devlog "${devlog_bin_dir}/devlog"
+          echo "${devlog_bin_dir}" >> "$GITHUB_PATH"
 
       - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, docs-prose-audit, tempdir-leak-audit, test-stale-audit, file-size-audit)
         id: validation
@@ -288,7 +290,9 @@ jobs:
       - name: Build devlog validator
         run: |
           cargo build --locked -p nils-devlog
-          echo "${GITHUB_WORKSPACE}/target/debug" >> "$GITHUB_PATH"
+          devlog_bin_dir="$(mktemp -d "${RUNNER_TEMP}/devlog-bin.XXXXXX")"
+          cp target/debug/devlog "${devlog_bin_dir}/devlog"
+          echo "${devlog_bin_dir}" >> "$GITHUB_PATH"
 
       - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, docs-prose-audit, tempdir-leak-audit, test-stale-audit, file-size-audit)
         id: validation
