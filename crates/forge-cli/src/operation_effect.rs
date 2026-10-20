@@ -57,6 +57,12 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
             ProviderEffect::NetworkWrite,
             Vec::new(),
         ),
+        Some(Command::Run(_)) => (
+            "run.rerun",
+            mutation,
+            ProviderEffect::NetworkWrite,
+            vec!["provider", "identity_policy"],
+        ),
         Some(Command::Workflow(args)) => (
             match args.command {
                 WorkflowCommand::Dispatch(_) => "workflow.dispatch",
