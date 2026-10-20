@@ -59,6 +59,7 @@ fn state(record: &ReviewStateRecord) -> Option<&ReviewLoopState> {
     match &record.payload {
         ReviewStatePayload::ReviewLoop { state }
         | ReviewStatePayload::ReviewLoopCorrection { state, .. }
+        | ReviewStatePayload::ReviewLoopAcceptance { state, .. }
         | ReviewStatePayload::ReviewLoopSupersession { state, .. } => Some(state),
         _ => None,
     }
@@ -274,6 +275,7 @@ pub fn apply(
             changed: false,
             correction: Some(correction.clone()),
             supersession: None,
+            acceptance: None,
         });
     }
     let (target, _) = context(&chain.records, head, request)?;
@@ -312,6 +314,7 @@ pub fn apply(
         changed: true,
         correction: Some(correction),
         supersession: None,
+        acceptance: None,
     })
 }
 
