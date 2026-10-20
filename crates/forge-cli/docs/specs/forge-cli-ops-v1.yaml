@@ -1660,6 +1660,26 @@ operations:
       data: { provider, host, repo, kind, state, limit, limited, items }
     notes: "Repository principal rules apply. States are kind-specific; all omits the filter. Bounded reads: Dependabot follows Link rel=next via decoded after cursors, never page=N; other alert kinds use numbered pages. Stop at the limit or exhausted pages; explicit metadata allowlist excludes secret values and code snippets."
 
+  - id: security.alerts.view
+    schema_version: cli.forge-cli.security.alerts.view.v1
+    summary: Read exact-ref and commit code-scanning alert evidence with optional analysis SARIF.
+    inputs:
+      - { name: number, type: positive-integer, required: true }
+      - { name: --kind, type: enum<code-scanning>, required: true }
+      - { name: --ref, type: string, required: true }
+      - { name: --commit, type: full-commit-sha, required: true }
+      - { name: --include-sarif, type: bool, default: false }
+    backends:
+      github:
+        program: gh
+        argv: [api, "{optional_hostname}", -X, GET, "repos/{repo}/code-scanning/alerts/{number}"]
+        env: { GH_HOST: "{resolved_authority}" }
+      gitlab: provider_unsupported
+      local: provider_unsupported
+    output:
+      data: { provider, host, repo, kind, reference, commit_sha, alert, instances, sarif_requested, sarif_scope, analyses }
+    notes: "Read-only repository principal binding applies to every request. Instances use GET alerts/{number}/instances with ref, per_page=100, page=N and exact local ref/commit filtering. Optional GET analyses uses the same pagination and exact ref/commit/configuration/tool matching (present string bindings, nonempty tool name and matching nonempty alert tool GUID; null alert GUID permits name fallback, tool versions need not match); GET analyses/{id} with Accept:application/sarif+json returns corresponding analysis-level SARIF including provider alert properties/codeFlows, potentially code snippets. No provider URLs are followed. Inventory bound is ten pages per endpoint. Each call uses a 30-second timeout and 8 MiB capture per stream; command limits are 32 requests, 120 seconds and 16 MiB cumulative evidence. Budget exhaustion is security_read_limit and capture overflow is backend_output_limit, without partial evidence. Incomplete reads and missing requested evidence are errors, never clearance. Dry-run previews the first GET only."
+
   - id: security.settings.view
     schema_version: cli.forge-cli.security.settings.view.v1
     summary: Read repository security feature settings.
