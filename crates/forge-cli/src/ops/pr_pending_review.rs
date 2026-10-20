@@ -33,6 +33,7 @@ pub struct PrPendingReviewInspectPayload {
     pub number: u64,
     pub url: String,
     pub snapshot: pr_reviews::PendingReviewSnapshot,
+    pub inline_comment_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -137,16 +138,22 @@ pub fn run_inspect_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             provider: ctx.provider.as_str(),
             number: view.number,
             url: view.url,
+            inline_comment_count: snapshot.inline_comments.len(),
             snapshot,
         },
         format,
         |payload| {
             println!(
-                "pending review {review} on #{number}: {comments} inline comment(s) [{provenance}]\n  {url}",
+                "pending review {review} on #{number}: {comments} inline comment(s) [{provenance}] created={created}\n  {url}",
                 review = payload.snapshot.review_id,
                 number = payload.number,
                 comments = payload.snapshot.inline_comments.len(),
                 provenance = payload.snapshot.provenance,
+                created = payload
+                    .snapshot
+                    .created_at
+                    .as_deref()
+                    .unwrap_or("<unknown>"),
                 url = payload.snapshot.review_url,
             );
         },

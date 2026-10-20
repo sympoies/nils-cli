@@ -826,8 +826,10 @@ pub(crate) fn wait_with_cancellation(
         context,
         cli::MessageWaitArgs {
             session: id.to_string(),
-            message: message.to_string(),
-            if_revision: body.if_revision,
+            message: Some(message.to_string()),
+            if_revision: Some(body.if_revision),
+            any_unread: false,
+            newer_than: None,
             timeout: body.timeout,
             capability_file: Some(server_capability.path.clone()),
             format: nils_common::cli_contract::OutputFormat::Json,

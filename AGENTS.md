@@ -22,6 +22,19 @@ Open only the references relevant to the requested change:
 - Crate docs placement policy: `docs/specs/crate-docs-placement-policy.md`
 - Development log (append-only history): `docs/devlog/README.md`
 
+## Development log writers
+
+- Source `scripts/dev-env.sh` in every development/automation shell; this
+  repository requires `DEVLOG_LAYOUT=fragments` and `devlog >=1.31.16`.
+- Use `devlog new` for durable outcomes. It writes a unique
+  `docs/devlog/pending/YYYY-MM-DD-slug.md`; keep its identity comment.
+- Ordinary PRs never edit month files, fold entries, or refresh the shared
+  index. Merged fragments are immutable; corrections are new entries.
+- After each release, the maintainer prepares a dedicated fold PR with
+  `.agents/scripts/fold-devlog.sh`; it does not commit or push.
+- Only canonical `chore/devlog-fold-<date>` maintenance PRs may fold.
+- See `docs/devlog/README.md` for authoring and release-fold validation.
+
 ## Required Local Check Entrypoints
 
 - Exact check contents and tool prerequisites are defined in
@@ -37,8 +50,9 @@ Open only the references relevant to the requested change:
 - Full coverage is owned by CI for normal PRs. Run it locally only for
   coverage maintenance, release-quality verification, or CI debugging:
   `NILS_CLI_TEST_RUNNER=nextest bash scripts/ci/nils-cli-checks-entrypoint.sh --with-coverage`
-- GitHub required checks for `main` must include `test`, `test_macos`, and
-  `coverage`; those checks are the full-suite merge gate.
+- GitHub required checks for `main` must include `test`, `test_containment`,
+  and `cargo-deny (advisories + bans)` after the maintainer applies the migration
+  in `.github/README.md`. Full Linux/macOS and coverage are release gates.
 - When completion assets change, also run:
   - `zsh -n completions/zsh/_<cli>`
   - `bash -n completions/bash/<cli>`

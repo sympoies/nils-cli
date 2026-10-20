@@ -56,7 +56,9 @@ sends.
 submission. `send` reads the pane back and reports
 `data.submission = { outcome, enter_presses }`:
 
-- `submitted` means the text left the Claude Code or Codex composer.
+- `submitted` means the text left the Claude Code or Codex composer, or an
+  accepted Enter was followed by verified absence of the exact terminal runtime
+  (for example, after `/exit`). A failed pane read alone does not confirm exit.
 - `queued` means Claude Code queued it behind a running turn ("Press up to edit
   queued messages").
 - When the text is still in the composer, `send` presses Enter once more,
@@ -214,7 +216,7 @@ restoring mode authority. Retirement does not migrate or delete durable state.
 
 ## Delete a session
 
-`delete` removes provider runtime files and session metadata only after bounded
+By default, `delete` removes provider runtime files and session metadata only after bounded
 checks verify the recorded runtime is stopped.
 
 Before killing a live runtime, it:
@@ -269,7 +271,79 @@ Cleanup and retry rules:
   persisted process boundary to verify stopped before removing metadata.
 
 Human success output reports the verified stopped state; the v1 JSON
-`killed: true` field remains stable for successful deletion.
+`killed: true` field remains stable for ordinary successful deletion.
+Its `termination_scope: "recorded-boundaries"` describes the verified recorded
+runtime boundary; it does not certify that no escaped process exists.
+Any observed process carrying both runtime markers still blocks ordinary deletion
+and retains the session record.
+
+Every deletion success includes `process_inventory` with `complete`,
+`inspected_processes`, `uninspected_processes`, and a `reasons` count map.
+An incomplete inventory remains advisory on top of recorded-boundary verification;
+ordinary success prints the counts and reasons and warns that additional processes
+may remain. For example:
+
+```json
+{
+  "termination_scope": "recorded-boundaries",
+  "process_inventory": {
+    "complete": false,
+    "inspected_processes": 12,
+    "uninspected_processes": 2,
+    "reasons": { "permission-denied": 2 }
+  }
+}
+```
+
+### Leave processes running explicitly
+
+A daemon can escape the pane tree or move out of its Linux cgroup while retaining
+`AGENT_SESSION_ID` and `AGENT_SESSION_RUNTIME_ID`. A failed ordinary delete now
+includes `blocking_processes` entries with `pid` and `command` (executable name
+only). Boundary-verification failures report `retryable: false` when associated
+live processes are observed, with an explicit recovery action.
+Stop or relocate those processes deliberately, or acknowledge leaving them behind:
+
+```bash
+agent-session delete <id> --leave-processes --format json
+```
+
+This CLI-only recovery path checks ownership, conditionally kills the exact tmux
+session, verifies its absence, revokes coordination capabilities, and removes
+session state. It deliberately does not signal process groups, the provider,
+broker processes, or escaped daemons directly. Processes that survive tmux shutdown
+remain running, lose normal session management, and appear in `survivors`.
+The response reports `termination_scope: "tmux-only"` and `killed: false`;
+it does not claim that the provider or every session-launched process stopped.
+Text output gives the same warning and names the observed survivors.
+
+The process inventory is a bounded snapshot of same-user processes carrying both
+exact runtime markers, on Linux and macOS. Arguments and environment values are
+never printed. `survivor_scan_complete: false` (or `process_scan_complete: false`
+in errors) means permissions, process churn, the time budget, or the 128-entry
+limit prevented a complete inventory. Processes that removed their markers may
+remain unlisted. Inspect survivors before taking any further action.
+The same inventory counts and reasons accompany this explicit recovery result.
+Reason classes include `permission-denied`, `process-read-failed`,
+`argv-only-or-sip-redacted`, `process-changed`, `time-budget-exhausted`, and
+`entry-limit-reached`, and `process-list-output-limit`. Counts cover observed
+inspection attempts; a time, output or entry
+limit can leave an unknown number of additional processes uninspected.
+
+On macOS process enumeration has a separate 1 MiB output bound; exceeding it
+reports incomplete inventory instead of silently accepting a process-list prefix.
+The scanner uses the kernel's argument-size limit. System Integrity
+Protection can omit a protected process's environment even when its arguments
+were readable; an absent environment is reported as uninspected rather than
+proof that the process has no runtime markers. No elevated privileges or SIP
+changes are required. Ordinary deletion still verifies its recorded boundary;
+the extra inventory cannot prove complete termination outside that boundary.
+
+`--leave-processes` preserves the existing child-session guard; use
+`--orphan-children` separately when deliberately orphaning managed child sessions.
+Ownership mismatches and ambiguous tmux probes still retain the record. An
+interrupted frozen/kill transaction must be recovered through ordinary deletion
+before this flag can be used. Retired external runtimes remain unsupported.
 
 ## Read logs
 

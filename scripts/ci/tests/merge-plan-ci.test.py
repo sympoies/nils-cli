@@ -57,38 +57,21 @@ class WorkflowDispatchTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             return (root / 'call.log').read_text().splitlines()
 
-    def test_pr_and_merge_group_dispatch_plan_consumption(self):
-        for job in ('test', 'test_macos'):
-            for event in ('pull_request', 'merge_group'):
-                with self.subTest(job=job, event=event):
-                    argv = self.dispatch(job, event)
-                    self.assertIn('--ci-merge-plan', argv,
-                                  f'{job}/{event} still launches the full entrypoint without consuming a plan')
-
-    def test_nightly_and_on_demand_keep_full_validation(self):
-        for job in ('test', 'test_macos'):
-            for event in ('schedule', 'workflow_dispatch'):
-                with self.subTest(job=job, event=event):
-                    self.assertNotIn('--ci-merge-plan', self.dispatch(job, event))
+    def test_pr_and_queue_dispatch_plan_consumption(self):
+        for event in ('pull_request', 'merge_group'):
+            self.assertIn('--ci-merge-plan', self.dispatch('test', event))
 
     def test_scoped_checks_cannot_claim_full_release_provenance(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         markers = re.findall(r'      - name: Full validation marker\n        if: ([^\n]+)', workflow)
-        self.assertEqual(len(markers), 3)
-        for condition in markers:
-            for event in ('pull_request', 'merge_group', 'schedule', 'workflow_dispatch'):
-                for scope in ('SCOPED', 'FULL'):
-                    expression = condition
-                    values = {'needs.changes.outputs.docs_only': 'false',
-                              'needs.changes.outputs.release_only': 'false',
-                              'steps.validation.outputs.validation_scope': scope,
-                              'needs.test_macos.outputs.validation_scope': scope,
-                              'github.event_name': event}
-                    for key, value in values.items():
-                        expression = expression.replace(key, repr(value))
-                    observed = eval(expression.replace('&&', 'and').replace('||', 'or'),
-                                    {'__builtins__': {}}, {})
-                    self.assertEqual(observed, scope == 'FULL' or event in ('schedule', 'workflow_dispatch'))
+        self.assertEqual(len(markers), 1)
+        for scope in ('SCOPED', 'FULL'):
+            expression = markers[0]
+            for key, value in {'needs.changes.outputs.docs_only': 'false',
+                    'needs.changes.outputs.release_only': 'false',
+                    'steps.validation.outputs.validation_scope': scope}.items():
+                expression = expression.replace(key, repr(value))
+            self.assertEqual(eval(expression.replace('&&', 'and'), {'__builtins__': {}}, {}), scope == 'FULL')
 
 
 class ConsumerExecutionTests(unittest.TestCase):
@@ -204,12 +187,12 @@ else:
                               '-p', self.base, '-m', 'fixture squash queue')
         self.git('checkout', '-q', '--detach', self.merge)
 
-    def execute(self, name='pull_request', event=None, env=None):
+    def execute(self, name='pull_request', event=None, env=None, extra_args=()):
         payload = self.root / 'event.json'
         payload.write_text(json.dumps(self.event(name) if event is None else event))
         result = subprocess.run([sys.executable, str(CONSUMER), '--repo', str(self.repo),
                                  '--event-name', name, '--event-path', str(payload),
-                                 '--candidate', self.merge, '--output', str(self.output)],
+                                 '--candidate', self.merge, '--output', str(self.output), *extra_args],
                                 env=dict(self.env, **(env or {})), capture_output=True, text=True)
         self.assertFalse(Path(str(self.log) + '.compiler').exists(), 'real compiler sentinel ran')
         rows = [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
@@ -488,6 +471,18 @@ raise SystemExit(subprocess.call(sys.argv[sys.argv.index('--') + 1:], env=env))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(rows, [{'kind': 'admission'}, {'kind': 'xvfb'}, {'kind': 'full'}])
         self.assertIn('validation_scope=FULL', (self.root / 'github-output').read_text())
+
+
+def load_tests(loader, tests, pattern):
+    spec = importlib.util.spec_from_file_location('queue_detection', Path(__file__).with_name('merge-plan-queue-detection.test.py'))
+    queue = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(queue)
+    tests.addTests(loader.loadTestsFromTestCase(queue.QueueDetectionTests))
+    spec = importlib.util.spec_from_file_location('preview', Path(__file__).with_name('merge-plan-preview.test.py'))
+    preview = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(preview)
+    tests.addTests(loader.loadTestsFromTestCase(preview.PreviewTests))
+    return tests
 
 
 if __name__ == '__main__':

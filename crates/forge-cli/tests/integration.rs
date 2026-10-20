@@ -33,9 +33,11 @@ mod integration {
     mod pr_deliver_chain;
     mod pr_merge;
     mod pr_pending_review;
+    mod pr_pending_review_recovery;
     mod pr_review;
     mod pr_review_dismiss;
     mod pr_review_handoff;
+    mod pr_review_handoff_head_rebind;
     mod pr_review_handoff_sync;
     mod pr_review_loop;
     mod pr_reviews;
@@ -55,6 +57,7 @@ mod integration {
     mod search;
     mod stacked_branch;
     mod support;
+    mod test_first_kinds;
     mod tracker_grammar;
     mod validations;
 }

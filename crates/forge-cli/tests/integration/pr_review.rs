@@ -1700,7 +1700,7 @@ fn pr_review_recover_pending_requires_submit_review() {
     );
 }
 
-fn github_resumable_thread_stub(
+pub(super) fn github_resumable_thread_stub(
     capture: &str,
     existing_thread: bool,
     existing_resolved: bool,
@@ -2083,7 +2083,7 @@ fn github_review_thread_approval_422_on_submit_stub(capture: &str) -> String {
     github_resumable_thread_stub(capture, false, false, false, "submit-422", false)
 }
 
-fn run_resumable_thread_review(stub: &StubEnv, thread_file: &Path) -> CmdOutput {
+pub(super) fn run_resumable_thread_review(stub: &StubEnv, thread_file: &Path) -> CmdOutput {
     run_forge_cli(
         stub,
         &[

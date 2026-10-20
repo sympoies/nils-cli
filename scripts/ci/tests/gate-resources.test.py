@@ -502,6 +502,7 @@ class GateIntegration(unittest.TestCase):
         verify = root / '.agents/skills/project-verify-required-checks/scripts'
         verify.mkdir(parents=True)
         (verify / 'project-verify-required-checks.sh').write_text('touch "$DOCS_CALLED"\n')
+        (ci / 'devlog-check.py').write_text('# Devlog policy is tested separately.\n')
         (ci / 'gate-resources.py').write_text(
             'import os, sys; from pathlib import Path; '
             'Path(os.environ["GATE_CALLED"]).write_text("called"); sys.exit(71)\n')

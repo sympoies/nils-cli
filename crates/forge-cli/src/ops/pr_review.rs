@@ -1666,6 +1666,13 @@ fn submit_github_review_with_threads<R: BackendRunner>(
         &state.viewer_login,
     )?;
 
+    let recovery = super::pr_review_recovery::PendingReviewRecovery {
+        host: &ctx.host,
+        repository: &repository,
+        number,
+        decision,
+        review_run_id: &review_run_id,
+    };
     let marked_body = marked_review_body(&summary, &review_run_id);
     let marked_specs = to_post
         .iter()
@@ -1703,10 +1710,10 @@ fn submit_github_review_with_threads<R: BackendRunner>(
     }
 
     let (pending, existing_count) = if let Some(existing) = viewer_pending.first() {
-        let snapshot = pr_reviews::compute_pending_snapshot(runner, ctx, &existing.id)?
+        let snapshot = pr_reviews::compute_pending_snapshot(runner, ctx, &existing.id)
+            .map_err(|error| recovery.retained_error(&existing.id, error))?
             .ok_or_else(|| {
-                pending_transaction_incomplete(
-                    &review_run_id,
+                recovery.incomplete(
                     Some(existing.id.as_str()),
                     "the pending review disappeared before recovery",
                     None,
@@ -1719,8 +1726,10 @@ fn submit_github_review_with_threads<R: BackendRunner>(
             &summary,
             &review_run_id,
             &manifest,
-        )?;
-        ensure_review_run_receipt(runner, ctx, &repository, number, &state, &receipt)?;
+        )
+        .map_err(|error| recovery.retained_error(&existing.id, error))?;
+        ensure_review_run_receipt(runner, ctx, &repository, number, &state, &receipt)
+            .map_err(|error| recovery.retained_error(&existing.id, error))?;
         (
             GitHubPendingReview {
                 review_id: snapshot.review_id,
@@ -1730,29 +1739,17 @@ fn submit_github_review_with_threads<R: BackendRunner>(
         )
     } else {
         ensure_review_run_receipt(runner, ctx, &repository, number, &state, &receipt)?;
-        let pending_output = runner
+        let pending = runner
             .run(&build_github_pending_review_call(
                 ctx,
                 &target.pull_request_id,
                 expected_head,
                 Some(&marked_body),
             ))
+            .and_then(|output| parse_github_pending_review(&output))
             .map_err(|error| {
-                pending_transaction_incomplete(
-                    &review_run_id,
-                    None,
-                    "pending review creation did not return a confirmed result",
-                    Some(error),
-                )
+                recovery.creation_incomplete(runner, ctx, &target.url, expected_head, error)
             })?;
-        let pending = parse_github_pending_review(&pending_output).map_err(|error| {
-            pending_transaction_incomplete(
-                &review_run_id,
-                None,
-                "pending review creation response was incomplete",
-                Some(error),
-            )
-        })?;
         (pending, 0)
     };
 
@@ -1766,8 +1763,7 @@ fn submit_github_review_with_threads<R: BackendRunner>(
             Ok(output) => output,
             Err(err) => {
                 let err = map_github_review_thread_error(idx + 1, spec, err);
-                return Err(pending_transaction_incomplete(
-                    &review_run_id,
+                return Err(recovery.incomplete(
                     Some(&pending.review_id),
                     "pending review retained after inline comment mutation failed",
                     Some(err),
@@ -1777,8 +1773,7 @@ fn submit_github_review_with_threads<R: BackendRunner>(
         let thread = match parse_created_review_thread(&output, spec) {
             Ok(thread) => thread,
             Err(err) => {
-                return Err(pending_transaction_incomplete(
-                    &review_run_id,
+                return Err(recovery.incomplete(
                     Some(&pending.review_id),
                     "pending review retained because inline comment creation was not confirmed",
                     Some(err),
@@ -1788,10 +1783,16 @@ fn submit_github_review_with_threads<R: BackendRunner>(
         review_threads.push(thread);
     }
 
-    let final_snapshot = pr_reviews::compute_pending_snapshot(runner, ctx, &pending.review_id)?
+    let final_snapshot = pr_reviews::compute_pending_snapshot(runner, ctx, &pending.review_id)
+        .map_err(|error| {
+            recovery.incomplete(
+                Some(&pending.review_id),
+                "pending review retained after final snapshot read failed",
+                Some(error),
+            )
+        })?
         .ok_or_else(|| {
-            pending_transaction_incomplete(
-                &review_run_id,
+            recovery.incomplete(
                 Some(&pending.review_id),
                 "pending review disappeared before final submit",
                 None,
@@ -1804,10 +1805,16 @@ fn submit_github_review_with_threads<R: BackendRunner>(
         &summary,
         &review_run_id,
         &manifest,
-    )?;
+    )
+    .map_err(|error| {
+        recovery.incomplete(
+            Some(&pending.review_id),
+            "pending review retained after final snapshot validation failed",
+            Some(error),
+        )
+    })?;
     if final_snapshot.inline_comments.len() != manifest.len() {
-        return Err(pending_transaction_incomplete(
-            &review_run_id,
+        return Err(recovery.incomplete(
             Some(&pending.review_id),
             "pending review manifest is not complete",
             Some(ForgeError::validation(
@@ -1841,8 +1848,7 @@ fn submit_github_review_with_threads<R: BackendRunner>(
         expected_state,
     )
     .map_err(|error| {
-        pending_transaction_incomplete(
-            &review_run_id,
+        recovery.incomplete(
             Some(&pending.review_id),
             "submitted review read-back failed",
             Some(error),
@@ -1852,8 +1858,7 @@ fn submit_github_review_with_threads<R: BackendRunner>(
         let cause = submit_result
             .err()
             .map(|error| map_github_native_review_submit_error(decision, error));
-        return Err(pending_transaction_incomplete(
-            &review_run_id,
+        return Err(recovery.incomplete(
             Some(&pending.review_id),
             "pending review submission could not be reconciled",
             cause,
@@ -1866,10 +1871,16 @@ fn submit_github_review_with_threads<R: BackendRunner>(
         &summary,
         &review_run_id,
         &manifest,
-    )?;
+    )
+    .map_err(|error| {
+        recovery.incomplete(
+            Some(&pending.review_id),
+            "submitted review snapshot validation failed",
+            Some(error),
+        )
+    })?;
     if submitted_snapshot.inline_comments.len() != manifest.len() {
-        return Err(pending_transaction_incomplete(
-            &review_run_id,
+        return Err(recovery.incomplete(
             Some(&pending.review_id),
             "submitted review manifest is not complete",
             None,
@@ -1879,8 +1890,7 @@ fn submit_github_review_with_threads<R: BackendRunner>(
         && let Some(review_url) = parse_submitted_review_url(output)
         && review_url != submitted_snapshot.review_url
     {
-        return Err(pending_transaction_incomplete(
-            &review_run_id,
+        return Err(recovery.incomplete(
             Some(&pending.review_id),
             "submitted review URL differs from the reconciled provider node",
             None,
@@ -2028,35 +2038,6 @@ fn validate_receipt_bound_snapshot(
         }
     }
     Ok(())
-}
-
-fn pending_transaction_incomplete(
-    review_run_id: &str,
-    pending_review_id: Option<&str>,
-    message: &str,
-    cause: Option<ForgeError>,
-) -> ForgeError {
-    let mut detail = vec![
-        format!("review_run_id={review_run_id}"),
-        format!(
-            "pending_review_id={}",
-            pending_review_id.unwrap_or("<unknown>")
-        ),
-        "recovery=rerun the identical pr review command or inspect the pending review".to_string(),
-    ];
-    if let Some(cause) = cause {
-        detail.push(format!("cause_kind={}", cause.kind()));
-        detail.push(format!("cause_message={}", cause.message()));
-        if let Some(cause_detail) = cause.detail().filter(|value| !value.is_empty()) {
-            detail.push(format!("cause_detail={cause_detail}"));
-        }
-    }
-    ForgeError::validation(
-        schema_err(),
-        "pending_review_transaction_incomplete",
-        message,
-        Some(detail.join("; ")),
-    )
 }
 
 fn ensure_review_run_receipt<R: BackendRunner>(

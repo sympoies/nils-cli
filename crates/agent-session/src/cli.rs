@@ -838,7 +838,7 @@ pub enum MessageCommand {
     /// The destination operator may suppress progress/report notifications;
     /// the reply remains readable and acknowledgeable in the mailbox.
     Reply(MessageReplyArgs),
-    /// Wait a bounded duration for one message revision change.
+    /// Wait for a message revision or for any unread message metadata.
     Wait(MessageWaitArgs),
     /// Claim the authenticated recipient's pending fixed mailbox reminder once.
     Reminder(MessageReminderArgs),
@@ -1092,10 +1092,18 @@ pub struct MessageWaitArgs {
     /// Authenticated recipient session id.
     #[arg(long)]
     pub session: String,
-    #[arg(long)]
-    pub message: String,
-    #[arg(long)]
-    pub if_revision: u64,
+    /// Wait for one known message to change revision.
+    #[arg(long, requires = "if_revision", conflicts_with_all = ["any_unread", "newer_than"])]
+    pub message: Option<String>,
+    /// Expected revision of the known message.
+    #[arg(long, requires = "message", conflicts_with_all = ["any_unread", "newer_than"])]
+    pub if_revision: Option<u64>,
+    /// Wait for unread messages and return metadata only (exit 0 on arrival, 69 on timeout).
+    #[arg(long, conflicts_with = "message")]
+    pub any_unread: bool,
+    /// Opaque cursor from a prior --any-unread result for this recipient incarnation.
+    #[arg(long, requires = "any_unread")]
+    pub newer_than: Option<String>,
     #[arg(long, value_name = "DURATION")]
     pub timeout: String,
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
@@ -1689,6 +1697,10 @@ pub struct ServeArgs {
 
 #[derive(Debug, Args)]
 pub struct DeleteArgs {
+    /// Stop only the verified tmux target and delete state, leaving processes running.
+    #[arg(long)]
+    pub leave_processes: bool,
+
     /// Session id.
     #[arg(value_name = "ID")]
     pub id: String,

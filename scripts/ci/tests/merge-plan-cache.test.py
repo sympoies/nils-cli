@@ -110,13 +110,14 @@ if args[0] == 'metadata':''')
                 self.assertIn('dependency source unavailable', plan['error']['recovery']['stderr_tail'])
                 self.assertEqual(self.receipt()['validation_scope'], 'FULL')
 
-    def test_both_ci_jobs_enable_preparation_after_cache_restore(self):
+    def test_linux_affected_lane_prepares_metadata_after_cache_restore(self):
         workflow = (fixtures.ROOT / '.github/workflows/ci.yml').read_text()
-        for job, following in (('test', 'test_containment'), ('test_macos', 'coverage')):
-            body = workflow.split(f'\n  {job}:\n', 1)[1].split(f'\n  {following}:\n', 1)[0]
-            validation = body.split('      - name: Nils CLI checks ', 1)[1]
-            self.assertIn('NILS_CLI_MERGE_PLAN_PREPARE_METADATA: "1"', validation)
-            self.assertLess(body.index('name: Cache cargo'), body.index('name: Nils CLI checks'))
+        body = workflow.split('\n  test:\n', 1)[1].split('\n  test_containment:\n', 1)[0]
+        validation = body.split('      - name: Nils CLI checks ', 1)[1]
+        self.assertIn('NILS_CLI_MERGE_PLAN_PREPARE_METADATA: "1"', validation)
+        self.assertLess(body.index('name: Cache cargo'), body.index('name: Nils CLI checks'))
+        full = (fixtures.ROOT / '.github/workflows/full-validation.yml').read_text()
+        self.assertNotIn('NILS_CLI_MERGE_PLAN_PREPARE_METADATA', full)
 
     def test_successful_preparation_cannot_replace_failed_offline_metadata(self):
         self.candidate()

@@ -6,3 +6,7 @@ tables = false
 
 [MD060]
 enabled = true
+
+[per-file-ignores]
+# devlog new generates an H2 entry ready for insertion into a monthly log.
+"docs/devlog/pending/*.md" = ["MD041"]
