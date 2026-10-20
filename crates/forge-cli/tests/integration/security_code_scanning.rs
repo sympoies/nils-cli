@@ -3,6 +3,8 @@ use super::support::{StubEnv, parse_envelope, run_forge_cli};
 use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
 
+mod repair;
+
 const COMMIT: &str = "1111111111111111111111111111111111111111";
 const REFERENCE: &str = "refs/pull/42/head";
 
@@ -14,9 +16,13 @@ fn instance(reference: &str, commit: &str) -> Value {
 }
 
 fn fixture(instances: Value, analyses: Value) -> StubEnv {
+    fixture_with_tool(instances, analyses, json!({"name": "CodeQL"}))
+}
+
+fn fixture_with_tool(instances: Value, analyses: Value, tool: Value) -> StubEnv {
     let alert = json!({"number": 7, "state": "open", "html_url": "https://github.com/acme/widget/security/code-scanning/7",
         "rule": {"id": "rust/command-line-injection", "security_severity_level": "critical"},
-        "tool": {"name": "CodeQL"}, "most_recent_instance": instance("refs/heads/main", &"2".repeat(40))});
+        "tool": tool, "most_recent_instance": instance("refs/heads/main", &"2".repeat(40))});
     let sarif = json!({"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "CodeQL"}}, "results": [{
     "ruleId": "rust/command-line-injection", "properties": {"github/alertNumber": 7},
     "codeFlows": [{"threadFlows": [{"locations": [
@@ -208,12 +214,19 @@ fn security_code_scanning_view_keeps_provider_refusal_as_error() {
 fn security_code_scanning_view_uses_selected_read_identity_without_fallback() {
     const CANARY: &str = "FIXTURE_SECURITY_READ_CREDENTIAL";
     for missing in [false, true] {
-        let stub = fixture(json!([instance(REFERENCE, COMMIT)]), json!([]))
-            .env("FORGE_IDENTITY_PRINCIPAL", "contributor")
-            .env(
-                "FIXTURE_ACCOUNT_A_CREDENTIAL",
-                if missing { "" } else { CANARY },
-            );
+        let stub = fixture(
+            json!([instance(REFERENCE, COMMIT)]),
+            json!([{
+                "id": 9, "ref": REFERENCE, "commit_sha": COMMIT,
+                "analysis_key": "workflow:analyze", "environment": "{}",
+                "category": "language:rust", "tool": {"name": "CodeQL"}
+            }]),
+        )
+        .env("FORGE_IDENTITY_PRINCIPAL", "contributor")
+        .env(
+            "FIXTURE_ACCOUNT_A_CREDENTIAL",
+            if missing { "" } else { CANARY },
+        );
         let config = stub.tempdir.path().join("xdg-config/forge-cli");
         std::fs::create_dir_all(&config).unwrap();
         let policy = include_str!("../../../nils-common/tests/fixtures/identity/policy.toml")
@@ -237,7 +250,9 @@ esac
 "#,
         );
         std::fs::write(path, script).unwrap();
-        let out = run_forge_cli(&stub, &args());
+        let mut argv = args();
+        argv.push("--include-sarif");
+        let out = run_forge_cli(&stub, &argv);
         assert_eq!(
             out.code,
             if missing { 65 } else { 0 },

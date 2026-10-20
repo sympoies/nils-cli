@@ -5,6 +5,8 @@
 
 - Added a read-only alert view with exact instance binding and optional
   corresponding analysis SARIF.
+- Bound per-call capture and total requests, time, and evidence bytes; reject
+  missing configuration bindings and conflicting scanner GUIDs.
 
 ### Why / context
 

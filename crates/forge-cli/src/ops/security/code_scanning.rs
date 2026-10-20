@@ -1,4 +1,7 @@
 //! Exact-ref code-scanning diagnostics through the ordinary identity-bound runner.
+mod budget;
+
+use budget::ReadBudget;
 use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use serde_json::{Value, json};
 
@@ -25,7 +28,8 @@ pub(super) fn view(
         return dry_run(version, ctx, call, format);
     }
     let runner = default_runner();
-    let alert = parse(&runner.run(&call)?.stdout)?;
+    let mut budget = ReadBudget::default();
+    let alert = budget.read(&runner, &call)?;
     if alert.get("number").and_then(Value::as_u64) != Some(args.number)
         || text(&alert, "/rule/id").is_none()
     {
@@ -38,6 +42,7 @@ pub(super) fn view(
     // The alert's most_recent_instance may belong to the default branch. Never
     // use it as evidence for the explicitly requested ref and commit.
     let instances: Vec<_> = pages(
+        &mut budget,
         &runner,
         ctx,
         &format!("{endpoint}/instances"),
@@ -74,6 +79,7 @@ pub(super) fn view(
     let mut analyses = Vec::new();
     if args.include_sarif {
         let candidates = pages(
+            &mut budget,
             &runner,
             ctx,
             &format!("repos/{repo}/code-scanning/analyses"),
@@ -86,7 +92,7 @@ pub(super) fn view(
             if !instances
                 .iter()
                 .any(|instance| same_configuration(instance, &row))
-                || row.pointer("/tool/name") != alert.pointer("/tool/name")
+                || !same_tool(&alert, &row)
             {
                 continue;
             }
@@ -96,7 +102,7 @@ pub(super) fn view(
             let mut call = get(ctx, &format!("repos/{repo}/code-scanning/analyses/{id}"));
             call.argv
                 .extend(["-H".into(), "Accept:application/sarif+json".into()]);
-            let sarif = parse(&runner.run(&call)?.stdout)?;
+            let sarif = budget.read(&runner, &call)?;
             if sarif.get("version").and_then(Value::as_str) != Some("2.1.0")
                 || !sarif.get("runs").is_some_and(Value::is_array)
             {
@@ -150,6 +156,7 @@ fn get(ctx: &ProviderContext, endpoint: &str) -> BackendCall {
 }
 
 fn pages(
+    budget: &mut ReadBudget,
     runner: &impl BackendRunner,
     ctx: &ProviderContext,
     endpoint: &str,
@@ -167,7 +174,7 @@ fn pages(
             "-f".into(),
             format!("page={page}").into(),
         ]);
-        let value = parse(&runner.run(&call)?.stdout)?;
+        let value = budget.read(runner, &call)?;
         let rows = value.as_array().ok_or_else(|| {
             ForgeError::software(schema(), "code-scanning page must be an array", None)
         })?;
@@ -192,8 +199,20 @@ fn matches_subject(row: &Value, args: &SecurityAlertViewArgs) -> bool {
 fn same_configuration(instance: &Value, analysis: &Value) -> bool {
     ["analysis_key", "environment", "category"]
         .iter()
-        .all(|field| instance.get(field) == analysis.get(field))
-        && instance.get("analysis_key").is_some_and(Value::is_string)
+        .all(|field| {
+            let selected = instance.get(field).and_then(Value::as_str);
+            selected.is_some_and(|value| *field == "environment" || !value.is_empty())
+                && selected == analysis.get(field).and_then(Value::as_str)
+        })
+}
+
+fn same_tool(alert: &Value, analysis: &Value) -> bool {
+    let name = alert.pointer("/tool/name").and_then(Value::as_str);
+    name.is_some_and(|value| !value.is_empty())
+        && name == analysis.pointer("/tool/name").and_then(Value::as_str)
+        && text(alert, "/tool/guid")
+            .filter(|guid| !guid.is_empty())
+            .is_none_or(|guid| text(analysis, "/tool/guid") == Some(guid))
 }
 
 fn select(row: &Value, fields: &[&str]) -> Value {

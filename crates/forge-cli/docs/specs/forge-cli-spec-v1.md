@@ -1525,8 +1525,12 @@ invocation's managed identity. Provider permission errors remain errors.
 
   Without `--include-sarif`, no analysis endpoint is called and `analyses` is
   empty. With it, analysis metadata must match the ref, commit, instance
-  configuration (analysis key, environment, category), and tool name. Each
-  `analyses` item contains selected `metadata` and provider `sarif`.
+  configuration (analysis key, environment, category), and tool name. All
+  configuration fields must be present strings; only environment may be empty.
+  Tool names must be present and nonempty. A nonempty alert tool GUID must
+  also match; absent or null alert GUIDs use name matching, without requiring
+  equal tool versions. Each `analyses` item contains selected `metadata` and
+  provider `sarif`.
 
   `sarif_scope` is `analysis`: SARIF may contain code snippets and other alerts
   in that analysis. Correlate provider result properties such as
@@ -1538,9 +1542,15 @@ invocation's managed identity. Provider permission errors remain errors.
   Missing matching analysis metadata returns `security_analysis_not_found`.
   Instance and analysis inventory reads each stop after ten 100-row pages;
   reaching that bound returns `security_read_incomplete`, with no partial
-  success payload. Provider access refusals remain errors. All calls are fixed
-  GET endpoints under the selected authority/repository; response URLs are not
-  followed. `--dry-run` previews only the first alert request, without calls.
+  success payload. Each backend call has a 30-second timeout and the existing
+  8 MiB capture limit per stream. The entire read allows at most 32 requests,
+  120 seconds, and 16 MiB cumulative captured evidence. Exhausting the command
+  budget returns `security_read_limit`; backend capture overflow returns
+  `backend_output_limit`. Neither emits partial evidence.
+
+  Provider access refusals remain errors. All calls are fixed GET endpoints
+  under the selected authority/repository; response URLs are not followed.
+  `--dry-run` previews only the first alert request, without calls.
 - `security settings view --repo owner/repo` emits
   `cli.forge-cli.security.settings.view.v1`: `provider`, `host`, `repo`, and
   nullable `security_and_analysis`. A missing block means the provider did
