@@ -783,6 +783,47 @@ operations:
         pending_reviews: list<{id, database_id?, url, author, state, commit_sha?, summary, summary_truncated}>
     notes: "all review pages are read (100 nodes/page, max 100 pages); provider-valid PENDING reviews have no submitted_at, may have no commit_sha, and are returned separately, never as convergence activity. Partial GraphQL data, missing required submitted-review fields, unknown states, head drift, or unsafe pagination return review_snapshot_incomplete. summary is bounded to 4096 UTF-8 bytes and is never parsed as a machine verdict; submitted commit_sha != head_sha is stale/informational."
 
+  - id: pr.review-get
+    schema_version: cli.forge-cli.pr.review-get.v1
+    summary: Read the complete bounded native review body selected by database ID.
+    inputs:
+      - { name: <id>, type: integer, required: true }
+      - { name: --review-id, type: integer, required: true }
+    validations:
+      - review_not_found
+      - review_snapshot_incomplete
+    dry_run:
+      offline: true
+      repo_resolution: "--repo owner/name or recognised forge remote"
+    backends:
+      github:
+        - { program: gh, argv: [pr, view, "{id}", --repo, "{repo}", --json, "<PR fields>"] }
+        - { program: gh, argv: [api, graphql, "--hostname <host when host != github.com>", -f, "query=<bound paginated review snapshot>"] }
+        - { program: gh, argv: [api, "--hostname <host when host != github.com>", "repos/{repo}/pulls/{id}/reviews/{review_id}"] }
+      gitlab: unsupported
+      local: unsupported
+    output:
+      data:
+        provider: enum<github>
+        repository: string
+        number: integer
+        pr_url: string
+        head_sha: string
+        viewer_login: string
+        id: string
+        database_id: integer
+        url: string
+        author: string
+        commit_sha: string|null
+        state: string
+        submitted_at: string|null
+        body: string
+        body_bytes: integer
+        body_truncated: boolean # always false on success
+        complete: boolean # always true on success
+        observed_at: string # UTC observation timestamp
+    notes: "Invoked by pr reviews <id> --review-id <database-id>. Reuses complete-report GET/binding verification and normal read-only provider transport; no arbitrary API, URL following or mutation. The 64 KiB UTF-8 body bound and backend capture limits remain enforced. Incomplete or changed readback fails rather than emitting a shortened success body. The default pr.reviews summary contract is unchanged."
+
   - id: pr.pending-review.inspect
     schema_version: cli.forge-cli.pr.pending-review.inspect.v1
     summary: Read one complete pending GitHub review and its immutable snapshot digest.

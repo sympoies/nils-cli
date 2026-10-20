@@ -1009,12 +1009,8 @@ pub struct PrTasksArgs {
 mod merge;
 pub use merge::PrMergeArgs;
 
-/// Native provider review summaries for one pull request.
-#[derive(Args, Debug, Clone)]
-pub struct PrReviewsArgs {
-    /// Numeric pull request id.
-    pub id: u64,
-}
+mod pr_review_get;
+pub use pr_review_get::PrReviewsArgs;
 
 /// `pr pending-review` recovery group.
 #[derive(Args, Debug, Clone)]

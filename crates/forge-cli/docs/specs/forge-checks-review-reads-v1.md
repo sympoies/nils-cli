@@ -123,3 +123,35 @@ validation rules, and output schema versions.
   states, cursor loops, a head change between pages, or the page safety limit
   return `review_snapshot_incomplete` (`DATA 65`). The gate never treats a
   partial native-review snapshot as empty.
+
+#### Complete native review by database ID
+
+`pr reviews <id> --review-id <database-id>` opts into the read-only
+`cli.forge-cli.pr.review-get.v1` response. For example:
+
+```sh
+forge-cli pr reviews 42 --review-id 102 --repo acme/widgets --format json
+```
+
+- The normal selected identity, provider host and repository routing apply.
+  The reader binds the PR view and complete review snapshot, then uses the fixed
+  `repos/{repo}/pulls/{id}/reviews/{database-id}` GET through the normal backend.
+  It never follows a returned URL or publishes, edits, deletes, approves, or
+  advances a review, handoff or ledger.
+- Output includes `provider`, `repository`, `number`, `pr_url`, observed
+  `head_sha`, `viewer_login`, native node `id`, `database_id`, review `url`,
+  `author`, `commit_sha`, `state`, `submitted_at`, complete `body`, `body_bytes`,
+  `body_truncated: false`, `complete: true`, and `observed_at` (UTC timestamp).
+  Pending reviews may have null `commit_sha` and `submitted_at`; historical
+  reviews retain their original commit and do not become current-head approval.
+- The body must fit the existing complete-report bound of 64 KiB of UTF-8.
+  Provider capture bounds still apply. Missing, malformed, oversized or changed
+  readback returns `review_snapshot_incomplete` (`DATA 65`), with no shortened
+  success body. Missing IDs return `review_not_found` (`DATA 65`). A nonpositive
+  or nonnumeric database ID is a usage error. Provider/transport failures retain
+  the normal typed errors and redacted diagnostics.
+- The readback verifies database ID, URL, author identity, commit and state
+  against the selected snapshot. Repository/PR mismatch and observed head drift
+  refuse the read. The body is evidence, never an inferred machine verdict.
+- `--dry-run` names the fixed GET without executing any provider call. Omitting
+  `--review-id` preserves the original 4096-byte summary listing and schema.

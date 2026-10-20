@@ -7884,12 +7884,16 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__pr__reviews)
-            opts="-h --format --remote --provider --host --repo --store-root --dry-run --help"
+            opts="-h --review-id --format --remote --provider --host --repo --store-root --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --review-id)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0
