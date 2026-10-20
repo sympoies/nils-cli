@@ -1,6 +1,239 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+#[derive(Clone, Copy)]
+enum PromptPeer {
+    Reject,
+    DropAcknowledgement,
+    CloseBeforePrompt,
+}
+
+async fn prompt_peer(
+    listener: tokio::net::UnixListener,
+    peer: PromptPeer,
+) -> (oneshot::Receiver<()>, tokio::task::JoinHandle<()>) {
+    let (ready_tx, ready_rx) = oneshot::channel();
+    let task = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let initialize = receive_json(&mut socket).await;
+        respond(&mut socket, &initialize, json!({})).await;
+        assert_eq!(receive_json(&mut socket).await["method"], "initialized");
+        let loaded = receive_json(&mut socket).await;
+        assert_eq!(loaded["method"], "thread/loaded/list");
+        respond(
+            &mut socket,
+            &loaded,
+            json!({ "data": ["thread-typed-causes"], "nextCursor": null }),
+        )
+        .await;
+        let resume = receive_json(&mut socket).await;
+        assert_eq!(resume["method"], "thread/resume");
+        respond(&mut socket, &resume, json!({})).await;
+        let usage = receive_json(&mut socket).await;
+        assert_eq!(usage["method"], "account/rateLimits/read");
+        respond(
+            &mut socket,
+            &usage,
+            json!({ "rateLimits": { "primary": { "usedPercent": 1 } } }),
+        )
+        .await;
+        let _ = ready_tx.send(());
+        match peer {
+            PromptPeer::CloseBeforePrompt => {
+                let _ = socket
+                    .send(tokio_tungstenite::tungstenite::Message::Close(None))
+                    .await;
+            }
+            PromptPeer::Reject => {
+                let prompt = receive_json(&mut socket).await;
+                assert_eq!(prompt["method"], "turn/start");
+                socket
+                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                        json!({
+                            "id": prompt["id"],
+                            "error": { "code": -32000, "message": "provider rejected" }
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await
+                    .unwrap();
+            }
+            PromptPeer::DropAcknowledgement => {
+                let prompt = receive_json(&mut socket).await;
+                assert_eq!(prompt["method"], "turn/start");
+                drop(socket);
+            }
+        }
+    });
+    (ready_rx, task)
+}
+
+async fn start_prompt_control(
+    id: &str,
+    peer: PromptPeer,
+) -> (
+    tempfile::TempDir,
+    CliContext,
+    SessionRecord,
+    ControlHandle,
+    tokio::task::JoinHandle<Result<(), String>>,
+    tokio::task::JoinHandle<()>,
+) {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket_path = tmp.path().join(format!("{id}.sock"));
+    let context = CliContext {
+        state_dir: tmp.path().join("state"),
+        host: None,
+    };
+    let record = record_with_runtime(id, &socket_path);
+    fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+    crate::write_session_record(&context, &record).unwrap();
+    bind_thread(&record, "thread-typed-causes").unwrap();
+    let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+    let (ready_rx, peer_task) = prompt_peer(listener, peer).await;
+    let (handle, commands, ready) = starting_control_channel();
+    let control = tokio::spawn(run_control(
+        context.clone(),
+        record.clone(),
+        commands,
+        ready,
+    ));
+    handle.wait_ready(Duration::from_secs(5)).await.unwrap();
+    ready_rx.await.unwrap();
+    (tmp, context, record, handle, control, peer_task)
+}
+
+#[tokio::test]
+async fn prompt_readiness_refusal_is_marked_as_not_dispatched() {
+    let env_lock = GlobalStateLock::new();
+    let _broker = EnvGuard::set(
+        &env_lock,
+        "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+        r#"["/configured/broker"]"#,
+    );
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket_path = tmp.path().join("prompt-readiness.sock");
+    let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+    let context = CliContext {
+        state_dir: tmp.path().join("state"),
+        host: None,
+    };
+    let record = record_with_runtime("prompt-readiness", &socket_path);
+    fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+    crate::write_session_record(&context, &record).unwrap();
+    bind_thread(&record, "thread-prompt-readiness").unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let initialize = receive_json(&mut socket).await;
+        respond(&mut socket, &initialize, json!({})).await;
+        assert_eq!(receive_json(&mut socket).await["method"], "initialized");
+        let loaded = receive_json(&mut socket).await;
+        assert_eq!(loaded["method"], "thread/loaded/list");
+        respond(
+            &mut socket,
+            &loaded,
+            json!({ "data": ["thread-prompt-readiness"], "nextCursor": null }),
+        )
+        .await;
+        let resume = receive_json(&mut socket).await;
+        assert_eq!(resume["method"], "thread/resume");
+        respond(&mut socket, &resume, json!({})).await;
+        let usage = receive_json(&mut socket).await;
+        assert_eq!(usage["method"], "account/rateLimits/read");
+        respond(
+            &mut socket,
+            &usage,
+            json!({ "rateLimits": { "primary": { "usedPercent": 1 } } }),
+        )
+        .await;
+        tokio::time::timeout(Duration::from_millis(250), receive_json(&mut socket))
+            .await
+            .ok()
+    });
+    let (handle, commands, ready) = starting_control_channel();
+    let control = tokio::spawn(run_control(
+        context.clone(),
+        record.clone(),
+        commands,
+        ready,
+    ));
+    handle.wait_ready(Duration::from_secs(5)).await.unwrap();
+    crate::codex_account::queue_next_account_with_unbound(
+        &context,
+        &record.id,
+        &record.runtime.as_ref().unwrap().launch_id,
+        "fixture-next-account",
+    )
+    .unwrap();
+
+    let error = handle
+        .submit_prompt("must remain retryable")
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        crate::codex_app_server::prompt_submit::PromptSubmissionFailure::NotDispatched
+    ));
+    assert!(
+        server.await.unwrap().is_none(),
+        "turn/start must not be written"
+    );
+    drop(handle);
+    control.abort();
+    let _ = control.await;
+}
+
+#[tokio::test]
+async fn websocket_provider_rejection_is_not_confirmed() {
+    let (_tmp, _context, _record, handle, control, peer) =
+        start_prompt_control("provider-rejection", PromptPeer::Reject).await;
+    let error = handle.submit_prompt("rejected prompt").await.unwrap_err();
+    assert!(matches!(
+        error,
+        prompt_submit::PromptSubmissionFailure::NotConfirmed
+    ));
+    peer.await.unwrap();
+    drop(handle);
+    control.abort();
+    let _ = control.await;
+}
+
+#[tokio::test]
+async fn websocket_disconnect_before_submit_is_not_dispatched() {
+    let (_tmp, _context, _record, handle, control, peer) =
+        start_prompt_control("write-failure", PromptPeer::CloseBeforePrompt).await;
+    peer.await.unwrap();
+    let error = handle.submit_prompt("not written").await.unwrap_err();
+    assert!(matches!(
+        error,
+        prompt_submit::PromptSubmissionFailure::NotDispatched
+    ));
+    drop(handle);
+    control.abort();
+    let _ = control.await;
+}
+
+#[tokio::test]
+async fn websocket_lost_acknowledgement_is_unknown() {
+    let (_tmp, _context, _record, handle, control, peer) =
+        start_prompt_control("lost-acknowledgement", PromptPeer::DropAcknowledgement).await;
+    let error = handle
+        .submit_prompt("sent without an acknowledgement")
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        prompt_submit::PromptSubmissionFailure::AcknowledgementUnknown
+    ));
+    peer.await.unwrap();
+    drop(handle);
+    control.abort();
+    let _ = control.await;
+}
+
 #[tokio::test]
 async fn fresh_thread_start_waits_for_initial_binding_application() {
     let tmp = tempfile::TempDir::new().unwrap();
