@@ -420,6 +420,14 @@ pub(crate) fn stopped_observed_at(context: &CliContext, target: &SessionRecord) 
         .map(str::to_owned)
 }
 
+pub(crate) fn stopped_activity_snapshot(
+    context: &CliContext,
+    target: &SessionRecord,
+) -> (String, Option<String>) {
+    observe_stopped(context, target);
+    ("stopped".to_string(), stopped_observed_at(context, target))
+}
+
 #[derive(Clone)]
 pub(crate) struct ResponseSessionId(pub(crate) String);
 

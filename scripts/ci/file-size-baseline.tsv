@@ -30,7 +30,7 @@ crates/codex-cli/src/agent/capsule.rs	impl	2626
 crates/codex-cli/tests/integration/execution_capsule.rs	test	3083
 crates/forge-cli/src/cli.rs	impl	2638
 crates/forge-cli/src/ops/inbox.rs	impl	2371
-crates/forge-cli/src/ops/pr_review.rs	impl	3911
+crates/forge-cli/src/ops/pr_review.rs	impl	3789
 crates/forge-cli/src/ops/repo_bootstrap.rs	impl	2426
 crates/forge-cli/tests/integration/pr_deliver_chain.rs	test	3038
 crates/forge-cli/tests/integration/pr_pending_review.rs	test	3433

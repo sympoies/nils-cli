@@ -1,4 +1,6 @@
 //! Retired-coordinator takeover integration coverage.
+use std::process::Command;
+
 use super::*;
 use pretty_assertions::assert_eq;
 
@@ -88,9 +90,10 @@ fn run_with_supervisor_config_on_remote(
     } else {
         "[]".to_string()
     };
+    let stale_after = if remote == "invalid" { "31d" } else { "2h" };
     fs::write(
         repo.join(".forge-cli.toml"),
-        format!("[review_handoff]\nsupervisors = {supervisors}\nstale_after = \"2h\"\n"),
+        format!("[review_handoff]\nsupervisors = {supervisors}\nstale_after = \"{stale_after}\"\n"),
     )
     .unwrap();
     assert!(
@@ -125,6 +128,57 @@ fn run_with_supervisor_config_on_remote(
             .unwrap()
             .success()
     );
+    let base = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&repo)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    assert!(
+        Command::new("git")
+            .args([
+                "remote",
+                "add",
+                remote,
+                if remote == "wrong" {
+                    "https://github.com/acme/other.git"
+                } else if remote == "host" {
+                    "https://gitlab.com/acme/widgets.git"
+                } else if remote == "mixed" {
+                    "https://github.com/Acme/Widgets.git"
+                } else {
+                    "https://github.com/acme/widgets.git"
+                },
+            ])
+            .current_dir(&repo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    if remote == "stale" {
+        assert!(
+            Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "commit",
+                    "--allow-empty",
+                    "-qm",
+                    "advance remote ref"
+                ])
+                .current_dir(&repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
     assert!(
         Command::new("git")
             .args(["update-ref", &format!("refs/remotes/{remote}/main"), "HEAD"])
@@ -133,7 +187,23 @@ fn run_with_supervisor_config_on_remote(
             .unwrap()
             .success()
     );
-    run_forge_cli_in(stub, args, Some(&repo))
+    let args: Vec<String> = args
+        .iter()
+        .map(|arg| {
+            if *arg == OLD {
+                base.clone()
+            } else {
+                (*arg).to_string()
+            }
+        })
+        .collect();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    super::super::support::run_forge_cli_in_with_env(
+        stub,
+        &args,
+        Some(&repo),
+        &[("PROVIDER_BASE", &base), ("PROVIDER_BASE_REF", "main")],
+    )
 }
 
 fn supervisor_takeover(
@@ -254,6 +324,61 @@ fn supervisor_takeover_rechecks_policy_from_the_selected_remote() {
 }
 
 #[test]
+fn supervisor_takeover_append_accepts_case_insensitive_github_repository_slug() {
+    let seeded = records(retired_coordinator_handoff(), None);
+    let tip = &seeded[0].record_digest;
+    let stub = writable_ledger(
+        coordinator_board(fixture(HEAD, &seeded, vec![]), "stopped", ""),
+        &seeded,
+    );
+    let out = supervisor_takeover_on_remote(&stub, HEAD, OLD, tip, true, false, "mixed");
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    let saved: Vec<String> =
+        serde_json::from_str(&fs::read_to_string(stub.tempdir.path().join("ledger.json")).unwrap())
+            .unwrap();
+    let chain =
+        review_state::parse_chain(saved.iter().map(String::as_str), "acme/widgets", 7).unwrap();
+    assert_eq!(chain.records.len(), 2);
+    assert_eq!(chain.records.last().unwrap().assignment_generation, Some(2));
+}
+
+#[test]
+fn supervisor_takeover_rejects_a_remote_for_another_repository() {
+    let seeded = records(retired_coordinator_handoff(), None);
+    let tip = &seeded[0].record_digest;
+    let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "stopped", "");
+    let out = supervisor_takeover_on_remote(&stub, HEAD, OLD, tip, true, true, "wrong");
+    assert!(out.code == 65 && out.stdout.contains("review_coordinator_unproven"));
+}
+
+#[test]
+fn supervisor_takeover_rejects_a_remote_on_another_provider_host() {
+    let seeded = records(retired_coordinator_handoff(), None);
+    let tip = &seeded[0].record_digest;
+    let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "stopped", "");
+    let out = supervisor_takeover_on_remote(&stub, HEAD, OLD, tip, true, true, "host");
+    assert!(out.code == 65 && out.stdout.contains("review_coordinator_unproven"));
+}
+
+#[test]
+fn supervisor_takeover_rejects_a_remote_ref_that_moved_from_provider_base() {
+    let seeded = records(retired_coordinator_handoff(), None);
+    let tip = &seeded[0].record_digest;
+    let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "stopped", "");
+    let out = supervisor_takeover_on_remote(&stub, HEAD, OLD, tip, true, true, "stale");
+    assert!(out.code == 65 && out.stdout.contains("review_coordinator_unproven"));
+}
+
+#[test]
+fn supervisor_takeover_rejects_invalid_explicit_staleness_policy() {
+    let seeded = records(retired_coordinator_handoff(), None);
+    let tip = &seeded[0].record_digest;
+    let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "stopped", "");
+    let out = supervisor_takeover_on_remote(&stub, HEAD, OLD, tip, true, true, "invalid");
+    assert!(out.code == 65 && out.stdout.contains("review_coordinator_unproven"));
+}
+
+#[test]
 fn retired_coordinator_takeover_preview_transfers_only_coordinator_authority() {
     let seeded = records(retired_coordinator_handoff(), Some(HEAD));
     let tip = &seeded.last().unwrap().record_digest;
@@ -262,7 +387,7 @@ fn retired_coordinator_takeover_preview_transfers_only_coordinator_authority() {
     let out = takeover(
         &stub,
         HEAD,
-        HEAD,
+        OLD,
         tip,
         &format!("{COORDINATOR_UUID}@source"),
         true,
@@ -279,7 +404,18 @@ fn retired_coordinator_takeover_preview_transfers_only_coordinator_authority() {
         review_state::sha256_digest(b"reviewer-session")
     );
     assert_eq!(data["handoff"]["assignment_generation"], 2);
-    assert_eq!(data["handoff"]["base_sha"], HEAD);
+    let policy_base = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "refs/remotes/origin/main"])
+            .current_dir(stub.tempdir.path().join("repo"))
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    assert_eq!(data["handoff"]["base_sha"], policy_base);
     assert_eq!(data["handoff"]["returned_reason"], "coordinator-retired");
     assert_eq!(
         data["handoff"]["coordinator_transfer"]["old_coordinator_digest"],
@@ -396,7 +532,7 @@ fn retired_coordinator_takeover_persists_findings_and_allows_reassignment() {
     let out = takeover(
         &stub,
         HEAD,
-        HEAD,
+        OLD,
         &seeded.last().unwrap().record_digest,
         &format!("{COORDINATOR_UUID}@source"),
         false,

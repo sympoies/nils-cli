@@ -166,7 +166,9 @@ pub(crate) fn closed_record(
     record: &SessionRecord,
     reason: CloseReason,
 ) -> Option<Value> {
-    let view = crate::session_view_from_parts(
+    crate::lifecycle::observe_stopped(context, record);
+    let last_terminal_activity_at = crate::lifecycle::stopped_observed_at(context, record);
+    let mut view = crate::session_view_from_parts(
         context,
         record,
         "stopped".to_string(),
@@ -175,6 +177,7 @@ pub(crate) fn closed_record(
         false,
         crate::coordination::CoordinationSummary::default(),
     );
+    view.last_terminal_activity_at = last_terminal_activity_at;
     let view = serde_json::to_value(&view).ok()?;
     let mut closed = project_record(&view, "", home_dir().as_deref(), false)?;
     let object = closed.as_object_mut()?;
@@ -976,6 +979,13 @@ mod tests {
                 "generation": 1,
                 "started_at": "2030-01-01T00:00:00Z",
                 "launch_id": "live-incarnation"
+            },
+            "delete_tmux_identity": {
+                "launch_id": "live-incarnation",
+                "session_id": "$7",
+                "pane_id": "%7",
+                "pane_pid": 7,
+                "process_group_id": 7
             }
         }))
         .expect("record");
@@ -1006,6 +1016,11 @@ mod tests {
         assert_eq!(closed["messaging_supported"], false);
         assert_eq!(closed["close_reason"], "archived");
         assert_eq!(closed["session_incarnation"], "live-incarnation");
+        assert!(closed["last_terminal_activity_at"].is_string());
+        assert_eq!(
+            closed["last_terminal_activity_at"].as_str(),
+            crate::lifecycle::stopped_observed_at(&context, &record).as_deref()
+        );
         assert_eq!(closed["cwd"], Value::Null);
         assert_eq!(closed["updated_at"], "2030-01-01T00:04:00Z");
     }
@@ -1037,6 +1052,11 @@ mod tests {
         }))
         .expect("work");
         let closed = closed_record(&context, &record, CloseReason::Deleted).expect("closed");
+        assert!(closed["last_terminal_activity_at"].is_string());
+        assert_eq!(
+            closed["last_terminal_activity_at"].as_str(),
+            crate::lifecycle::stopped_observed_at(&context, &record).as_deref()
+        );
         assert_eq!(closed["role"], "coordinator");
         assert_eq!(closed["lineage"]["root"], session_ref("root"));
         assert_eq!(closed["lineage"]["effective_parent"], session_ref("root"));

@@ -7846,37 +7846,22 @@ fn session_list_runtime_snapshot(
     tmux_snapshots: Option<&TmuxSessionSnapshots>,
     record: &SessionRecord,
 ) -> (String, Option<String>) {
-    if recorded_runtime_is_from_prior_boot(record) {
-        lifecycle::observe_stopped(context, record);
-        return (
-            "stopped".to_string(),
-            lifecycle::stopped_observed_at(context, record),
-        );
+    let status = if recorded_runtime_is_from_prior_boot(record)
+        || tmux_snapshots.is_some_and(|snapshots| !snapshots.contains_key(&record.tmux_session))
+    {
+        "stopped".to_string()
+    } else if tmux_snapshots.is_some() {
+        "running".to_string()
+    } else {
+        session_status(context, tmux_bin, record)
+    };
+    if status == "stopped" {
+        return lifecycle::stopped_activity_snapshot(context, record);
     }
-    match tmux_snapshots {
-        Some(snapshots) => match snapshots.sessions.get(&record.tmux_session) {
-            Some(snapshot) => (
-                "running".to_string(),
-                snapshot.last_terminal_activity_at.clone(),
-            ),
-            None => {
-                lifecycle::observe_stopped(context, record);
-                (
-                    "stopped".to_string(),
-                    lifecycle::stopped_observed_at(context, record),
-                )
-            }
-        },
-        None => {
-            let status = session_status(context, tmux_bin, record);
-            if status == "stopped" {
-                lifecycle::observe_stopped(context, record);
-                (status, lifecycle::stopped_observed_at(context, record))
-            } else {
-                (status, None)
-            }
-        }
-    }
+    let activity = tmux_snapshots
+        .and_then(|snapshots| snapshots.sessions.get(&record.tmux_session))
+        .and_then(|snapshot| snapshot.last_terminal_activity_at.clone());
+    (status, activity)
 }
 
 fn tmux_session_snapshots(tmux_bin: &Path) -> Option<TmuxSessionSnapshots> {

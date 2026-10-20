@@ -440,6 +440,7 @@ fn recorded_carry_over<'a>(
 pub(crate) fn ensure_handoff_append(
     chain: &review_state::ReviewStateChain,
     next: &ReviewHandoff,
+    context: &ProviderContext,
     remote: &str,
 ) -> Result<(), ForgeError> {
     let actor = actor_digest()?;
@@ -461,8 +462,19 @@ pub(crate) fn ensure_handoff_append(
                     "supervisor retirement evidence is required",
                 ));
             };
-            let (supervisors, configured_stale_after) =
-                trusted_supervisor_policy(next.base_ref.as_deref().unwrap_or_default(), remote);
+            let (supervisors, configured_stale_after) = trusted_supervisor_policy(
+                context.repo.as_deref().ok_or_else(|| {
+                    fail(
+                        "review_coordinator_unproven",
+                        "provider repository is unavailable",
+                    )
+                })?,
+                context.provider,
+                &context.host,
+                &next.base_sha,
+                next.base_ref.as_deref().unwrap_or_default(),
+                remote,
+            )?;
             if transfer.supervisor_digest.as_deref() != Some(actor.as_str())
                 || !supervisors.contains(&actor)
                 || evidence.stale_after_seconds != configured_stale_after.as_secs()
@@ -544,25 +556,62 @@ pub(crate) fn valid_coordinator_transfer(old: &ReviewHandoff, next: &ReviewHando
     })
 }
 
-fn trusted_supervisor_policy(base_ref: &str, remote: &str) -> (Vec<String>, Duration) {
-    let workdir = std::env::current_dir().ok();
-    let Some(workdir) = workdir else {
-        return (Vec::new(), Duration::from_secs(2 * 60 * 60));
+fn trusted_supervisor_policy(
+    repository: &str,
+    provider: Provider,
+    provider_host: &str,
+    provider_base_sha: &str,
+    base_ref: &str,
+    remote: &str,
+) -> Result<(Vec<String>, Duration), ForgeError> {
+    let policy_error = || {
+        fail(
+            "review_coordinator_unproven",
+            "repository handoff policy is unavailable for the current provider base",
+        )
     };
-    let Some(toplevel) = crate::ops::pr_create::find_git_toplevel(&workdir) else {
-        return (Vec::new(), Duration::from_secs(2 * 60 * 60));
+    let workdir = std::env::current_dir().map_err(|_| policy_error())?;
+    let toplevel = crate::ops::pr_create::find_git_toplevel(&workdir).ok_or_else(policy_error)?;
+    let remote_url = crate::provider::git_remote_url(remote).ok_or_else(policy_error)?;
+    let remote_repository = crate::provider::parse_slug(&remote_url).ok_or_else(policy_error)?;
+    let repository_matches = match provider {
+        Provider::GitHub => remote_repository.eq_ignore_ascii_case(repository),
+        _ => remote_repository == repository,
     };
-    let config = ForgeConfig::load_from_git_ref(
-        &workdir,
-        &toplevel,
-        &format!("refs/remotes/{remote}/{base_ref}"),
-    );
-    (
+    if !repository_matches
+        || !crate::provider::authorities_equal(
+            provider,
+            provider_host,
+            &crate::provider::parse_host(&remote_url).ok_or_else(policy_error)?,
+        )
+    {
+        return Err(policy_error());
+    }
+    let git_ref = format!("refs/remotes/{remote}/{base_ref}");
+    let resolved = Command::new("git")
+        .args(["rev-parse", "--verify", &format!("{git_ref}^{{commit}}")])
+        .current_dir(&toplevel)
+        .output()
+        .map_err(|_| policy_error())?;
+    if !resolved.status.success()
+        || String::from_utf8_lossy(&resolved.stdout).trim() != provider_base_sha
+    {
+        return Err(policy_error());
+    }
+    let config = ForgeConfig::load_from_git_ref(&workdir, &toplevel, &git_ref);
+    if config
+        .warnings
+        .iter()
+        .any(|warning| warning.starts_with("invalid-config-value:review_handoff.stale_after"))
+    {
+        return Err(policy_error());
+    }
+    Ok((
         config.review_handoff_supervisors.unwrap_or_default(),
         config
             .review_handoff_stale_after
             .unwrap_or_else(|| Duration::from_secs(2 * 60 * 60)),
-    )
+    ))
 }
 
 /// Read the existing session-board authority, never caller-supplied evidence.
@@ -1376,8 +1425,14 @@ pub fn run(
                         "takeover base differs from the provider base",
                     ));
                 }
-                let (supervisors, stale_after) =
-                    trusted_supervisor_policy(&view.base, &global.remote);
+                let (supervisors, stale_after) = trusted_supervisor_policy(
+                    &repository,
+                    ctx.provider,
+                    &ctx.host,
+                    &base,
+                    &view.base,
+                    &global.remote,
+                )?;
                 if !supervisors.contains(&actor) {
                     return Err(fail(
                         "review_writer_conflict",

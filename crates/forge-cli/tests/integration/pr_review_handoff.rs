@@ -1,13 +1,12 @@
 //! Assigned review gate fixtures never contact a live provider or session.
 use std::fs;
-use std::process::Command;
 
 use forge_cli::ops::pr_review_handoff::ReviewHandoff;
 use forge_cli::ops::review_state::{self, ReviewStatePayload, ReviewStateRecord};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
-use super::support::{StubEnv, parse_envelope, run_forge_cli, run_forge_cli_in};
+use super::support::{StubEnv, parse_envelope, run_forge_cli};
 
 const HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const OLD: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";

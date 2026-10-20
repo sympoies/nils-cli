@@ -285,7 +285,10 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   is resolved from the stored coordinator digest in a fresh, complete
   `agent-session board --state all --format json` read. Only a repository
   configured handoff supervisor may take over, as listed by `sha256:` digest in
-  `[review_handoff].supervisors` on the PR's target base branch. The list is
+  `[review_handoff].supervisors` at the exact provider base. The selected
+  remote must match provider host/repository and its base-tracking ref must
+  resolve to that base SHA; invalid explicit `stale_after` refuses takeover.
+  The list is
   empty by default and is never read from global configuration or the PR head.
   The supervisor must also prove at operation time that every matching
   coordinator row is stopped or deleted on one available host and that its
