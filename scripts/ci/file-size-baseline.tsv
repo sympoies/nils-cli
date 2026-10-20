@@ -37,4 +37,4 @@ crates/forge-cli/tests/integration/pr_pending_review.rs	test	3433
 crates/forge-cli/tests/integration/pr_review.rs	test	4840
 crates/git-cli/src/worktree/dirty_checkout_adoption.rs	impl	8302
 crates/git-cli/tests/integration/dirty_checkout_adoption.rs	test	3158
-crates/semantic-commit/src/commit.rs	impl	2149
+crates/semantic-commit/src/commit.rs	impl	2140
