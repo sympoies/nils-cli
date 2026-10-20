@@ -3,6 +3,7 @@ use serde::Deserialize;
 
 pub(super) struct ObservationInput {
     pub observations: Vec<review_state::ReviewFindingObservation>,
+    acceptance: Option<review_state::acceptance::AcceptanceRequest>,
     correction: Option<review_state::correction::CorrectionRequest>,
     supersession: Option<review_state::supersession::SupersessionRequest>,
 }
@@ -21,6 +22,18 @@ impl ObservationInput {
     }
 
     pub fn parse(value: &serde_json::Value) -> Result<Self, ForgeError> {
+        if value.get("acceptance").is_some()
+            || value.get("schema_version").and_then(|v| v.as_str())
+                == Some(review_state::acceptance::INPUT_SCHEMA)
+        {
+            let (request, observations) = super::acceptance_input::parse(value)?;
+            return Ok(Self {
+                observations,
+                acceptance: Some(request),
+                correction: None,
+                supersession: None,
+            });
+        }
         if value.get("supersession").is_some()
             || value.get("schema_version").and_then(|v| v.as_str())
                 == Some(review_state::supersession::INPUT_SCHEMA)
@@ -37,6 +50,7 @@ impl ObservationInput {
             envelope.supersession.validate()?;
             return Ok(Self {
                 observations: observations_from_value(&envelope.findings)?,
+                acceptance: None,
                 correction: None,
                 supersession: Some(envelope.supersession),
             });
@@ -68,12 +82,14 @@ impl ObservationInput {
             envelope.correction.validate()?;
             Ok(Self {
                 observations: observations_from_value(&envelope.findings)?,
+                acceptance: None,
                 correction: Some(envelope.correction),
                 supersession: None,
             })
         } else {
             Ok(Self {
                 observations: observations_from_value(value)?,
+                acceptance: None,
                 correction: None,
                 supersession: None,
             })
@@ -88,6 +104,17 @@ impl ObservationInput {
         chain: &review_state::ReviewStateChain,
         args: &PrReviewLoopObserveArgs,
     ) -> Result<review_state::ReviewLoopTransition, ForgeError> {
+        if let Some(request) = &self.acceptance {
+            return super::acceptance_input::transition(
+                runner,
+                ctx,
+                repository,
+                chain,
+                args,
+                request,
+                &self.observations,
+            );
+        }
         if let Some(request) = &self.supersession {
             if args.body.is_some() || args.body_file.is_some() {
                 return Err(review_state::supersession::invalid(

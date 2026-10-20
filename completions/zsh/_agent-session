@@ -184,7 +184,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 (send)
 _arguments "${_arguments_options[@]}" : \
 '--text=[Literal text to type into the session. Applied before any --key. Prefer --text-stdin for secrets (--text is visible in this process'\''s arguments)]:TEXT:_default' \
-'*--key=[Special key to press (repeatable), applied in order after any text]:KEY:(enter escape backspace c-c up down left shift-left right tab)' \
+'*--key=[Named key or one printable character to press (repeatable). Printable keys require verified idle activity; applied in order after any text]:KEY:(enter escape backspace c-c up down left shift-left right tab)' \
 '--expect-runtime=[Require the active runtime launch id to match before delivery]:INCARNATION:_default' \
 '--expect-provider-session=[Require the persisted provider session id to match before delivery]:SESSION:_default' \
 '--idempotency-key=[Persist an at-most-once delivery claim, retained on uncertain outcomes]:KEY:_default' \

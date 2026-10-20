@@ -54,7 +54,9 @@ mod integration {
     mod repo_security;
     mod repo_view;
     mod required_check_gate;
+    mod run_rerun;
     mod search;
+    mod security_code_scanning;
     mod stacked_branch;
     mod support;
     mod test_first_kinds;

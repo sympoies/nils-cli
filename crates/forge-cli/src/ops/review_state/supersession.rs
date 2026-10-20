@@ -82,6 +82,7 @@ fn record_state(record: &ReviewStateRecord) -> Option<&ReviewLoopState> {
     match &record.payload {
         ReviewStatePayload::ReviewLoop { state }
         | ReviewStatePayload::ReviewLoopCorrection { state, .. }
+        | ReviewStatePayload::ReviewLoopAcceptance { state, .. }
         | ReviewStatePayload::ReviewLoopSupersession { state, .. } => Some(state),
         _ => None,
     }
@@ -147,6 +148,7 @@ pub fn apply(
             changed: false,
             correction: None,
             supersession: Some(receipt),
+            acceptance: None,
         });
     }
     if latest.record_digest != request.superseded_record {
@@ -189,6 +191,7 @@ pub fn apply(
         changed: true,
         correction: None,
         supersession: Some(receipt),
+        acceptance: None,
     })
 }
 

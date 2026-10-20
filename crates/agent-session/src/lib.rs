@@ -47,7 +47,7 @@ mod retitle_v3;
 mod runtime_environment;
 mod runtime_teardown;
 use runtime_teardown::tmux_kill_identity_with_timeout;
-mod send;
+pub(crate) mod send;
 mod send_guard;
 mod send_submit;
 use send::{SendResult, load_and_paste_buffer_with_timeout, send_to_session};
@@ -4990,10 +4990,10 @@ fn send_tmux_key_with_timeout(
     timeout: Duration,
 ) -> Result<(), CliError> {
     let mut command = ProcessCommand::new(tmux_bin);
+    // Literal mode prevents a printable key from becoming a tmux command.
     command
-        .arg("send-keys")
-        .arg("-t")
-        .arg(target)
+        .args(["send-keys", "-t", target])
+        .args(cli::send_key::literal_args(key))
         .arg(key.tmux_key());
     run_status_with_timeout(command, "tmux send-keys", timeout)
 }

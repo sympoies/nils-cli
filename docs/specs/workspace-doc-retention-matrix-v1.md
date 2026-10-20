@@ -99,6 +99,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/agent-session/docs/specs/session-display-metadata-v1.md`
 - `crates/agent-session/docs/turn-state-contract.md`
 - `crates/agent-workflow-primitives/docs/specs/failed-final-validation-resolution-v1.md`
+- `crates/agent-workflow-primitives/docs/specs/retained-test-first-evidence-v1.md`
 - `crates/agent-workflow-primitives/docs/specs/test-first-evidence-mutation-receipt-v1.md`
 - `crates/api-websocket/docs/specs/websocket-cli-contract-v1.md`
 - `crates/api-websocket/docs/specs/websocket-request-schema-v1.md`
@@ -117,6 +118,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/forge-cli/docs/specs/forge-default-push-v1.md`
 - `crates/forge-cli/docs/specs/forge-checks-review-reads-v1.md`
 - `crates/forge-cli/docs/specs/forge-review-state-v1.md`
+- `crates/forge-cli/docs/specs/forge-run-rerun-v1.md`
 - `crates/forge-cli/docs/specs/test-change-admission-v1.md`
 - `crates/forge-cli/docs/specs/forge-review-publication-v1.md`
 - `crates/forge-cli/docs/specs/forge-merge-v1.md`

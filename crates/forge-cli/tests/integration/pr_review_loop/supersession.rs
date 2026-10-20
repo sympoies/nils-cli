@@ -5,7 +5,7 @@ use forge_cli::ops::review_state::{
 };
 use pretty_assertions::{assert_eq, assert_ne};
 
-const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+pub(super) const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 pub(super) fn stopped_fixture() -> (Vec<ReviewStateRecord>, Vec<ReviewFindingObservation>) {
