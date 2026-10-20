@@ -6,7 +6,8 @@ on:
       - main
   pull_request:
   # A required merge queue runs every required check on its temporary merge
-  # branch before landing the pull request.
+  # branch before landing the pull request. Linux consumes the combined-tree
+  # affected plan; full validation belongs to nightly and release.
   merge_group:
   schedule:
     - cron: "23 5 * * *"
@@ -16,17 +17,21 @@ on:
 # are never grouped. Main pushes run only the lightweight status lane; scheduled
 # and manually dispatched runs exercise the full workflow on main.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'push' && 'main-push' || github.run_id) }}
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'push' && 'main-push' || ((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'nightly-main' || github.run_id)) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_BUILD_JOBS: "4"
+  DEVLOG_LAYOUT: fragments
 
 jobs:
   changes:
-    if: github.event_name != 'push'
+    if: github.event_name != 'push' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-latest
     # A release candidate waits at most 45 minutes (wall clock) for its base
     # commit's full CI receipt (merge-group, with legacy push support), then
     # falls back to full CI. This bound only stops a
-    # hung job: a timed-out changes job skips the required checks.
+    # hung job: failed or timed-out detection fails the required Linux guard.
     timeout-minutes: 60
     permissions:
       actions: read
@@ -34,7 +39,6 @@ jobs:
     outputs:
       base_sha: ${{ steps.detect.outputs.base_sha }}
       docs_only: ${{ steps.detect.outputs.docs_only }}
-      validation_scope: ${{ steps.pr_plan.outputs.validation_scope }}
       head_sha: ${{ steps.detect.outputs.head_sha }}
       release_branch: ${{ steps.detect.outputs.release_branch }}
       release_mode: ${{ steps.detect.outputs.release_mode }}
@@ -126,13 +130,26 @@ jobs:
             docs_only=false
             release_candidate=false
           fi
-          echo "base_sha=${base}" >> "$GITHUB_OUTPUT"
-          echo "docs_only=${docs_only}" >> "$GITHUB_OUTPUT"
-          echo "head_sha=${head}" >> "$GITHUB_OUTPUT"
-          echo "release_branch=${HEAD_REF}" >> "$GITHUB_OUTPUT"
-          echo "release_mode=${release_mode}" >> "$GITHUB_OUTPUT"
-          echo "release_candidate=${release_candidate}" >> "$GITHUB_OUTPUT"
+          {
+            echo "base_sha=${base}"
+            echo "docs_only=${docs_only}"
+            echo "head_sha=${head}"
+            echo "release_branch=${HEAD_REF}"
+            echo "release_mode=${release_mode}"
+            echo "release_candidate=${release_candidate}"
+          } >> "$GITHUB_OUTPUT"
           echo "docs_only=${docs_only} release_candidate=${release_candidate} release_mode=${release_mode} (base=${base}, head=${head})"
+
+      - name: Set up Rust for devlog policy
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check devlog ownership
+        env:
+          NILS_CLI_DEVLOG_BASE: ${{ steps.detect.outputs.base_sha }}
+        run: |
+          cargo build --locked -p nils-devlog
+          export PATH="$PWD/target/debug:$PATH"
+          python3 scripts/ci/devlog-check.py
 
       - name: Prove full CI on exact base main commit
         id: base_ci
@@ -182,35 +199,11 @@ jobs:
           echo "release_only=${release_only}" >> "$GITHUB_OUTPUT"
           echo "release_only=${release_only}"
 
-      - name: Set up Rust for trusted PR scope
-        if: github.event_name == 'pull_request' && steps.detect.outputs.docs_only != 'true' && steps.finalize.outputs.release_only != 'true'
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache PR planning cargo inputs
-        if: github.event_name == 'pull_request' && steps.detect.outputs.docs_only != 'true' && steps.finalize.outputs.release_only != 'true'
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: linux-test
-          save-if: false
-
-      - name: Preview trusted PR scope
-        id: pr_plan
-        if: github.event_name == 'pull_request' && steps.detect.outputs.docs_only != 'true' && steps.finalize.outputs.release_only != 'true'
-        env:
-          NILS_CLI_MERGE_PLAN_PREPARE_METADATA: "1"
-        run: python3 scripts/ci/nils-cli-merge-plan-checks.py --plan-only --output target/ci-merge-preview
-
-      - name: Upload PR scope preview
-        if: always() && hashFiles('target/ci-merge-preview/planning.json') != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: merge-scope-preview
-          path: target/ci-merge-preview
-
   cargo_deny:
-    if: github.event_name != 'push'
+    if: github.event_name != 'push' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     name: cargo-deny (advisories + bans)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -226,7 +219,7 @@ jobs:
         run: bash scripts/ci/cargo-deny-audit.sh
 
   test:
-    if: github.event_name != 'push'
+    if: always() && github.event_name != 'push' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     needs: changes
     outputs:
       validation_scope: ${{ steps.validation.outputs.validation_scope }}
@@ -243,6 +236,15 @@ jobs:
       contents: read
       checks: write
     steps:
+      - name: Require change detection
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+        run: |
+          if [ "${CHANGES_RESULT}" != "success" ]; then
+            echo 'error: change detection did not succeed; Linux validation is blocked' >&2
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -305,9 +307,17 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus" >> "$GITHUB_ENV"
           test -S "/run/user/${uid}/systemd/private"
 
+      - name: Build repository devlog checker
+        run: |
+          cargo build --locked -p nils-devlog
+          devlog_bin_dir="$(mktemp -d "${RUNNER_TEMP}/devlog-bin.XXXXXX")"
+          cp target/debug/devlog "${devlog_bin_dir}/devlog"
+          echo "${devlog_bin_dir}" >> "$GITHUB_PATH"
+
       - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, docs-prose-audit, tempdir-leak-audit, test-stale-audit, file-size-audit)
         id: validation
         env:
+          NILS_CLI_DEVLOG_BASE: ${{ needs.changes.outputs.base_sha }}
           NILS_CLI_GATE_MIN_AVAILABLE_GIB: "2"
           NILS_CLI_GATE_MEMORY_MAX_GIB: "12"
           NILS_CLI_RUNNER_MAX: "2"
@@ -337,7 +347,7 @@ jobs:
               --base "${{ needs.changes.outputs.base_sha }}" \
               --head "${{ needs.changes.outputs.head_sha }}" \
               "${mode_args[@]}"
-          elif [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+          elif [ "${GITHUB_EVENT_NAME}" = "pull_request" ] || [ "${GITHUB_EVENT_NAME}" = "merge_group" ]; then
             bash scripts/ci/nils-cli-checks-entrypoint.sh --xvfb --ci-merge-plan
           else
             bash scripts/ci/nils-cli-checks-entrypoint.sh --xvfb
@@ -351,7 +361,7 @@ jobs:
           path: target/ci-merge-plan
 
       - name: Full validation marker
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && (steps.validation.outputs.validation_scope == 'FULL' || github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && (steps.validation.outputs.validation_scope == 'FULL')
         run: true
 
       - name: Publish JUnit report
@@ -377,10 +387,10 @@ jobs:
 
   # The cgroup containment checks need a systemd user
   # scope and compile their own agent-session targets (~5.5 min). They run
-  # beside `test` instead of in front of it. `coverage` requires this job, so a
-  # failure here still blocks merge and the release gate.
+  # beside `test` instead of in front of it. This required Linux check blocks
+  # merge; the shared full workflow also requires it before releases.
   test_containment:
-    if: github.event_name != 'push'
+    if: github.event_name != 'push' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     needs: changes
     runs-on: ubuntu-24.04
     # These steps run `cargo test`, so no nextest `slow-timeout` covers them and
@@ -439,295 +449,13 @@ jobs:
             tests::delete_kills_a_detached_descendant_inside_a_pinned_tmux_control_group \
             -- --exact --nocapture
 
-  test_macos:
-    if: github.event_name != 'push' && needs.changes.result == 'success' && needs.changes.outputs.validation_scope != 'FULL'
-    needs: changes
-    outputs:
-      validation_scope: ${{ steps.validation.outputs.validation_scope }}
-    runs-on: macos-14
-    # Recent successful full merge-group jobs: n=13, p90=43m23s,
-    # maximum=44m33s. Full lanes get 75m; selected PRs retain 55m.
-    timeout-minutes: ${{ github.event_name == 'pull_request' && 55 || 75 }}
-    permissions:
-      contents: read
-      checks: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy, llvm-tools-preview
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          # rust-cache never overwrites an existing key, and the key cut before
-          # this job ran instrumented tests holds no llvm-cov-target
-          # dependencies, so every run rebuilt ~400 crates (~6 min). A distinct
-          # key lets main save a cache that includes them.
-          key: llvm-cov
-          # Only main saves. rust-cache stores dependencies, not workspace
-          # crates, so a PR copy (~1 GB) adds nothing over main's and just
-          # evicts the main caches every run restores.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Set up Node.js
-        if: needs.changes.outputs.release_only != 'true'
-        uses: actions/setup-node@v7
-        with:
-          node-version: "20"
-
-      - name: Set up Python for schema fixtures
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-
-      - name: Install schema fixture dependency
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        run: python3 -m pip install 'jsonschema==4.26.0'
-
-      - name: Install bash + ripgrep + tmux
-        if: needs.changes.outputs.release_only != 'true'
-        run: |
-          if ! /opt/homebrew/bin/bash --version >/dev/null 2>&1; then
-            brew install bash
-          fi
-          if ! command -v rg >/dev/null 2>&1; then
-            brew install ripgrep
-          fi
-          if ! command -v tmux >/dev/null 2>&1; then
-            brew install tmux
-          fi
-
-      - name: Install cargo-nextest + cargo-llvm-cov
-        if: needs.changes.outputs.release_only != 'true'
-        uses: taiki-e/install-action@v2
-        with:
-          tool: |
-            cargo-llvm-cov
-            cargo-nextest
-
-      # The full lane runs the workspace tests once, instrumented, and enforces
-      # the coverage floor here (NILS_CLI_TEST_RUNNER=llvm-cov). The `coverage`
-      # job then reports from this run's LCOV instead of repeating the whole
-      # suite on a second macOS runner.
-      - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, docs-prose-audit, tempdir-leak-audit, test-stale-audit, file-size-audit)
-        id: validation
-        env:
-          NILS_CLI_RUNNER_MAX: "2"
-          NILS_CLI_TEST_RUNNER: llvm-cov
-          # Full macOS/coverage is required on the queue candidate. Selected
-          # PR tests retain the immutable-base coverage no-decrease ratchet.
-          NILS_CLI_PR_DEFER_FULL: ${{ github.event_name == 'pull_request' && '1' || '0' }}
-          # Instrumented build caches do not guarantee all-platform metadata
-          # dependencies are present for both exact planner snapshots.
-          NILS_CLI_MERGE_PLAN_PREPARE_METADATA: "1"
-          # The stale-test and completion freshness/parity audits give the same
-          # answer on every OS, and the Linux `test` job runs them. Here they
-          # cost ~2-3 min, mostly a debug build of every binary.
-          NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS: "1"
-          NILS_CLI_COVERAGE_FAIL_UNDER_LINES: "85"
-          # The Linux lane runs the workspace doc tests. Here they cost ~85 s,
-          # because llvm-cov builds into its own target directory and the doc
-          # run rebuilds the workspace un-instrumented.
-          NILS_CLI_SKIP_DOCTESTS: "1"
-          # A skip here would mean a lane that builds every binary lost coverage
-          # silently; make it fatal instead. See `bin::sibling_or_skip`.
-          NILS_TEST_REQUIRE_SIBLING_BINS: "1"
-        run: |
-          if [ "${{ needs.changes.outputs.docs_only }}" = "true" ]; then
-            /opt/homebrew/bin/bash scripts/ci/nils-cli-checks-entrypoint.sh --docs-only
-          elif [ "${{ needs.changes.outputs.release_only }}" = "true" ]; then
-            policy_dir="${RUNNER_TEMP}/release-policy"
-            mkdir -p "${policy_dir}"
-            git show "${{ needs.changes.outputs.base_sha }}:scripts/ci/detect-release-only.sh" \
-              >"${policy_dir}/detect-release-only.sh"
-            git show "${{ needs.changes.outputs.base_sha }}:scripts/ci/release-only-checks.sh" \
-              >"${policy_dir}/release-only-checks.sh"
-            mode_args=(--branch "${{ needs.changes.outputs.release_branch }}")
-            if [ "${{ needs.changes.outputs.release_mode }}" = "merge-group" ]; then
-              mode_args=(--merge-group)
-            fi
-            RELEASE_ONLY_DETECTOR="${policy_dir}/detect-release-only.sh" \
-            bash "${policy_dir}/release-only-checks.sh" \
-              --base "${{ needs.changes.outputs.base_sha }}" \
-              --head "${{ needs.changes.outputs.head_sha }}" \
-              "${mode_args[@]}"
-          elif [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
-            /opt/homebrew/bin/bash scripts/ci/nils-cli-checks-entrypoint.sh --ci-merge-plan
-          else
-            /opt/homebrew/bin/bash scripts/ci/nils-cli-checks-entrypoint.sh
-          fi
-
-      - name: Require the selected PR scope
-        if: github.event_name == 'pull_request' && steps.validation.outputs.validation_scope == 'DEFERRED_FULL'
-        run: |
-          echo 'error: the selected macOS PR scope could not be validated; coverage cannot be deferred' >&2
-          exit 1
-
-      - name: Upload affected plan and validation receipt
-        if: always() && hashFiles('target/ci-merge-plan/validation.json') != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: merge-validation-macos
-          path: target/ci-merge-plan
-
-      - name: Full validation marker
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && (steps.validation.outputs.validation_scope == 'FULL' || github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        run: true
-
-      - name: Generate HTML coverage report
-        if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && steps.validation.outputs.validation_scope != 'SCOPED' && hashFiles('target/coverage/lcov.info') != ''
-        run: cargo llvm-cov report --html --output-dir target/coverage
-
-      - name: Upload coverage LCOV
-        if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && hashFiles('target/coverage/lcov.info') != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-lcov
-          path: target/coverage/lcov.info
-          retention-days: 7
-
-      - name: Upload coverage HTML
-        if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && hashFiles('target/coverage/html/index.html') != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-html
-          path: target/coverage/html
-          retention-days: 7
-
-      - name: Cleanup coverage outputs (avoid bloating cache)
-        if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        run: rm -rf target/coverage
-
-      # cargo-llvm-cov runs nextest with its own target directory, so the JUnit
-      # report lands under target/llvm-cov-target on this job.
-      - name: Publish JUnit report
-        if: always() && hashFiles('target/**/nextest/ci/junit.xml') != ''
-        uses: mikepenz/action-junit-report@v6
-        with:
-          token: ${{ github.token }}
-          check_name: JUnit Test Report (macOS)
-          report_paths: target/**/nextest/ci/junit.xml
-          # Keep the job summary bounded; the JUnit artifact and failure
-          # annotations retain the detailed test results.
-          detailed_summary: false
-          group_suite: true
-          include_passed: false
-          flaky_summary: true
-
-      - name: Upload JUnit XML
-        if: always() && hashFiles('target/**/nextest/ci/junit.xml') != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: junit-nextest-macos
-          path: target/**/nextest/ci/junit.xml
-
-  # The coverage floor is enforced by test_macos's instrumented test run; this
-  # job keeps the required `coverage` check by proving that run produced its
-  # LCOV report and by publishing the summary. It needs no macOS runner.
-  coverage:
-    needs: [changes, test, test_macos, test_containment]
-    # A job skipped because a needed job failed concludes `skipped`, which a
-    # required check accepts. Run anyway and fail below instead, because
-    # test_containment is not itself a required check.
-    if: ${{ always() && github.event_name != 'push' && !(github.event_name == 'pull_request' && needs.changes.result == 'success' && needs.changes.outputs.validation_scope == 'FULL' && needs.test.result == 'success' && needs.test.outputs.validation_scope == 'FULL' && needs.test_macos.result == 'skipped' && needs.test_containment.result == 'success') }}
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      pull-requests: write
-    steps:
-      - name: Require the upstream lanes
-        env:
-          CHANGES_RESULT: ${{ needs.changes.result }}
-          TEST_RESULT: ${{ needs.test.result }}
-          TEST_MACOS_RESULT: ${{ needs.test_macos.result }}
-          TEST_CONTAINMENT_RESULT: ${{ needs.test_containment.result }}
-        run: |
-          if [ "${CHANGES_RESULT}" != "success" ] || \
-             [ "${TEST_RESULT}" != "success" ] || \
-             [ "${TEST_MACOS_RESULT}" != "success" ] || \
-             [ "${TEST_CONTAINMENT_RESULT}" != "success" ]; then
-            echo "error: changes=${CHANGES_RESULT} test=${TEST_RESULT} test_macos=${TEST_MACOS_RESULT} test_containment=${TEST_CONTAINMENT_RESULT}; coverage requires all four to succeed" >&2
-            exit 1
-          fi
-
-      - name: Require selected PR coverage
-        if: github.event_name == 'pull_request'
-        env:
-          LINUX_SCOPE: ${{ needs.test.outputs.validation_scope }}
-          MACOS_SCOPE: ${{ needs.test_macos.outputs.validation_scope }}
-        run: |
-          if [ "${LINUX_SCOPE}" = "SCOPED" ] && [ "${MACOS_SCOPE}" != "SCOPED" ]; then
-            echo 'error: selected PR coverage cannot be deferred after scoped Linux validation' >&2
-            exit 1
-          fi
-
-      # Docs-only and proven release-only change sets skip coverage work at the
-      # step level so the required `coverage` job still concludes `success`.
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Download coverage LCOV
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        uses: actions/download-artifact@v8
-        with:
-          name: coverage-lcov
-          path: target/coverage
-
-      - name: Require LCOV from the instrumented test run
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        run: test -s target/coverage/lcov.info
-
-      - name: Full validation marker
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && (needs.test_macos.outputs.validation_scope == 'FULL' || github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        run: true
-
-      - name: Coverage summary
-        if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        run: |
-          env GITHUB_STEP_SUMMARY=/dev/stdout bash scripts/ci/coverage-summary.sh target/coverage/lcov.info \
-            | tee target/coverage/coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: PR comment (sticky coverage summary)
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && hashFiles('target/coverage/lcov.info') != ''
-        uses: marocchino/sticky-pull-request-comment@v3
-        with:
-          header: coverage
-          path: target/coverage/coverage-summary.md
-
-  deferred_full:
-    name: "deferred-full: runs in merge group"
-    needs: [changes, test, test_macos, test_containment, coverage]
-    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.result == 'success' && needs.changes.outputs.validation_scope == 'FULL' && needs.test.result == 'success' && needs.test.outputs.validation_scope == 'FULL' && needs.test_macos.result == 'skipped' && needs.test_containment.result == 'success' && needs.coverage.result == 'skipped' }}
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      checks: write
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Label the skipped required checks
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const { labelDeferredChecks } = require('./.github/scripts/deferred-full-checks.cjs');
-            await labelDeferredChecks({ github, context, core });
 
   coverage_badge:
-    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    needs:
-      - changes
-      - coverage
+    needs: full_validation
     permissions:
       actions: read
       contents: write
@@ -786,15 +514,35 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
         run: echo "Main advanced to ${COMMIT_SHA}; full CI runs nightly and on demand."
 
-  nightly_failure_alert:
-    if: always() && github.event_name == 'schedule' && (needs.changes.result == 'failure' || needs.cargo_deny.result == 'failure' || needs.test.result == 'failure' || needs.test_containment.result == 'failure' || needs.test_macos.result == 'failure' || needs.coverage.result == 'failure' || needs.coverage_badge.result == 'failure')
-    name: Nightly full CI failure alert
-    needs: [changes, cargo_deny, test, test_containment, test_macos, coverage, coverage_badge]
-    runs-on: ubuntu-latest
+
+  full_validation:
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/full-validation.yml
     permissions:
       contents: read
+      checks: write
+    with:
+      commit: ${{ github.sha }}
+
+  nightly_report:
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    needs: full_validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write
     steps:
-      - name: Publish failure notification
-        run: |
-          echo "::error title=Nightly full CI failed::One or more full CI jobs failed on main."
-          echo "Nightly full CI failed on main. See the failed jobs in this workflow run." >> "$GITHUB_STEP_SUMMARY"
+      - name: Checkout tracker
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Update nightly tracking issue
+        uses: actions/github-script@v9
+        env:
+          VALIDATION_RESULT: ${{ needs.full_validation.result }}
+        with:
+          script: |
+            const { trackNightly } = require('./.github/scripts/nightly-tracker.cjs');
+            await trackNightly({ github, context, core, result: process.env.VALIDATION_RESULT });

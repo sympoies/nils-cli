@@ -2,6 +2,9 @@
 
 mod support;
 
+#[path = "finish_line/group_preservation.rs"]
+mod group_preservation;
+
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -2100,7 +2103,8 @@ fn danger_full_access_preserves_the_host_user_systemd_bus() {
         .expect("host groups are utf8")
         .trim()
         .to_string();
-    let command = "/usr/bin/systemctl --user show-environment >/dev/null";
+    let manager_groups = group_preservation::manager_groups();
+    let command = "/usr/bin/systemctl --user show-environment >/dev/null && /usr/bin/id -G";
     one_contract(&fixture, command);
 
     let (code, exact) = run_validation(
@@ -2118,9 +2122,17 @@ fn danger_full_access_preserves_the_host_user_systemd_bus() {
         "danger-full-access exact validation lost the host user bus: {exact}",
     );
 
+    group_preservation::assert_preserved_groups(
+        &host_groups,
+        &manager_groups,
+        exact["data"]["execution"]["stdout"]["text"]
+            .as_str()
+            .expect("exact stdout"),
+    );
+
     let ordinary_command = format!(
-        "/usr/bin/systemctl --user show-environment >/dev/null; \
-         : >/dev/tcp/127.0.0.1/{port}; /usr/bin/id -G",
+        "/usr/bin/systemctl --user show-environment >/dev/null && \
+         : >/dev/tcp/127.0.0.1/{port} && /usr/bin/id -G",
     );
     let (code, ordinary) = run_validation(
         &fixture,
@@ -2136,13 +2148,12 @@ fn danger_full_access_preserves_the_host_user_systemd_bus() {
         ordinary["data"]["execution"]["exit_code"], 0,
         "danger-full-access ordinary Bash lost the host user bus: {ordinary}",
     );
-    assert_eq!(
+    group_preservation::assert_preserved_groups(
+        &host_groups,
+        &manager_groups,
         ordinary["data"]["execution"]["stdout"]["text"]
             .as_str()
-            .expect("ordinary stdout")
-            .trim(),
-        host_groups,
-        "danger-full-access changed the host user's supplementary groups",
+            .expect("ordinary stdout"),
     );
 }
 

@@ -268,7 +268,15 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
 - `surrender <id> --expected-head <sha> --expected-state <digest>` is a
   reviewer-owned relinquishment at the current assignment generation.
   Ordinary reassignment requires this explicit surrender; inspection alone
-  never transfers ownership.
+  never transfers ownership. Surrender may name the current provider head
+  whether or not an observation exists, but after an advance it may name the
+  assigned head only when that head belongs to the current assignment and no
+  observation exists in that interval; prior-assignment observations do not
+  block it, and a current-assignment observation requires naming the current
+  head. The surrendered record stores the provider-head snapshot read before
+  append without rechecking it there, so a second advance during append leaves
+  the earlier snapshot recorded; the ledger-tip compare-and-swap still guards
+  the state chain, and a later assignment must match the then-current head.
 - `recover <id> --expected-head <sha> --expected-state <digest> --reason
   <reviewer-unreachable|reviewer-closed|reviewer-declined|reviewer-timeout>` is
   an explicit original-coordinator revocation that advances the assignment
@@ -522,6 +530,65 @@ for deleted tests, assertion changes and new skips in the PR comparison.
   the exact approval marker. The stop code must map to its canonical budget
   field and the proposal must match the active receipt. Each proposal is
   consumable once; retry and delivery paths cannot silently increase a budget.
+- To terminally accept remaining risk after a durable hard stop, use an
+  explicit acceptance envelope with `observe --expected-head <stopped-head>
+  --expected-state <current-tip> --findings-file acceptance.json`:
+
+  ```json
+  {
+    "schema_version": "forge-cli.review-loop-acceptance.v1",
+    "acceptance": {
+      "stopped_record": "sha256:<latest-stopped-review-loop-record>",
+      "attempted_findings": [
+        {"fingerprint": "correctness:component:invariant", "status": "open"}
+      ],
+      "approval_comment": 123
+    },
+    "findings": [
+      {"fingerprint": "correctness:component:invariant", "status": "accepted"}
+    ]
+  }
+  ```
+
+  `attempted_findings` must prove the exact canonical inventory digest in the
+  stop, including thread references and root-cause identities. The proposed
+  `findings` may only change `open` rows to `accepted`; every other row must
+  remain identical, every previously open identity must be present, and no
+  blocking open finding may remain. `accepted` represents accepted risk or a
+  decision not to fix. It does not claim that a repair occurred.
+
+  First omit `approval_comment` and run `observe --dry-run` to obtain the exact
+  required marker in the `observation_transition` verdict. The proposal digest
+  binds the stopped record, head, attempted inventory, and proposed inventory.
+  A maintainer then posts that marker as a standalone line in a newer comment
+  on the same PR, authored by an `OWNER`, `MEMBER`, or `COLLABORATOR`:
+
+  ```text
+  <!-- forge-cli:review-loop-acceptance:v1 proposal=sha256:<proposal-digest> -->
+  ```
+
+  Set `approval_comment` to that comment's numeric ID, rerun `--dry-run`, then
+  perform the live observation against the explicit current tip. An extension
+  approval marker grants no acceptance authority. Missing, unauthorized, stale,
+  wrong-PR, or mismatched approval fails as `review_acceptance_approval_invalid`
+  before any write. Invalid proof, altered dispositions, a stale stopped record,
+  or `--auto-state` fails closed; inventory violations use
+  `review_acceptance_invalid`. Both acceptance errors expose typed recovery
+  details (`retryable`, `next_action`, and `recovery`). Existing head, tip,
+  designated writer, native review, and merge gates continue to apply.
+
+  The appended `review-loop-acceptance` record retains the original stop and
+  canonical attempted inventory, named accepted fingerprints, proposal digest,
+  and approval reference. Original records remain byte-identical. The latest
+  state clears the active stop and records the dispositions at the stopped
+  head, preserving rounds, no-progress counters, budgets, extensions, and
+  existing finding lifecycle counters. No extension or new repair round is
+  required, including when an extension was already applied. Convergence then
+  passes when the other merge gates pass. `inspect` and `observe` expose the
+  historical receipts in `accepted_risks`, including the original stop.
+  Identical retries at the fresh tip append nothing; a retry from an older
+  designated assignment cannot establish a new review interval. Readers must
+  understand the new record kind before consuming a chain that contains it.
 - An applied extension still binds the stopped head and the exact canonical
   inventory: reviewer surrender/reassignment, a new assignment generation, or
   a changed base does not clear that binding. A mismatched observation returns

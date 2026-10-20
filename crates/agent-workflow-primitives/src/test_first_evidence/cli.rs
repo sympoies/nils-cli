@@ -37,6 +37,8 @@ pub enum Command {
     RecordGap(RecordGapArgs),
     /// Bind the immutable repository and pre-edit baseline subject.
     BindBaseline(SubjectArgs),
+    /// Bind retained pre-edit RED and post-edit GREEN logs with explicit retroactive provenance.
+    RetroBind(super::retro_binding::RetroBindArgs),
     /// Append an attestation for the current delivered head and diff.
     BindDelivery(BindDeliveryArgs),
     /// Query classified, pre-edit, or delivery readiness without mutating the record.

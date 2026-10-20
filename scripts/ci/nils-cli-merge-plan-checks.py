@@ -208,14 +208,6 @@ def run(repo, event_name, event, candidate, output, bash='bash', plan_only=False
                'coverage_fail_under_lines': None if ratchet else os.environ.get('NILS_CLI_COVERAGE_FAIL_UNDER_LINES', '85'),
                'doctests': os.environ.get('NILS_CLI_SKIP_DOCTESTS', '0') != '1',
                'command': command, 'status': 'RUNNING'}
-    deferred = (event_name == 'pull_request' and runner == 'llvm-cov' and scope == 'FULL'
-                and os.environ.get('NILS_CLI_PR_DEFER_FULL') == '1')
-    if deferred:
-        scope = 'DEFERRED_FULL'
-        receipt.update(schema_version='nils-cli.merge-validation.v2',
-                       validation_scope=scope, command=[], status='DEFERRED',
-                       coverage_policy=None, coverage_fail_under_lines=None,
-                       deferred_reason='deferred-full: runs in merge group')
     (output / 'validation.json').write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
     print(f'CI snapshot base={expected["base"]} event_base={receipt["event_base"]} '
           f'head={expected["head"]} candidate={candidate}', flush=True)
@@ -224,12 +216,8 @@ def run(repo, event_name, event, candidate, output, bash='bash', plan_only=False
     executor_env = dict(os.environ)
     executor_env.pop('GITHUB_OUTPUT', None)
     executor_env['NILS_CLI_SCOPED_COVERAGE_BASE'] = expected['base']
-    if deferred:
-        print('deferred-full: runs in merge group; no full macOS tests or coverage executed on this PR', flush=True)
-        returncode = 0
-    else:
-        returncode = subprocess.run(command, cwd=repo, env=executor_env).returncode
-        receipt.update(status='PASS' if returncode == 0 else 'FAIL')
+    returncode = subprocess.run(command, cwd=repo, env=executor_env).returncode
+    receipt.update(status='PASS' if returncode == 0 else 'FAIL')
     receipt['exit_code'] = returncode
     (output / 'validation.json').write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
     if github_output and (returncode == 0 or Path(github_output).exists()):

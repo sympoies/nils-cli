@@ -348,6 +348,7 @@ pub(crate) fn owned_state(
         .find_map(|r| match &r.payload {
             review_state::ReviewStatePayload::ReviewLoop { state }
             | review_state::ReviewStatePayload::ReviewLoopCorrection { state, .. }
+            | review_state::ReviewStatePayload::ReviewLoopAcceptance { state, .. }
             | review_state::ReviewStatePayload::ReviewLoopSupersession { state, .. } => Some(state),
             _ => None,
         })
@@ -1247,7 +1248,13 @@ pub fn run(
         Some(_) => "awaiting-designated-review",
         None => "unassigned",
     };
-    let base = provider_base(&runner, &ctx, id)?;
+    let (base, base_ref) = match &args.command {
+        PrReviewHandoffCommand::Assign(_) => {
+            let (sha, name) = provider_base_scope(&runner, &ctx, id)?;
+            (sha, Some(name))
+        }
+        _ => (provider_base(&runner, &ctx, id)?, None),
+    };
     let mut proposed = None;
     let mut sync_carry_over = None;
     let mut approval = None;
@@ -1388,7 +1395,7 @@ pub fn run(
                 assignment_generation: generation,
                 surrendered: false,
                 coordinator_transfer: None,
-                base_ref: Some(view.base.clone()),
+                base_ref: base_ref.clone(),
             };
             if latest(&chain).is_some_and(|h| {
                 !h.surrendered && h.returned_reason.is_none() && !valid_scope_refresh(h, &next)
@@ -1401,12 +1408,20 @@ pub fn run(
             proposed = Some(next);
         }
         PrReviewHandoffCommand::Surrender(a) => {
-            require_head(head, &a.expected_head)?;
+            let handoff = latest(&chain)
+                .ok_or_else(|| fail("review_assignment_missing", "no handoff to surrender"))?;
+            let unobserved_head_advance = head != a.expected_head
+                && handoff.assigned_head == a.expected_head
+                && owned_state(&chain).is_none();
+            if !unobserved_head_advance {
+                require_head(head, &a.expected_head)?;
+            }
             require_tip(chain.tip_digest.as_deref(), &a.expected_state)?;
             ensure_writer(&chain)?;
-            let mut h = latest(&chain)
-                .cloned()
-                .ok_or_else(|| fail("review_assignment_missing", "no handoff to surrender"))?;
+            let mut h = handoff.clone();
+            if unobserved_head_advance {
+                h.assigned_head = head.to_string();
+            }
             h.surrendered = true;
             proposed = Some(h);
         }

@@ -6,19 +6,22 @@ on:
       - "v*"
   workflow_dispatch:
 
+env:
+  CARGO_BUILD_JOBS: "4"
+
 jobs:
   verify_ci:
-    name: Verify CI gate
+    name: Authorize release invocation
     runs-on: ubuntu-latest
     timeout-minutes: 35
     permissions:
-      actions: read
-      checks: read
       contents: read
-      pull-requests: read
     steps:
       - name: Checkout release gate
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Authorize release invocation
         shell: bash
@@ -35,16 +38,18 @@ jobs:
             "${RELEASE_RUN_ATTEMPT}" \
             "${GITHUB_REF}"
 
-      - name: Require green CI on tagged commit
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const { runReleaseGate } = require("./.github/scripts/release-ci-gate.cjs");
-            await runReleaseGate({ github, context, core });
+  full_validation:
+    needs: verify_ci
+    uses: ./.github/workflows/full-validation.yml
+    permissions:
+      contents: read
+      checks: write
+    with:
+      commit: ${{ github.sha }}
 
   build:
     name: Build (${{ matrix.target }})
-    needs: verify_ci
+    needs: full_validation
     runs-on: ${{ matrix.runs_on }}
     permissions:
       contents: read
@@ -63,6 +68,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Install ripgrep
         shell: bash

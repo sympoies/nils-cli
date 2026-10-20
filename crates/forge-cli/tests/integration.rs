@@ -37,6 +37,7 @@ mod integration {
     mod pr_review;
     mod pr_review_dismiss;
     mod pr_review_handoff;
+    mod pr_review_handoff_head_rebind;
     mod pr_review_handoff_sync;
     mod pr_review_loop;
     mod pr_reviews;
@@ -53,6 +54,7 @@ mod integration {
     mod repo_security;
     mod repo_view;
     mod required_check_gate;
+    mod run_rerun;
     mod search;
     mod stacked_branch;
     mod support;

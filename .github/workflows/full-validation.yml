@@ -1,0 +1,410 @@
+name: Full validation
+
+# Check out only the caller's immutable event SHA. The commit input asserts
+# the requested identity at the final gate; it never selects executable code.
+
+on:
+  workflow_call:
+    inputs:
+      commit:
+        description: Expected immutable caller event SHA, verified by the final gate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_BUILD_JOBS: "4"
+  DEVLOG_LAYOUT: fragments
+
+jobs:
+  cargo_deny:
+    name: cargo-deny (advisories + bans)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Run cargo-deny (RUSTSEC advisories + duplicate-version bans)
+        run: bash scripts/ci/cargo-deny-audit.sh
+
+  test:
+    runs-on: ubuntu-24.04
+    # Backstop for a hang outside a test, such as a stuck build, install, or
+    # audit step. A hung test is ended first by the `ci` nextest profile's
+    # `slow-timeout`, which names it. The slowest of 186 successful full-lane
+    # runs on 2026-09-28..30 took 21 minutes (19 with a cold cache). Keep the
+    # test job limits below the merge queue's 90 minute check timeout and the
+    # release PR's 60 minute check wait, so a waiter sees the job fail instead
+    # of reaching its own timeout.
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          # test_containment restores this cache under the same shared key.
+          shared-key: linux-test
+          # Only main saves. rust-cache stores dependencies, not workspace
+          # crates, so a PR copy (~1 GB) adds nothing over main's and just
+          # evicts the main caches every run restores.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Set up Python for schema fixtures
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install schema fixture dependency
+        run: python3 -m pip install 'jsonschema==4.26.0'
+
+      - name: Install zsh + xvfb + ripgrep + tmux + bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y zsh xvfb xauth ripgrep tmux bubblewrap
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      # Keep identical to the copy in the test_containment job.
+      - name: Provision systemd user scopes
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            # Ubuntu 24.04 denies capabilities inside unprivileged user namespaces
+            # by default; this ephemeral runner must exercise bubblewrap itself.
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          uid="$(id -u)"
+          sudo loginctl enable-linger "${USER}"
+          sudo systemctl start "user@${uid}.service"
+          echo "XDG_RUNTIME_DIR=/run/user/${uid}" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus" >> "$GITHUB_ENV"
+          test -S "/run/user/${uid}/systemd/private"
+
+      - name: Build devlog validator
+        run: |
+          cargo build --locked -p nils-devlog
+          devlog_bin_dir="$(mktemp -d "${RUNNER_TEMP}/devlog-bin.XXXXXX")"
+          cp target/debug/devlog "${devlog_bin_dir}/devlog"
+          echo "${devlog_bin_dir}" >> "$GITHUB_PATH"
+
+      - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, docs-prose-audit, tempdir-leak-audit, test-stale-audit, file-size-audit)
+        id: validation
+        env:
+          NILS_CLI_GATE_MIN_AVAILABLE_GIB: "2"
+          NILS_CLI_GATE_MEMORY_MAX_GIB: "12"
+          NILS_CLI_RUNNER_MAX: "2"
+          NILS_CLI_TEST_RUNNER: nextest
+          # A skip here would mean a lane that builds every binary lost coverage
+          # silently; make it fatal instead. See `bin::sibling_or_skip`.
+          NILS_TEST_REQUIRE_SIBLING_BINS: "1"
+        run: bash scripts/ci/nils-cli-checks-entrypoint.sh --xvfb
+
+      - name: Full validation marker
+        run: true
+
+      - name: Publish JUnit report
+        if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
+        uses: mikepenz/action-junit-report@v6
+        with:
+          token: ${{ github.token }}
+          check_name: JUnit Test Report
+          report_paths: target/nextest/ci/junit.xml
+          # Keep the job summary bounded; the JUnit artifact and failure
+          # annotations retain the detailed test results.
+          detailed_summary: false
+          group_suite: true
+          include_passed: false
+          flaky_summary: true
+
+      - name: Upload JUnit XML
+        if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-nextest
+          path: target/nextest/ci/junit.xml
+
+  # The cgroup containment checks need a systemd user
+  # scope and compile their own agent-session targets (~5.5 min). They run
+  # beside `test` instead of in front of it. The final gate requires this job; a
+  # failure here blocks full validation and release builds.
+
+  test_containment:
+    runs-on: ubuntu-24.04
+    # These steps run `cargo test`, so no nextest `slow-timeout` covers them and
+    # this limit is their only guard against a hang. The slowest of 176
+    # successful full-lane runs on 2026-09-28..30 took 8 minutes (7 with a cold
+    # cache).
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Restore the `test` job's main cache; only that job saves it.
+          shared-key: linux-test
+          save-if: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Install zsh + xvfb + ripgrep + tmux + bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y zsh xvfb xauth ripgrep tmux bubblewrap
+
+      # Keep identical to the copy in the test job.
+      - name: Provision systemd user scopes
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            # Ubuntu 24.04 denies capabilities inside unprivileged user namespaces
+            # by default; this ephemeral runner must exercise bubblewrap itself.
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          uid="$(id -u)"
+          sudo loginctl enable-linger "${USER}"
+          sudo systemctl start "user@${uid}.service"
+          echo "XDG_RUNTIME_DIR=/run/user/${uid}" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus" >> "$GITHUB_ENV"
+          test -S "/run/user/${uid}/systemd/private"
+
+      - name: Require agent-session cgroup containment
+        env:
+          AGENT_SESSION_TEST_REQUIRE_CGROUP: "1"
+        run: |
+          setsid --wait cargo test -p nils-agent-session --lib \
+            tests::delete_kills_a_detached_descendant_inside_a_pinned_tmux_control_group \
+            -- --exact --nocapture
+
+  test_macos:
+    runs-on: macos-14
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          # rust-cache never overwrites an existing key, and the key cut before
+          # this job ran instrumented tests holds no llvm-cov-target
+          # dependencies, so every run rebuilt ~400 crates (~6 min). A distinct
+          # key lets main save a cache that includes them.
+          key: llvm-cov
+          # Only main saves. rust-cache stores dependencies, not workspace
+          # crates, so a PR copy (~1 GB) adds nothing over main's and just
+          # evicts the main caches every run restores.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Set up Python for schema fixtures
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install schema fixture dependency
+        run: python3 -m pip install 'jsonschema==4.26.0'
+
+      - name: Install bash + ripgrep + tmux
+        run: |
+          if ! /opt/homebrew/bin/bash --version >/dev/null 2>&1; then
+            brew install bash
+          fi
+          if ! command -v rg >/dev/null 2>&1; then
+            brew install ripgrep
+          fi
+          if ! command -v tmux >/dev/null 2>&1; then
+            brew install tmux
+          fi
+
+      - name: Install cargo-nextest + cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: |
+            cargo-llvm-cov
+            cargo-nextest
+
+      # The full lane runs the workspace tests once, instrumented, and enforces
+      # the coverage floor here (NILS_CLI_TEST_RUNNER=llvm-cov). The `coverage`
+      # job then reports from this run's LCOV instead of repeating the whole
+      # suite on a second macOS runner.
+      - name: Build devlog validator
+        run: |
+          cargo build --locked -p nils-devlog
+          devlog_bin_dir="$(mktemp -d "${RUNNER_TEMP}/devlog-bin.XXXXXX")"
+          cp target/debug/devlog "${devlog_bin_dir}/devlog"
+          echo "${devlog_bin_dir}" >> "$GITHUB_PATH"
+
+      - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, docs-prose-audit, tempdir-leak-audit, test-stale-audit, file-size-audit)
+        id: validation
+        env:
+          NILS_CLI_RUNNER_MAX: "2"
+          NILS_CLI_TEST_RUNNER: llvm-cov
+          # The stale-test and completion freshness/parity audits give the same
+          # answer on every OS, and the Linux `test` job runs them. Here they
+          # cost ~2-3 min, mostly a debug build of every binary.
+          NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS: "1"
+          NILS_CLI_COVERAGE_FAIL_UNDER_LINES: "85"
+          # The Linux lane runs the workspace doc tests. Here they cost ~85 s,
+          # because llvm-cov builds into its own target directory and the doc
+          # run rebuilds the workspace un-instrumented.
+          NILS_CLI_SKIP_DOCTESTS: "1"
+          # A skip here would mean a lane that builds every binary lost coverage
+          # silently; make it fatal instead. See `bin::sibling_or_skip`.
+          NILS_TEST_REQUIRE_SIBLING_BINS: "1"
+        run: /opt/homebrew/bin/bash scripts/ci/nils-cli-checks-entrypoint.sh
+
+      - name: Full validation marker
+        run: true
+
+      - name: Generate HTML coverage report
+        if: always() && hashFiles('target/coverage/lcov.info') != ''
+        run: cargo llvm-cov report --html --output-dir target/coverage
+
+      - name: Upload coverage LCOV
+        if: always() && hashFiles('target/coverage/lcov.info') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-lcov
+          path: target/coverage/lcov.info
+          retention-days: 7
+
+      - name: Upload coverage HTML
+        if: always() && hashFiles('target/coverage/html/index.html') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-html
+          path: target/coverage/html
+          retention-days: 7
+
+      - name: Cleanup coverage outputs (avoid bloating cache)
+        if: always()
+        run: rm -rf target/coverage
+
+      # cargo-llvm-cov runs nextest with its own target directory, so the JUnit
+      # report lands under target/llvm-cov-target on this job.
+      - name: Publish JUnit report
+        if: always() && hashFiles('target/**/nextest/ci/junit.xml') != ''
+        uses: mikepenz/action-junit-report@v6
+        with:
+          token: ${{ github.token }}
+          check_name: JUnit Test Report (macOS)
+          report_paths: target/**/nextest/ci/junit.xml
+          # Keep the job summary bounded; the JUnit artifact and failure
+          # annotations retain the detailed test results.
+          detailed_summary: false
+          group_suite: true
+          include_passed: false
+          flaky_summary: true
+
+      - name: Upload JUnit XML
+        if: always() && hashFiles('target/**/nextest/ci/junit.xml') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-nextest-macos
+          path: target/**/nextest/ci/junit.xml
+
+  # The coverage floor is enforced by test_macos's instrumented test run; this
+  # job keeps the required `coverage` check by proving that run produced its
+  # LCOV report and by publishing the summary. It needs no macOS runner.
+
+  coverage:
+    needs: test_macos
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download coverage LCOV
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage-lcov
+          path: target/coverage
+      - name: Require LCOV from the instrumented test run
+        run: test -s target/coverage/lcov.info
+      - name: Full validation marker
+        run: true
+      - name: Coverage summary
+        run: bash scripts/ci/coverage-summary.sh target/coverage/lcov.info
+
+  gate:
+    needs: [test, test_macos, coverage, test_containment, cargo_deny]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact validated commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require all full-validation lanes
+        env:
+          EXPECTED_COMMIT: ${{ inputs.commit }}
+          VALIDATION_NEEDS: ${{ toJSON(needs) }}
+        run: |
+          ACTUAL_COMMIT="$(git rev-parse HEAD)"
+          export ACTUAL_COMMIT
+          node -e 'require("./.github/scripts/full-validation-gate.cjs").requireFullValidation({expected: process.env.EXPECTED_COMMIT, actual: process.env.ACTUAL_COMMIT, needs: JSON.parse(process.env.VALIDATION_NEEDS)})'

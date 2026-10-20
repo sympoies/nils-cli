@@ -55,6 +55,9 @@ repo-retro report --repo . --from 2026-05-11 --to 2026-05-17 \
 - [Failed final validation resolution v1](specs/failed-final-validation-resolution-v1.md):
   explicit investigated dispositions preserve failed attempts and reference passing validation.
 
+- [Retained test-first evidence v1](specs/retained-test-first-evidence-v1.md):
+  explicit retroactive RED/GREEN binding and aggregate verification guidance.
+
 ## Runbooks
 
 - Workspace runbook: `docs/runbooks/review-specialists-primitive.md`.

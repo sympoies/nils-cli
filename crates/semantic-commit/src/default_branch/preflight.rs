@@ -16,10 +16,10 @@ pub(super) struct RemoteState {
 }
 
 #[derive(Debug)]
-pub(super) struct RepositoryState {
-    pub(super) root: PathBuf,
+pub(crate) struct RepositoryState {
+    pub(crate) root: PathBuf,
     pub(super) default_branch: String,
-    pub(super) head: String,
+    pub(crate) head: String,
     pub(super) staged_file_count: usize,
     pub(super) fingerprint: String,
     pub(super) remote: RemoteState,

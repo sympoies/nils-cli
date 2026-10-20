@@ -74,6 +74,7 @@ intended remote. GitLab and Local are unsupported for these commands.
 forge-cli --repo example/widget release create v1.0.0 --title 'Release 1.0.0' --notes-file notes.md --verify-tag --draft
 forge-cli --repo example/widget release upload v1.0.0 artifact.tar.gz
 forge-cli --repo example/widget workflow dispatch build.yml --ref main --input mode=check
+forge-cli --repo example/widget run rerun 42 --job 19 --expected-head "$EXPECTED_HEAD"
 forge-cli --repo example/widget comment edit 123 --body-file correction.md
 forge-cli --repo example/widget comment delete 123 --kind review --dry-run
 ```
@@ -578,3 +579,6 @@ a head the designated reviewer has passed, `pr review-dismiss <id> --review-id <
 refuses human, unconfigured, wrong-head and wrong-state reviews, and any PR
 without a designated PASS at that head. See the
 [dismissal contract](docs/specs/forge-cli-spec-v1.md#pr-review-dismiss).
+
+For fenced CI reruns and attempt/job receipts, see the
+[run rerun contract](docs/specs/forge-run-rerun-v1.md).

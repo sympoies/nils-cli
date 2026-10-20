@@ -14,6 +14,9 @@ use pretty_assertions::assert_eq;
 
 use super::support::{StubEnv, parse_envelope, run_forge_cli};
 
+#[path = "pr_review_loop/acceptance.rs"]
+mod acceptance;
+
 #[path = "pr_review_loop/correction.rs"]
 mod correction;
 
