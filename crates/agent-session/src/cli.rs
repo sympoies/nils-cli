@@ -1,3 +1,5 @@
+pub(crate) mod send_key;
+
 use std::path::PathBuf;
 
 use crate::SessionTitleState;
@@ -1341,8 +1343,9 @@ pub struct SendArgs {
     #[arg(long = "text-stdin")]
     pub text_stdin: bool,
 
-    /// Special key to press (repeatable), applied in order after any text.
-    #[arg(long = "key", value_enum, value_name = "KEY")]
+    /// Named key or one printable character to press (repeatable). Printable
+    /// keys require verified idle activity; applied in order after any text.
+    #[arg(long = "key", value_parser = send_key::Parser, value_name = "KEY")]
     pub keys: Vec<SpecialKey>,
 
     /// Type the literal text even while the agent is waiting on an approval or
@@ -1761,10 +1764,12 @@ impl AgentKind {
     }
 }
 
-/// Named special keys accepted by `send`, mapped to tmux `send-keys` names.
+/// Named terminal keys and CLI-only printable characters.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 pub enum SpecialKey {
+    #[value(skip)]
+    Printable(send_key::PrintableKey),
     Enter,
     Escape,
     Backspace,
@@ -1779,9 +1784,10 @@ pub enum SpecialKey {
 }
 
 impl SpecialKey {
-    /// Canonical CLI name, used in the JSON contract (never echoes user input).
-    pub fn as_str(self) -> &'static str {
+    /// Canonical key label, including the explicit printable key in CLI receipts.
+    pub fn as_str(&self) -> &str {
         match self {
+            Self::Printable(key) => key.as_str(),
             Self::Enter => "enter",
             Self::Escape => "escape",
             Self::Backspace => "backspace",
@@ -1814,8 +1820,11 @@ impl SpecialKey {
     }
 
     /// tmux `send-keys` key name.
-    pub fn tmux_key(self) -> &'static str {
+    pub fn tmux_key(&self) -> &str {
         match self {
+            // tmux splits argv on semicolons before parsing send-keys flags.
+            Self::Printable(key) if key.as_str() == ";" => "\\;",
+            Self::Printable(key) => key.as_str(),
             Self::Enter => "Enter",
             Self::Escape => "Escape",
             Self::Backspace => "BSpace",
