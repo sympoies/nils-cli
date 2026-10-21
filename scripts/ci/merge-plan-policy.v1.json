@@ -6,9 +6,17 @@
     "build.rs", "**/build.rs", ".cargo/**", "**/.cargo/**",
     ".agents/**", ".github/**", ".config/**", "scripts/**", "tests/**", "completions/**",
     "crates/nils-common/**", "crates/nils-term/**", "crates/nils-test-support/**", "crates/nils-scrub/**",
-    "crates/agent-session/**", "crates/forge-cli/**",
     "crates/*/docs/specs/*.schema.json", "docs/specs/*.schema.json",
     "THIRD_PARTY_LICENSES.md", "THIRD_PARTY_NOTICES.md"
+  ],
+  "audit_only": [
+    "scripts/ci/file-size-baseline.tsv",
+    "scripts/ci/docs-prose-baseline.tsv",
+    "scripts/ci/test-stale-audit-baseline.tsv"
+  ],
+  "completion_assets": [
+    "completions/zsh/_{bin}",
+    "completions/bash/{bin}"
   ],
   "documentation": [
     "docs/**", "README.md", "DEVELOPMENT.md", "BINARY_DEPENDENCIES.md", "LICENSE", "LICENSE.*"

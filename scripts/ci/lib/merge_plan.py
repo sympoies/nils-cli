@@ -78,6 +78,7 @@ def graph(metadata):
 
         reverse = {}
         builds = set()
+        bins = {}
         for raw_id, package in raw_packages.items():
             normalized = package_id(raw_id)
             reverse[normalized] = set()
@@ -88,6 +89,8 @@ def graph(metadata):
                 raise ValueError()
             packages[normalized] = {'id': normalized, 'name': package['name'],
                                     'manifest_path': manifest}
+            bins[normalized] = sorted(t['name'] for t in package['targets']
+                                      if 'bin' in t.get('kind', []))
             for target in package['targets']:
                 if 'custom-build' in target.get('kind', []):
                     builds.add(Path(target['src_path']).relative_to(root).as_posix())
@@ -102,7 +105,7 @@ def graph(metadata):
                 reverse[package_id(dependency['pkg'])].add(package_id(node['id']))
         if set(raw_packages) != seen or len(raw_packages) != len(metadata['packages']):
             raise ValueError()
-        return packages, reverse, builds
+        return packages, reverse, builds, bins
     except (KeyError, TypeError, ValueError, AttributeError):
         raise PlanError('METADATA_FAILED', 'metadata') from None
 
@@ -111,9 +114,10 @@ def policy_inputs(policy, registry):
     try:
         valid = (policy['schema_version'] == 'nils-cli.merge-policy.v1'
                  and registry['schema_version'] == 'nils-cli.merge-extra-inputs.v1')
-        for key in ('always_escalate', 'documentation'):
+        for key in ('always_escalate', 'documentation', 'audit_only', 'completion_assets'):
             valid = valid and isinstance(policy[key], list) and all(
                 isinstance(p, str) and p for p in policy[key])
+        valid = valid and all(p.count('{bin}') == 1 for p in policy['completion_assets'])
         if not valid or not isinstance(registry['rules'], list):
             raise ValueError()
         ids = set()
@@ -131,8 +135,8 @@ def policy_inputs(policy, registry):
 
 def select(changes, base_metadata, candidate_metadata, policy, registry):
     policy_inputs(policy, registry)
-    base_packages, base_reverse, base_builds = graph(base_metadata)
-    packages, candidate_reverse, candidate_builds = graph(candidate_metadata)
+    base_packages, base_reverse, base_builds, _ = graph(base_metadata)
+    packages, candidate_reverse, candidate_builds, candidate_bins = graph(candidate_metadata)
     union = {**base_packages, **packages}
     reverse = {}
     for source in (base_reverse, candidate_reverse):
@@ -155,11 +159,39 @@ def select(changes, base_metadata, candidate_metadata, policy, registry):
     def matches(path, patterns):
         return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
 
+    def completion_binary(path):
+        for template in policy['completion_assets']:
+            prefix, suffix = template.split('{bin}')
+            name = path[len(prefix):len(path) - len(suffix)]
+            if (path.startswith(prefix) and path.endswith(suffix)
+                    and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', name)):
+                return name
+        return None
+
     for change in changes:
         for path in change['paths']:
             if not valid_path(path):
                 raise PlanError('DIFF_FAILED', 'diff')
-            if path in base_builds | candidate_builds or matches(path, policy['always_escalate']):
+            if path in base_builds | candidate_builds:
+                escalate('ALWAYS_ESCALATE', path)
+                continue
+            # The scoped lane runs the audit that reads these baselines over the
+            # whole workspace, so they select no package and do not escalate.
+            if path in policy['audit_only']:
+                reason('AUDIT_ONLY', path)
+                continue
+            # A generated completion asset follows the one package that owns its
+            # binary. Any other completions path falls through to ALWAYS_ESCALATE.
+            binary = completion_binary(path)
+            if binary is not None:
+                owners = [pid for pid in packages if binary in candidate_bins[pid]]
+                if len(owners) == 1:
+                    selected.add(owners[0])
+                    reason('COMPLETION_OWNER', path, owners[0])
+                else:
+                    escalate('UNKNOWN_COMPLETION_OWNER', path)
+                continue
+            if matches(path, policy['always_escalate']):
                 escalate('ALWAYS_ESCALATE', path)
                 continue
             owners = {pid for root, pid in roots if root == '.' or path == root or path.startswith(root + '/')}
@@ -391,14 +423,14 @@ def metadata(snapshot_root, stage, trusted_root):
     except (OSError, KeyError, TypeError, ValueError):
         raise failure('workspace_root_mismatch') from None
     try:
-        packages, reverse, builds = graph(value)
+        packages, reverse, builds, bins = graph(value)
     except PlanError:
         raise failure('graph_error') from None
     # The normalized graph, rather than random materialization paths, is the
     # metadata evidence. All resolved edges and custom build inputs are bound.
     normalized = {'packages': packages, 'reverse_dependencies':
                   {pid: sorted(consumers) for pid, consumers in reverse.items()},
-                  'build_scripts': sorted(builds)}
+                  'build_scripts': sorted(builds), 'binaries': bins}
     return value, digest(canonical(normalized))
 
 

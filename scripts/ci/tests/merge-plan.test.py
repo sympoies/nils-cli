@@ -171,8 +171,7 @@ class SelectorTests(unittest.TestCase):
         paths = ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'crates/base/build.rs',
                  'crates/base/Cargo.toml', 'crates/base/.cargo/config.toml',
                  '.github/workflows/test.yml', 'scripts/release.sh', 'tests/support.rs',
-                 'crates/nils-test-support/src/lib.rs', 'crates/agent-session/README.md',
-                 'crates/forge-cli/src/auth.rs', '.agents/config.json']
+                 'crates/nils-test-support/src/lib.rs', '.agents/config.json']
         self.registry['rules'] = [{'id': 'overlap', 'paths': ['**'], 'packages': ['leaf']}]
         for path in paths:
             with self.subTest(path=path):

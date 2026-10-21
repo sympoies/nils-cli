@@ -26,13 +26,21 @@ for package in "$@"; do
 done
 
 # These non-compiling audits retain workspace contracts without building every
-# unrelated binary. Changes to scripts/completions/shared fixtures escalate FULL
-# in the accepted policy and execute the complete existing audit stack there.
+# unrelated binary. Scripts, shared fixtures, and unmapped completions escalate
+# FULL in the accepted policy and execute the complete existing audit stack
+# there. A crate-only change no longer escalates, so every cheap audit it can
+# break runs here too; the baseline files are audit-only and read by these.
 run bash scripts/ci/docs-placement-audit.sh --strict
 run bash scripts/ci/docs-hygiene-audit.sh --strict
+run bash scripts/ci/markdownlint-audit.sh --strict
+run bash scripts/ci/cli-output-contract-lint.sh --strict
+run bash scripts/ci/forge-cli-fixture-lint.sh --strict
 run bash scripts/ci/docs-prose-audit.sh --strict
 run bash scripts/ci/file-size-audit.sh --strict
+run bash scripts/ci/test-stale-audit.sh --strict
 run bash scripts/ci/tempdir-leak-audit.sh
+run bash scripts/ci/completion-asset-audit.sh --strict
+run zsh -f tests/zsh/completion.test.zsh
 run python3 scripts/ci/assert-import-audit.py
 run python3 scripts/ci/tests/assert-import-audit.test.py
 run cargo fmt --all -- --check
@@ -40,8 +48,8 @@ run cargo clippy "${package_args[@]}" --all-targets --all-features -- -D warning
 run cargo build "${package_args[@]}" --bins --all-features
 
 # Source-only CLI changes can invalidate generated assets without triggering
-# FULL. Cover selected required binaries using the existing freshness audit;
-# never let its default workspace build expand this selected execution.
+# FULL. Cover selected required binaries using the existing freshness and flag
+# parity audits; never let their default workspace build expand this execution.
 completion_bins="$(cargo metadata --offline --locked --no-deps --format-version 1 | python3 -c '
 import json, sys
 from pathlib import Path
@@ -69,6 +77,7 @@ while IFS= read -r binary; do
 done <<< "$completion_bins"
 if (( ${#completion_args[@]} > 0 )); then
   run bash scripts/ci/completion-freshness-audit.sh --strict --skip-build "${completion_args[@]}"
+  run bash scripts/ci/completion-flag-parity-audit.sh --strict --skip-build "${completion_args[@]}"
 fi
 
 case "${NILS_CLI_TEST_RUNNER:-nextest}" in
