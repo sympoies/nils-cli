@@ -6,10 +6,7 @@ use nils_common::fs::{SECRET_FILE_MODE, write_atomic};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{
-    authenticate_from_file, authenticate_token, digest_bytes, incarnation, lock_registry,
-    now_epoch, timestamp,
-};
+use super::{authenticate_token, digest_bytes, incarnation, lock_registry, now_epoch, timestamp};
 use crate::{CliContext, CliError};
 
 #[path = "remote_delivery_notice.rs"]
@@ -725,7 +722,23 @@ pub(crate) fn submit(
     token: &str,
     args: Submit,
 ) -> Result<Value, CliError> {
-    let (_, source_incarnation) = authenticate_token(context, session, token)?;
+    let usage = super::delegation::Use::MessageSend {
+        machine: &args.to_machine,
+        recipient: &args.to_session,
+    };
+    // Forwarding reads another message and is outside message-send delegation.
+    if args.forward.is_some() && super::delegation::is_delegation(token) {
+        super::delegation::authenticate_token(
+            context,
+            Some(session),
+            token,
+            super::delegation::Use::CapabilityOnly,
+            true,
+        )?;
+        return Err(super::delegation::scope_denied());
+    }
+    let (_, source_incarnation) =
+        super::delegation::authenticate_token(context, Some(session), token, usage, true)?;
     submit_origin(
         context,
         config,
@@ -1034,24 +1047,33 @@ where
         None
     };
     if let Some(token) = token {
-        let (_, current) = authenticate_token(context, session, token)?;
+        let (_, current) = super::delegation::authenticate_token(
+            context,
+            Some(session),
+            token,
+            super::delegation::Use::MessageSend {
+                machine: &envelope.to.machine,
+                recipient: &envelope.to.session_id,
+            },
+            false,
+        )?;
         if current != source_incarnation {
             return Err(super::unauthorized());
         }
     }
     let locked = lock_registry(context)?;
     if let Some(token) = token {
-        let broker = locked
-            .registry
-            .brokers
-            .get(session)
-            .ok_or_else(super::unauthorized)?;
-        if broker.state != "ready"
-            || broker.incarnation != source_incarnation
-            || broker.capability_digest != digest_bytes(token.as_bytes())
-        {
-            return Err(super::unauthorized());
-        }
+        super::delegation::revalidate(
+            context,
+            &locked.registry,
+            session,
+            &source_incarnation,
+            token,
+            super::delegation::Use::MessageSend {
+                machine: &envelope.to.machine,
+                recipient: &envelope.to.session_id,
+            },
+        )?;
     }
     authorize()?;
     if let Some(parent_id) = envelope.reply_to.as_deref() {
@@ -1781,7 +1803,13 @@ fn local_request(
     body: Option<Value>,
 ) -> Result<Value, CliError> {
     let capability = super::mailbox::resolve_capability_file(capability)?;
-    authenticate_from_file(context, session, Some(&capability))?;
+    super::delegation::authenticate_remote_request(
+        context,
+        session,
+        &capability,
+        path,
+        body.as_ref(),
+    )?;
     let token = String::from_utf8(
         super::read_private_file(&capability, 256).map_err(|_| super::unauthorized())?,
     )

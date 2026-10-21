@@ -269,7 +269,7 @@ fn dispatch(cli: Cli) -> i32 {
         return completion::run(args.shell);
     }
 
-    let format = command_format(&cli.command);
+    let format = coordination_routing::command_format(&cli.command);
     let context = match CliContext::resolve(cli.state_dir, cli.host) {
         Ok(context) => context,
         Err(err) => {
@@ -313,6 +313,7 @@ fn dispatch(cli: Cli) -> i32 {
         Command::WorkContext(args) => coordination::run_work_context(&context, args),
         Command::Broker(args) => coordination::run_broker(&context, args),
         Command::Readiness(args) => coordination::readiness::run(&context, args),
+        Command::Delegation(args) => coordination::delegation::run(&context, args),
         Command::Message(args) => coordination::run_message(&context, args),
         Command::Metadata(args) => metadata::run_metadata(&context, args),
         Command::Lineage(args) => lineage::run_lineage(&context, args),
@@ -322,88 +323,6 @@ fn dispatch(cli: Cli) -> i32 {
         Command::CodexAppServerProxy(args) => codex_app_server::run_proxy(&context, args),
         Command::Delete(args) => run_delete(&context, args),
         Command::Completion(_) => unreachable!("completion is handled before context resolution"),
-    }
-}
-
-fn command_format(command: &Command) -> OutputFormat {
-    match command {
-        Command::Workspace(args) => origin::format(args),
-        Command::Readiness(args) => args.format,
-        Command::AutoResume(args) => args.format,
-        Command::Start(args) => args.format,
-        Command::Run(args) => args.format,
-        Command::List(args) => args.format,
-        Command::Board(args) => args.format,
-        Command::Show(args) => args.format,
-        Command::Logs(args) => args.format,
-        Command::Diagnose(args) => args.format,
-        Command::Send(args) => args.format,
-        Command::Glance(args) => args.format,
-        Command::Resume(args) => args.format,
-        Command::Restart(args) => args.format,
-        Command::Clear(args) | Command::Rebind(args) => args.format,
-        Command::Account(args) => match &args.command {
-            cli::AccountCommand::Show(args) => args.format,
-            cli::AccountCommand::Switch(args) => args.format,
-        },
-        Command::Activity(args) => match &args.command {
-            cli::ActivityCommand::Event(args) => args.format,
-            cli::ActivityCommand::Status(args) => args.format,
-            cli::ActivityCommand::Hook(_) | cli::ActivityCommand::Notify(_) => OutputFormat::Text,
-            cli::ActivityCommand::Doctor(args) => args.format,
-            cli::ActivityCommand::Setup(args) => args.format,
-        },
-        Command::WorkContext(args) => match &args.command {
-            cli::WorkContextCommand::Status(args) => args.format,
-            cli::WorkContextCommand::Set(args) => args.format,
-            cli::WorkContextCommand::Clear(args) => args.format,
-            cli::WorkContextCommand::Advise(args) => args.format,
-            cli::WorkContextCommand::Acknowledge(args) => args.format,
-            cli::WorkContextCommand::Claim(args) => args.format,
-            cli::WorkContextCommand::Show(args) => args.format,
-            cli::WorkContextCommand::Check(args) => args.format,
-            cli::WorkContextCommand::Renew(args) => args.format,
-            cli::WorkContextCommand::Release(args) => args.format,
-            cli::WorkContextCommand::Admit(args) => args.format,
-            cli::WorkContextCommand::Complete(args) => args.format,
-            cli::WorkContextCommand::Reconcile(args) => args.format,
-        },
-        Command::Broker(args) => match &args.command {
-            cli::BrokerCommand::Identity(args) | cli::BrokerCommand::Status(args) => args.format,
-            cli::BrokerCommand::Adopt(args) | cli::BrokerCommand::Reconcile(args) => args.format,
-            cli::BrokerCommand::RetireStopped(args) => args.format,
-            cli::BrokerCommand::Stop(args) => args.format,
-            cli::BrokerCommand::Heartbeat(args) => args.format,
-        },
-        Command::Message(args) => match &args.command {
-            cli::MessageCommand::Audit(args) => args.format,
-            cli::MessageCommand::Peers(args) => args.format,
-            cli::MessageCommand::Delivery(args) => args.format,
-            cli::MessageCommand::ServiceSend(args) => args.format,
-            cli::MessageCommand::Send(args) => args.format,
-            cli::MessageCommand::Forward(args) => args.format,
-            cli::MessageCommand::Inbox(args) => args.format,
-            cli::MessageCommand::Show(args) => args.format,
-            cli::MessageCommand::Ack(args) => args.format,
-            cli::MessageCommand::Reply(args) => args.format,
-            cli::MessageCommand::Wait(args) => args.format,
-            cli::MessageCommand::Reminder(args) => args.format,
-        },
-        Command::Metadata(args) => match &args.command {
-            cli::MetadataCommand::Attach(args) => args.format,
-            cli::MetadataCommand::Show(args) => args.format,
-        },
-        Command::Lineage(args) => match &args.command {
-            cli::LineageCommand::Adopt(args) => args.format,
-        },
-        Command::Work(args) => match &args.command {
-            cli::WorkCommand::Set(args) => args.format,
-        },
-        Command::Delete(args) => args.format,
-        Command::Attach(_)
-        | Command::Serve(_)
-        | Command::CodexAppServerProxy(_)
-        | Command::Completion(_) => OutputFormat::Text,
     }
 }
 

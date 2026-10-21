@@ -751,6 +751,54 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(delegation)
+_arguments "${_arguments_options[@]}" : \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_agent-session__subcmd__delegation_commands" \
+"*::: :->delegation" \
+&& ret=0
+
+    case $state in
+    (delegation)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agent-session-delegation-command-$line[1]:"
+        case $line[1] in
+            (mint)
+_arguments "${_arguments_options[@]}" : \
+'--session=[Caller session that issues and owns the delegation]:SESSION:_default' \
+'--capability-file=[Caller'\''s runtime credential; defaults to AGENT_SESSION_CAPABILITY_FILE]:CAPABILITY_FILE:_files' \
+'*--operation=[Exact allowed operation (repeatable)]:OPERATIONS:(start-via-console message-send)' \
+'*--recipient=[Exact MACHINE/SESSION_ID permitted for message-send (repeatable)]:RECIPIENTS:_default' \
+'--expires-in=[Lifetime in seconds, from 1 to 86400]:EXPIRES_IN:_default' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(revoke)
+_arguments "${_arguments_options[@]}" : \
+'--session=[Caller session that owns the delegation]:SESSION:_default' \
+'--id=[]:ID:_default' \
+'--capability-file=[]:CAPABILITY_FILE:_files' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (message)
 _arguments "${_arguments_options[@]}" : \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
@@ -1191,6 +1239,7 @@ _agent-session_commands() {
 'work-context:Manage authenticated structured work context and mutation leases' \
 'broker:Inspect or recover the per-session coordination broker' \
 'readiness:Authenticate the current managed session and its runtime-issued checkpoint' \
+'delegation:Mint or revoke scoped credentials for supervised workers' \
 'message:Exchange bounded private coordination mailbox messages' \
 'metadata:Attach and inspect bounded public metadata for one managed session' \
 'workspace:Assign a public workspace to a session' \
@@ -1345,6 +1394,24 @@ _agent-session__subcmd__command_commands() {
 _agent-session__subcmd__completion_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session completion commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__delegation_commands] )) ||
+_agent-session__subcmd__delegation_commands() {
+    local commands; commands=(
+'mint:Mint a private expiring credential for a supervised worker' \
+'revoke:Revoke one delegation owned by the authenticated caller' \
+    )
+    _describe -t commands 'agent-session delegation commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__delegation__subcmd__mint_commands] )) ||
+_agent-session__subcmd__delegation__subcmd__mint_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session delegation mint commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__delegation__subcmd__revoke_commands] )) ||
+_agent-session__subcmd__delegation__subcmd__revoke_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session delegation revoke commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__delete_commands] )) ||
 _agent-session__subcmd__delete_commands() {

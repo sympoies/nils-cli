@@ -46,6 +46,9 @@ _agent__session() {
             agent__session,completion)
                 cmd="agent__session__completion"
                 ;;
+            agent__session,delegation)
+                cmd="agent__session__delegation"
+                ;;
             agent__session,delete)
                 cmd="agent__session__delete"
                 ;;
@@ -148,6 +151,12 @@ _agent__session() {
             agent__session__broker,stop)
                 cmd="agent__session__broker__stop"
                 ;;
+            agent__session__delegation,mint)
+                cmd="agent__session__delegation__mint"
+                ;;
+            agent__session__delegation,revoke)
+                cmd="agent__session__delegation__revoke"
+                ;;
             agent__session__lineage,adopt)
                 cmd="agent__session__lineage__adopt"
                 ;;
@@ -245,7 +254,7 @@ _agent__session() {
 
     case "${cmd}" in
         agent__session)
-            opts="-h -V --state-dir --host --help --version start run auto-resume list board command attach logs diagnose send glance resume restart clear rebind account activity work-context broker readiness message metadata workspace lineage work serve codex-app-server-proxy delete completion"
+            opts="-h -V --state-dir --host --help --version start run auto-resume list board command attach logs diagnose send glance resume restart clear rebind account activity work-context broker readiness delegation message metadata workspace lineage work serve codex-app-server-proxy delete completion"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1306,6 +1315,143 @@ _agent__session() {
                 return 0
             fi
             case "${prev}" in
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agent__session__delegation)
+            opts="-h --state-dir --host --help mint revoke"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agent__session__delegation__mint)
+            opts="-h --session --capability-file --operation --recipient --expires-in --format --state-dir --host --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --capability-file)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --operation)
+                    COMPREPLY=($(compgen -W "start-via-console message-send" -- "${cur}"))
+                    return 0
+                    ;;
+                --recipient)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expires-in)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agent__session__delegation__revoke)
+            opts="-h --session --id --capability-file --format --state-dir --host --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --id)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --capability-file)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
                 --state-dir)
                     COMPREPLY=()
                     if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then

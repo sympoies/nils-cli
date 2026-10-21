@@ -10,6 +10,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 pub const REGISTRY_VERSION: &str = "agent-session.coordination-registry.v1";
+pub const DELEGATION_REGISTRY_VERSION: &str = "agent-session.coordination-registry.v4";
 pub const SUPPRESSION_REGISTRY_VERSION: &str = "agent-session.coordination-registry.v3";
 pub const CLAIM_FENCE_REGISTRY_VERSION: &str = "agent-session.coordination-registry.v2";
 pub const CLAIM_VERSION: &str = "agent-session.work-context.v1";
@@ -142,7 +143,10 @@ pub fn load(state_dir: &Path) -> Result<Option<RegistryProjection>, ReadError> {
         serde_json::from_slice(&bytes).map_err(|_| ReadError::Invalid)?;
     if !matches!(
         projection.schema_version.as_str(),
-        REGISTRY_VERSION | CLAIM_FENCE_REGISTRY_VERSION | SUPPRESSION_REGISTRY_VERSION
+        REGISTRY_VERSION
+            | CLAIM_FENCE_REGISTRY_VERSION
+            | SUPPRESSION_REGISTRY_VERSION
+            | DELEGATION_REGISTRY_VERSION
     ) {
         // A well-formed body in this schema family that declares an unknown
         // version came from another release generation. Report drift so the
@@ -153,6 +157,7 @@ pub fn load(state_dir: &Path) -> Result<Option<RegistryProjection>, ReadError> {
                 REGISTRY_VERSION,
                 CLAIM_FENCE_REGISTRY_VERSION,
                 SUPPRESSION_REGISTRY_VERSION,
+                DELEGATION_REGISTRY_VERSION,
             ],
         ) {
             return Err(ReadError::Incompatible);
@@ -375,6 +380,7 @@ mod tests {
             REGISTRY_VERSION,
             CLAIM_FENCE_REGISTRY_VERSION,
             SUPPRESSION_REGISTRY_VERSION,
+            DELEGATION_REGISTRY_VERSION,
         ] {
             let temporary = tempfile::TempDir::new().expect("temporary state");
             let coordination = temporary.path().join("coordination");

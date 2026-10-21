@@ -155,8 +155,17 @@ pub(crate) fn send(context: &CliContext, args: MessageSendArgs) -> Result<Value,
 
 fn send_impl(context: &CliContext, args: MessageSendArgs) -> Result<Value, CliError> {
     let capability_file = resolve_capability_file(args.capability_file.as_deref())?;
-    let (record, sender_incarnation) =
-        authenticate_from_file(context, &args.from_session, Some(&capability_file))?;
+    let machine = crate::board::machine_identity(None, context);
+    let (record, sender_incarnation) = super::delegation::authenticate_file(
+        context,
+        &args.from_session,
+        Some(&capability_file),
+        super::delegation::Use::LocalMessageSend {
+            machine: &machine,
+            recipient: &args.to_session,
+        },
+        true,
+    )?;
     let body = read_body(&args.body_file)?;
     send_authenticated(
         context,
@@ -836,12 +845,16 @@ fn send_authenticated(
             .map_err(|_| super::unauthorized())?;
         let mut locked = lock_registry(context)?;
         clean_expired(&mut locked.registry, now_epoch());
-        revalidate_capability_file(
+        super::delegation::revalidate_file(
             context,
             &locked.registry,
-            &sender,
+            &sender.id,
             sender_incarnation,
             capability_file,
+            super::delegation::Use::LocalMessageSend {
+                machine: &crate::board::machine_identity(None, context),
+                recipient: recipient_session_id,
+            },
         )?;
         if let Some(replay) = idempotency_replay(
             &locked.registry,
@@ -879,12 +892,16 @@ fn send_authenticated(
     let now = now_epoch();
     let mut locked = lock_registry(context)?;
     clean_expired(&mut locked.registry, now);
-    revalidate_capability_file(
+    super::delegation::revalidate_file(
         context,
         &locked.registry,
-        &sender,
+        &sender.id,
         sender_incarnation,
         capability_file,
+        super::delegation::Use::LocalMessageSend {
+            machine: &crate::board::machine_identity(None, context),
+            recipient: recipient_session_id,
+        },
     )?;
     if let Some(replay) = idempotency_replay(
         &locked.registry,
