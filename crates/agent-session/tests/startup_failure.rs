@@ -204,13 +204,15 @@ sleep 0.2 >&2 &
 exit {exit_code}
 "#
     ));
-    // Let provider teardown finish before the first liveness observation.
+    // Let provider teardown finish before the first liveness observation. Delay
+    // only that probe, and stay well under the one-second cleanup probe timeout:
+    // a slower runner otherwise reads the delayed probe as an unverifiable cleanup.
     let tmux_script = fs::read_to_string(&fixture.tmux).unwrap();
     executable(
         &fixture.tmux,
         &tmux_script.replace(
             "exec tmux",
-            "case \"$1\" in has-session) sleep 1;; esac\nexec tmux",
+            "case \"$1\" in has-session) [ -e \"$0.probed\" ] || { : > \"$0.probed\"; sleep 0.5; };; esac\nexec tmux",
         ),
     );
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
