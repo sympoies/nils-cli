@@ -13,7 +13,10 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   with literal `text` and `keys` exactly `["enter"]` is a prompt submission and
   `data.sent.submission` reports `{ outcome, enter_presses }`. `outcome` is
   `submitted`, `queued` (Claude Code queued it behind a running turn), or
-  `unverified` (the pane could not prove either way). A prompt still in the
+  `unverified` (the pane could not prove either way). `submitted` also covers an
+  accepted Enter followed by verified absence of the exact terminal runtime,
+  such as `/exit`. Capture errors or unknown liveness alone do not prove exit.
+  A prompt still in the
   composer after the bounded Enter retries returns `409 send-submit-stuck` with
   `{ id, outcome: "stuck", enter_presses }`. The text has reached the pane, so
   do not resend it. Inspect or clear the composer first. Retries never press
