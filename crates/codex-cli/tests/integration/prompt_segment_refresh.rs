@@ -6,10 +6,23 @@ use pretty_assertions::assert_eq;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const POLL_INTERVAL_MS: u64 = 25;
+
+/// Upper bound for conditions that normally hold within milliseconds. The waits
+/// below return as soon as the condition holds, so a generous bound costs
+/// nothing on a quiet host and keeps a starved detached child from failing the
+/// test.
+const SETTLE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The detached refresh child's own HTTP budget, kept far above the local
+/// loopback round trip so a starved child is not cut off mid-request.
+const CURL_CONNECT_TIMEOUT_SECONDS: &str = "10";
+const CURL_MAX_TIME_SECONDS: &str = "30";
 
 fn codex_cli_bin() -> PathBuf {
     bin::resolve("codex-cli")
@@ -104,13 +117,15 @@ fn wait_for_file_contains(path: &Path, needle: &str, timeout: Duration) -> bool 
 /// test itself passes.
 fn wait_for_background_refresh_settled(kv_path: &Path, needle: &str, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
-    if !wait_for_file_contains(kv_path, needle, timeout) {
-        return false;
-    }
+    wait_for_file_contains(kv_path, needle, timeout)
+        && wait_for_refresh_lock_released(kv_path, deadline)
+}
 
+/// Wait until `<key>.refresh.lock` is absent. Only meaningful once the refresh
+/// child is known to hold the lock (it wrote the kv or issued a request), so an
+/// absent directory means released rather than not-yet-acquired.
+fn wait_for_refresh_lock_released(kv_path: &Path, deadline: Instant) -> bool {
     // `alpha.kv` -> `alpha.refresh.lock`, matching `lock_dir_for_cache_file`.
-    // Observing the kv proves the child already held the lock, so an absent lock
-    // dir here means released rather than not-yet-acquired.
     let lock_dir = kv_path.with_extension("refresh.lock");
     while lock_dir.exists() {
         if Instant::now() >= deadline {
@@ -121,15 +136,21 @@ fn wait_for_background_refresh_settled(kv_path: &Path, needle: &str, timeout: Du
     true
 }
 
-fn collect_requests_for(server: &TestServer, timeout: Duration) -> Vec<RecordedRequest> {
+/// Block until the server has seen a `/wham/usage` request, returning every
+/// request received so far. A detached child may start arbitrarily late on a
+/// loaded host, so this waits for the request instead of sampling a fixed window.
+fn wait_for_usage_request(server: &TestServer, timeout: Duration) -> Vec<RecordedRequest> {
     let deadline = Instant::now() + timeout;
     let mut requests = Vec::new();
-    while Instant::now() < deadline {
+    loop {
         requests.extend(server.take_requests());
+        if requests.iter().any(|request| request.path == "/wham/usage")
+            || Instant::now() >= deadline
+        {
+            return requests;
+        }
         thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
     }
-    requests.extend(server.take_requests());
-    requests
 }
 
 fn write_auth_and_secret(dir: &tempfile::TempDir) -> (PathBuf, PathBuf, PathBuf) {
@@ -227,8 +248,14 @@ fn prompt_segment_refresh_updates_cache_and_prints() {
         &[
             ("CODEX_PROMPT_SEGMENT_ENABLED", "true"),
             ("CODEX_CHATGPT_BASE_URL", &server.url()),
-            ("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
-            ("CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "3"),
+            (
+                "CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS",
+                CURL_CONNECT_TIMEOUT_SECONDS,
+            ),
+            (
+                "CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS",
+                CURL_MAX_TIME_SECONDS,
+            ),
         ],
     );
     assert_exit(&output, 0);
@@ -272,8 +299,14 @@ fn prompt_segment_refresh_weekly_only_removes_stale_non_weekly_cache() {
         &[
             ("CODEX_PROMPT_SEGMENT_ENABLED", "true"),
             ("CODEX_CHATGPT_BASE_URL", &server.url()),
-            ("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
-            ("CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "3"),
+            (
+                "CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS",
+                CURL_CONNECT_TIMEOUT_SECONDS,
+            ),
+            (
+                "CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS",
+                CURL_MAX_TIME_SECONDS,
+            ),
         ],
     );
 
@@ -325,8 +358,14 @@ fn prompt_segment_stale_cache_triggers_background_refresh() {
             ("CODEX_CHATGPT_BASE_URL", &server.url()),
             ("CODEX_PROMPT_SEGMENT_STALE_SUFFIX", " (STALE)"),
             ("CODEX_PROMPT_SEGMENT_REFRESH_MIN_SECONDS", "0"),
-            ("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
-            ("CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "3"),
+            (
+                "CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS",
+                CURL_CONNECT_TIMEOUT_SECONDS,
+            ),
+            (
+                "CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS",
+                CURL_MAX_TIME_SECONDS,
+            ),
         ],
     );
     assert_exit(&output, 0);
@@ -337,11 +376,7 @@ fn prompt_segment_stale_cache_triggers_background_refresh() {
 
     let kv_path = cache_file(&cache_root, "alpha");
     assert!(
-        wait_for_background_refresh_settled(
-            &kv_path,
-            "weekly_remaining=88",
-            Duration::from_secs(3)
-        ),
+        wait_for_background_refresh_settled(&kv_path, "weekly_remaining=88", SETTLE_TIMEOUT),
         "expected background refresh to update cache kv"
     );
 }
@@ -367,27 +402,28 @@ fn settled_wait_blocks_until_the_refresh_lock_is_released() {
     let lock_dir = dir.path().join("alpha.refresh.lock");
     fs::create_dir(&lock_dir).expect("create lock dir");
 
+    // Raised just before the lock is removed. A wait that returned on the kv
+    // alone would come back with this still unset, whatever the host load.
+    let released = Arc::new(AtomicBool::new(false));
     let releaser = {
         let lock_dir = lock_dir.clone();
+        let released = Arc::clone(&released);
         thread::spawn(move || {
             thread::sleep(LOCK_HELD_FOR);
+            released.store(true, Ordering::SeqCst);
             fs::remove_dir_all(&lock_dir).expect("release lock dir");
         })
     };
 
-    let started = Instant::now();
-    let settled = wait_for_background_refresh_settled(
-        &kv_path,
-        "weekly_remaining=88",
-        Duration::from_secs(5),
-    );
-    let waited = started.elapsed();
+    let settled =
+        wait_for_background_refresh_settled(&kv_path, "weekly_remaining=88", SETTLE_TIMEOUT);
+    let released_before_return = released.load(Ordering::SeqCst);
     releaser.join().expect("releaser thread");
 
     assert!(settled, "the lock was released, so the wait must succeed");
     assert!(
-        waited >= LOCK_HELD_FOR / 2,
-        "the wait must outlast the held lock rather than return on the kv alone; waited {waited:?}"
+        released_before_return,
+        "the wait must outlast the held lock rather than return on the kv alone"
     );
     assert!(!lock_dir.exists(), "the lock dir must be gone on return");
 }
@@ -439,8 +475,14 @@ fn prompt_segment_expired_cache_refreshes_in_background_before_next_render() {
         ("CODEX_PROMPT_SEGMENT_ENABLED", "true"),
         ("CODEX_CHATGPT_BASE_URL", server_url.as_str()),
         ("CODEX_PROMPT_SEGMENT_REFRESH_MIN_SECONDS", "0"),
-        ("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
-        ("CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "3"),
+        (
+            "CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS",
+            CURL_CONNECT_TIMEOUT_SECONDS,
+        ),
+        (
+            "CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS",
+            CURL_MAX_TIME_SECONDS,
+        ),
     ];
 
     let first = run(
@@ -457,11 +499,7 @@ fn prompt_segment_expired_cache_refreshes_in_background_before_next_render() {
     assert_exit(&first, 0);
     assert!(stdout(&first).trim().is_empty());
     assert!(
-        wait_for_background_refresh_settled(
-            &kv_path,
-            "weekly_remaining=88",
-            Duration::from_secs(3)
-        ),
+        wait_for_background_refresh_settled(&kv_path, "weekly_remaining=88", SETTLE_TIMEOUT),
         "expected background refresh to replace expired cache"
     );
 
@@ -525,8 +563,14 @@ kill -HUP 0
         .env("CODEX_CHATGPT_BASE_URL", server.url())
         .env("CODEX_PROMPT_SEGMENT_STALE_SUFFIX", " (STALE)")
         .env("CODEX_PROMPT_SEGMENT_REFRESH_MIN_SECONDS", "0")
-        .env("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", "1")
-        .env("CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "3")
+        .env(
+            "CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS",
+            CURL_CONNECT_TIMEOUT_SECONDS,
+        )
+        .env(
+            "CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS",
+            CURL_MAX_TIME_SECONDS,
+        )
         .env("NO_COLOR", "1")
         .env("TZ", "UTC")
         .env_remove("STARSHIP_SESSION_KEY")
@@ -540,11 +584,7 @@ kill -HUP 0
 
     let kv_path = cache_file(&cache_root, "alpha");
     assert!(
-        wait_for_background_refresh_settled(
-            &kv_path,
-            "weekly_remaining=88",
-            Duration::from_secs(3)
-        ),
+        wait_for_background_refresh_settled(&kv_path, "weekly_remaining=88", SETTLE_TIMEOUT),
         "expected detached background refresh to survive prompt shell HUP and update cache kv"
     );
 }
@@ -611,8 +651,14 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
             ("CODEX_CHATGPT_BASE_URL", &server.url()),
             ("CODEX_PROMPT_SEGMENT_STALE_SUFFIX", " (STALE)"),
             ("CODEX_PROMPT_SEGMENT_REFRESH_MIN_SECONDS", "0"),
-            ("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
-            ("CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "3"),
+            (
+                "CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS",
+                CURL_CONNECT_TIMEOUT_SECONDS,
+            ),
+            (
+                "CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS",
+                CURL_MAX_TIME_SECONDS,
+            ),
             ("REMOTE_AUTH_PAYLOAD", remote_payload.as_str()),
             ("SSH_ARGS_FILE", args_file.to_str().expect("args path")),
         ],
@@ -625,11 +671,8 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
     );
 
     let kv_path = cache_file(&cache_root, "alpha");
-    let refreshed = wait_for_background_refresh_settled(
-        &kv_path,
-        "weekly_remaining=88",
-        Duration::from_secs(3),
-    );
+    let refreshed =
+        wait_for_background_refresh_settled(&kv_path, "weekly_remaining=88", SETTLE_TIMEOUT);
     let requests = server.take_requests();
     let captured_args =
         fs::read_to_string(&args_file).unwrap_or_else(|err| format!("<missing: {err}>"));
@@ -711,8 +754,14 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
             ("CODEX_AUTH_REMOTE_NAME", "acct1"),
             ("CODEX_AUTH_REMOTE_REFRESH", "true"),
             ("CODEX_CHATGPT_BASE_URL", &server.url()),
-            ("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
-            ("CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "3"),
+            (
+                "CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS",
+                CURL_CONNECT_TIMEOUT_SECONDS,
+            ),
+            (
+                "CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS",
+                CURL_MAX_TIME_SECONDS,
+            ),
             ("REMOTE_AUTH_PAYLOAD", remote_payload.as_str()),
             ("SSH_ARGS_FILE", args_file.to_str().expect("args path")),
         ],
@@ -789,8 +838,14 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
             ("CODEX_CHATGPT_BASE_URL", &server.url()),
             ("CODEX_PROMPT_SEGMENT_STALE_SUFFIX", " (STALE)"),
             ("CODEX_PROMPT_SEGMENT_REFRESH_MIN_SECONDS", "0"),
-            ("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
-            ("CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "3"),
+            (
+                "CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS",
+                CURL_CONNECT_TIMEOUT_SECONDS,
+            ),
+            (
+                "CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS",
+                CURL_MAX_TIME_SECONDS,
+            ),
             ("REMOTE_AUTH_PAYLOAD", remote_payload.as_str()),
             ("SSH_ARGS_FILE", args_file.to_str().expect("args path")),
         ],
@@ -802,7 +857,16 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
         "alpha 5h:1% W:2% 2023-11-21T20:53Z (STALE)\n"
     );
 
-    let requests = collect_requests_for(&server, Duration::from_secs(1));
+    // Wait for the detached child's single request, then for it to finish, so
+    // "no remote auth, no second request" is judged after everything it would
+    // have done has happened instead of after an arbitrary window.
+    let kv_path = cache_file(&cache_root, "alpha");
+    let mut requests = wait_for_usage_request(&server, SETTLE_TIMEOUT);
+    assert!(
+        wait_for_refresh_lock_released(&kv_path, Instant::now() + SETTLE_TIMEOUT),
+        "expected the background refresh to finish"
+    );
+    requests.extend(server.take_requests());
     let usage_requests = requests
         .iter()
         .filter(|request| request.method == "GET" && request.path == "/wham/usage")
@@ -817,7 +881,6 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
         "disabled auto-refresh must not invoke remote auth"
     );
 
-    let kv_path = cache_file(&cache_root, "alpha");
     let cache_content = fs::read_to_string(&kv_path).expect("read cache");
     assert!(cache_content.contains("weekly_remaining=2"));
     assert!(!cache_content.contains("weekly_remaining=88"));
@@ -857,8 +920,14 @@ fn prompt_segment_refresh_recovers_from_stale_lock_dir() {
             ("CODEX_PROMPT_SEGMENT_ENABLED", "true"),
             ("CODEX_CHATGPT_BASE_URL", &server.url()),
             ("CODEX_PROMPT_SEGMENT_LOCK_STALE_SECONDS", "0"),
-            ("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
-            ("CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "3"),
+            (
+                "CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS",
+                CURL_CONNECT_TIMEOUT_SECONDS,
+            ),
+            (
+                "CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS",
+                CURL_MAX_TIME_SECONDS,
+            ),
         ],
     );
     assert_exit(&output, 0);
@@ -879,20 +948,23 @@ fn prompt_segment_refresh_respects_min_interval() {
     let base_url = server.url();
 
     let fetched_at = now_epoch().saturating_sub(10).max(1);
-    write_prompt_segment_cache_kv(
-        &cache_root,
-        "alpha",
-        &format!(
-            "fetched_at={fetched_at}\nnon_weekly_label=5h\nnon_weekly_remaining=1\nweekly_remaining=2\nweekly_reset_epoch=1700600000\n"
-        ),
+    let stale_kv = format!(
+        "fetched_at={fetched_at}\nnon_weekly_label=5h\nnon_weekly_remaining=1\nweekly_remaining=2\nweekly_reset_epoch=1700600000\n"
     );
+    write_prompt_segment_cache_kv(&cache_root, "alpha", &stale_kv);
 
     let vars = [
         ("CODEX_PROMPT_SEGMENT_ENABLED", "true"),
         ("CODEX_CHATGPT_BASE_URL", base_url.as_str()),
         ("CODEX_PROMPT_SEGMENT_REFRESH_MIN_SECONDS", "9999"),
-        ("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
-        ("CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "3"),
+        (
+            "CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS",
+            CURL_CONNECT_TIMEOUT_SECONDS,
+        ),
+        (
+            "CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS",
+            CURL_MAX_TIME_SECONDS,
+        ),
     ];
     let envs = [
         ("CODEX_AUTH_FILE", auth_file.as_path()),
@@ -900,13 +972,28 @@ fn prompt_segment_refresh_respects_min_interval() {
         ("ZSH_CACHE_DIR", cache_root.as_path()),
     ];
 
+    // The first run starts the detached refresh. Let it finish, so its
+    // `.refresh.at` marker is on disk, before judging the second run; both
+    // runs racing the child would make the outcome depend on host load.
+    let kv_path = cache_file(&cache_root, "alpha");
     let output = run(&["prompt-segment", "--ttl", "1s"], &envs, &vars);
     assert_exit(&output, 0);
+    assert!(
+        wait_for_background_refresh_settled(&kv_path, "weekly_remaining=88", SETTLE_TIMEOUT),
+        "expected the first background refresh to finish"
+    );
+    let mut requests = server.take_requests();
+
+    // Make the cache stale again so the second run would refresh were it not
+    // for the minimum interval.
+    write_prompt_segment_cache_kv(&cache_root, "alpha", &stale_kv);
     let output = run(&["prompt-segment", "--ttl", "1s"], &envs, &vars);
     assert_exit(&output, 0);
 
+    // Negative window: a refresh that wrongly started would request within it.
+    // Load can only make this pass for the wrong reason, never fail.
     thread::sleep(Duration::from_secs(1));
-    let requests = server.take_requests();
+    requests.extend(server.take_requests());
     assert_eq!(
         requests.iter().filter(|r| r.path == "/wham/usage").count(),
         1
