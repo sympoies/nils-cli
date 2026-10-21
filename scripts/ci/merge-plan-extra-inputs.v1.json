@@ -9,7 +9,7 @@
     {
       "id": "semantic-commit-integration-binary",
       "paths": ["crates/semantic-commit/**"],
-      "packages": ["nils-semantic-commit", "nils-common", "nils-forge-cli"]
+      "packages": ["nils-semantic-commit", "nils-forge-cli"]
     },
     {
       "id": "forge-cli-semantic-commit-sibling",

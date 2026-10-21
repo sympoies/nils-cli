@@ -139,6 +139,31 @@ def plan_scope(plan, expected):
     return 'SCOPED', sorted(names), None
 
 
+def write_summary(path, scope, packages, fallback, plan):
+    """Append why this run is SCOPED or FULL; changed paths come from the PR, so keep them inert."""
+    names = {p['id']: p['name'] for p in (plan or {}).get('selected_packages', [])}
+    groups = {}
+    for reason in (plan or {}).get('reasons', []):
+        groups.setdefault(reason['code'], []).append(reason['path'] or names.get(reason['package_id'], ''))
+
+    def inert(text):
+        return re.sub(r'[^A-Za-z0-9._/@+=:-]', '?', text)
+
+    lines = [f'### CI validation scope: {scope}', '',
+             'Packages: ' + (', '.join(f'`{inert(name)}`' for name in packages) if packages
+                             else 'all (full validation)'),
+             f'Fallback: {inert(fallback or "none")}']
+    if groups:
+        lines += ['', '| Reason | Count | Examples |', '| --- | ---: | --- |']
+        for code, items in sorted(groups.items()):
+            distinct = list(dict.fromkeys(items))
+            more = f' (+{len(distinct) - 3} more)' if len(distinct) > 3 else ''
+            lines.append(f'| {inert(code)} | {len(items)} | '
+                         + ', '.join(f'`{inert(item)}`' for item in distinct[:3]) + more + ' |')
+    with open(path, 'a') as stream:
+        stream.write('\n'.join(lines) + '\n\n')
+
+
 def make_plan(repo, expected):
     try:
         source = subprocess.check_output(['git', '--no-replace-objects', '-C', str(repo),
@@ -212,6 +237,8 @@ def run(repo, event_name, event, candidate, output, bash='bash', plan_only=False
     print(f'CI snapshot base={expected["base"]} event_base={receipt["event_base"]} '
           f'head={expected["head"]} candidate={candidate}', flush=True)
     print(f'CI validation scope={scope} packages={",".join(packages)} fallback={fallback or "none"}', flush=True)
+    if os.environ.get('GITHUB_STEP_SUMMARY'):
+        write_summary(os.environ['GITHUB_STEP_SUMMARY'], scope, packages, fallback, plan)
     github_output = os.environ.get('GITHUB_OUTPUT')
     executor_env = dict(os.environ)
     executor_env.pop('GITHUB_OUTPUT', None)

@@ -33,8 +33,9 @@ Git replacement objects and external diff/text conversion are disabled.
 The launcher reads and executes `scripts/ci/lib/merge_plan.py` from **B**, not
 from H, M, or the working directory. That selector loads these files from B:
 
-- [Policy](../../scripts/ci/merge-plan-policy.v1.json): versioned escalation and
-  recognized documentation patterns.
+- [Policy](../../scripts/ci/merge-plan-policy.v1.json): versioned escalation,
+  audit-only paths, completion asset templates and recognized documentation
+  patterns.
 - [Extra-input registry](../../scripts/ci/merge-plan-extra-inputs.v1.json):
   versioned non-Cargo inputs and their workspace consumers.
 - [Output schema](../../scripts/ci/merge-plan.schema.v1.json): the v1 plan contract.
@@ -107,16 +108,30 @@ when it arose only from reverse-dependency closure.
 
 Selection order for each changed path is:
 
-1. Always-escalate patterns and Cargo custom-build target paths from either tree
-   take precedence over documentation and extra-input rules. The policy includes
-   manifests/lockfiles, toolchain/build inputs, shared crates and test support,
-   CI/configuration, release/scripts/completions, sensitive lifecycle/credential surfaces, and outward schemas in workspace or
-   crate `docs/specs/*.schema.json` contract locations. Test fixture schemas
-   remain owned by their crate.
-2. Map the path to its workspace owner in either tree.
-3. Apply **every** matching extra-input rule, including rules for paths already
+1. Cargo custom-build target paths from either tree escalate to FULL.
+2. A path listed in the policy's `audit_only` section (the file-size, docs-prose
+   and test-stale baselines) records `AUDIT_ONLY`, selects no package and does
+   not escalate: the scoped lane runs the audit that reads each baseline over
+   the whole workspace. A diff of only such paths selects nothing, so the
+   consumer runs FULL (`empty_selection`).
+3. A path matching a `completion_assets` template, such as
+   `completions/zsh/_{bin}` or `completions/bash/{bin}`, selects the one
+   candidate workspace package that has a binary target named `{bin}` and
+   records `COMPLETION_OWNER`. An unknown or ambiguous binary escalates as
+   `UNKNOWN_COMPLETION_OWNER`; a deleted owner has no binary in the candidate.
+   Any other `completions/**` path (adapters, alias files) falls through.
+4. Always-escalate patterns take precedence over documentation and extra-input
+   rules. The policy includes manifests/lockfiles, toolchain/build inputs,
+   shared crates and test support, CI/configuration, every other `scripts/**`
+   and `tests/**` path, remaining completions, sensitive lifecycle/credential
+   surfaces, and outward schemas in workspace or crate `docs/specs/*.schema.json`
+   contract locations. Test fixture schemas remain owned by their crate. Crates
+   with no workspace dependents, such as `nils-forge-cli` and
+   `nils-agent-session`, are ordinary owned crates.
+5. Map the path to its workspace owner in either tree.
+6. Apply **every** matching extra-input rule, including rules for paths already
    owned by a crate. Add each consumer and its transitive reverse dependencies.
-4. Recognized documentation with no owner or registry rule records a documentation
+7. Recognized documentation with no owner or registry rule records a documentation
    reason. Every other unknown path escalates to FULL.
 
 The registry uses case-sensitive `fnmatch` patterns over repository-relative
@@ -126,7 +141,9 @@ removed consumers escalate to FULL; malformed registry or policy versions HOLD.
 In-crate fixtures and generated/include files map to their owning crate by
 default; register additional consumers when Cargo does not represent the edge.
 The initial registry covers binary consumers, a shared identity fixture, and an
-included workspace runbook. The registry does not claim to discover arbitrary
+included workspace runbook. A rule selects a package to test, with its whole
+reverse closure, so it names only a package whose tests run the changed binary
+(`semantic-commit` selects `nils-forge-cli`, not `nils-common`). The registry does not claim to discover arbitrary
 runtime dependencies automatically.
 
 ## Output and failure contract
