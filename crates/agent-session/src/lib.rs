@@ -13793,7 +13793,7 @@ exit 97
     use std::thread;
     use std::time::{Duration, Instant};
 
-    fn test_context(state_dir: &Path) -> CliContext {
+    pub(crate) fn test_context(state_dir: &Path) -> CliContext {
         CliContext {
             state_dir: state_dir.to_path_buf(),
             host: None,
@@ -14163,7 +14163,7 @@ exit 97
         );
     }
 
-    fn create_test_record_id(
+    pub(crate) fn create_test_record_id(
         context: &CliContext,
         agent: AgentKind,
         title: Option<&str>,
@@ -14189,13 +14189,13 @@ exit 97
         .id
     }
 
-    struct TestProcessGroup {
+    pub(crate) struct TestProcessGroup {
         child: Option<Child>,
         process_group_id: libc::pid_t,
     }
 
     impl TestProcessGroup {
-        fn spawn() -> Self {
+        pub(crate) fn spawn() -> Self {
             let mut command = Command::new("sleep");
             command.arg("30");
             // SAFETY: this test-only child must own a dedicated process session.
@@ -14216,7 +14216,7 @@ exit 97
             }
         }
 
-        fn pid(&self) -> u32 {
+        pub(crate) fn pid(&self) -> u32 {
             self.child.as_ref().expect("live test child").id()
         }
 
