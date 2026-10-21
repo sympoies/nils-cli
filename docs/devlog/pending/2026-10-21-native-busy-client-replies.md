@@ -19,6 +19,7 @@
   terminal fixtures cover unknown preservation, duplicate suppression, distinct
   later input, drafts and runtime fences; they are not live provider
   acceptance.
+- The PR body lists the new test module under its test changes section.
 
 ### Links
 
