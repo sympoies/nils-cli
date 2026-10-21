@@ -1,9 +1,8 @@
 # Nextest configuration.
 #
-# JUnit report output is written to:
-#   target/nextest/<profile>/junit.xml
-# So with `--profile ci` this becomes:
-#   target/nextest/ci/junit.xml
+# Repository gates set store.dir through scripts/ci/gate-reports.py, so JUnit
+# output is <owner-report-dir>/nextest/<profile>/junit.xml, outside Cargo caches.
+# Raw nextest invocations retain nextest's default store location.
 
 [profile.ci]
 # Retry a test that fails then passes, instead of failing the whole run. The

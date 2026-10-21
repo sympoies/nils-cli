@@ -44,7 +44,7 @@ class RatchetTests(unittest.TestCase):
         (self.bin / 'cargo').rename(self.bin / 'cargo-base')
         cargo = self.bin / 'cargo'
         cargo.write_text('''#!/usr/bin/env python3
-import json, os, pathlib, subprocess, sys
+import json, os, pathlib, subprocess, sys, tomllib
 args = sys.argv[1:]
 if args[:2] == ['llvm-cov', 'report'] and '--exclude-from-report' in args:
     sys.stderr.write('--exclude-from-report is not supported for subcommand report\\n')
@@ -58,9 +58,16 @@ with open(os.environ['FAKE_CARGO_LOG'], 'a') as stream:
     stream.write(json.dumps({'kind': 'cargo', 'args': args, 'stage': stage,
         'revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
         'cwd': str(root), 'target': os.environ.get('CARGO_TARGET_DIR'),
+        'report_dir': os.environ.get('NILS_CLI_REPORT_DIR'),
+        'state_dir': os.environ.get('NEXTEST_STATE_DIR'),
         'identity_present': 'FORGE_IDENTITY_FIXTURE_MARKER' in os.environ}) + '\\n')
 if os.environ.get(stage + '_FAIL'):
     raise SystemExit(17)
+config = pathlib.Path(args[args.index('--tool-config-file') + 1].split(':', 1)[1])
+store = pathlib.Path(tomllib.loads(config.read_text(encoding='utf-8'))['store']['dir'])
+junit = store / 'ci/junit.xml'
+junit.parent.mkdir(parents=True, exist_ok=True)
+junit.write_text(f'<testsuites name="{stage}"/>')
 hit = int(os.environ.get(stage + '_HIT', '80'))
 found = int(os.environ.get(stage + '_FOUND', '100'))
 report = pathlib.Path(args[args.index('--output-path') + 1])
@@ -118,6 +125,15 @@ if '--fail-under-lines' in args and 100 * hit / found < float(args[args.index('-
             self.assertEqual([args[i + 1] for i, arg in enumerate(args) if arg == '--exclude-from-report'], ['unrelated', 'untouched'])
             self.assertFalse(row['identity_present'])
         self.assertNotEqual(calls[0]['target'], calls[1]['target'])
+        report_root = Path(self.env['NILS_CLI_REPORT_DIR'])
+        self.assertEqual([row['report_dir'] for row in calls],
+                         [str(report_root / 'baseline'), str(report_root)])
+        self.assertEqual([row['state_dir'] for row in calls],
+                         [str(report_root / 'baseline/history'), str(report_root / 'history')])
+        self.assertEqual((report_root / 'baseline/nextest/ci/junit.xml').read_text(),
+                         '<testsuites name="BASE"/>')
+        self.assertEqual((report_root / 'nextest/ci/junit.xml').read_text(),
+                         '<testsuites name="HEAD"/>')
         self.assertFalse(Path(calls[0]['cwd']).exists(), 'temporary baseline clone leaked')
         self.assertEqual(self.git('rev-parse', 'HEAD'), self.merge)
         self.assertEqual(self.git('show-ref'), self.refs)
@@ -151,10 +167,15 @@ if '--fail-under-lines' in args and 100 * hit / found < float(args[args.index('-
         self.assertNotEqual(result.returncode, 0, 'stale baseline evidence passed')
         self.assertEqual(self.receipt()['status'], 'FAIL')
 
-    def test_candidate_failure_is_not_a_ratchet_pass(self):
+    def test_early_candidate_failure_cannot_publish_baseline_junit(self):
         result, calls = self.coverage(HEAD_FAIL='1')
         self.assertEqual(result.returncode, 17, result.stderr)
         self.assertEqual([row['stage'] for row in calls], ['BASE', 'HEAD'])
+        report_root = Path(self.env['NILS_CLI_REPORT_DIR'])
+        self.assertFalse((report_root / 'nextest/ci/junit.xml').exists(),
+                         'baseline JUnit must never occupy the candidate publication path')
+        self.assertEqual((report_root / 'baseline/nextest/ci/junit.xml').read_text(),
+                         '<testsuites name="BASE"/>')
         self.assertEqual(self.receipt()['status'], 'FAIL')
 
     def test_fraction_comparison_rejects_decrease_hidden_by_display_rounding(self):

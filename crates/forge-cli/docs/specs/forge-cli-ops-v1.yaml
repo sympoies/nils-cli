@@ -783,6 +783,47 @@ operations:
         pending_reviews: list<{id, database_id?, url, author, state, commit_sha?, summary, summary_truncated}>
     notes: "all review pages are read (100 nodes/page, max 100 pages); provider-valid PENDING reviews have no submitted_at, may have no commit_sha, and are returned separately, never as convergence activity. Partial GraphQL data, missing required submitted-review fields, unknown states, head drift, or unsafe pagination return review_snapshot_incomplete. summary is bounded to 4096 UTF-8 bytes and is never parsed as a machine verdict; submitted commit_sha != head_sha is stale/informational."
 
+  - id: pr.review-get
+    schema_version: cli.forge-cli.pr.review-get.v1
+    summary: Read the complete bounded native review body selected by database ID.
+    inputs:
+      - { name: <id>, type: integer, required: true }
+      - { name: --review-id, type: integer, required: true }
+    validations:
+      - review_not_found
+      - review_snapshot_incomplete
+    dry_run:
+      offline: true
+      repo_resolution: "--repo owner/name or recognised forge remote"
+    backends:
+      github:
+        - { program: gh, argv: [pr, view, "{id}", --repo, "{repo}", --json, "<PR fields>"] }
+        - { program: gh, argv: [api, graphql, "--hostname <host when host != github.com>", -f, "query=<bound paginated review snapshot>"] }
+        - { program: gh, argv: [api, "--hostname <host when host != github.com>", "repos/{repo}/pulls/{id}/reviews/{review_id}"] }
+      gitlab: unsupported
+      local: unsupported
+    output:
+      data:
+        provider: enum<github>
+        repository: string
+        number: integer
+        pr_url: string
+        head_sha: string
+        viewer_login: string
+        id: string
+        database_id: integer
+        url: string
+        author: string
+        commit_sha: string|null
+        state: string
+        submitted_at: string|null
+        body: string
+        body_bytes: integer
+        body_truncated: boolean # always false on success
+        complete: boolean # always true on success
+        observed_at: string # UTC observation timestamp
+    notes: "Invoked by pr reviews <id> --review-id <database-id>. Reuses complete-report GET/binding verification and normal read-only provider transport; no arbitrary API, URL following or mutation. The 64 KiB UTF-8 body bound and backend capture limits remain enforced. Incomplete or changed readback fails rather than emitting a shortened success body. The default pr.reviews summary contract is unchanged."
+
   - id: pr.pending-review.inspect
     schema_version: cli.forge-cli.pr.pending-review.inspect.v1
     summary: Read one complete pending GitHub review and its immutable snapshot digest.
@@ -1659,6 +1700,26 @@ operations:
     output:
       data: { provider, host, repo, kind, state, limit, limited, items }
     notes: "Repository principal rules apply. States are kind-specific; all omits the filter. Bounded reads: Dependabot follows Link rel=next via decoded after cursors, never page=N; other alert kinds use numbered pages. Stop at the limit or exhausted pages; explicit metadata allowlist excludes secret values and code snippets."
+
+  - id: security.alerts.view
+    schema_version: cli.forge-cli.security.alerts.view.v1
+    summary: Read exact-ref and commit code-scanning alert evidence with optional analysis SARIF.
+    inputs:
+      - { name: number, type: positive-integer, required: true }
+      - { name: --kind, type: enum<code-scanning>, required: true }
+      - { name: --ref, type: string, required: true }
+      - { name: --commit, type: full-commit-sha, required: true }
+      - { name: --include-sarif, type: bool, default: false }
+    backends:
+      github:
+        program: gh
+        argv: [api, "{optional_hostname}", -X, GET, "repos/{repo}/code-scanning/alerts/{number}"]
+        env: { GH_HOST: "{resolved_authority}" }
+      gitlab: provider_unsupported
+      local: provider_unsupported
+    output:
+      data: { provider, host, repo, kind, reference, commit_sha, alert, instances, sarif_requested, sarif_scope, analyses }
+    notes: "Read-only repository principal binding applies to every request. Instances use GET alerts/{number}/instances with ref, per_page=100, page=N and exact local ref/commit filtering. Optional GET analyses uses the same pagination and exact ref/commit/configuration/tool matching (present string bindings, nonempty tool name and matching nonempty alert tool GUID; null alert GUID permits name fallback, tool versions need not match); GET analyses/{id} with Accept:application/sarif+json returns corresponding analysis-level SARIF including provider alert properties/codeFlows, potentially code snippets. No provider URLs are followed. Inventory bound is ten pages per endpoint. Each call uses a 30-second timeout and 8 MiB capture per stream; command limits are 32 requests, 120 seconds and 16 MiB cumulative evidence. Budget exhaustion is security_read_limit and capture overflow is backend_output_limit, without partial evidence. Incomplete reads and missing requested evidence are errors, never clearance. Dry-run previews the first GET only."
 
   - id: security.settings.view
     schema_version: cli.forge-cli.security.settings.view.v1
