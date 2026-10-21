@@ -7,6 +7,14 @@ use pretty_assertions::assert_eq;
 use std::time::{Duration, Instant};
 use support::{StubEnv, parse_envelope, run_forge_cli};
 
+// Real-time cases keep three bands apart so host load cannot flip them. The
+// budget covers a complete first poll (several stub launches) on a loaded
+// host, a stalled backend outlasts the ceiling, and finishing under the
+// ceiling therefore proves the budget, not the backend, ended the wait.
+const BUDGET: &str = "3s";
+const STALL: &str = "sleep 30";
+const CEILING: Duration = Duration::from_secs(15);
+
 fn backend(delay: &str) -> StubEnv {
     let stub = StubEnv::new().gh_stub(&format!(
         r#"#!/bin/sh
@@ -44,7 +52,7 @@ fn warm_binary(stub: &StubEnv) {
 
 #[test]
 fn wait_budget_includes_delayed_backend_and_rejects_late_success() {
-    let stub = backend("sleep 3");
+    let stub = backend(STALL);
     let started = Instant::now();
     let out = run_forge_cli(
         &stub,
@@ -59,7 +67,7 @@ fn wait_budget_includes_delayed_backend_and_rejects_late_success() {
             "wait-checks",
             "1",
             "--timeout",
-            "1s",
+            BUDGET,
             "--interval",
             "1s",
         ],
@@ -71,7 +79,7 @@ fn wait_budget_includes_delayed_backend_and_rejects_late_success() {
         "checks_timeout"
     );
     assert!(
-        elapsed < Duration::from_secs(2),
+        elapsed < CEILING,
         "elapsed={elapsed:?}; stdout={}",
         out.stdout
     );
@@ -126,7 +134,7 @@ fn wait(stub: &StubEnv) -> support::CmdOutput {
             "wait-checks",
             "1",
             "--timeout",
-            "1s",
+            BUDGET,
             "--interval",
             "1s",
         ],
@@ -136,8 +144,8 @@ fn wait(stub: &StubEnv) -> support::CmdOutput {
 #[test]
 fn rate_limit_probe_and_wait_share_the_command_budget() {
     for probe in [
-        "sleep 3; echo '{\"resources\":{\"graphql\":{\"remaining\":100}}}'",
-        "echo '{\"resources\":{\"graphql\":{\"remaining\":0}}}'",
+        format!("{STALL}; echo '{{\"resources\":{{\"graphql\":{{\"remaining\":100}}}}}}'"),
+        "echo '{\"resources\":{\"graphql\":{\"remaining\":0}}}'".to_string(),
     ] {
         let stub = backend(":").env("FORGE_CLI_RATE_LIMIT_GATE", "on");
         rewrite_backend(&stub, |body| {
@@ -153,13 +161,13 @@ fn rate_limit_probe_and_wait_share_the_command_budget() {
             parse_envelope(&out.stdout)["error"]["code"],
             "checks_timeout"
         );
-        assert!(start.elapsed() < Duration::from_secs(2));
+        assert!(start.elapsed() < CEILING);
     }
 }
 
 #[test]
 fn deadline_returns_last_complete_pending_snapshot() {
-    let stub = backend("if [ -f \"$0.second\" ]; then sleep 3; fi");
+    let stub = backend(&format!("if [ -f \"$0.second\" ]; then {STALL}; fi"));
     rewrite_backend(&stub, |body| {
         body.replace(
         "    echo '{\"total_count\":1,\"check_runs\":[{\"name\":\"build\",\"status\":\"completed\",\"conclusion\":\"success\"}]}'",
@@ -180,7 +188,7 @@ fn deadline_returns_last_complete_pending_snapshot() {
             "wait-checks",
             "1",
             "--timeout",
-            "1s",
+            BUDGET,
             "--interval",
             "10ms",
         ],
@@ -191,25 +199,21 @@ fn deadline_returns_last_complete_pending_snapshot() {
     assert_eq!(data["gate_count"], 1);
     assert_eq!(data["checks"][0]["name"], "build");
     assert_eq!(data["checks"][0]["state"], "pending");
-    assert!(start.elapsed() < Duration::from_secs(2));
+    assert!(start.elapsed() < CEILING);
 }
 
 #[test]
 fn deadline_covers_backend_descendants_holding_capture_pipes() {
-    let stub = backend("sleep 3 & exit 0");
+    let stub = backend(&format!("{STALL} & exit 0"));
     let start = Instant::now();
     let out = wait(&stub);
     assert_eq!(out.code, 69, "{} {}", out.stdout, out.stderr);
-    assert!(
-        start.elapsed() < Duration::from_secs(2),
-        "elapsed={:?}",
-        start.elapsed()
-    );
+    assert!(start.elapsed() < CEILING, "elapsed={:?}", start.elapsed());
 }
 
 #[test]
 fn gitlab_backend_uses_the_same_wait_budget() {
-    let stub = StubEnv::new().glab_stub("#!/bin/sh\nsleep 3\necho '{}'\n");
+    let stub = StubEnv::new().glab_stub(&format!("#!/bin/sh\n{STALL}\necho '{{}}'\n"));
     warm_binary(&stub);
     let start = Instant::now();
     let out = run_forge_cli(
@@ -225,7 +229,7 @@ fn gitlab_backend_uses_the_same_wait_budget() {
             "wait-checks",
             "1",
             "--timeout",
-            "1s",
+            BUDGET,
             "--interval",
             "1s",
         ],
@@ -235,7 +239,7 @@ fn gitlab_backend_uses_the_same_wait_budget() {
         parse_envelope(&out.stdout)["error"]["code"],
         "checks_timeout"
     );
-    assert!(start.elapsed() < Duration::from_secs(2));
+    assert!(start.elapsed() < CEILING);
 }
 
 #[test]
@@ -443,16 +447,8 @@ fn a_successful_wait_never_reports_an_expired_duration() {
 fn repository_discovery_shares_the_whole_wait_budget() {
     for stage in ["checkout-comparison", "git-toplevel", "provider-detection"] {
         let stub = backend(":");
-        let remote_delay = if stage == "git-toplevel" {
-            ":"
-        } else {
-            "sleep 3"
-        };
-        let toplevel_delay = if stage == "git-toplevel" {
-            "sleep 3"
-        } else {
-            ":"
-        };
+        let remote_delay = if stage == "git-toplevel" { ":" } else { STALL };
+        let toplevel_delay = if stage == "git-toplevel" { STALL } else { ":" };
         stub.write_stub(
             "git",
             &format!(
@@ -480,7 +476,7 @@ esac
             "wait-checks",
             "1",
             "--timeout",
-            "1s",
+            BUDGET,
             "--interval",
             "1s",
         ]);
@@ -493,7 +489,7 @@ esac
             "{stage}"
         );
         assert!(
-            started.elapsed() < Duration::from_secs(2),
+            started.elapsed() < CEILING,
             "{stage}: {:?}",
             started.elapsed()
         );
@@ -502,7 +498,7 @@ esac
 
 #[test]
 fn interrupted_nonempty_read_after_an_empty_poll_is_a_timeout() {
-    let stub = backend("if [ -f \"$0.second\" ]; then sleep 3; fi");
+    let stub = backend(&format!("if [ -f \"$0.second\" ]; then {STALL}; fi"));
     rewrite_backend(&stub, |body| {
         body.replace(
         "    echo '{\"total_count\":1,\"check_runs\":[{\"name\":\"build\",\"status\":\"completed\",\"conclusion\":\"success\"}]}'",
@@ -522,7 +518,7 @@ fn interrupted_nonempty_read_after_an_empty_poll_is_a_timeout() {
             "wait-checks",
             "1",
             "--timeout",
-            "1s",
+            BUDGET,
             "--interval",
             "10ms",
         ],

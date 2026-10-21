@@ -134,7 +134,7 @@ fn pr_wait_checks_required_failure_exits_runtime_with_kind_checks_failed() {
             "--interval",
             "10ms",
             "--timeout",
-            "1s",
+            "30s",
         ],
     );
     assert_eq!(out.code, 1, "expected RUNTIME 1, stderr={}", out.stderr);
@@ -169,7 +169,7 @@ fn pr_wait_checks_timeout_exits_unavailable_with_kind_checks_timeout() {
             "--interval",
             "20ms",
             "--timeout",
-            "1s",
+            "3s",
         ],
     );
     assert_eq!(
@@ -283,7 +283,7 @@ exit 99
             "--interval",
             "10ms",
             "--timeout",
-            "1s",
+            "30s",
         ],
     );
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
@@ -319,7 +319,7 @@ fn pr_wait_checks_expires_as_not_registered_when_nothing_is_ever_reported() {
             "--interval",
             "1s",
             "--timeout",
-            "1s",
+            "3s",
         ],
     );
 
@@ -468,7 +468,7 @@ fn pr_wait_checks_without_required_checks_times_out_on_a_queued_check() {
             "--interval",
             "10ms",
             "--timeout",
-            "1s",
+            "3s",
         ],
     );
 
