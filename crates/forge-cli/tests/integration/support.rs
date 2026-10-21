@@ -142,6 +142,9 @@ pub fn run_forge_cli_in_with_env(
     extra_env: &[(&str, &str)],
 ) -> CmdOutput {
     let mut cmd = Command::new(forge_cli_bin());
+    // Hermetic base: a cleared environment and per-run homes, so the developer's
+    // home, cache, and git config never reach the binary. The overrides below win.
+    let _home = nils_test_support::hermetic::isolate(&mut cmd);
     cmd.args(args);
     for key in SCRUBBED_ENV {
         cmd.env_remove(key);
@@ -177,6 +180,7 @@ pub fn run_forge_cli_in_with_env(
 /// Run `forge-cli` with controlled stdin.
 pub fn run_forge_cli_with_stdin(stub: &StubEnv, args: &[&str], stdin: &str) -> CmdOutput {
     let mut cmd = Command::new(forge_cli_bin());
+    let _home = nils_test_support::hermetic::isolate(&mut cmd);
     cmd.args(args);
     for key in SCRUBBED_ENV {
         cmd.env_remove(key);

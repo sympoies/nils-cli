@@ -95,6 +95,8 @@ printf '%s' "$GH_TOKEN" >&2
         fn bare_command(&self) -> Command {
             let mut c = Command::new(resolve("forge-cli"));
             c.args(["--format", "json"])
+                .env("HOME", self.home.path())
+                .env("XDG_CACHE_HOME", self.home.path().join("cache"))
                 .env("XDG_CONFIG_HOME", self.home.path())
                 .env("XDG_STATE_HOME", self.home.path().join("state"))
                 .env("FORGE_IDENTITY_PRINCIPAL", "contributor")
@@ -1385,6 +1387,7 @@ mod session_binding_tests {
         fn command(&self, role: Option<&str>, session: &str) -> Command {
             let mut cmd = Command::new(resolve("forge-cli"));
             cmd.current_dir(self.home.path()).args(["--format","json","--provider","github","--host","github.com","--repo","sandbox/widget"])
+                .env("HOME",self.home.path()).env("XDG_CACHE_HOME",self.home.path().join("cache"))
                 .env("XDG_CONFIG_HOME",self.home.path()).env("XDG_STATE_HOME",self.home.path().join("state"))
                 .env("FORGE_IDENTITY_AGENT_SESSION_BIN",&self.broker)
                 .env("FORGE_CLI_GH_BIN",self.home.path().join("gh"))
