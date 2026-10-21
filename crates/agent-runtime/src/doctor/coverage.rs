@@ -388,6 +388,12 @@ fn probe_cli_tool(key: &str, command: &str, brew_formula: &str) -> CoverageFindi
 }
 
 fn brew_reports_outdated(formula: &str) -> bool {
+    // Unit tests must not run the host's real Homebrew (network and cache writes)
+    // through an inherited PATH; a test that stubs brew sets its own PATH.
+    #[cfg(test)]
+    if nils_test_support::hermetic::is_ambient("PATH") {
+        return false;
+    }
     if find_in_path("brew").is_none() {
         return false;
     }

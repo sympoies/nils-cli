@@ -29,6 +29,19 @@ impl Layout {
 }
 
 pub fn agent_session_state_root() -> Result<PathBuf, HookError> {
+    // Unit tests that emit observations without choosing a state root must not
+    // write into the caller's real state directory. Recording is best-effort, so
+    // an unavailable root only skips the record; a test that sets a root keeps it.
+    #[cfg(test)]
+    if ["AGENT_SESSION_STATE_DIR", "XDG_STATE_HOME", "HOME"]
+        .iter()
+        .all(|name| nils_test_support::hermetic::is_ambient(name))
+    {
+        return Err(HookError::data(
+            "state-root-unavailable",
+            "unit test has no isolated state root",
+        ));
+    }
     if let Some(value) = non_empty("AGENT_SESSION_STATE_DIR") {
         return absolute("AGENT_SESSION_STATE_DIR", PathBuf::from(value));
     }
