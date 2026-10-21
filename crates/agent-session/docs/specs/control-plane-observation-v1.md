@@ -142,6 +142,10 @@ filtering or an incorrect address. A logging failure cannot change the refusal.
   `/proc/<pid>/exe`. Checking an installation symlink is insufficient: an upgrade
   can leave the symlink correct while a live process references a deleted inode.
   Platforms without procfs report `unknown` rather than guessing.
+- `runtime.launch_executable`: the rule that chose the `agent-session` path new
+  session wrappers embed: `invocation`, `package-opt`, `package-bin`, or
+  `versioned-keg` (no stable path exists, so an upgrade deletes it) or
+  `unavailable`. The last two degrade `health`.
 - `runtime.release_skew`: live broker records whose published release crosses a
   minor or major generation from this binary, each with a bounded
   `recovery_action`. A broker that published no release is compatibility state,
