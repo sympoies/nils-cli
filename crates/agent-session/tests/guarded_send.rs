@@ -15,6 +15,8 @@ use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
+const TMUX_FAST_PATH: &str = include_str!("guarded_send/tmux-fast-path.sh");
+
 struct Fixture {
     temp: tempfile::TempDir,
 }
@@ -239,9 +241,13 @@ elif command == 'capture-pane':
         shown = occupied + padding if text else ('\x1b[2mAsk Codex to do anything\x1b[22m' if '-e' in args else 'Ask Codex to do anything')
         print('› ' + shown + '\n' + rows + '\n  ' + footer)
 "#;
-        let tmux = temp.path().join("tmux");
-        fs::write(&tmux, script).unwrap();
-        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o755)).unwrap();
+        // The model is a Python process per call; its shell fast path answers
+        // the repeated default-state identity probes without starting Python.
+        for (name, body) in [("tmux-model", script), ("tmux", TMUX_FAST_PATH)] {
+            let path = temp.path().join(name);
+            fs::write(&path, body).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
         let fixture = Self { temp };
         fixture.idle();
         fixture

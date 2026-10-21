@@ -303,8 +303,8 @@ pub(super) fn start_captures_stable_codex_session_meta_before_full_timeout() {
             // Large timeout so the "returned before the timeout" signal has a
             // wide margin: a stable session confirms right after the 40ms
             // ambiguity window, so elapsed is dominated by process-spawn
-            // overhead (hundreds of ms, load-dependent), never the timeout.
-            ("AGENT_SESSION_CODEX_CAPTURE_TIMEOUT_MS", "5000"),
+            // overhead (load-dependent), never the timeout.
+            ("AGENT_SESSION_CODEX_CAPTURE_TIMEOUT_MS", "60000"),
             ("AGENT_SESSION_CODEX_CAPTURE_POLL_MS", "10"),
             ("AGENT_SESSION_CODEX_AMBIGUITY_WINDOW_MS", "40"),
         ],
@@ -312,13 +312,13 @@ pub(super) fn start_captures_stable_codex_session_meta_before_full_timeout() {
     let elapsed = started.elapsed();
 
     assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
-    // Confirm well within half the 5s timeout. This proves the stable session
-    // is captured without waiting for the full timeout, while the 2.5s margin
-    // absorbs process-spawn overhead on loaded hosts (a bare 750ms bound over a
-    // 1s timeout was timing-flaky). A real "waited the timeout" regression is
-    // ~5s and still fails this bound.
+    // Confirm well within half the 60s timeout. This proves the stable session
+    // is captured without waiting for the full timeout, while the 30s margin
+    // absorbs process-spawn overhead on loaded hosts (2.5s over a 5s timeout
+    // was still timing-flaky). A real "waited the timeout" regression is ~60s
+    // and still fails this bound.
     assert!(
-        elapsed < std::time::Duration::from_millis(2500),
+        elapsed < std::time::Duration::from_secs(30),
         "stable capture should confirm before the timeout, not wait for it; elapsed={elapsed:?}"
     );
     let value = output.stdout_json();

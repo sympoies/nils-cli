@@ -115,5 +115,15 @@ filter = 'package(nils-agent-session) & test(=activity::tests::replay_journal::t
 slow-timeout = { period = "30s", terminate-after = 4 }
 retries = 0
 
+# The idle-waiter test samples the child's CPU ticks against a wall-clock
+# window, so it must not run beside another CPU sampler. The test waits for
+# the child to go quiet first; the group names the class for later samplers.
+[test-groups.cpu-sampling]
+max-threads = 1
+
+[[profile.ci.overrides]]
+filter = 'package(nils-agent-session) & test(=mailbox_any_unread::any_unread_wait_idle_cpu_is_bounded)'
+test-group = "cpu-sampling"
+
 [profile.ci.junit]
 path = "junit.xml"
