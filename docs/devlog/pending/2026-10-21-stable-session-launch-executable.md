@@ -22,6 +22,9 @@
 
 - Focused `stable_executable`, `diagnose` and held-launch wrapper tests; the
   wrapper test upgrades mid-run and asserts `broker stop` ran the new release.
+- The resolver tests moved with the code into `stable_executable_tests.rs`; the
+  PR body Test changes section lists them together with the new stable-link
+  cases.
 
 ### Links
 
