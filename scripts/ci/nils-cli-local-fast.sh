@@ -590,6 +590,23 @@ fi
 test_runner="$(select_test_runner)"
 echo "LOCAL_FAST_TEST_RUNNER=$test_runner"
 
+# Lanes sharing one cargo target directory can replace the executables under
+# test mid-run (#2697). Record them once built; fail clearly if they change.
+target_guard_snapshot_file="$(mktemp)"
+trap 'rm -f "$target_guard_snapshot_file"' EXIT
+
+target_guard_snapshot() {
+  # shellcheck source=scripts/ci/lib/cargo-target-dir.sh
+  source "$repo_root/scripts/ci/lib/cargo-target-dir.sh"
+  run python3 scripts/ci/lib/target_guard.py snapshot \
+    --target-dir "$(resolve_cargo_target_dir "$repo_root")" \
+    --out "$target_guard_snapshot_file"
+}
+
+target_guard_verify() {
+  run python3 scripts/ci/lib/target_guard.py verify "$target_guard_snapshot_file"
+}
+
 run cargo fmt --all -- --check
 
 if [[ "$mode" == "workspace" ]]; then
@@ -600,6 +617,7 @@ if [[ "$mode" == "workspace" ]]; then
     # leaks whose cleanup *did* run (a late background write that re-creates the
     # tree, or a lock placed beside the fixture instead of inside it).
     run_test cargo nextest run --profile ci --workspace --no-run
+    target_guard_snapshot
     # git-cli-test-worker.<euid> is a deliberate per-user cache of private worker
     # binaries: a fixed name, contents keyed by source digest, reused across runs
     # so concurrent readers see a stable inode. Bounded, so it is not a leak.
@@ -607,8 +625,11 @@ if [[ "$mode" == "workspace" ]]; then
       -- --profile ci --workspace
     run_test cargo test --workspace --doc
   else
+    run cargo test --workspace --no-run
+    target_guard_snapshot
     run_test cargo test --workspace
   fi
+  target_guard_verify
   echo "ok: local-fast workspace Rust gate passed"
   exit 0
 fi
@@ -627,6 +648,18 @@ for package in "${packages[@]}" "${siblings[@]}"; do
 done
 run cargo build "${package_args[@]}" --bins
 
+# Build every selected package's test executables too, so the guard covers them.
+declare -a selected_args=()
+for package in "${packages[@]}"; do
+  selected_args+=(-p "$package")
+done
+if [[ "$test_runner" == "nextest" ]]; then
+  run_test cargo nextest run --profile ci "${selected_args[@]}" --no-run
+else
+  run cargo test "${selected_args[@]}" --no-run
+fi
+target_guard_snapshot
+
 for package in "${packages[@]}"; do
   if [[ "$test_runner" == "nextest" ]]; then
     run_test cargo nextest run --profile ci -p "$package"
@@ -637,5 +670,7 @@ for package in "${packages[@]}"; do
     run_test cargo test -p "$package"
   fi
 done
+
+target_guard_verify
 
 echo "ok: local-fast package checks passed (${#packages[@]} package(s))"
