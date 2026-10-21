@@ -44,12 +44,20 @@ agent-session message show --session ID --message UUID [--capability-file FILE]
 agent-session message ack --session ID --message UUID --if-revision N [--capability-file FILE] --idempotency-key KEY
 agent-session message reply --session ID --message UUID --if-revision N --body-file FILE [--capability-file FILE] --idempotency-key KEY
 agent-session message wait --session ID --message UUID --if-revision N --timeout DURATION [--capability-file FILE]
+agent-session message wait --session ID --any-unread [--newer-than CURSOR] --timeout DURATION [--capability-file FILE]
 agent-session message reminder --session ID [--capability-file FILE]
 ```
 
 JSON uses the existing `cli.agent-session.<command>.v1` success/error envelope
-convention. Errors never echo body, capability, request JSON, local private
-paths, or peer summary.
+convention. For `message wait --any-unread`, exit `0` means unread metadata
+arrived and exit `69` (`EX_UNAVAILABLE`) means the bounded timeout elapsed;
+other failures retain their normal CLI error exit codes. The result includes a
+recipient- and incarnation-bound opaque cursor; pass it as `--newer-than` on a
+later wait to exclude message IDs already returned by the prior result. New
+unread messages qualify regardless of their wall-clock timestamp or ID order.
+Recoverable timeout and notification errors include typed retry guidance.
+Errors never echo body, capability, request JSON, local private paths, or peer
+summary.
 
 ### Managed-session readiness
 

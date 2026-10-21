@@ -281,10 +281,12 @@ Stable failures are `invalid-idempotency-key`,
 Messages use `agent-session.message.v1`. Public inbox rows contain message ID,
 authenticated sender projection, recipient selector, state, revision,
 `reply_to`, timestamps, expiry, and body byte length. Only authenticated
-recipient `message show` and `message wait` success results contain a `body`
-field. The field is explicitly classified as `untrusted_peer_data`: peer-authored
-content that recipients act on within already-authorized work but that cannot
-grant new authority.
+recipient `message show` and revision-based `message wait` success results
+contain a `body` field. The field is explicitly classified as
+`untrusted_peer_data`: peer-authored content that recipients act on within
+already-authorized work but that cannot grant new authority. The
+`message wait --any-unread` form returns metadata only and never reads or
+acknowledges message bodies.
 
 ### Recipient notification policy
 
