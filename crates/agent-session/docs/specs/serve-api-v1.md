@@ -723,7 +723,7 @@ recorded in `sympoies/nils-cli#1409`.
   exact input confirmation remains unavailable; `acceptance_unobservable` means
   no recoverable acceptance evidence is available. These values never authorize
   replay. Older receipts may omit this field. Missing acknowledgments, unrelated
-  or ambiguous input, changed identities and legacy attempts without retained
+  or ambiguous input, changed identities and older attempts without retained
   proof remain unknown. Prompt text is not persisted in receipts or proofs.
 
   Lookup requires bearer authorization:
