@@ -91,7 +91,8 @@ impl Stubs {
             );
             for (verb, kind) in kinds {
                 script.push_str(&format!(
-                    "  {verb}) body=$(cat '{out}'); [ -f '{delay}' ] && sleep \"$(cat '{delay}')\"; printf '%s' \"$body\"; exit \"$(cat '{code}')\" ;;\n",
+                    "  {verb}) body=$(cat '{out}'); while [ -f '{hold}' ]; do sleep 0.02; done; [ -f '{delay}' ] && sleep \"$(cat '{delay}')\"; printf '%s' \"$body\"; exit \"$(cat '{code}')\" ;;\n",
+                    hold = stubs.dir.join(format!("{kind}.hold")).display(),
                     delay = stubs.dir.join(format!("{kind}.delay")).display(),
                     out = stubs.dir.join(format!("{kind}.out")).display(),
                     code = stubs.dir.join(format!("{kind}.exit")).display(),
@@ -663,16 +664,25 @@ fn usage_v1_forced_refresh_waits_for_a_run_that_starts_after_the_request() {
     );
     serve.usage("/usage/v1");
 
-    // A background refresh starts with the old answer and is still running
-    // when the answer changes and a forced read arrives.
-    fs::write(stubs.dir.join("codex-diag.delay"), "1").expect("delay");
+    // A background refresh starts with the old answer and stays running, held
+    // by the stub, while the answer changes and a forced read arrives.
+    let hold = stubs.dir.join("codex-diag.hold");
+    fs::write(&hold, "").expect("hold");
     stubs.answer("codex-diag", &diag_with_alpha_credits(5), 0);
+    // The cache goes stale only after the one-second refresh interval.
     thread::sleep(Duration::from_millis(1100));
     serve.usage("/usage/v1");
     stubs.wait_for_calls("codex-cli", "diag", 2);
     stubs.answer("codex-diag", &diag_with_alpha_credits(1), 0);
 
-    let forced = serve.usage("/usage/v1?refresh=1");
+    let forced = thread::scope(|scope| {
+        let forced = scope.spawn(|| serve.usage("/usage/v1?refresh=1"));
+        // The forced read cannot finish while the held run is in flight; give
+        // the request time to arrive before releasing that run.
+        thread::sleep(Duration::from_millis(300));
+        fs::remove_file(&hold).expect("release hold");
+        forced.join().expect("forced read")
+    });
     assert_eq!(alpha_credits(&forced), 1, "{forced}");
     assert_eq!(forced["data"]["usage"]["providers"][0]["stale"], false);
     assert_eq!(stubs.calls("codex-cli", "diag").len(), 3);
@@ -688,9 +698,11 @@ fn usage_v1_serves_the_last_good_snapshot_while_a_stale_cache_refreshes() {
     );
     serve.usage("/usage/v1");
 
-    // The next refresh is slow and then fails outright.
-    fs::write(stubs.dir.join("codex-diag.delay"), "1").expect("delay");
+    // The next refresh is held by the stub and then fails outright.
+    let hold = stubs.dir.join("codex-diag.hold");
+    fs::write(&hold, "").expect("hold");
     stubs.answer("codex-diag", &json!({}), 1);
+    // The cache goes stale only after the one-second refresh interval.
     thread::sleep(Duration::from_millis(1100));
 
     let refreshing = serve.usage("/usage/v1");
@@ -705,6 +717,7 @@ fn usage_v1_serves_the_last_good_snapshot_while_a_stale_cache_refreshes() {
     // An account that already failed keeps its own failure unchanged.
     assert_eq!(refreshing["data"]["usage"]["providers"][1]["stale"], false);
 
+    fs::remove_file(&hold).expect("release hold");
     stubs.wait_for_calls("codex-cli", "diag", 2);
     let deadline = Instant::now() + Duration::from_secs(10);
     let backoff = loop {
