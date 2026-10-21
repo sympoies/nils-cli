@@ -27,7 +27,12 @@ uses full Linux; invalid checkout/event bindings fail before validation.
 Workspace manifests, CI, shared infrastructure and sensitive paths can
 intentionally select FULL. Crates with no workspace dependents, generated
 completion assets of a known binary, and the three audit baseline files stay
-scoped; each run's job summary lists the scope, packages and reasons. Docs-only PRs run substantive documentation audits.
+scoped; each run's job summary lists the scope, packages and reasons.
+
+A canonical release version bump takes the reduced release-only lane (version
+lockstep, third-party artifacts, publish order and a locked `cargo check`, no
+test suites) without waiting for a base-commit receipt; any other dependency
+change stays on the planner. The release workflow still validates the tag in full. Docs-only PRs run substantive documentation audits.
 The merge queue still invokes the planner for docs and release changes.
 See the [scope consumption contract](../docs/specs/affected-scope-ci-consumption-v1.md).
 
@@ -116,7 +121,7 @@ publishing a conflicting release. Never bypass a failed validation gate.
 
 | Job | Limit |
 | --- | --- |
-| Change detection and legacy exact-base CI proof | 60 minutes; base receipt wait at most 45 minutes |
+| Change detection | 60 minutes |
 | Linux validation | 50 minutes |
 | Linux containment | 25 minutes |
 | Dependency policy | 15 minutes |
