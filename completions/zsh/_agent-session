@@ -769,7 +769,7 @@ _arguments "${_arguments_options[@]}" : \
         case $line[1] in
             (mint)
 _arguments "${_arguments_options[@]}" : \
-'--session=[]:SESSION:_default' \
+'--session=[Caller session that issues and owns the delegation]:SESSION:_default' \
 '--capability-file=[Caller'\''s runtime credential; defaults to AGENT_SESSION_CAPABILITY_FILE]:CAPABILITY_FILE:_files' \
 '*--operation=[Exact allowed operation (repeatable)]:OPERATIONS:(start-via-console message-send)' \
 '*--recipient=[Exact MACHINE/SESSION_ID permitted for message-send (repeatable)]:RECIPIENTS:_default' \
@@ -784,7 +784,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (revoke)
 _arguments "${_arguments_options[@]}" : \
-'--session=[]:SESSION:_default' \
+'--session=[Caller session that owns the delegation]:SESSION:_default' \
 '--id=[]:ID:_default' \
 '--capability-file=[]:CAPABILITY_FILE:_files' \
 '--format=[]:FORMAT:((text\:"Human-readable text output (default)"

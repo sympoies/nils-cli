@@ -38,6 +38,7 @@ pub enum Command {
 }
 #[derive(Debug, ClapArgs)]
 pub struct Mint {
+    /// Caller session that issues and owns the delegation.
     #[arg(long)]
     pub session: String,
     /// Caller's runtime credential; defaults to AGENT_SESSION_CAPABILITY_FILE.
@@ -57,6 +58,7 @@ pub struct Mint {
 }
 #[derive(Debug, ClapArgs)]
 pub struct Revoke {
+    /// Caller session that owns the delegation.
     #[arg(long)]
     pub session: String,
     #[arg(long)]
