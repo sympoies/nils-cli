@@ -1905,3 +1905,57 @@ fn safe_removal_unknown_session_schema_warns() {
             .is_empty()
     );
 }
+
+#[test]
+fn worktree_remove_absolute_path_resolves_owning_repo_from_another_checkout() {
+    let fixture = RemovalFixture::new();
+    let caller = init_repo();
+    let owner_root = fs::canonicalize(fixture.repo.path()).unwrap();
+
+    let result = fixture.remove_from(caller.path(), &fixture.target);
+
+    assert_eq!(
+        result.code,
+        0,
+        "{} {}",
+        result.stdout_text(),
+        result.stderr_text()
+    );
+    let receipt = parse_json(&result);
+    assert_eq!(receipt["data"]["removed_path"], fixture.target);
+    assert_eq!(receipt["data"]["repo_root"], owner_root.to_str().unwrap());
+    assert!(!Path::new(&fixture.target).exists());
+    assert!(!git(&owner_root, &["worktree", "list", "--porcelain"]).contains(&fixture.target));
+}
+
+#[test]
+fn worktree_remove_absolute_path_from_another_checkout_keeps_owner_refusals() {
+    let fixture = RemovalFixture::new();
+    let caller = init_repo();
+    let outside = tempfile::TempDir::new().unwrap();
+    let unmanaged = outside.path().join("external");
+    git(
+        fixture.repo.path(),
+        &[
+            "worktree",
+            "add",
+            unmanaged.to_str().unwrap(),
+            "-b",
+            "external",
+        ],
+    );
+
+    let primary = fixture.remove_from(caller.path(), fixture.repo.path().to_str().unwrap());
+    assert_eq!(
+        parse_json(&primary)["error"]["code"],
+        "refuse-primary-worktree"
+    );
+
+    let external = fixture.remove_from(caller.path(), unmanaged.to_str().unwrap());
+    assert_eq!(parse_json(&external)["error"]["code"], "removal-unmanaged");
+    assert!(unmanaged.exists());
+
+    let missing = fixture.remove_from(caller.path(), "/nonexistent/worktree");
+    assert_eq!(parse_json(&missing)["error"]["code"], "worktree-not-found");
+    assert!(Path::new(&fixture.target).exists());
+}

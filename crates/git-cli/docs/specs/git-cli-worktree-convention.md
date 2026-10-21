@@ -45,6 +45,16 @@ It runs `git worktree remove --force` and prunes metadata from the primary
 checkout. Removing the caller's current worktree leaves its parent shell in a
 deleted directory; change to an existing directory afterwards.
 
+When the target is an absolute path inside a linked worktree, `remove` resolves
+the owning repository (the first entry of `git worktree list` run in that
+path) instead of the caller's current directory. A session rooted in one
+repository can therefore remove a finished managed worktree of another
+repository. The managed-root, primary, dirty/unpushed, live-holder, and lease
+checks run unchanged against the resolved repository. An absolute path that is
+not inside any git worktree falls back to the caller's repository and is
+refused as `worktree-not-found`. Worktrees under a previous managed root
+(#2578) and conditional eligibility (#2362) are not changed.
+
 Positive evidence retains the target with exit 65 and structured details:
 
 | Code | Evidence |
@@ -106,7 +116,8 @@ reason details that do not copy arbitrary subprocess diagnostics.
 Invalid cap configuration uses the default;
 invalid retention keeps backups with a warning. No expiry runs inside removal.
 
-The JSON removal receipt includes `removed_path`, `removed_branch`,
+The JSON removal receipt includes `repo_root` (the resolved owning
+repository), `removed_path`, `removed_branch`,
 `removed_head`, `pruned`, `backup_ref` (or null), `backup_reasons`,
 `backup_retention`, `backup_bytes`, `backup_max_bytes`, `backup_omitted_bytes`,
 `backup_omissions` (path/bytes), `warnings`, and informational `delivered`.
