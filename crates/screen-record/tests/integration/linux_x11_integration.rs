@@ -122,7 +122,10 @@ printf "stub" > "$out"
         let stubs = StubBinDir::new();
         write_ffmpeg_stub(&stubs);
 
+        // The test connects to the host's X server above, so the child must reach
+        // the same display; every other variable stays hermetic.
         let options_base = CmdOptions::new()
+            .with_env_passthrough(&["DISPLAY", "XAUTHORITY"])
             .with_env_remove("AGENTS_SCREEN_RECORD_TEST_MODE")
             .with_path_prepend(stubs.path());
 
