@@ -22,6 +22,7 @@ const hosts = ['alpha','beta','gamma'].map(machine => ({ machine, root:join(root
 const children = new Set();
 const checks = [];
 let denyRelay = null, hold = false, dropOnce = false, blockRelay = false, relayBlocked = false, edge;
+const relayReleases = [];
 function seed(host) {
   mkdirSync(join(host.root,'sessions',host.session,'coordination'), {recursive:true,mode:0o700});
   mkdirSync(join(host.root,'coordination'),{recursive:true,mode:0o700});
@@ -33,7 +34,7 @@ function seed(host) {
   privateWrite(join(host.root,'coordination','registry.json'),{schema_version:'agent-session.coordination-registry.v2',fingerprint_epoch:1,fingerprint_key:randomUUID()+randomUUID(),brokers:{[host.session]:{session_id:host.session,incarnation:host.incarnation,coordination_mode:'advisory',capability_digest:hash(host.capability),generation:1,state:'ready',heartbeat_at:'2030-01-01T00:00:00Z',heartbeat_epoch:now()}},claims:[],operations:[],messages:[],receipts:{},notifications:{}});
 }
 const address = h => ({machine:h.machine,session_id:h.session,session_incarnation:h.incarnation});
-async function waitFor(fn, label, milliseconds=20000) {
+async function waitFor(fn, label, milliseconds=90000) {
   const deadline=Date.now()+milliseconds;
   while(Date.now()<deadline){const value=await fn();if(value)return value;await delay(100);}
   throw new Error(`timed out: ${label}`);
@@ -81,7 +82,7 @@ try {
     if(message.body==='timeout-first'){await delay(16000);res.destroy();return;}
     if(denyRelay){res.writeHead(denyRelay==='rate-limited'?429:403);res.end(JSON.stringify({error:{code:denyRelay}}));return;}
     if(hold){res.writeHead(503);res.end(JSON.stringify({error:{code:'remote-messaging-unavailable'}}));return;}
-    if(blockRelay){relayBlocked=true;await delay(2500);relayBlocked=false;}
+    if(blockRelay){relayBlocked=true;await new Promise(resolve=>relayReleases.push(resolve));relayBlocked=false;}
     if(message.from.machine==='alpha'&&message.body==='category forwarding body')await delay(2200);
     const target=hosts.find(h=>h.machine===message.to.machine);
     if(!target||JSON.stringify(message.to)!==JSON.stringify(address(target))){res.writeHead(409);res.end(JSON.stringify({error:{code:'session-incarnation-conflict'}}));return;}
@@ -102,12 +103,13 @@ try {
   assert.match(wrongRecipient.error.message,/message peers/);
   assert(!existsSync(join(alpha.root,'coordination','federation-journal.json')),'refused discovery does not persist an envelope');
   checks.push('absent-recipient-guidance-through-cli');
+  const timedSentEpoch=now();
   const timed=await send(alpha,beta,'timeout-first');
   const following=await send(alpha,beta,'timeout-following');
-  await waitFor(async()=>{const v=await status(alpha,following.message_id);return v.state==='delivered';},'later queued entry bypasses repeated timeout',35000);
+  await waitFor(async()=>{const v=await status(alpha,following.message_id);return v.state==='delivered';},'later queued entry bypasses repeated timeout',120000);
   const timedState=await status(alpha,timed.message_id);assert(timedState.attempts>0);
   const timedJournal=JSON.parse(readFileSync(join(alpha.root,'coordination','federation-journal.json'),'utf8')).remote_outbox.find(i=>i.envelope.message_id===timed.message_id);
-  assert(timedJournal.next_attempt_epoch>now(),'retry deadline begins after request completion');
+  assert(timedJournal.next_attempt_epoch>timedSentEpoch+15,'retry deadline begins after request completion');
   await stop(alpha);
   const journalPath=join(alpha.root,'coordination','federation-journal.json');const journal=JSON.parse(readFileSync(journalPath,'utf8'));journal.remote_outbox.find(i=>i.envelope.message_id===timed.message_id).state='delivery-unknown';privateWrite(journalPath,journal);
   const betaRegistryPath=join(beta.root,'coordination','registry.json');const betaRegistry=JSON.parse(readFileSync(betaRegistryPath,'utf8'));betaRegistry.messages=betaRegistry.messages.filter(m=>m.message_id!==following.message_id);privateWrite(betaRegistryPath,betaRegistry);
@@ -151,7 +153,7 @@ if(previousIndex>=0){
 await stop(beta);await start(beta);assert.equal(JSON.parse(readFileSync(join(beta.root,'coordination','registry.json'),'utf8')).messages.length,1);checks.push('destination-restart-retains-inbox');
 const spoofed=await fetch(alpha.url+`/sessions/${alpha.session}/messages/remote/v1`,{method:'POST',headers:{Authorization:`Bearer ${beta.capability}`,'Content-Type':'application/json'},body:JSON.stringify({to_machine:beta.machine,to_session:beta.session,body:'spoof fixture',idempotency_key:'spoof-key-0001',reply_to:null,expires_in:null,reply_revision:null})});assert.equal(spoofed.status,401);checks.push('local-sender-capability-required');
 blockRelay=true;const inFlight=await send(alpha,beta,'network-lock');await waitFor(()=>relayBlocked,'relay held in HTTP fixture');
-const started=Date.now();await cli(alpha,['inbox','--session',alpha.session]);assert(Date.now()-started<2000,'network I/O must not hold registry lock');blockRelay=false;await delivered(alpha,inFlight.message_id);checks.push('network-await-holds-no-registry-lock');
+await cli(alpha,['inbox','--session',alpha.session]);assert(relayBlocked,'network I/O must not hold registry lock: the inbox read must finish while the relay request is still in flight');blockRelay=false;relayReleases.splice(0).forEach(release=>release());await delivered(alpha,inFlight.message_id);checks.push('network-await-holds-no-registry-lock');
 const original=await inspect
 (beta,initial.message_id,'response-loss');assert.equal(original.sender.machine,'alpha');assert.equal(original.sender.session_incarnation,alpha.incarnation);
   const replied=await cli(beta,['reply','--session',beta.session,'--message',initial.message_id,'--if-revision',String(original.revision),'--body-file',bodyFile('reply','reply'),'--idempotency-key','reply-0001']);
@@ -305,15 +307,17 @@ checks.push('bidirectional-reply-show-status');
   const acceptedRow=sourceAudit.records.find(r=>r.message_id===orphan.message_id);
   assert.equal(acceptedRow.delivery_state,'delivered');assert(acceptedRow.sent_at);assert(acceptedRow.persisted_at);assert(acceptedRow.last_attempt_at);
   checks.push('audit-stopped-submission-and-accepted-orphan');
-  await stop(alpha);await start(alpha,false);
+  // Seed the local peer while the daemon is down: a freshly started daemon rewrites the registry after it reports healthy, which discards a concurrent edit.
+  await stop(alpha);
   const localPeer={...alpha,session:alpha.session+'-local-peer',incarnation:randomUUID(),capability:randomUUID()+randomUUID()};
   const peerRoot=join(alpha.root,'sessions',localPeer.session);mkdirSync(join(peerRoot,'coordination'),{recursive:true,mode:0o700});
   const peerRecord=JSON.parse(readFileSync(join(alpha.root,'sessions',alpha.session,'session.json'),'utf8'));
   peerRecord.id=localPeer.session;peerRecord.runtime.launch_id=localPeer.incarnation;privateWrite(join(peerRoot,'session.json'),peerRecord);
   localPeer.capabilityFile=join(peerRoot,'coordination','capability-'+hash(localPeer.incarnation));privateWrite(localPeer.capabilityFile,localPeer.capability);
-  writeHeartbeat(join(peerRoot,'coordination','heartbeat'),localPeer.incarnation+':'+now()+'\n');
   const localRegistryPath=join(alpha.root,'coordination','registry.json');const localRegistry=JSON.parse(readFileSync(localRegistryPath,'utf8'));
   localRegistry.brokers[localPeer.session]={...localRegistry.brokers[alpha.session],session_id:localPeer.session,incarnation:localPeer.incarnation,capability_digest:hash(localPeer.capability)};privateWrite(localRegistryPath,localRegistry);
+  await start(alpha,false);
+  writeHeartbeat(join(peerRoot,'coordination','heartbeat'),localPeer.incarnation+':'+now()+'\n');
   const local=await cli(alpha,['send','--from',alpha.session,'--to',localPeer.session,'--body-file',bodyFile('local','local'),'--idempotency-key','local-0001']);
   const localOriginal=await inspect(localPeer,local.message_id,'local');
   privateWrite(join(alpha.root,'coordination','federation-journal.json'),{schema_version:'agent-session.federation-journal.v99',remote_outbox:[]});

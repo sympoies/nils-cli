@@ -247,6 +247,10 @@ impl Drop for WaitChild {
 }
 
 fn spawn_waiter(tmp: &Path) -> WaitChild {
+    spawn_waiter_for(tmp, "5s")
+}
+
+fn spawn_waiter_for(tmp: &Path, timeout: &str) -> WaitChild {
     let state = tmp.join("state");
     let cap = capability(&state, "recipient");
     let mut command = Command::new(nils_test_support::bin::resolve("agent-session"));
@@ -261,7 +265,7 @@ fn spawn_waiter(tmp: &Path) -> WaitChild {
             "recipient",
             "--any-unread",
             "--timeout",
-            "5s",
+            timeout,
             "--capability-file",
             &cap,
             "--format",
@@ -403,9 +407,24 @@ fn cpu_ticks(child: &Child) -> u64 {
 #[cfg(target_os = "linux")]
 fn any_unread_wait_idle_cpu_is_bounded() {
     let tmp = fixture();
-    let mut child = spawn_waiter(tmp.path());
-    std::thread::sleep(Duration::from_millis(200));
-    assert!(child.0.try_wait().unwrap().is_none());
+    let mut child = spawn_waiter_for(tmp.path(), "60s");
+    // Process start-up burns CPU for a host-dependent time. Measure only once
+    // the waiter has used none for three consecutive samples; a self-wake
+    // loop never settles, so the budget below still catches it.
+    let settle_deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let mut quiet_samples = 0;
+    let mut last = cpu_ticks(&child.0);
+    while quiet_samples < 3 && std::time::Instant::now() < settle_deadline {
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(child.0.try_wait().unwrap().is_none());
+        let current = cpu_ticks(&child.0);
+        quiet_samples = if current == last {
+            quiet_samples + 1
+        } else {
+            0
+        };
+        last = current;
+    }
     let before = cpu_ticks(&child.0);
     let window = Duration::from_millis(750);
     std::thread::sleep(window);
