@@ -648,19 +648,17 @@ for package in "${packages[@]}" "${siblings[@]}"; do
 done
 run cargo build "${package_args[@]}" --bins
 
-# Build every selected package's test executables too, so the guard covers them.
-declare -a selected_args=()
+# Cargo resolver 2 unifies features across the -p set, so a solo build can relink
+# an executable the combined build made. Build each package's test executables
+# solo and snapshot them right after, so the guard covers what that package runs
+# without charging it for another package's build.
 for package in "${packages[@]}"; do
-  selected_args+=(-p "$package")
-done
-if [[ "$test_runner" == "nextest" ]]; then
-  run_test cargo nextest run --profile ci "${selected_args[@]}" --no-run
-else
-  run cargo test "${selected_args[@]}" --no-run
-fi
-target_guard_snapshot
-
-for package in "${packages[@]}"; do
+  if [[ "$test_runner" == "nextest" ]]; then
+    run_test cargo nextest run --profile ci -p "$package" --no-run
+  else
+    run cargo test -p "$package" --no-run
+  fi
+  target_guard_snapshot
   if [[ "$test_runner" == "nextest" ]]; then
     run_test cargo nextest run --profile ci -p "$package"
     if package_has_doctest "$package"; then
@@ -669,8 +667,7 @@ for package in "${packages[@]}"; do
   else
     run_test cargo test -p "$package"
   fi
+  target_guard_verify
 done
-
-target_guard_verify
 
 echo "ok: local-fast package checks passed (${#packages[@]} package(s))"

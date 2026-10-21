@@ -41,12 +41,24 @@ def write(path, content, mtime):
     os.utime(path, ns=(mtime, mtime))
 if args[:1] not in (["build"], ["test"]):
     raise SystemExit(0)
-if "--no-run" in args or args[:1] == ["build"]:
-    write(os.path.join(debug, "agent-session"), "built-from-gate-head", 1_000_000_000)
-    write(os.path.join(debug, "deps", "agent_session-0123abcd"), "test-from-gate-head", 1_000_000_000)
-    raise SystemExit(0)
+# Cargo resolver 2 unifies features across the -p set, so the same package built
+# in a bigger set links a different executable. A build whose identity already
+# matches is fresh and leaves the file alone.
+packages = [args[i + 1] for i, arg in enumerate(args) if arg == "-p"]
+identity = 1_000_000_000 * max(len(packages), 1)
+names = {{"nils-agent-session": "agent_session", "nils-memo": "memo"}}
+for package in packages:
+    stem = names.get(package)
+    if stem is None:
+        continue
+    binary = stem.replace("_", "-")
+    for path, content in ((os.path.join(debug, binary), "built"),
+                          (os.path.join(debug, "deps", stem + "-0123abcd"), "test")):
+        if not os.path.exists(path) or os.stat(path).st_mtime_ns != identity:
+            write(path, content, identity)
 # The test run itself: another lane rebuilds the shared binary mid-run.
-if os.environ.get("LOCAL_FAST_TEST_REPLACE") == "1":
+if "--no-run" not in args and args[:1] == ["test"] \
+        and os.environ.get("LOCAL_FAST_TEST_REPLACE") == "1":
     write(os.path.join(debug, "agent-session"), "built-from-another-worktree", 2_000_000_000)
 '''
 
@@ -94,11 +106,11 @@ class LocalFastTargetGuardTest(unittest.TestCase):
             'NILS_CLI_TEST_RUNNER': 'cargo',
         })
 
-    def run_local_fast(self, **extra_env):
+    def run_local_fast(self, changed=('crates/agent-session/src/lib.rs',), **extra_env):
         env = {**self.env, **extra_env}
+        changed_args = [arg for path in changed for arg in ('--changed-file', path)]
         return subprocess.run(
-            [self.real_bash, str(LOCAL_FAST),
-             '--changed-file', 'crates/agent-session/src/lib.rs'],
+            [self.real_bash, str(LOCAL_FAST), *changed_args],
             cwd=REPO, env=env, text=True, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, check=False)
 
@@ -114,6 +126,17 @@ class LocalFastTargetGuardTest(unittest.TestCase):
         self.assertIn('debug/agent-session', result.stdout)
         commands = [json.loads(line) for line in self.log.read_text().splitlines()]
         self.assertIn(['test', '-p', 'nils-agent-session'], commands)
+
+    def test_multi_package_selection_is_not_a_replacement(self):
+        # A solo package build can relink an executable the combined build made
+        # with unified features; that is not another lane replacing it.
+        result = self.run_local_fast(changed=(
+            'crates/agent-session/src/lib.rs', 'crates/memo/src/lib.rs'))
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn('shared target replaced', result.stdout)
+        commands = [json.loads(line) for line in self.log.read_text().splitlines()]
+        self.assertIn(['test', '-p', 'nils-agent-session'], commands)
+        self.assertIn(['test', '-p', 'nils-memo'], commands)
 
 
 if __name__ == '__main__':
