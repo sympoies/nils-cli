@@ -60,11 +60,13 @@ remaining when they start. Poll sleeps are capped by the same deadline.
 A terminal result arriving at or after expiry cannot return success.
 
 Expiry returns the last fully observed snapshot and elapsed `duration_ms`.
-An interrupted backend read returns `checks_timeout` (exit 69), even after
-previous empty snapshots; an incomplete read cannot prove absent registration. If no snapshot completed,
-the payload has `state=pending` and no rows; partial or late data cannot replace
-a previously observed snapshot. A completed series of empty snapshots retains
-`checks_not_registered` (exit 65) when its bounded poll sleep reaches expiry.
+During polling, every expiry path, including an interrupted backend read,
+returns `checks_not_registered` (exit 65) if no check was ever observed in a
+complete snapshot. It returns `checks_timeout` (exit 69) after checks were
+observed but did not finish, even if later snapshots are empty. If no snapshot
+completed, the payload has `state=pending` and no rows; partial or late data
+cannot replace a previously observed snapshot. The classification depends on
+observed history rather than which deadline check or poll sleep ends the wait.
 Discovery timeout before any snapshot uses the ordinary error envelope with
 `checks_timeout` (exit 69); no provider snapshot is available yet. Explicit no-checks opt-outs and
 positive no-workflow detection retain their existing behavior within the budget.

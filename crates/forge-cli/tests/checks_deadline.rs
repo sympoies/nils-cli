@@ -73,10 +73,10 @@ fn wait_budget_includes_delayed_backend_and_rejects_late_success() {
         ],
     );
     let elapsed = started.elapsed();
-    assert_eq!(out.code, 69, "elapsed={elapsed:?}; stderr={}", out.stderr);
+    assert_eq!(out.code, 65, "elapsed={elapsed:?}; stderr={}", out.stderr);
     assert_eq!(
         parse_envelope(&out.stdout)["error"]["code"],
-        "checks_timeout"
+        "checks_not_registered"
     );
     assert!(
         elapsed < CEILING,
@@ -156,10 +156,10 @@ fn rate_limit_probe_and_wait_share_the_command_budget() {
         });
         let start = Instant::now();
         let out = wait(&stub);
-        assert_eq!(out.code, 69, "{} {}", out.stdout, out.stderr);
+        assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
         assert_eq!(
             parse_envelope(&out.stdout)["error"]["code"],
-            "checks_timeout"
+            "checks_not_registered"
         );
         assert!(start.elapsed() < CEILING);
     }
@@ -207,7 +207,7 @@ fn deadline_covers_backend_descendants_holding_capture_pipes() {
     let stub = backend(&format!("{STALL} & exit 0"));
     let start = Instant::now();
     let out = wait(&stub);
-    assert_eq!(out.code, 69, "{} {}", out.stdout, out.stderr);
+    assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
     assert!(start.elapsed() < CEILING, "elapsed={:?}", start.elapsed());
 }
 
@@ -234,10 +234,10 @@ fn gitlab_backend_uses_the_same_wait_budget() {
             "1s",
         ],
     );
-    assert_eq!(out.code, 69, "{} {}", out.stdout, out.stderr);
+    assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
     assert_eq!(
         parse_envelope(&out.stdout)["error"]["code"],
-        "checks_timeout"
+        "checks_not_registered"
     );
     assert!(start.elapsed() < CEILING);
 }
@@ -436,8 +436,11 @@ fn a_successful_wait_never_reports_an_expired_duration() {
                     snapshot.duration_ms
                 );
             }
-            WaitOutcome::TimedOut(_) => saw_timeout = true,
-            _ => panic!("ready backend should succeed or exhaust its budget"),
+            WaitOutcome::NotRegistered(snapshot, _) => {
+                saw_timeout = true;
+                assert!(snapshot.checks.is_empty());
+            }
+            _ => panic!("ready backend should succeed or expire before observing any checks"),
         }
     }
     assert!(saw_success && saw_timeout);
@@ -497,7 +500,7 @@ esac
 }
 
 #[test]
-fn interrupted_nonempty_read_after_an_empty_poll_is_a_timeout() {
+fn interrupted_read_after_an_empty_poll_is_not_registered() {
     let stub = backend(&format!("if [ -f \"$0.second\" ]; then {STALL}; fi"));
     rewrite_backend(&stub, |body| {
         body.replace(
@@ -523,9 +526,9 @@ fn interrupted_nonempty_read_after_an_empty_poll_is_a_timeout() {
             "10ms",
         ],
     );
-    assert_eq!(out.code, 69, "{} {}", out.stdout, out.stderr);
+    assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
     let envelope = parse_envelope(&out.stdout);
-    assert_eq!(envelope["error"]["code"], "checks_timeout");
+    assert_eq!(envelope["error"]["code"], "checks_not_registered");
     assert_eq!(envelope["data"]["checks"].as_array().unwrap().len(), 0);
     assert_eq!(envelope["data"]["state"], "success");
 }
