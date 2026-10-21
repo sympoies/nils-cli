@@ -32,9 +32,10 @@
 
 ### Links
 
-- Issue #2711
+- <https://github.com/sympoies/nils-cli/issues/2711>
 
 ### Follow-ups
 
-- Reuse main's cached dependency artifacts for package-scoped builds (item 5 of
-  #2711); choose the mechanism by measuring non-workspace compile counts.
+- Reuse main's cached dependency artifacts for package-scoped builds (the
+  dependency-cache item of issue 2711); choose the mechanism by measuring
+  non-workspace compile counts.
