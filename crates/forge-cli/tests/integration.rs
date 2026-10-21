@@ -60,6 +60,7 @@ mod integration {
     mod stacked_branch;
     mod support;
     mod test_first_kinds;
+    mod test_first_publication_portability;
     mod tracker_grammar;
     mod validations;
 }
