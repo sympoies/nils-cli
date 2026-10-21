@@ -901,7 +901,7 @@ fn verify_crash_recovery_active_cleanup(owner_only: bool) {
     request["execution"] = json!({ "kind": "bash-v1", "workdir": fixture.root,
         "output_max_bytes": 64 * 1024, "runner": {"kind": "danger-full-access"} });
     owner.start("run", &request);
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + support::WAIT_BOUND;
     while !fixture.root.join("recovery-started").exists() {
         assert!(
             Instant::now() < deadline,
@@ -1812,7 +1812,11 @@ fn non_contract_foreground_shell_is_supervised_once_and_invalidates_validation_e
 fn ordinary_shell_cannot_leave_a_same_group_descendant_to_mutate_after_return() {
     let fixture = fixture();
     one_contract(&fixture, ":");
-    let command = "nohup sh -c 'sleep 0.2; printf late > late-mutation' >/dev/null 2>&1 &";
+    let command = concat!(
+        "nohup sh -c 'printf %s \"$$\" > descendant.pid.tmp; mv descendant.pid.tmp descendant.pid; ",
+        "sleep 30; printf late > late-mutation' >/dev/null 2>&1 & ",
+        "n=0; while [ ! -e descendant.pid ] && [ $n -lt 3000 ]; do sleep 0.01; n=$((n+1)); done",
+    );
     let (code, envelope) = run_validation(
         &fixture,
         "session-a",
@@ -1825,7 +1829,7 @@ fn ordinary_shell_cannot_leave_a_same_group_descendant_to_mutate_after_return() 
     assert_eq!(code, 0, "envelope={envelope}");
     assert_eq!(envelope["data"]["status"], "ordinary-applied");
 
-    std::thread::sleep(std::time::Duration::from_millis(400));
+    support::wait_for_exit(support::read_pid(&fixture.root.join("descendant.pid")));
     assert!(
         !fixture.root.join("late-mutation").exists(),
         "ordinary shell descendant mutated the repository after nils returned",
@@ -1837,7 +1841,15 @@ fn ordinary_shell_cannot_leave_a_same_group_descendant_to_mutate_after_return() 
 fn ordinary_shell_cannot_escape_with_a_new_session_or_double_fork_after_return() {
     let fixture = fixture();
     one_contract(&fixture, ":");
-    let command = "setsid sh -c \"sh -c 'sleep 0.2; printf escaped > escaped-mutation' >/dev/null 2>&1 &\" >/dev/null 2>&1 &";
+    fs::write(
+        fixture.root.join("escaped-descendant.sh"),
+        "printf %s \"$$\" > escaped.pid.tmp\nmv escaped.pid.tmp escaped.pid\nsleep 30\nprintf escaped > escaped-mutation\n",
+    )
+    .expect("escaped descendant script");
+    let command = concat!(
+        "setsid sh -c \"sh escaped-descendant.sh >/dev/null 2>&1 &\" >/dev/null 2>&1 & ",
+        "n=0; while [ ! -e escaped.pid ] && [ $n -lt 3000 ]; do sleep 0.01; n=$((n+1)); done",
+    );
     let (code, envelope) = run_validation(
         &fixture,
         "session-a",
@@ -1850,7 +1862,7 @@ fn ordinary_shell_cannot_escape_with_a_new_session_or_double_fork_after_return()
     assert_eq!(code, 0, "envelope={envelope}");
     assert_eq!(envelope["data"]["status"], "ordinary-applied");
 
-    std::thread::sleep(std::time::Duration::from_millis(400));
+    support::wait_for_exit(support::read_pid(&fixture.root.join("escaped.pid")));
     assert!(
         !fixture.root.join("escaped-mutation").exists(),
         "new-session descendant mutated the repository after nils returned",
@@ -1861,7 +1873,11 @@ fn ordinary_shell_cannot_escape_with_a_new_session_or_double_fork_after_return()
 #[test]
 fn confined_shell_cannot_delegate_a_late_mutation_to_the_user_manager() {
     let fixture = fixture();
-    let command = "systemd-run --user --quiet --collect --unit=finish-line-confined-${BASHPID} -- sh -c 'sleep 0.2; printf escaped > manager-mutation'";
+    let unit = format!("finish-line-confined-{}", std::process::id());
+    let command = format!(
+        "systemd-run --user --quiet --collect --unit={unit} -- sh -c 'sleep 30; printf escaped > manager-mutation'"
+    );
+    let command = command.as_str();
     one_contract(&fixture, command);
     begin_edit(&fixture, "session-a", "turn-1", "edit-1");
     let runner_capability = open_runner(&fixture, "session-a", "turn-1");
@@ -1908,7 +1924,17 @@ fn confined_shell_cannot_delegate_a_late_mutation_to_the_user_manager() {
     let envelope = output.stdout_json();
     assert_ne!(envelope["data"]["execution"]["exit_code"], 0);
 
-    std::thread::sleep(std::time::Duration::from_millis(400));
+    let active = Command::new("systemctl")
+        .args(["--user", "is-active", &unit])
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .unwrap_or_default();
+    if matches!(active.as_str(), "active" | "activating") {
+        let _ = Command::new("systemctl")
+            .args(["--user", "stop", &unit])
+            .status();
+        panic!("confined shell delegated a unit outside its execution unit: {active}");
+    }
     assert!(
         !fixture.root.join("manager-mutation").exists(),
         "confined shell delegated a late mutation outside its execution unit",
@@ -1995,11 +2021,7 @@ fn edit_during_validation_makes_the_observed_success_stale() {
             )
         })
     };
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !fixture.root.join("validation-started").exists() {
-        assert!(Instant::now() < deadline, "validation did not start");
-        thread::sleep(Duration::from_millis(10));
-    }
+    support::wait_for_path(&fixture.root.join("validation-started"));
     let edit = begin_edit(&fixture, "session-a", "turn-2", "edit-2");
     assert_eq!(edit["generation"], 2);
     fs::write(fixture.root.join("validation-release"), "release").unwrap();
@@ -2197,11 +2219,7 @@ fn quiesce_recovers_a_killed_supervisor_and_prevents_late_mutation() {
         .expect("validation stdin")
         .write_all(request.to_string().as_bytes())
         .expect("write validation request");
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !fixture.root.join("validation-started").exists() {
-        assert!(Instant::now() < deadline, "validation did not start");
-        thread::sleep(Duration::from_millis(10));
-    }
+    support::wait_for_path(&fixture.root.join("validation-started"));
     let child_pid: i32 = fs::read_to_string(fixture.root.join("validation-child.pid"))
         .expect("validation child pid")
         .parse()
@@ -2228,9 +2246,8 @@ fn quiesce_recovers_a_killed_supervisor_and_prevents_late_mutation() {
         output.stderr_text()
     );
     assert_eq!(output.stdout_json()["data"]["status"], "quiescent");
-    thread::sleep(Duration::from_millis(300));
+    support::wait_for_exit(child_pid);
     assert!(!fixture.root.join("late-after-kill").exists());
-    assert_ne!(unsafe { libc::kill(child_pid, 0) }, 0);
     let (_, blocked) = stop(&fixture, "session-a");
     assert!(!reason_codes(&blocked).contains(&"validation-pending"));
 
@@ -2251,7 +2268,7 @@ fn quiesce_recovers_a_killed_supervisor_and_prevents_late_mutation() {
 #[test]
 fn quiesce_stabilizes_a_unit_cancelled_during_submission() {
     let fixture = fixture();
-    let command = "sleep 0.25; printf late > late-after-submission-cancel";
+    let command = "printf '%s' \"$$\" > unit.pid.tmp; mv unit.pid.tmp unit.pid; sleep 0.25; printf late > late-after-submission-cancel";
     one_contract(&fixture, command);
     begin_edit(&fixture, "session-a", "turn-1", "edit-1");
     let runner_capability = open_runner(&fixture, "session-a", "turn-1");
@@ -2290,7 +2307,7 @@ fn quiesce_stabilizes_a_unit_cancelled_during_submission() {
         .expect("write validation request");
 
     let state_path = finish_line_state_path(&fixture);
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + support::WAIT_BOUND;
     loop {
         let state = fs::read_to_string(&state_path)
             .ok()
@@ -2332,7 +2349,12 @@ fn quiesce_stabilizes_a_unit_cancelled_during_submission() {
         output.stdout_text(),
         output.stderr_text()
     );
-    thread::sleep(Duration::from_millis(350));
+    // The unit may never have started, so a leaked one cannot be waited on by
+    // pid alone: outlast its sleep, then require that it left nothing behind.
+    support::outlast_sleep("0.5");
+    if let Ok(pid) = fs::read_to_string(fixture.root.join("unit.pid")) {
+        support::wait_for_exit(pid.trim().parse().expect("numeric unit pid"));
+    }
     assert!(!fixture.root.join("late-after-submission-cancel").exists());
     let (_, blocked) = stop(&fixture, "session-a");
     assert!(!reason_codes(&blocked).contains(&"validation-pending"));
@@ -2379,11 +2401,7 @@ fn quiesce_rejects_wrong_and_cross_session_capabilities_without_touching_the_uni
         .expect("validation stdin")
         .write_all(request.to_string().as_bytes())
         .expect("write validation request");
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !fixture.root.join("quiesce-auth-ready").exists() {
-        assert!(Instant::now() < deadline, "validation did not start");
-        thread::sleep(Duration::from_millis(10));
-    }
+    support::wait_for_path(&fixture.root.join("quiesce-auth-ready"));
 
     for rejected_capability in [
         "finish-line-runner:wrong".to_string(),
@@ -2500,7 +2518,7 @@ fn timeout_kills_the_validation_cgroup_and_records_failure() {
         "validation-timeout",
         "project-dev",
         command,
-        100,
+        2_000,
     );
     assert_eq!(code, 0, "envelope={timed_out}");
     assert_eq!(timed_out["data"]["execution"]["timed_out"], true);
@@ -2508,18 +2526,7 @@ fn timeout_kills_the_validation_cgroup_and_records_failure() {
         .expect("child pid")
         .parse()
         .expect("numeric child pid");
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        let alive = unsafe { libc::kill(child, 0) } == 0;
-        if !alive {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "validation descendant survived timeout"
-        );
-        thread::sleep(Duration::from_millis(10));
-    }
+    support::wait_for_exit(child);
     let (code, blocked) = stop(&fixture, "session-a");
     assert_eq!(code, 1);
     assert!(reason_codes(&blocked).contains(&"validation-failed"));
