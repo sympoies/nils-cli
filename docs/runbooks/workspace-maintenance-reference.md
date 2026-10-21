@@ -433,15 +433,15 @@ does not lint or test those packages.
 Lanes that share one `CARGO_TARGET_DIR` can overwrite the executables a running
 gate is testing. Once the tests are built, the gate records the size and
 modification time of every executable under `<target>/debug` and
-`<target>/debug/deps`, and re-checks them after the tests; a package selection
-does this per package, so one package's solo build is never mistaken for a
-replacement while another is tested. A rewritten or
-removed executable fails the gate with `error: shared target replaced during the
-gate`, naming each path, instead of a product test failure. Give concurrent
-lanes separate target directories (for example, one per managed worktree); the
-cost is one build tree of disk per worktree, reclaimed when the worktree is
-removed. `scripts/ci/lib/target_guard.py` implements the check, and only
-`--local-fast` runs it.
+`<target>/debug/deps`, and re-checks them after the tests, including when a test
+fails. A package selection does this per package, so one package's solo build is
+never mistaken for a replacement. A rewritten or removed executable fails the
+gate with `error: shared target replaced during the gate`, naming each path,
+alongside any product test failure. Give concurrent lanes separate target
+directories (for example, one per managed worktree); the cost is one build tree
+of disk per worktree, reclaimed when the worktree is removed.
+`scripts/ci/lib/target_guard.py` implements the check, and only `--local-fast`
+runs it.
 
 ### 3.3 Full checks (CI gate / optional local parity)
 

@@ -57,9 +57,10 @@ for package in packages:
         if not os.path.exists(path) or os.stat(path).st_mtime_ns != identity:
             write(path, content, identity)
 # The test run itself: another lane rebuilds the shared binary mid-run.
-if "--no-run" not in args and args[:1] == ["test"] \
-        and os.environ.get("LOCAL_FAST_TEST_REPLACE") == "1":
-    write(os.path.join(debug, "agent-session"), "built-from-another-worktree", 2_000_000_000)
+if "--no-run" not in args and args[:1] == ["test"]:
+    if os.environ.get("LOCAL_FAST_TEST_REPLACE") == "1":
+        write(os.path.join(debug, "agent-session"), "built-from-another-worktree", 2_000_000_000)
+    raise SystemExit(int(os.environ.get("LOCAL_FAST_TEST_EXIT", "0")))
 '''
 
 
@@ -126,6 +127,20 @@ class LocalFastTargetGuardTest(unittest.TestCase):
         self.assertIn('debug/agent-session', result.stdout)
         commands = [json.loads(line) for line in self.log.read_text().splitlines()]
         self.assertIn(['test', '-p', 'nils-agent-session'], commands)
+
+    def test_failing_tests_against_a_replaced_binary_report_the_replacement(self):
+        # The #2697 symptom: a product test fails because its binary was replaced.
+        result = self.run_local_fast(
+            LOCAL_FAST_TEST_REPLACE='1', LOCAL_FAST_TEST_EXIT='101')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('shared target replaced', result.stdout)
+        self.assertIn('debug/agent-session', result.stdout)
+
+    def test_failing_tests_on_an_intact_target_are_a_product_failure(self):
+        result = self.run_local_fast(LOCAL_FAST_TEST_EXIT='101')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('cargo test -p nils-agent-session', result.stdout)
+        self.assertNotIn('shared target replaced', result.stdout)
 
     def test_multi_package_selection_is_not_a_replacement(self):
         # A solo package build can relink an executable the combined build made

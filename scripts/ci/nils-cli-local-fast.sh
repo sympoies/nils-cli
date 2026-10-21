@@ -603,7 +603,21 @@ target_guard_snapshot() {
     --out "$target_guard_snapshot_file"
 }
 
+# Test commands run through here so a failure still reaches the guard: a product
+# test that fails against a replaced binary must name the replacement, not only
+# the product failure. After the first failure no further test command runs.
+target_guard_test_status=0
+guarded_test() {
+  if [[ "$target_guard_test_status" -eq 0 ]]; then
+    run_test "$@" || target_guard_test_status=$?
+  fi
+}
+
 target_guard_verify() {
+  if [[ "$target_guard_test_status" -ne 0 ]]; then
+    python3 scripts/ci/lib/target_guard.py verify "$target_guard_snapshot_file" || true
+    exit "$target_guard_test_status"
+  fi
   run python3 scripts/ci/lib/target_guard.py verify "$target_guard_snapshot_file"
 }
 
@@ -621,13 +635,13 @@ if [[ "$mode" == "workspace" ]]; then
     # git-cli-test-worker.<euid> is a deliberate per-user cache of private worker
     # binaries: a fixed name, contents keyed by source digest, reused across runs
     # so concurrent readers see a stable inode. Bounded, so it is not a leak.
-    run_test bash scripts/ci/tempdir-leak-probe.sh --allow 'git-cli-test-worker.*' \
+    guarded_test bash scripts/ci/tempdir-leak-probe.sh --allow 'git-cli-test-worker.*' \
       -- --profile ci --workspace
-    run_test cargo test --workspace --doc
+    guarded_test cargo test --workspace --doc
   else
     run cargo test --workspace --no-run
     target_guard_snapshot
-    run_test cargo test --workspace
+    guarded_test cargo test --workspace
   fi
   target_guard_verify
   echo "ok: local-fast workspace Rust gate passed"
@@ -660,12 +674,12 @@ for package in "${packages[@]}"; do
   fi
   target_guard_snapshot
   if [[ "$test_runner" == "nextest" ]]; then
-    run_test cargo nextest run --profile ci -p "$package"
+    guarded_test cargo nextest run --profile ci -p "$package"
     if package_has_doctest "$package"; then
-      run_test cargo test -p "$package" --doc
+      guarded_test cargo test -p "$package" --doc
     fi
   else
-    run_test cargo test -p "$package"
+    guarded_test cargo test -p "$package"
   fi
   target_guard_verify
 done
