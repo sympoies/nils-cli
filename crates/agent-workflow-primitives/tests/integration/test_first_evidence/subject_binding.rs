@@ -5,11 +5,11 @@ use std::process::Command;
 use nils_test_support::cmd::{CmdOutput, run_resolved_in_dir};
 use pretty_assertions::assert_eq;
 
-fn run(dir: &Path, args: &[&str]) -> CmdOutput {
+pub(super) fn run(dir: &Path, args: &[&str]) -> CmdOutput {
     run_resolved_in_dir("test-first-evidence", dir, args, &[], None)
 }
 
-fn git(repo: &Path, args: &[&str]) -> String {
+pub(super) fn git(repo: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -27,7 +27,7 @@ fn git(repo: &Path, args: &[&str]) -> String {
         .to_string()
 }
 
-fn init_repo(root: &Path, name: &str, remote: Option<&str>) -> std::path::PathBuf {
+pub(super) fn init_repo(root: &Path, name: &str, remote: Option<&str>) -> std::path::PathBuf {
     let repo = root.join(name);
     fs::create_dir_all(&repo).expect("repo dir");
     git(&repo, &["init", "-q", "-b", "main"]);

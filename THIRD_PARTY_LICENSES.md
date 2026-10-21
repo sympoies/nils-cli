@@ -3,8 +3,8 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `54e5920d4cdde413be99d9fd29758714ece75dd8d3f45defd86209ee23d1b7ef`
-- Third-party crates (`source != null`): 505
+- Cargo.lock SHA256: `7922117a7a5f15e639a942125c94d7848cafe9af5d0921a295dfe8a9301b5a6d`
+- Third-party crates (`source != null`): 504
 - Workspace crates (`source == null`, excluded below): 41
 
 ## Notes
@@ -30,10 +30,10 @@ This file documents third-party Rust crate licenses used by this workspace.
 | MIT OR Apache-2.0 OR Zlib | 4 |
 | Apache-2.0 OR ISC OR MIT | 3 |
 | BSD-3-Clause | 3 |
-| CDLA-Permissive-2.0 | 3 |
 | Zlib | 3 |
 | BSD-2-Clause OR Apache-2.0 OR MIT | 2 |
 | BSD-3-Clause OR Apache-2.0 | 2 |
+| CDLA-Permissive-2.0 | 2 |
 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | 2 |
 | Unlicense/MIT | 2 |
 | (MIT OR Apache-2.0) AND Unicode-3.0 | 1 |
@@ -379,7 +379,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | rustls-pki-types | 1.14.1 | MIT OR Apache-2.0 | crates.io |
 | rustls-platform-verifier | 0.7.0 | MIT OR Apache-2.0 | crates.io |
 | rustls-platform-verifier-android | 0.1.1 | MIT OR Apache-2.0 | crates.io |
-| rustls-webpki | 0.103.15 | ISC | crates.io |
+| rustls-webpki | 0.103.16 | ISC | crates.io |
 | rustversion | 1.0.22 | MIT OR Apache-2.0 | crates.io |
 | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 | crates.io |
 | same-file | 1.0.6 | Unlicense/MIT | crates.io |
@@ -500,9 +500,8 @@ This file documents third-party Rust crate licenses used by this workspace.
 | wasm-bindgen-shared | 0.2.125 | MIT OR Apache-2.0 | crates.io |
 | web-sys | 0.3.102 | MIT OR Apache-2.0 | crates.io |
 | web-time | 1.1.0 | MIT OR Apache-2.0 | crates.io |
-| webpki-root-certs | 1.0.7 | CDLA-Permissive-2.0 | crates.io |
-| webpki-roots | 0.26.11 | CDLA-Permissive-2.0 | crates.io |
-| webpki-roots | 1.0.7 | CDLA-Permissive-2.0 | crates.io |
+| webpki-root-certs | 1.0.10 | CDLA-Permissive-2.0 | crates.io |
+| webpki-roots | 1.0.10 | CDLA-Permissive-2.0 | crates.io |
 | weezl | 0.1.12 | MIT OR Apache-2.0 | crates.io |
 | winapi-util | 0.1.11 | Unlicense OR MIT | crates.io |
 | windows-core | 0.62.2 | MIT OR Apache-2.0 | crates.io |

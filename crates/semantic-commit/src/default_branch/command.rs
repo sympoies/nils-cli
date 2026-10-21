@@ -5,7 +5,6 @@ use serde_json::Value;
 
 use crate::commit::DefaultBranchCommitOptions;
 
-use super::git::Git;
 use super::{OptionKind, clap_command, option_for_spelling, preflight, receipt, transaction};
 
 const EXIT_ERROR: i32 = 1;
@@ -39,21 +38,17 @@ pub(crate) fn run(args: &[String]) -> i32 {
         Ok(state) => state,
         Err(message) => return fail(&message),
     };
-    let code = options
-        .commit
-        .run(state.root.clone(), state.head.clone(), options.dry_run);
+    let (code, installed) = options.commit.run(&state, options.dry_run);
     if code != 0 {
-        return code;
+        return match installed.as_deref() {
+            Some(head) => partial_failure(Some(head), "commit finalization failed"),
+            None => code,
+        };
     }
     if options.dry_run {
         return emit_preview(&receipt::preview(&state), options.output_format);
     }
-
-    let git = Git::at(state.root.clone());
-    let new_head = match git.stdout(["rev-parse", "--verify", "HEAD^{commit}"]) {
-        Ok(value) => value,
-        Err(message) => return partial_failure(None, &message),
-    };
+    let new_head = installed.expect("successful mutation records the installed commit");
     let post = match transaction::verify(&state, &new_head) {
         Ok(post) => post,
         Err(message) => return partial_failure(Some(&new_head), &message),
@@ -238,7 +233,7 @@ fn fail(message: &str) -> i32 {
 fn partial_failure(new_head: Option<&str>, message: &str) -> i32 {
     match new_head {
         Some(new_head) => eprintln!(
-            "error: default-branch commit {new_head} was created but finalization failed: {message}; inspect the commit and recover manually"
+            "error: default-branch commit {new_head} was created but finalization failed: {message}; do not replay the commit; preserve this installed commit ID, inspect it and repair finalization manually"
         ),
         None => eprintln!(
             "error: default-branch commit may have been created but HEAD could not be resolved: {message}; inspect the repository and recover manually"

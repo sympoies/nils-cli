@@ -955,63 +955,14 @@ fn read_complete_report<R: BackendRunner>(
     selected: &pr_reviews::NativeReviewSummary,
     expected_author: &str,
 ) -> Result<String, ForgeError> {
-    let id = selected
-        .database_id
-        .ok_or_else(|| fail("review_snapshot_incomplete", "native review id is missing"))?;
-    let call = BackendCall::new(
-        BackendProgram::Gh,
-        pr_review::github_native_review_lookup_argv(ctx, number, id),
-    );
-    let output = runner.run(&call)?;
-    let value: serde_json::Value = serde_json::from_str(&output.stdout).map_err(|_| {
-        fail(
-            "review_snapshot_incomplete",
-            "native report read-back is invalid",
-        )
-    })?;
-    let bot = selected.author_type.as_deref() == Some("Bot");
-    let rest_author = &value["user"];
-    let same_node = selected
-        .author_node_id
-        .as_deref()
-        .is_some_and(|node| rest_author["node_id"].as_str() == Some(node));
-    let identity_matches = if bot {
-        selected.author_type.as_deref() == Some("Bot")
-            && rest_author["type"].as_str() == Some("Bot")
-            && same_node
-    } else {
-        // A retained stable identity must agree with the REST read-back.
-        selected.author_node_id.is_none() || same_node
-    };
-    if value["id"].as_u64() != Some(id)
-        || value["html_url"].as_str() != Some(selected.url.as_str())
-        || value["commit_id"].as_str() != Some(selected.commit_sha.as_str())
-        || !rest_author["login"]
-            .as_str()
-            .is_some_and(|v| v.eq_ignore_ascii_case(expected_author))
-        || !identity_matches
-        || selected.author_type.as_deref().is_some_and(|kind| {
-            rest_author["type"]
-                .as_str()
-                .is_some_and(|rest| rest != kind)
-        })
-        || value["state"].as_str() != Some(selected.state.as_str())
-    {
-        return Err(fail(
-            "review_snapshot_incomplete",
-            "native report changed during read-back",
-        ));
-    }
-    let body = value["body"]
-        .as_str()
-        .filter(|v| v.len() <= 64 * 1024)
-        .ok_or_else(|| {
-            fail(
-                "review_snapshot_incomplete",
-                "native report body is missing or exceeds its bound",
-            )
-        })?;
-    Ok(body.to_string())
+    super::pr_review_get::read_complete_report(
+        runner,
+        ctx,
+        number,
+        selected,
+        expected_author,
+        |message| fail("review_snapshot_incomplete", message),
+    )
 }
 
 fn provider_pull_field<R: BackendRunner>(

@@ -19018,18 +19018,18 @@ esac
         };
         let broker = ActivityBroker::for_test(MACHINE);
         let (started_tx, mut started_rx) = mpsc::unbounded_channel();
-        let collector: SessionCollector = Arc::new(move |_, _| {
-            let _ = started_tx.send(std::time::Instant::now());
-            Ok(Vec::new())
-        });
         let (change_tx, change_rx) = mpsc::channel(1);
-        let change_task = tokio::spawn(activity_change_loop(
+        let change_task = tokio::spawn(activity_change_loop_inner(
             broker.log.clone(),
             broker.lifecycle.clone(),
-            collector,
+            Arc::new(|_, _| Ok(Vec::new())),
             context,
             PathBuf::from("tmux"),
             change_rx,
+            ActivityChangeLoopControls {
+                refresh_started: Some(started_tx),
+                ..Default::default()
+            },
         ));
 
         change_tx

@@ -1,17 +1,16 @@
-use std::net::TcpStream;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use anyhow::Context;
 use serde::Serialize;
+use tungstenite::Message;
 use tungstenite::WebSocket;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::{HeaderName, HeaderValue};
-use tungstenite::stream::MaybeTlsStream;
-use tungstenite::{Message, connect};
 
 use crate::Result;
+use crate::websocket::connection::{Transport, connect};
 use crate::websocket::schema::{WebsocketExpect, WebsocketRequestFile, WebsocketStep};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -30,17 +29,10 @@ pub struct WebsocketExecutedRequest {
 /// Apply a read timeout to the underlying TCP socket so per-step `read()`
 /// calls cannot hang forever. Pass `None` to clear the timeout.
 fn set_socket_read_timeout(
-    socket: &mut WebSocket<MaybeTlsStream<TcpStream>>,
+    socket: &mut WebSocket<Transport>,
     timeout: Option<Duration>,
 ) -> std::io::Result<()> {
-    let tcp = match socket.get_mut() {
-        MaybeTlsStream::Plain(stream) => stream,
-        MaybeTlsStream::Rustls(stream) => stream.get_mut(),
-        // Forward-compat: other variants (e.g. NativeTls if a future feature is
-        // enabled) do not expose a TcpStream we can configure here.
-        _ => return Ok(()),
-    };
-    tcp.set_read_timeout(timeout)
+    socket.get_ref().tcp_stream().set_read_timeout(timeout)
 }
 
 fn parse_message_text(message: Message) -> String {

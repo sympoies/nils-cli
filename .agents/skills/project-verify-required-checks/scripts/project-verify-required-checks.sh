@@ -200,6 +200,7 @@ if [[ "$docs_only" -eq 1 ]]; then
 fi
 
 run python3 scripts/ci/tests/gate-resources.test.py
+run python3 scripts/ci/tests/gate-reports.test.py
 run python3 scripts/ci/assert-import-audit.py
 run python3 scripts/ci/tests/assert-import-audit.test.py
 run python3 scripts/ci/tests/merge-plan-ci.test.py
