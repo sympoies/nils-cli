@@ -136,6 +136,12 @@ jobs:
           NILS_TEST_REQUIRE_SIBLING_BINS: "1"
         run: bash scripts/ci/nils-cli-checks-entrypoint.sh --xvfb
 
+      # Re-run representative tests under a poisoned environment and fail if any
+      # sentinel changes. Nightly only: about five minutes per merge-queue entry
+      # is too costly for the required checks.
+      - name: Test isolation guard
+        run: bash scripts/ci/test-env-isolation-guard.sh
+
       - name: Full validation marker
         run: true
 
