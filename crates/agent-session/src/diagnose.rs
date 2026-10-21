@@ -17,6 +17,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::cli::DiagnoseArgs;
+use crate::stable_executable;
 use crate::{CliContext, CliError, render_error, render_single_success};
 
 const BUNDLE_VERSION: &str = "agent-session.diagnostic-bundle.v1";
@@ -62,6 +63,10 @@ struct Runtime {
     /// upgrade can leave a live process on a deleted inode while the installed
     /// symlink looks correct, so the symlink alone is not evidence.
     executable_state: &'static str,
+    /// How the launch path that new session wrappers embed is chosen. A
+    /// `versioned-keg` or `unavailable` path does not survive a package upgrade,
+    /// so running sessions would keep a deleted binary (`sympoies/nils-cli#2672`).
+    launch_executable: &'static str,
     /// Releases published by live broker records that cross a generation
     /// boundary from this binary.
     release_skew: Vec<ReleaseSkew>,
@@ -118,13 +123,18 @@ fn build(context: &CliContext, args: &DiagnoseArgs) -> Result<Bundle, CliError> 
         .cloned()
         .collect();
     let release_skew = release_skew(context);
-    let health = health(&summary, &release_skew);
+    let launch_executable = launch_executable_basis();
+    let health = match health(&summary, &release_skew) {
+        Health::Healthy if !launch_path_is_stable(launch_executable) => Health::Degraded,
+        other => other,
+    };
     Ok(Bundle {
         schema_version: BUNDLE_VERSION,
         binary_version: nils_build_info::long_version(env!("CARGO_PKG_VERSION")),
         health,
         runtime: Runtime {
             executable_state: runtime_compat::executable_state(std::process::id()).as_str(),
+            launch_executable,
             release_skew,
         },
         observation: Observation {
@@ -135,6 +145,16 @@ fn build(context: &CliContext, args: &DiagnoseArgs) -> Result<Bundle, CliError> 
             recent,
         },
     })
+}
+
+fn launch_executable_basis() -> &'static str {
+    stable_executable::launch_executable()
+        .map(|launch| launch.basis.as_str())
+        .unwrap_or("unavailable")
+}
+
+fn launch_path_is_stable(basis: &str) -> bool {
+    !matches!(basis, "versioned-keg" | "unavailable")
 }
 
 /// Collect live broker records whose release crosses a generation boundary.
@@ -196,6 +216,14 @@ fn text(bundle: &Bundle) -> String {
         "observed events: {}\n",
         bundle.observation.event_count
     ));
+    let launch = bundle.runtime.launch_executable;
+    if launch_path_is_stable(launch) {
+        out.push_str(&format!("launch executable: {launch}\n"));
+    } else {
+        out.push_str(&format!(
+            "launch executable: {launch} (new sessions pin a path an upgrade removes; link the package opt or bin path, or reinstall)\n"
+        ));
+    }
     for skew in &bundle.runtime.release_skew {
         out.push_str(&format!(
             "release skew: session {} broker {} ({}) -> {}\n",
@@ -291,6 +319,7 @@ mod tests {
             health: Health::Degraded,
             runtime: Runtime {
                 executable_state: "live",
+                launch_executable: "versioned-keg",
                 release_skew: Vec::new(),
             },
             observation: Observation {
@@ -314,6 +343,10 @@ mod tests {
         assert!(rendered.contains("health: degraded"), "{rendered}");
         assert!(rendered.contains("executable: live"), "{rendered}");
         assert!(
+            rendered.contains("launch executable: versioned-keg (new sessions pin a path"),
+            "{rendered}"
+        );
+        assert!(
             rendered.contains("[warn] agent-hook coordination-degraded-read-only x4"),
             "{rendered}"
         );
@@ -331,6 +364,7 @@ mod tests {
             health: Health::Healthy,
             runtime: Runtime {
                 executable_state: ExecutableState::Unknown.as_str(),
+                launch_executable: "package-opt",
                 release_skew: Vec::new(),
             },
             observation: Observation {
@@ -348,5 +382,9 @@ mod tests {
             "{rendered}"
         );
         assert!(!rendered.contains("codes:"), "{rendered}");
+        assert!(
+            rendered.contains("launch executable: package-opt\n"),
+            "{rendered}"
+        );
     }
 }

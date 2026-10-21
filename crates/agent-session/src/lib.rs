@@ -46,8 +46,10 @@ mod retitle;
 mod retitle_v3;
 mod runtime_environment;
 mod runtime_teardown;
+mod stable_executable;
 mod startup;
 use runtime_teardown::tmux_kill_identity_with_timeout;
+use stable_executable::resolve_agent_session_executable;
 use startup::start_interactive_tmux;
 pub(crate) mod send;
 mod send_guard;
@@ -3523,64 +3525,6 @@ fn new_session_command(tmux_bin: &Path, scope: Option<&TmuxScope>) -> ProcessCom
         }
         None => ProcessCommand::new(tmux_bin),
     }
-}
-
-pub(crate) fn resolve_agent_session_executable() -> io::Result<PathBuf> {
-    let current_executable = env::current_exe()?;
-    // Unit tests call launch helpers from the hashed `deps` harness; bind those
-    // calls to Cargo's same-profile binary without changing production lookup.
-    #[cfg(test)]
-    if current_executable
-        .parent()
-        .and_then(Path::file_name)
-        .is_some_and(|name| name == std::ffi::OsStr::new("deps"))
-    {
-        let profile_dir = current_executable
-            .parent()
-            .and_then(Path::parent)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "test executable has no Cargo profile directory",
-                )
-            })?;
-        let test_binary = profile_dir.join(format!("agent-session{}", env::consts::EXE_SUFFIX));
-        return resolve_agent_session_executable_from(&test_binary);
-    }
-    resolve_agent_session_executable_from(&current_executable)
-}
-
-fn resolve_agent_session_executable_from(current_executable: &Path) -> io::Result<PathBuf> {
-    // Linux reports the resolved `/proc/self/exe`, but macOS reports the
-    // invocation path, which is a link for a Homebrew `bin/` install. Resolve
-    // the running binary itself so the exact-sibling check below still runs in
-    // its real release directory and still refuses a linked sibling.
-    let current_executable = &fs::canonicalize(current_executable)?;
-    let binary_name = format!("agent-session{}", env::consts::EXE_SUFFIX);
-    let executable = if current_executable
-        .file_name()
-        .is_some_and(|name| name == std::ffi::OsStr::new(&binary_name))
-    {
-        current_executable.to_path_buf()
-    } else {
-        current_executable
-            .parent()
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "current executable has no release directory",
-                )
-            })?
-            .join(binary_name)
-    };
-    let metadata = fs::symlink_metadata(&executable)?;
-    if !metadata.file_type().is_file() || metadata.permissions().mode() & 0o111 == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "agent-session executable is unavailable",
-        ));
-    }
-    Ok(executable)
 }
 
 fn current_runtime_helper() -> Result<PathBuf, CliError> {
@@ -13357,9 +13301,9 @@ mod tests {
         TmuxRuntimeIdentity, acquire_session_record_lock, acquire_session_record_lock_timed,
         create_record, delete_session_with_timeouts, kill_tmux_session_with_timeout,
         live_status_with_timeout, load_session_record, pane_drawn, parse_pane_cursor,
-        persist_tmux_runtime_identity, resolve_agent_session_executable_from, resolve_session_id,
-        session_dir, strip_trailing_blank_lines, tmux_launch_may_have_created_runtime,
-        try_acquire_session_record_lock, write_session_record,
+        persist_tmux_runtime_identity, resolve_session_id, session_dir, strip_trailing_blank_lines,
+        tmux_launch_may_have_created_runtime, try_acquire_session_record_lock,
+        write_session_record,
     };
 
     #[test]
@@ -13419,113 +13363,6 @@ mod tests {
         assert!(!pane_drawn((0, 0)));
         assert!(pane_drawn((0, 1)));
         assert!(pane_drawn((9, 25)));
-    }
-
-    #[test]
-    fn agent_session_executable_resolves_facade_to_exact_release_sibling() {
-        let tmp = tempfile::TempDir::new().expect("tempdir");
-        let sibling_helper = tmp
-            .path()
-            .join(format!("fixture-helper{}", std::env::consts::EXE_SUFFIX));
-        let agent_session = tmp
-            .path()
-            .join(format!("agent-session{}", std::env::consts::EXE_SUFFIX));
-        fs::write(&sibling_helper, "fixture-helper").expect("fixture-helper fixture");
-        fs::write(&agent_session, "agent-session").expect("agent-session fixture");
-        fs::set_permissions(&sibling_helper, fs::Permissions::from_mode(0o700))
-            .expect("fixture-helper mode");
-        fs::set_permissions(&agent_session, fs::Permissions::from_mode(0o700))
-            .expect("agent-session mode");
-
-        // The resolver canonicalizes; macOS tempdirs sit behind `/var`.
-        assert_eq!(
-            resolve_agent_session_executable_from(&sibling_helper).expect("sibling executable"),
-            fs::canonicalize(&agent_session).expect("canonical agent-session")
-        );
-    }
-
-    #[test]
-    fn agent_session_executable_preserves_direct_agent_session_recursion() {
-        let tmp = tempfile::TempDir::new().expect("tempdir");
-        let agent_session = tmp
-            .path()
-            .join(format!("agent-session{}", std::env::consts::EXE_SUFFIX));
-        fs::write(&agent_session, "agent-session").expect("agent-session fixture");
-        fs::set_permissions(&agent_session, fs::Permissions::from_mode(0o700))
-            .expect("agent-session mode");
-
-        assert_eq!(
-            resolve_agent_session_executable_from(&agent_session).expect("current executable"),
-            fs::canonicalize(&agent_session).expect("canonical agent-session")
-        );
-    }
-
-    #[test]
-    fn agent_session_executable_resolves_a_linked_invocation_to_its_release() {
-        // macOS reports the unresolved invocation path from current_exe, so a
-        // Homebrew `bin/` link must resolve to the linked release directory.
-        let tmp = tempfile::TempDir::new().expect("tempdir");
-        let release = tmp.path().join("Cellar/nils-cli/1.0.0/bin");
-        let bin = tmp.path().join("bin");
-        fs::create_dir_all(&release).expect("release dir");
-        fs::create_dir_all(&bin).expect("bin dir");
-        let name = |stem: &str| format!("{stem}{}", std::env::consts::EXE_SUFFIX);
-        for stem in ["agent-session", "fixture-helper"] {
-            let binary = release.join(name(stem));
-            fs::write(&binary, stem).expect("release fixture");
-            fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).expect("release mode");
-            std::os::unix::fs::symlink(&binary, bin.join(name(stem))).expect("bin link");
-        }
-        let released = fs::canonicalize(release.join(name("agent-session"))).expect("release");
-
-        assert_eq!(
-            resolve_agent_session_executable_from(&bin.join(name("agent-session")))
-                .expect("linked agent-session"),
-            released
-        );
-        assert_eq!(
-            resolve_agent_session_executable_from(&bin.join(name("fixture-helper")))
-                .expect("linked facade"),
-            released
-        );
-
-        // Resolving the invocation must not relax the sibling check: a linked
-        // agent-session beside the real facade is still refused.
-        let linked_sibling = tmp.path().join("linked-sibling");
-        fs::create_dir_all(&linked_sibling).expect("linked sibling dir");
-        let facade = linked_sibling.join(name("fixture-helper"));
-        fs::write(&facade, "fixture-helper").expect("facade fixture");
-        fs::set_permissions(&facade, fs::Permissions::from_mode(0o700)).expect("facade mode");
-        std::os::unix::fs::symlink(&released, linked_sibling.join(name("agent-session")))
-            .expect("sibling link");
-        let refused = resolve_agent_session_executable_from(&facade)
-            .expect_err("linked sibling must be refused");
-        assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied);
-    }
-
-    #[test]
-    fn agent_session_executable_fails_closed_for_missing_or_non_executable_sibling() {
-        let tmp = tempfile::TempDir::new().expect("tempdir");
-        let sibling_helper = tmp
-            .path()
-            .join(format!("fixture-helper{}", std::env::consts::EXE_SUFFIX));
-        let agent_session = tmp
-            .path()
-            .join(format!("agent-session{}", std::env::consts::EXE_SUFFIX));
-        fs::write(&sibling_helper, "fixture-helper").expect("fixture-helper fixture");
-        fs::set_permissions(&sibling_helper, fs::Permissions::from_mode(0o700))
-            .expect("fixture-helper mode");
-
-        let missing = resolve_agent_session_executable_from(&sibling_helper)
-            .expect_err("missing sibling must fail");
-        assert_eq!(missing.kind(), io::ErrorKind::NotFound);
-
-        fs::write(&agent_session, "agent-session").expect("agent-session fixture");
-        fs::set_permissions(&agent_session, fs::Permissions::from_mode(0o600))
-            .expect("agent-session mode");
-        let non_executable = resolve_agent_session_executable_from(&sibling_helper)
-            .expect_err("non-executable sibling must fail");
-        assert_eq!(non_executable.kind(), io::ErrorKind::PermissionDenied);
     }
 
     #[test]
