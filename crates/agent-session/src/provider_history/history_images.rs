@@ -1,4 +1,6 @@
 use super::*;
+use crate::provider_prompt::claude_queued_prompt_blocks;
+use std::borrow::Cow;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct HistoryMessage {
@@ -307,7 +309,7 @@ pub(super) fn normalize_message(
             }
             let text = if role == "user" {
                 claude_user_message_text(value)
-                    .or_else(|| claude_queued_prompt_text(value).map(str::to_string))
+                    .or_else(|| claude_queued_prompt_text(value).map(Cow::into_owned))
                     .or_else(|| {
                         (!image_sources(value).is_empty()
                             && value.get("isMeta") != Some(&Value::Bool(true)))
@@ -375,7 +377,8 @@ fn image_sources(value: &Value) -> Vec<ImageSource<'_>> {
     let mut sources = Vec::new();
     let content = value
         .pointer("/payload/content")
-        .or_else(|| value.pointer("/message/content"));
+        .or_else(|| value.pointer("/message/content"))
+        .or_else(|| claude_queued_prompt_blocks(value));
     if let Some(content) = content {
         collect_images(content, &mut sources, 0);
     }
@@ -795,6 +798,9 @@ fn sniff_mime(bytes: &[u8]) -> Option<&'static str> {
         None
     }
 }
+
+#[cfg(test)]
+mod queued_list_prompt_tests;
 
 #[cfg(test)]
 mod image_tests {
