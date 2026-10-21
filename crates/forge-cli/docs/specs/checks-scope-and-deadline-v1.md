@@ -45,9 +45,10 @@ means some gate rows did not succeed); they do not infer it from `gate_state`.
 
 When `skipped_required` is non-empty, default text output adds, after the scope
 line, one `required_skipped=N required_neutral=N (...)` line and one
-`  skipped-required: <name> (<state>)` line per row. Text output is unchanged
-when every gate row succeeded or failed. Non-required rows outside the effective
-gate are never listed.
+`skipped-required: <name> (<state>)` line per row, indented two spaces. Text
+output is unchanged when every gate row succeeded or failed. Rows outside the
+effective gate are never listed; outside `gate_scope=required` the effective
+gate is the visible rows, so those rows are reported under the same names.
 
 ## Wait budget
 
