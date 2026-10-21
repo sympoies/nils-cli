@@ -127,6 +127,7 @@ struct WorktreeEntryOutput {
 
 #[derive(Debug, Serialize)]
 struct RemoveOutput {
+    repo_root: String,
     removed_path: String,
     removed_branch: Option<String>,
     removed_head: String,
@@ -249,8 +250,8 @@ fn run_remove(args: &[String]) -> i32 {
 
 fn render_removal(output: &RemoveOutput) -> String {
     let mut text = format!(
-        "Removed worktree {}\nPruned stale worktree metadata",
-        output.removed_path
+        "Removed worktree {}\nRepository: {}\nPruned stale worktree metadata",
+        output.removed_path, output.repo_root
     );
     if let Some(reference) = &output.backup_ref {
         text.push_str(&format!(
@@ -642,7 +643,7 @@ fn list_worktrees() -> Result<ListOutput, CliError> {
 }
 
 fn remove_worktree(args: &RemoveArgs) -> Result<RemoveOutput, CliError> {
-    let layout = resolve_layout()?;
+    let layout = resolve_remove_layout(&args.target)?;
     let target = resolve_remove_target(&args.target, &layout)?;
     let target_key = path_key(&target);
     let repo_root_key = path_key(&layout.repo_root);
@@ -655,7 +656,7 @@ fn remove_worktree(args: &RemoveArgs) -> Result<RemoveOutput, CliError> {
         .with_details(json!({ "path": display_path(&target) })));
     }
 
-    let entries = list_linked_worktrees()
+    let entries = list_linked_worktrees_in(&layout.repo_root)
         .map_err(|err| CliError::runtime("git-worktree-list-failed", err.to_string()))?;
     let known = entries
         .iter()
@@ -679,6 +680,7 @@ fn remove_worktree(args: &RemoveArgs) -> Result<RemoveOutput, CliError> {
     removal::remove(&target, &layout.repo_root)?;
 
     Ok(RemoveOutput {
+        repo_root: display_path(&layout.repo_root),
         removed_path: target_arg,
         removed_branch: fence.removed_branch,
         removed_head: fence.removed_head,
@@ -775,6 +777,18 @@ fn worktree_candidates_from_entries(entries: &[LinkedWorktree]) -> Vec<String> {
 
 fn list_linked_worktrees() -> anyhow::Result<Vec<LinkedWorktree>> {
     let output = git_output(&["worktree", "list", "--porcelain"])?;
+    let stdout = String::from_utf8(output.stdout).context("git worktree output was not UTF-8")?;
+    Ok(parse_worktree_porcelain(&stdout))
+}
+
+fn list_linked_worktrees_in(cwd: &Path) -> anyhow::Result<Vec<LinkedWorktree>> {
+    let output = nils_common::git::run_output_in(cwd, &["worktree", "list", "--porcelain"])
+        .context("spawn git worktree list")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "git worktree list failed: {}",
+        summarize_git_error(&String::from_utf8_lossy(&output.stderr))
+    );
     let stdout = String::from_utf8(output.stdout).context("git worktree output was not UTF-8")?;
     Ok(parse_worktree_porcelain(&stdout))
 }
@@ -1113,7 +1127,30 @@ fn print_go_help() {
 }
 
 fn resolve_layout() -> Result<WorktreeLayout, CliError> {
-    let repo_root = require_repo_root()?;
+    layout_for_repo_root(require_repo_root()?)
+}
+
+/// `remove` layout: an absolute target that lives in a git worktree selects the
+/// repository owning that worktree, so a caller rooted in another repository can
+/// remove it. Any other target keeps resolving the repository from the caller's
+/// working directory, and the usual managed-root and known-worktree checks then
+/// run against the resolved repository.
+fn resolve_remove_layout(target: &str) -> Result<WorktreeLayout, CliError> {
+    let candidate = Path::new(target);
+    if candidate.is_absolute()
+        && let Some(repo_root) = owning_repo_root(candidate)
+    {
+        return layout_for_repo_root(repo_root);
+    }
+    resolve_layout()
+}
+
+fn owning_repo_root(path: &Path) -> Option<PathBuf> {
+    let primary = list_linked_worktrees_in(path).ok()?.into_iter().next()?;
+    absolute_existing_path(&primary.path).ok()
+}
+
+fn layout_for_repo_root(repo_root: PathBuf) -> Result<WorktreeLayout, CliError> {
     let agent_home = resolve_agent_home()?;
     let worktree_root = agent_home.join("worktrees");
     let repo_key = repo_key_for_path(&repo_root);
