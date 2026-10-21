@@ -725,6 +725,44 @@ async fn mailbox_wake_recovers_unverified_composer_and_clears_prompt(agent: Agen
 }
 
 #[tokio::test]
+async fn mailbox_wake_unverified_but_submitted_stays_unknown_claude() {
+    mailbox_wake_unverified_but_submitted_stays_unknown(AgentKind::Claude).await;
+}
+
+#[tokio::test]
+async fn mailbox_wake_unverified_but_submitted_stays_unknown_codex() {
+    mailbox_wake_unverified_but_submitted_stays_unknown(AgentKind::Codex).await;
+}
+
+async fn mailbox_wake_unverified_but_submitted_stays_unknown(agent: AgentKind) {
+    // Enter succeeds and empties the composer, but the pane layout is unreadable
+    // while the submission is confirmed. An empty composer after an unverified
+    // submission is not evidence of failure, so the outcome must stay Unknown
+    // for transcript reconciliation instead of becoming a retryable refusal.
+    let fixture = WakeFixture::new(agent).await;
+    fs::write(fixture.temp.path().join("unknown-layout-after-enter"), "").unwrap();
+    assert!(
+        matches!(
+            fixture.start(),
+            Err(TerminalNotificationStartError::Unknown)
+        ),
+        "a submitted wake with an empty composer must stay Unknown for {agent:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.temp.path().join("submissions"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.temp.path().join("composer")).unwrap(),
+        ""
+    );
+    assert_eq!(notification_fixture(fixture.temp.path())["state"], "attempting");
+}
+
+#[tokio::test]
 async fn mailbox_wake_accepts_verified_runtime_exit_after_enter() {
     let fixture = WakeFixture::new(AgentKind::Claude).await;
     fs::write(fixture.temp.path().join("exit-after-next-enter"), "").unwrap();

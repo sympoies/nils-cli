@@ -395,6 +395,19 @@ fn guarded_input(
             })
         }
         crate::send_submit::SubmitOutcome::Unverified => {
+            // An empty composer is also what a successful Enter looks like, so
+            // only a reminder still visible proves that the wake failed.
+            match observe_composer_input(tmux_bin, record) {
+                Some(input) if input.is_empty() => {
+                    return Err(TerminalNotificationStartError::Unknown);
+                }
+                None => {
+                    return Err(TerminalNotificationStartError::UnknownReason(
+                        "submission-not-confirmed",
+                    ));
+                }
+                Some(_) => {}
+            }
             if !clear_owned_notification(context, tmux_bin, record, prompt) {
                 return Err(TerminalNotificationStartError::UnknownReason(
                     "submission-not-confirmed",
@@ -413,6 +426,34 @@ fn guarded_input(
                 TerminalNotificationStartError::Unknown
             })
         }
+    }
+}
+
+/// Read the recognized composer, retrying briefly while the pane layout is
+/// transiently unreadable. `None` means the composer stayed unobservable.
+fn observe_composer_input(tmux_bin: &Path, record: &SessionRecord) -> Option<String> {
+    let target = format!("{}:0.0", record.tmux_session);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+        let mut command = ProcessCommand::new(tmux_bin);
+        command.args(["capture-pane", "-p", "-e", "-J", "-t", &target]);
+        let input = crate::run_output_with_timeout_and_strict_cap(
+            command,
+            remaining.min(crate::PANE_OBSERVATION_COMMAND_TIMEOUT),
+            crate::PANE_OBSERVATION_MAX_OUTPUT_BYTES,
+        )
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|pane| crate::send_submit::exact_composer_input(&record.agent, &pane));
+        if input.is_some() {
+            return input;
+        }
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 
