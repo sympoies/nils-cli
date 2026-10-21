@@ -24,7 +24,20 @@ fn capture_tmux_identity(
     timeout: Duration,
     capture_process_boundary: bool,
 ) -> Result<TmuxRuntimeProbe, SessionTerminationFailure> {
-    capture_tmux_identity_once(context, record, tmux_bin, timeout, capture_process_boundary)
+    match capture_tmux_identity_once(context, record, tmux_bin, timeout, capture_process_boundary) {
+        Err(
+            SessionTerminationFailure::RuntimeIdentityUnavailable
+            | SessionTerminationFailure::RuntimeIdentityMismatch,
+        ) if verified_tmux_status_with_timeout(
+            tmux_bin,
+            &format!("={}", record.tmux_session),
+            timeout,
+        ) == "stopped" =>
+        {
+            Ok(TmuxRuntimeProbe::Stopped)
+        }
+        probe => probe,
+    }
 }
 
 fn capture_tmux_identity_once(
