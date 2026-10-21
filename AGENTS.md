@@ -52,7 +52,7 @@ Open only the references relevant to the requested change:
   `NILS_CLI_TEST_RUNNER=nextest bash scripts/ci/nils-cli-checks-entrypoint.sh --with-coverage`
 - GitHub required checks for `main` must include `test`, `test_containment`,
   and `cargo-deny (advisories + bans)` after the maintainer applies the migration
-  in `.github/README.md`. Full Linux/macOS and coverage are release gates.
+  in `docs/runbooks/delivery-and-releases.md`. Full Linux/macOS and coverage are release gates.
 - When completion assets change, also run:
   - `zsh -n completions/zsh/_<cli>`
   - `bash -n completions/bash/<cli>`

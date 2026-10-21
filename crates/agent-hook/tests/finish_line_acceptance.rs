@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::{Duration, Instant};
 
 use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
@@ -1491,16 +1490,12 @@ fn repository_wide_mutation_barrier_covers_other_sessions_and_ordinary_shell() {
     );
     let ordinary = run_request(
         "ordinary-shell-active",
-        "touch ordinary-started; sleep 0.4",
+        "touch ordinary-started; n=0; while [ ! -e ordinary-release ] && [ $n -lt 3000 ]; do sleep 0.01; n=$((n+1)); done",
         "turn-ordinary-active",
     );
     let ordinary_result = thread::scope(|scope| {
         let handle = scope.spawn(|| call(&fixture, "run", &ordinary));
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while !fixture.root.join("ordinary-started").exists() {
-            assert!(Instant::now() < deadline, "ordinary shell did not start");
-            thread::sleep(Duration::from_millis(5));
-        }
+        support::wait_for_path(&fixture.root.join("ordinary-started"));
         let validator = admit_validator(
             &fixture,
             "session-barrier-b",
@@ -1519,6 +1514,7 @@ fn repository_wide_mutation_barrier_covers_other_sessions_and_ordinary_shell() {
         assert_eq!(mutation.0, 75, "envelope={}", mutation.1);
         let (_, blocked) = verdict(&fixture, "session-barrier-b", &capability_b, contract_b);
         assert_eq!(blocked["data"]["aggregate"], "active");
+        std::fs::write(fixture.root.join("ordinary-release"), "release").expect("release shell");
         handle.join().expect("ordinary shell thread")
     });
     assert_eq!(ordinary_result.0, 0, "envelope={}", ordinary_result.1);
@@ -2346,7 +2342,7 @@ fn contained_bash_provider_failure_terminalizes_acceptance_as_infrastructure_blo
 #[test]
 fn killed_contained_supervisor_quiesces_to_infrastructure_blocked_terminal() {
     let fixture = fixture();
-    let command = "touch acceptance-validation-started; sleep 5; touch acceptance-late-write";
+    let command = "printf '%s' \"$$\" > acceptance-validation.pid.tmp; mv acceptance-validation.pid.tmp acceptance-validation.pid; touch acceptance-validation-started; sleep 5; touch acceptance-late-write";
     install_bash_contract(&fixture, command);
     let capability = open(&fixture, "session-contained-killed");
     let mut registration = common(&fixture, "session-contained-killed", "turn-register");
@@ -2420,14 +2416,8 @@ fn killed_contained_supervisor_quiesces_to_infrastructure_blocked_terminal() {
         .expect("validation stdin")
         .write_all(request.to_string().as_bytes())
         .expect("write validation request");
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !fixture.root.join("acceptance-validation-started").exists() {
-        assert!(
-            Instant::now() < deadline,
-            "contained validation did not start"
-        );
-        thread::sleep(Duration::from_millis(5));
-    }
+    support::wait_for_path(&fixture.root.join("acceptance-validation-started"));
+    let validation_pid = support::read_pid(&fixture.root.join("acceptance-validation.pid"));
     unsafe {
         libc::kill(-(child.id() as i32), libc::SIGKILL);
     }
@@ -2441,7 +2431,7 @@ fn killed_contained_supervisor_quiesces_to_infrastructure_blocked_terminal() {
         "nils-contained-killed-run",
     );
     assert_eq!(quiesced.0, 0, "envelope={}", quiesced.1);
-    thread::sleep(Duration::from_millis(250));
+    support::wait_for_exit(validation_pid);
     assert!(!fixture.root.join("acceptance-late-write").exists());
     let (_, blocked) = verdict(
         &fixture,

@@ -596,6 +596,10 @@ direct-child exit terminates descendants before bounded pipe draining. The
 policy cannot specify a path,
 interpreter, argv, environment assignment, shell fragment, timeout, or digest.
 
+`AGENT_HOOK_HANDLER_TIMEOUT_MS` shortens that deadline for the invoking
+process and never lengthens it; zero or unparsable values are ignored. Tests
+use it to exercise timeout postures without waiting out five seconds.
+
 Shadow mode never invokes it. Adding another handler requires a new nils-cli
 release or a new versioned capability ID.
 

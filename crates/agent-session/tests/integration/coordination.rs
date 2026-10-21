@@ -3479,7 +3479,7 @@ fn coordination_review_wait_processes_message_expiry() {
         .as_str()
         .expect("message id")
         .to_string();
-    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    super::mailbox_expiry::expire_message(&state_dir, &message_id);
     let waited = run(
         tmp.path(),
         &[

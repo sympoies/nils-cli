@@ -745,9 +745,11 @@ fn post_exit_record_lock_contention_returns_the_receipt() {
     let launch = running_session(&context, &tmux);
     session_ready(&context, &launch);
     fs::write(tmp.path().join("hold-exit"), "").unwrap();
+    let restart_returned = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let holder = {
         let context = context.clone();
         let root = tmp.path().to_path_buf();
+        let restart_returned = restart_returned.clone();
         thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(10);
             while !log(&root).contains("send-keys") && Instant::now() < deadline {
@@ -761,13 +763,20 @@ fn post_exit_record_lock_contention_returns_the_receipt() {
                 .arg(format!("-{}", pane.trim()))
                 .status();
             fs::remove_file(root.join("running")).unwrap();
-            thread::sleep(Duration::from_secs(3));
+            // Hold the record until the restart gives up, however long that takes.
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !restart_returned.load(std::sync::atomic::Ordering::SeqCst)
+                && Instant::now() < deadline
+            {
+                thread::sleep(Duration::from_millis(20));
+            }
         })
     };
 
     let mut args = restart_args(&tmux, false, 1);
     args.stop_timeout = 1;
     let error = restart(&context, &args).unwrap_err();
+    restart_returned.store(true, std::sync::atomic::Ordering::SeqCst);
     holder.join().unwrap();
 
     assert_eq!(error.code(), "restart-stop-failed", "{error:?}");

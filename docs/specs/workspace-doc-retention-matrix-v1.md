@@ -30,6 +30,7 @@ Decision fields:
 | `docs/runbooks/review-specialists-primitive.md` | `workspace-level` | `canonical` | `keep` | Shared specialist-review evidence contract. |
 | `docs/runbooks/test-cleanup-governance.md` | `workspace-level` | `canonical` | `keep` | Stale-test lifecycle and CI guardrails. |
 | `docs/runbooks/workspace-maintenance-reference.md` | `workspace-level` | `canonical` | `keep` | Detailed setup, validation, coverage, artifact, and publishing reference. |
+| `docs/runbooks/delivery-and-releases.md` | `workspace-level` | `canonical` | `keep` | Delivery lanes, merge gates, and release flow. |
 | `docs/specs/cli-output-contract-v1.md` | `workspace-level` | `canonical` | `keep` | Workspace CLI output envelope and exit-code contract. |
 | `docs/specs/cli-service-json-contract-guideline-v1.md` | `workspace-level` | `canonical` | `keep` | Service-consumed CLI JSON contract guidance. |
 | `docs/specs/completion-contract-template.md` | `workspace-level` | `canonical` | `keep` | Per-crate completion migration contract template. |

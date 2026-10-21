@@ -14,9 +14,9 @@ on its exact tagged commit. Green PR or queue checks do not authorize a release.
 | Release | Authorize the invocation, then the same full Linux/macOS/coverage workflow on the exact tag SHA, then build and package four platform targets, publish assets, and dispatch the tap update | Release builds, assets and tap update |
 | Push to `main` | Lightweight status only | No additional merge or release guarantee |
 
-[`ci.yml`](workflows/ci.yml) runs on PRs, merge groups and main pushes. Its full
+[`ci.yml`](../../.github/workflows/ci.yml) runs on PRs, merge groups and main pushes. Its full
 validation caller runs daily at **05:23 UTC**, or through `workflow_dispatch`
-on `main`, using [`full-validation.yml`](workflows/full-validation.yml).
+on `main`, using [`full-validation.yml`](../../.github/workflows/full-validation.yml).
 Scheduled and manual full runs share one concurrency group; newer PR pushes
 cancel their superseded run, while merge-group runs remain independent.
 
@@ -34,7 +34,7 @@ lockstep, third-party artifacts, publish order and a locked `cargo check`, no
 test suites) without waiting for a base-commit receipt; any other dependency
 change stays on the planner. The release workflow still validates the tag in full. Docs-only PRs run substantive documentation audits.
 The merge queue still invokes the planner for docs and release changes.
-See the [scope consumption contract](../docs/specs/affected-scope-ci-consumption-v1.md).
+See the [scope consumption contract](../specs/affected-scope-ci-consumption-v1.md).
 
 ## Required checks and migration
 
@@ -74,7 +74,7 @@ Do not require removed checks before their producers are restored.
 Version preparation makes a reviewed version-bump PR. The authorized release
 broker owns stable `vMAJOR.MINOR.PATCH` tags and release publication; maintainers
 must not tag or publish from an ordinary delivery session.
-[`release.yml`](workflows/release.yml) also supports authorized recovery dispatch
+[`release.yml`](../../.github/workflows/release.yml) also supports authorized recovery dispatch
 on an existing stable tag. Invocation and rerun identity checks still apply.
 
 The release runs full validation itself. Every validation and build checkout
@@ -86,7 +86,7 @@ with an LCOV report required; source-PR or merge-group green checks cannot
 substitute for this gate. Releases build native Linux/macOS x86_64 and aarch64
 archives, audit third-party notices, upload assets, publish the GitHub Release,
 and confirm that a tap update workflow actually started. Crates.io publication
-is a separate authorized [`publish-crates.yml`](workflows/publish-crates.yml) flow.
+is a separate authorized [`publish-crates.yml`](../../.github/workflows/publish-crates.yml) flow.
 
 ## Failure recovery
 
@@ -135,5 +135,5 @@ The nextest CI profile terminates an individual test after its configured
 Build, packaging and publication jobs retain GitHub Actions' default job limit.
 Timeouts and cancellations cannot satisfy the full-validation gate.
 
-For local commands and prerequisites, see [DEVELOPMENT.md](../DEVELOPMENT.md)
-and the [workspace maintenance reference](../docs/runbooks/workspace-maintenance-reference.md).
+For local commands and prerequisites, see [DEVELOPMENT.md](../../DEVELOPMENT.md)
+and the [workspace maintenance reference](workspace-maintenance-reference.md).
