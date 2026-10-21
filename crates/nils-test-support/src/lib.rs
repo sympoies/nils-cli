@@ -9,6 +9,7 @@ pub mod fixtures;
 pub mod fs;
 pub mod git;
 pub mod help;
+pub mod hermetic;
 pub mod http;
 pub mod node;
 pub mod stubs;
@@ -22,6 +23,9 @@ pub struct GlobalStateLock {
 
 impl GlobalStateLock {
     pub fn new() -> Self {
+        // Capture the inherited environment before any in-process change, so the
+        // hermetic spawn helpers can tell ambient state from a test's own.
+        hermetic::ambient_baseline();
         let guard = match GLOBAL_STATE_LOCK.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -45,6 +49,7 @@ impl EnvGuard {
     /// Requires holding `GlobalStateLock` to avoid concurrent global mutations.
     pub fn set(lock: &GlobalStateLock, key: &str, value: &str) -> Self {
         let _ = lock;
+        hermetic::ambient_baseline();
         let original = env::var(key).ok();
         // SAFETY: tests mutate process environment only while holding GlobalStateLock.
         unsafe { env::set_var(key, value) };
@@ -57,6 +62,7 @@ impl EnvGuard {
     /// Requires holding `GlobalStateLock` to avoid concurrent global mutations.
     pub fn remove(lock: &GlobalStateLock, key: &str) -> Self {
         let _ = lock;
+        hermetic::ambient_baseline();
         let original = env::var(key).ok();
         // SAFETY: tests mutate process environment only while holding GlobalStateLock.
         unsafe { env::remove_var(key) };

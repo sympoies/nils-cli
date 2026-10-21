@@ -2,6 +2,29 @@ use super::*;
 
 pub(crate) mod session_tmp;
 
+/// Checkout-lease namespace for worktree lifecycle guards.
+///
+/// Unit tests start sessions in temporary checkouts; keep their lock files out of
+/// the developer's real state directory when the lease location is only inherited
+/// from the caller. A test that set any of these variables itself keeps them.
+pub(crate) fn worktree_lifecycle_state_home(
+    context: &CliContext,
+) -> Result<PathBuf, nils_common::worktree_lifecycle::Error> {
+    #[cfg(test)]
+    if [
+        "AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME",
+        "AGENT_RUNTIME_STATE_HOME",
+        "XDG_STATE_HOME",
+    ]
+    .iter()
+    .all(|name| nils_test_support::hermetic::is_ambient(name))
+    {
+        return Ok(context.state_dir.join("checkout-leases"));
+    }
+    let _ = context;
+    nils_common::worktree_lifecycle::state_home()
+}
+
 pub(super) fn add_runtime_tmux_environment(
     command: &mut ProcessCommand,
     state_dir: &Path,

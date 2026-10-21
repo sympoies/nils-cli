@@ -197,7 +197,7 @@ fn worktree_lifecycle_guard_survives_launch_and_failure_rollback() {
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
         let agent = fake_agent(tmp.path(), "codex");
         let mut command = Command::new(bin::resolve("agent-session"));
-        nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
+        let _home = nils_test_support::hermetic::isolate(&mut command);
         command
             .current_dir(tmp.path())
             .args([

@@ -26,13 +26,28 @@ lock files under the real agent home.
 - A test never prints credential material. Assertion messages compare key sets or
   digests, not file contents.
 
+## Spawn helpers
+
+- `CmdOptions` (and the shared `git` helpers) apply `nils_test_support::hermetic`:
+  the child starts from a cleared environment plus `ENV_ALLOWLIST`, and `HOME`,
+  `AGENT_HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `XDG_*`, and `GIT_CONFIG_GLOBAL`
+  point at a per-spawn temp directory. `GIT_CONFIG_NOSYSTEM` is set.
+- A variable the test changed in-process (through `EnvGuard`) or passed with
+  `with_env` reaches the child. Only values that equal what the process inherited
+  are treated as ambient state and dropped.
+- A test that builds its own `Command` calls `hermetic::isolate` and keeps the
+  returned home alive until the child exits.
+- Product code that reads an inherited home root under `#[cfg(test)]` can use
+  `hermetic::is_ambient` to ignore an inherited value and keep a fixture's own.
+
 ## Enforcement
 
 - `scripts/ci/test-env-isolation-guard.sh` runs representative tests under
   `env -i` with a poisoned environment. Every home and config variable points at a
   sentinel directory, and the auth-sync and remote-auth hooks are commands that
-  record a hit. It fails when a sentinel changes, a hook command runs, or a
-  representative run fails. It never prints test output.
+  record a hit. It fails when a sentinel changes, a hook command runs, or a run
+  cannot build. Ordinary test failures are left to the regular gate. It never
+  prints test output.
 - `scripts/ci/tests/test-env-isolation-guard.test.sh` covers the guard itself
   with a fake `cargo`, because a real run cannot be made to leak on demand.
 - The guard is a detector over a selection, not a proof for the whole suite. Add a

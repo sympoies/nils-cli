@@ -59,11 +59,7 @@ impl Default for InitRepoOptions {
 }
 
 pub fn git_output(dir: &Path, args: &[&str]) -> Output {
-    Command::new(git_command())
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git command failed to spawn")
+    git_output_with_env(dir, args, &[])
 }
 
 pub fn git(dir: &Path, args: &[&str]) -> String {
@@ -94,6 +90,10 @@ pub fn git_with_env(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> String 
 
 fn git_output_with_env(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> Output {
     let mut cmd = Command::new(git_command());
+    // Hermetic: the developer's global git config (signing, hooks path, identity)
+    // and inherited GIT_* variables must not steer fixture repositories.
+    let home = crate::hermetic::HermeticHome::new();
+    crate::hermetic::apply(&mut cmd, &home, &[]);
     cmd.args(args).current_dir(dir);
     for (key, value) in envs {
         cmd.env(key, value);
