@@ -24,8 +24,13 @@ set -euo pipefail
 SELECTION=(
   "nils-test-support|lib|"
   "nils-codex-cli|all|"
-  "nils-agent-session|all|"
   "nils-secrets|all|"
+  "nils-agent-session|lib|"
+  "nils-agent-session|integration|"
+  "nils-agent-session|startup_failure|"
+  "nils-agent-hook|lib|"
+  "nils-agent-runtime|lib|"
+  "nils-forge-cli|integration|"
 )
 
 # A caller can replace the selection with newline-separated entries in the same
