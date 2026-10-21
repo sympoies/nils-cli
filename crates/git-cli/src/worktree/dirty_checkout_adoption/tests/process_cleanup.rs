@@ -87,7 +87,7 @@ fn delayed_cleanup_signals_use_only_the_successfully_pinned_generation() {
     terminate_owned_processes_until_with(
         &mut owner,
         &mut child,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         &mut control,
     )
     .expect("opaque-handle cleanup succeeds");

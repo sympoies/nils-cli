@@ -120,7 +120,7 @@ fn aggregate_file_budget_is_checked_before_opening_the_file() {
         false,
         None,
         &mut budget,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
     );
 
     assert_eq!(

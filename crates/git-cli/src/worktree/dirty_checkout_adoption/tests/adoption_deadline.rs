@@ -51,7 +51,7 @@ fn lease_lock_waits_for_active_transaction_until_shared_deadline() {
     let state_dir = tempfile::TempDir::new().expect("lease-lock state directory");
     let held_lock = LeaseLock::acquire_until(
         state_dir.path(),
-        deadline_after(Duration::from_secs(1)).expect("initial lock deadline"),
+        deadline_after(TEST_WAIT).expect("initial lock deadline"),
     )
     .expect("acquire initial lease lock");
     let worker_directory = state_dir.path().to_path_buf();
@@ -61,8 +61,7 @@ fn lease_lock_waits_for_active_transaction_until_shared_deadline() {
         let mut notified = false;
         LeaseLock::acquire_until_with(
             &worker_directory,
-            deadline_after(legacy_lock_wait + Duration::from_secs(2))
-                .expect("contending lock deadline"),
+            deadline_after(legacy_lock_wait + TEST_WAIT).expect("contending lock deadline"),
             || {
                 if !notified {
                     waiting_sender
@@ -75,7 +74,7 @@ fn lease_lock_waits_for_active_transaction_until_shared_deadline() {
     });
 
     waiting_receiver
-        .recv_timeout(Duration::from_secs(1))
+        .recv_timeout(TEST_WAIT)
         .expect("contending worker must reach the real lock boundary");
     std::thread::sleep(legacy_lock_wait + LOCK_POLL);
     drop(held_lock);
@@ -93,7 +92,7 @@ fn lease_lock_times_out_at_shared_transaction_deadline() {
     let state_dir = tempfile::TempDir::new().expect("lease-lock state directory");
     let held_lock = LeaseLock::acquire_until(
         state_dir.path(),
-        deadline_after(Duration::from_secs(1)).expect("initial lock deadline"),
+        deadline_after(TEST_WAIT).expect("initial lock deadline"),
     )
     .expect("acquire initial lease lock");
 

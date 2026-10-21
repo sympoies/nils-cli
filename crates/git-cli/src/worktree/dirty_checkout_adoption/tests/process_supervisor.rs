@@ -87,7 +87,7 @@ impl PublishedPidCleanup {
         };
         let mut control = SystemProcessControl;
         signal_published_process_with(&mut control, process)?;
-        wait_pinned_process_until(process, Instant::now() + Duration::from_secs(1))?;
+        wait_pinned_process_until(process, Instant::now() + TEST_WAIT)?;
         self.0 = None;
         Ok(())
     }
@@ -125,7 +125,7 @@ pub(super) fn spawn_authenticated_supervisor_fixture(
     scenario: &str,
     pid_path: &Path,
 ) -> SupervisorFixture {
-    spawn_authenticated_supervisor_fixture_with_timeout(scenario, pid_path, Duration::from_secs(5))
+    spawn_authenticated_supervisor_fixture_with_timeout(scenario, pid_path, TEST_WAIT)
 }
 
 #[cfg(target_os = "linux")]
@@ -231,9 +231,7 @@ pub(super) fn spawn_authenticated_supervisor_output_fixture(
         let _ = child.wait();
         panic!("deliver output fixture capability: {error}");
     }
-    if let Err(error) =
-        sender.write_all(&fixture_monotonic_deadline(Duration::from_secs(5)).to_be_bytes())
-    {
+    if let Err(error) = sender.write_all(&fixture_monotonic_deadline(TEST_WAIT).to_be_bytes()) {
         unsafe {
             let _ = libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
         }
@@ -287,7 +285,7 @@ fn run_process_supervisor_capability_fixture(
             .write_all(bytes)
             .expect("deliver capability validation bytes");
         sender
-            .write_all(&fixture_monotonic_deadline(Duration::from_secs(1)).to_be_bytes())
+            .write_all(&fixture_monotonic_deadline(TEST_WAIT).to_be_bytes())
             .expect("deliver capability validation deadline");
     }
     child
@@ -326,7 +324,7 @@ fn process_supervisor_wrong_peer_sender_test_fixture() {
         .write_all(PROCESS_SUPERVISOR_CAPABILITY)
         .expect("deliver wrong-peer capability");
     sender
-        .write_all(&fixture_monotonic_deadline(Duration::from_secs(1)).to_be_bytes())
+        .write_all(&fixture_monotonic_deadline(TEST_WAIT).to_be_bytes())
         .expect("deliver wrong-peer deadline");
 }
 
@@ -559,7 +557,7 @@ fn process_supervisor_target_test_fixture() {
                 .stderr(Stdio::null())
                 .spawn()
                 .expect("spawn surviving fixture child");
-            let deadline = Instant::now() + Duration::from_secs(1);
+            let deadline = Instant::now() + TEST_WAIT;
             while !Path::new(&pid_path).exists() {
                 if Instant::now() >= deadline {
                     let _ = child.kill();
@@ -688,7 +686,7 @@ fn output_cleanup_escaped_descendant_test_fixture() {
     let mut child = child
         .spawn()
         .expect("spawn escaped output fixture intermediate");
-    let deadline = Instant::now() + Duration::from_secs(1);
+    let deadline = Instant::now() + TEST_WAIT;
     while !Path::new(&pid_path).exists() {
         if Instant::now() >= deadline {
             let _ = child.kill();

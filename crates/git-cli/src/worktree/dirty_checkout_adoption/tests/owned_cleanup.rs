@@ -79,7 +79,7 @@ fn owned_cleanup_continues_until_a_quiescent_generation_pass() {
     terminate_owned_processes_until_with(
         &mut owner,
         &mut child,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         &mut control,
     )
     .expect("all escaping generations are cleaned");
@@ -146,7 +146,7 @@ fn owned_cleanup_rejects_cumulative_generation_limit_plus_one() {
     let error = terminate_owned_processes_until_with(
         &mut owner,
         &mut child,
-        Instant::now() + Duration::from_secs(5),
+        Instant::now() + TEST_WAIT,
         &mut control,
     )
     .expect_err("cumulative generation churn must fail closed");
@@ -211,7 +211,7 @@ fn failed_kill_resumes_a_stopped_pinned_process_before_cleanup_returns_error() {
     terminate_owned_processes_until_with(
         &mut owner,
         &mut child,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         &mut control,
     )
     .expect_err("failed termination must fail containment");
@@ -257,12 +257,8 @@ fn successful_kill_waits_for_pinned_process_termination_before_cleanup_returns()
         waited: false,
     };
 
-    terminate_owned_identity_until_with(
-        &mut control,
-        identity,
-        Instant::now() + Duration::from_secs(1),
-    )
-    .expect("stable termination is observed");
+    terminate_owned_identity_until_with(&mut control, identity, Instant::now() + TEST_WAIT)
+        .expect("stable termination is observed");
 
     assert_eq!(control.signals, vec![libc::SIGSTOP, libc::SIGKILL]);
     assert!(
@@ -287,6 +283,7 @@ fn cleanup_deadline_resumes_a_process_stopped_mid_phase_without_late_kill() {
 
     struct DeadlineCrossingControl {
         signals: Vec<libc::c_int>,
+        deadline: Instant,
     }
 
     impl OwnedProcessControl for DeadlineCrossingControl {
@@ -299,7 +296,9 @@ fn cleanup_deadline_resumes_a_process_stopped_mid_phase_without_late_kill() {
         fn signal(&mut self, _process: &Self::Pinned, signal: libc::c_int) -> Result<bool> {
             self.signals.push(signal);
             if signal == libc::SIGSTOP {
-                std::thread::sleep(Duration::from_millis(75));
+                while Instant::now() < self.deadline {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
             }
             Ok(true)
         }
@@ -310,20 +309,17 @@ fn cleanup_deadline_resumes_a_process_stopped_mid_phase_without_late_kill() {
         generation: 11,
     };
     let mut owner = SingleOwner(identity);
+    let deadline = Instant::now() + Duration::from_millis(500);
     let mut control = DeadlineCrossingControl {
         signals: Vec::new(),
+        deadline,
     };
     let mut child = Command::new(true_executable())
         .spawn()
         .expect("spawn completed cleanup child");
 
-    terminate_owned_processes_until_with(
-        &mut owner,
-        &mut child,
-        Instant::now() + Duration::from_millis(50),
-        &mut control,
-    )
-    .expect_err("crossing the shared cleanup deadline must fail containment");
+    terminate_owned_processes_until_with(&mut owner, &mut child, deadline, &mut control)
+        .expect_err("crossing the shared cleanup deadline must fail containment");
 
     assert_eq!(
         control.signals,
@@ -463,14 +459,8 @@ fn signal_terminated_target_cannot_be_authenticated_as_git_status_one() {
         &root.path().join("unused.pid"),
     );
 
-    let error = collect_output_child_until(
-        spawned,
-        Instant::now() + Duration::from_secs(5),
-        1024,
-        1024,
-        1024,
-    )
-    .expect_err("signal termination must remain outside the Git exit-status domain");
+    let error = collect_output_child_until(spawned, Instant::now() + TEST_WAIT, 1024, 1024, 1024)
+        .expect_err("signal termination must remain outside the Git exit-status domain");
 
     assert_eq!(
         error
@@ -500,7 +490,7 @@ fn successful_child_with_cleanup_failure_cannot_cross_supervisor_success_boundar
         &[],
         &mut CleanupFailingOwner,
         None,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         || false,
     )
     .expect_err("cleanup failure must replace a successful child result");

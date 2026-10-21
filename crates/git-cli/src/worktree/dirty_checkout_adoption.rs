@@ -6837,7 +6837,7 @@ where
     let task_path = proc_root.join(parent.pid.to_string()).join("task");
     let tasks = match fs::read_dir(task_path) {
         Ok(tasks) => tasks,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if is_departed_process_error(&error) => return Ok(()),
         Err(_) => return Err(process_scan_resource_error()),
     };
     for task in tasks {

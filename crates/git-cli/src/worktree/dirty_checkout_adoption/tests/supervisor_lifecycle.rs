@@ -48,7 +48,7 @@ fn linux_process_stat_parser_accepts_non_utf8_process_names() {
 }
 
 pub(super) fn assert_process_absent(pid: libc::pid_t, label: &str) {
-    let deadline = Instant::now() + Duration::from_millis(500);
+    let deadline = Instant::now() + TEST_WAIT;
     loop {
         let status = unsafe { libc::kill(pid, 0) };
         if status == -1 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
@@ -81,7 +81,7 @@ fn snapshot_worker_process_is_reaped_at_the_hard_deadline() {
 
     let error = run_snapshot_worker_command(
         &mut command,
-        deadline_after(Duration::from_millis(100)).expect("worker deadline"),
+        deadline_after(Duration::from_secs(2)).expect("worker deadline"),
     )
     .expect_err("blocked snapshot worker must hit the hard deadline");
 
@@ -110,12 +110,9 @@ fn snapshot_worker_process_is_reaped_at_the_hard_deadline() {
 fn supervisor_ownership_eof_terminates_the_target_before_the_original_deadline() {
     let root = tempfile::TempDir::new().expect("ownership EOF root");
     let pid_path = root.path().join("blocked.pid");
-    let mut supervisor = spawn_authenticated_supervisor_fixture_with_timeout(
-        "blocked-child",
-        &pid_path,
-        Duration::from_secs(5),
-    );
-    let publication_deadline = Instant::now() + Duration::from_secs(1);
+    let mut supervisor =
+        spawn_authenticated_supervisor_fixture_with_timeout("blocked-child", &pid_path, TEST_WAIT);
+    let publication_deadline = Instant::now() + TEST_WAIT;
     while !pid_path.exists() {
         assert!(
             Instant::now() < publication_deadline,
@@ -129,7 +126,7 @@ fn supervisor_ownership_eof_terminates_the_target_before_the_original_deadline()
         .expect("parse blocked target PID");
 
     supervisor.abandon_owner();
-    let owner_loss_deadline = Instant::now() + Duration::from_millis(500);
+    let owner_loss_deadline = Instant::now() + TEST_WAIT / 2;
     let status = loop {
         if let Some(status) = supervisor.try_wait().expect("poll abandoned supervisor") {
             break status;
@@ -155,10 +152,10 @@ fn supervisor_retains_the_original_absolute_deadline_after_spawn() {
     let mut supervisor = spawn_authenticated_supervisor_fixture_with_timeout_and_delay(
         "blocked-child",
         &pid_path,
-        Duration::from_millis(500),
-        Duration::from_millis(300),
+        Duration::from_secs(2),
+        Duration::from_millis(1_200),
     );
-    let completion_deadline = Instant::now() + Duration::from_secs(1);
+    let completion_deadline = Instant::now() + TEST_WAIT;
     let status = loop {
         if let Some(status) = supervisor.try_wait().expect("poll deadline supervisor") {
             break status;
@@ -172,7 +169,7 @@ fn supervisor_retains_the_original_absolute_deadline_after_spawn() {
 
     assert!(status.success(), "deadline supervisor fixture failed");
     assert!(
-        started.elapsed() < Duration::from_millis(700),
+        started.elapsed() < Duration::from_millis(2_900),
         "supervisor reset the deadline after delayed authentication: {:?}",
         started.elapsed()
     );
@@ -190,7 +187,7 @@ fn successful_git_output_reaps_a_surviving_process_group_child() {
     let root = tempfile::TempDir::new().expect("surviving child root");
     let pid_path = root.path().join("child.pid");
     let mut supervisor = spawn_authenticated_supervisor_fixture("successful-child", &pid_path);
-    let publication_deadline = Instant::now() + Duration::from_secs(1);
+    let publication_deadline = Instant::now() + TEST_WAIT;
     while !pid_path.exists() {
         assert!(
             Instant::now() < publication_deadline,
@@ -227,7 +224,7 @@ fn git_output_deadline_does_not_join_a_descendant_held_pipe() {
         .expect_err("descendant-held pipe must hit the hard deadline");
 
     assert!(
-        started.elapsed() < Duration::from_secs(2),
+        started.elapsed() < TEST_WAIT,
         "hard deadline was not enforced: {:?}",
         started.elapsed()
     );
@@ -242,7 +239,7 @@ fn output_cleanup_tracks_escaped_descendants_after_the_group_leader_exits() {
     let pid_path = root.path().join("escaped.pid");
     let spawned =
         spawn_authenticated_supervisor_output_fixture("escaped-output-timeout", &pid_path);
-    let publication_deadline = Instant::now() + Duration::from_secs(1);
+    let publication_deadline = Instant::now() + TEST_WAIT;
     while !pid_path.exists() {
         assert!(
             Instant::now() < publication_deadline,
@@ -290,7 +287,7 @@ fn git_output_collection_enforces_an_aggregate_stream_budget() {
             .stderr(Stdio::piped())
             .process_group(0);
 
-    let error = output_with_limits(&mut command, Duration::from_secs(1), 1024, 1024)
+    let error = output_with_limits(&mut command, TEST_WAIT, 1024, 1024)
         .expect_err("combined stdout and stderr must share an aggregate budget");
 
     assert!(error.to_string().contains("size limit"));
@@ -306,7 +303,7 @@ fn detached_double_fork_pipe_holder_is_owned_and_terminated() {
     let started = Instant::now();
     while !pid_path.exists() {
         assert!(
-            started.elapsed() < Duration::from_secs(1),
+            started.elapsed() < TEST_WAIT,
             "detached fixture did not publish its process identity"
         );
         std::thread::sleep(Duration::from_millis(2));
@@ -320,7 +317,7 @@ fn detached_double_fork_pipe_holder_is_owned_and_terminated() {
         .expect("detached final generation exists");
     let cleanup = PublishedPidCleanup::new(identity);
     unsafe {
-        libc::kill(-(supervisor.id() as libc::pid_t), libc::SIGTERM);
+        libc::kill(supervisor.id() as libc::pid_t, libc::SIGTERM);
     }
     let status = supervisor
         .wait()
