@@ -760,6 +760,10 @@ pub fn render_provider_error(
 
 fn provider_denial(product: Product, event: &str, reason: &str) -> Value {
     match (product, event) {
+        // The upstream Interrupt output admits only `systemMessage`.
+        (Product::Codex, "Interrupt") => json!({
+            "systemMessage": format!("agent-hook:{reason}"),
+        }),
         (Product::Codex | Product::Claude, "PreToolUse") => json!({
             "hookSpecificOutput": {
                 "hookEventName": event,
@@ -929,7 +933,7 @@ pub fn normalize_activity_event(
         (Product::Codex, "PreToolUse" | "PostToolUse" | "PostToolUseFailure", _, _) => {
             ("progress", None, "observed")
         }
-        (Product::Codex, "Stop", _, _) => ("stop_observed", None, "observed"),
+        (Product::Codex, "Stop" | "Interrupt", _, _) => ("stop_observed", None, "observed"),
         (Product::Codex, "StopFailure", _, _) => ("turn_failed", None, "authoritative"),
         (Product::Claude, "PreToolUse", _, true) => {
             ("attention_requested", Some("clarification"), "observed")
@@ -972,6 +976,18 @@ pub fn normalize_activity_event(
         _ => return Ok(None),
     };
 
+    if request.product == Product::Codex && request.event == "Interrupt" {
+        // The pinned upstream Interrupt input requires both identifiers; an
+        // uncorrelated interrupt must not be recorded against another turn.
+        for field in ["session_id", "turn_id"] {
+            if optional_provider_id(object, field)?.is_none() {
+                return Err(HookError::data(
+                    "provider-hook-correlation-missing",
+                    "Interrupt hook input is missing a required identifier",
+                ));
+            }
+        }
+    }
     let provider_session_id = optional_provider_id(object, "session_id")?
         .or(optional_provider_id(object, "session_key")?)
         .map(|value| projected_provider_id(runtime_id, request.product, "session", value));
@@ -1496,6 +1512,9 @@ fn parse_provider_json(input: &[u8]) -> Result<Value, HookError> {
         }
     })
 }
+
+#[cfg(test)]
+mod interrupt_tests;
 
 #[cfg(test)]
 mod tests {

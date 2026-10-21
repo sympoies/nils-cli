@@ -740,6 +740,7 @@ pub fn supported_event(product: Product, event: &str) -> bool {
                 | "SubagentStart"
                 | "SubagentStop"
                 | "Stop"
+                | "Interrupt"
         ),
         Product::Claude => matches!(
             event,

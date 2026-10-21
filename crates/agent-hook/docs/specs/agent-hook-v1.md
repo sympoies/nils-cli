@@ -188,7 +188,7 @@ Supported canonical events are:
 
 - Codex: `SessionStart`, `UserPromptSubmit`, `PermissionRequest`, `PreToolUse`,
   `PostToolUse`, `PostToolUseFailure`, `PreCompact`, `PostCompact`,
-  `SubagentStart`, `SubagentStop`, and `Stop`.
+  `SubagentStart`, `SubagentStop`, `Stop`, and `Interrupt`.
 - Claude: `SessionStart`, `UserPromptSubmit`, `PermissionRequest`, `PreToolUse`,
   `PostToolUse`, `PostToolUseFailure`, `PreCompact`, `PermissionDenied`, `Stop`, `StopFailure`,
   `Notification`, `SubagentStart`, `SubagentStop`, `Elicitation`, and
@@ -196,6 +196,18 @@ Supported canonical events are:
 - DSH: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`,
   and `Stop`, normalized respectively from native `tools/pre-execute`,
   `tools/post-execute`, `agent/pre-step`, and `agent/turn-stopping` ingress.
+
+Codex `Interrupt` follows the upstream `interrupt.command.input` schema
+(openai/codex `rust-v0.162.1`; identical at `rust-v0.150.0`, which introduced
+it) and has no matcher input. Its output admits only `systemMessage`, so
+policy may register it for `decision.allow.v1`, `agent-session.activity.v1`,
+and runtime-kit handlers only; block, context, and transform capabilities are
+rejected as `policy-capability-event-unsupported`. Activity normalization
+records an observed `stop_observed` turn event, the same observation as Codex
+`Stop`, and requires both `session_id` and `turn_id`; a missing or invalid
+identifier fails closed with `provider-hook-correlation-missing` or
+`provider-hook-identifier-invalid`, and a closed block renders as
+`systemMessage`.
 
 The Codex/Claude/Hermes adapter accepts the event from `--event` or the
 provider's documented `hook_event_name`/`event` field and rejects a mismatch.
