@@ -1026,6 +1026,15 @@ An unverified runtime status never confirms success. A still-visible reminder
 after the retry is recorded as submission not confirmed so the wake can be
 retried later.
 
+A wake that gives up after paste, whether on a changed composer, a recipient
+that became busy, or an unconfirmed submission, clears the exact reminder it
+pasted and never presses Enter. Clearing runs only after a fresh read shows the
+reminder alone in the composer. If clearing cannot be proven, the generation
+becomes `attempt_unknown` with `submission-not-confirmed`,
+`notification-residual-changed`, or `notification-residual-unobservable-or-changed`.
+The next attempt removes the residual reminder only when it is still alone in
+the composer, and leaves mixed operator text untouched.
+
 Exact observation reuses the guarded-send styled composer parser;
 `tmux capture-pane -p -e -J` preserves occupied spaces and joins terminal soft
 wraps. Hidden text, hard-wrapped/multiline composers, ambiguous layouts, and

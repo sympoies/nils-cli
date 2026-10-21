@@ -2,6 +2,36 @@
 //! only while the exact wake remains visible.
 use super::*;
 
+#[derive(Debug)]
+pub(super) enum TerminalNotificationStartError {
+    Known(&'static str),
+    Unknown,
+    UnknownReason(&'static str),
+}
+
+pub(super) async fn mark_unknown(
+    state: &Arc<ServeState>,
+    candidate: crate::coordination::NotificationCandidate,
+    reason: &'static str,
+) {
+    let context = state.context.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        crate::coordination::mark_notification_unknown(&context, &candidate, reason)
+    })
+    .await;
+}
+
+pub(super) async fn mark_unknown_after_paste(
+    state: &Arc<ServeState>,
+    candidate: crate::coordination::NotificationCandidate,
+    reason: &'static str,
+) {
+    let context = state.context.clone();
+    let _ =
+        tokio::task::spawn_blocking(move || candidate.mark_unknown_after_paste(&context, reason))
+            .await;
+}
+
 pub(super) fn start_terminal_coordination_notification(
     context: &CliContext,
     tmux_bin: &Path,
@@ -51,8 +81,39 @@ pub(super) fn start_terminal_coordination_notification(
     }
 
     let deadline = Instant::now() + crate::send_submit::HOLD_BUDGET;
-    check_composer(context, tmux_bin, &current, expected_agent, "", deadline)
-        .map_err(TerminalNotificationStartError::Known)?;
+    let recovery_prompt = candidate
+        .recovery_prompt(context)
+        .map_err(|_| TerminalNotificationStartError::Unknown)?;
+    let mut recovery_failure = None;
+    if let Some(recovery_prompt) = recovery_prompt.as_deref() {
+        if check_composer(
+            context,
+            tmux_bin,
+            &current,
+            expected_agent,
+            recovery_prompt,
+            deadline,
+        )
+        .is_ok()
+        {
+            if clear_owned_notification(context, tmux_bin, &current, recovery_prompt) {
+                let _ = candidate.clear_recovery_prompt(context, recovery_prompt);
+            } else {
+                recovery_failure = Some("notification-residual-changed");
+            }
+        } else if check_composer(context, tmux_bin, &current, expected_agent, "", deadline).is_ok()
+        {
+            // A prior cleanup may have succeeded just before its final cursor
+            // confirmation became unavailable. Empty input is safe to retire.
+            let _ = candidate.clear_recovery_prompt(context, recovery_prompt);
+        } else {
+            recovery_failure = Some("notification-residual-unobservable-or-changed");
+        }
+    }
+    if recovery_failure.is_none() {
+        check_composer(context, tmux_bin, &current, expected_agent, "", deadline)
+            .map_err(TerminalNotificationStartError::Known)?;
+    }
 
     let current = load_session_record(context, &candidate.target_session_id)
         .map_err(|_| TerminalNotificationStartError::Known("recipient-incarnation-replaced"))?;
@@ -98,6 +159,9 @@ pub(super) fn start_terminal_coordination_notification(
         return Err(TerminalNotificationStartError::Known("provider-not-ready"));
     }
     drop(quiescence);
+    if let Some(reason) = recovery_failure {
+        return Err(TerminalNotificationStartError::UnknownReason(reason));
+    }
     if !terminal_notification_waiting(context, &current, expected_agent) {
         if !crate::coordination::mark_notification_known_failure(
             context,
@@ -260,8 +324,24 @@ fn guarded_input(
     result.map_err(|_| TerminalNotificationStartError::Unknown)?;
     std::thread::sleep(crate::POST_PASTE_KEY_SETTLE_DELAY);
     // Preserve the existing post-paste race guard before the initial Enter.
-    check_composer(context, tmux_bin, record, expected_agent, prompt, deadline)
+    if let Err(reason) = check_composer(context, tmux_bin, record, expected_agent, prompt, deadline)
+    {
+        if !clear_owned_notification(context, tmux_bin, record, prompt) {
+            return Err(TerminalNotificationStartError::UnknownReason(reason));
+        }
+        let known = crate::coordination::mark_notification_known_failure(
+            context,
+            candidate,
+            reason,
+            COORDINATION_NOTIFICATION_RETRY,
+        )
         .map_err(|_| TerminalNotificationStartError::Unknown)?;
+        return Err(if known {
+            TerminalNotificationStartError::Known(reason)
+        } else {
+            TerminalNotificationStartError::Unknown
+        });
+    }
     // Confirm that the wake left the composer. A swallowed Enter is retried
     // only while the exact prompt remains visible in the recognized composer.
     let probe = crate::send_submit::probe(prompt).ok_or(TerminalNotificationStartError::Unknown)?;
@@ -296,6 +376,11 @@ fn guarded_input(
         crate::send_submit::SubmitOutcome::Submitted
         | crate::send_submit::SubmitOutcome::Queued => Ok(()),
         crate::send_submit::SubmitOutcome::Stuck => {
+            if !clear_owned_notification(context, tmux_bin, record, prompt) {
+                return Err(TerminalNotificationStartError::UnknownReason(
+                    "submission-not-confirmed",
+                ));
+            }
             let known = crate::coordination::mark_notification_known_failure(
                 context,
                 candidate,
@@ -310,7 +395,57 @@ fn guarded_input(
             })
         }
         crate::send_submit::SubmitOutcome::Unverified => {
-            Err(TerminalNotificationStartError::Unknown)
+            if !clear_owned_notification(context, tmux_bin, record, prompt) {
+                return Err(TerminalNotificationStartError::UnknownReason(
+                    "submission-not-confirmed",
+                ));
+            }
+            let known = crate::coordination::mark_notification_known_failure(
+                context,
+                candidate,
+                "submission-not-confirmed",
+                COORDINATION_NOTIFICATION_RETRY,
+            )
+            .map_err(|_| TerminalNotificationStartError::Unknown)?;
+            Err(if known {
+                TerminalNotificationStartError::Known("submission-not-confirmed")
+            } else {
+                TerminalNotificationStartError::Unknown
+            })
         }
     }
+}
+
+/// Clear only the exact notification text this dispatch pasted. The fresh
+/// composer read is the ownership check; a human draft or any mixed text is
+/// left untouched, and this path never presses Enter.
+fn clear_owned_notification(
+    context: &CliContext,
+    tmux_bin: &Path,
+    record: &SessionRecord,
+    prompt: &str,
+) -> bool {
+    let args = crate::send_guard::GuardArgs {
+        require_empty_composer: true,
+        ..Default::default()
+    };
+    let admission = crate::send_guard::Admission {
+        context,
+        record,
+        args: &args,
+        tmux_bin,
+        verify_composer: true,
+        deadline: Instant::now() + crate::send_submit::HOLD_BUDGET,
+    };
+    let error = crate::CliError::unavailable(
+        "notification-submission-unconfirmed",
+        "mailbox notification submission could not be confirmed",
+        None,
+    );
+    let error = admission.report_pasted_input(error, prompt, true);
+    error
+        .details()
+        .and_then(|details| details.get("cleared"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
 }

@@ -68,6 +68,7 @@ async fn check_attempt(form: AttemptPrompt, submitted_at: &str, expected_state: 
         let path = tmp.path().join("coordination/registry.json");
         let mut registry: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         let receipt = registry["notifications"].as_object_mut().unwrap().values_mut().next().unwrap();
+        assert!(receipt.get("composer_recovery_prompt").is_none());
         if matches!(form, AttemptPrompt::PriorDated | AttemptPrompt::PriorUndated) {
             receipt.as_object_mut().unwrap().remove("attempted_prompt_format");
         }
