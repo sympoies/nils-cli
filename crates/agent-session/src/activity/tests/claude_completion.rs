@@ -1,3 +1,4 @@
+use super::test_clock::TestClock;
 use super::*;
 use pretty_assertions::assert_eq;
 
@@ -55,6 +56,7 @@ fn claude_stop_completion_without_idle_prompt() {
         ),
     ] {
         let tmp = tempfile::TempDir::new().expect("tempdir");
+        let clock = TestClock::freeze();
         let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
         activate_runtime(&context, &created.record).expect("activate");
         let runtime = &created.record.runtime.as_ref().expect("runtime").launch_id;
@@ -74,12 +76,13 @@ fn claude_stop_completion_without_idle_prompt() {
             hook("UserPromptSubmit", json!({})),
         )
         .unwrap();
+        clock.advance(Duration::from_millis(10));
         let initial =
             ingest_event(&context, &created.record.id, hook(event_name, stop_fields)).unwrap();
         if event_name == "Stop" {
             assert_eq!(initial.turn_state.phase, TurnPhase::Working);
         }
-        std::thread::sleep(Duration::from_millis(1100));
+        clock.advance(Duration::from_millis(1100));
         let state = state_for_view(&context, &created.record).unwrap();
         assert_eq!(state.phase, expected, "{event_name}");
         if expected == TurnPhase::Waiting {
@@ -91,6 +94,7 @@ fn claude_stop_completion_without_idle_prompt() {
 #[test]
 fn claude_stop_continuation_cancels_completion_candidate() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
+    let clock = TestClock::freeze();
     let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
     activate_runtime(&context, &created.record).unwrap();
     let runtime = &created.record.runtime.as_ref().unwrap().launch_id;
@@ -106,8 +110,9 @@ fn claude_stop_continuation_cancels_completion_candidate() {
             .unwrap()
             .unwrap();
         ingest_event(&context, &created.record.id, event).unwrap();
+        clock.advance(Duration::from_millis(100));
     }
-    std::thread::sleep(Duration::from_millis(1100));
+    clock.advance(Duration::from_millis(1100));
     assert_eq!(
         state_for_view(&context, &created.record).unwrap().phase,
         TurnPhase::Working
@@ -117,6 +122,7 @@ fn claude_stop_continuation_cancels_completion_candidate() {
 #[test]
 fn claude_reentrant_stop_cancels_completion_candidate() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
+    let clock = TestClock::freeze();
     let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
     activate_runtime(&context, &created.record).unwrap();
     let runtime = &created.record.runtime.as_ref().unwrap().launch_id;
@@ -132,10 +138,38 @@ fn claude_reentrant_stop_cancels_completion_candidate() {
             .unwrap()
             .unwrap();
         ingest_event(&context, &created.record.id, event).unwrap();
+        clock.advance(Duration::from_millis(100));
     }
-    std::thread::sleep(Duration::from_millis(1100));
+    clock.advance(Duration::from_millis(1100));
     assert_eq!(
         state_for_view(&context, &created.record).unwrap().phase,
         TurnPhase::Working
     );
+}
+
+#[test]
+fn claude_stop_completes_on_the_real_clock_after_the_quiet_window() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+    activate_runtime(&context, &created.record).unwrap();
+    let runtime = &created.record.runtime.as_ref().unwrap().launch_id;
+    for raw in [
+        json!({"hook_event_name": "UserPromptSubmit"}),
+        json!({"hook_event_name": "Stop", "stop_hook_active": false, "background_tasks": []}),
+    ] {
+        let mut raw = raw;
+        raw["session_id"] = json!("session-1");
+        raw["turn_id"] = json!("turn-1");
+        let event = normalize_provider_hook(AgentKind::Claude, None, runtime, &raw)
+            .unwrap()
+            .unwrap();
+        ingest_event(&context, &created.record.id, event).unwrap();
+    }
+    // The quiet window is real time here; wait for the settled phase instead
+    // of sleeping a fixed span, with a bound that tolerates a loaded host.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while state_for_view(&context, &created.record).unwrap().phase != TurnPhase::Waiting {
+        assert!(Instant::now() < deadline, "the Stop never settled");
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }

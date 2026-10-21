@@ -2715,8 +2715,18 @@ mod tests {
         let sidecar = thread::spawn(move || run_heartbeat_sidecar(&sidecar_context, args));
         let result = activate_ready(&context, &record);
         let readiness_elapsed = start.elapsed();
-        // Hold the shared lock across the old two-second readiness boundary.
-        thread::sleep(Duration::from_millis(2200).saturating_sub(start.elapsed()));
+        // Keep the shared lock until the sidecar's next heartbeat, which lands
+        // after the old two-second readiness boundary.
+        let heartbeat = super::super::heartbeat_path(&context.state_dir, &record.id);
+        let first = fs::read(&heartbeat).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while fs::read(&heartbeat).ok().as_deref() == Some(first.as_slice()) {
+            assert!(
+                Instant::now() < deadline,
+                "the sidecar never wrote a second heartbeat"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
         drop(held);
         fs::remove_file(crate::session_dir(&context, &record.id).join("session.json")).unwrap();
         sidecar.join().unwrap().unwrap();

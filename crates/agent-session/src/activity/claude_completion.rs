@@ -1,5 +1,14 @@
 use super::*;
 
+/// The activity clock. Tests freeze it to cross the quiet window without sleeping.
+pub(super) fn now() -> String {
+    #[cfg(test)]
+    if let Some(frozen) = super::tests::test_clock::frozen_now() {
+        return frozen.to_string();
+    }
+    Zoned::now().timestamp().to_string()
+}
+
 pub(crate) fn completion_deadline_for_view(
     context: &CliContext,
     record: &SessionRecord,
