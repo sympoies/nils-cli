@@ -15,6 +15,9 @@ use crate::error::ForgeError;
 use crate::ops;
 use crate::provider::ProviderHint;
 
+mod security;
+pub use security::*;
+
 mod run;
 pub use run::{RunArgs, RunCommand, RunRerunArgs};
 
@@ -1009,12 +1012,8 @@ pub struct PrTasksArgs {
 mod merge;
 pub use merge::PrMergeArgs;
 
-/// Native provider review summaries for one pull request.
-#[derive(Args, Debug, Clone)]
-pub struct PrReviewsArgs {
-    /// Numeric pull request id.
-    pub id: u64,
-}
+mod pr_review_get;
+pub use pr_review_get::PrReviewsArgs;
 
 /// `pr pending-review` recovery group.
 #[derive(Args, Debug, Clone)]
@@ -2065,66 +2064,6 @@ pub struct RepoListArgs {
     /// Maximum matching repositories to return.
     #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..))]
     pub limit: u32,
-}
-
-#[derive(Args, Debug)]
-pub struct SecurityArgs {
-    #[command(subcommand)]
-    pub command: SecurityCommand,
-}
-#[derive(Subcommand, Debug)]
-pub enum SecurityCommand {
-    /// Read repository security alerts without scanned secret values.
-    Alerts(SecurityAlertsArgs),
-    /// Read repository security feature settings.
-    Settings(SecuritySettingsArgs),
-}
-#[derive(Args, Debug)]
-pub struct SecurityAlertsArgs {
-    #[command(subcommand)]
-    pub command: SecurityAlertsCommand,
-}
-#[derive(Subcommand, Debug)]
-pub enum SecurityAlertsCommand {
-    /// List alerts, bounded by --limit (default: 100).
-    List(SecurityAlertListArgs),
-}
-#[derive(Args, Debug)]
-pub struct SecuritySettingsArgs {
-    #[command(subcommand)]
-    pub command: SecuritySettingsCommand,
-}
-#[derive(Subcommand, Debug)]
-pub enum SecuritySettingsCommand {
-    /// View security_and_analysis; null means unavailable to this identity.
-    View,
-}
-#[derive(Args, Debug)]
-pub struct SecurityAlertListArgs {
-    /// Security alert family.
-    #[arg(long, value_enum)]
-    pub kind: SecurityAlertKind,
-    /// Provider state filter; all omits the state parameter.
-    #[arg(long, default_value = "open", value_parser = ["open", "dismissed", "fixed", "auto_dismissed", "resolved", "all"])]
-    pub state: String,
-    /// Maximum alerts to return.
-    #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..))]
-    pub limit: u32,
-}
-#[derive(ValueEnum, Debug, Clone, Copy)]
-pub enum SecurityAlertKind {
-    Dependabot,
-    CodeScanning,
-    SecretScanning,
-}
-impl SecurityAlertKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Dependabot => "dependabot",
-            Self::CodeScanning => "code-scanning",
-            Self::SecretScanning => "secret-scanning",
-        }
-    }
 }
 
 /// `repo freeze` arguments.
