@@ -1115,6 +1115,7 @@ fn public_event_label(event: &str) -> &'static str {
         "SubagentStart" => "SubagentStart",
         "SubagentStop" => "SubagentStop",
         "Stop" => "Stop",
+        "Interrupt" => "Interrupt",
         "StopFailure" => "StopFailure",
         "Notification" => "Notification",
         "Elicitation" => "Elicitation",
