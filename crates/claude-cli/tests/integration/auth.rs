@@ -58,7 +58,7 @@ case "${CLAUDE_TEST_AUTH_CASE:-}" in
   unexpected-diagnostic) printf '%s\n' 'upstream diagnostic'; exit 2 ;;
   inconsistent) printf '%s\n' '{"loggedIn":false}'; exit 0 ;;
   oversized) while :; do printf '%s\n' 'unbounded auth output'; done ;;
-  timeout) sleep 30 ;;
+  timeout) sleep 120 ;;
 esac
 exit 99
 "#,
@@ -104,7 +104,9 @@ exit 99
     let payload: Value = serde_json::from_str(&stdout(&timed_out)).expect("timeout json");
     assert_eq!(payload["ok"], false);
     assert_eq!(payload["error"]["code"], "upstream-timeout");
-    assert!(started.elapsed() < Duration::from_secs(7));
+    // The deadline is 3 s; the stub sleeps for 120 s, so this only fails when
+    // the deadline did not end the run.
+    assert!(started.elapsed() < Duration::from_secs(60));
 }
 
 #[cfg(unix)]

@@ -773,8 +773,19 @@ fn linux_task_children(process: libc::pid_t) -> Vec<libc::pid_t> {
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]
+const PS_LOOKUP_TIMEOUT: Duration = Duration::from_millis(250);
+
+#[cfg(all(unix, not(target_os = "linux")))]
 fn descendant_process_ids(root: libc::pid_t) -> Vec<libc::pid_t> {
-    let Ok(mut child) = Command::new("/bin/ps")
+    ps_descendant_process_ids(Path::new("/bin/ps"), PS_LOOKUP_TIMEOUT, root)
+}
+
+/// Lists `root`'s descendants from a `ps -eo pid=,ppid=` run that is abandoned
+/// after `timeout`. The program and the bound are parameters so tests can pin the
+/// behavior without racing the production deadline.
+#[cfg(all(unix, any(test, not(target_os = "linux"))))]
+fn ps_descendant_process_ids(ps: &Path, timeout: Duration, root: libc::pid_t) -> Vec<libc::pid_t> {
+    let Ok(mut child) = Command::new(ps)
         .args(["-eo", "pid=,ppid="])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -782,7 +793,7 @@ fn descendant_process_ids(root: libc::pid_t) -> Vec<libc::pid_t> {
     else {
         return Vec::new();
     };
-    let deadline = Instant::now() + Duration::from_millis(250);
+    let deadline = Instant::now() + timeout;
     let output = loop {
         match child.try_wait() {
             Ok(Some(_)) => break child.wait_with_output().ok(),
@@ -800,7 +811,7 @@ fn descendant_process_ids(root: libc::pid_t) -> Vec<libc::pid_t> {
     descendants_from_process_rows(root, &String::from_utf8_lossy(&output.stdout))
 }
 
-#[cfg(all(unix, not(target_os = "linux")))]
+#[cfg(all(unix, any(test, not(target_os = "linux"))))]
 fn descendants_from_process_rows(root: libc::pid_t, raw: &str) -> Vec<libc::pid_t> {
     let rows = raw
         .lines()
@@ -1332,21 +1343,60 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn descendant_lookup_does_not_wait_for_path_ps() {
+    fn descendant_lookup_never_runs_a_path_provided_ps() {
         use nils_test_support::{GlobalStateLock, StubBinDir, prepend_path};
 
         let lock = GlobalStateLock::new();
         let stubs = StubBinDir::new();
-        stubs.write_exe("ps", "#!/usr/bin/env sh\nsleep 1\n");
+        let ran = stubs.path().join("ps-ran");
+        stubs.write_exe(
+            "ps",
+            &format!("#!/usr/bin/env sh\n: > '{}'\nsleep 300\n", ran.display()),
+        );
         let _path = prepend_path(&lock, stubs.path());
 
-        let started = Instant::now();
         let _ = descendant_process_ids(std::process::id() as libc::pid_t);
 
         assert!(
-            started.elapsed() < Duration::from_millis(500),
-            "descendant lookup must not wait for a PATH-provided ps"
+            !ran.exists(),
+            "descendant lookup must not run a PATH-provided ps"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ps_descendant_lookup_gives_up_on_a_stalled_ps() {
+        use nils_test_support::StubBinDir;
+
+        let stubs = StubBinDir::new();
+        stubs.write_exe("stalled-ps", "#!/usr/bin/env sh\nexec sleep 300\n");
+        let started = Instant::now();
+
+        let descendants = ps_descendant_process_ids(
+            &stubs.path().join("stalled-ps"),
+            Duration::from_millis(100),
+            1,
+        );
+
+        assert!(descendants.is_empty());
+        assert!(started.elapsed() < Duration::from_secs(120));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ps_descendant_lookup_collects_the_whole_process_subtree() {
+        use nils_test_support::StubBinDir;
+
+        let stubs = StubBinDir::new();
+        stubs.write_exe(
+            "rows-ps",
+            "#!/usr/bin/env sh\nprintf '%s\\n' '10 1' '11 10' '12 11' '13 99'\n",
+        );
+
+        let descendants =
+            ps_descendant_process_ids(&stubs.path().join("rows-ps"), Duration::from_secs(60), 1);
+
+        assert_eq!(descendants, vec![10, 11, 12]);
     }
 
     #[cfg(target_os = "linux")]

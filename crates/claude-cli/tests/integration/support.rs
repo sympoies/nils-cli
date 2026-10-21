@@ -11,8 +11,53 @@ use std::os::fd::AsRawFd;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+/// Upper bound for waits on a condition that normally settles in milliseconds.
+/// It only matters when the condition never arrives, so it is generous enough
+/// for a host that is starved of CPU.
+pub(crate) const CONDITION_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Holds a stub server response until the test says so.
+///
+/// A fixed server delay turns "the caller did not wait for the slow upstream"
+/// into a race against the wall clock. Gating the response on an explicit
+/// release makes the stall last exactly as long as the test needs: the caller
+/// either returns while the response is still held, or it visibly waits for it.
+/// `STALL_CAP` only keeps a broken caller from hanging the suite forever.
+pub(crate) struct ResponseGate {
+    released: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl ResponseGate {
+    /// Long enough that a caller which really waits on the held response is
+    /// unmistakable, short enough to bound a hung test.
+    pub(crate) const STALL_CAP: Duration = Duration::from_secs(20);
+
+    pub(crate) fn new() -> Arc<Self> {
+        Arc::new(Self {
+            released: Mutex::new(false),
+            changed: Condvar::new(),
+        })
+    }
+
+    /// Blocks the stub handler until `release` runs or `cap` elapses.
+    pub(crate) fn wait(&self, cap: Duration) {
+        let released = self.released.lock().expect("gate lock");
+        let _ = self
+            .changed
+            .wait_timeout_while(released, cap, |released| !*released)
+            .expect("gate wait");
+    }
+
+    pub(crate) fn release(&self) {
+        *self.released.lock().expect("gate lock") = true;
+        self.changed.notify_all();
+    }
+}
 
 pub(crate) fn claude_cli_bin() -> PathBuf {
     bin::resolve("claude-cli")
@@ -252,7 +297,7 @@ pub(crate) fn wait_for_requests(
     server: &LoopbackServer,
     expected: usize,
 ) -> Vec<nils_test_support::http::RecordedRequest> {
-    let deadline = Instant::now() + Duration::from_secs(4);
+    let deadline = Instant::now() + CONDITION_TIMEOUT;
     let quiet_period = Duration::from_millis(300);
     let mut quiet_since = None;
     let mut requests = Vec::new();
@@ -277,7 +322,7 @@ pub(crate) fn wait_for_test_requests(
     server: &TestServer,
     expected: usize,
 ) -> Vec<nils_test_support::http::RecordedRequest> {
-    let deadline = Instant::now() + Duration::from_secs(4);
+    let deadline = Instant::now() + CONDITION_TIMEOUT;
     let quiet_period = Duration::from_millis(300);
     let mut quiet_since = None;
     let mut requests = Vec::new();
