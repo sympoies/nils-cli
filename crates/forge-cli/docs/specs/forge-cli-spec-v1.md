@@ -1170,6 +1170,10 @@ timeout = "20m"                      # bounds an active convergence wait
 [[review_convergence.bots]]
 login = "example-review-bot"
 mode = "observed"                    # absence never waits or fails
+
+[review_handoff]
+supervisors = ["sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+stale_after = "2h"                   # default minimum coordinator inactivity
 ```
 
 ### Global config layer
@@ -1295,6 +1299,18 @@ disables a repo/global opt-in. Precedence is explicit flag > repo config >
 global config > default, subject to the enabled-global safety exception.
 Disabling this feature never disables the existing unresolved-thread gate.
 `pr close` has no convergence flag and remains unchanged.
+
+### `[review_handoff]` — retired coordinator takeover
+
+Read `.forge-cli.toml` at the exact provider base; require the selected remote host/repository
+and base-ref commit to match, and reject invalid explicit `stale_after`.
+`supervisors` is an empty-by-default allow-list of `sha256:` digests for
+canonical agent-session UUIDs. `stale_after` defaults to `2h` (range `60s` to
+`30d`). Takeover requires `--reason coordinator-retired` and a fresh board
+proving the coordinator stopped or deleted on one host, with terminal activity
+older than the threshold. Missing, unreadable, recent, or ambiguous proof
+refuses takeover. The ledger records proof and supervisor digests while
+preserving history and incrementing the assignment generation.
 For `pr merge --dry-run` and the merge-capable `pr deliver --dry-run`, the
 resolved policy is additive output under `data.review_convergence`; the same
 GitHub-only provider check runs before the dry/live split.

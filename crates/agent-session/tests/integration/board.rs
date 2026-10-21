@@ -365,7 +365,8 @@ fn board_snapshot_is_opt_in_and_operator_authenticated() {
                 "work.v1",
                 "programs.v1",
                 "context_usage.v1",
-                "launch_env.v1"
+                "launch_env.v1",
+                "terminal_activity.v1"
             ])
         );
         assert!(board["generated_at"].as_str().is_some(), "{board}");
@@ -401,6 +402,7 @@ fn board_snapshot_is_opt_in_and_operator_authenticated() {
                 "runtime_status": inside["runtime_status"],
                 "created_at": "2030-01-01T00:00:00Z",
                 "updated_at": "2030-01-01T00:04:00Z",
+                "last_terminal_activity_at": null,
                 "closed_at": null,
                 "close_reason": null,
                 "summary": null,
@@ -538,6 +540,7 @@ fn a_cli_delete_with_the_board_disabled_is_served_as_one_closed_record() {
             "runtime_status": null,
             "created_at": "2030-01-01T00:00:00Z",
             "updated_at": record["updated_at"],
+            "last_terminal_activity_at": record["last_terminal_activity_at"],
             "closed_at": record["closed_at"],
             "close_reason": "deleted",
             "summary": null,
@@ -974,7 +977,13 @@ fn the_board_carries_role_lineage_work_and_the_tree_filter() {
     let board = output.stdout_json()["data"]["board"].clone();
     assert_eq!(
         board["extensions"],
-        json!(["lineage.v1", "work.v1", "context_usage.v1", "launch_env.v1"])
+        json!([
+            "lineage.v1",
+            "work.v1",
+            "context_usage.v1",
+            "launch_env.v1",
+            "terminal_activity.v1"
+        ])
     );
     let records = board["records"].as_array().expect("records");
     let record = |id: &str| {
@@ -1036,7 +1045,8 @@ fn the_board_carries_role_lineage_work_and_the_tree_filter() {
             "work.v1",
             "programs.v1",
             "context_usage.v1",
-            "launch_env.v1"
+            "launch_env.v1",
+            "terminal_activity.v1"
         ])
     );
     let root = snapshot["records"]
@@ -1055,7 +1065,13 @@ fn the_board_carries_role_lineage_work_and_the_tree_filter() {
     assert_eq!(status, 200, "{body}");
     assert_eq!(
         body["data"]["board_closed"]["extensions"],
-        json!(["lineage.v1", "work.v1", "context_usage.v1", "launch_env.v1"])
+        json!([
+            "lineage.v1",
+            "work.v1",
+            "context_usage.v1",
+            "launch_env.v1",
+            "terminal_activity.v1"
+        ])
     );
 }
 

@@ -102,7 +102,7 @@ pub struct PrReviewHandoffReturnArgs {
     #[arg(long, value_parser = ["reviewer-unreachable", "reviewer-closed", "reviewer-declined", "reviewer-timeout", "coordinator-retired"])]
     pub reason: String,
     /// Recorded coordinator selector; required for coordinator-retired only.
-    #[arg(long, required_if_eq("reason", "coordinator-retired"))]
+    #[arg(long)]
     pub coordinator_session: Option<String>,
     /// Exact current provider base; required for coordinator-retired only.
     #[arg(long, required_if_eq("reason", "coordinator-retired"))]

@@ -401,6 +401,33 @@ pub(crate) fn read(context: &CliContext, id: &str, limit: usize) -> Result<Value
     Ok(json!({"session_id": id, "records": records}))
 }
 
+/// Return the timestamp of the successful stop observation for this exact
+/// runtime generation. It is a conservative inactivity bound when tmux no
+/// longer provides window activity.
+pub(crate) fn stopped_observed_at(context: &CliContext, target: &SessionRecord) -> Option<String> {
+    let runtime = target.runtime.as_ref()?;
+    read(context, &target.id, 1000).ok()?["records"]
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|row| {
+            row["operation"] == "exit-observed"
+                && row["result"]["ok"] == true
+                && row["session_incarnation"].as_str() == Some(runtime.launch_id.as_str())
+                && row["session_generation"].as_u64() == Some(runtime.generation)
+        })?["timestamp"]
+        .as_str()
+        .map(str::to_owned)
+}
+
+pub(crate) fn stopped_activity_snapshot(
+    context: &CliContext,
+    target: &SessionRecord,
+) -> (String, Option<String>) {
+    observe_stopped(context, target);
+    ("stopped".to_string(), stopped_observed_at(context, target))
+}
+
 #[derive(Clone)]
 pub(crate) struct ResponseSessionId(pub(crate) String);
 
@@ -616,6 +643,8 @@ mod tests {
         })).unwrap();
         observe_stopped(&context, &target);
         observe_stopped(&context, &target);
+        let stopped_at = stopped_observed_at(&context, &target).expect("stop observation time");
+        assert!(stopped_at.parse::<jiff::Timestamp>().is_ok());
         let rows = read(&context, "observed", 10).unwrap();
         assert_eq!(rows["records"].as_array().unwrap().len(), 1);
         assert_eq!(rows["records"][0]["exit"]["reason"], "runtime-disappeared");

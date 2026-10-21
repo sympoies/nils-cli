@@ -30,15 +30,21 @@ pub(crate) const BOARD_SCHEMA: &str = "agent-session.board.v1";
 pub(crate) const RECORD_SCHEMA: &str = "agent-session.board-record.v1";
 /// Additive capabilities of the v1 envelopes. A reader feature-detects from
 /// this list, never from the presence of a record field.
-pub(crate) const EXTENSIONS: [&str; 4] =
-    ["lineage.v1", "work.v1", "context_usage.v1", "launch_env.v1"];
+pub(crate) const EXTENSIONS: [&str; 5] = [
+    "lineage.v1",
+    "work.v1",
+    "context_usage.v1",
+    "launch_env.v1",
+    "terminal_activity.v1",
+];
 /// What the daemon snapshot names: the extensions plus the programs route.
-const DAEMON_EXTENSIONS: [&str; 5] = [
+const DAEMON_EXTENSIONS: [&str; 6] = [
     "lineage.v1",
     "work.v1",
     "programs.v1",
     "context_usage.v1",
     "launch_env.v1",
+    "terminal_activity.v1",
 ];
 /// `AGENT_SESSION_BOARD=1` enables the daemon board routes, like `--board`.
 pub(crate) const BOARD_ENV: &str = "AGENT_SESSION_BOARD";
@@ -160,7 +166,9 @@ pub(crate) fn closed_record(
     record: &SessionRecord,
     reason: CloseReason,
 ) -> Option<Value> {
-    let view = crate::session_view_from_parts(
+    crate::lifecycle::observe_stopped(context, record);
+    let last_terminal_activity_at = crate::lifecycle::stopped_observed_at(context, record);
+    let mut view = crate::session_view_from_parts(
         context,
         record,
         "stopped".to_string(),
@@ -169,6 +177,7 @@ pub(crate) fn closed_record(
         false,
         crate::coordination::CoordinationSummary::default(),
     );
+    view.last_terminal_activity_at = last_terminal_activity_at;
     let view = serde_json::to_value(&view).ok()?;
     let mut closed = project_record(&view, "", home_dir().as_deref(), false)?;
     let object = closed.as_object_mut()?;
@@ -297,6 +306,7 @@ pub(crate) fn project_record(
         "runtime_status": status,
         "created_at": created_at,
         "updated_at": updated_at,
+        "last_terminal_activity_at": nullable("last_terminal_activity_at"),
         "closed_at": null,
         "close_reason": null,
         "summary": null,
@@ -515,12 +525,13 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    const RECORD_KEYS: [&str; 24] = [
+    const RECORD_KEYS: [&str; 25] = [
         "agent_profile",
         "close_reason",
         "closed_at",
         "created_at",
         "cwd",
+        "last_terminal_activity_at",
         "launch_env",
         "lineage",
         "machine",
@@ -669,6 +680,7 @@ mod tests {
                 "updated_at": "2030-01-01T00:04:00Z",
                 "closed_at": null,
                 "close_reason": null,
+                "last_terminal_activity_at": "2030-01-01T00:04:00Z",
                 "summary": null,
                 "role": null,
                 "lineage": null,
@@ -967,6 +979,13 @@ mod tests {
                 "generation": 1,
                 "started_at": "2030-01-01T00:00:00Z",
                 "launch_id": "live-incarnation"
+            },
+            "delete_tmux_identity": {
+                "launch_id": "live-incarnation",
+                "session_id": "$7",
+                "pane_id": "%7",
+                "pane_pid": 7,
+                "process_group_id": 7
             }
         }))
         .expect("record");
@@ -997,6 +1016,11 @@ mod tests {
         assert_eq!(closed["messaging_supported"], false);
         assert_eq!(closed["close_reason"], "archived");
         assert_eq!(closed["session_incarnation"], "live-incarnation");
+        assert!(closed["last_terminal_activity_at"].is_string());
+        assert_eq!(
+            closed["last_terminal_activity_at"].as_str(),
+            crate::lifecycle::stopped_observed_at(&context, &record).as_deref()
+        );
         assert_eq!(closed["cwd"], Value::Null);
         assert_eq!(closed["updated_at"], "2030-01-01T00:04:00Z");
     }
@@ -1028,6 +1052,11 @@ mod tests {
         }))
         .expect("work");
         let closed = closed_record(&context, &record, CloseReason::Deleted).expect("closed");
+        assert!(closed["last_terminal_activity_at"].is_string());
+        assert_eq!(
+            closed["last_terminal_activity_at"].as_str(),
+            crate::lifecycle::stopped_observed_at(&context, &record).as_deref()
+        );
         assert_eq!(closed["role"], "coordinator");
         assert_eq!(closed["lineage"]["root"], session_ref("root"));
         assert_eq!(closed["lineage"]["effective_parent"], session_ref("root"));
