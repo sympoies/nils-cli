@@ -11,6 +11,22 @@ pub(super) fn empty_composer_tmux(dir: &Path) -> PathBuf {
     bin
 }
 
+/// `empty_composer_tmux` that also marks the first Enter in the returned file,
+/// so a fixture can act once the prompt has been submitted.
+pub(super) fn empty_composer_tmux_marking_enter(dir: &Path) -> (PathBuf, PathBuf) {
+    let bin = empty_composer_tmux(dir);
+    let entered = dir.join("entered");
+    let script = fs::read_to_string(&bin).unwrap().replace(
+        "  capture-pane)",
+        &format!(
+            "  send-keys) case \"$*\" in *Enter*) touch '{}' ;; esac; exit 0 ;;\n  capture-pane)",
+            entered.display()
+        ),
+    );
+    fs::write(&bin, script).unwrap();
+    (bin, entered)
+}
+
 /// Show an empty composer before Enter and the provider's queued pane after it.
 pub(super) fn minimal_tmux_showing(dir: &Path, pane: &str) -> PathBuf {
     let bin = minimal_tmux(dir);

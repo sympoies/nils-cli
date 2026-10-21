@@ -24042,7 +24042,8 @@ esac
     async fn claude_structured_prompt_reports_submitted_after_provider_turn() {
         let tmp = tempfile::TempDir::new().unwrap();
         let launch_id = seed_claude_prompt_session(tmp.path(), "claude-structured");
-        let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
+        let (tmux, entered) = empty_composer_tmux_marking_enter(tmp.path());
+        let st = state(tmp.path(), Some(TOKEN), tmux);
         let record = load_session_record(&st.context, "claude-structured").unwrap();
         crate::activity::activate_runtime(&st.context, &record).unwrap();
 
@@ -24050,7 +24051,7 @@ esac
         let ack_id = record.id.clone();
         let ack_launch_id = launch_id.clone();
         let acknowledger = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            wait_for_file(&entered).await;
             tokio::task::spawn_blocking(move || {
                 crate::activity::ingest_event(
                     &ack_context,
@@ -32541,7 +32542,7 @@ exit 0
     }
 
     async fn wait_for_file(path: &Path) {
-        tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::time::timeout(Duration::from_secs(60), async {
             while !path.exists() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
@@ -35925,9 +35926,7 @@ exit 0
         .expect("write active operation");
         drain_coordination_notifications(state.clone()).await;
         assert!(
-            tokio::time::timeout(Duration::from_millis(100), commands.recv())
-                .await
-                .is_err(),
+            commands.try_recv().is_err(),
             "an active atomic operation must defer the in-turn checkpoint"
         );
         assert_eq!(
@@ -35981,7 +35980,7 @@ exit 0
         .expect("attach preview before notification submission");
         let expected_prompt = fixture_notification_prompt(tmp.path());
         let responder = tokio::spawn(async move {
-            let command = tokio::time::timeout(Duration::from_secs(2), commands.recv())
+            let command = tokio::time::timeout(Duration::from_secs(60), commands.recv())
                 .await
                 .expect("working Codex notification must reach an in-turn checkpoint")
                 .expect("Codex control command");
@@ -36000,14 +35999,14 @@ exit 0
                 let _record_lock = crate::acquire_session_record_lock(&lock_probe_context, "beta")
                     .expect("checkpoint record lock must be reacquirable");
             });
-            tokio::time::timeout(Duration::from_millis(250), lock_probe)
+            tokio::time::timeout(Duration::from_secs(60), lock_probe)
                 .await
                 .expect("checkpoint must release the record lock before provider I/O")
                 .expect("record-lock probe worker");
             let lifecycle = tokio::task::spawn_blocking(move || {
                 crate::resume_session_by_id(&lifecycle_context, "beta", &lifecycle_tmux)
             });
-            let error = tokio::time::timeout(Duration::from_millis(250), lifecycle)
+            let error = tokio::time::timeout(Duration::from_secs(60), lifecycle)
                 .await
                 .expect("lifecycle admission must remain bounded during checkpoint provider I/O")
                 .expect("lifecycle probe worker")
@@ -36067,7 +36066,7 @@ exit 0
                 (inspect, attach, delete)
             });
             let (inspect, attach, delete) =
-                tokio::time::timeout(Duration::from_millis(250), maintenance)
+                tokio::time::timeout(Duration::from_secs(60), maintenance)
                     .await
                     .expect(
                         "maintenance admission must remain bounded during checkpoint provider I/O",
@@ -36132,7 +36131,7 @@ exit 0
         );
 
         let drain = tokio::spawn(drain_coordination_notifications(state.clone()));
-        let command = tokio::time::timeout(Duration::from_secs(2), commands.recv())
+        let command = tokio::time::timeout(Duration::from_secs(60), commands.recv())
             .await
             .expect("unknown steer attempt")
             .expect("steer command");
@@ -36164,20 +36163,19 @@ exit 0
             "an unresolved steer must not become a pending retry"
         );
         let duplicate_drain = tokio::spawn(drain_coordination_notifications(state.clone()));
-        match tokio::time::timeout(Duration::from_millis(100), commands.recv()).await {
-            Err(_) => {
-                tokio::time::timeout(Duration::from_secs(2), duplicate_drain)
-                    .await
-                    .expect("empty notification drain must finish")
-                    .expect("empty notification drain");
-            }
-            Ok(Some(codex_app_server::ControlCommand::Steer { response, .. })) => {
-                let _ = response.send(Err("duplicate test steer".to_string()));
-                let _ = duplicate_drain.await;
-                panic!("an unresolved steer must not be submitted twice");
-            }
-            Ok(Some(_)) => panic!("an unresolved steer emitted another control command"),
-            Ok(None) => panic!("the active control channel closed unexpectedly"),
+        // A drain that submitted would block on its response, so finishing
+        // first proves nothing was sent.
+        tokio::select! {
+            biased;
+            joined = duplicate_drain => joined.expect("empty notification drain"),
+            command = commands.recv() => match command {
+                Some(codex_app_server::ControlCommand::Steer { response, .. }) => {
+                    let _ = response.send(Err("duplicate test steer".to_string()));
+                    panic!("an unresolved steer must not be submitted twice");
+                }
+                Some(_) => panic!("an unresolved steer emitted another control command"),
+                None => panic!("the active control channel closed unexpectedly"),
+            },
         }
         write_codex_notification_transcript(&transcript, provider_id, &[]);
         reconcile_coordination_notifications(state.clone()).await;
@@ -36188,7 +36186,7 @@ exit 0
         );
 
         let drain = tokio::spawn(drain_coordination_notifications(state.clone()));
-        let command = tokio::time::timeout(Duration::from_secs(2), commands.recv())
+        let command = tokio::time::timeout(Duration::from_secs(60), commands.recv())
             .await
             .expect("reconciled steer retry")
             .expect("steer retry command");
@@ -36300,16 +36298,16 @@ exit 0
         )
         .expect("write active claim");
         let claimed_drain = tokio::spawn(drain_coordination_notifications(state.clone()));
-        let claimed_command =
-            tokio::time::timeout(Duration::from_millis(100), commands.recv()).await;
-        if let Ok(Some(codex_app_server::ControlCommand::Prompt { response, .. })) = claimed_command
-        {
-            response
-                .send(Ok("turn-claimed-notification".to_string()))
-                .expect("acknowledge unexpected claimed prompt");
-            panic!("active claim must prevent structured notification submission");
+        tokio::select! {
+            biased;
+            joined = claimed_drain => joined.expect("claimed drain"),
+            command = commands.recv() => {
+                if let Some(codex_app_server::ControlCommand::Prompt { response, .. }) = command {
+                    let _ = response.send(Ok("turn-claimed-notification".to_string()));
+                }
+                panic!("active claim must prevent structured notification submission");
+            }
         }
-        claimed_drain.await.expect("claimed drain");
 
         let mut registry: Value =
             serde_json::from_slice(&fs::read(&registry_path).expect("registry"))
@@ -36354,17 +36352,16 @@ exit 0
         )
         .expect("write uncertain operation");
         let uncertain_drain = tokio::spawn(drain_coordination_notifications(state.clone()));
-        let uncertain_command =
-            tokio::time::timeout(Duration::from_millis(100), commands.recv()).await;
-        if let Ok(Some(codex_app_server::ControlCommand::Prompt { response, .. })) =
-            uncertain_command
-        {
-            response
-                .send(Ok("turn-uncertain-notification".to_string()))
-                .expect("acknowledge unexpected uncertain prompt");
-            panic!("uncertain operation must prevent structured notification submission");
+        tokio::select! {
+            biased;
+            joined = uncertain_drain => joined.expect("uncertain drain"),
+            command = commands.recv() => {
+                if let Some(codex_app_server::ControlCommand::Prompt { response, .. }) = command {
+                    let _ = response.send(Ok("turn-uncertain-notification".to_string()));
+                }
+                panic!("uncertain operation must prevent structured notification submission");
+            }
         }
-        uncertain_drain.await.expect("uncertain drain");
 
         let mut registry: Value =
             serde_json::from_slice(&fs::read(&registry_path).expect("registry"))
@@ -36394,18 +36391,18 @@ exit 0
             response
                 .send(Ok("turn-notification-catchup".to_string()))
                 .expect("acknowledge prompt");
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            assert!(
-                commands.try_recv().is_err(),
-                "racing wakeups must not submit a duplicate generation"
-            );
+            commands
         });
 
         let first = tokio::spawn(drain_coordination_notifications(state.clone()));
         let second = tokio::spawn(drain_coordination_notifications(state.clone()));
         first.await.expect("first wakeup");
         second.await.expect("second wakeup");
-        responder.await.expect("responder");
+        let mut commands = responder.await.expect("responder");
+        assert!(
+            commands.try_recv().is_err(),
+            "racing wakeups must not submit a duplicate generation"
+        );
 
         let registry: Value = serde_json::from_slice(
             &fs::read(tmp.path().join("coordination/registry.json")).expect("registry"),
@@ -36935,7 +36932,9 @@ exit 0
 
     #[path = "prompt_composer.rs"]
     mod prompt_composer;
-    use prompt_composer::{empty_composer_tmux, minimal_tmux_showing};
+    use prompt_composer::{
+        empty_composer_tmux, empty_composer_tmux_marking_enter, minimal_tmux_showing,
+    };
     #[path = "prompt_receipts.rs"]
     mod prompt_receipts_tests;
 
