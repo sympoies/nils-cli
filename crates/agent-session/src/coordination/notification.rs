@@ -51,6 +51,11 @@ pub(crate) struct NotificationReceipt {
     /// Only a known attempt format can prove absence from a transcript.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempted_prompt_format: Option<String>,
+    /// Exact body-free reminder text from an uncertain terminal attempt. A
+    /// later generation may remove it only after observing it alone in the
+    /// composer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub composer_recovery_prompt: Option<String>,
     pub updated_at_epoch: i64,
     pub next_attempt_at_epoch: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -78,6 +83,66 @@ pub(crate) struct NotificationCandidate {
     pub queued_at_epoch: i64,
     pub attempted_at_epoch: i64,
     pub attempted_at: Option<String>,
+}
+
+impl NotificationCandidate {
+    pub(crate) fn recovery_prompt(&self, context: &CliContext) -> Result<Option<String>, CliError> {
+        let locked = super::lock_registry_observational(context)?;
+        Ok(locked
+            .registry
+            .notifications
+            .get(&receipt_key(
+                &self.target_session_id,
+                &self.target_incarnation,
+            ))
+            .filter(|receipt| receipt.state == "queued" && receipt.generation == self.generation)
+            .and_then(|receipt| receipt.composer_recovery_prompt.clone()))
+    }
+
+    pub(crate) fn clear_recovery_prompt(
+        &self,
+        context: &CliContext,
+        prompt: &str,
+    ) -> Result<bool, CliError> {
+        let mut locked = super::lock_registry(context)?;
+        let Some(receipt) = locked.registry.notifications.get_mut(&receipt_key(
+            &self.target_session_id,
+            &self.target_incarnation,
+        )) else {
+            return Ok(false);
+        };
+        if receipt.generation != self.generation
+            || receipt.composer_recovery_prompt.as_deref() != Some(prompt)
+        {
+            return Ok(false);
+        }
+        receipt.composer_recovery_prompt = None;
+        receipt.updated_at_epoch = now_epoch();
+        locked.save()?;
+        Ok(true)
+    }
+
+    pub(crate) fn mark_unknown_after_paste(
+        &self,
+        context: &CliContext,
+        reason: &str,
+    ) -> Result<bool, CliError> {
+        update_attempt(context, |registry, now| {
+            if !transition_unknown(registry, self, reason, now) {
+                return false;
+            }
+            let Some(receipt) = registry.notifications.get_mut(&receipt_key(
+                &self.target_session_id,
+                &self.target_incarnation,
+            )) else {
+                return false;
+            };
+            receipt
+                .composer_recovery_prompt
+                .get_or_insert_with(|| fixed_prompt(&self.target_session_id, self.queued_at_epoch));
+            true
+        })
+    }
 }
 
 /// The body-free prompt for one generation. Its bytes depend only on the
@@ -520,6 +585,7 @@ fn transition_submitted(
         return false;
     };
     receipt.notified_generation = receipt.notified_generation.max(candidate.generation);
+    receipt.composer_recovery_prompt = None;
     receipt.state = if receipt.generation > candidate.generation {
         "queued".to_string()
     } else {
@@ -797,6 +863,9 @@ pub(super) fn safe_reason(reason: &str) -> String {
         | "recipient-attached"
         | "recipient-composer-not-empty"
         | "recipient-composer-unobservable"
+        | "submission-not-confirmed"
+        | "notification-residual-changed"
+        | "notification-residual-unobservable-or-changed"
         | "recipient-coordination-not-quiescent"
         | "provider-not-ready"
         | "controller-unavailable"

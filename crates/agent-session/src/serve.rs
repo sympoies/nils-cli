@@ -259,12 +259,6 @@ struct CoordinationNotificationFence {
     candidate: crate::coordination::NotificationCandidate,
 }
 
-#[derive(Debug)]
-enum TerminalNotificationStartError {
-    Known(&'static str),
-    Unknown,
-}
-
 #[derive(Default)]
 struct StructuredPromptGuards<'a> {
     expected_session_incarnation: Option<&'a str>,
@@ -8215,16 +8209,13 @@ async fn dispatch_terminal_coordination_notification(
             .await;
             return;
         }
+        Ok(Err(TerminalNotificationStartError::UnknownReason(reason))) => {
+            terminal_notification::mark_unknown_after_paste(&state, candidate, reason).await;
+            return;
+        }
         Ok(Err(TerminalNotificationStartError::Unknown)) | Err(_) => {
-            let context = state.context.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                crate::coordination::mark_notification_unknown(
-                    &context,
-                    &candidate,
-                    "submission-outcome-unknown",
-                )
-            })
-            .await;
+            terminal_notification::mark_unknown(&state, candidate, "submission-outcome-unknown")
+                .await;
             return;
         }
     };
@@ -8251,7 +8242,9 @@ async fn dispatch_terminal_coordination_notification(
 }
 
 mod terminal_notification;
-use terminal_notification::start_terminal_coordination_notification;
+use terminal_notification::{
+    TerminalNotificationStartError, start_terminal_coordination_notification,
+};
 
 fn terminal_notification_waiting(
     context: &CliContext,

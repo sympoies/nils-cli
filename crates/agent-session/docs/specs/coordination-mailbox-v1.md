@@ -225,6 +225,18 @@ composer leaves its contents untouched, sends no Enter, and retains an uncertain
 attempt for existing transcript reconciliation. There is no swallowed-Enter
 retry.
 
+A wake that gives up after paste, whether on a changed composer, a recipient
+that became busy, or an unconfirmed submission, removes the reminder it pasted
+and never presses Enter. On a Claude composer whose changed text begins with the
+verified reminder, only that prefix is removed and the appended operator text is
+kept; otherwise removal needs the reminder alone in a fresh read. An unverified
+submission whose composer is empty stays unknown, because an empty composer is
+also what a successful Enter leaves. If removal cannot be proven, the generation
+becomes `attempt_unknown` with `submission-not-confirmed`,
+`notification-residual-changed`, or `notification-residual-unobservable-or-changed`.
+The next attempt removes the residual reminder only when it is still alone in
+the composer, and leaves mixed operator text untouched.
+
 Exact observation reuses the guarded-send styled composer parser;
 `tmux capture-pane -p -e -J` preserves occupied spaces and joins terminal soft
 wraps. Hidden text, hard-wrapped/multiline composers, ambiguous layouts, and
