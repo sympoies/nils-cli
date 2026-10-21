@@ -702,8 +702,8 @@ recorded in `sympoies/nils-cli#1409`.
 
   A keyed attempt is scoped to the canonical session ID, exact expected
   incarnation and request ID. The daemon durably claims that key before
-  dispatch. Repeating the same text and idle flag returns the recorded outcome
-  without sending again; different text or idle flag returns
+  dispatch. Repeating the same text and idle flag returns or safely confirms the
+  recorded outcome without sending again; different text or idle flag returns
   `409 request-id-conflict`, preserving the original receipt. An in-flight,
   interrupted or incomplete claim returns `unknown`, never authorizing another
   dispatch. This is at-most-once dispatch, not a guarantee of delivery or turn
@@ -734,6 +734,24 @@ recorded in `sympoies/nils-cli#1409`.
   for keyed attempts and `error.code` for unkeyed attempts. Repeated POSTs
   return the retained status and outcome; an unfinished claim may later resolve
   through lookup when the original request completes.
+
+  A keyed Codex idle-only attempt may retain a private, request-correlated native
+  turn acknowledgment when input history is not yet observable. Lookup or a
+  matching repeated POST can then make one bounded, read-only confirmation of
+  that exact turn and its single matching user input. The runtime, provider
+  thread and account binding must still match the retained attempt before and
+  after observation. A successful confirmation durably changes that receipt to
+  `submitted`; later lookup and POST recover the same outcome without another
+  input dispatch. The proof survives daemon restart and is not returned by the
+  API. This does not add history waiting to ordinary immediate native input.
+
+  Unknown receipts can include a value-free `confirmation_diagnostic`:
+  `native_input_unconfirmed` means a native turn acknowledgment was retained but
+  exact input confirmation remains unavailable; `acceptance_unobservable` means
+  no recoverable acceptance evidence is available. These values never authorize
+  replay. Older receipts may omit this field. Missing acknowledgments, unrelated
+  or ambiguous input, changed identities and older attempts without retained
+  proof remain unknown. Prompt text is not persisted in receipts or proofs.
 
   Lookup requires bearer authorization:
   `GET /sessions/{id}/prompt/v2/receipts/{request_id}?expected_session_incarnation=launch-id`.

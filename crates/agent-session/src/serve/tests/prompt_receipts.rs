@@ -14,6 +14,8 @@ mod claude_prompt_ack;
 mod claude_stopped_runtime;
 #[path = "codex_prompt_outcomes.rs"]
 mod codex_prompt_outcomes;
+#[path = "native_reconciliation.rs"]
+mod native_reconciliation;
 
 fn keyed_body(incarnation: &str) -> Value {
     json!({"text":"inspect the workspace", "expected_session_incarnation":incarnation,

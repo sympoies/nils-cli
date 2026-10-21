@@ -31,7 +31,7 @@ pub(super) fn fingerprint(text: &str, require_idle: bool) -> String {
     digest(&(text, require_idle))
 }
 
-fn digest(value: &impl Serialize) -> String {
+pub(super) fn digest(value: &impl Serialize) -> String {
     let bytes = Sha256::digest(serde_json::to_vec(value).expect("fixed serializable tuple"));
     let mut encoded = String::with_capacity(64);
     for byte in bytes {
@@ -155,6 +155,51 @@ pub(super) fn finish(claim: Claim, result: &ResultRecord) -> Result<(), CliError
     let result = write().map_err(persist_error);
     let _ = fs::remove_file(&temporary);
     result
+}
+
+pub(super) fn confirmation_is_current(context: &CliContext, result: &ResultRecord) -> bool {
+    let Some(proof) = result.native_confirmation.as_ref() else {
+        return false;
+    };
+    let claim = read(&path(context, &result.receipt))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<ClaimRecord>(&bytes).ok());
+    let Some(claim) = claim else { return false };
+    claim.fingerprint == proof.fingerprint
+        && claim.receipt.request_id == result.receipt.request_id
+        && claim.receipt.session_id == result.receipt.session_id
+        && claim.receipt.session_incarnation == result.receipt.session_incarnation
+        && lookup(context, &result.receipt)
+            .ok()
+            .flatten()
+            .is_some_and(|current| {
+                current.receipt.outcome == super::Outcome::Unknown
+                    && current.native_confirmation.as_ref() == Some(proof)
+            })
+}
+
+pub(super) fn publish_confirmed(
+    context: &CliContext,
+    result: &ResultRecord,
+) -> Result<Option<ResultRecord>, CliError> {
+    if !confirmation_is_current(context, result) {
+        return Ok(None);
+    }
+    let mut confirmed = result.clone();
+    confirmed.receipt.outcome = super::Outcome::Submitted;
+    confirmed.receipt.code = None;
+    confirmed.receipt.confirmation_diagnostic = None;
+    confirmed.status = 200;
+    confirmed.queued = false;
+    confirmed.native_confirmation = None;
+    finish(
+        Claim {
+            receipt: confirmed.receipt.clone(),
+            path: path(context, &confirmed.receipt),
+        },
+        &confirmed,
+    )?;
+    Ok(Some(confirmed))
 }
 
 #[cfg(test)]
