@@ -118,6 +118,9 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
             PrCommand::View { .. } => ("pr.view", read, network, vec!["provider"]),
             PrCommand::List(_) => ("pr.list", read, network, vec!["provider"]),
             PrCommand::Comments(_) => ("pr.comments", read, network, vec!["provider"]),
+            PrCommand::Reviews(args) if args.review_id.is_some() => {
+                ("pr.review-get", read, network, vec!["provider"])
+            }
             PrCommand::Reviews(_) => ("pr.reviews", read, network, vec!["provider"]),
             PrCommand::Tasks(_) => ("pr.tasks", read, network, vec!["provider"]),
             PrCommand::Checks(_) => ("pr.checks", read, network, vec!["provider"]),

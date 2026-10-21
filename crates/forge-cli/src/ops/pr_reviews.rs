@@ -194,6 +194,19 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     )?;
     ensure_github(&ctx)?;
 
+    if let Some(review_id) = args.review_id {
+        let repo = resolve_repo_slug(&ctx, &global.remote, &remote_url_lookup)?;
+        return super::pr_review_get::run_with(
+            runner,
+            &ctx,
+            &repo,
+            args.id,
+            review_id,
+            format,
+            global.dry_run,
+        );
+    }
+
     if global.dry_run {
         let slug = resolve_repo_slug(&ctx, &global.remote, &remote_url_lookup)?;
         let (owner, name) = split_slug(&slug)?;
