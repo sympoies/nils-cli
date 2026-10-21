@@ -227,6 +227,56 @@ pub fn now_epoch() -> i64 {
         .as_secs() as i64
 }
 
+/// Upper bound for waiting on a condition. Waits return as soon as the
+/// condition holds, so a generous bound costs nothing on a quiet host and only
+/// a hang ever reaches it.
+pub const WAIT_BOUND: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Polls `condition` until it holds, panicking with `what` after `WAIT_BOUND`.
+pub fn wait_for(what: &str, mut condition: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + WAIT_BOUND;
+    while !condition() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// Waits for `path` to exist.
+pub fn wait_for_path(path: &Path) {
+    wait_for(&format!("{} to exist", path.display()), || path.exists());
+}
+
+/// Reads the process id a fixture shell wrote to `path`.
+#[cfg(unix)]
+pub fn read_pid(path: &Path) -> i32 {
+    fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+        .trim()
+        .parse()
+        .expect("numeric process id")
+}
+
+/// Waits for process `pid` to be gone.
+#[cfg(unix)]
+pub fn wait_for_exit(pid: i32) {
+    wait_for(&format!("process {pid} to exit"), || {
+        // SAFETY: signal 0 only probes for existence.
+        unsafe { libc::kill(pid, 0) != 0 }
+    });
+}
+
+/// Blocks until a fresh `sleep secs` finishes. A leaked descendant that began
+/// an equal or shorter sleep earlier has had its timer expire before this
+/// returns, so a negative check made afterwards scales with host load instead
+/// of guessing a fixed wall-clock window.
+pub fn outlast_sleep(secs: &str) {
+    let status = Command::new("sleep").arg(secs).status().expect("sleep");
+    assert!(status.success(), "sleep {secs} failed: {status}");
+}
+
 /// A real long-lived client ancestor, with request/receipt files confined to
 /// the test fixture. Keep the pipe open so each nils invocation is its child.
 #[cfg(target_os = "linux")]

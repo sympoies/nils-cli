@@ -1,6 +1,6 @@
 path	kind	lines
 crates/agent-hook/src/dsh_policy.rs	impl	5799
-crates/agent-hook/src/evaluator.rs	impl	2208
+crates/agent-hook/src/evaluator.rs	impl	2194
 crates/agent-hook/src/finish_line.rs	impl	5179
 crates/agent-hook/src/finish_line/acceptance.rs	impl	2106
 crates/agent-hook/src/setup.rs	impl	2084

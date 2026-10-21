@@ -16,6 +16,7 @@ use crate::contract::{
 };
 use crate::degradation::StopCoordinationOutcome;
 use crate::error::HookError;
+use crate::handler_timeout::handler_timeout;
 use crate::liveness;
 use crate::model::{
     Capability, DECISION_VERSION, DecisionAction, DecisionReason, Enforcement, FailurePosture,
@@ -26,10 +27,8 @@ use crate::model::{
 const MAX_AGGREGATE_CONTEXT: usize = 16 * 1024;
 const MAX_REASONS: usize = 64;
 const MAX_HANDLER_OUTPUT: usize = 256 * 1024;
-const HANDLER_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_EXECUTABLE_CAPABILITIES: usize = 17;
 const MAX_DISPATCH_CHILD_OUTPUT: usize = 512 * 1024;
-const RULE_CHILD_DEADLINE: Duration = HANDLER_TIMEOUT;
 const SESSION_COORDINATION_HANDLER: &str = "session-coordination-guard.py";
 pub(crate) const ACTIVITY_STOP_RECONCILIATION_REQUIRED: &str =
     "activity-stop-reconciliation-required";
@@ -41,7 +40,6 @@ const HELPER_BIN_ENV: &str = "AGENT_SESSION_BIN";
 const ACTIVITY_HELPER: &str = "agent-session";
 /// Stable classification for a helper that cannot be resolved or executed.
 pub(crate) const ACTIVITY_HELPER_UNRESOLVABLE: &str = "activity-helper-unresolvable";
-const SESSION_COORDINATION_TIMEOUT: Duration = RULE_CHILD_DEADLINE;
 
 #[derive(Debug)]
 struct RuleOutcome {
@@ -145,7 +143,7 @@ impl ExecutionBudget {
         }
         self.children += 1;
         Ok((
-            HANDLER_TIMEOUT.min(RULE_CHILD_DEADLINE),
+            handler_timeout(),
             MAX_DISPATCH_CHILD_OUTPUT.saturating_sub(self.retained_output),
         ))
     }
@@ -466,7 +464,7 @@ fn evaluate_with_io(
                     request,
                     rule,
                     operation_effect,
-                    RULE_CHILD_DEADLINE,
+                    handler_timeout(),
                     raw,
                 ),
                 Err(error) => simple(DecisionAction::Block, &error.code),
@@ -556,7 +554,7 @@ fn evaluate_with_io(
                 request,
                 rule,
                 operation_effect,
-                RULE_CHILD_DEADLINE,
+                handler_timeout(),
                 raw,
             ),
             Err(error) if error.code.starts_with("dispatch-") => return Err(error),
@@ -1019,13 +1017,7 @@ pub fn apply_session_coordination(
     };
     let run_result = if native_dsh_operation {
         crate::dsh_coordination::run(request, raw, execution.operation_effect, &mut |command| {
-            run_bounded(
-                command,
-                &[],
-                SESSION_COORDINATION_TIMEOUT,
-                MAX_HANDLER_OUTPUT,
-                false,
-            )
+            run_bounded(command, &[], handler_timeout(), MAX_HANDLER_OUTPUT, false)
         })
         .map(|native| {
             let (action, status) = match native.status {
@@ -1147,7 +1139,7 @@ fn coordination_timeout_outcome(
             rule,
             operation_effect,
             disposition,
-            SESSION_COORDINATION_TIMEOUT.as_millis() as u64,
+            handler_timeout().as_millis() as u64,
             raw,
         )
     });
@@ -1802,13 +1794,7 @@ fn run_session_coordination(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let output = run_bounded(
-        command,
-        raw,
-        SESSION_COORDINATION_TIMEOUT,
-        MAX_HANDLER_OUTPUT,
-        false,
-    )?;
+    let output = run_bounded(command, raw, handler_timeout(), MAX_HANDLER_OUTPUT, false)?;
     if output.stdout.len() > MAX_HANDLER_OUTPUT {
         return Err(HookError::data(
             "handler-output-too-large",
@@ -2218,6 +2204,9 @@ mod tests {
 
     use super::*;
 
+    /// Generous bound for children that exit at once; only a hang may reach it.
+    const TEST_DEADLINE: Duration = Duration::from_secs(30);
+
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[derive(Default)]
@@ -2500,13 +2489,13 @@ mod tests {
             .stderr(Stdio::piped());
 
         let started = Instant::now();
-        let output = run_bounded(command, &[], HANDLER_TIMEOUT, MAX_HANDLER_OUTPUT, false)
+        let output = run_bounded(command, &[], TEST_DEADLINE, MAX_HANDLER_OUTPUT, false)
             .expect("bounded output");
 
         assert!(output.status.success());
         assert_eq!(output.stdout.len(), MAX_HANDLER_OUTPUT + 1);
         assert_eq!(output.stderr.len(), MAX_HANDLER_OUTPUT + 1);
-        assert!(started.elapsed() < HANDLER_TIMEOUT);
+        assert!(started.elapsed() < TEST_DEADLINE / 2);
     }
 
     /// A child that exits without draining a 1 MiB payload leaves the runner
@@ -2532,14 +2521,14 @@ mod tests {
         let output = run_bounded(
             command,
             &vec![b'x'; 1024 * 1024],
-            HANDLER_TIMEOUT,
+            TEST_DEADLINE,
             MAX_HANDLER_OUTPUT,
             false,
         )
         .expect("a child that stopped reading is not a failed child");
 
         assert!(output.status.success());
-        assert!(started.elapsed() < HANDLER_TIMEOUT);
+        assert!(started.elapsed() < TEST_DEADLINE / 2);
     }
 
     /// The tolerance covers the pipe, not the verdict.
@@ -2555,7 +2544,7 @@ mod tests {
         let output = run_bounded(
             command,
             &vec![b'x'; 1024 * 1024],
-            HANDLER_TIMEOUT,
+            TEST_DEADLINE,
             MAX_HANDLER_OUTPUT,
             false,
         )
