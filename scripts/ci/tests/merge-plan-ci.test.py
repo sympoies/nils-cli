@@ -102,6 +102,7 @@ class ConsumerExecutionTests(unittest.TestCase):
                  'scripts/ci/merge-plan.schema.v1.json', 'scripts/ci/merge-plan.schema.v2.json',
                  'scripts/ci/nils-cli-scoped-checks.sh', 'scripts/ci/scoped-coverage-ratchet.py',
                  'scripts/ci/assert-import-audit.py', 'scripts/ci/lib/rust_file_size.py',
+                 'scripts/ci/lib/sibling_bins.py',
                  'scripts/ci/test-env.sh', 'scripts/ci/gate-reports.py')
         for path in paths:
             dest = self.repo / path
@@ -146,8 +147,9 @@ if args[0] == 'metadata':
     names = ('selected', 'consumer', 'untouched', 'unrelated')
     ids = {n: f'path+{root.as_uri()}/crates/{n}#{n}@0.1.0' for n in names}
     bins = [{'kind': ['bin'], 'name': os.environ['FIXTURE_SELECTED_BIN']}] if os.environ.get('FIXTURE_SELECTED_BIN') else []
+    sibling = [{'kind': ['bin'], 'name': 'sibling-cli'}] if os.environ.get('FIXTURE_SIBLING_BIN') else []
     packages = [{'id': ids[n], 'name': n, 'manifest_path': str(root/f'crates/{n}/Cargo.toml'),
-                 'targets': bins if n == 'selected' else []} for n in names]
+                 'targets': bins if n == 'selected' else (sibling if n == 'unrelated' else [])} for n in names]
     nodes = [{'id': ids[n], 'deps': [{'pkg': ids['selected']}] if n == 'consumer' else []} for n in names]
     print(json.dumps({'workspace_root': str(root), 'workspace_members': list(ids.values()), 'packages': packages, 'resolve': {'nodes': nodes}}))
 else:
@@ -277,6 +279,25 @@ else:
         builds = [r['args'] for r in rows if r['args'][0] == 'build']
         self.assertEqual(len(builds), 1)
         self.assertNotIn('--workspace', builds[0])
+
+    def test_scoped_lane_builds_but_does_not_test_sibling_binaries_the_tests_resolve(self):
+        # forge-cli tests run the semantic-commit binary: a package-scoped run
+        # builds only the selected packages' own binaries (#2711 regression).
+        (self.repo / 'crates/selected/src/sibling.rs').write_text(
+            '// nils_test_support::bin::sibling_or_skip("sibling-cli", "unrelated")\n')
+        self.env['FIXTURE_SIBLING_BIN'] = '1'
+        self.candidate()
+        result, rows = self.execute()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.receipt()['packages'], ['consumer', 'selected'])
+
+        def packages(prefix):
+            command = next(r['args'] for r in rows if r['args'][0] == prefix)
+            return [command[i + 1] for i, arg in enumerate(command) if arg == '-p']
+
+        self.assertEqual(packages('build'), ['consumer', 'selected', 'unrelated'])
+        for prefix in ('clippy', 'nextest', 'test'):
+            self.assertEqual(packages(prefix), ['consumer', 'selected'])
 
     def test_scoped_lane_fails_before_compiling_when_a_cheap_audit_fails(self):
         self.candidate()

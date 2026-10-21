@@ -55,10 +55,11 @@ their diff and trusted release policy. Wrong reviewed-head or checkout binding
 holds detection before a reduced lane can be selected.
 
 Nonempty `READY/VALIDATE/SCOPED` runs strict Clippy for the selected packages,
-builds their binaries with all features for sibling fixtures, audits selected
-completion-required binaries against committed assets with the existing
-freshness and flag-parity audits (`--skip-build --bin <name>`, no workspace
-build), and runs their nextest tests. Linux runs selected doctests. Formatting
+builds their binaries with all features, plus the binaries of unselected packages
+that their tests resolve (found by `scripts/ci/lib/sibling_bins.py`; built, never
+tested), audits selected completion-required binaries against committed assets
+with the existing freshness and flag-parity audits (`--skip-build --bin <name>`,
+no workspace build), and runs their nextest tests. Linux runs selected doctests. Formatting
 and test identity isolation remain.
 
 The scoped lane also runs every cheap, non-compiling workspace audit that a

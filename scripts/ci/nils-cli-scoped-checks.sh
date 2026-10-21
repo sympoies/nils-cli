@@ -45,7 +45,30 @@ run python3 scripts/ci/assert-import-audit.py
 run python3 scripts/ci/tests/assert-import-audit.test.py
 run cargo fmt --all -- --check
 run cargo clippy "${package_args[@]}" --all-targets --all-features -- -D warnings
-run cargo build "${package_args[@]}" --bins --all-features
+
+# A selected package's tests can run a binary owned by an unselected package
+# (forge-cli runs semantic-commit); a -p run builds only the selected packages'
+# own binaries. Build, but never test, the owners the tests resolve, as
+# local-fast does (scripts/ci/lib/sibling_bins.py).
+sibling_names="$(cargo metadata --offline --locked --no-deps --format-version 1 | python3 -c '
+import json, sys
+sys.path.insert(0, "scripts/ci/lib")
+from sibling_bins import sibling_packages
+metadata = json.load(sys.stdin)
+members = set(metadata["workspace_members"])
+packages = [p for p in metadata["packages"] if p["id"] in members]
+selected = set(sys.argv[1:])
+if not selected <= {p["name"] for p in packages}:
+    raise SystemExit("selected sibling package missing from workspace")
+print("\n".join(sorted(sibling_packages(packages, selected))))
+' "$@")"
+build_args=("${package_args[@]}")
+while IFS= read -r sibling; do
+  if [[ -n "$sibling" ]]; then
+    build_args+=(-p "$sibling")
+  fi
+done <<< "$sibling_names"
+run cargo build "${build_args[@]}" --bins --all-features
 
 # Source-only CLI changes can invalidate generated assets without triggering
 # FULL. Cover selected required binaries using the existing freshness and flag
