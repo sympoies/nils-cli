@@ -126,12 +126,10 @@ assert_contains .github/workflows/ci.yml 'release_mode: ${{ steps.detect.outputs
   "CI preserves the release-mode output"
 assert_contains .github/workflows/ci.yml 'git show "${base}:scripts/ci/detect-release-only.sh"' \
   "release classification loads exact-base policy"
-assert_contains .github/workflows/ci.yml 'git show "${base}:.github/scripts/release-ci-gate.cjs"' \
-  "release receipt proof loads the exact-base module"
-assert_contains .github/workflows/ci.yml 'findTrustedMainCi' \
-  "legacy release-only proof retains exact-base receipt lookup"
-assert_contains .github/workflows/ci.yml 'waitForTrustedMainCi' \
-  "legacy release-only proof retains the bounded exact-base wait"
+assert_not_contains .github/workflows/ci.yml 'findTrustedMainCi' \
+  "the reduced release lane needs no full base-CI receipt"
+assert_not_contains .github/workflows/ci.yml 'waitForTrustedMainCi' \
+  "the reduced release lane never waits for a base-CI receipt"
 assert_contains scripts/ci/release-only-checks.sh 'RELEASE_ONLY_DETECTOR' \
   "the reduced checker accepts a protected detector"
 assert_contains scripts/ci/release-only-checks.sh '--merge-group' \

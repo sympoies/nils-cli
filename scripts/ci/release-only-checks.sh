@@ -5,8 +5,9 @@ usage() {
   cat <<'USAGE'
 Usage: release-only-checks.sh --base <git-ref> [--head <git-ref>] (--branch <name> | --merge-group)
 
-Runs the reduced cross-platform validation lane after the caller has proved
-that the base main commit completed full CI.
+Runs the reduced validation lane after the exact-base detector has proved the
+diff is only a canonical release version bump. The release workflow validates
+the tagged commit in full.
 USAGE
 }
 

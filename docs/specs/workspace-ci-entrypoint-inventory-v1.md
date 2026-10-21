@@ -27,8 +27,7 @@ out of scope for this governance inventory; flag it as a follow-up.
 | --- | --- | --- | --- | --- |
 | (workflow) | `concurrency` | workflow-local expression | keep | Groups `pull_request` runs by PR number and cancels a superseded run; `merge_group` runs get a unique `run_id` group. Main pushes use the `main-push` group and run only the lightweight `main_push` status job. Scheduled nightly and manual runs execute the full validation on main, serialized as `nightly-main`. |
 | `changes` | `Detect change set` | `scripts/ci/detect-docs-only.sh` plus exact-base `scripts/ci/detect-release-only.sh` policy | keep | Emits `base_sha`, `docs_only`, `head_sha`, `release_branch`, and `release_candidate`. Release policy is loaded from the exact base SHA; missing or invalid policy emits `release_candidate=false`. |
-| `changes` | `Prove full CI on exact base main commit` | exact-base `.github/scripts/release-ci-gate.cjs` (`waitForTrustedMainCi`, falling back to `findTrustedMainCi` for an older base) | keep | A canonical candidate becomes eligible for the reduced lane only when the exact base SHA has a unique successful push or merge-group CI run whose required jobs contain the full-validation marker. While a run is queued or in progress the step polls, deciding each attempt from one run listing, for at most 45 minutes. No run, a non-success conclusion, an exhausted wait, API errors, and ambiguous evidence fail closed to full CI. |
-| `changes` | `Finalize fail-closed CI lane` | workflow-local boolean conjunction | keep | Emits `release_only=true` only when both the semantic candidate and exact-base CI proof are true; all other states emit false. |
+| `changes` | `Finalize fail-closed CI lane` | workflow-local boolean | keep | Emits `release_only=true` only when the exact-base detector proved a canonical release bump (`release_candidate=true`); every other state emits false. No full base-CI receipt is required: the release workflow validates the tagged commit in full, and scoped queue runs carry no full-validation marker. |
 | `test` | Linux affected checks | `scripts/ci/nils-cli-checks-entrypoint.sh --ci-merge-plan` | keep | PR and combined merge-group candidate; accepted-base plan, strict binding and full Linux fallback. Docs/release PR shortcuts retain their proven audits. |
 | `test` | change-detection failure guard | workflow-local result check | keep | Runs with `always()` so failed change detection produces a failed required test rather than an accepted skip. |
 | `test_containment` | Linux cgroup canary | workflow-local test command and systemd setup | keep | Required alongside `test`; steps skip on docs-only/proven release-only PRs. |
@@ -133,7 +132,7 @@ records the keep/delete decision plus the active caller evidence.
 
 | Path | Decision | Active caller evidence |
 | --- | --- | --- |
-| `.github/scripts/release-ci-gate.cjs` | keep | `.github/workflows/ci.yml` exact-base main CI proof + historical receipt compatibility helpers + `scripts/ci/tests/release-ci-gate.test.cjs` |
+| `.github/scripts/release-ci-gate.cjs` | keep | historical receipt compatibility helpers + `scripts/ci/tests/release-ci-gate.test.cjs` |
 | `scripts/ci/lib/cargo-target-dir.sh` | keep | sourced by `scripts/ci/completion-freshness-audit.sh` + `scripts/ci/completion-flag-parity-audit.sh` to locate binaries under `CARGO_TARGET_DIR` / `cargo metadata` `target_directory` |
 | `scripts/ci/lib/doc_classify.py` | keep | imported by `scripts/ci/nils-cli-local-fast.sh` planner + `scripts/ci/detect-docs-only.sh` |
 | `wrappers/git-cli` | keep | `README.md` wrapper contributor flow + `git-cli` wrapper behavior |
