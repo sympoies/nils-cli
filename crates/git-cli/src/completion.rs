@@ -430,6 +430,12 @@ fn build_worktree_group() -> Command {
                         .help("Print an evaluable cd command instead of the bare path")
                         .action(ArgAction::SetTrue),
                 )
+                .arg(
+                    Arg::new("build")
+                        .long("build")
+                        .help("Print the worktree's build directory (with --shell, a CARGO_TARGET_DIR export)")
+                        .action(ArgAction::SetTrue),
+                )
                 .arg(format_arg()),
         )
         .subcommand(

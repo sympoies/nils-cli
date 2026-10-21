@@ -44,10 +44,21 @@ _arguments "${_arguments_options[@]}" : \
 (project)
 _arguments "${_arguments_options[@]}" : \
 '--topic=[Human-readable topic for this run directory]:TOPIC:_default' \
+'--kind=[Write-location class\: \`evidence\` (kept artifacts, long retention) or \`scratch\` (rebuildable intermediates, short retention)]:KIND:(evidence scratch)' \
 '--repo=[Repository path used for slug discovery. Defaults to the current directory]:PATH:_files -/' \
 '--repo-slug=[Explicit repository slug, preferably owner/repo]:OWNER/REPO:_default' \
 '--agent-home=[Agent home root. Defaults to AGENT_HOME]:PATH:_files -/' \
 '--format=[Output format]:FORMAT:(path json env)' \
+'--mkdir[Create the generated directory]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(build)
+_arguments "${_arguments_options[@]}" : \
+'--topic=[Human-readable topic for this build run]:TOPIC:_default' \
+'--agent-home=[Agent home root. Defaults to AGENT_HOME]:PATH:_files -/' \
+'--format=[Output format. \`env\` also exports CARGO_TARGET_DIR]:FORMAT:(path json env)' \
 '--mkdir[Create the generated directory]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -80,6 +91,8 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '--agent-home=[Agent home root. Defaults to AGENT_HOME]:PATH:_files -/' \
 '--project-retention-days=[Mark idle project runs older than DAYS as delete candidates]:DAYS:_default' \
+'--scratch-retention-days=[Mark idle scratch runs older than DAYS as delete candidates]:DAYS:_default' \
+'--build-retention-days=[Mark idle run-scoped builds older than DAYS as delete candidates]:DAYS:_default' \
 '--format=[Output format]:FORMAT:(text json)' \
 '--include-projects[Include canonical projects/<repo>/<run> entries as preserve/needs-policy rows]' \
 '-h[Print help]' \
@@ -117,6 +130,7 @@ _agent-out_commands() {
     local commands; commands=(
 'path-for:Compatibility allocator for rendered state_out artifact paths' \
 'project:Generate a canonical project-scoped artifact directory path' \
+'build:Allocate a run-scoped build directory under AGENT_HOME/build/run' \
 'audit:Audit top-level AGENT_HOME/out entries' \
 'cleanup:Plan or apply safe AGENT_HOME/out cleanup' \
 'completion:Print shell completion script' \
@@ -127,6 +141,11 @@ _agent-out_commands() {
 _agent-out__subcmd__audit_commands() {
     local commands; commands=()
     _describe -t commands 'agent-out audit commands' commands "$@"
+}
+(( $+functions[_agent-out__subcmd__build_commands] )) ||
+_agent-out__subcmd__build_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-out build commands' commands "$@"
 }
 (( $+functions[_agent-out__subcmd__cleanup_commands] )) ||
 _agent-out__subcmd__cleanup_commands() {

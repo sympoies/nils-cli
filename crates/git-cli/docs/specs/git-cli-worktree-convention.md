@@ -31,7 +31,7 @@ If `AGENT_HOME` is unset, the CLI falls back to
 - `git-cli worktree backup list [--format text|json]`
 - `git-cli worktree backup prune [--older-than <dur>] [--dry-run] [--format text|json]`
 - `git-cli worktree prune [--format text|json]`
-- `git-cli worktree go <slug-or-branch-or-path> [--shell] [--format text|json]`
+- `git-cli worktree go <slug-or-branch-or-path> [--shell] [--build] [--format text|json]`
 
 `--kind` selects the branch prefix (`feature`->`feat/`, `bug`->`fix/`,
 `chore`->`chore/`, `docs`->`docs/`, `ci`->`ci/`, `refactor`->`refactor/`,
@@ -155,6 +155,33 @@ worktree path, managed slug, then worktree directory basename) and prints its
 path so the caller can `cd` into it. `--shell` prints an evaluable
 `cd -- <path>` command instead of the bare path, mirroring `utils root --shell`;
 the committed `gxwcd` shell helper wraps it and adds worktree-name completion.
+
+## Build Directory
+
+Compiler output for a managed worktree belongs to the `build` class of the agent
+write-location contract
+([agent-runtime-kit `core/policies/write-locations.md`](https://github.com/sympoies/agent-runtime-kit/blob/main/core/policies/write-locations.md),
+tracking [agent-runtime-kit#302](https://github.com/sympoies/agent-runtime-kit/issues/302)):
+it is never written under `out/` and is deleted with its worktree.
+
+The build directory is `${AGENT_HOME}/build/<repo-key>/<slug>`, using the same
+`<repo-key>` and `<slug>` as the worktree path so equal slugs in different
+repositories never share one directory. It is not created eagerly; cargo creates
+it on first build.
+
+`git-cli` cannot export into the caller's shell, so it records the path for
+wrappers and CI scripts instead:
+
+- `worktree add` JSON carries `build_dir` and `build_env`
+  (`export CARGO_TARGET_DIR='<build_dir>'`); text output prints both.
+- `worktree go <target> --build` prints the build directory; with `--shell` it
+  prints the evaluable export, e.g. `eval "$(git-cli worktree go <slug> --build --shell)"`.
+  JSON `go` output carries `build_dir` and `build_env`, both null for a worktree
+  that is not managed. `go --build` on an unmanaged worktree is a data error.
+- `worktree remove` deletes the build directory after the worktree is removed
+  and reports `build_dir` (null for an unmanaged target) and `build_dir_removed`.
+  A symlinked build directory is unlinked, never followed. A reclaim failure is a
+  warning, because the worktree itself is already gone.
 
 ## Upstream Tracking
 
