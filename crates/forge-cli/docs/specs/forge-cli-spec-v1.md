@@ -460,6 +460,12 @@ See [checks and review reads](forge-checks-review-reads-v1.md#pr-review-threads-
 
 See [checks and review reads](forge-checks-review-reads-v1.md#pr-reviews-read) for this contract.
 
+Use `pr reviews <id> --review-id <database-id>` for a complete native review body when a summary
+has `summary_truncated: true`. This opt-in read emits `cli.forge-cli.pr.review-get.v1`; the default
+summary listing remains unchanged. The complete body is bounded to 64 KiB and returned with exact
+review, repository, PR, author, commit, state, URL and observation bindings. See the same read contract
+for completeness fields and typed refusals.
+
 ### Review transaction state and pending-review recovery
 
 See [review transaction and handoff state](forge-review-state-v1.md#review-transaction-state-and-pending-review-recovery) for this contract.
