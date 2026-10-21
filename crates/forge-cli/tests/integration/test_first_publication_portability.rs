@@ -32,6 +32,14 @@ fn fixture() -> SubjectBoundEvidenceFixture {
 }
 
 fn fixture_with_references(references: &[&str]) -> SubjectBoundEvidenceFixture {
+    fixture_with_commands(references, "synthetic affected", "synthetic full")
+}
+
+fn fixture_with_commands(
+    references: &[&str],
+    failed_command: &str,
+    passing_command: &str,
+) -> SubjectBoundEvidenceFixture {
     let fixture = SubjectBoundEvidenceFixture::new(
         "https://github.com/example/project.git",
         &[(".forge-cli.toml", "[test_first]\nrequire = true\n")],
@@ -60,7 +68,7 @@ fn fixture_with_references(references: &[&str]) -> SubjectBoundEvidenceFixture {
         "record-final",
         &[
             "--command",
-            "synthetic affected",
+            failed_command,
             "--scope",
             "affected-suite",
             "--status",
@@ -72,7 +80,7 @@ fn fixture_with_references(references: &[&str]) -> SubjectBoundEvidenceFixture {
         "record-final",
         &[
             "--command",
-            "synthetic full",
+            passing_command,
             "--scope",
             "full",
             "--status",
@@ -81,13 +89,13 @@ fn fixture_with_references(references: &[&str]) -> SubjectBoundEvidenceFixture {
     );
     let mut resolution = vec![
         "--command",
-        "synthetic affected",
+        failed_command,
         "--scope",
         "affected-suite",
         "--attempt",
         "1",
         "--passing-command",
-        "synthetic full",
+        passing_command,
         "--passing-scope",
         "full",
         "--passing-attempt",
@@ -267,4 +275,48 @@ fn create_and_deliver_refuse_uri_home_components_before_publication() {
         assert_eq!(fs::read(&file).unwrap(), before);
         assert_eq!(Sha256::digest(fs::read(&file).unwrap()), hash);
     }
+}
+
+#[test]
+fn create_and_deliver_publish_portable_command_display_without_rewriting_evidence() {
+    let failed = "cargo test affected > /home/fixture/out/affected.log 2>&1";
+    let passing = "bash scripts/checks.sh > /Users/fixture/out/full.log 2>&1";
+    let fixture = fixture_with_commands(&["docs/repro.md"], failed, passing);
+    let file = fixture.evidence.join("test-first-evidence.json");
+    let before = fs::read(&file).unwrap();
+    let hash = Sha256::digest(&before);
+    let history: serde_json::Value = serde_json::from_slice(&before).unwrap();
+    assert!(BODY.find("/home/").is_none());
+    for operation in ["create", "deliver"] {
+        let stub = StubEnv::new();
+        let capture = stub.tempdir.path().join("published-body.md");
+        let stub = publication_stub(stub, &capture);
+        let mut args = create_args(operation, fixture.evidence.to_str().unwrap());
+        if operation == "deliver" {
+            args.push("--no-merge");
+        }
+        let result = run_forge_cli_in(&stub, &args, Some(&fixture.repo));
+        assert!(
+            capture.is_file(),
+            "failed before publication: {}\n{}",
+            result.stdout,
+            result.stderr
+        );
+        assert_ne!(result.code, 0, "fixture stops after body capture");
+        let body = fs::read_to_string(capture).unwrap();
+        assert!(body.starts_with(BODY));
+        assert!(body.contains("FAIL: `cargo test affected > $HOME/out/affected.log 2>&1`"));
+        assert!(body.contains("Resolved by `bash scripts/checks.sh > $HOME/out/full.log 2>&1`"));
+        assert!(body.contains("PASS: `bash scripts/checks.sh > $HOME/out/full.log 2>&1`"));
+        forge_cli::validations::no_local_path(&body, "body").expect("unchanged normal path guard");
+        assert_eq!(fs::read(&file).unwrap(), before);
+        assert_eq!(Sha256::digest(fs::read(&file).unwrap()), hash);
+        let after: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        assert_eq!(after["final_validations"], history["final_validations"]);
+        assert_eq!(after["subject"], history["subject"]);
+    }
+    let retained = String::from_utf8(before).unwrap();
+    assert!(retained.contains(failed));
+    assert!(retained.contains(passing));
+    assert_eq!(git(&fixture.repo, &["status", "--porcelain"]), "");
 }

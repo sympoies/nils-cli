@@ -247,11 +247,11 @@ pub(super) fn run_resolve_final(args: ResolveFinalArgs) -> i32 {
 }
 
 // Consume matches from the original text so a rendered tail is never rewritten again.
-fn portable_investigation(reference: &str) -> String {
+fn portable_reference(reference: &str) -> String {
     static URI: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let uri = URI.get_or_init(|| {
         regex::Regex::new(r#"[A-Za-z][A-Za-z0-9+.-]*:[^\s<>"`]+"#)
-            .expect("valid investigation URI regex")
+            .expect("valid portable reference URI regex")
     });
     let uri_ranges: Vec<_> = uri.find_iter(reference).map(|uri| uri.range()).collect();
     let hits = nils_common::provider_payload::scan_local_paths(reference);
@@ -294,7 +294,7 @@ pub fn final_resolution_summary(record: &EvidenceRecord) -> String {
         summary.push_str(&format!(
             "\n- {}: `{}` (scope {}, attempt {}).",
             validation.status.as_str().to_uppercase(),
-            validation.command,
+            portable_reference(&validation.command),
             validation.scope.map_or("unknown", ValidationScope::as_str),
             validation.attempt
         ));
@@ -304,14 +304,14 @@ pub fn final_resolution_summary(record: &EvidenceRecord) -> String {
         if let Some(resolution) = &validation.resolution {
             summary.push_str(&format!(
                 " Resolved by `{}` (scope {}, attempt {}): {}. Investigation: {}.",
-                resolution.passing_command,
+                portable_reference(&resolution.passing_command),
                 resolution.passing_scope.as_str(),
                 resolution.passing_attempt,
                 resolution.reason,
                 resolution
                     .investigation
                     .iter()
-                    .map(|reference| portable_investigation(reference))
+                    .map(|reference| portable_reference(reference))
                     .collect::<Vec<_>>()
                     .join("; ")
             ));

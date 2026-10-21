@@ -21,6 +21,22 @@ fn record(dir: &Path, command: &str, args: &[&str]) {
 }
 
 fn resolved_fixture(dir: &Path, investigations: &[&str], reason: &str) {
+    resolved_fixture_with_commands(
+        dir,
+        investigations,
+        reason,
+        &["synthetic affected-a", "synthetic affected-b"],
+        "synthetic canonical",
+    );
+}
+
+fn resolved_fixture_with_commands(
+    dir: &Path,
+    investigations: &[&str],
+    reason: &str,
+    failed_commands: &[&str],
+    passing_command: &str,
+) {
     record(
         dir,
         "init",
@@ -52,7 +68,7 @@ fn resolved_fixture(dir: &Path, investigations: &[&str], reason: &str) {
             "machine-local reference in exported summary",
         ],
     );
-    for command in ["synthetic affected-a", "synthetic affected-b"] {
+    for &command in failed_commands {
         record(
             dir,
             "record-final",
@@ -71,7 +87,7 @@ fn resolved_fixture(dir: &Path, investigations: &[&str], reason: &str) {
         "record-final",
         &[
             "--command",
-            "synthetic canonical",
+            passing_command,
             "--scope",
             "full",
             "--status",
@@ -92,7 +108,7 @@ fn resolved_fixture(dir: &Path, investigations: &[&str], reason: &str) {
             "pass",
         ],
     );
-    for command in ["synthetic affected-a", "synthetic affected-b"] {
+    for &command in failed_commands {
         let mut args = vec![
             "--command",
             command,
@@ -101,7 +117,7 @@ fn resolved_fixture(dir: &Path, investigations: &[&str], reason: &str) {
             "--attempt",
             "1",
             "--passing-command",
-            "synthetic canonical",
+            passing_command,
             "--passing-scope",
             "full",
             "--passing-attempt",
@@ -268,4 +284,69 @@ fn uri_home_components_are_preserved_for_the_existing_publication_guard() {
     assert!(validate_no_local_paths(&summary, "body").is_err());
     assert_eq!(fs::read(&file).unwrap(), before);
     assert_eq!(Sha256::digest(fs::read(&file).unwrap()), hash);
+}
+
+#[test]
+fn immutable_validation_command_redirections_export_as_portable_display() {
+    let temp = tempfile::tempdir().unwrap();
+    let failed = [
+        "cargo test affected > /home/fixture/out/affected.log 2>&1",
+        "cargo test consumer > /Users/fixture/out/consumer.log 2>&1",
+    ];
+    let passing = "bash scripts/checks.sh > /home/fixture/out/full.log 2>&1";
+    resolved_fixture_with_commands(
+        temp.path(),
+        &["docs/repro.md"],
+        "same source",
+        &failed,
+        passing,
+    );
+    let file = temp.path().join("test-first-evidence.json");
+    let before = fs::read(&file).unwrap();
+    let hash = Sha256::digest(&before);
+    let record = verify_dir(temp.path()).unwrap().record;
+    let history = serde_json::to_value(&record.final_validations).unwrap();
+    let summary = final_resolution_summary(&record);
+
+    validate_no_local_paths(&summary, "body")
+        .expect("portable command display passes normal guard");
+    assert!(summary.contains("FAIL: `cargo test affected > $HOME/out/affected.log 2>&1`"));
+    assert!(summary.contains("FAIL: `cargo test consumer > $HOME/out/consumer.log 2>&1`"));
+    assert!(summary.contains("PASS: `bash scripts/checks.sh > $HOME/out/full.log 2>&1`"));
+    assert_eq!(
+        summary
+            .matches("Resolved by `bash scripts/checks.sh > $HOME/out/full.log 2>&1`")
+            .count(),
+        2
+    );
+    assert_eq!(
+        serde_json::to_value(&verify_dir(temp.path()).unwrap().record.final_validations).unwrap(),
+        history
+    );
+    assert_eq!(fs::read(&file).unwrap(), before);
+    assert_eq!(Sha256::digest(fs::read(&file).unwrap()), hash);
+    let retained = String::from_utf8(before).unwrap();
+    for command in failed.into_iter().chain([passing]) {
+        assert!(retained.contains(command));
+    }
+}
+
+#[test]
+fn validation_command_uri_components_stay_intact_and_guarded() {
+    let temp = tempfile::tempdir().unwrap();
+    let command = "curl https://example.invalid/home/fixture/report > /home/fixture/out/fetch.log";
+    resolved_fixture_with_commands(
+        temp.path(),
+        &["docs/repro.md"],
+        "same source",
+        &["synthetic failed"],
+        command,
+    );
+    let file = temp.path().join("test-first-evidence.json");
+    let before = fs::read(&file).unwrap();
+    let summary = final_resolution_summary(&verify_dir(temp.path()).unwrap().record);
+    assert!(summary.contains("https://example.invalid/home/fixture/report > $HOME/out/fetch.log"));
+    assert!(!summary.contains("example.invalid$HOME"));
+    assert!(validate_no_local_paths(&summary, "body").is_err());
+    assert_eq!(fs::read(file).unwrap(), before);
 }

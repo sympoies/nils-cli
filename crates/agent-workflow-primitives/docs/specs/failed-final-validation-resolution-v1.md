@@ -40,8 +40,12 @@ When the evidence gate applies, `forge-cli pr create` appends a
 `Final validation dispositions` section to the supplied body if the verified
 record contains dispositions. It lists final attempts and their summaries,
 including the original failures, referenced passes, resolution reasons and
-investigation. Standalone home-absolute investigation references are displayed as `$HOME`-relative
-references without changing the stored record, resolution history or record hash.
+investigation.
+
+Standalone home-absolute references in validation commands,
+referenced passing commands and investigation entries are displayed as
+`$HOME`-relative references without changing stored command identities,
+the record, resolution history or record hash.
 Home-like components inside URIs remain unchanged so audit links cannot be
 silently corrupted; the normal publication guard retains its conservative refusal.
 Existing local-path and attribution checks still apply to all appended content.
