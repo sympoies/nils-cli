@@ -17020,16 +17020,8 @@ esac
         EnvGuard::set(lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER", &argv)
     }
 
-    fn resume_tmux(dir: &Path, log: &Path) -> PathBuf {
-        let pane_stub = live_pane_stub_prelude(dir);
-        executable(
-            &dir.join("tmux"),
-            &format!(
-                "#!/usr/bin/env sh\n{pane_stub}\nprintf '%s\\n' \"$*\" >> {}\ncase \"$1\" in\n  has-session) printf '%s\\n' \"can't find session: fixture\" >&2; exit 1 ;;\n  new-session) heartbeat=''; slot=0; for arg in \"$@\"; do if [ \"$slot\" = 2 ]; then incarnation=\"$arg\"; break; elif [ \"$slot\" = 1 ]; then slot=2; else case \"$arg\" in */coordination/heartbeat) heartbeat=\"$arg\"; slot=1 ;; esac; fi; done; if [ -n \"$heartbeat\" ] && [ -n \"$incarnation\" ]; then mkdir -p \"$(dirname \"$heartbeat\")\"; printf '%s:%s\\n' \"$incarnation\" \"$(date +%s)\" > \"$heartbeat\"; chmod 600 \"$heartbeat\"; fi; start_live_pane || exit 1; printf '%s\\t%s\\t%s\\n' '$77' '%77' \"$NILS_TEST_PANE_PID\"; exit 0 ;;\n  display-message) set -- $(cat \"$NILS_TEST_PANE_PARENT/.pane-identity\"); printf '%s\\t%s\\t%s\\n' '$77' '%77' \"$1\"; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
-                shell_words::quote(&log.to_string_lossy())
-            ),
-        )
-    }
+    mod startup_fixtures;
+    use startup_fixtures::resume_tmux;
 
     fn fake_agent(dir: &Path, name: &str) -> PathBuf {
         executable(
@@ -19992,7 +19984,7 @@ esac
         )
         .unwrap();
         let log = tmp.path().join("tmux.log");
-        let tmux = resume_tmux(tmp.path(), &log);
+        let tmux = startup_fixtures::live_resume_tmux(tmp.path(), &log);
         let mut st = state(tmp.path(), Some(TOKEN), tmux);
         Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
 
@@ -20066,7 +20058,7 @@ esac
         )
         .unwrap();
         let log = tmp.path().join("tmux.log");
-        let tmux = resume_tmux(tmp.path(), &log);
+        let tmux = startup_fixtures::live_resume_tmux(tmp.path(), &log);
         let mut st = state(tmp.path(), Some(TOKEN), tmux);
         Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
 

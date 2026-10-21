@@ -372,7 +372,8 @@ recorded in `sympoies/nils-cli#1409`.
   allowlisted code: `runtime-helper-unavailable`, `agent-binary-unavailable`,
   `working-directory-unavailable`, `terminal-runtime-create-failed`,
   `app-server-start-failed`, `proxy-start-failed`, `provider-client-exited`,
-  `provider-configuration-rejected`, `startup-timeout`, `startup-exited`, or
+  `provider-configuration-rejected`, `startup-trust-required`,
+  `startup-prompt-required`, `startup-timeout`, `startup-exited`, or
   `claude-account-switch-resume-failed`, or `claude-account-switch-cleanup-incomplete`.
   A failure whose cleanup could not finish adds a bounded `cleanup` object with
   `state` of `pending` or `blocked` and one allowlisted `reason`:
@@ -390,7 +391,33 @@ recorded in `sympoies/nils-cli#1409`.
   keep stderr in a private, tail-capped local diagnostic file for startup failures
   and non-zero Codex provider-client exits after readiness; clean exits discard it.
   The local `agent-session logs <id>` command can read that diagnostic, but it is
-  never copied into the session projection. Raw argv, environment, provider responses,
+  never copied into the session projection.
+
+  Fresh create/start observes startup
+  for up to five seconds (the existing capture-timeout override also bounds this
+  observation). An observed stop before provider readiness returns HTTP 500 with
+  `error.code: "start-failed"`, rather than a successful stopped session. Its
+  `error.details` contains the retained `session_id`, failed `startup` projection,
+  `reason: "runtime-exited-during-startup"`, nullable numeric
+  `provider_exit_code`, optional redacted `stderr_tail` capped at 4096 bytes,
+  boolean `retryable` and `safe_to_retry`, `next_action`, `recovery.action`, and
+  `cleanup`.
+
+  Retry is allowed only after verifying that the recorded runtime
+  boundary has stopped. Missing exit or diagnostic evidence remains null/absent;
+  it is never invented. Startup timeout or an unobservable runtime does not prove
+  failure or authorize retry.
+
+  A recognized folder-trust screen returns the same `start-failed` envelope with
+  `reason: "startup-trust-required"` and
+  `next_action: "configure_provider_trust"`; recognized sign-in/setup screens use
+  `reason: "startup-prompt-required"` and `next_action: "configure_provider"`.
+  These prompts are never answered automatically. Failed-launch cleanup is
+  attempted and reported; incomplete cleanup uses `next_action: "inspect_session"`
+  and always disables retry. The failure response includes a bounded, redacted
+  diagnostic only; the durable session projection remains metadata-only.
+
+  Raw argv, environment, provider responses,
   stderr, prompts, and filesystem paths are never copied into the projection. A
   record that reached `ready` keeps that state after an ordinary later stop,
   so consumers must not relabel normal session termination as startup failure.
