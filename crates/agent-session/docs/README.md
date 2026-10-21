@@ -28,6 +28,8 @@ or integrating a specific subsystem.
   roles, persisted auto/pinned titles, and exact-session revision-fenced updates.
 - [Serve API v1](specs/serve-api-v1.md): HTTP and WebSocket endpoints,
   response/authentication rules, launch profiles, and session survival.
+- [Native busy replies](specs/native-busy-replies.md): immediate client handoff,
+  provider acknowledgment limits, and the separate explicit idle-only option.
 - [Session retitle v2](specs/session-retitle-v2.md): bounded title context,
   automatic scheduling, mutation fences, provider configuration, and privacy.
 - [Session retitle v3](specs/session-retitle-v3.md): bounded semantic memory,

@@ -594,24 +594,7 @@ fn persisted_runtime_paths(
     Ok([socket, proxy, handoff, attached])
 }
 
-const STARTUP_DIAGNOSTIC_COLLECTOR_SCRIPT: &str = r#"collect_startup_diagnostic() {
-  if (umask 077; tail -c 16384 > "$startup_diagnostic_buffer"); then
-    runtime_exit="$(cat "$runtime_exit_status" 2>/dev/null)"
-    if { [ "$(cat "$startup_stage" 2>/dev/null)" != initial_connection ] ||
-         { [ -n "$runtime_exit" ] && [ "$runtime_exit" != 0 ]; }; } &&
-       [ -s "$startup_diagnostic_buffer" ]; then
-      mv -f "$startup_diagnostic_buffer" "$startup_diagnostic" 2>/dev/null ||
-        rm -f -- "$startup_diagnostic_buffer"
-    else
-      rm -f -- "$startup_diagnostic_buffer"
-    fi
-    if [ "$runtime_exit" = 0 ]; then
-      rm -f -- "$runtime_exit_status"
-    fi
-  else
-    rm -f -- "$startup_diagnostic_buffer"
-  fi
-}"#;
+const STARTUP_DIAGNOSTIC_COLLECTOR_SCRIPT: &str = include_str!("startup/codex-diagnostic.sh");
 
 /// The remote TUI forwards only a subset of its configuration to thread/start.
 /// Give the already session-owned server the explicit configuration flags too,
@@ -736,6 +719,10 @@ trap 'handle_signal 143' TERM
 i=0
 while [ ! -S "$socket" ]; do
   if ! kill -0 "$server" 2>/dev/null; then
+    wait "$server"
+    server_status=$?
+    server=
+    write_startup_marker "$runtime_exit_status" "$server_status"
     record_startup_failure app-server-start-failed
     exit 1
   fi

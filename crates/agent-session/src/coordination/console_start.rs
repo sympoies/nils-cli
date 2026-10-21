@@ -22,6 +22,7 @@ pub(crate) mod diagnostics;
 mod operation;
 mod retention;
 mod start_args;
+mod start_failure;
 pub(crate) use start_args::{OperationArgs, render_text, start_args};
 
 pub(crate) const RESULT_SCHEMA: &str = "agent-session.console-start.v1";
@@ -457,7 +458,8 @@ fn relay_create(
             false,
         ));
     }
-    let mut failure = forwarded(error["code"].as_str(), &error["message"]);
+    let mut failure = start_failure::forward(error)
+        .unwrap_or_else(|| forwarded(error["code"].as_str(), &error["message"]));
     if matches!(
         failure.code(),
         "title-mode-unconfirmed" | "launch-env-unconfirmed"
@@ -646,7 +648,8 @@ fn cli_request(
     let mut failure = if error["code"] == UNAVAILABLE_CODE {
         unavailable_from_details(&error["message"], &error["details"])
     } else {
-        forwarded(error["code"].as_str(), &error["message"])
+        start_failure::forward(error)
+            .unwrap_or_else(|| forwarded(error["code"].as_str(), &error["message"]))
     };
     let details = failure.details_mut().get_or_insert_with(|| json!({}));
     diagnostics::copy(&error["details"], details, operation_id);

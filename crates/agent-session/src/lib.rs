@@ -46,7 +46,9 @@ mod retitle;
 mod retitle_v3;
 mod runtime_environment;
 mod runtime_teardown;
+mod startup;
 use runtime_teardown::tmux_kill_identity_with_timeout;
+use startup::start_interactive_tmux;
 pub(crate) mod send;
 mod send_guard;
 mod send_submit;
@@ -161,10 +163,11 @@ const STARTUP_STAGE_FILE: &str = ".startup-stage";
 const STARTUP_FAILURE_FILE: &str = ".startup-failure";
 const STARTUP_DIAGNOSTIC_FILE: &str = ".startup-diagnostic.log";
 const RUNTIME_EXIT_STATUS_FILE: &str = ".runtime-exit-status";
-const STARTUP_ARTIFACT_FILES: [&str; 5] = [
+const STARTUP_ARTIFACT_FILES: [&str; 6] = [
     STARTUP_STAGE_FILE,
     STARTUP_FAILURE_FILE,
     STARTUP_DIAGNOSTIC_FILE,
+    startup::STDERR_FILE,
     RUNTIME_EXIT_STATUS_FILE,
     coordination::broker::DSH_PROVIDER_LEASE_FAILURE_FILE,
 ];
@@ -219,7 +222,7 @@ const TMUX_RUNTIME_NEVER_LAUNCHED_KEY: &str = "tmux_runtime_never_launched";
 const TMUX_RUNTIME_IDENTITY_CHANGED_OUTPUT: &str = "agent-session-runtime-identity-changed";
 const COORDINATION_LAUNCH_GATE: &str = "launch-ready";
 const COORDINATION_BROKER_GATE: &str = "broker-provisioned";
-const HELD_LAUNCH_SCRIPT: &str = "gate=$1; broker_gate=$2; heartbeat=$3; capability=$4; incarnation=$5; generation=$6; broker_bin=$7; shift 7; done_file=\"${heartbeat}.done.$$\"; umask 077; while [ ! -f \"$broker_gate\" ]; do sleep 0.01; done; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker heartbeat --session \"$AGENT_SESSION_ID\" --incarnation \"$incarnation\" --generation \"$generation\" --capability-file \"$capability\" --format json >/dev/null 2>&1 & broker_pid=$!; while [ ! -f \"$gate\" ]; do sleep 0.01; done; \"$@\"; status=$?; printf '%s\\n' \"$status\" > \"$done_file\"; kill \"$broker_pid\" >/dev/null 2>&1 || true; wait \"$broker_pid\" >/dev/null 2>&1 || true; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --exit-code \"$status\" --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || true; rm -f \"$done_file\" \"$capability\" \"$broker_gate\" \"$gate\"; exit \"$status\"";
+const HELD_LAUNCH_SCRIPT: &str = include_str!("startup/held-launch.sh");
 
 pub fn run() -> i32 {
     run_with_args(env::args_os())
@@ -1008,6 +1011,16 @@ fn startup_failure_details(
             "provider_client",
             "The agent exited before the session was ready.",
             true,
+        )),
+        "startup-trust-required" => Some((
+            "provider_client",
+            "The provider requires folder trust before startup can continue.",
+            false,
+        )),
+        "startup-prompt-required" => Some((
+            "provider_client",
+            "The provider requires startup configuration or sign-in.",
+            false,
         )),
         "provider-configuration-rejected" => Some((
             "provider_client",
@@ -2103,6 +2116,7 @@ fn start_session_inner_unjournaled(
     }
 
     let _ = advance_owned_startup_stage(context, &mut created.record, "runtime");
+    startup::observe(context, &mut created.record, &tmux_bin, &launch_identity)?;
     let mut prompt_delivery_observation = None;
     if created.prompt_file.is_some() {
         if let Err(err) = created.validate_session_storage() {
@@ -2128,13 +2142,13 @@ fn start_session_inner_unjournaled(
         match paste_prompt(&tmux_bin, &created.record) {
             Ok(observation) => prompt_delivery_observation = Some(observation),
             Err(err) => {
-                let cleanup = recover_failed_tmux_launch_bounded(
+                let cleanup = startup::recover_prompt_failure(
                     context,
                     &mut created.record,
                     &tmux_bin,
                     Some(&launch_identity),
                     SessionTerminationOperation::FailedLaunch,
-                );
+                )?;
                 if cleanup == FailedLaunchCleanup::Completed {
                     cleanup_created_record(context, &created);
                 } else {
@@ -2151,6 +2165,7 @@ fn start_session_inner_unjournaled(
         launch_started_at,
     )?;
     let status = session_status(context, &tmux_bin, &created.record);
+    startup::check_stopped(context, &mut created.record, &status, &tmux_bin)?;
     reconcile_owned_startup_projection(context, &mut created.record, &status);
     let result = session_view(context, &created.record, Some(status), Some(&tmux_bin));
     record_workdir_usage(context, &cwd);
@@ -3750,109 +3765,6 @@ fn add_interactive_agent_environment(command: &mut ProcessCommand) {
         .arg("-c")
         .arg("unset NO_COLOR AGENT_SESSION_TOKEN AGENT_SESSION_RELAY_URL AGENT_SESSION_RELAY_TOKEN AGENT_SESSION_RELAY_INGRESS_TOKEN AGENT_CONSOLE_COORDINATION_RELAYS; exec \"$@\"")
         .arg("agent-session-interactive");
-}
-
-fn start_interactive_tmux(
-    tmux_bin: &Path,
-    agent_bin: &Path,
-    agent: AgentKind,
-    state_dir: &Path,
-    record: &SessionRecord,
-    provider_launch_args: &[String],
-    agent_args: &[String],
-) -> Result<TmuxRuntimeIdentity, CliError> {
-    let mut command = new_session_command(tmux_bin, tmux_scope_runner().as_ref());
-    command
-        .arg("new-session")
-        .arg("-d")
-        .arg("-P")
-        .arg("-F")
-        .arg(TMUX_RUNTIME_IDENTITY_FORMAT)
-        .arg("-s")
-        .arg(&record.tmux_session)
-        .arg("-c")
-        .arg(&record.cwd);
-    add_runtime_tmux_environment(&mut command, state_dir, record)?;
-    begin_held_runtime(&mut command, state_dir, record)?;
-
-    add_interactive_agent_environment(&mut command);
-
-    if agent == AgentKind::Codex && codex_app_server::runtime_is_supported(record) {
-        let socket = codex_app_server::socket_path(record).ok_or_else(|| {
-            CliError::data(
-                "codex-app-server-socket-missing",
-                "Codex app-server runtime is missing its private socket",
-                Some(json!({ "id": record.id })),
-            )
-        })?;
-        let proxy = codex_app_server::proxy_path(record).ok_or_else(|| {
-            CliError::data(
-                "codex-app-server-proxy-missing",
-                "Codex app-server runtime is missing its private TUI proxy",
-                Some(json!({ "id": record.id })),
-            )
-        })?;
-        let handoff = codex_app_server::thread_handoff_path(record).ok_or_else(|| {
-            CliError::data(
-                "codex-app-server-handoff-missing",
-                "Codex app-server runtime is missing its thread handoff path",
-                Some(json!({ "id": record.id })),
-            )
-        })?;
-        let attached = codex_app_server::thread_attached_path(record).ok_or_else(|| {
-            CliError::data(
-                "codex-app-server-attached-marker-missing",
-                "Codex app-server runtime is missing its attached marker path",
-                Some(json!({ "id": record.id })),
-            )
-        })?;
-        let proxy_bin = current_runtime_helper()?;
-        command
-            .arg("sh")
-            .arg("-c")
-            .arg(codex_app_server::launch_script(agent_args))
-            .arg("agent-session-codex-app-server")
-            .arg(socket)
-            .arg(proxy)
-            .arg(handoff)
-            .arg(attached)
-            .arg(proxy_bin)
-            .arg(state_dir)
-            .arg(&record.id)
-            .arg(agent_bin)
-            .arg(&record.cwd);
-        if provider_launch_args.is_empty() {
-            command.arg("--cd").arg(&record.cwd).arg("--no-alt-screen");
-        } else {
-            command.args(provider_launch_args);
-        }
-        command.args(agent_args);
-        return run_tmux_new_session(command, tmux_bin, record);
-    }
-
-    command.arg(agent_bin);
-
-    match agent {
-        AgentKind::Codex => {
-            command.arg("--cd").arg(&record.cwd).arg("--no-alt-screen");
-        }
-        AgentKind::Claude => {
-            command.args(provider_launch_args);
-            if let Some(title) = record
-                .title
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-            {
-                command.arg("--name").arg(title);
-            }
-        }
-        AgentKind::Dsh => {
-            // The launch profile's agent_bin owns the whole command line.
-            command.args(provider_launch_args);
-        }
-    }
-    command.args(agent_args);
-    run_tmux_new_session(command, tmux_bin, record)
 }
 
 fn start_run_tmux(
@@ -13863,7 +13775,6 @@ fi
 
     #[test]
     fn held_launch_keeps_provider_in_foreground_and_tracks_broker_lifecycle() {
-        assert!(!super::HELD_LAUNCH_SCRIPT.contains("kill -0"));
         assert!(!super::HELD_LAUNCH_SCRIPT.contains("child=$!"));
         assert!(super::HELD_LAUNCH_SCRIPT.contains("broker_pid=$!"));
         assert!(super::HELD_LAUNCH_SCRIPT.contains("; \"$@\"; status=$?;"));

@@ -26,13 +26,15 @@ declare -A HELP_FAILURES=()
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/ci/completion-flag-parity-audit.sh [--strict]
+  scripts/ci/completion-flag-parity-audit.sh [--strict] [--bin <name>] [--skip-build]
 
 Audit completion flag parity between --help and bash/zsh completions.
 
 Options:
-  --strict   Compatibility flag. The audit is always strict.
-  -h, --help Show this help
+  --strict      Compatibility flag. The audit is always strict.
+  --bin <name>  Limit the audit to one required binary. Repeatable.
+  --skip-build  Never build; fail if a binary to audit is not already built.
+  -h, --help    Show this help
 
 Environment:
   COMPLETION_PARITY_JOBS  Binaries audited concurrently (default: CPU count).
@@ -718,10 +720,28 @@ audit_binary() {
 
 main() {
   local strict=0
+  local skip_build=0
+  local -a requested_bins=()
   while [[ $# -gt 0 ]]; do
     case "${1:-}" in
       --strict)
         strict=1
+        shift
+        ;;
+      --bin)
+        if [[ $# -lt 2 ]]; then
+          echo "error: --bin requires a value" >&2
+          return 2
+        fi
+        requested_bins+=( "${2:-}" )
+        shift 2
+        ;;
+      --bin=*)
+        requested_bins+=( "${1#--bin=}" )
+        shift
+        ;;
+      --skip-build)
+        skip_build=1
         shift
         ;;
       -h|--help)
@@ -770,7 +790,27 @@ main() {
     esac
   fi
 
-  if ! ensure_binaries "$repo_root" "${required_bins[@]}"; then
+  if (( ${#requested_bins[@]} > 0 )); then
+    local requested
+    for requested in "${requested_bins[@]}"; do
+      if ! printf '%s\n' "${required_bins[@]}" | grep -qxF -- "$requested"; then
+        echo "error: requested binary is not required by the completion matrix: $requested" >&2
+        return 2
+      fi
+    done
+    required_bins=( "${requested_bins[@]}" )
+  fi
+
+  if (( skip_build == 1 )); then
+    local binary_path missing_bin
+    for missing_bin in "${required_bins[@]}"; do
+      binary_path="$TARGET_DEBUG_DIR/${missing_bin}${PLATFORM_EXE_SUFFIX}"
+      if [[ ! -f "$binary_path" ]]; then
+        echo "FAIL: binary is not built (--skip-build): ${binary_path#"$repo_root"/}" >&2
+        return 2
+      fi
+    done
+  elif ! ensure_binaries "$repo_root" "${required_bins[@]}"; then
     echo "FAIL: $ENSURE_BIN_ERROR" >&2
     return 2
   fi

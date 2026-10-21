@@ -85,11 +85,14 @@ class ConsumerExecutionTests(unittest.TestCase):
         self.bin = self.root / 'bin'
         self.bin.mkdir()
         self.log = self.root / 'commands.jsonl'
+        self.audit_log = self.root / 'audits.log'
         self.output = self.root / 'receipt'
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
-                        FAKE_CARGO_LOG=str(self.log), NILS_CLI_TEST_RUNNER='nextest',
+                        FAKE_CARGO_LOG=str(self.log), FAKE_AUDIT_LOG=str(self.audit_log),
+                        NILS_CLI_TEST_RUNNER='nextest',
                         NILS_CLI_SKIP_DOCTESTS='0', NILS_CLI_COVERAGE_FAIL_UNDER_LINES='85',
                         GITHUB_OUTPUT=str(self.root / 'github-output'),
+                        NILS_CLI_REPORT_DIR=str(self.root / 'reports'),
                         FORGE_IDENTITY_FIXTURE_MARKER='synthetic')
         self.git('init', '-q')
         self.git('config', 'user.name', 'Fixture')
@@ -99,7 +102,7 @@ class ConsumerExecutionTests(unittest.TestCase):
                  'scripts/ci/merge-plan.schema.v1.json', 'scripts/ci/merge-plan.schema.v2.json',
                  'scripts/ci/nils-cli-scoped-checks.sh', 'scripts/ci/scoped-coverage-ratchet.py',
                  'scripts/ci/assert-import-audit.py', 'scripts/ci/lib/rust_file_size.py',
-                 'scripts/ci/test-env.sh')
+                 'scripts/ci/test-env.sh', 'scripts/ci/gate-reports.py')
         for path in paths:
             dest = self.repo / path
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -112,9 +115,22 @@ class ConsumerExecutionTests(unittest.TestCase):
             source = self.repo / f'crates/{name}/src/lib.rs'
             source.parent.mkdir(parents=True)
             source.write_text('// synthetic fixture\n')
+        # Audits are recorded, not run; FAIL_AUDIT names the one that must fail.
         for name in ('docs-placement-audit', 'docs-hygiene-audit', 'docs-prose-audit',
-                     'file-size-audit', 'tempdir-leak-audit'):
-            (self.repo / f'scripts/ci/{name}.sh').write_text('#!/usr/bin/env bash\nexit 0\n')
+                     'file-size-audit', 'tempdir-leak-audit', 'markdownlint-audit',
+                     'cli-output-contract-lint', 'forge-cli-fixture-lint', 'test-stale-audit',
+                     'completion-asset-audit', 'completion-freshness-audit',
+                     'completion-flag-parity-audit'):
+            (self.repo / f'scripts/ci/{name}.sh').write_text(
+                '#!/usr/bin/env bash\n'
+                'echo "$(basename "$0" .sh) $*" >> "$FAKE_AUDIT_LOG"\n'
+                '[[ "$(basename "$0" .sh)" != "${FAIL_AUDIT:-}" ]]\n')
+        (self.repo / 'tests/zsh').mkdir(parents=True)
+        (self.repo / 'tests/zsh/completion.test.zsh').write_text('# synthetic completion suite\n')
+        zsh = self.bin / 'zsh'
+        zsh.write_text('#!/usr/bin/env bash\necho "zsh $*" >> "$FAKE_AUDIT_LOG"\n'
+                       '[[ "${FAIL_AUDIT:-}" != zsh-completion ]]\n')
+        zsh.chmod(0o755)
         (self.repo / 'scripts/ci/nils-cli-checks-entrypoint.sh').write_text(
             '#!/usr/bin/env bash\nprintf \'{"kind":"full"}\\n\' >> "$FAKE_CARGO_LOG"\n')
         cargo = self.bin / 'cargo'
@@ -129,7 +145,9 @@ if args[0] == 'metadata':
     root = pathlib.Path(args[args.index('--manifest-path') + 1]).parent if '--manifest-path' in args else pathlib.Path.cwd()
     names = ('selected', 'consumer', 'untouched', 'unrelated')
     ids = {n: f'path+{root.as_uri()}/crates/{n}#{n}@0.1.0' for n in names}
-    packages = [{'id': ids[n], 'name': n, 'manifest_path': str(root/f'crates/{n}/Cargo.toml'), 'targets': []} for n in names]
+    bins = [{'kind': ['bin'], 'name': os.environ['FIXTURE_SELECTED_BIN']}] if os.environ.get('FIXTURE_SELECTED_BIN') else []
+    packages = [{'id': ids[n], 'name': n, 'manifest_path': str(root/f'crates/{n}/Cargo.toml'),
+                 'targets': bins if n == 'selected' else []} for n in names]
     nodes = [{'id': ids[n], 'deps': [{'pkg': ids['selected']}] if n == 'consumer' else []} for n in names]
     print(json.dumps({'workspace_root': str(root), 'workspace_members': list(ids.values()), 'packages': packages, 'resolve': {'nodes': nodes}}))
 else:
@@ -158,6 +176,14 @@ else:
             (self.repo / 'crates/selected/src/lib.rs').write_text(
                 '#[cfg(test)] mod tests { use pretty_assertions::assert_eq; '
                 'mod child { use super::*; fn check() { assert_eq!(1, 1); } } }\n')
+        elif change == 'bulk':
+            for index in range(30):
+                (self.repo / f'crates/selected/src/bulk_{index}.rs').write_text('// bulk\n')
+            (self.repo / 'crates/selected/src/`x|y`.rs').write_text('// hostile\n')
+        elif change == 'completion':
+            (self.repo / 'completions/zsh/_selected-cli').write_text('# regenerated asset\n')
+        elif change == 'unknown-completion':
+            (self.repo / 'completions/zsh/_unknown-cli').write_text('# regenerated asset\n')
         elif change == 'full':
             with (self.repo / 'Cargo.toml').open('a') as stream:
                 stream.write('# manifest escalation\n')
@@ -217,6 +243,103 @@ else:
                              ['consumer', 'selected'])
         self.assertEqual(next(c for c in calls if c[0] == 'clippy')[-2:], ['-D', 'warnings'])
         self.assertTrue(all(not r['identity_present'] for r in rows if r['args'][0] in ('nextest', 'test')))
+
+    def selected_binary(self):
+        """Give `selected` a required `selected-cli` binary and its generated asset."""
+        matrix = self.repo / 'docs/specs/completion-coverage-matrix-v1.md'
+        matrix.parent.mkdir(parents=True, exist_ok=True)
+        matrix.write_text('| Binary | Obligation |\n| --- | --- |\n| `selected-cli` | `required` |\n')
+        for path in ('completions/zsh/_selected-cli', 'completions/zsh/_unknown-cli'):
+            (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / path).write_text('# synthetic completion asset\n')
+        self.env['FIXTURE_SELECTED_BIN'] = 'selected-cli'
+
+    def audits(self):
+        return self.audit_log.read_text().splitlines() if self.audit_log.exists() else []
+
+    def test_scoped_lane_runs_the_cheap_audits_a_crate_change_can_break(self):
+        self.candidate()
+        result, _ = self.execute()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        audits = self.audits()
+        for expected in ('markdownlint-audit --strict', 'cli-output-contract-lint --strict',
+                         'forge-cli-fixture-lint --strict', 'test-stale-audit --strict',
+                         'completion-asset-audit --strict', 'zsh -f tests/zsh/completion.test.zsh'):
+            with self.subTest(audit=expected):
+                self.assertIn(expected, audits)
+
+    def test_scoped_flag_parity_audits_selected_binaries_without_a_workspace_build(self):
+        self.selected_binary()
+        self.candidate()
+        result, rows = self.execute()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('completion-flag-parity-audit --strict --skip-build --bin selected-cli', self.audits())
+        builds = [r['args'] for r in rows if r['args'][0] == 'build']
+        self.assertEqual(len(builds), 1)
+        self.assertNotIn('--workspace', builds[0])
+
+    def test_scoped_lane_fails_before_compiling_when_a_cheap_audit_fails(self):
+        self.candidate()
+        for name in ('markdownlint-audit', 'cli-output-contract-lint', 'forge-cli-fixture-lint',
+                     'test-stale-audit', 'completion-asset-audit', 'zsh-completion'):
+            with self.subTest(audit=name):
+                self.log.unlink(missing_ok=True)
+                result, rows = self.execute(env={'FAIL_AUDIT': name})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual([r['args'][0] for r in rows if r['args'][0] in ('clippy', 'build')], [])
+                self.assertEqual(self.receipt()['status'], 'FAIL')
+
+    def test_generated_completion_asset_alone_runs_scoped_for_its_owner(self):
+        self.selected_binary()
+        self.candidate('completion')
+        result, _ = self.execute()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.receipt()['validation_scope'], 'SCOPED')
+        self.assertEqual(self.receipt()['packages'], ['consumer', 'selected'])
+
+    def test_completion_asset_without_a_binary_owner_runs_full(self):
+        self.selected_binary()
+        self.candidate('unknown-completion')
+        result, rows = self.execute()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(rows, [{'kind': 'full'}])
+        self.assertEqual(self.receipt()['validation_scope'], 'FULL')
+
+    def summary(self, name='pull_request', change='source', env=None):
+        self.candidate(change)
+        path = self.root / 'step-summary.md'
+        result, _ = self.execute(name, env=dict(env or {}, GITHUB_STEP_SUMMARY=str(path)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return path.read_text()
+
+    def test_job_summary_shows_scope_packages_and_reasons_for_pr_and_queue(self):
+        for name in ('pull_request', 'merge_group'):
+            with self.subTest(event=name):
+                self.setUp()
+                text = self.summary(name)
+                self.assertIn('SCOPED', text)
+                self.assertIn('`consumer`', text)
+                self.assertIn('`selected`', text)
+                self.assertIn('CHANGED_PACKAGE', text)
+                self.assertIn('REVERSE_DEPENDENCY', text)
+                self.assertIn('crates/selected/src/lib.rs', text)
+
+    def test_job_summary_explains_a_full_escalation(self):
+        text = self.summary(change='full')
+        self.assertIn('FULL', text)
+        self.assertIn('ALWAYS_ESCALATE', text)
+        self.assertIn('`Cargo.toml`', text)
+
+    def test_job_summary_names_the_fallback_when_there_is_no_usable_plan(self):
+        text = self.summary(change='hold')
+        self.assertIn('FULL', text)
+        self.assertIn('planner_hold', text)
+
+    def test_job_summary_keeps_untrusted_paths_inert_and_bounded(self):
+        text = self.summary(change='bulk')
+        self.assertNotIn('x|y', text)
+        self.assertLess(text.count('bulk_'), 10)
+        self.assertIn('CHANGED_PACKAGE', text)
 
     def test_ambiguous_assert_imports_fail_before_compilation(self):
         self.candidate(change='ambiguous')

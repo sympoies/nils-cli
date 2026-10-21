@@ -25,7 +25,9 @@ head, combined candidate and tested tree, and records selected packages,
 fallback reasons and results in `merge-validation-linux`. Unavailable planning
 uses full Linux; invalid checkout/event bindings fail before validation.
 Workspace manifests, CI, shared infrastructure and sensitive paths can
-intentionally select FULL. Docs-only PRs run substantive documentation audits.
+intentionally select FULL. Crates with no workspace dependents, generated
+completion assets of a known binary, and the three audit baseline files stay
+scoped; each run's job summary lists the scope, packages and reasons. Docs-only PRs run substantive documentation audits.
 The merge queue still invokes the planner for docs and release changes.
 See the [scope consumption contract](../docs/specs/affected-scope-ci-consumption-v1.md).
 

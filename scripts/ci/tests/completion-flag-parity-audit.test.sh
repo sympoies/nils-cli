@@ -352,6 +352,55 @@ if [[ ! -s "$iso_missing/cargo.log" ]]; then
   fail "missing isolated binary fixture did not reach the build step"
 fi
 
+# 5. Selected binaries without a workspace build (scoped CI): only the named
+#    required binaries are audited, a failing sibling is not reported, and the
+#    audit never builds. An unlisted or unbuilt binary is a usage error.
+selected="$tmp/selected"
+make_workspace "$selected" \
+  "alpha-cli:--verbose:--verbose:--verbose" \
+  "beta-cli:--json:--json:" \
+  "gamma-cli:--dry-run:--dry-run:--dry-run"
+rm "$selected/target/debug/gamma-cli"
+
+run_selected_audit() {
+  local dir="$1"
+  local out_file="$2"
+  shift 2
+  local code=0
+  (cd "$tmp" && env PATH="$stub_dir:$PATH" STUB_CARGO_LOG="$dir/cargo.log" \
+    COMPLETION_PARITY_JOBS=2 \
+    bash "$dir/scripts/ci/completion-flag-parity-audit.sh" --strict "$@") >"$out_file" 2>&1 || code=$?
+  printf '%s' "$code"
+}
+
+out="$tmp/selected.out"
+code="$(run_selected_audit "$selected" "$out" --skip-build --bin alpha-cli)"
+if [[ "$code" != "0" ]] || ! grep -qxF 'PASS: completion flag parity audit (required=1, dynamic_engine_skipped=0, failures=0)' "$out"; then
+  fail "selected binary fixture exited $code and reported:"$'\n'"$(cat "$out")"
+fi
+if [[ -e "$selected/cargo.log" ]]; then
+  fail "selected binary fixture attempted a cargo build: $(cat "$selected/cargo.log")"
+fi
+
+out="$tmp/selected-failing.out"
+code="$(run_selected_audit "$selected" "$out" --skip-build --bin alpha-cli --bin=beta-cli)"
+if [[ "$code" != "1" ]] || ! grep -qxF 'FAIL: beta-cli: zsh completion missing flag `--json` for command `<root>`' "$out" \
+  || grep -q 'gamma-cli' "$out"; then
+  fail "selected failing fixture exited $code and reported:"$'\n'"$(cat "$out")"
+fi
+
+out="$tmp/selected-unlisted.out"
+code="$(run_selected_audit "$selected" "$out" --skip-build --bin not-in-matrix)"
+if [[ "$code" != "2" ]] || ! grep -q 'not-in-matrix' "$out"; then
+  fail "unlisted selected binary exited $code and reported:"$'\n'"$(cat "$out")"
+fi
+
+out="$tmp/selected-unbuilt.out"
+code="$(run_selected_audit "$selected" "$out" --skip-build --bin gamma-cli)"
+if [[ "$code" != "2" ]] || ! grep -q 'gamma-cli' "$out" || [[ -e "$selected/cargo.log" ]]; then
+  fail "unbuilt selected binary exited $code and reported:"$'\n'"$(cat "$out")"
+fi
+
 if (( failures > 0 )); then
   echo "FAIL: completion-flag-parity-audit self-test ($failures failure(s))" >&2
   exit 1
