@@ -9,6 +9,7 @@ const DEFAULT_KEYS: &[&str] = &[
     "AGENT_RUNTIME_SUPPRESS_HEALTH",
     "AGENT_RUNTIME_SUPPRESS_PREFLIGHT",
     "AGENT_RUNTIME_SUPPRESS_FINISH_GATE",
+    crate::runtime_environment::session_tmp::OPT_OUT_KEY,
 ];
 const MAX_KEYS: usize = 16;
 const MAX_VALUE_BYTES: usize = 1024;
@@ -187,6 +188,8 @@ mod tests {
     fn launch_env_is_present_in_each_provider_process() {
         let lock = GlobalStateLock::new();
         let _policy = EnvGuard::remove(&lock, ALLOWLIST_ENV);
+        let agent_home = tempfile::TempDir::new().unwrap();
+        let _home = EnvGuard::set(&lock, "AGENT_HOME", agent_home.path().to_str().unwrap());
         use std::{
             path::PathBuf,
             process::Command,

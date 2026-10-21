@@ -197,6 +197,9 @@ pub(crate) fn command_format(command: &Command) -> OutputFormat {
             cli::WorkCommand::Set(args) => args.format,
         },
         Command::Delete(args) => args.format,
+        Command::Tmp(args) => match &args.command {
+            cli::TmpCommand::Sweep(args) => args.format,
+        },
         Command::Attach(_)
         | Command::Serve(_)
         | Command::CodexAppServerProxy(_)

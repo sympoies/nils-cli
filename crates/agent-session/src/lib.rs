@@ -113,8 +113,7 @@ use serde_json::{Value, json};
 use agent_bin::resolve_agent_bin;
 use cli::{AgentKind, Cli, Command, SpecialKey};
 use digest_format::valid_sha256;
-use display_metadata::SessionTitleStateView;
-use runtime_environment::add_runtime_tmux_environment;
+use {display_metadata::SessionTitleStateView, runtime_environment::add_runtime_tmux_environment};
 
 pub const SESSION_DOCUMENT_VERSION: &str = "agent-session.session.v1";
 const SESSION_RESUME_DOCUMENT_VERSION: &str = "agent-session.resume.v1";
@@ -322,6 +321,7 @@ fn dispatch(cli: Cli) -> i32 {
         Command::Serve(args) => serve::run_serve(&context, args),
         Command::CodexAppServerProxy(args) => codex_app_server::run_proxy(&context, args),
         Command::Delete(args) => run_delete(&context, args),
+        Command::Tmp(args) => runtime_environment::session_tmp::run(&context, args),
         Command::Completion(_) => unreachable!("completion is handled before context resolution"),
     }
 }

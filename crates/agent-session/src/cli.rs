@@ -124,6 +124,8 @@ pub enum Command {
     CodexAppServerProxy(CodexAppServerProxyArgs),
     /// Delete session state and kill the tmux session if it is still alive.
     Delete(DeleteArgs),
+    /// Manage the per-session `TMPDIR` directories under `AGENT_HOME/tmp`.
+    Tmp(TmpArgs),
     /// Print shell completion script.
     Completion(CompletionArgs),
 }
@@ -1112,6 +1114,35 @@ pub struct MessageWaitArgs {
     pub timeout: String,
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub capability_file: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct TmpArgs {
+    #[command(subcommand)]
+    pub command: TmpCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TmpCommand {
+    /// Remove per-session tmp directories of stopped sessions past the grace
+    /// period and of deleted session records; a live session is never touched.
+    Sweep(TmpSweepArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct TmpSweepArgs {
+    /// Grace period after a session stops, in seconds. Defaults to
+    /// AGENT_SESSION_TMP_GRACE_SECS, or 86400 (24 hours).
+    #[arg(long, value_name = "SECONDS")]
+    pub grace_secs: Option<u64>,
+
+    /// tmux binary override.
+    #[arg(long = "tmux-bin", value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub tmux_bin: Option<PathBuf>,
+
+    /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 }

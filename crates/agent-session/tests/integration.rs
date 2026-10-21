@@ -38,6 +38,8 @@ mod resume_mail;
 mod resume_status;
 #[path = "integration/retitle_v3.rs"]
 mod retitle_v3;
+#[path = "integration/tmp_sweep.rs"]
+mod tmp_sweep;
 #[path = "integration/work_context_admission.rs"]
 mod work_context_admission;
 
@@ -52,6 +54,8 @@ fn hermetic_provider_options(dir: &std::path::Path) -> nils_test_support::cmd::C
     nils_test_support::cmd::CmdOptions::new()
         .with_cwd(dir)
         .with_env_remove_many(&["CLAUDE_CONFIG_DIR", "CODEX_HOME"])
+        // Per-session TMPDIR directories land under AGENT_HOME; keep them in the test directory.
+        .with_env("AGENT_HOME", &dir.join("agent-home").to_string_lossy())
         .with_env("AGENT_SESSION_CODEX_BIN", UNPINNED_PROVIDER_BIN)
         .with_env("AGENT_SESSION_CLAUDE_BIN", UNPINNED_PROVIDER_BIN)
 }
