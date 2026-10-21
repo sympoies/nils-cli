@@ -181,9 +181,10 @@ exit 23
         assert!(!std::path::Path::new(child.trim()).exists());
         assert!(!homes.contains(&child));
         homes.push(child);
-        assert_eq!(
-            fs::read_to_string(source.join("auth.json")).unwrap(),
-            "credential-canary"
+        nils_test_support::credential::assert_credential_file_eq(
+            "source auth file",
+            &source.join("auth.json"),
+            "credential-canary",
         );
     }
 }

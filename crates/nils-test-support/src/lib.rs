@@ -5,6 +5,7 @@ use std::sync::{Mutex, MutexGuard};
 
 pub mod bin;
 pub mod cmd;
+pub mod credential;
 pub mod fixtures;
 pub mod fs;
 pub mod git;

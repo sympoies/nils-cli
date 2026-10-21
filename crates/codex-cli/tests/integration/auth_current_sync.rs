@@ -225,10 +225,14 @@ fn auth_sync_updates_matching() {
     assert_exit(&output, 0);
 
     let synced = fs::read_to_string(&match_secret).expect("read synced secret");
-    assert_eq!(synced, auth_content);
+    nils_test_support::credential::assert_credential_eq("synced secret", &synced, &auth_content);
 
     let untouched = fs::read_to_string(&other_secret).expect("read other secret");
-    assert_eq!(untouched, other_content);
+    nils_test_support::credential::assert_credential_eq(
+        "untouched secret",
+        &untouched,
+        &other_content,
+    );
 
     let match_timestamp = cache.join("alpha.json.timestamp");
     let auth_timestamp = cache.join("auth.json.timestamp");

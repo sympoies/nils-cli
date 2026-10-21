@@ -520,7 +520,11 @@ fn rate_limits_all_json_no_window_payloads_serve_preserved_cache() {
             assert_eq!(result["windows"].as_array().expect("windows").len(), 2);
             assert_eq!(result["reset_credits"]["available_count"], 4);
         }
-        assert_eq!(fs::read_to_string(&secret_file).expect("secret"), secret);
+        nils_test_support::credential::assert_credential_file_eq(
+            "secret file",
+            &secret_file,
+            secret,
+        );
         assert_eq!(fs::read_to_string(&kv_path).expect("cache"), cache);
     }
 }
