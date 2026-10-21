@@ -130,9 +130,10 @@ fn auth_save_writes_target_file() {
     );
     assert_eq!(output.code, 0);
     assert!(stdout(&output).contains("codex: saved"));
-    assert_eq!(
-        fs::read_to_string(secrets.join("alpha.json")).expect("read saved"),
-        fs::read_to_string(&auth_file).expect("read auth")
+    nils_test_support::credential::assert_credential_eq(
+        "saved secret vs auth file",
+        &fs::read_to_string(secrets.join("alpha.json")).expect("read saved"),
+        &fs::read_to_string(&auth_file).expect("read auth"),
     );
 }
 

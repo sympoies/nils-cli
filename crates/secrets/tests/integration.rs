@@ -69,15 +69,15 @@ fn assert_exit(output: &CmdOutput, code: i32) {
 
 /// Assert the secret canary never leaked to stdout or stderr.
 fn assert_no_secret_leak(output: &CmdOutput) {
-    assert!(
-        !output.stdout_text().contains(SECRET_CANARY),
-        "secret value leaked to stdout: {}",
-        output.stdout_text()
+    nils_test_support::credential::assert_credential_absent(
+        "stdout",
+        &output.stdout_text(),
+        SECRET_CANARY,
     );
-    assert!(
-        !output.stderr_text().contains(SECRET_CANARY),
-        "secret value leaked to stderr: {}",
-        output.stderr_text()
+    nils_test_support::credential::assert_credential_absent(
+        "stderr",
+        &output.stderr_text(),
+        SECRET_CANARY,
     );
 }
 
@@ -536,10 +536,15 @@ fn add_interrupted_after_install_finishes_git_transaction(signal: &str) {
 
     let target = store.join("repos/example/service.enc.env");
     let stored = fs::read_to_string(&target).expect("installed ciphertext");
-    assert!(stored.contains("ENC["), "stored: {stored}");
+    assert!(
+        stored.contains("ENC["),
+        "stored: {}",
+        nils_test_support::credential::fingerprint(&stored)
+    );
     assert!(
         !stored.contains(SECRET_CANARY),
-        "plaintext persisted: {stored}"
+        "plaintext persisted: {}",
+        nils_test_support::credential::fingerprint(&stored)
     );
     let git_calls = fs::read_to_string(&git_log).expect("git log");
     assert!(git_calls.lines().any(|line| line.starts_with("add ")));
@@ -941,7 +946,11 @@ fn pull_writes_dotenv_600_without_leaking_secret() {
     // ON DISK, which is the whole point) but it never reached stdout.
     let dotenv = app.join(".env");
     let written = fs::read_to_string(&dotenv).expect("read .env");
-    assert!(written.contains(SECRET_CANARY), "{written}");
+    assert!(
+        written.contains(SECRET_CANARY),
+        "written file lacks the secret: {}",
+        nils_test_support::credential::fingerprint(&written)
+    );
 
     // Metadata-only stdout: store rel path + key count, no values.
     let stdout = output.stdout_text();
@@ -1188,10 +1197,15 @@ fn add_encrypts_commits_and_pushes() {
     // The stored file is the ENC-marked output, not plaintext.
     let stored =
         fs::read_to_string(store.join("repos/example/service.enc.env")).expect("read stored");
-    assert!(stored.contains("ENC["), "stored: {stored}");
+    assert!(
+        stored.contains("ENC["),
+        "stored: {}",
+        nils_test_support::credential::fingerprint(&stored)
+    );
     assert!(
         !stored.contains(SECRET_CANARY),
-        "plaintext persisted: {stored}"
+        "plaintext persisted: {}",
+        nils_test_support::credential::fingerprint(&stored)
     );
 
     // git add + commit + push were all invoked.
@@ -1243,7 +1257,11 @@ fn add_supports_linked_worktree_git_file_and_common_dir() {
     assert_no_secret_leak(&output);
     let stored = fs::read_to_string(store.join("repos/example/service.enc.env"))
         .expect("linked worktree ciphertext");
-    assert!(stored.contains("ENC["), "stored: {stored}");
+    assert!(
+        stored.contains("ENC["),
+        "stored: {}",
+        nils_test_support::credential::fingerprint(&stored)
+    );
     let git_calls = fs::read_to_string(&git_log).expect("git log");
     assert!(git_calls.lines().any(|line| line.starts_with("commit ")));
     assert!(git_calls.lines().any(|line| line.starts_with("push ")));

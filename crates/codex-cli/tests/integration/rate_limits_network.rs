@@ -896,9 +896,10 @@ fn rate_limits_all_mode_empty_windows_serves_preserved_cache() {
         "expected cached non-weekly usage:\n{out}"
     );
     assert!(out.contains("70%"), "expected cached weekly usage:\n{out}");
-    assert_eq!(
-        fs::read_to_string(&secret_file).expect("secret"),
-        before_secret
+    nils_test_support::credential::assert_credential_file_eq(
+        "secret file",
+        &secret_file,
+        &before_secret,
     );
     assert_eq!(fs::read_to_string(&kv_path).expect("cache"), cache);
 }
@@ -948,9 +949,10 @@ fn rate_limits_all_mode_null_rate_limit_serves_preserved_cache() {
         "expected cached non-weekly usage:\n{out}"
     );
     assert!(out.contains("70%"), "expected cached weekly usage:\n{out}");
-    assert_eq!(
-        fs::read_to_string(&secret_file).expect("secret"),
-        before_secret
+    nils_test_support::credential::assert_credential_file_eq(
+        "secret file",
+        &secret_file,
+        &before_secret,
     );
     assert_eq!(fs::read_to_string(&kv_path).expect("cache"), cache);
 }

@@ -682,7 +682,8 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
         fs::read_to_string(&kv_path).unwrap_or_else(|err| format!("<missing: {err}>"));
     assert!(
         refreshed,
-        "expected background refresh to refresh auth after 401 and update cache kv\nrequests={requests:#?}\nssh_args={captured_args}\nauth={auth_content}\ncache={cache_content}"
+        "expected background refresh to refresh auth after 401 and update cache kv\nrequests={requests:#?}\nssh_args={captured_args}\nauth={}\ncache={cache_content}",
+        nils_test_support::credential::fingerprint(&auth_content)
     );
 
     assert!(captured_args.contains("--name alpha"));

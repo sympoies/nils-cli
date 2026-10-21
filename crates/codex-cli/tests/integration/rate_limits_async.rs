@@ -768,9 +768,10 @@ fn rate_limits_async_empty_window_object_preserves_fallback_cache_and_metadata()
         out.contains("(stale)"),
         "expected stale marker, got:\n{out}"
     );
-    assert_eq!(
-        fs::read_to_string(&secret_file).expect("read alpha"),
-        secret_json
+    nils_test_support::credential::assert_credential_file_eq(
+        "alpha secret file",
+        &secret_file,
+        secret_json,
     );
     assert_eq!(fs::read_to_string(&kv_path).expect("read cache"), cache);
 }
