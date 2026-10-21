@@ -317,7 +317,7 @@ fn pr_wait_checks_expires_as_not_registered_when_nothing_is_ever_reported() {
             "wait-checks",
             "1",
             "--interval",
-            "1s",
+            "10ms",
             "--timeout",
             "3s",
         ],
@@ -333,11 +333,15 @@ fn pr_wait_checks_expires_as_not_registered_when_nothing_is_ever_reported() {
         "the envelope must name the opt-outs: {}",
         out.stdout
     );
-    // The snapshot is reported verbatim, so `data.state` is still "success"
-    // while `ok` is false. Consumers must gate on ok / error.kind — this
-    // asserts the combination so any future normalization is deliberate.
+    // Poll sleeps and interrupted snapshot reads must agree on the outcome.
+    // If no read completed, the retained initial state is pending; otherwise
+    // the empty snapshot reports success. Neither proves checks registered.
     assert_eq!(env["ok"], false);
-    assert_eq!(env["data"]["state"], "success");
+    assert!(matches!(
+        env["data"]["state"].as_str(),
+        Some("success" | "pending")
+    ));
+    assert_eq!(env["data"]["checks"], serde_json::json!([]));
     assert_eq!(env["data"]["required_count"], 0);
 }
 
