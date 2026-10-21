@@ -126,10 +126,13 @@ if '--fail-under-lines' in args and 100 * hit / found < float(args[args.index('-
             self.assertFalse(row['identity_present'])
         self.assertNotEqual(calls[0]['target'], calls[1]['target'])
         report_root = Path(self.env['NILS_CLI_REPORT_DIR'])
+        # The configured report root is passed through verbatim, while the
+        # nextest state directory is canonical (macOS /var -> /private/var).
+        canonical_root = report_root.resolve()
         self.assertEqual([row['report_dir'] for row in calls],
                          [str(report_root / 'baseline'), str(report_root)])
         self.assertEqual([row['state_dir'] for row in calls],
-                         [str(report_root / 'baseline/history'), str(report_root / 'history')])
+                         [str(canonical_root / 'baseline/history'), str(canonical_root / 'history')])
         self.assertEqual((report_root / 'baseline/nextest/ci/junit.xml').read_text(),
                          '<testsuites name="BASE"/>')
         self.assertEqual((report_root / 'nextest/ci/junit.xml').read_text(),
