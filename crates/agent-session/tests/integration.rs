@@ -24,6 +24,8 @@ mod doctor;
 mod lineage;
 #[path = "integration/mailbox_any_unread.rs"]
 mod mailbox_any_unread;
+#[path = "integration/mailbox_burst.rs"]
+mod mailbox_burst;
 #[path = "integration/mailbox_quota_warning.rs"]
 mod mailbox_quota_warning;
 #[path = "integration/metadata.rs"]
