@@ -19,6 +19,9 @@ _agent__out() {
             agent__out,audit)
                 cmd="agent__out__audit"
                 ;;
+            agent__out,build)
+                cmd="agent__out__build"
+                ;;
             agent__out,cleanup)
                 cmd="agent__out__cleanup"
                 ;;
@@ -44,7 +47,7 @@ _agent__out() {
 
     case "${cmd}" in
         agent__out)
-            opts="-h -V --help --version path-for project audit cleanup completion"
+            opts="-h -V --help --version path-for project build audit cleanup completion"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -73,6 +76,35 @@ _agent__out() {
                     ;;
                 --format)
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agent__out__build)
+            opts="-h --topic --agent-home --mkdir --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --topic)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --agent-home)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "path json env" -- "${cur}"))
                     return 0
                     ;;
                 *)
@@ -141,7 +173,7 @@ _agent__out() {
             return 0
             ;;
         agent__out__cleanup__plan)
-            opts="-h --agent-home --include-projects --project-retention-days --format --help"
+            opts="-h --agent-home --include-projects --project-retention-days --scratch-retention-days --build-retention-days --format --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -155,6 +187,14 @@ _agent__out() {
                     return 0
                     ;;
                 --project-retention-days)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --scratch-retention-days)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --build-retention-days)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -225,7 +265,7 @@ _agent__out() {
             return 0
             ;;
         agent__out__project)
-            opts="-h --topic --repo --repo-slug --agent-home --mkdir --format --help"
+            opts="-h --topic --kind --repo --repo-slug --agent-home --mkdir --format --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -233,6 +273,10 @@ _agent__out() {
             case "${prev}" in
                 --topic)
                     COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --kind)
+                    COMPREPLY=($(compgen -W "evidence scratch" -- "${cur}"))
                     return 0
                     ;;
                 --repo)

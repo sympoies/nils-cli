@@ -22,9 +22,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use cli::classes::{self, PlanRetention, Retention, RunClass};
 use cli::{
     AuditArgs, AuditFormat, CleanupApplyArgs, CleanupFormat, CleanupPlanArgs, Cli, Command,
-    PathForArgs, ProjectArgs, ProjectFormat,
+    PathForArgs, ProjectArgs, ProjectFormat, RunKind,
 };
 
 use nils_common::cli_contract::exit;
@@ -100,6 +101,7 @@ pub fn project_dir_for_current_repo(topic: &str, mkdir: bool) -> Result<ProjectR
         repo,
         explicit_repo_slug: None,
         topic: topic.to_string(),
+        kind: RunKind::Evidence,
         timestamp: current_timestamp(),
         mkdir,
     };
@@ -110,6 +112,7 @@ fn dispatch(cli: Cli) -> i32 {
     match cli.command {
         Command::PathFor(args) => run_path_for(args),
         Command::Project(args) => run_project(args),
+        Command::Build(args) => classes::run_build(args),
         Command::Audit(args) => run_audit(args),
         Command::Cleanup(args) => match args.command {
             cli::CleanupCommand::Plan(args) => run_cleanup_plan(args),
@@ -348,6 +351,7 @@ pub struct ProjectResult {
     pub project_slug: String,
     pub topic: String,
     pub run_id: String,
+    pub kind: &'static str,
     pub created: bool,
 }
 
@@ -370,6 +374,7 @@ struct ProjectPathInput {
     repo: PathBuf,
     explicit_repo_slug: Option<String>,
     topic: String,
+    kind: RunKind,
     timestamp: String,
     mkdir: bool,
 }
@@ -382,6 +387,7 @@ fn build_project_result(args: &ProjectArgs) -> Result<ProjectResult, CliError> {
         repo,
         explicit_repo_slug: args.repo_slug.clone(),
         topic: args.topic.clone(),
+        kind: args.kind,
         timestamp: current_timestamp(),
         mkdir: args.mkdir,
     };
@@ -399,6 +405,7 @@ fn build_path_for_result(args: &PathForArgs) -> Result<PathForResult, CliError> 
         repo,
         explicit_repo_slug,
         topic,
+        kind: RunKind::Evidence,
         timestamp: current_timestamp(),
         mkdir: args.mkdir,
     })?;
@@ -455,7 +462,7 @@ fn build_project_path(input: ProjectPathInput) -> Result<ProjectResult, CliError
     let run_id = format!("{}-{}", input.timestamp, topic);
     let out_root = input.agent_home.join("out");
     let path = out_root
-        .join(CANONICAL_PROJECT_ROOT)
+        .join(input.kind.root_segment())
         .join(&project_slug)
         .join(&run_id);
 
@@ -477,6 +484,7 @@ fn build_project_path(input: ProjectPathInput) -> Result<ProjectResult, CliError
         project_slug,
         topic,
         run_id,
+        kind: input.kind.as_str(),
         created: input.mkdir,
     })
 }
@@ -627,6 +635,8 @@ pub enum CleanupCategory {
     TopLevelNoncanonical,
     EvidenceSource,
     ProjectArtifact,
+    ScratchArtifact,
+    RunBuild,
     Unreadable,
 }
 
@@ -655,6 +665,9 @@ pub struct CleanupItem {
     pub tree_identity: Option<String>,
     pub contains_skill_usage: bool,
     pub contains_test_first_evidence: bool,
+    /// Build output (a cargo target tree) found inside an evidence run.
+    #[serde(default, skip_serializing_if = "classes::is_false")]
+    pub contains_build_tree: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diagnostic: Option<CleanupDiagnostic>,
 }
@@ -677,6 +690,14 @@ pub struct CleanupPlan {
     pub project_retention_days: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_retention_cutoff_unix: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scratch_retention_days: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scratch_retention_cutoff_unix: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_retention_days: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_retention_cutoff_unix: Option<i64>,
     pub items: Vec<CleanupItem>,
     pub summary: CleanupSummary,
     pub plan_digest: String,
@@ -695,6 +716,9 @@ pub struct CleanupSummary {
     /// Omitted when zero so plans without unreadable rows keep earlier bytes.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub unreadable: usize,
+    /// Evidence runs that contain a build tree; omitted when zero.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub build_trees: usize,
 }
 
 fn is_zero(value: &usize) -> bool {
@@ -731,7 +755,7 @@ pub struct CleanupApplySummary {
 /// What a project-run delete must re-prove immediately before removal.
 struct ProjectRunRecheck {
     item: CleanupItem,
-    policy: ProjectRetention,
+    policy: Retention,
     owner_uid: u32,
 }
 
@@ -767,6 +791,14 @@ struct CleanupPlanDigestInput<'a> {
     project_retention_days: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     project_retention_cutoff_unix: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scratch_retention_days: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scratch_retention_cutoff_unix: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    build_retention_days: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    build_retention_cutoff_unix: Option<i64>,
     items: &'a [CleanupItem],
     summary: &'a CleanupSummary,
 }
@@ -827,7 +859,7 @@ fn build_audit_report(args: &AuditArgs) -> Result<AuditReport, CliError> {
             .to_string();
         let kind = entry_kind(&path);
 
-        if name == CANONICAL_PROJECT_ROOT && path.is_dir() {
+        if (name == CANONICAL_PROJECT_ROOT || name == classes::SCRATCH_ROOT) && path.is_dir() {
             allowed_roots.push(AuditEntry {
                 name,
                 path: display_path(&path),
@@ -870,22 +902,6 @@ fn build_audit_report(args: &AuditArgs) -> Result<AuditReport, CliError> {
     })
 }
 
-/// Owner-attested retention for canonical project runs.
-#[derive(Clone, Copy, Debug)]
-struct ProjectRetention {
-    days: u32,
-    cutoff_unix: i64,
-}
-
-impl ProjectRetention {
-    fn from_days(days: u32, now_unix: i64) -> Self {
-        Self {
-            days,
-            cutoff_unix: now_unix.saturating_sub(i64::from(days) * 86_400),
-        }
-    }
-}
-
 fn now_unix() -> i64 {
     Local::now().timestamp()
 }
@@ -894,25 +910,19 @@ fn build_cleanup_plan(args: &CleanupPlanArgs) -> Result<CleanupPlan, CliError> {
     let agent_home = resolve_agent_home(args.agent_home.as_deref())?;
     let out_root = agent_home.join("out");
     let mut items = Vec::new();
-    let retention = args
-        .project_retention_days
-        .map(|days| ProjectRetention::from_days(days, now_unix()));
+    let now = now_unix();
+    let retention = PlanRetention {
+        evidence: args
+            .project_retention_days
+            .map(|days| Retention::from_days(days, now)),
+        scratch: Some(Retention::from_days(args.scratch_retention_days, now)),
+        build: Some(Retention::from_days(args.build_retention_days, now)),
+    };
 
     reject_cleanup_out_root_symlink_if_exists(&out_root)?;
     if !out_root.exists() {
-        let mut plan = CleanupPlan {
-            agent_home: display_path(&agent_home),
-            out_root: display_path(&out_root),
-            out_root_exists: false,
-            include_projects: args.include_projects,
-            project_retention_days: retention.map(|policy| policy.days),
-            project_retention_cutoff_unix: retention.map(|policy| policy.cutoff_unix),
-            items,
-            summary: CleanupSummary::default(),
-            plan_digest: String::new(),
-        };
-        plan.plan_digest = compute_cleanup_plan_digest(&plan)?;
-        return Ok(plan);
+        items.extend(build_run_items(&agent_home, &retention)?);
+        return classes::finish_plan(&agent_home, false, args.include_projects, &retention, items);
     }
 
     if !out_root.is_dir() {
@@ -932,40 +942,30 @@ fn build_cleanup_plan(args: &CleanupPlanArgs) -> Result<CleanupPlan, CliError> {
         let kind = entry_kind(&path);
 
         if name == CANONICAL_PROJECT_ROOT && is_real_dir(&path) {
-            items.push(CleanupItem {
-                name,
-                path: display_path(&path),
-                kind,
-                category: CleanupCategory::AllowedRoot,
-                action: CleanupAction::Preserve,
-                reason: "canonical project-scoped artifact root".to_string(),
-                size_bytes: path_shallow_size_bytes(&path)?,
-                mtime_unix: path_mtime_unix(&path),
-                content_digest: None,
-                tree_identity: None,
-                contains_skill_usage: false,
-                contains_test_first_evidence: false,
-                diagnostic: None,
-            });
+            let reason = "canonical project-scoped artifact root";
+            items.push(classes::allowed_root_item(&path, name, kind, reason)?);
             if args.include_projects {
-                items.extend(build_project_cleanup_items(&path, retention, owner_uid)?);
+                let evidence = retention.evidence;
+                items.extend(classes::run_items(
+                    &path,
+                    RunClass::Evidence,
+                    evidence,
+                    owner_uid,
+                )?);
             }
+        } else if name == classes::SCRATCH_ROOT && is_real_dir(&path) {
+            let reason = "canonical scratch artifact root";
+            items.push(classes::allowed_root_item(&path, name, kind, reason)?);
+            let scratch = retention.scratch;
+            items.extend(classes::run_items(
+                &path,
+                RunClass::Scratch,
+                scratch,
+                owner_uid,
+            )?);
         } else if allowlisted.contains(name.as_str()) && path.is_dir() {
-            items.push(CleanupItem {
-                name,
-                path: display_path(&path),
-                kind,
-                category: CleanupCategory::AllowedRoot,
-                action: CleanupAction::Preserve,
-                reason: "preserved tool/workflow artifact root".to_string(),
-                size_bytes: path_shallow_size_bytes(&path)?,
-                mtime_unix: path_mtime_unix(&path),
-                content_digest: None,
-                tree_identity: None,
-                contains_skill_usage: false,
-                contains_test_first_evidence: false,
-                diagnostic: None,
-            });
+            let reason = "preserved tool/workflow artifact root";
+            items.push(classes::allowed_root_item(&path, name, kind, reason)?);
         } else {
             match top_level_cleanup_item(&path, name.clone(), kind.clone()) {
                 Ok(item) => items.push(item),
@@ -974,20 +974,21 @@ fn build_cleanup_plan(args: &CleanupPlanArgs) -> Result<CleanupPlan, CliError> {
         }
     }
 
-    let summary = cleanup_summary(&items);
-    let mut plan = CleanupPlan {
-        agent_home: display_path(&agent_home),
-        out_root: display_path(&out_root),
-        out_root_exists: true,
-        include_projects: args.include_projects,
-        project_retention_days: retention.map(|policy| policy.days),
-        project_retention_cutoff_unix: retention.map(|policy| policy.cutoff_unix),
-        items,
-        summary,
-        plan_digest: String::new(),
-    };
-    plan.plan_digest = compute_cleanup_plan_digest(&plan)?;
-    Ok(plan)
+    items.extend(build_run_items(&agent_home, &retention)?);
+    classes::finish_plan(&agent_home, true, args.include_projects, &retention, items)
+}
+
+/// Run-scoped builds under `AGENT_HOME/build/run`, planned under the build class.
+fn build_run_items(
+    agent_home: &Path,
+    retention: &PlanRetention,
+) -> Result<Vec<CleanupItem>, CliError> {
+    let run_root = agent_home.join("build/run");
+    if !is_real_dir(&run_root) {
+        return Ok(Vec::new());
+    }
+    let owner_uid = path_owner_uid(&run_root)?;
+    classes::run_items(&run_root, RunClass::Build, retention.build, owner_uid)
 }
 
 fn top_level_cleanup_item(
@@ -1014,6 +1015,7 @@ fn top_level_cleanup_item(
             tree_identity: None,
             contains_skill_usage: markers.skill_usage,
             contains_test_first_evidence: markers.test_first_evidence,
+            contains_build_tree: false,
             diagnostic: None,
         }
     } else if name == RELEASE_CACHE_ROOT {
@@ -1031,6 +1033,7 @@ fn top_level_cleanup_item(
             tree_identity: None,
             contains_skill_usage: markers.skill_usage,
             contains_test_first_evidence: markers.test_first_evidence,
+            contains_build_tree: false,
             diagnostic: None,
         }
     } else {
@@ -1047,6 +1050,7 @@ fn top_level_cleanup_item(
             tree_identity: None,
             contains_skill_usage: false,
             contains_test_first_evidence: false,
+            contains_build_tree: false,
             diagnostic: None,
         }
     };
@@ -1079,6 +1083,7 @@ fn unreadable_cleanup_item(path: &Path, name: String, kind: String, err: CliErro
         tree_identity: None,
         contains_skill_usage: false,
         contains_test_first_evidence: false,
+        contains_build_tree: false,
         diagnostic: Some(CleanupDiagnostic {
             code: err.code.to_string(),
             path: one_line(&diagnostic_path, 512),
@@ -1105,157 +1110,6 @@ fn one_line(value: &str, limit: usize) -> String {
         .chars()
         .take(limit)
         .collect()
-}
-
-fn build_project_cleanup_items(
-    projects_root: &Path,
-    retention: Option<ProjectRetention>,
-    owner_uid: u32,
-) -> Result<Vec<CleanupItem>, CliError> {
-    let mut items = Vec::new();
-    if !projects_root.is_dir() {
-        return Ok(items);
-    }
-
-    for project_dir in read_sorted_children(projects_root, "cleanup-read-failed")? {
-        // A symlinked repo directory could steer project-run deletes elsewhere.
-        if !is_real_dir(&project_dir) {
-            continue;
-        }
-        let run_dirs = match read_sorted_children(&project_dir, "cleanup-read-failed") {
-            Ok(run_dirs) => run_dirs,
-            Err(err) => {
-                items.push(unreadable_cleanup_item(
-                    &project_dir,
-                    path_name(&project_dir),
-                    entry_kind(&project_dir),
-                    err,
-                ));
-                continue;
-            }
-        };
-        for run_dir in run_dirs {
-            let name = path_name(&run_dir);
-            let kind = entry_kind(&run_dir);
-            match project_run_cleanup_item(
-                &run_dir,
-                name.clone(),
-                kind.clone(),
-                retention,
-                owner_uid,
-            ) {
-                Ok(item) => items.push(item),
-                Err(err) => items.push(unreadable_cleanup_item(&run_dir, name, kind, err)),
-            }
-        }
-    }
-    Ok(items)
-}
-
-fn project_run_cleanup_item(
-    run_dir: &Path,
-    name: String,
-    kind: String,
-    retention: Option<ProjectRetention>,
-    owner_uid: u32,
-) -> Result<CleanupItem, CliError> {
-    let markers = marker_flags(run_dir)?;
-    let mut item = CleanupItem {
-        name,
-        path: display_path(run_dir),
-        kind,
-        category: CleanupCategory::ProjectArtifact,
-        action: CleanupAction::NeedsPolicy,
-        reason: "canonical project artifact without a retention policy; review before deleting"
-            .to_string(),
-        size_bytes: 0,
-        mtime_unix: path_mtime_unix(run_dir),
-        content_digest: None,
-        tree_identity: None,
-        contains_skill_usage: markers.skill_usage,
-        contains_test_first_evidence: markers.test_first_evidence,
-        diagnostic: None,
-    };
-    if markers.has_evidence() {
-        item.category = CleanupCategory::EvidenceSource;
-        item.action = CleanupAction::Preserve;
-        item.reason =
-            "contains retained evidence markers; use evidence migrate/prune-source".to_string();
-        item.size_bytes = path_size_bytes(run_dir)?;
-        return Ok(item);
-    }
-    let Some(policy) = retention else {
-        item.size_bytes = path_size_bytes(run_dir)?;
-        return Ok(item);
-    };
-
-    let scan = scan_tree(run_dir, owner_uid)?;
-    item.size_bytes = scan.size_bytes;
-    item.reason = project_run_retention_reason(&item, &scan, policy);
-    if project_run_retention_eligible(&item.name, &item.kind, &scan, policy) {
-        item.action = CleanupAction::Delete;
-        item.tree_identity = Some(scan.identity);
-    }
-    Ok(item)
-}
-
-fn project_run_retention_eligible(
-    name: &str,
-    kind: &str,
-    scan: &TreeScan,
-    policy: ProjectRetention,
-) -> bool {
-    kind == "directory"
-        && !scan.foreign_owned_dirs
-        && scan.newest_mtime_unix < policy.cutoff_unix
-        && run_started_unix(name).is_some_and(|started| started < policy.cutoff_unix)
-}
-
-fn project_run_retention_reason(
-    item: &CleanupItem,
-    scan: &TreeScan,
-    policy: ProjectRetention,
-) -> String {
-    let days = policy.days;
-    if item.kind != "directory" {
-        "project run is not a real directory; review before deleting".to_string()
-    } else if scan.foreign_owned_dirs {
-        "contains directories owned by another account; restore ownership before cleanup"
-            .to_string()
-    } else if run_started_unix(&item.name).is_none() {
-        "project run name has no YYYYMMDD run id; review before deleting".to_string()
-    } else if run_started_unix(&item.name).is_some_and(|started| started >= policy.cutoff_unix) {
-        format!("project run is inside the {days}-day retention window")
-    } else if scan.newest_mtime_unix >= policy.cutoff_unix {
-        format!("project run changed within the {days}-day retention window")
-    } else {
-        format!("idle project run older than the {days}-day retention policy")
-    }
-}
-
-/// Parse the allocation timestamp from a run id such as `20260928-172130-topic`
-/// or `20260901-topic`.
-///
-/// The id is written in local time but read as UTC. On hosts east of UTC that
-/// makes a run look slightly newer than it is, which only delays deletion; the
-/// newest-mtime check bounds every other case.
-fn run_started_unix(name: &str) -> Option<i64> {
-    let date = name.get(0..8)?;
-    if !date.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    let day = chrono::NaiveDate::parse_from_str(date, "%Y%m%d").ok()?;
-    let rest = name.get(8..).unwrap_or("");
-    if !(rest.is_empty() || rest.starts_with('-')) {
-        return None;
-    }
-    let time = rest
-        .get(1..7)
-        .filter(|candidate| candidate.bytes().all(|byte| byte.is_ascii_digit()))
-        .filter(|_| rest.get(7..8).is_none_or(|next| next == "-"))
-        .and_then(|candidate| chrono::NaiveTime::parse_from_str(candidate, "%H%M%S").ok())
-        .unwrap_or(chrono::NaiveTime::MIN);
-    Some(day.and_time(time).and_utc().timestamp())
 }
 
 struct TreeScan {
@@ -1378,6 +1232,9 @@ fn cleanup_summary(items: &[CleanupItem]) -> CleanupSummary {
         if item.category == CleanupCategory::Unreadable {
             summary.unreadable += 1;
         }
+        if item.contains_build_tree {
+            summary.build_trees += 1;
+        }
     }
     summary
 }
@@ -1430,6 +1287,7 @@ fn read_sorted_children(path: &Path, code: &'static str) -> Result<Vec<PathBuf>,
 struct MarkerFlags {
     skill_usage: bool,
     test_first_evidence: bool,
+    build_tree: bool,
 }
 
 impl MarkerFlags {
@@ -1440,6 +1298,7 @@ impl MarkerFlags {
     fn merge(&mut self, other: MarkerFlags) {
         self.skill_usage |= other.skill_usage;
         self.test_first_evidence |= other.test_first_evidence;
+        self.build_tree |= other.build_tree;
     }
 }
 
@@ -1462,11 +1321,12 @@ fn marker_flags(path: &Path) -> Result<MarkerFlags, CliError> {
         Some(TEST_FIRST_MARKER) => flags.test_first_evidence = true,
         _ => {}
     }
+    flags.build_tree = classes::is_build_tree_marker(path, &metadata);
 
     if metadata.is_dir() && !metadata.file_type().is_symlink() {
         for child in read_sorted_children(path, "cleanup-read-failed")? {
             flags.merge(marker_flags(&child)?);
-            if flags.has_evidence() && flags.skill_usage && flags.test_first_evidence {
+            if flags.skill_usage && flags.test_first_evidence && flags.build_tree {
                 break;
             }
         }
@@ -1637,6 +1497,10 @@ fn compute_cleanup_plan_digest(plan: &CleanupPlan) -> Result<String, CliError> {
         include_projects: plan.include_projects,
         project_retention_days: plan.project_retention_days,
         project_retention_cutoff_unix: plan.project_retention_cutoff_unix,
+        scratch_retention_days: plan.scratch_retention_days,
+        scratch_retention_cutoff_unix: plan.scratch_retention_cutoff_unix,
+        build_retention_days: plan.build_retention_days,
+        build_retention_cutoff_unix: plan.build_retention_cutoff_unix,
         items: &plan.items,
         summary: &plan.summary,
     };
@@ -1734,7 +1598,7 @@ fn apply_cleanup_plan(args: &CleanupApplyArgs) -> Result<CleanupApplyReport, Cli
     let out_root = PathBuf::from(&plan.out_root);
     validate_cleanup_plan_path(&out_root, &plan.out_root)?;
     reject_cleanup_out_root_symlink_if_exists(&out_root)?;
-    let retention = validated_plan_retention(&plan)?;
+    let retention = classes::validated_plan_retention(&plan)?;
     let mut decisions = Vec::new();
     let mut delete_paths = BTreeSet::new();
 
@@ -1745,14 +1609,21 @@ fn apply_cleanup_plan(args: &CleanupApplyArgs) -> Result<CleanupApplyReport, Cli
     {
         let path = PathBuf::from(&item.path);
         validate_cleanup_plan_path(&path, &item.path)?;
-        if !path.starts_with(&out_root) {
+        let class = RunClass::of(item.category);
+        // Run-scoped builds live under AGENT_HOME/build, every other delete
+        // under out/; each must stay inside its own class root.
+        let root = class.map_or_else(
+            || out_root.clone(),
+            |class| class.root(&agent_home, &out_root),
+        );
+        if !path.starts_with(&root) {
             return Err(CliError::data(
                 "cleanup-path-outside-out-root",
                 "plan contains a delete path outside out_root",
                 Some(json!({ "path": item.path, "out_root": plan.out_root })),
             ));
         }
-        validate_cleanup_delete_eligibility(item, &path, &out_root, retention)?;
+        validate_cleanup_delete_eligibility(item, &path, &root, &retention)?;
 
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
@@ -1771,20 +1642,20 @@ fn apply_cleanup_plan(args: &CleanupApplyArgs) -> Result<CleanupApplyReport, Cli
                 ));
             }
         };
-        let delete_identity = validate_cleanup_delete_target(&path, &out_root, &metadata)?;
-        let project_run = match (item.category, retention) {
-            (CleanupCategory::ProjectArtifact, Some(policy)) => {
-                // No symlink may sit anywhere on the lexical projects/<repo>/<run>
-                // path; otherwise a link could steer the delete to another root.
-                let canonical_out_root = fs::canonicalize(&out_root).map_err(|err| {
+        let delete_identity = validate_cleanup_delete_target(&path, &root, &metadata)?;
+        let project_run = match class.and_then(|class| retention.for_class(class)) {
+            Some(policy) => {
+                // No symlink may sit anywhere on the lexical run path below the
+                // class root; otherwise a link could steer the delete elsewhere.
+                let canonical_root = fs::canonicalize(&root).map_err(|err| {
                     CliError::runtime(
                         "cleanup-out-root-canonicalize-failed",
-                        format!("failed to resolve {}: {err}", out_root.display()),
-                        Some(json!({ "out_root": display_path(&out_root) })),
+                        format!("failed to resolve {}: {err}", root.display()),
+                        Some(json!({ "out_root": display_path(&root) })),
                     )
                 })?;
-                let relative = path.strip_prefix(&out_root).unwrap_or(&path);
-                if delete_identity != canonical_out_root.join(relative) {
+                let relative = path.strip_prefix(&root).unwrap_or(&path);
+                if delete_identity != canonical_root.join(relative) {
                     return Err(CliError::data(
                         "cleanup-delete-shape-invalid",
                         "project-run delete path passes through a symlink",
@@ -1794,7 +1665,7 @@ fn apply_cleanup_plan(args: &CleanupApplyArgs) -> Result<CleanupApplyReport, Cli
                 Some(ProjectRunRecheck {
                     item: item.clone(),
                     policy,
-                    owner_uid: path_owner_uid(&out_root)?,
+                    owner_uid: path_owner_uid(&root)?,
                 })
             }
             _ => None,
@@ -1853,7 +1724,7 @@ fn apply_cleanup_plan(args: &CleanupApplyArgs) -> Result<CleanupApplyReport, Cli
             }
             CleanupApplyDecision::Delete(delete) => {
                 if let Some(recheck) = &delete.project_run
-                    && let Some(reason) = project_run_apply_skip_reason(
+                    && let Some(reason) = classes::run_apply_skip_reason(
                         &recheck.item,
                         &delete.path,
                         recheck.policy,
@@ -1915,100 +1786,6 @@ fn apply_cleanup_plan(args: &CleanupApplyArgs) -> Result<CleanupApplyReport, Cli
         entries,
         summary,
     })
-}
-
-/// Accept a plan's retention policy only when it is internally consistent and
-/// no looser than its own day count allows right now.
-fn validated_plan_retention(plan: &CleanupPlan) -> Result<Option<ProjectRetention>, CliError> {
-    match (
-        plan.project_retention_days,
-        plan.project_retention_cutoff_unix,
-    ) {
-        (None, None) => Ok(None),
-        (Some(days), Some(cutoff_unix))
-            if days >= 1
-                && plan.include_projects
-                && cutoff_unix <= ProjectRetention::from_days(days, now_unix()).cutoff_unix =>
-        {
-            Ok(Some(ProjectRetention { days, cutoff_unix }))
-        }
-        _ => Err(CliError::data(
-            "cleanup-retention-policy-invalid",
-            "plan retention policy is inconsistent or newer than its retention window allows",
-            Some(json!({
-                "project_retention_days": plan.project_retention_days,
-                "project_retention_cutoff_unix": plan.project_retention_cutoff_unix
-            })),
-        )),
-    }
-}
-
-/// A project-run delete must be exactly `projects/<repo>/<run>`, carry a tree
-/// identity, and fall under the plan's retention policy by its run id.
-fn validate_project_run_delete(
-    item: &CleanupItem,
-    relative: &Path,
-    retention: Option<ProjectRetention>,
-) -> Result<(), CliError> {
-    let components: Vec<_> = relative.components().collect();
-    let shape_ok = components.len() == 3
-        && components
-            .iter()
-            .all(|component| matches!(component, Component::Normal(_)))
-        && components[0].as_os_str() == CANONICAL_PROJECT_ROOT
-        && components[2].as_os_str().to_str() == Some(item.name.as_str());
-    if !shape_ok {
-        return Err(CliError::data(
-            "cleanup-delete-shape-invalid",
-            "project-run deletes must be canonical projects/<repo>/<run> directories",
-            Some(json!({ "path": item.path, "category": item.category })),
-        ));
-    }
-    let Some(policy) = retention else {
-        return Err(CliError::data(
-            "cleanup-delete-shape-invalid",
-            "project-run deletes require a plan retention policy",
-            Some(json!({ "path": item.path, "category": item.category })),
-        ));
-    };
-    if item.tree_identity.is_none()
-        || run_started_unix(&item.name).is_none_or(|started| started >= policy.cutoff_unix)
-    {
-        return Err(CliError::data(
-            "cleanup-delete-shape-invalid",
-            "project-run delete lacks a tree identity or is inside the retention window",
-            Some(json!({ "path": item.path, "category": item.category })),
-        ));
-    }
-    Ok(())
-}
-
-/// Recheck a project run immediately before deletion. Any read failure or
-/// drift becomes a skip for that row; nothing unproven is deleted.
-fn project_run_apply_skip_reason(
-    item: &CleanupItem,
-    path: &Path,
-    policy: ProjectRetention,
-    owner_uid: u32,
-) -> Option<String> {
-    match marker_flags(path) {
-        Err(_) => return Some("path became unreadable after the plan was created".to_string()),
-        Ok(markers) if markers.has_evidence() => {
-            return Some("evidence marker appeared after the plan was created".to_string());
-        }
-        Ok(_) => {}
-    }
-    let scan = match scan_tree(path, owner_uid) {
-        Ok(scan) => scan,
-        Err(_) => return Some("path became unreadable after the plan was created".to_string()),
-    };
-    if item.tree_identity.as_deref() != Some(scan.identity.as_str()) {
-        return Some("path metadata changed after the plan was created".to_string());
-    }
-    if !project_run_retention_eligible(&item.name, &entry_kind(path), &scan, policy) {
-        return Some("project run no longer satisfies the retention policy".to_string());
-    }
-    None
 }
 
 fn validate_cleanup_plan_path(path: &Path, raw: &str) -> Result<(), CliError> {
@@ -2112,7 +1889,7 @@ fn validate_cleanup_delete_eligibility(
     item: &CleanupItem,
     path: &Path,
     out_root: &Path,
-    retention: Option<ProjectRetention>,
+    retention: &PlanRetention,
 ) -> Result<(), CliError> {
     let relative = path.strip_prefix(out_root).map_err(|_| {
         CliError::data(
@@ -2121,8 +1898,8 @@ fn validate_cleanup_delete_eligibility(
             Some(json!({ "path": item.path, "out_root": display_path(out_root) })),
         )
     })?;
-    if item.category == CleanupCategory::ProjectArtifact {
-        return validate_project_run_delete(item, relative, retention);
+    if let Some(class) = RunClass::of(item.category) {
+        return classes::validate_run_delete(item, class, relative, retention.for_class(class));
     }
     if relative.components().count() != 1 {
         return Err(CliError::data(
@@ -2241,6 +2018,7 @@ fn render_cleanup_plan_text(plan: &CleanupPlan) -> String {
             "project_retention: {days} days (cutoff_unix={cutoff})"
         ));
     }
+    lines.extend(classes::plan_notes(plan));
     lines.push(format!("plan_digest: {}", plan.plan_digest));
     lines.push("items:".to_string());
 
@@ -2325,6 +2103,8 @@ fn cleanup_category_label(category: CleanupCategory) -> &'static str {
         CleanupCategory::TopLevelNoncanonical => "top-level-noncanonical",
         CleanupCategory::EvidenceSource => "evidence-source",
         CleanupCategory::ProjectArtifact => "project-artifact",
+        CleanupCategory::ScratchArtifact => "scratch-artifact",
+        CleanupCategory::RunBuild => "run-build",
         CleanupCategory::Unreadable => "unreadable",
     }
 }
@@ -2336,6 +2116,7 @@ fn render_project_env(result: &ProjectResult) -> String {
         ("AGENT_OUT_PROJECT_SLUG", result.project_slug.as_str()),
         ("AGENT_OUT_TOPIC", result.topic.as_str()),
         ("AGENT_OUT_RUN_ID", result.run_id.as_str()),
+        ("AGENT_OUT_KIND", result.kind),
     ]
     .into_iter()
     .map(|(key, value)| format!("{key}={}", shell_quote(value)))
@@ -2498,6 +2279,7 @@ mod tests {
             repo: PathBuf::from("/repo"),
             explicit_repo_slug: Some("owner/repo".to_string()),
             topic: "Bug Sweep".to_string(),
+            kind: RunKind::Evidence,
             timestamp: "20260511-121314".to_string(),
             mkdir: false,
         };
@@ -2532,6 +2314,7 @@ mod tests {
             tree_identity: None,
             contains_skill_usage: false,
             contains_test_first_evidence: false,
+            contains_build_tree: false,
             diagnostic: None,
         }
     }
@@ -2569,6 +2352,10 @@ mod tests {
             include_projects: false,
             project_retention_days: None,
             project_retention_cutoff_unix: None,
+            scratch_retention_days: None,
+            scratch_retention_cutoff_unix: None,
+            build_retention_days: None,
+            build_retention_cutoff_unix: None,
             summary: cleanup_summary(std::slice::from_ref(&item)),
             items: vec![item],
             plan_digest: String::new(),
@@ -2850,12 +2637,12 @@ mod tests {
         let cache = out_root.join(RELEASE_CACHE_ROOT);
 
         let mut item = cache_item(&cache, 10, Some("sha256:x".to_string()));
-        validate_cleanup_delete_eligibility(&item, &cache, out_root, None)
+        validate_cleanup_delete_eligibility(&item, &cache, out_root, &PlanRetention::default())
             .expect("reviewed cache root");
 
         item.content_digest = None;
         assert_eq!(
-            validate_cleanup_delete_eligibility(&item, &cache, out_root, None)
+            validate_cleanup_delete_eligibility(&item, &cache, out_root, &PlanRetention::default())
                 .expect_err("cache needs a digest")
                 .code,
             "cleanup-delete-content-digest-required"
@@ -2865,9 +2652,14 @@ mod tests {
         let nested = cache.join("1.0.0");
         let mut nested_item = cache_item(&nested, 10, Some("sha256:x".to_string()));
         assert_eq!(
-            validate_cleanup_delete_eligibility(&nested_item, &nested, out_root, None)
-                .expect_err("nested delete")
-                .code,
+            validate_cleanup_delete_eligibility(
+                &nested_item,
+                &nested,
+                out_root,
+                &PlanRetention::default()
+            )
+            .expect_err("nested delete")
+            .code,
             "cleanup-delete-shape-invalid"
         );
 
@@ -2875,9 +2667,14 @@ mod tests {
         let other_cache = out_root.join("something-else");
         nested_item = cache_item(&other_cache, 10, Some("sha256:x".to_string()));
         assert_eq!(
-            validate_cleanup_delete_eligibility(&nested_item, &other_cache, out_root, None)
-                .expect_err("non-release cache")
-                .code,
+            validate_cleanup_delete_eligibility(
+                &nested_item,
+                &other_cache,
+                out_root,
+                &PlanRetention::default()
+            )
+            .expect_err("non-release cache")
+            .code,
             "cleanup-delete-shape-invalid"
         );
 
@@ -2890,9 +2687,14 @@ mod tests {
             let mut row = cache_item(&other_cache, 10, None);
             row.category = category;
             assert_eq!(
-                validate_cleanup_delete_eligibility(&row, &other_cache, out_root, None)
-                    .expect_err("category needs policy")
-                    .code,
+                validate_cleanup_delete_eligibility(
+                    &row,
+                    &other_cache,
+                    out_root,
+                    &PlanRetention::default()
+                )
+                .expect_err("category needs policy")
+                .code,
                 "cleanup-delete-shape-invalid",
                 "category {category:?} must not be auto-deletable"
             );
@@ -2901,9 +2703,14 @@ mod tests {
         let elsewhere = Path::new("/tmp/elsewhere");
         let stray = cache_item(elsewhere, 10, None);
         assert_eq!(
-            validate_cleanup_delete_eligibility(&stray, elsewhere, out_root, None)
-                .expect_err("outside out_root")
-                .code,
+            validate_cleanup_delete_eligibility(
+                &stray,
+                elsewhere,
+                out_root,
+                &PlanRetention::default()
+            )
+            .expect_err("outside out_root")
+            .code,
             "cleanup-path-outside-out-root"
         );
     }
@@ -3088,6 +2895,10 @@ mod tests {
             include_projects: false,
             project_retention_days: None,
             project_retention_cutoff_unix: None,
+            scratch_retention_days: None,
+            scratch_retention_cutoff_unix: None,
+            build_retention_days: None,
+            build_retention_cutoff_unix: None,
             items: Vec::new(),
             summary: CleanupSummary::default(),
             plan_digest: "sha256:abc".to_string(),
@@ -3162,6 +2973,7 @@ mod tests {
             project_slug: "o__r".to_string(),
             topic: "it's-tricky".to_string(),
             run_id: "run".to_string(),
+            kind: "evidence",
             created: false,
         };
         let rendered = render_project_env(&project);
@@ -3170,7 +2982,7 @@ mod tests {
             rendered.contains(r"AGENT_OUT_TOPIC='it'\''s-tricky'"),
             "a single quote must be escaped for `eval`: {rendered}"
         );
-        assert_eq!(rendered.lines().count(), 5);
+        assert_eq!(rendered.lines().count(), 6);
 
         let path_for = PathForResult {
             path: project.path.clone(),
@@ -3213,7 +3025,11 @@ mod tests {
             ("", None),
         ];
         for (name, expected) in cases {
-            assert_eq!(run_started_unix(name), *expected, "run id {name:?}");
+            assert_eq!(
+                classes::run_started_unix(name),
+                *expected,
+                "run id {name:?}"
+            );
         }
     }
 
@@ -3227,14 +3043,14 @@ mod tests {
         fs::create_dir_all(run.join("logs")).expect("run");
         fs::write(run.join("logs/out.txt"), "x").expect("file");
         let owner = fs::metadata(tmp.path()).expect("metadata").uid();
-        let policy = ProjectRetention {
+        let policy = Retention {
             days: 30,
             cutoff_unix: i64::MAX,
         };
 
         let own = scan_tree(&run, owner).expect("scan");
         assert!(!own.foreign_owned_dirs);
-        assert!(project_run_retention_eligible(
+        assert!(classes::retention_eligible(
             "20200101-000000-run",
             "directory",
             &own,
@@ -3243,7 +3059,7 @@ mod tests {
 
         let foreign = scan_tree(&run, owner.wrapping_add(1)).expect("scan");
         assert!(foreign.foreign_owned_dirs);
-        assert!(!project_run_retention_eligible(
+        assert!(!classes::retention_eligible(
             "20200101-000000-run",
             "directory",
             &foreign,

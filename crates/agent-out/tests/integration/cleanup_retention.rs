@@ -129,6 +129,14 @@ fn resign(envelope: &mut Value) {
         project_retention_days: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         project_retention_cutoff_unix: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scratch_retention_days: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scratch_retention_cutoff_unix: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        build_retention_days: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        build_retention_cutoff_unix: Option<i64>,
         items: &'a [CleanupItem],
         summary: &'a CleanupSummary,
     }
@@ -141,6 +149,10 @@ fn resign(envelope: &mut Value) {
         include_projects: plan.include_projects,
         project_retention_days: plan.project_retention_days,
         project_retention_cutoff_unix: plan.project_retention_cutoff_unix,
+        scratch_retention_days: plan.scratch_retention_days,
+        scratch_retention_cutoff_unix: plan.scratch_retention_cutoff_unix,
+        build_retention_days: plan.build_retention_days,
+        build_retention_cutoff_unix: plan.build_retention_cutoff_unix,
         items: &plan.items,
         summary: &plan.summary,
     })
@@ -494,4 +506,488 @@ fn plans_without_unreadable_rows_omit_the_unreadable_count() {
     make_run(&fixture.projects, "owner__repo", "20200101-000000-run");
     let plan = fixture.plan(&[]).stdout_json();
     assert!(plan["result"]["summary"].get("unreadable").is_none());
+}
+
+/// Write-location classes: evidence and scratch runs live at distinct roots,
+/// run-scoped builds live outside `out/`, and cleanup plans apply per-class
+/// retention and flag build trees found inside evidence runs.
+///
+/// Inline here for the same reason as `cli::classes`: new files under this
+/// crate directory are refused by the artifact-routing hook.
+mod write_classes {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    use nils_test_support::cmd::CmdOutput;
+    use pretty_assertions::assert_eq;
+    use serde::Serialize;
+    use serde_json::Value;
+    use sha2::{Digest, Sha256};
+
+    use super::{age_tree, run, today_run_id};
+
+    const OLD_RUN: &str = "20200101-000000-old";
+
+    struct Fixture {
+        tmp: tempfile::TempDir,
+        home: PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let tmp = tempfile::TempDir::new().expect("tempdir");
+            let home = tmp.path().join("agent-home");
+            fs::create_dir_all(&home).expect("agent home");
+            Self { tmp, home }
+        }
+
+        fn home_arg(&self) -> String {
+            self.home.to_string_lossy().to_string()
+        }
+
+        fn make_run(&self, class_root: &str, repo: Option<&str>, name: &str) -> PathBuf {
+            let mut dir = self.home.join(class_root);
+            if let Some(repo) = repo {
+                dir = dir.join(repo);
+            }
+            let dir = dir.join(name);
+            fs::create_dir_all(dir.join("logs")).expect("run dir");
+            fs::write(dir.join("logs/output.txt"), "output").expect("run file");
+            dir
+        }
+
+        fn plan(&self, extra: &[&str]) -> CmdOutput {
+            let home = self.home_arg();
+            let mut args = vec![
+                "cleanup",
+                "plan",
+                "--agent-home",
+                home.as_str(),
+                "--format",
+                "json",
+            ];
+            args.extend_from_slice(extra);
+            run(self.tmp.path(), &args)
+        }
+
+        fn apply(&self, plan: &Value) -> CmdOutput {
+            let plan_file = self.tmp.path().join("plan.json");
+            fs::write(&plan_file, serde_json::to_vec(plan).expect("plan json")).expect("plan file");
+            let digest = plan["result"]["plan_digest"]
+                .as_str()
+                .expect("digest")
+                .to_string();
+            let plan_arg = plan_file.to_string_lossy().to_string();
+            let home = self.home_arg();
+            run(
+                self.tmp.path(),
+                &[
+                    "cleanup",
+                    "apply",
+                    "--plan-file",
+                    &plan_arg,
+                    "--confirm-digest",
+                    &digest,
+                    "--agent-home",
+                    &home,
+                    "--format",
+                    "json",
+                ],
+            )
+        }
+    }
+
+    fn row<'a>(plan: &'a Value, name: &str) -> &'a Value {
+        plan["result"]["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .find(|item| item["name"] == name)
+            .unwrap_or_else(|| panic!("no plan row for {name}"))
+    }
+
+    /// Re-sign a hand-edited plan over the digest input apply recomputes.
+    fn resign(envelope: &mut Value) {
+        #[derive(Serialize)]
+        struct DigestInput<'a> {
+            agent_home: &'a str,
+            out_root: &'a str,
+            out_root_exists: bool,
+            include_projects: bool,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            project_retention_days: Option<u64>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            project_retention_cutoff_unix: Option<i64>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            scratch_retention_days: Option<u64>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            scratch_retention_cutoff_unix: Option<i64>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            build_retention_days: Option<u64>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            build_retention_cutoff_unix: Option<i64>,
+            items: &'a Value,
+            summary: &'a Value,
+        }
+        let plan = &envelope["result"];
+        let bytes = serde_json::to_vec(&DigestInput {
+            agent_home: plan["agent_home"].as_str().unwrap(),
+            out_root: plan["out_root"].as_str().unwrap(),
+            out_root_exists: plan["out_root_exists"].as_bool().unwrap(),
+            include_projects: plan["include_projects"].as_bool().unwrap(),
+            project_retention_days: plan["project_retention_days"].as_u64(),
+            project_retention_cutoff_unix: plan["project_retention_cutoff_unix"].as_i64(),
+            scratch_retention_days: plan["scratch_retention_days"].as_u64(),
+            scratch_retention_cutoff_unix: plan["scratch_retention_cutoff_unix"].as_i64(),
+            build_retention_days: plan["build_retention_days"].as_u64(),
+            build_retention_cutoff_unix: plan["build_retention_cutoff_unix"].as_i64(),
+            items: &plan["items"],
+            summary: &plan["summary"],
+        })
+        .expect("digest input");
+        let hex = Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        envelope["result"]["plan_digest"] = Value::String(format!("sha256:{hex}"));
+    }
+
+    #[test]
+    fn project_allocates_evidence_by_default_and_scratch_at_a_distinct_root() {
+        let fixture = Fixture::new();
+        let home = fixture.home_arg();
+        let base = [
+            "project",
+            "--topic",
+            "unpack",
+            "--repo-slug",
+            "owner/repo",
+            "--agent-home",
+            home.as_str(),
+            "--format",
+            "json",
+        ];
+
+        let evidence = run(fixture.tmp.path(), &base);
+        assert_eq!(evidence.code, 0, "stderr={}", evidence.stderr_text());
+        let evidence = evidence.stdout_json();
+        assert_eq!(evidence["result"]["kind"], "evidence");
+        let evidence_path = evidence["result"]["path"].as_str().unwrap();
+        assert!(
+            evidence_path.contains("/out/projects/owner__repo/"),
+            "{evidence_path}"
+        );
+
+        let mut scratch_args = base.to_vec();
+        scratch_args.extend(["--kind", "scratch", "--mkdir"]);
+        let scratch = run(fixture.tmp.path(), &scratch_args);
+        assert_eq!(scratch.code, 0, "stderr={}", scratch.stderr_text());
+        let scratch = scratch.stdout_json();
+        assert_eq!(scratch["result"]["kind"], "scratch");
+        let scratch_path = scratch["result"]["path"].as_str().unwrap();
+        assert!(
+            scratch_path.contains("/out/scratch/owner__repo/"),
+            "{scratch_path}"
+        );
+        assert!(scratch_path.ends_with("-unpack"), "{scratch_path}");
+        assert!(Path::new(scratch_path).is_dir());
+        assert!(!fixture.home.join("out/projects").exists());
+    }
+
+    #[test]
+    fn project_kind_is_exported_in_env_format_and_rejects_unknown_values() {
+        let fixture = Fixture::new();
+        let home = fixture.home_arg();
+        let env = run(
+            fixture.tmp.path(),
+            &[
+                "project",
+                "--topic",
+                "unpack",
+                "--repo-slug",
+                "owner/repo",
+                "--agent-home",
+                &home,
+                "--kind",
+                "scratch",
+                "--format",
+                "env",
+            ],
+        );
+        assert_eq!(env.code, 0, "stderr={}", env.stderr_text());
+        assert!(
+            env.stdout_text().contains("AGENT_OUT_KIND='scratch'"),
+            "{}",
+            env.stdout_text()
+        );
+
+        let bad = run(
+            fixture.tmp.path(),
+            &[
+                "project",
+                "--topic",
+                "unpack",
+                "--agent-home",
+                &home,
+                "--kind",
+                "build",
+            ],
+        );
+        assert_eq!(bad.code, 64);
+    }
+
+    #[test]
+    fn build_allocates_a_run_scoped_directory_outside_out() {
+        let fixture = Fixture::new();
+        let home = fixture.home_arg();
+        let output = run(
+            fixture.tmp.path(),
+            &[
+                "build",
+                "--topic",
+                "release check",
+                "--agent-home",
+                &home,
+                "--mkdir",
+                "--format",
+                "json",
+            ],
+        );
+        assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+        let json = output.stdout_json();
+        assert_eq!(json["schema_version"], "cli.agent-out.build.v1");
+        let path = json["result"]["path"].as_str().unwrap();
+        let run_id = json["result"]["run_id"].as_str().unwrap();
+        assert!(run_id.ends_with("-release-check"), "{run_id}");
+        assert!(path.ends_with(&format!("/build/run/{run_id}")), "{path}");
+        assert!(Path::new(path).is_dir());
+        assert!(
+            !fixture.home.join("out").exists(),
+            "build must not use out/"
+        );
+
+        let env = run(
+            fixture.tmp.path(),
+            &[
+                "build",
+                "--topic",
+                "release check",
+                "--agent-home",
+                &home,
+                "--format",
+                "env",
+            ],
+        );
+        assert_eq!(env.code, 0, "stderr={}", env.stderr_text());
+        let stdout = env.stdout_text();
+        assert!(stdout.contains("CARGO_TARGET_DIR='"), "{stdout}");
+        assert!(stdout.contains("AGENT_OUT_KIND='build'"), "{stdout}");
+    }
+
+    #[test]
+    fn audit_accepts_the_scratch_root() {
+        let fixture = Fixture::new();
+        fixture.make_run("out/scratch", Some("owner__repo"), OLD_RUN);
+        let home = fixture.home_arg();
+        let output = run(
+            fixture.tmp.path(),
+            &["audit", "--agent-home", &home, "--strict"],
+        );
+        assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    }
+
+    #[test]
+    fn plan_applies_short_scratch_retention_by_default_and_shows_every_class() {
+        let fixture = Fixture::new();
+        let old = fixture.make_run("out/scratch", Some("owner__repo"), OLD_RUN);
+        age_tree(&old);
+        let today = today_run_id();
+        fixture.make_run("out/scratch", Some("owner__repo"), &today);
+
+        let output = fixture.plan(&[]);
+        assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+        let plan = output.stdout_json();
+        assert_eq!(plan["result"]["scratch_retention_days"], 3);
+        assert_eq!(plan["result"]["build_retention_days"], 3);
+        assert!(plan["result"]["scratch_retention_cutoff_unix"].is_i64());
+        assert!(plan["result"].get("project_retention_days").is_none());
+
+        let old_row = row(&plan, OLD_RUN);
+        assert_eq!(old_row["category"], "scratch-artifact");
+        assert_eq!(old_row["action"], "delete");
+        assert!(
+            old_row["tree_identity"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
+        );
+        let today_row = row(&plan, &today);
+        assert_eq!(today_row["action"], "preserve");
+        assert!(
+            today_row["reason"]
+                .as_str()
+                .unwrap()
+                .contains("3-day retention window")
+        );
+
+        let home = fixture.home_arg();
+        let text = run(
+            fixture.tmp.path(),
+            &[
+                "cleanup",
+                "plan",
+                "--agent-home",
+                &home,
+                "--scratch-retention-days",
+                "7",
+            ],
+        );
+        assert_eq!(text.code, 0, "stderr={}", text.stderr_text());
+        let stdout = text.stdout_text();
+        assert!(stdout.contains("evidence retention: unset"), "{stdout}");
+        assert!(stdout.contains("scratch retention: 7 days"), "{stdout}");
+        assert!(stdout.contains("build retention: 3 days"), "{stdout}");
+    }
+
+    #[test]
+    fn plan_rejects_a_zero_class_retention() {
+        let fixture = Fixture::new();
+        for flag in ["--scratch-retention-days", "--build-retention-days"] {
+            let output = fixture.plan(&[flag, "0"]);
+            assert_eq!(output.code, 64, "{flag}: {}", output.stderr_text());
+        }
+    }
+
+    #[test]
+    fn apply_deletes_only_idle_scratch_runs() {
+        let fixture = Fixture::new();
+        let old = fixture.make_run("out/scratch", Some("owner__repo"), OLD_RUN);
+        age_tree(&old);
+        let today = fixture.make_run("out/scratch", Some("owner__repo"), &today_run_id());
+
+        let plan = fixture.plan(&[]).stdout_json();
+        let applied = fixture.apply(&plan);
+        assert_eq!(applied.code, 0, "stdout={}", applied.stdout_text());
+        assert_eq!(applied.stdout_json()["result"]["summary"]["deleted"], 1);
+        assert!(!old.exists());
+        assert!(today.exists());
+    }
+
+    #[test]
+    fn plan_and_apply_reclaim_idle_run_builds_without_an_out_root() {
+        let fixture = Fixture::new();
+        let old = fixture.make_run("build/run", None, OLD_RUN);
+        fs::create_dir_all(old.join("debug")).unwrap();
+        fs::write(old.join("debug/artifact"), "bytes").unwrap();
+        age_tree(&old);
+        let fresh = fixture.make_run("build/run", None, &today_run_id());
+
+        let plan = fixture.plan(&[]).stdout_json();
+        assert_eq!(plan["result"]["out_root_exists"], false);
+        let old_row = row(&plan, OLD_RUN);
+        assert_eq!(old_row["category"], "run-build");
+        assert_eq!(old_row["action"], "delete");
+        assert_eq!(row(&plan, &today_run_id())["action"], "preserve");
+
+        let applied = fixture.apply(&plan);
+        assert_eq!(applied.code, 0, "stdout={}", applied.stdout_text());
+        assert!(!old.exists());
+        assert!(fresh.exists());
+    }
+
+    #[test]
+    fn apply_refuses_forged_class_delete_shapes() {
+        let fixture = Fixture::new();
+        let old = fixture.make_run("out/scratch", Some("owner__repo"), OLD_RUN);
+        let build = fixture.make_run("build/run", None, OLD_RUN);
+        let stray = fixture.make_run("build", Some("other"), OLD_RUN);
+        for dir in [&old, &build, &stray] {
+            age_tree(dir);
+        }
+        let plan = fixture.plan(&[]).stdout_json();
+
+        let forge = |category: &str, path: &Path| {
+            let mut forged = plan.clone();
+            let mut item = forged["result"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["category"] == category)
+                .unwrap_or_else(|| panic!("no {category} row"))
+                .clone();
+            item["path"] = Value::String(path.to_string_lossy().to_string());
+            forged["result"]["items"] = Value::Array(vec![item]);
+            resign(&mut forged);
+            fixture.apply(&forged)
+        };
+
+        // A scratch row pointing at the repo directory instead of a run.
+        let shallow = forge("scratch-artifact", old.parent().unwrap());
+        assert_eq!(shallow.code, 65, "stdout={}", shallow.stdout_text());
+        // A run-build row outside build/run.
+        let outside = forge("run-build", &stray);
+        assert_eq!(outside.code, 65, "stdout={}", outside.stdout_text());
+        assert!(old.exists() && build.exists() && stray.exists());
+    }
+
+    #[test]
+    fn plan_flags_build_trees_inside_evidence_runs() {
+        let fixture = Fixture::new();
+        let built = fixture.make_run("out/projects", Some("owner__repo"), "20200101-000000-built");
+        fs::create_dir_all(built.join("target/debug")).unwrap();
+        fs::write(built.join("target/.rustc_info.json"), "{}").unwrap();
+        let tagged = fixture.make_run(
+            "out/projects",
+            Some("owner__repo"),
+            "20200101-000000-tagged",
+        );
+        fs::create_dir_all(tagged.join("cache")).unwrap();
+        fs::write(
+            tagged.join("cache/CACHEDIR.TAG"),
+            "Signature: 8a477f597d28d172789f06886806bc55\n# cache dir\n",
+        )
+        .unwrap();
+        let plain = fixture.make_run("out/projects", Some("owner__repo"), "20200101-000000-plain");
+        let lookalike =
+            fixture.make_run("out/projects", Some("owner__repo"), "20200101-000000-look");
+        fs::write(lookalike.join("logs/CACHEDIR.TAG"), "not a cache tag\n").unwrap();
+        for dir in [&built, &tagged, &plain, &lookalike] {
+            age_tree(dir);
+        }
+
+        let plan = fixture.plan(&["--include-projects"]).stdout_json();
+        for name in ["20200101-000000-built", "20200101-000000-tagged"] {
+            let flagged = row(&plan, name);
+            assert_eq!(flagged["contains_build_tree"], true, "{name}");
+            assert!(
+                flagged["reason"].as_str().unwrap().contains("build tree"),
+                "{name}"
+            );
+            assert_eq!(flagged["action"], "needs-policy", "{name}");
+        }
+        for name in ["20200101-000000-plain", "20200101-000000-look"] {
+            assert!(
+                row(&plan, name).get("contains_build_tree").is_none(),
+                "{name}"
+            );
+        }
+        assert_eq!(plan["result"]["summary"]["build_trees"], 2);
+
+        let home = fixture.home_arg();
+        let text = run(
+            fixture.tmp.path(),
+            &[
+                "cleanup",
+                "plan",
+                "--agent-home",
+                &home,
+                "--include-projects",
+            ],
+        );
+        assert!(
+            text.stdout_text().contains("build trees in evidence: 2"),
+            "{}",
+            text.stdout_text()
+        );
+    }
 }

@@ -86,8 +86,9 @@ subcommands (matching the binary's `--help` output):
   Matches by branch name, explicit path, managed slug, or worktree directory name. `go` and `remove`
   complete live worktree names/branches via `clap_complete` dynamic completion (superseding the
   static `gxwcd` completion workaround, though `gxwcd` remains for cd-on-select ergonomics). Use
-  `--shell` to emit an evaluable `cd -- <path>` command (mirrors `utils root --shell`). Options:
-  `--shell`, `--format text|json`.
+  `--shell` to emit an evaluable `cd -- <path>` command (mirrors `utils root --shell`). Use
+  `--build` to print the worktree's build directory under `$AGENT_HOME/build/` (with `--shell`, an
+  evaluable `export CARGO_TARGET_DIR=...`). Options: `--shell`, `--build`, `--format text|json`.
 - `dirty-snapshot`: Compute a bounded, two-pass identity for the current dirty checkout without
   printing raw paths or file content. The identity binds the physical checkout instance, `HEAD`,
   symbolic branch, raw index stages, unstaged content, and untracked regular-file/symlink state.

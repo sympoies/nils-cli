@@ -483,7 +483,7 @@ fn audit_strict_exits_nonzero_with_json_error_details() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let agent_home = tmp.path().join("agent-home");
     let out = agent_home.join("out");
-    fs::create_dir_all(out.join("scratch")).expect("scratch");
+    fs::create_dir_all(out.join("stray-dir")).expect("scratch");
 
     let agent_home_arg = agent_home.to_string_lossy().to_string();
     let output = run(
@@ -539,7 +539,7 @@ fn cleanup_plan_classifies_cache_temp_evidence_and_project_artifacts() {
     fs::create_dir_all(out.join("nils-versions/v1.19.2")).expect("cache");
     fs::write(out.join("nils-versions/v1.19.2/agent-out"), "binary").expect("cache file");
     fs::write(out.join("loose.log"), "debug").expect("loose");
-    fs::create_dir_all(out.join("scratch")).expect("scratch");
+    fs::create_dir_all(out.join("stray-dir")).expect("scratch");
     fs::create_dir_all(out.join("evidence-run")).expect("evidence dir");
     fs::write(out.join("evidence-run/test-first-evidence.json"), "{}").expect("evidence marker");
     fs::create_dir_all(out.join("projects/owner__repo/20260627-report")).expect("project run");
@@ -595,7 +595,7 @@ fn cleanup_plan_classifies_cache_temp_evidence_and_project_artifacts() {
             && item["action"] == "needs-policy"
     }));
     assert!(items.iter().any(|item| {
-        item["name"] == "scratch"
+        item["name"] == "stray-dir"
             && item["category"] == "top-level-noncanonical"
             && item["action"] == "needs-policy"
     }));

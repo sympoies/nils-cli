@@ -7,7 +7,7 @@ crates/agent-hook/src/setup.rs	impl	2084
 crates/agent-hook/src/workspace_lease.rs	impl	2389
 crates/agent-hook/tests/dsh_policy.rs	test	4623
 crates/agent-hook/tests/setup.rs	test	3033
-crates/agent-out/src/lib.rs	impl	2430
+crates/agent-out/src/lib.rs	impl	2211
 crates/agent-session/src/activity.rs	impl	5199
 crates/agent-session/src/codex_app_server.rs	impl	5384
 crates/agent-session/src/codex_app_server/tests/mod.rs	test	8545

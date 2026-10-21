@@ -12,6 +12,7 @@ use std::env;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+mod build_dir;
 pub mod dirty_checkout_adoption;
 mod removal;
 
@@ -80,6 +81,7 @@ struct PruneArgs {
 struct GoArgs {
     target: String,
     shell: bool,
+    build: bool,
     format: OutputFormat,
 }
 
@@ -103,6 +105,8 @@ struct AddOutput {
     branch: String,
     base_ref: String,
     path: String,
+    build_dir: String,
+    build_env: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -140,6 +144,8 @@ struct RemoveOutput {
     backup_omissions: Vec<removal::backup::Omission>,
     delivered: bool,
     delivery_proof: Option<removal::DeliveryProof>,
+    build_dir: Option<String>,
+    build_dir_removed: bool,
     warnings: Vec<String>,
     pruned: bool,
 }
@@ -156,6 +162,8 @@ struct GoOutput {
     branch: Option<String>,
     managed: bool,
     shell_command: String,
+    build_dir: Option<String>,
+    build_env: Option<String>,
 }
 
 impl CliError {
@@ -210,8 +218,8 @@ fn run_add(args: &[String]) -> i32 {
     match add_worktree(&parsed) {
         Ok(output) => emit_success("worktree.add", parsed.format, &output, || {
             format!(
-                "Created worktree {}\nBranch: {}\nBase: {}",
-                output.path, output.branch, output.base_ref
+                "Created worktree {}\nBranch: {}\nBase: {}\nBuild: {}\n{}",
+                output.path, output.branch, output.base_ref, output.build_dir, output.build_env
             )
         }),
         Err(err) => emit_error("worktree.add", parsed.format, err),
@@ -264,6 +272,11 @@ fn render_removal(output: &RemoveOutput) -> String {
             "\nOmitted: {} ({} bytes)",
             omission.path, omission.bytes
         ));
+    }
+    if output.build_dir_removed
+        && let Some(dir) = &output.build_dir
+    {
+        text.push_str(&format!("\nReclaimed build dir: {dir}"));
     }
     for warning in &output.warnings {
         text.push_str(&format!("\nWarning: {warning}"));
@@ -416,6 +429,25 @@ fn run_go(args: &[String]) -> i32 {
             // single evaluable `cd -- <path>` command (mirroring
             // `git-cli utils root --shell`) so a shell wrapper can `eval` it.
             // An explicit `--format json` still wins for machine consumers.
+            if parsed.build && !matches!(parsed.format, OutputFormat::Json) {
+                // Build mode prints the build class path, or its evaluable
+                // `CARGO_TARGET_DIR` export with `--shell`.
+                let Some(dir) = &output.build_dir else {
+                    return emit_error(
+                        "worktree.go",
+                        parsed.format,
+                        CliError::data(
+                            "no-build-dir",
+                            format!("{} is not a managed worktree", output.path),
+                        ),
+                    );
+                };
+                match (&output.build_env, parsed.shell) {
+                    (Some(export), true) => println!("{export}"),
+                    _ => println!("{dir}"),
+                }
+                return exit::SUCCESS;
+            }
             if parsed.shell && !matches!(parsed.format, OutputFormat::Json) {
                 println!("{}", output.shell_command);
                 return exit::SUCCESS;
@@ -442,12 +474,15 @@ fn resolve_go(args: &GoArgs) -> Result<GoOutput, CliError> {
         .unwrap_or(args.target.as_str())
         .to_string();
     let shell_command = format!("cd -- {}", quote_posix_single(&path_text));
+    let build = build_dir::path_for_worktree(&entry.path, &layout);
     Ok(GoOutput {
         path: path_text,
         slug,
         branch: entry.branch.clone(),
         managed: is_managed_worktree(&entry.path, &layout),
         shell_command,
+        build_dir: build.as_deref().map(display_path),
+        build_env: build.as_deref().map(build_dir::export_command),
     })
 }
 
@@ -601,6 +636,7 @@ fn add_worktree(args: &AddArgs) -> Result<AddOutput, CliError> {
         )
     })?;
 
+    let build = build_dir::path(&layout, &branch_slug);
     Ok(AddOutput {
         agent_home: display_path(&layout.agent_home),
         worktree_root: display_path(&layout.worktree_root),
@@ -611,6 +647,8 @@ fn add_worktree(args: &AddArgs) -> Result<AddOutput, CliError> {
         branch,
         base_ref,
         path: path_arg,
+        build_dir: display_path(&build),
+        build_env: build_dir::export_command(&build),
     })
 }
 
@@ -677,7 +715,17 @@ fn remove_worktree(args: &RemoveArgs) -> Result<RemoveOutput, CliError> {
     let fence = removal::fence(&target, &layout)?;
     let backup = removal::backup::capture(&target, &fence, args.acknowledge_backup_omissions)?;
     fence.release_own_lease()?;
+    let build = build_dir::path_for_worktree(&target, &layout);
     removal::remove(&target, &layout.repo_root)?;
+    let mut warnings = fence.warnings;
+    let build_dir_removed = match build.as_deref().map(build_dir::reclaim) {
+        Some(Ok(removed)) => removed,
+        Some(Err(warning)) => {
+            warnings.push(warning);
+            false
+        }
+        None => false,
+    };
 
     Ok(RemoveOutput {
         repo_root: display_path(&layout.repo_root),
@@ -693,7 +741,9 @@ fn remove_worktree(args: &RemoveArgs) -> Result<RemoveOutput, CliError> {
         backup_omissions: backup.omissions,
         delivered: fence.delivered,
         delivery_proof: fence.delivery_proof,
-        warnings: fence.warnings.into_iter().chain(backup.warnings).collect(),
+        build_dir: build.as_deref().map(display_path),
+        build_dir_removed,
+        warnings: warnings.into_iter().chain(backup.warnings).collect(),
         pruned: true,
     })
 }
@@ -979,12 +1029,17 @@ fn parse_go_args(args: &[String]) -> Result<GoArgs, CliError> {
     }
 
     let mut shell = false;
+    let mut build = false;
     let mut target: Option<String> = None;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--shell" => {
                 shell = true;
+                i += 1;
+            }
+            "--build" => {
+                build = true;
                 i += 1;
             }
             value if value.starts_with('-') => {
@@ -1012,6 +1067,7 @@ fn parse_go_args(args: &[String]) -> Result<GoArgs, CliError> {
     Ok(GoArgs {
         target,
         shell,
+        build,
         format,
     })
 }
@@ -1101,6 +1157,9 @@ fn print_add_help() {
     println!(
         "  --kind selects the branch prefix (feature->feat/, bug->fix/, chore->chore/, docs->docs/, ci->ci/, refactor->refactor/, test->test/); default: feature"
     );
+    println!(
+        "  The record names the worktree's build directory (AGENT_HOME/build/<repo-key>/<slug>) and a CARGO_TARGET_DIR export for it; `worktree remove` reclaims it."
+    );
 }
 
 fn print_list_help() {
@@ -1121,9 +1180,14 @@ fn print_prune_help() {
 }
 
 fn print_go_help() {
-    println!("Usage: git-cli worktree go <slug-or-branch-or-path> [--shell] [--format text|json]");
+    println!(
+        "Usage: git-cli worktree go <slug-or-branch-or-path> [--shell] [--build] [--format text|json]"
+    );
     println!("  Resolve a worktree and print its path (default), so you can `cd` into it.");
     println!("  --shell  Print an evaluable `cd -- <path>` command instead of the bare path");
+    println!(
+        "  --build  Print the worktree's build directory under AGENT_HOME/build; with --shell, print an evaluable `export CARGO_TARGET_DIR=...`"
+    );
 }
 
 fn resolve_layout() -> Result<WorktreeLayout, CliError> {

@@ -29,3 +29,5 @@ mod trusted_binary_cache;
 pub mod utils;
 #[path = "integration/worktree.rs"]
 mod worktree;
+#[path = "integration/worktree_build_dir.rs"]
+mod worktree_build_dir;

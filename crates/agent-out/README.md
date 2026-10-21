@@ -10,6 +10,23 @@ $AGENT_HOME/out/projects/<project-slug>/<YYYYMMDD-HHMMSS>-<topic>/
 
 It does not install hooks or block arbitrary filesystem writes. Hooks and skills can consume this command later.
 
+## Write-location classes
+
+`agent-out` implements the allocation side of the agent write-location contract
+([agent-runtime-kit `core/policies/write-locations.md`](https://github.com/sympoies/agent-runtime-kit/blob/main/core/policies/write-locations.md),
+tracking [agent-runtime-kit#302](https://github.com/sympoies/agent-runtime-kit/issues/302)).
+Each class has its own root and retention, so a cleaner never has to guess:
+
+| Class | Path | Allocated by | Retention |
+| --- | --- | --- | --- |
+| evidence | `$AGENT_HOME/out/projects/<project-slug>/<run>/` | `agent-out project` | long; opt-in `--project-retention-days` |
+| scratch | `$AGENT_HOME/out/scratch/<project-slug>/<run>/` | `agent-out project --kind scratch` | short; `--scratch-retention-days`, default 3 |
+| build | `$AGENT_HOME/build/run/<run>/` | `agent-out build` | idle window; `--build-retention-days`, default 3 |
+
+Build output never belongs under `out/`. Worktree builds are owned by
+`git-cli worktree` (`$AGENT_HOME/build/<repo-key>/<slug>`, reclaimed with the
+worktree); `agent-out build` covers one-off builds that have no worktree.
+
 ## Commands
 
 ### `project`
@@ -30,12 +47,32 @@ Options:
 - `--agent-home <PATH>`: agent home root; defaults to `AGENT_HOME`.
 - `--mkdir`: create the generated directory.
 - `--format path|json|env`: output mode; default is `path`.
+- `--kind evidence|scratch`: write-location class; default `evidence`. `scratch`
+  allocates under `$AGENT_HOME/out/scratch/` for rebuildable intermediates such
+  as fixtures, unpacked archives, and one-off clones. JSON and env output carry
+  the kind (`kind`, `AGENT_OUT_KIND`).
 
 Slug precedence:
 
 1. `--repo-slug owner/repo` becomes `owner__repo`.
 2. Git `origin` remote under `--repo` or the current directory becomes `owner__repo`.
 3. Local fallback becomes `local__<basename>-<short-hash>`.
+
+### `build`
+
+Allocate a run-scoped build directory for one-off builds that are not tied to a
+managed worktree:
+
+```bash
+agent-out build --topic "release check" --mkdir
+agent-out build --topic "release check" --mkdir --format env
+```
+
+The path is `$AGENT_HOME/build/run/<YYYYMMDD-HHMMSS>-<topic>/`, outside `out/`.
+Options: `--topic` (required), `--agent-home`, `--mkdir`, `--format path|json|env`.
+`env` output adds `CARGO_TARGET_DIR` next to `AGENT_OUT_PATH`, `AGENT_OUT_ROOT`
+(the `build/run` root), `AGENT_OUT_TOPIC`, `AGENT_OUT_RUN_ID`, and
+`AGENT_OUT_KIND=build`. JSON uses `cli.agent-out.build.v1`.
 
 ### `path-for`
 
@@ -119,6 +156,15 @@ Plan classification is conservative:
 - canonical and allowlisted preserved roots are listed with shallow metadata
   unless children are explicitly requested; their marker booleans are not a
   recursive assertion about all descendants.
+- `scratch/` is a canonical root. Its `scratch/<repo>/<run>` entries are always
+  planned under scratch retention (below).
+- run-scoped builds under `$AGENT_HOME/build/run/<run>` are planned too, even
+  when `$AGENT_HOME/out` does not exist, under build retention (below).
+- an evidence run that contains a build tree (a cargo `.rustc_info.json`, or a
+  `CACHEDIR.TAG` with the standard signature) is flagged: its row carries
+  `contains_build_tree: true` and a reason note, and `summary.build_trees`
+  counts them. The action is unchanged; the flag tells the owner build output
+  was misfiled and belongs in the build class.
 - `projects/<repo>/<run>` entries are included only with `--include-projects`;
   runs without evidence markers are reported as `needs-policy`, not deleted,
   unless the owner opts into a retention window (below).
@@ -156,6 +202,24 @@ contents at plan and again at apply is impractical for multi-gigabyte runs, and
 any rewrite, rename, or replacement changes this identity. Without the flag
 and without unreadable rows, plans are byte-identical to earlier releases.
 
+#### Per-class retention
+
+Every plan states the retention of each class (JSON fields, and text lines
+`evidence retention`, `scratch retention`, `build retention`):
+
+| Class | Flag | Default | Plan fields |
+| --- | --- | --- | --- |
+| evidence | `--project-retention-days` (needs `--include-projects`) | unset: runs need review | `project_retention_days`, `project_retention_cutoff_unix` |
+| scratch | `--scratch-retention-days` | 3 | `scratch_retention_days`, `scratch_retention_cutoff_unix` |
+| build | `--build-retention-days` | 3 | `build_retention_days`, `build_retention_cutoff_unix` |
+
+Scratch and run-build rows use the same delete conditions as project runs (real
+directory, run id older than the cutoff, nothing modified since, one owner).
+Unlike project runs, a row still inside its window is `preserve`, not
+`needs-policy`. Rows carry category `scratch-artifact` or `run-build`. Plans
+always contain the scratch and build fields, so their digests differ from plans
+made by earlier releases; older plan files still verify and apply.
+
 `cleanup apply` requires a reviewed plan file and exact digest confirmation:
 
 ```bash
@@ -167,23 +231,25 @@ agent-out cleanup apply \
 ```
 
 Apply deletes only reviewed `cache` delete items and, under a plan retention
-policy, `project-artifact` delete items from the plan. It rejects
-digest mismatches, requires the resolved agent home to match the plan, rejects
-parent-directory or out-of-root delete paths, validates every delete candidate
-before removing any path, rejects duplicate delete paths, re-checks evidence
-markers immediately before deletion, and skips stale items whose size,
-modification time, or content digest changed after planning. Cache delete items
-must include `content_digest`. Older v1 plans that contain
-`top-level-noncanonical` delete items or cache delete items without
+policy, `project-artifact`, `scratch-artifact`, and `run-build` delete items
+from the plan. It rejects digest mismatches, requires the resolved agent home
+to match the plan, rejects parent-directory or out-of-root delete paths,
+validates every delete candidate before removing any path, rejects duplicate
+delete paths, re-checks evidence markers immediately before deletion, and skips
+stale items whose size, modification time, or content digest changed after
+planning. Cache delete items must include `content_digest`. Older v1 plans that
+contain `top-level-noncanonical` delete items or cache delete items without
 `content_digest` must be regenerated; apply now fails those closed instead of
 deleting them. If `--agent-home` is omitted, `AGENT_HOME` is still required so
 the plan has a live runtime-root boundary.
 
-Project-run delete rows are accepted only as exact `projects/<repo>/<run>`
+Run delete rows are accepted only as exact `projects/<repo>/<run>`,
+`scratch/<repo>/<run>` (below `out/`), or `run/<run>` (below `$AGENT_HOME/build`)
 paths with no symlink anywhere on that path, in a plan whose retention policy is
 consistent and whose cutoff is no later than `now - DAYS`
-(`cleanup-retention-policy-invalid` otherwise). Immediately before each
-project-run deletion apply re-reads that run: a read failure, a new evidence
+(`cleanup-retention-policy-invalid` otherwise).
+
+Immediately before each run deletion apply re-reads that run: a read failure, a new evidence
 marker, a changed `tree_identity`, or a run that no longer meets the policy
 becomes a `skipped` entry. A project-run delete that fails part way is recorded
 as `failed` (`summary.failed`) and the remaining rows continue; other categories
@@ -206,6 +272,7 @@ Human-readable mode is the default. Primary command output goes to stdout; error
 JSON output is opt-in and uses versioned envelopes:
 
 - `cli.agent-out.project.v1`
+- `cli.agent-out.build.v1`
 - `cli.agent-out.path-for.v1`
 - `cli.agent-out.audit.v1`
 - `cli.agent-out.cleanup.plan.v1`
