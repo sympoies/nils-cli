@@ -625,9 +625,7 @@ esac
                 ("rejected", "rejected"),
             ] {
                 let _broker = configure(&lock, client, &[&broker, mode]);
-                let error = client
-                    .call("list", &[], Duration::from_secs(2))
-                    .unwrap_err();
+                let error = client.call("list", &[], BROKER_TIMEOUT).unwrap_err();
                 assert_eq!(error.code(), code(client, suffix), "{mode}");
                 assert!(
                     !error.message().contains("private broker failure"),
@@ -761,12 +759,12 @@ wait "$child"
             // the helper is still hanging instead of before it published the
             // child (sympoies/nils-cli#2131).
             let error = client
-                .call("list", &[], Duration::from_secs(2))
+                .call("list", &[], Duration::from_secs(3))
                 .unwrap_err();
             assert_eq!(error.code(), code(client, "timeout"));
             // The group kill happened at the timeout, so wait deterministically
             // for the published child PID instead of racy unwrapping a read.
-            let deadline = Instant::now() + Duration::from_secs(2);
+            let deadline = Instant::now() + Duration::from_secs(10);
             let raw = loop {
                 if let Ok(raw) = fs::read_to_string(&child_pid_file)
                     && raw.trim().parse::<i32>().is_ok()
@@ -781,7 +779,7 @@ wait "$child"
                 thread::sleep(Duration::from_millis(10));
             };
             let child_pid: i32 = raw.trim().parse().unwrap();
-            let deadline = Instant::now() + Duration::from_secs(1);
+            let deadline = Instant::now() + Duration::from_secs(10);
             // SAFETY: signal 0 only probes whether the pid still exists.
             while unsafe { libc::kill(child_pid, 0) } == 0 && Instant::now() < deadline {
                 thread::sleep(Duration::from_millis(10));

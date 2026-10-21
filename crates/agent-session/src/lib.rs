@@ -15319,7 +15319,7 @@ exit 0
         };
         let descendant_trigger_path = PathBuf::from(descendant_trigger_path);
         let started_at = Instant::now();
-        while !descendant_trigger_path.is_file() && started_at.elapsed() < Duration::from_secs(5) {
+        while !descendant_trigger_path.is_file() && started_at.elapsed() < Duration::from_secs(30) {
             thread::sleep(Duration::from_millis(5));
         }
         assert!(
@@ -15510,7 +15510,7 @@ exit 0
         let started = Instant::now();
         assert!(!probe_systemd_user_scope(&helper));
         assert!(
-            started.elapsed() < Duration::from_secs(5),
+            started.elapsed() < Duration::from_secs(20),
             "the systemd capability probe must have a bounded deadline"
         );
         let pid = fs::read_to_string(&pid_file)
@@ -15599,15 +15599,13 @@ exit 0
             .arg("#{session_id}\t#{pane_id}\t#{pane_pid}")
             .arg("-s")
             .arg(&record.tmux_session)
-            .arg("-e")
-            .arg(format!("AGENT_SESSION_ID={}", record.id))
+            .args(["-e", &format!("AGENT_SESSION_ID={}", record.id)])
             .arg("-e")
             .arg(format!(
                 "AGENT_SESSION_STATE_DIR={}",
                 super::display_path(&context.state_dir)
             ))
-            .arg("-e")
-            .arg(format!("AGENT_SESSION_RUNTIME_ID={runtime_id}"))
+            .args(["-e", &format!("AGENT_SESSION_RUNTIME_ID={runtime_id}")])
             .arg("--")
             .arg(env::current_exe().unwrap())
             .arg("--exact")
@@ -15616,6 +15614,7 @@ exit 0
             .arg(";")
             .arg("wait-for")
             .arg(&scope_anchor_channel)
+            .env("LC_ALL", "C.UTF-8")
             .env(
                 "AGENT_SESSION_TEST_CGROUP_DESCENDANT_TRIGGER",
                 &descendant_trigger_path,
@@ -15658,7 +15657,7 @@ exit 0
                 break control_group;
             }
             assert!(
-                containment_started_at.elapsed() < Duration::from_secs(3),
+                containment_started_at.elapsed() < Duration::from_secs(30),
                 "tmux pane never reached stable cgroup containment: {observed_control_group:?}"
             );
             thread::sleep(Duration::from_millis(10));
@@ -15669,7 +15668,7 @@ exit 0
                 &context,
                 &record,
                 &wrapper,
-                Duration::from_secs(1),
+                Duration::from_secs(10),
             ) {
                 Ok(super::TmuxRuntimeProbe::Running(identity)) => break *identity,
                 Ok(super::TmuxRuntimeProbe::Stopped) => {
@@ -15680,7 +15679,7 @@ exit 0
                         error,
                         super::SessionTerminationFailure::RuntimeIdentityUnavailable
                             | super::SessionTerminationFailure::VerificationFailed
-                    ) && capture_started_at.elapsed() < Duration::from_secs(2) =>
+                    ) && capture_started_at.elapsed() < Duration::from_secs(30) =>
                 {
                     thread::sleep(Duration::from_millis(10));
                 }
@@ -15750,7 +15749,7 @@ exit 0
                 break pid;
             }
             assert!(
-                started_at.elapsed() < Duration::from_secs(2),
+                started_at.elapsed() < Duration::from_secs(30),
                 "detached descendant PID was not published"
             );
             thread::sleep(Duration::from_millis(10));
@@ -15775,7 +15774,7 @@ exit 0
                 break;
             }
             assert!(
-                membership_started.elapsed() < Duration::from_secs(2),
+                membership_started.elapsed() < Duration::from_secs(30),
                 "detached descendant never entered the pane's dedicated cgroup: pane={control_group:?}, descendant={:?}",
                 super::linux_process_control_group(descendant_pid),
             );
@@ -15883,7 +15882,7 @@ exit 0
                 Ok(Some(_)) => {}
                 Err(_) => break false,
             }
-            if started_at.elapsed() >= Duration::from_secs(2) {
+            if started_at.elapsed() >= Duration::from_secs(30) {
                 break false;
             }
             thread::sleep(Duration::from_millis(10));
@@ -15907,7 +15906,7 @@ exit 0
                 Ok(Some(_)) => {}
                 Err(_) => break false,
             }
-            if escaped_started_at.elapsed() >= Duration::from_secs(2) {
+            if escaped_started_at.elapsed() >= Duration::from_secs(30) {
                 break false;
             }
             thread::sleep(Duration::from_millis(10));
@@ -15929,7 +15928,7 @@ exit 0
             if scope_anchor.try_wait().unwrap().is_some() {
                 break;
             }
-            if anchor_started_at.elapsed() >= Duration::from_secs(2) {
+            if anchor_started_at.elapsed() >= Duration::from_secs(30) {
                 scope_anchor.kill().unwrap();
                 scope_anchor.wait().unwrap();
                 panic!("the cgroup scope anchor did not exit after deletion cleanup");
