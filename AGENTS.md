@@ -47,8 +47,9 @@ Open only the references relevant to the requested change:
   when debugging CI, preparing release-quality verification, or explicitly
   asked:
   `NILS_CLI_TEST_RUNNER=nextest bash scripts/ci/nils-cli-checks-entrypoint.sh`
-- Full coverage is owned by CI for normal PRs. Run it locally only for
-  coverage maintenance, release-quality verification, or CI debugging:
+- Full coverage runs in the nightly, manual and release full-validation
+  workflow, not on normal PRs. Run it locally only for coverage maintenance,
+  release-quality verification, or CI debugging:
   `NILS_CLI_TEST_RUNNER=nextest bash scripts/ci/nils-cli-checks-entrypoint.sh --with-coverage`
 - GitHub required checks for `main` must include `test`, `test_containment`,
   and `cargo-deny (advisories + bans)` after the maintainer applies the migration

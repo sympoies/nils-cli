@@ -160,9 +160,11 @@ scans; they must not treat a partial/failed scan as a clean host.
 
 ## Retention and compatibility
 
-Readers accept registry v1/v2/v3 and federation journal v1 through v6.
+Readers accept registry v1 through v4 and federation journal v1 through v6.
 Journal v5 retains quota refusal details; v6 retains destination suppression
-receipts. Registry v3 fences older writers that would erase suppression decisions.
+receipts. Registry v3 fences older writers that would erase suppression decisions;
+registry v4 is the fence written by the first worker delegation (see
+[scoped worker delegation](scoped-worker-delegation-v1.md#private-audit)).
 Missing stores are empty; corrupt/unreadable/unsupported stores produce `partial` with a fixed
 source code, leaving the other source observable. Store reads retain existing
 private-file checks. Federation journal reads are bounded to 38,535,168 bytes,

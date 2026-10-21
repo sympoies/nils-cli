@@ -130,8 +130,9 @@ is already complete.
 
 ## 3. Canonical validation flows
 
-Local development defaults to changed-scope validation. The full workspace test
-stack and coverage gate are CI responsibilities for normal PRs; run them
+Local development defaults to changed-scope validation. Normal PRs run
+affected-scope Linux checks; the full workspace test stack and coverage gate
+belong to the nightly, manual and release full-validation workflow. Run them
 locally only when you need CI parity, release-quality verification, coverage
 maintenance, or explicit debugging evidence.
 
