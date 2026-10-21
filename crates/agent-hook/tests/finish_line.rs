@@ -2508,7 +2508,9 @@ fn failed_contained_runner_stays_pending_until_authenticated_quiescence() {
 #[test]
 fn timeout_kills_the_validation_cgroup_and_records_failure() {
     let fixture = fixture();
-    let command = "sleep 30 & child=$!; printf '%s' \"$child\" > child.pid; wait \"$child\"";
+    // The stall must outlast `support::WAIT_BOUND` by a wide margin so a descendant that was
+    // not killed cannot end on its own inside the wait below and pass the test.
+    let command = "sleep 300 & child=$!; printf '%s' \"$child\" > child.pid; wait \"$child\"";
     one_contract(&fixture, command);
     begin_edit(&fixture, "session-a", "turn-1", "edit-1");
     let (code, timed_out) = run_validation(
