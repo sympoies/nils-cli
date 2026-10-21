@@ -391,6 +391,30 @@ cleanup so the failed create does not leave a silent live orphan.
 An unobservable or still-starting runtime is not proof of failure; reconcile
 that attempt before creating another session.
 
+## Per-session temporary directory
+
+Every managed tmux session launches with `TMPDIR=${AGENT_HOME}/tmp/<session-id>`
+(mode 0700), so harness scratch directories and `mktemp` output stay under
+`AGENT_HOME` instead of the system `/tmp`. This is the `tmp` class of the agent
+write-location contract in agent-runtime-kit
+([`write-locations.md`](https://github.com/sympoies/agent-runtime-kit/blob/main/core/policies/write-locations.md)).
+`AGENT_HOME` defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/agent-runtime-kit`.
+Only the new tmux session sees `TMPDIR`; `TMUX_TMPDIR`, the launching process and
+launchd services are unchanged.
+
+- The directory is created at start, resume and restart, and `agent-session` records
+  an owner file in it. A sweep only touches directories whose owner file names the
+  same session and `--state-dir`.
+- When the runtime exits, the grace period starts (default 24 hours, set with
+  `AGENT_SESSION_TMP_GRACE_SECS`). Relaunching the session within the grace period
+  keeps the contents; after it, the contents are removed before the relaunch.
+- `agent-session tmp sweep [--grace-secs N] [--format json]` removes directories of
+  stopped sessions past the grace period and of deleted session records, and reports
+  what it removed and kept. A running or unprovable session, or one whose record is
+  locked, is never removed. Every launch also sweeps best effort, within two seconds.
+- To keep the system `TMPDIR` for one session, start it with
+  `--env AGENT_RUNTIME_SESSION_TMPDIR=system` (a public launch switch, see below).
+
 ## Read logs
 
 For a stopped session without a one-shot run log, `agent-session logs <id>`
@@ -498,8 +522,8 @@ persisted as `launch_env` and returned by JSON start/list/board responses.
 Never pass credentials or private values.
 
 The default allowlist contains `AGENT_RUNTIME_SUPPRESS_MEMORY`,
-`AGENT_RUNTIME_SUPPRESS_HEALTH`, `AGENT_RUNTIME_SUPPRESS_PREFLIGHT`, and
-`AGENT_RUNTIME_SUPPRESS_FINISH_GATE`. Configure
+`AGENT_RUNTIME_SUPPRESS_HEALTH`, `AGENT_RUNTIME_SUPPRESS_PREFLIGHT`,
+`AGENT_RUNTIME_SUPPRESS_FINISH_GATE`, and `AGENT_RUNTIME_SESSION_TMPDIR`. Configure
 `AGENT_SESSION_LAUNCH_ENV_ALLOWLIST` as a JSON array to replace that list;
 `[]` disables overrides. Configured keys must be uppercase `AGENT_RUNTIME_`
 switch names without credential words. At most 16 unique assignments are

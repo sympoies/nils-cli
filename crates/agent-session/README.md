@@ -29,6 +29,7 @@ agent-session glance <id> --tail 40
 agent-session command <id>
 agent-session attach <id>
 agent-session logs <id>
+agent-session tmp sweep --format json   # reclaim per-session TMPDIR dirs (24 h grace)
 agent-session completion zsh
 ```
 

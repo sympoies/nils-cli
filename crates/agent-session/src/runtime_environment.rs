@@ -1,5 +1,7 @@
 use super::*;
 
+pub(crate) mod session_tmp;
+
 pub(super) fn add_runtime_tmux_environment(
     command: &mut ProcessCommand,
     state_dir: &Path,
@@ -7,6 +9,13 @@ pub(super) fn add_runtime_tmux_environment(
 ) -> Result<(), CliError> {
     for (key, value) in launch_env::from_record(record)? {
         command.arg("-e").arg(format!("{key}={value}"));
+    }
+    // Per-session TMPDIR (write-location contract, class `tmp`). Only the new
+    // tmux session sees it; TMUX_TMPDIR and this process's environment stay put.
+    if let Some(dir) = session_tmp::prepare_launch(state_dir, record)? {
+        command
+            .arg("-e")
+            .arg(format!("TMPDIR={}", display_path(&dir)));
     }
     let runtime_id = record
         .runtime
