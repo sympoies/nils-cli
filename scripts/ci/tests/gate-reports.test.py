@@ -19,18 +19,19 @@ class GateReports(unittest.TestCase):
     def test_default_is_unique_and_independent_of_cargo_target(self):
         with tempfile.TemporaryDirectory() as directory:
             env = {'XDG_STATE_HOME': directory, 'CARGO_TARGET_DIR': str(ROOT / 'target')}
+            canonical = Path(directory).resolve()
             with patch.dict(os.environ, env, clear=True), \
                  patch.object(reports_module.subprocess, 'call', return_value=23) as launch:
                 self.assertEqual(reports_module.run(['cargo', 'nextest', 'run']), 23)
                 first = launch.call_args.kwargs['env']['NEXTEST_STATE_DIR']
-                self.assertTrue(Path(first).is_relative_to(Path(directory)))
+                self.assertTrue(Path(first).is_relative_to(canonical))
                 self.assertFalse(Path(first).is_relative_to(ROOT))
                 self.assertEqual(reports_module.run(['cargo', 'nextest', 'run']), 23)
                 self.assertNotEqual(first, launch.call_args.kwargs['env']['NEXTEST_STATE_DIR'])
 
     def test_non_bmp_report_root_generates_valid_utf8_toml(self):
         with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / 'reports-\U0001f4ca'
+            output = Path(directory).resolve() / 'reports-\U0001f4ca'
             with patch.dict(os.environ, {'NILS_CLI_REPORT_DIR': str(output)}), \
                  patch.object(reports_module.subprocess, 'call', return_value=0) as launch:
                 self.assertEqual(reports_module.run(['cargo', 'nextest', 'run']), 0)

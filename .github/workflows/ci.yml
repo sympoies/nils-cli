@@ -28,10 +28,8 @@ jobs:
   changes:
     if: github.event_name != 'push' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-latest
-    # A release candidate waits at most 45 minutes (wall clock) for its base
-    # commit's full CI receipt (merge-group, with legacy push support), then
-    # falls back to full CI. This bound only stops a
-    # hung job: failed or timed-out detection fails the required Linux guard.
+    # This bound only stops a hung job: failed or timed-out detection fails the
+    # required Linux guard.
     timeout-minutes: 60
     permissions:
       actions: read
@@ -103,14 +101,11 @@ jobs:
           policy_dir="${RUNNER_TEMP}/release-policy"
           mkdir -p "${policy_dir}"
           release_detector="${policy_dir}/detect-release-only.sh"
-          release_gate="${policy_dir}/release-ci-gate.cjs"
           policy_available=false
-          if git show "${base}:scripts/ci/detect-release-only.sh" >"${release_detector}" 2>/dev/null && \
-             git show "${base}:.github/scripts/release-ci-gate.cjs" >"${release_gate}" 2>/dev/null; then
+          if git show "${base}:scripts/ci/detect-release-only.sh" >"${release_detector}" 2>/dev/null; then
             policy_available=true
-            echo "RELEASE_GATE_PATH=${release_gate}" >> "$GITHUB_ENV"
           else
-            rm -f "${release_detector}" "${release_gate}"
+            rm -f "${release_detector}"
           fi
           if { [ "${EVENT_NAME}" = "pull_request" ] || [ "${EVENT_NAME}" = "merge_group" ]; } && \
              { [ "${EVENT_NAME}" = "merge_group" ] || [ "${HEAD_REPOSITORY}" = "${REPOSITORY}" ]; } && \
@@ -151,49 +146,16 @@ jobs:
           export PATH="$PWD/target/debug:$PATH"
           python3 scripts/ci/devlog-check.py
 
-      - name: Prove full CI on exact base main commit
-        id: base_ci
-        if: steps.detect.outputs.release_candidate == 'true'
-        uses: actions/github-script@v9
-        env:
-          BASE_SHA: ${{ steps.detect.outputs.base_sha }}
-        with:
-          script: |
-            const { findTrustedMainCi, waitForTrustedMainCi } = require(process.env.RELEASE_GATE_PATH);
-            try {
-              // The gate module comes from the exact base commit; a base that
-              // predates waitForTrustedMainCi keeps the single lookup.
-              const trusted = typeof waitForTrustedMainCi === "function"
-                ? await waitForTrustedMainCi({
-                    github,
-                    context,
-                    core,
-                    sha: process.env.BASE_SHA,
-                  })
-                : await findTrustedMainCi({
-                    github,
-                    context,
-                    sha: process.env.BASE_SHA,
-                  });
-              core.setOutput("trusted", trusted ? "true" : "false");
-              if (trusted) {
-                core.info(`Reusing full base CI run ${trusted.runId}: ${trusted.runUrl}`);
-              } else {
-                core.info("Exact base commit has no unique successful full CI run; using full PR CI.");
-              }
-            } catch (error) {
-              core.warning(`Could not prove full base CI; using full PR CI: ${error.message}`);
-              core.setOutput("trusted", "false");
-            }
-
       - name: Finalize fail-closed CI lane
         id: finalize
         env:
-          BASE_CI_TRUSTED: ${{ steps.base_ci.outputs.trusted }}
           RELEASE_CANDIDATE: ${{ steps.detect.outputs.release_candidate }}
         run: |
+          # The exact-base detector proves the diff is only the canonical version
+          # bump. The release workflow validates the tagged commit in full, so the
+          # reduced lane needs no full base-CI receipt (scoped queue runs have none).
           release_only=false
-          if [ "${RELEASE_CANDIDATE}" = "true" ] && [ "${BASE_CI_TRUSTED}" = "true" ]; then
+          if [ "${RELEASE_CANDIDATE}" = "true" ]; then
             release_only=true
           fi
           echo "release_only=${release_only}" >> "$GITHUB_OUTPUT"

@@ -8,9 +8,7 @@ crates/agent-memory/README.md	1	13
 crates/agent-session/docs/provider-turn-signal-evidence.md	4	54
 crates/agent-session/docs/runbooks/serve-daemon.md	2	14
 crates/agent-session/docs/specs/activity-stream-v1.md	1	13
-crates/agent-session/docs/specs/serve-api-v1.md	22	118
 crates/agent-session/docs/specs/session-board-v1.md	3	14
-crates/agent-session/docs/specs/session-coordination-v1.md	19	36
 crates/agent-session/docs/specs/session-retitle-v2.md	3	16
 crates/agent-session/docs/specs/session-retitle-v3.md	3	19
 crates/agent-session/docs/turn-state-contract.md	8	30

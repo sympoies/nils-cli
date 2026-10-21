@@ -24,8 +24,7 @@ class SnapshotTests(unittest.TestCase):
     def advanced_main_candidate(self, change='source'):
         for path, source in {
             'scripts/ci/detect-docs-only.sh': 'printf "%s\\n" "$2" > "$DOCS_BASE_LOG"\necho false\n',
-            'scripts/ci/detect-release-only.sh': 'echo false\n',
-            '.github/scripts/release-ci-gate.cjs': '// Original base policy.\n',
+            'scripts/ci/detect-release-only.sh': 'echo false\n# Original base policy.\n',
         }.items():
             target = self.repo / path
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -38,7 +37,7 @@ class SnapshotTests(unittest.TestCase):
         note.write_text('Independent main change after event capture.\n')
         selector = self.repo / 'scripts/ci/lib/merge_plan.py'
         selector.write_text(selector.read_text() + '\n# New trusted-base snapshot.\n')
-        (self.repo / '.github/scripts/release-ci-gate.cjs').write_text('// Actual candidate base policy.\n')
+        (self.repo / 'scripts/ci/detect-release-only.sh').write_text('echo false\n# Actual candidate base policy.\n')
         self.git('add', '.')
         self.git('commit', '-qm', 'fixture main advanced')
         self.actual_base = self.git('rev-parse', 'HEAD')
@@ -68,8 +67,8 @@ class SnapshotTests(unittest.TestCase):
         output = Path(self.env['GITHUB_OUTPUT']).read_text()
         self.assertIn(f'base_sha={self.actual_base}\n', output)
         self.assertEqual((self.root / 'docs-base').read_text().strip(), self.actual_base)
-        self.assertEqual((self.root / 'release-policy/release-ci-gate.cjs').read_text(),
-                         '// Actual candidate base policy.\n')
+        self.assertEqual((self.root / 'release-policy/detect-release-only.sh').read_text(),
+                         'echo false\n# Actual candidate base policy.\n')
 
     def test_change_detection_holds_wrong_head_and_checkout_bindings(self):
         self.advanced_main_candidate()

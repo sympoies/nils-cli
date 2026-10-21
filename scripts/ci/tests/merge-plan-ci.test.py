@@ -74,6 +74,44 @@ class WorkflowDispatchTests(unittest.TestCase):
             self.assertEqual(eval(expression.replace('&&', 'and'), {'__builtins__': {}}, {}), scope == 'FULL')
 
 
+class ReleaseOnlyLaneTests(unittest.TestCase):
+    """A canonical release bump takes the reduced lane without a base-CI proof.
+
+    The release workflow validates the tagged commit in full, and scoped queue
+    runs on the base carry no full-validation marker to prove.
+    """
+    def finalize(self, candidate, base_ci=None):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        step = workflow.split('      - name: Finalize fail-closed CI lane\n', 1)[1]
+        script = step.split('        run: |\n', 1)[1]
+        script = re.split(r'\n  [a-z_]+:\n', script, maxsplit=1)[0]
+        script = '\n'.join(line[10:] for line in script.splitlines() if line.startswith('          '))
+        with tempfile.TemporaryDirectory(prefix='ci-finalize-') as directory:
+            output = Path(directory) / 'output'
+            env = dict(os.environ, GITHUB_OUTPUT=str(output), RELEASE_CANDIDATE=candidate)
+            env.pop('BASE_CI_TRUSTED', None)
+            if base_ci is not None:
+                env['BASE_CI_TRUSTED'] = base_ci
+            subprocess.run(['bash', '-euo', 'pipefail', '-c', script], env=env, check=True,
+                           capture_output=True)
+            return output.read_text().strip()
+
+    def test_release_candidate_alone_selects_the_reduced_lane(self):
+        for base_ci in (None, 'false', 'true'):
+            with self.subTest(base_ci=base_ci):
+                self.assertEqual(self.finalize('true', base_ci), 'release_only=true')
+
+    def test_non_candidates_never_take_the_reduced_lane(self):
+        for base_ci in (None, 'true'):
+            with self.subTest(base_ci=base_ci):
+                self.assertEqual(self.finalize('false', base_ci), 'release_only=false')
+
+    def test_workflow_no_longer_waits_for_a_base_ci_proof(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        self.assertNotIn('Prove full CI on exact base main commit', workflow)
+        self.assertNotIn('steps.base_ci', workflow)
+
+
 class ConsumerExecutionTests(unittest.TestCase):
     """Real Git/planner and fake Cargo executor; every command stays offline."""
     def setUp(self):
