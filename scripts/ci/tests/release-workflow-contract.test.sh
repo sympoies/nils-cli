@@ -118,6 +118,21 @@ if [[ "$(release_build_signature .github/workflows/release.yml)" != \
   exit 1
 fi
 echo "ok: the release cache warmer builds the same targets, runners, and toolchain as release.yml"
+# Pin the supported asset set independently of matrix/cache agreement: both
+# workflows could otherwise reintroduce the same retired target together.
+expected_targets=$'aarch64-apple-darwin\naarch64-unknown-linux-gnu\nx86_64-unknown-linux-gnu'
+for workflow in .github/workflows/release.yml .github/workflows/release-cache.yml; do
+  actual_targets="$(sed -nE 's/^[[:space:]]*target: ([a-z0-9_-]+)$/\1/p' "$workflow" | sort)"
+  if [[ "$actual_targets" != "$expected_targets" ]]; then
+    echo "FAIL: $workflow must build exactly the three supported release targets" >&2
+    exit 1
+  fi
+done
+echo "ok: release and cache matrices contain exactly the three supported targets"
+assert_contains .github/workflows/release.yml 'sha256sum "${tarball}"' \
+  "checksums are generated from each built target archive"
+assert_contains .github/workflows/release.yml 'files: dist/**/*.tar.gz*' \
+  "release publication discovers built archives and checksum sidecars"
 # Retain the Linux PR lane's existing outputs and protected reduced checker.
 # Full-validation contracts cover a different workflow and cannot replace these.
 assert_contains .github/workflows/ci.yml 'release_only: ${{ steps.finalize.outputs.release_only }}' \

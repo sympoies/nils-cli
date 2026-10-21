@@ -9,6 +9,11 @@ and provides recommended installation commands for Homebrew (macOS) and Linuxbre
 - Source of truth: crate READMEs, runtime process invocations (`Command::new(...)`), and repository scripts.
 - Goal: make environment setup predictable for contributors and CI-like local validation.
 
+Prebuilt releases support `x86_64-unknown-linux-gnu`,
+`aarch64-unknown-linux-gnu`, and `aarch64-apple-darwin`. Intel macOS
+release artifacts are no longer supported. Each archive has a matching
+`.tar.gz.sha256` sidecar.
+
 ## 1. Runtime Dependencies (Core)
 
 These tools are required for common command paths. Each row is anchored to at least one
