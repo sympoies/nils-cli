@@ -10,6 +10,11 @@ on:
         description: Expected immutable caller event SHA, verified by the final gate
         required: true
         type: string
+      isolation_guard:
+        description: Also run the poisoned-environment isolation guard (nightly and manual runs only)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -135,6 +140,13 @@ jobs:
           # silently; make it fatal instead. See `bin::sibling_or_skip`.
           NILS_TEST_REQUIRE_SIBLING_BINS: "1"
         run: bash scripts/ci/nils-cli-checks-entrypoint.sh --xvfb
+
+      # Re-run representative tests under a poisoned environment and fail if any
+      # sentinel changes. Only the nightly and manual call in ci.yml sets the
+      # input; release validation and the merge queue never run it.
+      - name: Test isolation guard
+        if: inputs.isolation_guard
+        run: bash scripts/ci/test-env-isolation-guard.sh
 
       - name: Full validation marker
         run: true

@@ -154,9 +154,9 @@ This runs changed-scope validation against `origin/main` by default:
 - the workspace lane runs its tests through `scripts/ci/tempdir-leak-probe.sh`,
   which fails on temp directories the suite leaves behind; see
   `docs/specs/test-temp-directory-policy.md`
-- `scripts/ci/test-env-isolation-guard.sh` runs representative tests under a poisoned
-  environment and fails when they touch it; run it on demand after changing a
-  test spawn helper. See `docs/specs/test-environment-isolation-policy.md`
+- the workspace lane ends with `scripts/ci/test-env-isolation-guard.sh`, which runs
+  representative tests under a poisoned environment and fails when they touch it;
+  see `docs/specs/test-environment-isolation-policy.md`
 - a package-scoped lane does not build binaries another package owns, so a test
   that needs one skips with a reason naming the build command; see
   `bin::sibling_or_skip` in `crates/nils-test-support`. Build the sibling — for

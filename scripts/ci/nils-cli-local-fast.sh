@@ -645,6 +645,10 @@ if [[ "$mode" == "workspace" ]]; then
     guarded_test cargo test --workspace
   fi
   target_guard_verify
+  # Re-run the representative tests under a poisoned environment (every home and
+  # config variable pointing at a sentinel directory) and fail if any sentinel
+  # changes; see docs/specs/test-environment-isolation-policy.md.
+  run bash scripts/ci/test-env-isolation-guard.sh
   echo "ok: local-fast workspace Rust gate passed"
   exit 0
 fi

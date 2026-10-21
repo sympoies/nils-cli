@@ -47,7 +47,9 @@ lock files under the real agent home.
   sentinel directory, and the auth-sync and remote-auth hooks are commands that
   record a hit. It fails when a sentinel changes, a hook command runs, or a run
   cannot build. Ordinary test failures are left to the regular gate. It never
-  prints test output.
+  prints test output. The workspace lane of `scripts/ci/nils-cli-local-fast.sh` runs
+  it after the suite, and the nightly full validation runs it too. The merge
+  queue's required checks do not, because it adds about five minutes per entry.
 - `scripts/ci/tests/test-env-isolation-guard.test.sh` covers the guard itself
   with a fake `cargo`, because a real run cannot be made to leak on demand.
 - The guard is a detector over a selection, not a proof for the whole suite. Add a
