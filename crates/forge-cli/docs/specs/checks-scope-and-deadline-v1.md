@@ -16,6 +16,9 @@ Default text output prints the same fields after its existing summary line:
 | `gate_state` | Aggregate state for that effective gate. |
 | `visible_count` | Number of reported rows, including pending placeholders in gate snapshots. |
 | `visible_state` | Aggregate state across all reported rows. |
+| `required_skipped` | Number of effective-gate rows (the `gate_count` set) whose state is `skipped`. |
+| `required_neutral` | Number of effective-gate rows whose state is `neutral`. |
+| `skipped_required` | The `skipped` and `neutral` effective-gate rows as `{name, state, url?, conclusion?}`; empty when every gate row ran. |
 
 With no required checks and one successful visible check, both commands report
 `configured_required_count=0`, `gate_scope=visible_fallback`, `gate_count=1`,
@@ -29,6 +32,22 @@ command can retain `required_count=0` while the waiter reports `required_count=1
 New consumers use `gate_count` and `gate_state` for the effective gate and
 `visible_state` for the complete reported set. One-shot reads retain their
 rollup boundary; waiters use complete configuration and exact-head reads.
+
+## Skipped and neutral gate rows
+
+`gate_state=success` keeps GitHub ruleset semantics: a required check that
+concluded `skipped` or `neutral` satisfies the rule, and `state`,
+`success_count`, `failed`, and `pending` are unchanged. It is not proof the
+work ran: a check deferred to a later gate, such as a merge group, concludes
+`skipped`. Consumers that must prove execution read `required_skipped`,
+`required_neutral`, and `skipped_required` (`success_count` below `gate_count`
+means some gate rows did not succeed); they do not infer it from `gate_state`.
+
+When `skipped_required` is non-empty, default text output adds, after the scope
+line, one `required_skipped=N required_neutral=N (...)` line and one
+`  skipped-required: <name> (<state>)` line per row. Text output is unchanged
+when every gate row succeeded or failed. Non-required rows outside the effective
+gate are never listed.
 
 ## Wait budget
 
