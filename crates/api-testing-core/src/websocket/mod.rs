@@ -1,3 +1,4 @@
+mod connection;
 pub mod expect;
 pub mod report;
 pub mod runner;

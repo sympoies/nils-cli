@@ -19,6 +19,7 @@ use std::fmt::Write as _;
 
 use crate::error::ForgeError;
 
+pub mod acceptance;
 pub mod correction;
 mod stopped_attempt;
 pub mod supersession;
@@ -187,10 +188,17 @@ pub struct ReviewLoopTransition {
     pub changed: bool,
     pub correction: Option<correction::CorrectionReceipt>,
     pub supersession: Option<supersession::SupersessionReceipt>,
+    pub acceptance: Option<acceptance::AcceptanceReceipt>,
 }
 
 impl ReviewLoopTransition {
     pub fn into_payload(self) -> ReviewStatePayload {
+        if let Some(acceptance) = self.acceptance {
+            return ReviewStatePayload::ReviewLoopAcceptance {
+                state: self.state,
+                acceptance,
+            };
+        }
         if let Some(supersession) = self.supersession {
             return ReviewStatePayload::ReviewLoopSupersession {
                 state: self.state,
@@ -220,6 +228,10 @@ pub enum ReviewStatePayload {
         state: ReviewLoopState,
         correction: correction::CorrectionReceipt,
     },
+    ReviewLoopAcceptance {
+        state: ReviewLoopState,
+        acceptance: acceptance::AcceptanceReceipt,
+    },
     ReviewLoopSupersession {
         state: ReviewLoopState,
         supersession: supersession::SupersessionReceipt,
@@ -239,6 +251,7 @@ impl ReviewStatePayload {
             Self::ReviewRunReceipt { .. } => "review-run-receipt",
             Self::ReviewLoop { .. } => "review-loop",
             Self::ReviewLoopCorrection { .. } => "review-loop-correction",
+            Self::ReviewLoopAcceptance { .. } => "review-loop-acceptance",
             Self::ReviewLoopSupersession { .. } => "review-loop-supersession",
             Self::ReviewHandoff { .. } => "review-handoff",
             Self::ReviewSyncCarryOver { .. } => "review-sync-carry-over",
@@ -373,6 +386,12 @@ pub fn state_comment_visible_metadata(record: &ReviewStateRecord) -> String {
         ReviewStatePayload::ReviewRunReceipt { receipt } => format!(
             "Review receipt recorded at head {}. Follow the review findings before merge.",
             short_sha(&receipt.expected_head)
+        ),
+        ReviewStatePayload::ReviewLoopAcceptance { state, acceptance } => format!(
+            "Review accepted risk recorded at head {}: {} findings accepted; original stop, counters, and budgets retained. Approval: {}.",
+            short_sha(&state.head_sha),
+            acceptance.accepted_fingerprints.len(),
+            acceptance.approval_reference
         ),
         ReviewStatePayload::ReviewLoopSupersession {
             state,
@@ -690,6 +709,7 @@ pub fn parse_chain<'a>(
         }
         if let ReviewStatePayload::ReviewLoop { state }
         | ReviewStatePayload::ReviewLoopCorrection { state, .. }
+        | ReviewStatePayload::ReviewLoopAcceptance { state, .. }
         | ReviewStatePayload::ReviewLoopSupersession { state, .. } = &record.payload
         {
             validate_review_loop_state(state)?;
@@ -830,6 +850,7 @@ pub fn parse_chain<'a>(
         }
         correction::validate_record(&ordered, record)?;
         supersession::validate_record(&ordered, record)?;
+        acceptance::validate_record(&ordered, record)?;
         ordered.push((*record).clone());
         let candidates = children
             .get(&Some(digest.clone()))
@@ -941,6 +962,7 @@ pub fn latest_review_loop_state(chain: &ReviewStateChain) -> Option<&ReviewLoopS
         .find_map(|record| match &record.payload {
             ReviewStatePayload::ReviewLoop { state }
             | ReviewStatePayload::ReviewLoopCorrection { state, .. }
+            | ReviewStatePayload::ReviewLoopAcceptance { state, .. }
             | ReviewStatePayload::ReviewLoopSupersession { state, .. } => Some(state),
             ReviewStatePayload::ReviewRunReceipt { .. }
             | ReviewStatePayload::ReviewHandoff { .. }
@@ -993,6 +1015,7 @@ pub fn observe_review_loop(
             changed: true,
             correction: None,
             supersession: None,
+            acceptance: None,
         });
     };
 
@@ -1045,6 +1068,7 @@ pub fn observe_review_loop(
             changed: false,
             correction: None,
             supersession: None,
+            acceptance: None,
         });
     }
     if !head_changed {
@@ -1193,6 +1217,7 @@ pub fn observe_review_loop(
         state,
         correction: None,
         supersession: None,
+        acceptance: None,
     })
 }
 
