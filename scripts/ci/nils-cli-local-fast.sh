@@ -590,6 +590,37 @@ fi
 test_runner="$(select_test_runner)"
 echo "LOCAL_FAST_TEST_RUNNER=$test_runner"
 
+# Lanes sharing one cargo target directory can replace the executables under
+# test mid-run (#2697). Record them once built; fail clearly if they change.
+target_guard_snapshot_file="$(mktemp)"
+trap 'rm -f "$target_guard_snapshot_file"' EXIT
+
+target_guard_snapshot() {
+  # shellcheck source=scripts/ci/lib/cargo-target-dir.sh
+  source "$repo_root/scripts/ci/lib/cargo-target-dir.sh"
+  run python3 scripts/ci/lib/target_guard.py snapshot \
+    --target-dir "$(resolve_cargo_target_dir "$repo_root")" \
+    --out "$target_guard_snapshot_file"
+}
+
+# Test commands run through here so a failure still reaches the guard: a product
+# test that fails against a replaced binary must name the replacement, not only
+# the product failure. After the first failure no further test command runs.
+target_guard_test_status=0
+guarded_test() {
+  if [[ "$target_guard_test_status" -eq 0 ]]; then
+    run_test "$@" || target_guard_test_status=$?
+  fi
+}
+
+target_guard_verify() {
+  if [[ "$target_guard_test_status" -ne 0 ]]; then
+    python3 scripts/ci/lib/target_guard.py verify "$target_guard_snapshot_file" || true
+    exit "$target_guard_test_status"
+  fi
+  run python3 scripts/ci/lib/target_guard.py verify "$target_guard_snapshot_file"
+}
+
 run cargo fmt --all -- --check
 
 if [[ "$mode" == "workspace" ]]; then
@@ -600,15 +631,19 @@ if [[ "$mode" == "workspace" ]]; then
     # leaks whose cleanup *did* run (a late background write that re-creates the
     # tree, or a lock placed beside the fixture instead of inside it).
     run_test cargo nextest run --profile ci --workspace --no-run
+    target_guard_snapshot
     # git-cli-test-worker.<euid> is a deliberate per-user cache of private worker
     # binaries: a fixed name, contents keyed by source digest, reused across runs
     # so concurrent readers see a stable inode. Bounded, so it is not a leak.
-    run_test bash scripts/ci/tempdir-leak-probe.sh --allow 'git-cli-test-worker.*' \
+    guarded_test bash scripts/ci/tempdir-leak-probe.sh --allow 'git-cli-test-worker.*' \
       -- --profile ci --workspace
-    run_test cargo test --workspace --doc
+    guarded_test cargo test --workspace --doc
   else
-    run_test cargo test --workspace
+    run cargo test --workspace --no-run
+    target_guard_snapshot
+    guarded_test cargo test --workspace
   fi
+  target_guard_verify
   echo "ok: local-fast workspace Rust gate passed"
   exit 0
 fi
@@ -627,15 +662,26 @@ for package in "${packages[@]}" "${siblings[@]}"; do
 done
 run cargo build "${package_args[@]}" --bins
 
+# Cargo resolver 2 unifies features across the -p set, so a solo build can relink
+# an executable the combined build made. Build each package's test executables
+# solo and snapshot them right after, so the guard covers what that package runs
+# without charging it for another package's build.
 for package in "${packages[@]}"; do
   if [[ "$test_runner" == "nextest" ]]; then
-    run_test cargo nextest run --profile ci -p "$package"
+    run_test cargo nextest run --profile ci -p "$package" --no-run
+  else
+    run cargo test -p "$package" --no-run
+  fi
+  target_guard_snapshot
+  if [[ "$test_runner" == "nextest" ]]; then
+    guarded_test cargo nextest run --profile ci -p "$package"
     if package_has_doctest "$package"; then
-      run_test cargo test -p "$package" --doc
+      guarded_test cargo test -p "$package" --doc
     fi
   else
-    run_test cargo test -p "$package"
+    guarded_test cargo test -p "$package"
   fi
+  target_guard_verify
 done
 
 echo "ok: local-fast package checks passed (${#packages[@]} package(s))"
