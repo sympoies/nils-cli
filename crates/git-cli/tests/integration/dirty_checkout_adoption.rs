@@ -609,7 +609,7 @@ fn public_snapshot_api_does_not_require_a_colocated_git_cli_binary() {
     fs::set_permissions(&consumer, fs::Permissions::from_mode(0o755))
         .expect("make standalone consumer executable");
 
-    let launch_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let launch_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let status = loop {
         match Command::new(&consumer)
             .arg("public_snapshot_api_does_not_require_a_colocated_git_cli_binary")

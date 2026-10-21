@@ -99,7 +99,7 @@ fn macos_fallback_rejects_reused_root_generation_before_descendant_scan() {
 
     let scan = macos_fallback_descendants_with(
         root,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         |pid| {
             assert_eq!(pid, root.pid);
             Ok(Some(replacement))
@@ -146,7 +146,7 @@ fn macos_fallback_rejects_root_reuse_between_precheck_and_scan() {
 
     let scan = macos_fallback_descendants_with(
         root,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         |pid| {
             assert_eq!(pid, root.pid);
             Ok(Some(root))
@@ -204,7 +204,7 @@ fn macos_fallback_fail_closed_boundary_matrix() {
     let vanished_scans = std::cell::Cell::new(0_usize);
     let vanished = macos_fallback_descendants_with(
         root,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         |_| Ok(None),
         |_, _| {
             vanished_scans.set(vanished_scans.get() + 1);
@@ -222,7 +222,7 @@ fn macos_fallback_fail_closed_boundary_matrix() {
     let failed_scans = std::cell::Cell::new(0_usize);
     let identity_error = macos_fallback_descendants_with(
         root,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         |_| Err(process_scan_resource_error()),
         |_, _| {
             failed_scans.set(failed_scans.get() + 1);
@@ -275,7 +275,7 @@ fn macos_fallback_fail_closed_boundary_matrix() {
     let delegated_scans = std::cell::Cell::new(0_usize);
     let delegated = macos_fallback_descendants_with(
         root,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         |_| Ok(Some(root)),
         |_, _| {
             delegated_scans.set(delegated_scans.get() + 1);
@@ -292,7 +292,7 @@ fn macos_fallback_fail_closed_boundary_matrix() {
 
     let scanner_error = macos_fallback_descendants_with(
         root,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         |_| Ok(Some(root)),
         |_, _| Err(process_scan_resource_error()),
     )
@@ -555,7 +555,7 @@ fn linux_targeted_reader_revalidates_parent_generation_before_following_its_chil
     let scan = descendant_processes_at(
         proc_root.path(),
         10,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         ProcessScanLimits {
             process_entries: 8,
             metadata_bytes: 8 * 1024,

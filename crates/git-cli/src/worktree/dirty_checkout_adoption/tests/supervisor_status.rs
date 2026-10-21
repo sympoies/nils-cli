@@ -36,14 +36,8 @@ fn authenticated_target_status_one_remains_a_git_domain_result() {
         fallback_owner: None,
     };
 
-    let output = collect_output_child_until(
-        spawned,
-        Instant::now() + Duration::from_secs(1),
-        1024,
-        1024,
-        1024,
-    )
-    .expect("authenticated target status one remains available to Git consumers");
+    let output = collect_output_child_until(spawned, Instant::now() + TEST_WAIT, 1024, 1024, 1024)
+        .expect("authenticated target status one remains available to Git consumers");
 
     assert_eq!(output.status.code(), Some(1));
 }
@@ -57,14 +51,8 @@ fn authenticated_supervisor_producer_preserves_normal_target_status_one() {
         &root.path().join("unused.pid"),
     );
 
-    let output = collect_output_child_until(
-        spawned,
-        Instant::now() + Duration::from_secs(5),
-        1024,
-        1024,
-        1024,
-    )
-    .expect("authenticated target status one remains a Git-domain result");
+    let output = collect_output_child_until(spawned, Instant::now() + TEST_WAIT, 1024, 1024, 1024)
+        .expect("authenticated target status one remains a Git-domain result");
 
     assert_eq!(output.status.code(), Some(exit::RUNTIME));
 }
@@ -78,14 +66,8 @@ fn authenticated_supervisor_producer_internal_failure_is_not_git_status_one() {
         &root.path().join("unused.pid"),
     );
 
-    let error = collect_output_child_until(
-        spawned,
-        Instant::now() + Duration::from_secs(5),
-        1024,
-        1024,
-        1024,
-    )
-    .expect_err("authenticated internal failure must not enter the Git status domain");
+    let error = collect_output_child_until(spawned, Instant::now() + TEST_WAIT, 1024, 1024, 1024)
+        .expect_err("authenticated internal failure must not enter the Git status domain");
 
     assert_eq!(
         error
@@ -127,14 +109,8 @@ fn authenticated_supervisor_internal_failure_cannot_become_git_status_one() {
         fallback_owner: None,
     };
 
-    let error = collect_output_child_until(
-        spawned,
-        Instant::now() + Duration::from_secs(1),
-        1024,
-        1024,
-        1024,
-    )
-    .expect_err("authenticated internal failure must not become Git status one");
+    let error = collect_output_child_until(spawned, Instant::now() + TEST_WAIT, 1024, 1024, 1024)
+        .expect_err("authenticated internal failure must not become Git status one");
 
     assert_eq!(
         error
@@ -169,14 +145,8 @@ fn supervised_child_without_authenticated_completion_cannot_return_git_status_on
         fallback_owner: None,
     };
 
-    let error = collect_output_child_until(
-        spawned,
-        Instant::now() + Duration::from_secs(1),
-        1024,
-        1024,
-        1024,
-    )
-    .expect_err("missing authenticated completion must not become Git status one");
+    let error = collect_output_child_until(spawned, Instant::now() + TEST_WAIT, 1024, 1024, 1024)
+        .expect_err("missing authenticated completion must not become Git status one");
 
     assert_eq!(
         error
@@ -219,7 +189,7 @@ fn missing_supervisor_completion_cleans_a_prescanned_escaped_descendant() {
     let mut fallback_owner = ProcessOwner::for_root(child.id() as libc::pid_t)
         .expect("create scoped escaped fallback owner");
     fs::write(&start_path, []).expect("release escaped fixture start gate");
-    let publication_deadline = Instant::now() + Duration::from_secs(1);
+    let publication_deadline = Instant::now() + TEST_WAIT;
     while !pid_path.exists() {
         assert!(
             Instant::now() < publication_deadline,
@@ -235,7 +205,7 @@ fn missing_supervisor_completion_cleans_a_prescanned_escaped_descendant() {
         .expect("read escaped fixture identity")
         .expect("escaped fixture remains present before collection");
     let prescanned = fallback_owner
-        .identities(Instant::now() + Duration::from_secs(1))
+        .identities(Instant::now() + TEST_WAIT)
         .expect("prescan escaped supervisor descendants");
     assert!(
         prescanned.contains(&identity),
@@ -252,14 +222,8 @@ fn missing_supervisor_completion_cleans_a_prescanned_escaped_descendant() {
         fallback_owner: Some(fallback_owner),
     };
 
-    let error = collect_output_child_until(
-        spawned,
-        Instant::now() + Duration::from_secs(2),
-        1024,
-        1024,
-        1024,
-    )
-    .expect_err("missing authenticated completion must fail supervision");
+    let error = collect_output_child_until(spawned, Instant::now() + TEST_WAIT, 1024, 1024, 1024)
+        .expect_err("missing authenticated completion must fail supervision");
     assert_eq!(
         error
             .downcast_ref::<DirtyCheckoutError>()
@@ -269,7 +233,7 @@ fn missing_supervisor_completion_cleans_a_prescanned_escaped_descendant() {
     );
 
     let still_running = {
-        let exit_deadline = Instant::now() + Duration::from_millis(500);
+        let exit_deadline = Instant::now() + TEST_WAIT;
         loop {
             let state = fs::read(format!("/proc/{pid}/stat"))
                 .ok()
@@ -290,7 +254,7 @@ fn missing_supervisor_completion_cleans_a_prescanned_escaped_descendant() {
     };
     #[cfg(target_os = "macos")]
     let still_running = {
-        let exit_deadline = Instant::now() + Duration::from_millis(500);
+        let exit_deadline = Instant::now() + TEST_WAIT;
         loop {
             if process_identity(pid).expect("recheck escaped descendant") != Some(identity) {
                 break false;
@@ -361,7 +325,7 @@ fn lost_trackers_fail_unavailable_without_signaling_an_unseen_descendant() {
         "test cleanup must pin the canary generation"
     );
 
-    let publication_deadline = Instant::now() + Duration::from_secs(1);
+    let publication_deadline = Instant::now() + TEST_WAIT;
     while !pid_path.exists() {
         assert!(
             Instant::now() < publication_deadline,
@@ -405,14 +369,14 @@ fn lost_trackers_fail_unavailable_without_signaling_an_unseen_descendant() {
     let collection_started = Instant::now();
     let error = collect_output_child_until(
         spawned,
-        collection_started + Duration::from_secs(3),
+        collection_started + TEST_WAIT,
         16 * 1024,
         16 * 1024,
         32 * 1024,
     )
     .expect_err("lost tracking authorities must fail unavailable");
     assert!(
-        collection_started.elapsed() < Duration::from_secs(2),
+        collection_started.elapsed() < TEST_WAIT / 2,
         "missing cleanup proof must fail within the bounded cleanup window"
     );
     assert_eq!(

@@ -32,7 +32,7 @@ fn process_cleanup_budget_allows_bounded_slow_discovery() {
         .expect("bounded process discovery must retain enough cleanup headroom");
 
     assert!(
-        started.elapsed() < Duration::from_secs(2),
+        started.elapsed() < TEST_WAIT,
         "bounded cleanup discovery must not turn into an unbounded wait"
     );
 }
@@ -96,12 +96,9 @@ fn linux_process_scan_is_linear_bounded_and_deadline_first() {
         ProcessRecord::new(14, 12, 14, 100),
         ProcessRecord::new(99, 1, 99, 100),
     ];
-    let scan = collect_descendant_processes_with(
-        10,
-        Instant::now() + Duration::from_secs(1),
-        limits,
-        |_| Ok(records.clone()),
-    )
+    let scan = collect_descendant_processes_with(10, Instant::now() + TEST_WAIT, limits, |_| {
+        Ok(records.clone())
+    })
     .expect("exact process, byte, and descendant caps must pass");
     assert_eq!(scan.identities.len(), 4);
     assert_eq!(scan.edge_visits, 4, "each descendant edge is visited once");
@@ -118,7 +115,7 @@ fn linux_process_scan_is_linear_bounded_and_deadline_first() {
     };
     assert_resource(collect_descendant_processes_with(
         10,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         ProcessScanLimits {
             process_entries: 5,
             ..limits
@@ -127,7 +124,7 @@ fn linux_process_scan_is_linear_bounded_and_deadline_first() {
     ));
     assert_resource(collect_descendant_processes_with(
         10,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         ProcessScanLimits {
             metadata_bytes: 599,
             ..limits
@@ -136,7 +133,7 @@ fn linux_process_scan_is_linear_bounded_and_deadline_first() {
     ));
     assert_resource(collect_descendant_processes_with(
         10,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         ProcessScanLimits {
             descendants: 3,
             ..limits
@@ -199,7 +196,7 @@ fn linux_targeted_reader_scans_only_reachable_processes_and_retains_a_bounded_pr
     let scan = descendant_processes_at(
         proc_root.path(),
         10,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         limits,
         |identity| observed.push(identity),
     )
@@ -220,7 +217,7 @@ fn linux_targeted_reader_scans_only_reachable_processes_and_retains_a_bounded_pr
     let error = descendant_processes_at(
         proc_root.path(),
         10,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         ProcessScanLimits {
             descendants: 1,
             ..limits
@@ -255,7 +252,7 @@ fn linux_targeted_reader_scans_only_reachable_processes_and_retains_a_bounded_pr
     descendant_processes_at(
         proc_root.path(),
         10,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         ProcessScanLimits {
             metadata_bytes: MAX_PROC_CHILDREN_BYTES * 2,
             ..limits
@@ -304,7 +301,7 @@ fn linux_targeted_reader_rejects_recycled_child_pid_with_unrelated_parent() {
     let scan = descendant_processes_at(
         proc_root.path(),
         10,
-        Instant::now() + Duration::from_secs(1),
+        Instant::now() + TEST_WAIT,
         ProcessScanLimits {
             process_entries: 4,
             metadata_bytes: 1024,

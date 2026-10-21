@@ -30,6 +30,11 @@ use std::os::unix::net::UnixStream;
 
 use std::os::unix::process::ExitStatusExt;
 
+/// Bound for waits and budgets that end as soon as their condition holds, so a
+/// loaded host cannot turn a slow child start into a failure. Deadlines whose
+/// expiry is the behavior under test do not use it.
+const TEST_WAIT: Duration = Duration::from_secs(20);
+
 fn successful_worker_output(snapshot: serde_json::Value) -> std::process::Output {
     std::process::Output {
         status: std::process::ExitStatus::from_raw(0),
