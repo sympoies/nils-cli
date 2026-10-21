@@ -498,6 +498,8 @@ jobs:
       checks: write
     with:
       commit: ${{ github.sha }}
+      # Nightly and manual runs also run the poisoned-environment isolation guard.
+      isolation_guard: true
 
   nightly_report:
     if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
