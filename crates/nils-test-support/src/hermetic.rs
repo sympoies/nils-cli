@@ -109,13 +109,25 @@ pub fn ambient_baseline() -> &'static BTreeMap<OsString, OsString> {
     AMBIENT_BASELINE.get_or_init(|| std::env::vars_os().collect())
 }
 
+/// True when `value` lies under the system temp directory, which is where tests
+/// create fixtures and never where a developer's real home or state lives.
+///
+/// This recognizes a fixture root set with a raw `std::env::set_var` as well, which
+/// the baseline cannot see when the first call comes after that mutation.
+fn is_fixture_path(value: &OsStr) -> bool {
+    Path::new(value).starts_with(std::env::temp_dir())
+}
+
 /// True when `name` still has the value the process inherited, or is still absent
-/// as it was at start: the caller's ambient state, not something the test set.
+/// as it was at start, and does not point into the temp directory: the caller's
+/// ambient state, not something the test set.
 ///
 /// Product code under `#[cfg(test)]` uses this to ignore an inherited home root
 /// (for example `AGENT_HOME`) while still honoring one a test pointed at a fixture.
 pub fn is_ambient(name: &str) -> bool {
-    ambient_baseline().get(std::ffi::OsStr::new(name)) == std::env::var_os(name).as_ref()
+    let current = std::env::var_os(name);
+    ambient_baseline().get(OsStr::new(name)) == current.as_ref()
+        && !current.as_deref().is_some_and(is_fixture_path)
 }
 
 /// Replace `command`'s environment with the allowlisted caller variables, `extra`
@@ -143,7 +155,12 @@ pub fn apply_from(
     caller: Vars,
     baseline: &Vars,
 ) {
-    let changed = |name: &OsString| baseline.get(name) != caller.get(name);
+    // A variable is the test's own when it differs from the baseline or points at
+    // a fixture under the temp directory; anything else is inherited ambient state.
+    let changed = |name: &OsString| {
+        baseline.get(name) != caller.get(name)
+            || caller.get(name).is_some_and(|value| is_fixture_path(value))
+    };
     command.env_clear();
     for (name, value) in &caller {
         let keep = name.to_str().is_some_and(|plain| allowed(plain, extra)) || changed(name);
@@ -353,6 +370,19 @@ mod tests {
         assert_eq!(
             env.get("GIT_CONFIG_NOSYSTEM").map(String::as_str),
             Some("1")
+        );
+    }
+
+    #[test]
+    fn a_root_under_the_temp_directory_is_the_tests_own_even_when_unchanged() {
+        let fixture = std::env::temp_dir().join("fixture-home");
+        let fixture = fixture.to_string_lossy().to_string();
+        let ambient = [("HOME", fixture.as_str()), ("AGENT_HOME", "/real/agent")];
+        let (home, env) = run_env(&ambient, &ambient, &[]);
+        assert_eq!(env.get("HOME").map(String::as_str), Some(fixture.as_str()));
+        assert_eq!(
+            env.get("AGENT_HOME").map(String::as_str),
+            Some(home.path().join("agent-home").to_string_lossy().as_ref())
         );
     }
 }
