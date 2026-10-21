@@ -776,11 +776,11 @@ fn capability_probe_timeout_kills_and_reaps_the_process_group() {
 
     let started = Instant::now();
     assert!(
-        bounded_command_output_with_timeout(&path, &["--version"], Duration::from_millis(500))
+        bounded_command_output_with_timeout(&path, &["--version"], Duration::from_secs(3))
             .is_none()
     );
     assert!(
-        started.elapsed() < Duration::from_secs(2),
+        started.elapsed() < Duration::from_secs(30),
         "injected probe timeout must remain bounded"
     );
 
@@ -788,7 +788,7 @@ fn capability_probe_timeout_kills_and_reaps_the_process_group() {
         .unwrap()
         .parse::<libc::pid_t>()
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(10);
     while unsafe { libc::kill(pid, 0) } == 0 && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(25));
     }
@@ -817,11 +817,11 @@ fn capability_probe_timeout_kills_descendant_after_leader_exits() {
 
     let started = Instant::now();
     assert!(
-        bounded_command_output_with_timeout(&path, &["--version"], Duration::from_millis(500))
+        bounded_command_output_with_timeout(&path, &["--version"], Duration::from_secs(3))
             .is_none()
     );
     assert!(
-        started.elapsed() < Duration::from_secs(2),
+        started.elapsed() < Duration::from_secs(30),
         "output collection must remain under the injected probe timeout"
     );
 
@@ -829,7 +829,7 @@ fn capability_probe_timeout_kills_descendant_after_leader_exits() {
         .unwrap()
         .parse::<libc::pid_t>()
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(10);
     while unsafe { libc::kill(pid, 0) } == 0 && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(25));
     }

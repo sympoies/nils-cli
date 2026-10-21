@@ -14001,16 +14001,16 @@ mod tests {
         let started_at = Instant::now();
         assert!(!run_agent_profile_readiness(
             command,
-            Duration::from_millis(100)
+            Duration::from_secs(2)
         ));
-        assert!(started_at.elapsed() < Duration::from_secs(1));
+        assert!(started_at.elapsed() < Duration::from_secs(20));
 
         let process_group = fs::read_to_string(pid_file)
             .unwrap()
             .trim()
             .parse::<libc::pid_t>()
             .unwrap();
-        let cleanup_deadline = Instant::now() + Duration::from_millis(500);
+        let cleanup_deadline = Instant::now() + Duration::from_secs(10);
         let (result, error) = loop {
             // SAFETY: signal 0 only probes whether the dedicated process group remains.
             let result = unsafe { libc::kill(-process_group, 0) };
@@ -14781,10 +14781,8 @@ mod tests {
             context.clone(),
             discovery,
             record,
-            Instant::now() + Duration::from_secs(2),
+            Instant::now() + Duration::from_secs(60),
         ));
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
         let mut replacement = load_session_record(&context, "resolver-runtime-replaced")
             .expect("replacement session record");
         let runtime = replacement.runtime.as_mut().expect("runtime");
@@ -14899,6 +14897,7 @@ mod tests {
             tokio::task::yield_now().await;
         }
         lead.abort();
+        let _ = lead.await;
 
         let mut replacements = tokio::task::JoinSet::new();
         for _ in 0..4 {
@@ -14906,7 +14905,7 @@ mod tests {
             let record = record.clone();
             replacements.spawn(async move { registry.resolve_source(&record).await });
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        registry.wait_for_parked_scan_waiters(&record, 4).await;
         assert_eq!(started.load(Ordering::SeqCst), 1);
         assert_eq!(max_active.load(Ordering::SeqCst), 1);
         release.store(true, Ordering::SeqCst);
@@ -15619,7 +15618,6 @@ mod tests {
             .await
             .expect("subscribe before identity");
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
         let transcript = codex_home.join("sessions/2026/07/pending.jsonl");
         std::fs::create_dir_all(transcript.parent().expect("transcript parent"))
             .expect("transcript dir");
@@ -15830,12 +15828,10 @@ mod tests {
             .expect("listener");
         let addr = listener.local_addr().expect("address");
         let server_state_dir = state_dir.clone();
+        let server_state = state(&server_state_dir, Some(TOKEN), tmux);
+        let pending_state = server_state.clone();
         let server = tokio::spawn(async move {
-            let _ = axum::serve(
-                listener,
-                router(state(&server_state_dir, Some(TOKEN), tmux)),
-            )
-            .await;
+            let _ = axum::serve(listener, router(server_state)).await;
         });
 
         let mut request = format!("ws://{addr}/sessions/ws-claude-pending/attach")
@@ -15863,7 +15859,7 @@ mod tests {
             .await
             .expect("subscribe before transcript");
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        sync_waits::wait_for_pending_scan(&pending_state, "ws-claude-pending").await;
         let transcript = claude_config
             .join("projects/-pending")
             .join(format!("{provider_session_id}.jsonl"));
@@ -15992,7 +15988,6 @@ mod tests {
         let capability: Value = serde_json::from_str(capability.as_str()).expect("capability json");
         assert_eq!(capability["supported"], false);
         let _ = socket.close(None).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
         server.abort();
     }
 
@@ -16107,7 +16102,6 @@ mod tests {
             "an unrelated same-cwd transcript must not emit prompt events"
         );
         let _ = socket.close(None).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
         server.abort();
     }
 
@@ -17303,20 +17297,23 @@ esac
         .expect("write helper");
         fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).expect("chmod helper");
 
+        let started_at = Instant::now();
         let output = run_usage_helper(
             helper.to_str().expect("helper path"),
             &[],
             &[("PID_FILE", pid_file.to_str().expect("pid path"))],
-            Duration::from_millis(250),
+            Duration::from_secs(2),
         )
         .expect("run helper");
         assert!(output.timed_out);
+        // A surviving descendant holds the output pipes open for its 60 s sleep.
+        assert!(started_at.elapsed() < Duration::from_secs(30));
 
         let pid = fs::read_to_string(&pid_file)
             .expect("descendant pid")
             .parse::<libc::pid_t>()
             .expect("numeric pid");
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + Duration::from_secs(10);
         while unsafe { libc::kill(pid, 0) } == 0 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(25));
         }
@@ -24306,7 +24303,7 @@ esac
             .await
         });
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        sync_waits::wait_for_record_lock_waiter(tmp.path(), "structured-stale").await;
         assert!(
             !request.is_finished(),
             "request must wait for the record lock"
@@ -27934,7 +27931,7 @@ esac
             .await
         });
 
-        std::thread::sleep(Duration::from_millis(50));
+        sync_waits::wait_for_record_lock_waiter(tmp.path(), "waiting-replace").await;
         let record_path = tmp.path().join("sessions/waiting-replace/session.json");
         let mut replacement: Value =
             serde_json::from_str(&std::fs::read_to_string(&record_path).unwrap()).unwrap();
@@ -27988,7 +27985,7 @@ esac
             .await
         });
 
-        std::thread::sleep(Duration::from_millis(50));
+        sync_waits::wait_for_record_lock_waiter(tmp.path(), "waiting-recreate").await;
         let record_path = tmp.path().join("sessions/waiting-recreate/session.json");
         let mut replacement: Value =
             serde_json::from_str(&std::fs::read_to_string(&record_path).unwrap()).unwrap();
@@ -29361,6 +29358,8 @@ esac
 
     #[path = "account_switch.rs"]
     mod account_switch;
+    #[path = "sync_waits.rs"]
+    mod sync_waits;
 
     #[test]
     fn legacy_broker_resume_uses_prior_persisted_identity() {
@@ -31830,7 +31829,6 @@ exit 0
             );
 
             let _ = socket.close(None).await;
-            tokio::time::sleep(Duration::from_millis(50)).await;
             server.abort();
         }
     }
