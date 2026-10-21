@@ -3,7 +3,7 @@
 
 ### Result
 
-- Managed tmux sessions now launch with TMPDIR=${AGENT_HOME}/tmp/<session-id>
+- Managed tmux sessions now launch with `TMPDIR=${AGENT_HOME}/tmp/<session-id>`
   (mode 0700); TMUX_TMPDIR and the launching process environment are unchanged.
 - The directory is reclaimed after a grace period (default 24 h,
   AGENT_SESSION_TMP_GRACE_SECS) once the runtime exits, on relaunch, and by the
