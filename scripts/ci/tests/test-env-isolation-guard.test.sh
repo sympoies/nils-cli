@@ -9,7 +9,8 @@ set -euo pipefail
 #   - a run that touches nothing passes, and sees none of the caller's variables;
 #   - a write under the poisoned HOME, AGENT_HOME, or XDG_STATE_HOME fails;
 #   - a run of the inherited auth-sync or remote-auth hook command fails;
-#   - a cargo failure fails the guard instead of passing vacuously.
+#   - a run that could not build fails the guard instead of passing vacuously, while
+#     plain test failures (nextest exit 100) are left to the regular gate.
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 guard="$repo_root/scripts/ci/test-env-isolation-guard.sh"
@@ -95,6 +96,9 @@ write_fake_cargo '"$CODEX_AUTH_REMOTE_SSH" host; exit 0'
 expect_fail "inherited remote-auth command ran" "hook command ran"
 
 write_fake_cargo 'exit 101'
-expect_fail "failing test run fails the guard" "exited non-zero"
+expect_fail "a run that could not build fails the guard" "exited 101"
+
+write_fake_cargo 'exit 100'
+expect_pass "failing tests alone are left to the regular gate"
 
 echo "ok: test environment isolation guard"

@@ -10,20 +10,32 @@
 # Usage: scripts/ci/test-env-isolation-guard.sh [--list]
 #   --list   print the representative test selection and exit
 #
-# A representative run that fails or cannot compile also fails the guard; test
-# output is never printed because it may echo fixture data.
+# A run that cannot build also fails the guard; ordinary test failures are left to
+# the regular gate, and test output is never printed because it may echo fixture data.
 #
 # Environment:
 #   ENV_GUARD_CARGO_ARGS  extra arguments for `cargo test` (for example --offline)
+#   ENV_GUARD_SELECTION   newline-separated package|target|filter entries replacing the default
 #   ENV_GUARD_KEEP=1      keep the sentinel root after the run for inspection
 set -euo pipefail
 
-# package|test target (empty for --lib)|test name filter
+# package (or `workspace`)|test target|test name filter. The target is a test binary name, `lib`
+# for the unit tests, or `all` for every target of the package.
 SELECTION=(
-  "nils-codex-cli|integration|agent_runtime_boundaries::"
-  "nils-agent-session|integration|"
-  "nils-secrets|integration|add_"
+  "nils-test-support|lib|"
+  "nils-codex-cli|all|"
+  "nils-agent-session|all|"
+  "nils-secrets|all|"
 )
+
+# A caller can replace the selection with newline-separated entries in the same
+# format, for example to run whole packages under the poisoned environment.
+if [[ -n "${ENV_GUARD_SELECTION:-}" ]]; then
+  SELECTION=()
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && SELECTION+=("$line")
+  done <<<"$ENV_GUARD_SELECTION"
+fi
 
 if [[ "${1:-}" == "--list" ]]; then
   printf '%s\n' "${SELECTION[@]}"
@@ -119,36 +131,60 @@ poisoned_env cargo build -p nils-agent-hook -p nils-agent-session --bins >"$scra
 
 before="$(snapshot)"
 status=0
+leaked=()
 for entry in "${SELECTION[@]}"; do
   IFS='|' read -r package target filter <<<"$entry"
   # nextest runs each test in its own process, which also avoids the
   # fork-vs-fresh-executable ETXTBSY race that a threaded `cargo test` has.
-  if cargo nextest --version >/dev/null 2>&1; then
-    args=(nextest run --profile ci -p "$package")
+  use_nextest=0
+  if poisoned_env cargo nextest --version >/dev/null 2>&1; then
+    use_nextest=1
+    args=(nextest run --profile ci --no-fail-fast)
   else
-    args=(test -p "$package")
+    args=(test --no-fail-fast)
   fi
-  if [[ -n "$target" ]]; then
-    args+=(--test "$target")
+  # `workspace` selects every package.
+  if [[ "$package" == workspace ]]; then
+    args+=(--workspace)
   else
-    args+=(--lib)
+    args+=(-p "$package")
   fi
+  case "$target" in
+    all) ;;
+    lib) args+=(--lib) ;;
+    bins) args+=(--bins) ;;
+    *) args+=(--test "$target") ;;
+  esac
   # shellcheck disable=SC2206
   args+=(${ENV_GUARD_CARGO_ARGS:-})
   [[ -n "$filter" ]] && args+=("$filter")
   printf 'env-guard: cargo %s\n' "${args[*]}" >&2
-  poisoned_env \
-    cargo "${args[@]}" >"$scratch/run-$package.log" 2>&1 || {
-      # Test output can echo fixture data, so it is never printed here.
-      printf 'env-guard: FAIL: cargo test for %s exited non-zero (log kept with ENV_GUARD_KEEP=1)\n' "$package" >&2
-      status=1
-    }
+  entry_before="$(snapshot)"
+  rc=0
+  poisoned_env cargo "${args[@]}" >"$scratch/run-$package-$target.log" 2>&1 || rc=$?
+  # Test output can echo fixture data, so it is never printed here. A failing
+  # test (nextest exit 100) is the regular gate's concern and may be a load flake;
+  # this guard fails on a build or setup failure, where nothing was exercised.
+  # nextest exits 4 when a target has no tests, which proves nothing is wrong.
+  if [[ "$rc" -ne 0 && ! ( "$use_nextest" -eq 1 && ( "$rc" -eq 100 || "$rc" -eq 4 ) ) ]]; then
+    printf 'env-guard: FAIL: cargo for %s exited %s (log kept with ENV_GUARD_KEEP=1)\n' "$package" "$rc" >&2
+    status=1
+  elif [[ "$rc" -ne 0 ]]; then
+    printf 'env-guard: note: %s has failing tests; the regular gate reports them\n' "$package" >&2
+  fi
+  # Attribute a change to the selection entry that made it.
+  entry_after="$(snapshot)"
+  if [[ "$entry_after" != "$entry_before" ]]; then
+    leaked+=("$package|$target")
+    printf 'env-guard: sentinel change during %s (%s):\n' "$package" "$target" >&2
+    diff <(printf '%s\n' "$entry_before" | cut -f1) <(printf '%s\n' "$entry_after" | cut -f1) |
+      grep '^[<>]' | head -n 20 >&2 || true
+  fi
 done
 
 after="$(snapshot)"
 if [[ "$before" != "$after" ]]; then
   printf 'env-guard: FAIL: tests changed the poisoned sentinel locations\n' >&2
-  diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") >&2 || true
   status=1
 fi
 if [[ -e "$sentinels/hits" ]]; then

@@ -36,7 +36,7 @@ fn worktree_lifecycle_blocks_provider_import_and_existing_resume() {
     let record_path = context.state_dir.join("sessions/existing/session.json");
     let before = fs::read(&record_path).unwrap();
     let _guard = nils_common::worktree_lifecycle::Guard::acquire(
-        &nils_common::worktree_lifecycle::state_home().unwrap(),
+        &crate::runtime_environment::worktree_lifecycle_state_home(&context).unwrap(),
         &checkout,
     )
     .unwrap();

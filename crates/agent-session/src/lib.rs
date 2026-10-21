@@ -12257,7 +12257,7 @@ fn acquire_worktree_lifecycle(
             Some(json!({ "retryable": matches!(error, Error::Busy) })),
         )
     };
-    let namespace = worktree_lifecycle::state_home().map_err(adapt)?;
+    let namespace = runtime_environment::worktree_lifecycle_state_home(context).map_err(adapt)?;
     let Some(root) = resolve_worktree_lifecycle_root(&namespace, cwd).map_err(adapt)? else {
         return Ok(None);
     };

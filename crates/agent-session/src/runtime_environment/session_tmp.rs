@@ -60,9 +60,12 @@ fn agent_home() -> Result<PathBuf, CliError> {
 
 fn tmp_root(state_dir: &Path) -> Result<PathBuf, CliError> {
     // Unit tests launch sessions against temporary state directories; keep their
-    // tmp directories out of the developer's real AGENT_HOME.
+    // tmp directories out of the developer's real AGENT_HOME, whether it is unset
+    // or inherited from the caller. A test that set AGENT_HOME itself keeps it.
     #[cfg(test)]
-    if non_empty_env("AGENT_HOME").is_none() {
+    if non_empty_env("AGENT_HOME").is_none()
+        || nils_test_support::hermetic::is_ambient("AGENT_HOME")
+    {
         return Ok(state_dir.join("agent-home/tmp"));
     }
     let _ = state_dir;

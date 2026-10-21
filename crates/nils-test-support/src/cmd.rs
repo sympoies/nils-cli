@@ -98,6 +98,12 @@ pub struct CmdOptions {
     pub env_remove: Vec<String>,
     pub stdin: Option<Vec<u8>>,
     pub stdin_null: bool,
+    /// Extra caller variables copied into the hermetic child, beyond
+    /// [`crate::hermetic::ENV_ALLOWLIST`].
+    pub env_passthrough: Vec<String>,
+    /// Opt out of the hermetic environment and let the child inherit the
+    /// caller's. Only for a test whose subject is environment inheritance.
+    pub inherit_ambient_env: bool,
 }
 
 impl Default for CmdOptions {
@@ -109,6 +115,8 @@ impl Default for CmdOptions {
             env_remove: Vec::new(),
             stdin: None,
             stdin_null: true,
+            env_passthrough: Vec::new(),
+            inherit_ambient_env: false,
         }
     }
 }
@@ -207,6 +215,24 @@ impl CmdOptions {
 
     pub fn with_stdin_str(mut self, input: &str) -> Self {
         self.stdin = Some(input.as_bytes().to_vec());
+        self
+    }
+
+    /// Copy these caller variables into the child in addition to the allowlist.
+    ///
+    /// Children start from a cleared environment (see [`crate::hermetic`]); prefer
+    /// `with_env` with an explicit value, and use this only for a variable the test
+    /// cannot choose, such as a toolchain location.
+    pub fn with_env_passthrough(mut self, names: &[&str]) -> Self {
+        self.env_passthrough
+            .extend(names.iter().map(|name| name.to_string()));
+        self
+    }
+
+    /// Let the child inherit the caller's whole environment instead of the
+    /// hermetic one. Reserved for tests of environment inheritance itself.
+    pub fn inherit_ambient_env(mut self) -> Self {
+        self.inherit_ambient_env = true;
         self
     }
 
@@ -366,6 +392,16 @@ fn run_impl_os(bin: &Path, args: &[&OsStr], options: &CmdOptions, dir: Option<&P
     }
 
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    // The home must outlive the child: the child's HOME, AGENT_HOME, CODEX_HOME,
+    // CLAUDE_CONFIG_DIR, and XDG_* directories live inside it.
+    let _hermetic_home = if options.inherit_ambient_env {
+        None
+    } else {
+        let home = crate::hermetic::HermeticHome::new();
+        crate::hermetic::apply(&mut cmd, &home, &options.env_passthrough);
+        Some(home)
+    };
 
     for key in &options.env_remove {
         cmd.env_remove(key);

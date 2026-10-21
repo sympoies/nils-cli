@@ -47,6 +47,8 @@ impl Fixture {
         command
             .env("HOME", self.dir.path().join("home"))
             .env("CODEX_HOME", self.dir.path().join("home"))
+            .env("AGENT_HOME", self.dir.path().join("agent-home"))
+            .env("XDG_STATE_HOME", self.dir.path().join("xdg-state"))
             .env_remove("CLAUDE_CONFIG_DIR")
             .args([
                 "--state-dir",
