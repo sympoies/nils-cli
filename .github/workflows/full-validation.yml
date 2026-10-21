@@ -55,6 +55,10 @@ jobs:
       contents: read
       checks: write
     steps:
+      - name: Configure gate reports
+        shell: bash
+        run: echo "NILS_CLI_REPORT_DIR=$RUNNER_TEMP/nils-cli-reports" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -135,13 +139,22 @@ jobs:
       - name: Full validation marker
         run: true
 
+      - name: Locate JUnit report
+        id: junit-report
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$NILS_CLI_REPORT_DIR/nextest/ci/junit.xml" ]]; then
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish JUnit report
-        if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
+        if: always() && steps.junit-report.outputs.present == 'true'
         uses: mikepenz/action-junit-report@v6
         with:
           token: ${{ github.token }}
           check_name: JUnit Test Report
-          report_paths: target/nextest/ci/junit.xml
+          report_paths: ${{ env.NILS_CLI_REPORT_DIR }}/nextest/ci/junit.xml
           # Keep the job summary bounded; the JUnit artifact and failure
           # annotations retain the detailed test results.
           detailed_summary: false
@@ -150,11 +163,11 @@ jobs:
           flaky_summary: true
 
       - name: Upload JUnit XML
-        if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
+        if: always() && steps.junit-report.outputs.present == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: junit-nextest
-          path: target/nextest/ci/junit.xml
+          path: ${{ env.NILS_CLI_REPORT_DIR }}/nextest/ci/junit.xml
 
   # The cgroup containment checks need a systemd user
   # scope and compile their own agent-session targets (~5.5 min). They run
@@ -226,6 +239,10 @@ jobs:
       contents: read
       checks: write
     steps:
+      - name: Configure gate reports
+        shell: bash
+        run: echo "NILS_CLI_REPORT_DIR=$RUNNER_TEMP/nils-cli-reports" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -340,15 +357,22 @@ jobs:
         if: always()
         run: rm -rf target/coverage
 
-      # cargo-llvm-cov runs nextest with its own target directory, so the JUnit
-      # report lands under target/llvm-cov-target on this job.
+      - name: Locate JUnit report
+        id: junit-report
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$NILS_CLI_REPORT_DIR/nextest/ci/junit.xml" ]]; then
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish JUnit report
-        if: always() && hashFiles('target/**/nextest/ci/junit.xml') != ''
+        if: always() && steps.junit-report.outputs.present == 'true'
         uses: mikepenz/action-junit-report@v6
         with:
           token: ${{ github.token }}
           check_name: JUnit Test Report (macOS)
-          report_paths: target/**/nextest/ci/junit.xml
+          report_paths: ${{ env.NILS_CLI_REPORT_DIR }}/nextest/ci/junit.xml
           # Keep the job summary bounded; the JUnit artifact and failure
           # annotations retain the detailed test results.
           detailed_summary: false
@@ -357,11 +381,11 @@ jobs:
           flaky_summary: true
 
       - name: Upload JUnit XML
-        if: always() && hashFiles('target/**/nextest/ci/junit.xml') != ''
+        if: always() && steps.junit-report.outputs.present == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: junit-nextest-macos
-          path: target/**/nextest/ci/junit.xml
+          path: ${{ env.NILS_CLI_REPORT_DIR }}/nextest/ci/junit.xml
 
   # The coverage floor is enforced by test_macos's instrumented test run; this
   # job keeps the required `coverage` check by proving that run produced its

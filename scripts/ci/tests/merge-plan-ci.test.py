@@ -90,6 +90,7 @@ class ConsumerExecutionTests(unittest.TestCase):
                         FAKE_CARGO_LOG=str(self.log), NILS_CLI_TEST_RUNNER='nextest',
                         NILS_CLI_SKIP_DOCTESTS='0', NILS_CLI_COVERAGE_FAIL_UNDER_LINES='85',
                         GITHUB_OUTPUT=str(self.root / 'github-output'),
+                        NILS_CLI_REPORT_DIR=str(self.root / 'reports'),
                         FORGE_IDENTITY_FIXTURE_MARKER='synthetic')
         self.git('init', '-q')
         self.git('config', 'user.name', 'Fixture')
@@ -99,7 +100,7 @@ class ConsumerExecutionTests(unittest.TestCase):
                  'scripts/ci/merge-plan.schema.v1.json', 'scripts/ci/merge-plan.schema.v2.json',
                  'scripts/ci/nils-cli-scoped-checks.sh', 'scripts/ci/scoped-coverage-ratchet.py',
                  'scripts/ci/assert-import-audit.py', 'scripts/ci/lib/rust_file_size.py',
-                 'scripts/ci/test-env.sh')
+                 'scripts/ci/test-env.sh', 'scripts/ci/gate-reports.py')
         for path in paths:
             dest = self.repo / path
             dest.parent.mkdir(parents=True, exist_ok=True)
