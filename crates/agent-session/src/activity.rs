@@ -1101,7 +1101,7 @@ fn remove_runtime_unhealthy_marker(dir: &Path) -> Result<(), CliError> {
 }
 
 fn now() -> String {
-    Zoned::now().timestamp().to_string()
+    claude_completion::now()
 }
 
 fn runtime_source() -> TurnSource {

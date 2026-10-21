@@ -9,7 +9,38 @@ pub(super) fn capture_tmux_runtime_identity(
     capture_tmux_identity(context, record, tmux_bin, timeout, true)
 }
 
+/// Capture the runtime identity, resolving a probe that lost a race with the
+/// runtime's own exit.
+///
+/// The identity is read through several tmux and process probes. When the
+/// session closes between them (the first `display-message` saw it), a later
+/// probe fails with an unavailable or mismatched identity even though nothing
+/// is left to identify. Re-check the exact session: a positively absent
+/// session is a stopped runtime, not an identity that cannot be established.
 fn capture_tmux_identity(
+    context: &CliContext,
+    record: &SessionRecord,
+    tmux_bin: &Path,
+    timeout: Duration,
+    capture_process_boundary: bool,
+) -> Result<TmuxRuntimeProbe, SessionTerminationFailure> {
+    match capture_tmux_identity_once(context, record, tmux_bin, timeout, capture_process_boundary) {
+        Err(
+            SessionTerminationFailure::RuntimeIdentityUnavailable
+            | SessionTerminationFailure::RuntimeIdentityMismatch,
+        ) if verified_tmux_status_with_timeout(
+            tmux_bin,
+            &format!("={}", record.tmux_session),
+            timeout,
+        ) == "stopped" =>
+        {
+            Ok(TmuxRuntimeProbe::Stopped)
+        }
+        probe => probe,
+    }
+}
+
+fn capture_tmux_identity_once(
     context: &CliContext,
     record: &SessionRecord,
     tmux_bin: &Path,
@@ -821,6 +852,85 @@ fn scan_processes(_: &str, _: &str) -> ProcessScan {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    /// A tmux whose `display-message` still reports a live pane but whose later
+    /// probes find nothing, with `has-session` answering as given.
+    fn closing_session_tmux(dir: &Path, pane_pid: u32, session_present: bool) -> PathBuf {
+        let tmux = dir.join("tmux");
+        let has_session = if session_present {
+            "exit 0"
+        } else {
+            "echo \"can't find session: $3\" >&2; exit 1"
+        };
+        fs::write(
+            &tmux,
+            format!(
+                "#!/bin/sh\ncase \"$1\" in\ndisplay-message) printf '$91 %%91 {pane_pid}\\n'; exit 0 ;;\nhas-session) {has_session} ;;\nesac\nexit 1\n"
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        tmux
+    }
+
+    #[test]
+    fn identity_capture_reports_a_session_that_closed_mid_probe_as_stopped() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = crate::tests::test_context(tmp.path());
+        let id = crate::tests::create_test_record_id(&context, AgentKind::Codex, None, None);
+        let record = load_session_record(&context, &id).unwrap();
+        let pane = crate::tests::TestProcessGroup::spawn();
+
+        // `show-environment` fails after `display-message` saw the pane. The
+        // session is now absent, so nothing remains whose identity is unknown.
+        let tmux = closing_session_tmux(tmp.path(), pane.pid(), false);
+        assert!(matches!(
+            crate::capture_tmux_runtime_identity(&context, &record, &tmux, Duration::from_secs(1)),
+            Ok(crate::TmuxRuntimeProbe::Stopped)
+        ));
+
+        // A session that is still present keeps the failure closed.
+        let tmux = closing_session_tmux(tmp.path(), pane.pid(), true);
+        assert_eq!(
+            crate::capture_tmux_runtime_identity(&context, &record, &tmux, Duration::from_secs(1))
+                .err(),
+            Some(crate::SessionTerminationFailure::RuntimeIdentityUnavailable)
+        );
+    }
+
+    #[test]
+    fn plain_kill_accepts_a_session_that_closed_before_the_guarded_command() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let identity = crate::TmuxRuntimeIdentity {
+            macos_boot_id: crate::capture_macos_boot_id(),
+            launch_id: None,
+            session_id: "$91".to_owned(),
+            pane_id: "%91".to_owned(),
+            pane_pid: 4242,
+            pane_start_time: None,
+            process_group_id: Some(4242),
+            process_session_id: None,
+            process_session_members: Vec::new(),
+            control_group_members: Vec::new(),
+            control_group: None,
+            cgroup_mount: None,
+            pid_namespace: None,
+        };
+
+        // `if-shell` fails because tmux no longer finds the pane to guard.
+        let tmux = closing_session_tmux(tmp.path(), 4242, false);
+        assert_eq!(
+            crate::tmux_kill_identity_with_timeout(&tmux, &identity, Duration::from_secs(1)).ok(),
+            Some(crate::TmuxIdentityKillOutcome::KillConfirmed)
+        );
+
+        // A session that is still present is a real kill failure.
+        let tmux = closing_session_tmux(tmp.path(), 4242, true);
+        assert_eq!(
+            crate::tmux_kill_identity_with_timeout(&tmux, &identity, Duration::from_secs(1)).err(),
+            Some(crate::SessionTerminationFailure::KillFailed)
+        );
+    }
 
     #[test]
     fn macos_process_listing_finds_marked_candidates_after_four_kib() {

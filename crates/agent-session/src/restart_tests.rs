@@ -63,8 +63,8 @@ case "$1" in
     printf '%s\t%s\t%s\n' '$77' '%77' "$(cat "$root/pane")"
     ;;
   display-message) printf '%s\t%s\t%s\n' '$77' '%77' "$(cat "$root/pane")" ;;
-  has-session) [ -f "$root/stall-status" ] && {{ : > "$root/status-stalled"; sleep 5; }} ;;
-  show-environment) [ -f "$root/stall" ] && sleep 3; grep "^$4=" "$root/env" || exit 1 ;;
+  has-session) [ -f "$root/stall-status" ] && {{ : > "$root/status-stalled"; sleep 20; }} ;;
+  show-environment) [ -f "$root/stall" ] && sleep 20; grep "^$4=" "$root/env" || exit 1 ;;
   capture-pane) cat "$root/screen" ;;
   send-keys) case " $* " in *" Enter "*) [ -f "$root/hold-exit" ] || stop_pane ;; esac ;;
   if-shell|kill-session) stop_pane ;;
@@ -589,7 +589,7 @@ fn ready_timeout_bounds_a_stalled_readiness_observation() {
         fs::write(root.join("stall"), "").unwrap();
     });
 
-    let error = restart(&context, &restart_args(&tmux, false, 1)).unwrap_err();
+    let error = restart(&context, &restart_args(&tmux, false, 2)).unwrap_err();
     staller.join().unwrap();
 
     assert_eq!(error.code(), "restart-not-ready");
@@ -603,7 +603,9 @@ fn ready_timeout_bounds_a_stalled_readiness_observation() {
     let relaunched: Timestamp = receipt["relaunched_at"].as_str().unwrap().parse().unwrap();
     let finished: Timestamp = receipt["finished_at"].as_str().unwrap().parse().unwrap();
     let waited = finished.duration_since(relaunched).as_secs_f64();
-    assert!(waited < 2.5, "readiness waited {waited}s past a 1s timeout");
+    // The stalled observation outlasts the ceiling, which sits far above the
+    // 2 s budget so that CPU starvation cannot trip it.
+    assert!(waited < 8.0, "readiness waited {waited}s past a 2s timeout");
 }
 
 #[test]
@@ -718,7 +720,7 @@ fn ready_timeout_bounds_a_stalled_status_probe() {
         fs::write(root.join("stall-status"), "").unwrap();
     });
 
-    let error = restart(&context, &restart_args(&tmux, false, 1)).unwrap_err();
+    let error = restart(&context, &restart_args(&tmux, false, 2)).unwrap_err();
     staller.join().unwrap();
 
     assert_eq!(error.code(), "restart-not-ready");
@@ -731,7 +733,8 @@ fn ready_timeout_bounds_a_stalled_status_probe() {
     let relaunched: Timestamp = receipt["relaunched_at"].as_str().unwrap().parse().unwrap();
     let finished: Timestamp = receipt["finished_at"].as_str().unwrap().parse().unwrap();
     let waited = finished.duration_since(relaunched).as_secs_f64();
-    assert!(waited < 2.5, "readiness waited {waited}s past a 1s timeout");
+    // An uncapped probe would wait out its 10 s command timeout.
+    assert!(waited < 8.0, "readiness waited {waited}s past a 2s timeout");
 }
 
 /// A lifecycle writer that holds the session record past the stop timeout
@@ -745,9 +748,11 @@ fn post_exit_record_lock_contention_returns_the_receipt() {
     let launch = running_session(&context, &tmux);
     session_ready(&context, &launch);
     fs::write(tmp.path().join("hold-exit"), "").unwrap();
+    let restart_returned = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let holder = {
         let context = context.clone();
         let root = tmp.path().to_path_buf();
+        let restart_returned = restart_returned.clone();
         thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(10);
             while !log(&root).contains("send-keys") && Instant::now() < deadline {
@@ -761,13 +766,20 @@ fn post_exit_record_lock_contention_returns_the_receipt() {
                 .arg(format!("-{}", pane.trim()))
                 .status();
             fs::remove_file(root.join("running")).unwrap();
-            thread::sleep(Duration::from_secs(3));
+            // Hold the record until the restart gives up, however long that takes.
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !restart_returned.load(std::sync::atomic::Ordering::SeqCst)
+                && Instant::now() < deadline
+            {
+                thread::sleep(Duration::from_millis(20));
+            }
         })
     };
 
     let mut args = restart_args(&tmux, false, 1);
     args.stop_timeout = 1;
     let error = restart(&context, &args).unwrap_err();
+    restart_returned.store(true, std::sync::atomic::Ordering::SeqCst);
     holder.join().unwrap();
 
     assert_eq!(error.code(), "restart-stop-failed", "{error:?}");

@@ -67,7 +67,7 @@ This selects `DEVLOG_LAYOUT=fragments` for devlog writers. Install released
    coverage maintenance, CI debugging, or an explicit request. GitHub required
    checks `test`, `test_containment`, and `cargo-deny (advisories + bans)`
    remain the Linux merge gate. Full Linux/macOS tests and coverage gate releases.
-   See the [delivery and release flow](.github/README.md).
+   See the [delivery and release flow](docs/runbooks/delivery-and-releases.md).
 
 For an approved batch of low-risk changes, follow the
 [`next` integration procedure](docs/runbooks/workspace-maintenance-reference.md#integration-batches-on-next).

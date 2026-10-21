@@ -24,10 +24,11 @@ fn agent_session_executable_resolves_facade_to_exact_release_sibling() {
     fs::set_permissions(&agent_session, fs::Permissions::from_mode(0o700))
         .expect("agent-session mode");
 
-    // The resolver canonicalizes; macOS tempdirs sit behind `/var`.
+    // The sibling keeps the invocation's directory spelling; it is not resolved
+    // (macOS tempdirs sit behind the `/var` link).
     assert_eq!(
         resolve_agent_session_executable_from(&sibling_helper).expect("sibling executable"),
-        fs::canonicalize(&agent_session).expect("canonical agent-session")
+        agent_session
     );
 }
 
@@ -43,7 +44,33 @@ fn agent_session_executable_preserves_direct_agent_session_recursion() {
 
     assert_eq!(
         resolve_agent_session_executable_from(&agent_session).expect("current executable"),
-        fs::canonicalize(&agent_session).expect("canonical agent-session")
+        agent_session
+    );
+}
+
+#[test]
+fn agent_session_executable_keeps_a_linked_directory_in_the_invocation_path() {
+    // A directory reached through a link (macOS `/var` -> `/private/var`) is the
+    // stable spelling: resolving it would pin the path the link stands in for.
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let real = tmp.path().join("real");
+    fs::create_dir(&real).expect("real dir");
+    let linked = tmp.path().join("linked");
+    symlink(&real, &linked).expect("directory link");
+    for stem in ["agent-session", "fixture-helper"] {
+        let binary = real.join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
+        fs::write(&binary, stem).expect("fixture");
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).expect("mode");
+    }
+    let name = |stem: &str| linked.join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
+
+    assert_eq!(
+        resolve_agent_session_executable_from(&name("agent-session")).expect("direct"),
+        name("agent-session")
+    );
+    assert_eq!(
+        resolve_agent_session_executable_from(&name("fixture-helper")).expect("facade"),
+        name("agent-session")
     );
 }
 
