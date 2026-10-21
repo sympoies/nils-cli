@@ -27,7 +27,9 @@ or integrating a specific subsystem.
 - [Session display metadata v1](specs/session-display-metadata-v1.md): explicit
   roles, persisted auto/pinned titles, and exact-session revision-fenced updates.
 - [Serve API v1](specs/serve-api-v1.md): HTTP and WebSocket endpoints,
-  response/authentication rules, launch profiles, and session survival.
+  response/authentication rules, launch profiles, and session survival. Its
+  endpoint map routes history, observation, automation, prompts, accounts,
+  creation, terminal transport, and usage to topic contracts.
 - [Native busy replies](specs/native-busy-replies.md): immediate client handoff,
   provider acknowledgment limits, and the separate explicit idle-only option.
 - [Session retitle v2](specs/session-retitle-v2.md): bounded title context,
@@ -36,7 +38,9 @@ or integrating a specific subsystem.
   incremental history projection, asynchronous operations, freshness, and
   long-session privacy/fencing guarantees.
 - [Session coordination v1](specs/session-coordination-v1.md): normative
-  schemas, state machines, authorization, routes, limits, and failure codes.
+  core state machines, trust, authorization, and owned children. Its contract
+  map routes schemas, mailbox, runtime recovery, interfaces, and federation
+  to topic contracts.
 - [Scoped worker delegation v1](specs/scoped-worker-delegation-v1.md): expiring
   operation and recipient scopes for supervised workers, revocation and audits.
 - [Session board v1](specs/session-board-v1.md): opt-in cross-host board
