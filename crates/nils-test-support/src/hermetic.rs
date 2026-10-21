@@ -12,7 +12,7 @@
 //! `CmdOptions::with_env`, which is applied after this and therefore wins.
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::process::Command;
 use std::sync::OnceLock;
@@ -151,21 +151,25 @@ pub fn apply_from(
             command.env(name, value);
         }
     }
-    // Home and config roots are substituted unless the test changed them itself
-    // (set to a fixture, or removed to exercise a default).
-    let substitute = |name: &str| !changed(&OsString::from(name));
+    // Home and config roots the caller has inherited are replaced by the per-spawn
+    // layout. A root the caller does not have stays unset, so the child falls back
+    // to a path under the hermetic `HOME`; a root the test changed itself (set to a
+    // fixture, or removed to exercise a default) is left as the test made it.
+    let substitute = |name: &str, always: bool| {
+        !changed(&OsString::from(name)) && (always || caller.contains_key(OsStr::new(name)))
+    };
     for (name, dir) in HOME_DIRS {
-        if substitute(name) {
+        if substitute(name, name == "HOME") {
             command.env(name, home.path().join(dir));
         }
     }
-    if substitute("XDG_CACHE_HOME") {
+    if substitute("XDG_CACHE_HOME", false) {
         command.env("XDG_CACHE_HOME", home.path().join("xdg-cache"));
     }
-    if substitute("GIT_CONFIG_GLOBAL") {
+    if substitute("GIT_CONFIG_GLOBAL", false) {
         command.env("GIT_CONFIG_GLOBAL", home.path().join("gitconfig"));
     }
-    if substitute("GIT_CONFIG_NOSYSTEM") {
+    if substitute("GIT_CONFIG_NOSYSTEM", true) {
         command.env("GIT_CONFIG_NOSYSTEM", OsString::from("1"));
     }
 }
@@ -233,6 +237,14 @@ mod tests {
             ("GIT_CONFIG_COUNT", "1"),
             ("AGENT_SESSION_ID", "poison"),
             ("HOME", "/real/home"),
+            ("AGENT_HOME", "/real/agent"),
+            ("CODEX_HOME", "/real/codex"),
+            ("CLAUDE_CONFIG_DIR", "/real/claude"),
+            ("XDG_CONFIG_HOME", "/real/xdg-config"),
+            ("XDG_STATE_HOME", "/real/xdg-state"),
+            ("XDG_DATA_HOME", "/real/xdg-data"),
+            ("XDG_CACHE_HOME", "/real/xdg-cache"),
+            ("GIT_CONFIG_GLOBAL", "/real/gitconfig"),
             ("LC_ALL", "C"),
             ("TERM", "dumb"),
         ];
@@ -269,12 +281,14 @@ mod tests {
     fn variables_the_test_changed_in_process_reach_the_child() {
         let baseline = [
             ("HOME", "/real/home"),
+            ("AGENT_HOME", "/real/agent"),
             ("CODEX_HOME", "/real/codex"),
             ("AGENT_HOOK_BIN", "/real/hook"),
         ];
         // The test set HOME and a new variable, changed AGENT_HOOK_BIN, and removed CODEX_HOME.
         let caller = [
             ("HOME", "/fixture/home"),
+            ("AGENT_HOME", "/real/agent"),
             ("AGENT_HOOK_BIN", "/fixture/hook"),
             ("FIXTURE_ONLY", "set"),
         ];
@@ -316,5 +330,29 @@ mod tests {
         );
         assert_eq!(env.get("NILS_HERMETIC_DROP"), None);
         assert_eq!(env.get("HOME").map(String::as_str), Some("/explicit/home"));
+    }
+
+    #[test]
+    fn roots_the_caller_lacks_stay_unset_but_home_is_always_provided() {
+        let (home, env) = run_env(&[], &[("TERM", "dumb")], &[]);
+        assert_eq!(
+            env.get("HOME").map(String::as_str),
+            Some(home.path().join("home").to_string_lossy().as_ref())
+        );
+        for name in [
+            "AGENT_HOME",
+            "CODEX_HOME",
+            "CLAUDE_CONFIG_DIR",
+            "XDG_CONFIG_HOME",
+            "XDG_STATE_HOME",
+            "XDG_CACHE_HOME",
+            "GIT_CONFIG_GLOBAL",
+        ] {
+            assert_eq!(env.get(name), None, "{name} stays unset so defaults apply");
+        }
+        assert_eq!(
+            env.get("GIT_CONFIG_NOSYSTEM").map(String::as_str),
+            Some("1")
+        );
     }
 }
