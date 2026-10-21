@@ -1,6 +1,8 @@
 //! Native guarded dispatch. Thread idle never substitutes for composer proof.
+mod confirmation;
 pub(crate) mod trace;
 use super::*;
+use confirmation::input_observed;
 use trace::{Method, Outcome, Request};
 
 type Socket = tokio_tungstenite::WebSocketStream<UnixStream>;
@@ -159,7 +161,7 @@ impl Client {
     pub(crate) fn dispatch(
         &mut self,
         text: &str,
-        on_turn_ack: impl FnOnce(),
+        on_turn_ack: impl FnOnce(&str),
     ) -> Result<&'static str, DispatchError> {
         let unknown = |_| DispatchError {
             acknowledged: false,
@@ -194,7 +196,7 @@ impl Client {
             acknowledged: false,
         })?;
         let turn_id = turn_id.to_owned();
-        on_turn_ack();
+        on_turn_ack(&turn_id);
         self.confirm_input(&turn_id, text)
             .map_err(|_| DispatchError { acknowledged: true })?;
         Ok("input_observed")
@@ -221,57 +223,22 @@ impl Client {
             thread::sleep(remaining.min(Duration::from_millis(100)));
         }
     }
-}
 
-fn input_observed(
-    history: &Value,
-    thread_id: &str,
-    turn_id: &str,
-    text: &str,
-) -> trace::Observation {
-    let mut observed = trace::Observation::invalid();
-    observed.thread_matches =
-        Some(history.pointer("/thread/id").and_then(Value::as_str) == Some(thread_id));
-    if observed.thread_matches != Some(true) {
-        return observed;
+    /// Observe a retained acknowledged turn once; never start or steer a turn.
+    pub(crate) fn confirms_input(
+        &mut self,
+        turn_id: &str,
+        matches: impl FnOnce(&str) -> bool,
+    ) -> bool {
+        let Ok(history) = self.request(
+            "thread/read",
+            json!({"threadId":self.thread_id,"includeTurns":true}),
+        ) else {
+            return false;
+        };
+        confirmation::input_observed_by(&history, &self.thread_id, turn_id, matches).result
+            == Ok(true)
     }
-    let Some(turns) = history.pointer("/thread/turns").and_then(Value::as_array) else {
-        return observed;
-    };
-    let mut matching = turns
-        .iter()
-        .filter(|turn| turn["id"].as_str() == Some(turn_id));
-    let Some(turn) = matching.next() else {
-        observed.turn_matches = Some(false);
-        observed.result = Ok(false);
-        return observed;
-    };
-    observed.turn_matches = Some(matching.next().is_none());
-    if observed.turn_matches != Some(true) {
-        return observed;
-    }
-    let Some(items) = turn["items"].as_array() else {
-        return observed;
-    };
-    let mut inputs = items.iter().filter(|item| item["type"] == "userMessage");
-    let Some(input) = inputs.next() else {
-        observed.result = Ok(false);
-        return observed;
-    };
-    if inputs.next().is_some() {
-        return observed;
-    }
-    let Some(content) = input["content"].as_array() else {
-        return observed;
-    };
-    let exact = content.len() == 1
-        && content[0]["type"] == "text"
-        && content[0]["text"].as_str() == Some(text);
-    observed.text_matches = Some(exact);
-    if exact {
-        observed.result = Ok(true);
-    }
-    observed
 }
 
 pub(crate) fn idle(record: &SessionRecord, deadline: Instant) -> Result<(), &'static str> {

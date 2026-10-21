@@ -1,6 +1,8 @@
 //! At-most-once prompt attempts. An unfinished durable claim is never replayed.
 use super::*;
+use std::sync::Mutex;
 
+mod reconcile;
 mod store;
 mod terminal;
 
@@ -29,6 +31,13 @@ enum Outcome {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ConfirmationDiagnostic {
+    AcceptanceUnobservable,
+    NativeInputUnconfirmed,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct Receipt {
     request_id: String,
     session_id: String,
@@ -37,6 +46,8 @@ struct Receipt {
     code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     composer_cleanup: Option<terminal::ComposerCleanup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    confirmation_diagnostic: Option<ConfirmationDiagnostic>,
 }
 
 impl Receipt {
@@ -48,6 +59,7 @@ impl Receipt {
             outcome: Outcome::Unknown,
             code: Some("structured-prompt-outcome-unknown".into()),
             composer_cleanup: None,
+            confirmation_diagnostic: Some(ConfirmationDiagnostic::AcceptanceUnobservable),
         }
     }
 }
@@ -58,6 +70,9 @@ struct ResultRecord {
     status: u16,
     #[serde(default)]
     queued: bool,
+    // Private storage only: this record is never returned as an API envelope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    native_confirmation: Option<reconcile::NativeProof>,
 }
 
 impl ResultRecord {
@@ -66,6 +81,7 @@ impl ResultRecord {
             receipt,
             status: 500,
             queued: false,
+            native_confirmation: None,
         }
     }
 
@@ -153,7 +169,11 @@ pub(super) async fn submit(
     })
     .await;
     let claim = match claimed {
-        Ok(Ok(store::ClaimResult::Existing(result))) => return result.response(&state.machine),
+        Ok(Ok(store::ClaimResult::Existing(result))) => {
+            return reconcile::attempt(&state.context, result)
+                .await
+                .response(&state.machine);
+        }
         Ok(Ok(store::ClaimResult::New(claim))) => claim,
         Ok(Err(error)) if error.code() == "request-id-conflict" => {
             return status_json(
@@ -166,8 +186,22 @@ pub(super) async fn submit(
         Err(_) => return join_err(),
     };
     let receipt = claim.receipt.clone();
-    let response = dispatch(state.clone(), receipt.session_id.clone(), body).await;
-    let result = classify(response, receipt).await;
+    let proof = Arc::new(Mutex::new(None));
+    let response = dispatch_observing(
+        state.clone(),
+        receipt.session_id.clone(),
+        body,
+        Some(proof.clone()),
+    )
+    .await;
+    let mut result = classify(response, receipt).await;
+    if result.receipt.outcome == Outcome::Unknown {
+        result.native_confirmation = proof.lock().ok().and_then(|mut proof| proof.take());
+        if result.native_confirmation.is_some() {
+            result.receipt.confirmation_diagnostic =
+                Some(ConfirmationDiagnostic::NativeInputUnconfirmed);
+        }
+    }
     let persisted = result.clone();
     match tokio::task::spawn_blocking(move || store::finish(claim, &persisted)).await {
         Ok(Ok(())) => result.response(&state.machine),
@@ -176,6 +210,7 @@ pub(super) async fn submit(
         _ => ResultRecord::unknown(Receipt {
             outcome: Outcome::Unknown,
             code: Some("structured-prompt-outcome-unknown".into()),
+            confirmation_diagnostic: Some(ConfirmationDiagnostic::AcceptanceUnobservable),
             ..result.receipt
         })
         .response(&state.machine),
@@ -214,6 +249,7 @@ pub(super) async fn lookup(
     .await
     {
         Ok(Ok(Some(result))) => {
+            let result = reconcile::attempt(&state.context, result).await;
             envelope_ok(json!({"machine":state.machine,"receipt":result.receipt}))
         }
         Ok(Ok(None)) => status_json(
@@ -227,6 +263,15 @@ pub(super) async fn lookup(
 }
 
 async fn dispatch(state: Arc<ServeState>, id: String, body: SubmitBody) -> Response {
+    dispatch_observing(state, id, body, None).await
+}
+
+async fn dispatch_observing(
+    state: Arc<ServeState>,
+    id: String,
+    body: SubmitBody,
+    proof: Option<Arc<Mutex<Option<reconcile::NativeProof>>>>,
+) -> Response {
     if !body.require_idle {
         return submit_structured_prompt_handler(
             state,
@@ -278,6 +323,7 @@ async fn dispatch(state: Arc<ServeState>, id: String, body: SubmitBody) -> Respo
             "this session does not provide structured prompt submission",
         );
     }
+    let fingerprint = store::fingerprint(&body.text, true);
     let mut args = crate::send::unguarded_args(
         record.id,
         Some(body.text),
@@ -292,7 +338,17 @@ async fn dispatch(state: Arc<ServeState>, id: String, body: SubmitBody) -> Respo
         ..Default::default()
     };
     let context = state.context.clone();
-    match tokio::task::spawn_blocking(move || crate::send_to_session(&context, args)).await {
+    match tokio::task::spawn_blocking(move || {
+        crate::send::send_to_session_observing(&context, args, &mut |record, turn| {
+            if let Some(proof) = &proof
+                && let Ok(mut proof) = proof.lock()
+            {
+                *proof = reconcile::NativeProof::new(record, turn, &fingerprint);
+            }
+        })
+    })
+    .await
+    {
         Ok(Ok(sent))
             if sent.submission.is_some_and(|s| {
                 matches!(
@@ -355,10 +411,12 @@ async fn classify(response: Response, mut receipt: Receipt) -> ResultRecord {
     if status.is_success() && body["data"]["submitted"] == true {
         receipt.outcome = Outcome::Submitted;
         receipt.code = None;
+        receipt.confirmation_diagnostic = None;
         return ResultRecord {
             receipt,
             status: status.as_u16(),
             queued: body["data"]["queued"] == true,
+            native_confirmation: None,
         };
     }
     let code = body["error"]["code"].as_str().unwrap_or("");
@@ -382,10 +440,12 @@ async fn classify(response: Response, mut receipt: Receipt) -> ResultRecord {
     {
         receipt.outcome = Outcome::Refused;
         receipt.code = Some(code.to_string());
+        receipt.confirmation_diagnostic = None;
         ResultRecord {
             receipt,
             status: status.as_u16(),
             queued: false,
+            native_confirmation: None,
         }
     } else {
         let mut result = ResultRecord::unknown(receipt);

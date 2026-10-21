@@ -50,7 +50,15 @@ fn guarded_hold_budget(record: &SessionRecord) -> Duration {
 
 pub(crate) fn send_to_session(
     context: &CliContext,
+    args: cli::SendArgs,
+) -> Result<SendResult, CliError> {
+    send_to_session_observing(context, args, &mut |_, _| {})
+}
+
+pub(crate) fn send_to_session_observing(
+    context: &CliContext,
     mut args: cli::SendArgs,
+    acknowledged: &mut dyn FnMut(&SessionRecord, &str),
 ) -> Result<SendResult, CliError> {
     // Picker shortcuts type into the terminal rather than paste. Never send
     // them into a working/unknown session, even with --allow-blocked.
@@ -128,7 +136,10 @@ pub(crate) fn send_to_session(
             record,
             &tmux_bin,
             &mut manual_input,
-            guard_started,
+            native::Attempt {
+                started: guard_started,
+                acknowledged,
+            },
         );
     }
     auto_resume::cancel_for_manual_input_locked(
@@ -380,8 +391,9 @@ fn guarded(
     mut record: SessionRecord,
     tmux_bin: &Path,
     manual_input: &mut ManualInputSection,
-    hold_started: Instant,
+    attempt: native::Attempt<'_>,
 ) -> Result<SendResult, CliError> {
+    let hold_started = attempt.started;
     let observed = record.clone();
     let admission = send_guard::Admission {
         context,
@@ -406,7 +418,7 @@ fn guarded(
             record,
             tmux_bin,
             manual_input,
-            hold_started,
+            attempt,
         );
     }
     let submits = codex_app_server::input_contains_submission(text.as_deref(), &args.keys);
