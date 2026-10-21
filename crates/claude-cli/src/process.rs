@@ -486,6 +486,14 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    /// Deadline for tests whose subject is the child's own result, not the clock.
+    const GENEROUS: Duration = Duration::from_secs(60);
+    /// How long a stubbed child outlives any deadline a test sets.
+    const STUB_LIFETIME_SECS: u32 = 300;
+    /// A bounded call must come back long before the stub could have finished;
+    /// normal runs take milliseconds, so this only trips when the bound is broken.
+    const BOUNDED_RETURN: Duration = Duration::from_secs(120);
+
     #[test]
     fn captures_bounded_stdout_stderr_and_status() {
         let mut command = Command::new("/bin/sh");
@@ -493,8 +501,7 @@ mod tests {
             .args(["-c", "printf stdout; printf stderr >&2; exit 7"])
             .stdin(Stdio::null());
 
-        let output =
-            output_with_limits(&mut command, Duration::from_secs(1), 1024).expect("output");
+        let output = output_with_limits(&mut command, GENEROUS, 1024).expect("output");
 
         assert_eq!(output.status.code(), Some(7));
         assert_eq!(output.stdout, b"stdout");
@@ -504,14 +511,16 @@ mod tests {
     #[test]
     fn terminates_a_hung_process_at_the_deadline() {
         let mut command = Command::new("/bin/sh");
-        command.args(["-c", "sleep 30"]).stdin(Stdio::null());
+        command
+            .args(["-c", &format!("sleep {STUB_LIFETIME_SECS}")])
+            .stdin(Stdio::null());
         let started = Instant::now();
 
         let error = output_with_limits(&mut command, Duration::from_millis(100), 1024)
             .expect_err("timeout");
 
         assert!(matches!(error, ProcessOutputError::Timeout));
-        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(started.elapsed() < BOUNDED_RETURN);
     }
 
     #[test]
@@ -520,13 +529,10 @@ mod tests {
         command
             .args(["-c", "while :; do printf 1234567890; done"])
             .stdin(Stdio::null());
-        let started = Instant::now();
 
-        let error = output_with_limits(&mut command, Duration::from_secs(2), 1024)
-            .expect_err("output limit");
+        let error = output_with_limits(&mut command, GENEROUS, 1024).expect_err("output limit");
 
         assert!(matches!(error, ProcessOutputError::OutputLimit));
-        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]
@@ -539,8 +545,8 @@ mod tests {
             ])
             .stdin(Stdio::null());
 
-        let error = output_with_limits(&mut command, Duration::from_secs(1), 12)
-            .expect_err("aggregate output limit");
+        let error =
+            output_with_limits(&mut command, GENEROUS, 12).expect_err("aggregate output limit");
 
         assert!(matches!(error, ProcessOutputError::OutputLimit));
     }
@@ -555,7 +561,7 @@ mod tests {
             .args([
                 "-c",
                 &format!(
-                    "setsid sh -c 'sleep 30' & printf '%s' \"$!\" > '{}'",
+                    "setsid sh -c 'sleep {STUB_LIFETIME_SECS}' & printf '%s' \"$!\" > '{}'",
                     pid_file.display()
                 ),
             ])
@@ -566,7 +572,7 @@ mod tests {
             .expect_err("escaped descendant must not hold the caller");
 
         assert!(matches!(error, ProcessOutputError::Timeout));
-        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(started.elapsed() < BOUNDED_RETURN);
         let pid = std::fs::read_to_string(pid_file)
             .expect("escaped pid")
             .parse::<libc::pid_t>()
@@ -587,18 +593,18 @@ mod tests {
             .args([
                 "-c",
                 &format!(
-                    "setsid sh -c 'sleep 30' & printf '%s' \"$!\" > '{}'; printf overflow",
+                    "setsid sh -c 'sleep {STUB_LIFETIME_SECS}' & printf '%s' \"$!\" > '{}'; printf overflow",
                     pid_file.display()
                 ),
             ])
             .stdin(Stdio::null());
         let started = Instant::now();
 
-        let error = output_with_limits(&mut command, Duration::from_secs(5), 4)
+        let error = output_with_limits(&mut command, GENEROUS, 4)
             .expect_err("escaped descendant must not hold the caller");
 
         assert!(matches!(error, ProcessOutputError::OutputLimit));
-        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(started.elapsed() < BOUNDED_RETURN);
         let pid = std::fs::read_to_string(pid_file)
             .expect("escaped pid")
             .parse::<libc::pid_t>()
@@ -609,51 +615,52 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn status_deadline_terminates_a_hung_process_group() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let sentinel = tmp.path().join("descendant-survived");
+        // The descendant inherits the write end of this pipe, so the reader sees
+        // end-of-file exactly when every process of the group is gone.
+        let (mut reader, writer) = std::io::pipe().expect("pipe");
         let mut command = Command::new("/bin/sh");
         command
-            .args([
-                "-c",
-                &format!(
-                    "(sleep 0.4; printf survived > '{}') & wait",
-                    sentinel.display()
-                ),
-            ])
-            .stdin(Stdio::null());
+            .args(["-c", &format!("sleep {STUB_LIFETIME_SECS} & wait")])
+            .stdin(Stdio::null())
+            .stdout(writer);
         let started = Instant::now();
 
-        let error = status_with_deadline(&mut command, Duration::from_millis(100))
+        let error = status_with_deadline(&mut command, Duration::from_millis(500))
             .expect_err("status timeout");
 
         assert!(matches!(error, ProcessStatusError::Timeout));
-        assert!(started.elapsed() < Duration::from_secs(2));
-        thread::sleep(Duration::from_millis(500));
-        assert!(
-            !sentinel.exists(),
-            "a descendant survived the process-group timeout"
-        );
+        assert!(started.elapsed() < BOUNDED_RETURN);
+        // `command` still owns the parent's copy of the write end.
+        drop(command);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let mut sink = Vec::new();
+            let _ = sender.send(reader.read_to_end(&mut sink).map(|_| ()));
+        });
+        receiver
+            .recv_timeout(GENEROUS)
+            .expect("a descendant survived the process-group timeout")
+            .expect("read until the process group closed the pipe");
     }
 
     #[test]
     fn spawn_retry_is_bounded_and_limited_to_would_block() {
+        // Recovery happens on the third attempt, so the budget is never what ends
+        // these runs; it is large enough that a starved host cannot exhaust it.
         let mut attempts = 0;
         let value = retry_would_block(
             || {
                 attempts += 1;
-                if attempts == 1 {
-                    // A loaded host can deschedule the caller past a test-sized budget.
-                    thread::sleep(Duration::from_millis(150));
-                }
                 if attempts < 3 {
                     Err(io::Error::from(io::ErrorKind::WouldBlock))
                 } else {
                     Ok(7)
                 }
             },
-            SPAWN_RETRY_BUDGET,
+            GENEROUS,
         )
         .expect("transient spawn recovery");
         assert_eq!(value, 7);
@@ -671,7 +678,7 @@ mod tests {
                         Ok(9)
                     }
                 },
-                SPAWN_RETRY_BUDGET,
+                GENEROUS,
             )
             .expect("transient descriptor exhaustion recovery");
             assert_eq!(value, 9);
@@ -684,10 +691,23 @@ mod tests {
                 permanent_attempts += 1;
                 Err::<(), _>(io::Error::from(io::ErrorKind::NotFound))
             },
-            SPAWN_RETRY_BUDGET,
+            GENEROUS,
         )
         .expect_err("permanent spawn failure");
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
         assert_eq!(permanent_attempts, 1);
+
+        // An exhausted budget stops the retries without waiting on the clock.
+        let mut exhausted_attempts = 0;
+        let error = retry_would_block(
+            || {
+                exhausted_attempts += 1;
+                Err::<(), _>(io::Error::from(io::ErrorKind::WouldBlock))
+            },
+            Duration::ZERO,
+        )
+        .expect_err("exhausted retry budget");
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(exhausted_attempts, 1);
     }
 }

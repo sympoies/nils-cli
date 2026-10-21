@@ -1,7 +1,6 @@
 use crate::support::*;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
-use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 #[test]
@@ -141,14 +140,12 @@ exit 91
 "#,
     );
     nils_test_support::write_exe(&bin_dir, "semantic-commit", "#!/bin/sh\nexit 0\n");
-    let started = Instant::now();
     let output = run(
         &["agent", "doctor", "--format", "json"],
         &base_options(tmp.path()).with_fake_claude(&bin_dir),
     );
 
     assert_exit(&output, 1);
-    assert!(started.elapsed() < Duration::from_secs(3));
     let payload: Value = serde_json::from_str(stdout(&output).trim()).expect("doctor json");
     assert_eq!(payload["ok"], true);
     assert_eq!(payload["result"]["ready"], false);

@@ -65,8 +65,9 @@ struct Fixture {
     root: PathBuf,
     server: TestServer,
     status: Arc<Mutex<(u16, String)>>,
-    reset: Arc<Mutex<(u16, String, u64)>>,
+    reset: Arc<Mutex<(u16, String, bool)>>,
     reset_redirect: Arc<Mutex<Option<String>>>,
+    reset_gate: Arc<ResponseGate>,
 }
 
 impl Fixture {
@@ -80,13 +81,15 @@ impl Fixture {
         let reset = Arc::new(Mutex::new((
             200,
             json!({ "result": "reset" }).to_string(),
-            0u64,
+            false,
         )));
         let reset_redirect = Arc::new(Mutex::new(None::<String>));
-        let (status_t, reset_t, reset_redirect_t) = (
+        let reset_gate = ResponseGate::new();
+        let (status_t, reset_t, reset_redirect_t, reset_gate_t) = (
             Arc::clone(&status),
             Arc::clone(&reset),
             Arc::clone(&reset_redirect),
+            Arc::clone(&reset_gate),
         );
         let server = TestServer::new(move |request: &RecordedRequest| {
             match (request.method.as_str(), request.path.as_str()) {
@@ -95,8 +98,10 @@ impl Fixture {
                     HttpResponse::new(code, body)
                 }
                 ("POST", RESET_PATH) => {
-                    let (code, body, delay) = reset_t.lock().expect("reset").clone();
-                    std::thread::sleep(Duration::from_millis(delay));
+                    let (code, body, hold) = reset_t.lock().expect("reset").clone();
+                    if hold {
+                        reset_gate_t.wait(ResponseGate::STALL_CAP);
+                    }
                     let response = HttpResponse::new(code, body);
                     match reset_redirect_t.lock().expect("redirect").clone() {
                         Some(location) => response.with_header("Location", &location),
@@ -114,6 +119,7 @@ impl Fixture {
             status,
             reset,
             reset_redirect,
+            reset_gate,
         };
         fx.write_profile("alpha", FUTURE_MS, Some(ORG));
         fx
@@ -149,15 +155,20 @@ impl Fixture {
     }
 
     fn set_reset(&self, code: u16, body: Value) {
-        self.set_reset_raw(code, body.to_string(), 0);
+        self.set_reset_raw(code, body.to_string(), false);
     }
 
-    fn set_reset_raw(&self, code: u16, body: String, delay_ms: u64) {
-        *self.reset.lock().expect("reset") = (code, body, delay_ms);
+    /// `hold` keeps the reset response back until `release_reset` runs.
+    fn set_reset_raw(&self, code: u16, body: String, hold: bool) {
+        *self.reset.lock().expect("reset") = (code, body, hold);
+    }
+
+    fn release_reset(&self) {
+        self.reset_gate.release();
     }
 
     fn set_reset_redirect(&self, location: &str) {
-        self.set_reset_raw(307, "redirected".to_string(), 0);
+        self.set_reset_raw(307, "redirected".to_string(), false);
         *self.reset_redirect.lock().expect("redirect") = Some(location.to_string());
     }
 
@@ -379,7 +390,7 @@ fn reset_rate_limits_reports_every_provider_outcome() {
     let output = fx.redeem("cedar_ember");
     assert_error(&output, 3, "invalid-provider-response");
 
-    fx.set_reset_raw(200, "not json".to_string(), 0);
+    fx.set_reset_raw(200, "not json".to_string(), false);
     let output = fx.redeem("juniper_tide");
     assert_error(&output, 3, "invalid-provider-response");
 }
@@ -636,7 +647,8 @@ fn reset_rate_limits_does_not_follow_reset_redirects() {
 #[test]
 fn reset_rate_limits_times_out_as_a_retryable_unknown_result() {
     let fx = Fixture::new();
-    fx.set_reset_raw(200, json!({ "result": "reset" }).to_string(), 2_500);
+    // The response is held until the client has given up, however slowly it ran.
+    fx.set_reset_raw(200, json!({ "result": "reset" }).to_string(), true);
     let options = fx
         .options()
         .with_env("CLAUDE_RATE_LIMITS_RESET_MAX_TIME_SECONDS", "1");
@@ -659,8 +671,9 @@ fn reset_rate_limits_times_out_as_a_retryable_unknown_result() {
     let payload = assert_error(&output, 3, "provider-unavailable");
     assert_eq!(payload["error"]["details"]["reason_code"], "timeout");
     assert_eq!(payload["error"]["details"]["retryable"], true);
-    // The server records the abandoned POST once its delayed handler returns.
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    // The server records the abandoned POST once its held handler returns.
+    fx.release_reset();
+    let deadline = std::time::Instant::now() + CONDITION_TIMEOUT;
     let mut requests = fx.requests();
     while requests.len() < 2 && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));

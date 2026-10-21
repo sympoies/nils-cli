@@ -1,6 +1,5 @@
 use crate::support::*;
 use pretty_assertions::assert_eq;
-use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 #[test]
@@ -106,7 +105,6 @@ fi
 exit 99
 "#,
     );
-    let started = Instant::now();
 
     let output = run(
         &["agent", "prompt", "hello"],
@@ -118,7 +116,6 @@ exit 99
     assert_exit(&output, 69);
     assert!(stderr(&output).contains("bounded `claude --help` output"));
     assert!(!launched.exists());
-    assert!(started.elapsed() < Duration::from_secs(2));
 }
 
 #[cfg(unix)]

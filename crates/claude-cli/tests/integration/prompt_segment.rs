@@ -6,6 +6,10 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
+/// A foreground run that does not wait for upstream finishes in milliseconds. The
+/// ceiling is far above that and below `ResponseGate::STALL_CAP`.
+const FOREGROUND_CEILING: Duration = Duration::from_secs(10);
+
 #[test]
 fn prompt_segment_check_reads_credentials_json_without_printing_token() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -130,7 +134,7 @@ fn prompt_segment_stale_cache_fallback_suppresses_fetch_errors() {
     // `write_atomic` re-creates `tmp` on the way.
     assert_eq!(wait_for_requests(&server, 1).len(), 1);
     assert!(
-        wait_for_refresh_lock_release(&cache_file, Duration::from_secs(4)),
+        wait_for_refresh_lock_release(&cache_file, CONDITION_TIMEOUT),
         "detached refresh still held the lock at teardown"
     );
 }
@@ -196,7 +200,7 @@ fn prompt_segment_expired_cache_failed_refresh_observes_cooldown() {
     // still writes the `.refresh.at` marker before releasing, which would
     // re-create `tmp` after teardown.
     assert!(
-        wait_for_refresh_lock_release(&cache_file, Duration::from_secs(4)),
+        wait_for_refresh_lock_release(&cache_file, CONDITION_TIMEOUT),
         "detached refresh still held the lock at teardown"
     );
 }
@@ -209,8 +213,12 @@ fn prompt_segment_expired_cache_concurrent_refreshes_are_coalesced() {
     let cache_file = write_cache(tmp.path(), &usage_json(25.0, 50.0));
     set_modified(&cache_file, SystemTime::now() - Duration::from_secs(601));
 
-    let server = TestServer::new(|_| {
-        thread::sleep(Duration::from_millis(400));
+    // Hold the upstream response until every worker has returned, so the refresh
+    // lock stays taken for the whole contention window however slowly they start.
+    let gate = ResponseGate::new();
+    let held = Arc::clone(&gate);
+    let server = TestServer::new(move |_| {
+        held.wait(ResponseGate::STALL_CAP);
         HttpResponse::new(500, "upstream exploded")
     })
     .expect("server");
@@ -254,6 +262,7 @@ fn prompt_segment_expired_cache_concurrent_refreshes_are_coalesced() {
         assert_eq!(stdout(&output), "");
         assert_eq!(stderr(&output), "");
     }
+    gate.release();
 
     assert_eq!(wait_for_test_requests(&server, 1).len(), 1);
     assert_eq!(
@@ -264,7 +273,7 @@ fn prompt_segment_expired_cache_concurrent_refreshes_are_coalesced() {
         1
     );
     assert!(
-        wait_for_refresh_lock_release(&cache_file, Duration::from_secs(4)),
+        wait_for_refresh_lock_release(&cache_file, CONDITION_TIMEOUT),
         "coalesced refresh still held the lock at teardown"
     );
 }
@@ -386,8 +395,10 @@ fn prompt_segment_stale_cache_returns_immediately_and_refreshes_in_background() 
     make_old(&cache_file);
     let refreshed_body = usage_json(10.0, 20.0);
     let response_body = refreshed_body.clone();
+    let gate = ResponseGate::new();
+    let held = Arc::clone(&gate);
     let server = TestServer::new(move |_| {
-        thread::sleep(Duration::from_millis(800));
+        held.wait(ResponseGate::STALL_CAP);
         HttpResponse::new(200, response_body.clone())
             .with_header("Content-Type", "application/json")
     })
@@ -398,6 +409,7 @@ fn prompt_segment_stale_cache_returns_immediately_and_refreshes_in_background() 
             "CLAUDE_PROMPT_SEGMENT_ENDPOINT",
             &format!("{}/usage", server.url()),
         )
+        .with_env("CLAUDE_PROMPT_SEGMENT_MAX_TIME_SECONDS", "60")
         .with_env("NO_COLOR", "1")
         .with_env("TZ", "UTC");
 
@@ -409,14 +421,17 @@ fn prompt_segment_stale_cache_returns_immediately_and_refreshes_in_background() 
     let elapsed = started.elapsed();
 
     assert_exit(&output, 0);
+    // The upstream response is still held, so a caller that waited for it would
+    // have run for the whole stall cap; the bound sits well inside that.
     assert!(
-        elapsed < Duration::from_millis(400),
+        elapsed < FOREGROUND_CEILING,
         "cached prompt path blocked for {elapsed:?}"
     );
+    gate.release();
     assert_eq!(stdout(&output), "5h:75% W:50% 2026-01-03 (stale)\n");
 
     assert!(
-        wait_for_background_refresh_settled(&cache_file, &refreshed_body, Duration::from_secs(4)),
+        wait_for_background_refresh_settled(&cache_file, &refreshed_body, CONDITION_TIMEOUT),
         "background refresh did not update the cache"
     );
 }
@@ -427,8 +442,10 @@ fn prompt_segment_missing_cache_returns_immediately_then_renders_refreshed_cache
     let cache_file = tmp.path().join("usage.json");
     let refreshed_body = usage_json(10.0, 20.0);
     let response_body = refreshed_body.clone();
+    let gate = ResponseGate::new();
+    let held = Arc::clone(&gate);
     let server = TestServer::new(move |_| {
-        thread::sleep(Duration::from_millis(800));
+        held.wait(ResponseGate::STALL_CAP);
         HttpResponse::new(200, response_body.clone())
             .with_header("Content-Type", "application/json")
     })
@@ -439,6 +456,7 @@ fn prompt_segment_missing_cache_returns_immediately_then_renders_refreshed_cache
             "CLAUDE_PROMPT_SEGMENT_ENDPOINT",
             &format!("{}/usage", server.url()),
         )
+        .with_env("CLAUDE_PROMPT_SEGMENT_MAX_TIME_SECONDS", "60")
         .with_env("NO_COLOR", "1")
         .with_env("TZ", "UTC");
 
@@ -450,15 +468,18 @@ fn prompt_segment_missing_cache_returns_immediately_then_renders_refreshed_cache
     let elapsed = started.elapsed();
 
     assert_exit(&output, 0);
+    // The upstream response is still held, so a caller that waited for it would
+    // have run for the whole stall cap; the bound sits well inside that.
     assert!(
-        elapsed < Duration::from_millis(400),
+        elapsed < FOREGROUND_CEILING,
         "missing-cache prompt path blocked for {elapsed:?}"
     );
+    gate.release();
     assert_eq!(stdout(&output), "");
     assert_eq!(stderr(&output), "");
 
     assert!(
-        wait_for_background_refresh_settled(&cache_file, &refreshed_body, Duration::from_secs(4)),
+        wait_for_background_refresh_settled(&cache_file, &refreshed_body, CONDITION_TIMEOUT),
         "missing-cache background refresh did not create the cache"
     );
     let rendered = run(
