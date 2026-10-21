@@ -132,7 +132,10 @@ fn exited_provider_is_detected_while_descendant_holds_stderr_open() {
     let body: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(body["error"]["code"], "start-failed", "{body}");
     assert_eq!(body["error"]["details"]["provider_exit_code"], 23);
-    assert_eq!(body["error"]["details"]["cleanup"]["state"], "completed");
+    assert_eq!(
+        body["error"]["details"]["cleanup"]["state"], "completed",
+        "{body}"
+    );
     assert_eq!(body["error"]["details"]["retryable"], true);
 }
 
