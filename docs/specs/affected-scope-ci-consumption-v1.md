@@ -16,7 +16,7 @@ needs from admitting a candidate. No plan or receipt alone permits merge.
 
 Full Linux/macOS validation and the 85% workspace coverage floor run nightly,
 on manual full CI on main, and before release builds on the exact tagged SHA.
-See the [delivery flow](../../.github/README.md) for migration and recovery.
+See the [delivery flow](../runbooks/delivery-and-releases.md) for migration and recovery.
 
 ## Inputs and execution
 

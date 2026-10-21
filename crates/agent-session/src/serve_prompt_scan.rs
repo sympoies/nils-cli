@@ -131,6 +131,59 @@ impl ProviderPromptDiscoveryRegistry {
     }
 }
 
+#[cfg(test)]
+impl ProviderPromptDiscoveryRegistry {
+    async fn wait_until<F, Fut>(&self, what: &str, mut done: F)
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !done().await {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    async fn slot_of(
+        &self,
+        record: &SessionRecord,
+    ) -> Option<Arc<tokio::sync::Mutex<ProviderPromptDiscoverySlot>>> {
+        let key = ProviderPromptDiscoveryKey::from_record(record)?;
+        self.entries.lock().await.get(&key).cloned()
+    }
+
+    /// Waits until a scan of `record` ran to completion and none is in flight.
+    pub(super) async fn wait_for_finished_scan(&self, record: &SessionRecord) {
+        self.wait_until("a finished provider-history scan", || async {
+            let Some(slot) = self.slot_of(record).await else {
+                return false;
+            };
+            let state = slot.lock().await;
+            !state.in_flight && state.scan_attempts > 0
+        })
+        .await;
+    }
+
+    /// Like `wait_for_finished_scan` for the stored record of session `id`.
+    pub(super) async fn wait_for_finished_scan_of(&self, context: &CliContext, id: &str) {
+        let record = load_session_record(context, id).expect("session record");
+        self.wait_for_finished_scan(&record).await;
+    }
+
+    /// Waits until `count` callers are parked on the scan in flight for `record`.
+    pub(super) async fn wait_for_parked_scan_waiters(&self, record: &SessionRecord, count: usize) {
+        self.wait_until("callers parked on the scan", || async {
+            let Some(slot) = self.slot_of(record).await else {
+                return false;
+            };
+            let parked = slot.lock().await.progress.receiver_count();
+            parked >= count
+        })
+        .await;
+    }
+}
+
 pub(super) fn next_provider_prompt_discovery_backoff(current: Duration) -> Duration {
     current
         .saturating_mul(2)

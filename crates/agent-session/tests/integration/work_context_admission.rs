@@ -537,11 +537,7 @@ fn work_context_admit_renews_live_claim_at_final_commit_after_preparation() {
         .stderr(Stdio::piped());
     let admitting = admitting.spawn().expect("spawn admission");
     wait_for_claim_barrier(&barrier);
-    let expires_at_epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_secs() as i64
-        + 1;
+    let expires_at_epoch = 1_i64;
     rewrite_registry(&state_dir, |registry| {
         let claim = registry["claims"]
             .as_array_mut()
@@ -552,7 +548,6 @@ fn work_context_admit_renews_live_claim_at_final_commit_after_preparation() {
         claim["expires_at_epoch"] = json!(expires_at_epoch);
         claim["expires_at"] = json!("1970-01-01T00:00:01Z");
     });
-    std::thread::sleep(Duration::from_secs(2));
     fs::write(barrier.join("release"), b"release").expect("release admit barrier");
 
     let output = admitting.wait_with_output().expect("wait admission");

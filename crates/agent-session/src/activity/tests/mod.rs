@@ -1184,6 +1184,7 @@ mod codex_phase;
 mod completion_review;
 mod provider_hooks;
 mod replay_journal;
+pub(super) mod test_clock;
 mod turn_completion;
 
 #[test]

@@ -21,6 +21,7 @@ mod finish_line;
 #[path = "finish_line_unsupported.rs"]
 mod finish_line;
 mod git_inspection;
+mod handler_timeout;
 mod liveness;
 mod model;
 mod observe;

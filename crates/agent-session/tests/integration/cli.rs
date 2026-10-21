@@ -6220,9 +6220,9 @@ fn delete_exhausts_bounded_identity_churn_without_losing_current_runtime() {
     write_executable(
         &tmux_bin,
         &format!(
-            r#"#!/usr/bin/env sh
+            r#"#!/bin/sh
 printf '%s\n' "$*" >> {tmux_log}
-generation=$(cat {tmux_generation})
+read -r generation < {tmux_generation}
 case "$generation" in
   0) pane_pid={pane_0} ;;
   1) pane_pid={pane_1} ;;
@@ -6238,7 +6238,7 @@ case "$1" in
       AGENT_SESSION_RUNTIME_ID) printf 'AGENT_SESSION_RUNTIME_ID=%s\n' {launch_id} ;;
     esac ;;
   if-shell)
-    /bin/kill -TERM -- "-$pane_pid" 2>/dev/null || true
+    kill -s TERM -- "-$pane_pid" 2>/dev/null || true
     printf '%s\n' "$((generation + 1))" > {tmux_generation}
     printf 'agent-session-runtime-identity-changed\n' ;;
   has-session) exit 0 ;;

@@ -156,8 +156,9 @@ fn tmux_kill_identity(
     timeout: Duration,
     guarded_kill: Option<String>,
 ) -> Result<TmuxIdentityKillOutcome, SessionTerminationFailure> {
+    let plain_kill = guarded_kill.is_none();
     #[cfg(target_os = "macos")]
-    let group_termination = guarded_kill.is_some();
+    let group_termination = !plain_kill;
     let condition = format!(
         "#{{&&:#{{==:#{{session_id}},{}}},#{{&&:#{{==:#{{pane_id}},{}}},#{{==:#{{pane_pid}},{}}}}}}}",
         identity.session_id, identity.pane_id, identity.pane_pid
@@ -193,6 +194,16 @@ fn tmux_kill_identity(
         #[cfg(target_os = "macos")]
         if group_termination
             && verify_stopped_process_runtime(identity, timeout).is_ok()
+            && verified_tmux_status_with_timeout(tmux_bin, &identity.session_id, timeout)
+                == "stopped"
+        {
+            return Ok(TmuxIdentityKillOutcome::KillConfirmed);
+        }
+        // The runtime can end on its own between the identity capture and this
+        // command, so tmux no longer finds the pane to guard. The numeric
+        // session id is never reused by the server, so its verified absence is
+        // the boundary the kill would have produced.
+        if plain_kill
             && verified_tmux_status_with_timeout(tmux_bin, &identity.session_id, timeout)
                 == "stopped"
         {

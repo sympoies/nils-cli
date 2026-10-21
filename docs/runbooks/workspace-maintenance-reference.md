@@ -188,7 +188,7 @@ bash scripts/ci/nils-cli-checks-entrypoint.sh
 This delegates to `./.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh`.
 It is what the shared release/nightly full-validation workflow uses for its
 `test` and `test_macos` jobs; it is not the default local development loop.
-See the [delivery and release flow](../../.github/README.md) for lane ownership,
+See the [delivery and release flow](delivery-and-releases.md) for lane ownership,
 required contexts, recovery and timeouts.
 
 ### Integration batches on `next`
@@ -433,6 +433,19 @@ each binary that the selected packages' sources name in a `resolve`,
 call. It prints these as `LOCAL_FAST_SIBLING_PACKAGE` lines with reasons, and
 does not lint or test those packages.
 
+Lanes that share one `CARGO_TARGET_DIR` can overwrite the executables a running
+gate is testing. Once the tests are built, the gate records the size and
+modification time of every executable under `<target>/debug` and
+`<target>/debug/deps`, and re-checks them after the tests, including when a test
+fails. A package selection does this per package, so one package's solo build is
+never mistaken for a replacement. A rewritten or removed executable fails the
+gate with `error: shared target replaced during the gate`, naming each path,
+alongside any product test failure. Give concurrent lanes separate target
+directories (for example, one per managed worktree); the cost is one build tree
+of disk per worktree, reclaimed when the worktree is removed.
+`scripts/ci/lib/target_guard.py` implements the check, and only `--local-fast`
+runs it.
+
 ### 3.3 Full checks (CI gate / optional local parity)
 
 ```bash
@@ -483,7 +496,7 @@ PR and merge-group tests use affected-scope Linux checks with a full Linux
 fallback. They have no macOS or coverage jobs, preview-driven deferral, or
 labeler. Linux `test_containment` and `cargo-deny (advisories + bans)` are
 required checks alongside `test`; the maintainer applies the ruleset migration
-in the [delivery flow](../../.github/README.md). Full macOS has 75 minutes.
+in the [delivery flow](delivery-and-releases.md). Full macOS has 75 minutes.
 See [the CI consumption contract](../specs/affected-scope-ci-consumption-v1.md)
 for candidate bindings and receipts.
 
