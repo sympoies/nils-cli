@@ -1,6 +1,7 @@
 use pretty_assertions::assert_eq;
 
 use super::*;
+use crate::serve::terminal_notification::HoldBudgetGuard;
 
 struct WakeFixture {
     temp: tempfile::TempDir,
@@ -365,6 +366,7 @@ async fn mailbox_wake_empty_composer_control_submits_once() {
 #[tokio::test]
 async fn mailbox_wake_retries_a_swallowed_enter_and_confirms_submission() {
     let fixture = WakeFixture::new(AgentKind::Claude).await;
+    let _budget = HoldBudgetGuard::widen(Duration::from_secs(30));
     fs::write(fixture.temp.path().join("swallow-first-enter"), "").unwrap();
     fixture.start().expect("swallowed Enter is retried");
     let submissions = fs::read_to_string(fixture.temp.path().join("submissions")).unwrap();
@@ -402,6 +404,7 @@ async fn mailbox_wake_does_not_retry_after_operator_edits_composer() {
 #[tokio::test]
 async fn mailbox_wake_reports_known_failure_after_two_swallowed_enters() {
     let fixture = WakeFixture::new(AgentKind::Claude).await;
+    let _budget = HoldBudgetGuard::widen(Duration::from_secs(30));
     fs::write(fixture.temp.path().join("swallow-every-enter"), "").unwrap();
     assert!(matches!(
         fixture.start(),
@@ -587,6 +590,9 @@ async fn mailbox_wake_retry_clears_only_prior_unknown_notification_text() {
     });
     fs::write(&record_path, serde_json::to_vec_pretty(&persisted).unwrap()).unwrap();
     fs::write(fixture.temp.path().join("emit-transcript-after-enter"), "").unwrap();
+    // The first wake above waited out the real budget; the recovery wake needs
+    // room for its cleanup, paste and Enter on a loaded host.
+    let _budget = HoldBudgetGuard::widen(Duration::from_secs(30));
 
     send_notification_fixture(
         &fixture.state,

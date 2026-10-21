@@ -32,6 +32,45 @@ pub(super) async fn mark_unknown_after_paste(
             .await;
 }
 
+/// Test-only override of the wake hold budget, in milliseconds; 0 means none.
+/// A process-wide atomic because the wake runs on blocking-pool threads.
+#[cfg(test)]
+static HOLD_BUDGET_OVERRIDE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Test-only: widens the wake hold budget until dropped. The retry cadence
+/// stays real; only the lock-hold deadline stops depending on how fast a loaded
+/// host starts the fake tmux interpreter. A test that waits for the budget to
+/// expire must not hold it.
+#[cfg(test)]
+pub(super) struct HoldBudgetGuard;
+
+#[cfg(test)]
+impl HoldBudgetGuard {
+    pub(super) fn widen(budget: Duration) -> Self {
+        HOLD_BUDGET_OVERRIDE_MS.store(
+            budget.as_millis() as u64,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for HoldBudgetGuard {
+    fn drop(&mut self) {
+        HOLD_BUDGET_OVERRIDE_MS.store(0, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn hold_budget() -> Duration {
+    #[cfg(test)]
+    match HOLD_BUDGET_OVERRIDE_MS.load(std::sync::atomic::Ordering::SeqCst) {
+        0 => {}
+        millis => return Duration::from_millis(millis),
+    }
+    crate::send_submit::HOLD_BUDGET
+}
+
 pub(super) fn start_terminal_coordination_notification(
     context: &CliContext,
     tmux_bin: &Path,
@@ -80,7 +119,7 @@ pub(super) fn start_terminal_coordination_notification(
         }
     }
 
-    let deadline = Instant::now() + crate::send_submit::HOLD_BUDGET;
+    let deadline = Instant::now() + hold_budget();
     let recovery_prompt = candidate
         .recovery_prompt(context)
         .map_err(|_| TerminalNotificationStartError::Unknown)?;
@@ -476,7 +515,7 @@ fn clear_owned_notification(
         args: &args,
         tmux_bin,
         verify_composer: true,
-        deadline: Instant::now() + crate::send_submit::HOLD_BUDGET,
+        deadline: Instant::now() + hold_budget(),
     };
     let error = crate::CliError::unavailable(
         "notification-submission-unconfirmed",
