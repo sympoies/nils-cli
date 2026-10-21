@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
@@ -838,7 +839,7 @@ fn parse_claude_history_prompt(line: &str, session_id: &str) -> Option<ParsedPro
         if !claude_session_matches(&value, session_id) {
             return None;
         }
-        let mut prompt = bounded_prompt(text)?;
+        let mut prompt = bounded_prompt(&text)?;
         prompt.submitted_at = provider_timestamp(&value);
         Some(prompt)
     })?;
@@ -900,11 +901,11 @@ fn parse_claude_enqueued_prompt_value(value: &Value, session_id: &str) -> Option
     Some(prompt)
 }
 
-/// Text of a prompt the user sent while a Claude turn was running. Claude Code
-/// records it as a `queued_command` attachment instead of a `user` record.
+/// The prompt of a `queued_command` attachment the user sent while a Claude turn
+/// was running: a string, or a list of content blocks when it carries an image.
 /// Task notifications, peer messages, auto-continuations, and meta injections
 /// share that shape and are rejected.
-pub(crate) fn claude_queued_prompt_text(value: &Value) -> Option<&str> {
+fn claude_queued_prompt_value(value: &Value) -> Option<&Value> {
     if value.get("type").and_then(Value::as_str) != Some("attachment")
         || value.get("isSidechain").and_then(Value::as_bool) == Some(true)
     {
@@ -924,7 +925,36 @@ pub(crate) fn claude_queued_prompt_text(value: &Value) -> Option<&str> {
     {
         return None;
     }
-    let prompt = attachment.get("prompt")?.as_str()?;
+    attachment.get("prompt")
+}
+
+/// The content blocks of a list-form queued prompt, which carry its images.
+pub(crate) fn claude_queued_prompt_blocks(value: &Value) -> Option<&Value> {
+    claude_queued_prompt_value(value).filter(|prompt| prompt.is_array())
+}
+
+/// Text of a prompt the user sent while a Claude turn was running. A list-form
+/// prompt yields its text blocks joined, as `claude_user_message_text` does for
+/// user rows.
+pub(crate) fn claude_queued_prompt_text(value: &Value) -> Option<Cow<'_, str>> {
+    let prompt = claude_queued_prompt_value(value)?;
+    let prompt = match prompt.as_str() {
+        Some(text) => Cow::Borrowed(text),
+        None => {
+            let text = prompt
+                .as_array()?
+                .iter()
+                .filter(|item| item.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|item| item.get("text").and_then(Value::as_str))
+                .filter(|text| !text.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if text.trim().is_empty() {
+                return None;
+            }
+            Cow::Owned(text)
+        }
+    };
     let head = prompt.trim_start();
     (!CLAUDE_MACHINE_PROMPT_PREFIXES
         .iter()
