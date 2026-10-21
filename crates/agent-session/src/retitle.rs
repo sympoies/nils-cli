@@ -3862,7 +3862,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn fallback_queue_wait_uses_the_total_chain_deadline() {
         let lock = nils_test_support::GlobalStateLock::new();
         let config = json!({

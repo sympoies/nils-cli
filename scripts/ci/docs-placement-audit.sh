@@ -10,6 +10,7 @@ Checks documentation placement policy:
   - every workspace crate has a required docs index at crates/<crate>/docs/README.md
   - root docs/runbooks entries are approved workspace-level files or compatibility stubs
   - crate-owned root docs patterns are flagged
+  - no README.md under .github/ (GitHub would show it instead of the root README)
 
 Options:
   --strict   Treat policy warnings as hard failures
@@ -77,7 +78,7 @@ done
 runbook_is_approved_workspace_file() {
   local base="$1"
   case "$base" in
-    cli-completion-development-standard.md|cli-help-style-guide.md|crates-io-status-script-runbook.md|markdown-template-development-standard.md|new-cli-crate-development-standard.md|review-specialists-primitive.md|test-cleanup-governance.md|workspace-maintenance-reference.md)
+    cli-completion-development-standard.md|cli-help-style-guide.md|crates-io-status-script-runbook.md|delivery-and-releases.md|markdown-template-development-standard.md|new-cli-crate-development-standard.md|review-specialists-primitive.md|test-cleanup-governance.md|workspace-maintenance-reference.md)
       return 0
       ;;
     *)
@@ -138,6 +139,12 @@ for section in docs/specs docs/runbooks docs/reports; do
       fi
     done
   done < <(find "$section" -maxdepth 1 -type f -name '*.md' | sort)
+done
+
+for hidden_readme in .github/README.md .github/readme.md .github/README.markdown; do
+  if [[ -e "$hidden_readme" ]]; then
+    errors+=("$hidden_readme shadows the root README on the GitHub repository page; move it under docs/")
+  fi
 done
 
 for warn in "${warnings[@]}"; do

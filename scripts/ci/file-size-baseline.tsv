@@ -1,6 +1,6 @@
 path	kind	lines
 crates/agent-hook/src/dsh_policy.rs	impl	5799
-crates/agent-hook/src/evaluator.rs	impl	2208
+crates/agent-hook/src/evaluator.rs	impl	2194
 crates/agent-hook/src/finish_line.rs	impl	5179
 crates/agent-hook/src/finish_line/acceptance.rs	impl	2106
 crates/agent-hook/src/setup.rs	impl	2084
@@ -12,13 +12,13 @@ crates/agent-session/src/activity.rs	impl	5199
 crates/agent-session/src/codex_app_server.rs	impl	5384
 crates/agent-session/src/codex_app_server/tests/mod.rs	test	8545
 crates/agent-session/src/lib.rs	impl	13068
-crates/agent-session/src/lib.rs	test	6212
+crates/agent-session/src/lib.rs	test	6211
 crates/agent-session/src/provider_history.rs	impl	2761
 crates/agent-session/src/retitle.rs	impl	3378
 crates/agent-session/src/retitle_v3.rs	impl	3634
 crates/agent-session/src/retitle_v3.rs	test	3648
 crates/agent-session/src/serve.rs	impl	11763
-crates/agent-session/src/serve.rs	test	25180
+crates/agent-session/src/serve.rs	test	25178
 crates/agent-session/tests/integration/cli.rs	test	12198
 crates/agent-session/tests/integration/coordination.rs	test	5404
 crates/agent-workflow-primitives/src/heuristic_inbox.rs	impl	4085

@@ -12,6 +12,13 @@ use serde_json::json;
 
 use support::{Fixture, now_epoch};
 
+/// Handlers that stall for 30 s are given this much time. It is far shorter
+/// than the stall and far shorter than `STALL_CEILING`, so a loaded host
+/// cannot blur the two.
+const SHORT_HANDLER_DEADLINE: [(&str, &str); 1] = [("AGENT_HOOK_HANDLER_TIMEOUT_MS", "2000")];
+/// Only a handler left to run out its 30 s stall can reach this.
+const STALL_CEILING: Duration = Duration::from_secs(15);
+
 const ALLOW_POLICY: &str = r#"schema_version = "agent-hook.policy.v1"
 bundle_id = "runtime-kit"
 version = "2026.07.20.1"
@@ -595,9 +602,10 @@ capability = { id = "runtime-kit.handler.v1", handler_id = "user-prompt-agent-do
     fs::set_permissions(&blocking, fs::Permissions::from_mode(0o755))
         .expect("blocking handler mode");
     let started = Instant::now();
-    let output = fixture.run(
+    let output = fixture.run_with_env(
         &["dispatch", "--product", "codex", "--format", "json"],
         Some(r#"{"hook_event_name":"SessionStart","source":"startup"}"#),
+        &SHORT_HANDLER_DEADLINE,
     );
     assert_eq!(
         output.code,
@@ -614,7 +622,7 @@ capability = { id = "runtime-kit.handler.v1", handler_id = "user-prompt-agent-do
         output.stdout_json()["data"]["reasons"][1]["code"],
         "user-prompt-agent-docs"
     );
-    assert!(started.elapsed() < Duration::from_millis(5_800));
+    assert!(started.elapsed() < STALL_CEILING);
     let degraded = fixture.state_home.join("agent-hook/degraded");
     assert!(
         fs::read_dir(&degraded)
@@ -663,9 +671,10 @@ capability = { id = "runtime-kit.handler.v1", handler_id = "pre-edit-intent-gate
     })
     .to_string();
 
-    let output = fixture.run(
+    let output = fixture.run_with_env(
         &["dispatch", "--product", "codex", "--format", "json"],
         Some(&payload),
+        &SHORT_HANDLER_DEADLINE,
     );
 
     assert_eq!(
@@ -710,6 +719,10 @@ capability = { id = "runtime-kit.handler.v1", handler_id = "pre-edit-intent-gate
         .find(|(_, value)| value["schema_version"] == "agent-hook.degraded-summary.v1")
         .expect("summary record");
     assert_eq!(pending["completion"], "pending");
+    assert_eq!(
+        pending["deadline_ms"], 2_000,
+        "the shortened handler deadline must reach the incident record"
+    );
     assert_eq!(summary["count"], 1);
     assert_eq!(summary["latest_completion"], "pending");
     assert_eq!(summary["most_recent_incident_id"], pending["incident_id"]);
@@ -795,6 +808,7 @@ capability = { id = "runtime-kit.handler.v1", handler_id = "pre-edit-intent-gate
                 .env("XDG_CONFIG_HOME", &fixture.config_home)
                 .env("XDG_STATE_HOME", &fixture.state_home)
                 .env("AGENT_SESSION_STATE_DIR", &fixture.session_state)
+                .envs(SHORT_HANDLER_DEADLINE)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -883,9 +897,10 @@ capability = { id = "runtime-kit.handler.v1", handler_id = "block-unsafe-default
     })
     .to_string();
 
-    let output = fixture.run(
+    let output = fixture.run_with_env(
         &["dispatch", "--product", "codex", "--format", "json"],
         Some(&payload),
+        &SHORT_HANDLER_DEADLINE,
     );
 
     assert_eq!(
@@ -963,9 +978,10 @@ capability = { id = "runtime-kit.handler.v1", handler_id = "session-start-health
     fs::set_permissions(&handler, fs::Permissions::from_mode(0o755)).expect("handler mode");
 
     let started = Instant::now();
-    let output = fixture.run(
+    let output = fixture.run_with_env(
         &["dispatch", "--product", "codex", "--format", "json"],
         Some(r#"{"hook_event_name":"SessionStart","source":"startup"}"#),
+        &SHORT_HANDLER_DEADLINE,
     );
 
     assert!(
@@ -974,7 +990,7 @@ capability = { id = "runtime-kit.handler.v1", handler_id = "session-start-health
         output.stdout_text(),
         output.stderr_text()
     );
-    assert!(started.elapsed() < Duration::from_millis(5_800));
+    assert!(started.elapsed() < STALL_CEILING);
 }
 
 #[test]

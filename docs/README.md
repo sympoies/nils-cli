@@ -12,6 +12,8 @@ records ownership for both.
   workflow.
 - [Workspace maintenance reference](runbooks/workspace-maintenance-reference.md):
   setup, validation lanes, coverage, generated artifacts, and publishing.
+- [Delivery and release flow](runbooks/delivery-and-releases.md): CI lanes,
+  merge gates, and release ownership.
 - [Development log](devlog/README.md): conventions and the month index.
 
 ## Building a CLI crate
