@@ -185,7 +185,7 @@ bash scripts/ci/nils-cli-checks-entrypoint.sh
 This delegates to `./.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh`.
 It is what the shared release/nightly full-validation workflow uses for its
 `test` and `test_macos` jobs; it is not the default local development loop.
-See the [delivery and release flow](../../.github/README.md) for lane ownership,
+See the [delivery and release flow](delivery-and-releases.md) for lane ownership,
 required contexts, recovery and timeouts.
 
 ### Integration batches on `next`
@@ -480,7 +480,7 @@ PR and merge-group tests use affected-scope Linux checks with a full Linux
 fallback. They have no macOS or coverage jobs, preview-driven deferral, or
 labeler. Linux `test_containment` and `cargo-deny (advisories + bans)` are
 required checks alongside `test`; the maintainer applies the ruleset migration
-in the [delivery flow](../../.github/README.md). Full macOS has 75 minutes.
+in the [delivery flow](delivery-and-releases.md). Full macOS has 75 minutes.
 See [the CI consumption contract](../specs/affected-scope-ci-consumption-v1.md)
 for candidate bindings and receipts.
 
