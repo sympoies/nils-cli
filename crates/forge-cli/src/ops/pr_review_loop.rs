@@ -19,6 +19,7 @@ use crate::provider::{Provider, ProviderContext, detect, git_remote_url};
 use crate::rate_limit::default_runner;
 use crate::validations::{RuleVerdict, no_escaped_control_markdown, no_local_path};
 
+mod acceptance_input;
 mod correction_input;
 mod supersession_input;
 use correction_input::ObservationInput;
@@ -44,6 +45,8 @@ pub struct PrReviewLoopPayload {
     /// shares the appended comment, so `appended: false` always means the outcome
     /// was not posted (the ledger was already current).
     pub outcome_posted: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub accepted_risks: Vec<review_state::acceptance::AcceptanceReceipt>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored_stale_records: Vec<String>,
 }
@@ -260,6 +263,7 @@ fn collapsed_identities(observations: &[review_state::ReviewFindingObservation])
 fn shape_prose(shape: &str) -> &str {
     match shape {
         SHAPE_MERGE_ENVELOPE => "review-specialists merge envelope",
+        "acceptance-envelope" => "approved terminal acceptance envelope",
         "correction-envelope" => "chain-bound correction envelope",
         "supersession-envelope" => "chain-bound supersession envelope",
         _ => "bare observation array",
@@ -322,6 +326,11 @@ const SHAPE_MERGE_ENVELOPE: &str = "merge-envelope";
 const SHAPE_OBSERVATION_ARRAY: &str = "observation-array";
 
 fn detect_findings_shape(value: &serde_json::Value) -> &'static str {
+    if value.get("schema_version").and_then(|v| v.as_str())
+        == Some(review_state::acceptance::INPUT_SCHEMA)
+    {
+        return "acceptance-envelope";
+    }
     if value.get("schema_version").and_then(|v| v.as_str())
         == Some(review_state::correction::INPUT_SCHEMA)
     {
@@ -549,6 +558,7 @@ pub fn run_observe_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             expected_tip: state_view.chain.tip_digest.as_deref(),
             payload: transition.into_payload(),
             visible_outcome: outcome_body.as_deref(),
+            policy_remote: None,
         },
     )?;
     emit_state(
@@ -1265,6 +1275,18 @@ fn validate_approval(
     budget_field: &str,
     increment: u32,
 ) -> Result<(), ForgeError> {
+    validate_marker_approval(
+        approval,
+        state_created_at,
+        &extension_approval_marker(proposal, budget_field, increment),
+    )
+}
+
+fn validate_marker_approval(
+    approval: &ApprovalComment,
+    state_created_at: Option<&str>,
+    marker: &str,
+) -> Result<(), ForgeError> {
     if !matches!(
         approval.association.as_str(),
         "OWNER" | "MEMBER" | "COLLABORATOR"
@@ -1319,12 +1341,11 @@ fn validate_approval(
             )),
         ));
     }
-    let marker = extension_approval_marker(proposal, budget_field, increment);
     if !approval.body.lines().any(|line| line.trim() == marker) {
         return Err(ForgeError::validation(
             schema_err(),
             "review_extension_approval_invalid",
-            "the approval comment does not contain the exact extension marker",
+            "the approval comment does not contain the exact approval marker",
             Some(format!("required_marker={marker}")),
         ));
     }
@@ -1350,6 +1371,16 @@ fn emit_state(
             provider: ctx.provider.as_str(),
             number,
             url,
+            accepted_risks: chain
+                .records
+                .iter()
+                .filter_map(|r| match &r.payload {
+                    review_state::ReviewStatePayload::ReviewLoopAcceptance {
+                        acceptance, ..
+                    } => Some(acceptance.clone()),
+                    _ => None,
+                })
+                .collect(),
             state_tip_digest: chain.tip_digest,
             generation,
             state,

@@ -132,6 +132,15 @@ pub fn run_forge_cli(stub: &StubEnv, args: &[&str]) -> CmdOutput {
 /// the stub's isolated temp directory so the developer checkout's Git remote
 /// cannot affect provider-routing fixtures.
 pub fn run_forge_cli_in(stub: &StubEnv, args: &[&str], cwd: Option<&Path>) -> CmdOutput {
+    run_forge_cli_in_with_env(stub, args, cwd, &[])
+}
+
+pub fn run_forge_cli_in_with_env(
+    stub: &StubEnv,
+    args: &[&str],
+    cwd: Option<&Path>,
+    extra_env: &[(&str, &str)],
+) -> CmdOutput {
     let mut cmd = Command::new(forge_cli_bin());
     cmd.args(args);
     for key in SCRUBBED_ENV {
@@ -152,6 +161,9 @@ pub fn run_forge_cli_in(stub: &StubEnv, args: &[&str], cwd: Option<&Path>) -> Cm
     cmd.env("FORGE_CLI_RATE_LIMIT_GATE", "off");
     for (k, v) in &stub.envs {
         cmd.env(k, v);
+    }
+    for (key, value) in extra_env {
+        cmd.env(key, value);
     }
     cmd.current_dir(cwd.unwrap_or_else(|| stub.tempdir.path()));
     let output = cmd.output().expect("spawn forge-cli");

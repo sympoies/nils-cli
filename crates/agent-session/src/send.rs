@@ -52,6 +52,23 @@ pub(crate) fn send_to_session(
     context: &CliContext,
     args: cli::SendArgs,
 ) -> Result<SendResult, CliError> {
+    send_to_session_observing(context, args, &mut |_, _| {})
+}
+
+pub(crate) fn send_to_session_observing(
+    context: &CliContext,
+    mut args: cli::SendArgs,
+    acknowledged: &mut dyn FnMut(&SessionRecord, &str),
+) -> Result<SendResult, CliError> {
+    // Picker shortcuts type into the terminal rather than paste. Never send
+    // them into a working/unknown session, even with --allow-blocked.
+    if args
+        .keys
+        .iter()
+        .any(|key| matches!(key, SpecialKey::Printable(_)))
+    {
+        args.guards.require_idle = true;
+    }
     let text = read_send_text(&args.text, args.text_stdin)?;
     if text.is_none() && args.keys.is_empty() {
         return Err(CliError::usage(
@@ -119,7 +136,10 @@ pub(crate) fn send_to_session(
             record,
             &tmux_bin,
             &mut manual_input,
-            guard_started,
+            native::Attempt {
+                started: guard_started,
+                acknowledged,
+            },
         );
     }
     auto_resume::cancel_for_manual_input_locked(
@@ -189,6 +209,19 @@ pub(crate) fn send_to_session(
     })
 }
 
+pub(crate) fn recorded_tmux_runtime_stopped(
+    tmux: &Path,
+    record: &SessionRecord,
+    timeout: Duration,
+) -> bool {
+    crate::persisted_tmux_runtime_identity(record)
+        .ok()
+        .flatten()
+        .is_some_and(|identity| {
+            crate::live_status_with_timeout(tmux, &identity.session_id, timeout) == "stopped"
+        })
+}
+
 /// Press the submitting Enter for pasted `text` and confirm from the pane that
 /// it left the composer. Only Claude Code and Codex composers are recognized;
 /// any other provider gets the single Enter and an `unverified` outcome.
@@ -217,9 +250,7 @@ fn confirm_prompt_submission(
         &probe,
         hold_started + send_submit::HOLD_BUDGET,
         |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
-        |timeout| {
-            crate::live_status_with_timeout(tmux_bin, &record.tmux_session, timeout) == "stopped"
-        },
+        |timeout| recorded_tmux_runtime_stopped(tmux_bin, record, timeout),
         || {
             activity::state_for_view(context, record)
                 .is_none_or(|turn| turn.phase != activity::TurnPhase::NeedsInput)
@@ -360,8 +391,9 @@ fn guarded(
     mut record: SessionRecord,
     tmux_bin: &Path,
     manual_input: &mut ManualInputSection,
-    hold_started: Instant,
+    attempt: native::Attempt<'_>,
 ) -> Result<SendResult, CliError> {
+    let hold_started = attempt.started;
     let observed = record.clone();
     let admission = send_guard::Admission {
         context,
@@ -386,7 +418,7 @@ fn guarded(
             record,
             tmux_bin,
             manual_input,
-            hold_started,
+            attempt,
         );
     }
     let submits = codex_app_server::input_contains_submission(text.as_deref(), &args.keys);
@@ -448,10 +480,7 @@ fn guarded(
                     &probe,
                     admission.deadline,
                     |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
-                    |timeout| {
-                        crate::live_status_with_timeout(tmux_bin, &record.tmux_session, timeout)
-                            == "stopped"
-                    },
+                    |timeout| recorded_tmux_runtime_stopped(tmux_bin, &record, timeout),
                     || true,
                     press_enter,
                 )?))

@@ -34,8 +34,8 @@ for cross-host inheritance and nullable JSON details.
 ## Send input and glance
 
 `send` pushes input to a live session: literal text (`--text` /
-`--text-stdin`) and/or repeatable named keys
-(`--key enter|escape|backspace|c-c|up|down|left|shift-left|right|tab`), so
+`--text-stdin`) and/or repeatable named or single printable keys
+(`--key enter|escape|backspace|c-c|up|down|left|shift-left|right|tab`, or `--key s`), so
 codex/claude approval prompts and terminal editing remain usable from a phone.
 
 - Text is pasted with bracketed-paste markers (`tmux paste-buffer -p`), so a
@@ -46,6 +46,33 @@ codex/claude approval prompts and terminal editing remain usable from a phone.
 - Unguarded `send` is not idempotent: keystrokes are delivered before the command
   returns, so a retry after a mid-delivery failure can re-send. Callers that
   auto-retry should account for this.
+
+A printable key always requires verified idle activity, even without
+`--require-idle`. Busy or unknown sessions are refused before typing. Named
+keys keep their existing dialog/interrupt behavior.
+
+For a session-only model change, inspect the provider's picker with `glance`,
+navigate with named keys, and type the session-only shortcut it advertises:
+
+```bash
+agent-session glance <id> --tail 40
+agent-session send <id> --require-idle --text /model --key enter
+agent-session glance <id> --tail 40
+# Navigate the displayed model/effort choices in separate guarded sends.
+agent-session send <id> --require-idle --key down
+# Only when the displayed picker advertises s for this session only:
+agent-session send <id> --key s
+agent-session glance <id> --tail 40
+```
+
+Verify the resulting model and effort from the final provider display. In
+pickers that advertise `s` for this session only, `enter` may instead save a
+default; use it only when that persistent change is intended. If the provider
+version, picker shortcut, scope, or resulting settings cannot be verified, stop
+without confirming. This is the printable-key alternative for model switching;
+there is no automatic `set-model` command or provider-version support claim.
+For current Claude picker scope behavior, see the provider's
+[model configuration documentation](https://code.claude.com/docs/en/model-config#setting-your-model).
 
 For opt-in continuation guards and persisted at-most-once keys, use the
 [Send v1 contract](../specs/send-v1.md). Guarded submissions verify exact input
@@ -74,9 +101,11 @@ submission. `send` reads the pane back and reports
 While a session is `needs_input`, its pane belongs to a provider approval or
 question dialog, not to a prompt box. The routes that write to the pane refuse
 input carrying literal text with `agent-blocked` before anything reaches the
-terminal. Special keys stay admitted, because that is how the dialog gets
+terminal. Named special keys stay admitted, because that is how the dialog gets
 answered, and `send --allow-blocked` is the deliberate opt-in for typing into
-the dialog's own field. Routes that do not touch the pane, such as a Codex
+the dialog's own field. Printable `--key` values remain refused in this phase,
+even with `--allow-blocked`, because they always require idle admission.
+Routes that do not touch the pane, such as a Codex
 app-server prompt, are unaffected. This is a safety default rather than an
 authorization boundary: the attach socket remains an interactive terminal. The
 [Serve API v1 blocked-input contract](../specs/serve-api-v1.md) has the
@@ -344,6 +373,23 @@ the extra inventory cannot prove complete termination outside that boundary.
 Ownership mismatches and ambiguous tmux probes still retain the record. An
 interrupted frozen/kill transaction must be recovered through ordinary deletion
 before this flag can be used. Retired external runtimes remain unsupported.
+
+## Startup failures
+
+A fresh `start` or HTTP create that observes the provider stop before readiness
+returns `start-failed` (CLI exit 1). Inspect `error.details.reason`,
+`provider_exit_code`, and the optional redacted `stderr_tail` for the cause.
+The retained `session_id` makes the failed attempt addressable. Retry with a
+fresh session ID only when `retryable` is true; uncertain cleanup requires
+inspection first.
+
+`startup-trust-required` identifies a folder-trust screen. Review the requested
+working directory and configure its provider trust entry before retrying.
+`startup-prompt-required` identifies a recognized sign-in or setup screen.
+The launcher does not accept these prompts automatically and attempts verified
+cleanup so the failed create does not leave a silent live orphan.
+An unobservable or still-starting runtime is not proof of failure; reconcile
+that attempt before creating another session.
 
 ## Read logs
 

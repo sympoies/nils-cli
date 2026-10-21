@@ -246,6 +246,40 @@ pub(super) fn run_resolve_final(args: ResolveFinalArgs) -> i32 {
     }
 }
 
+// Consume matches from the original text so a rendered tail is never rewritten again.
+fn portable_reference(reference: &str) -> String {
+    static URI: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let uri = URI.get_or_init(|| {
+        regex::Regex::new(r#"[A-Za-z][A-Za-z0-9+.-]*:[^\s<>"`]+"#)
+            .expect("valid portable reference URI regex")
+    });
+    let uri_ranges: Vec<_> = uri.find_iter(reference).map(|uri| uri.range()).collect();
+    let hits = nils_common::provider_payload::scan_local_paths(reference);
+    let mut remaining = reference;
+    let mut display = String::new();
+    while let Some((start, hit)) = hits
+        .iter()
+        .filter_map(|hit| remaining.find(&hit.sample).map(|start| (start, hit)))
+        .min_by_key(|(start, hit)| (*start, std::cmp::Reverse(hit.sample.len())))
+    {
+        display.push_str(&remaining[..start]);
+        let original_start = reference.len() - remaining.len() + start;
+        // URI components are audit-link text, not standalone filesystem references.
+        // Leave them intact so the unchanged publication guard can refuse them.
+        if uri_ranges
+            .iter()
+            .any(|range| range.contains(&original_start))
+        {
+            display.push_str(&hit.sample);
+        } else {
+            display.push_str(&hit.suggestion);
+        }
+        remaining = &remaining[start + hit.sample.len()..];
+    }
+    display.push_str(remaining);
+    display
+}
+
 /// Portable audit section for PR bodies containing explicit failed-final dispositions.
 pub fn final_resolution_summary(record: &EvidenceRecord) -> String {
     if !record
@@ -260,7 +294,7 @@ pub fn final_resolution_summary(record: &EvidenceRecord) -> String {
         summary.push_str(&format!(
             "\n- {}: `{}` (scope {}, attempt {}).",
             validation.status.as_str().to_uppercase(),
-            validation.command,
+            portable_reference(&validation.command),
             validation.scope.map_or("unknown", ValidationScope::as_str),
             validation.attempt
         ));
@@ -270,11 +304,16 @@ pub fn final_resolution_summary(record: &EvidenceRecord) -> String {
         if let Some(resolution) = &validation.resolution {
             summary.push_str(&format!(
                 " Resolved by `{}` (scope {}, attempt {}): {}. Investigation: {}.",
-                resolution.passing_command,
+                portable_reference(&resolution.passing_command),
                 resolution.passing_scope.as_str(),
                 resolution.passing_attempt,
                 resolution.reason,
-                resolution.investigation.join("; ")
+                resolution
+                    .investigation
+                    .iter()
+                    .map(|reference| portable_reference(reference))
+                    .collect::<Vec<_>>()
+                    .join("; ")
             ));
         }
     }

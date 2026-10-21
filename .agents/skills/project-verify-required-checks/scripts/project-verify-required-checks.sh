@@ -24,6 +24,7 @@ Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/tests/dependabot-third-party-workflow-contract.test.sh
   - bash scripts/ci/tests/release-workflow-contract.test.sh
   - python3 scripts/ci/tests/merge-plan-metadata.test.py
+  - python3 scripts/ci/tests/merge-plan-policy.test.py
   - python3 scripts/ci/tests/scoped-coverage-ratchet.test.py
   - bash scripts/ci/tests/shared-helper-adoption-audit.test.sh
   - bash scripts/ci/tests/publish-order-audit.test.sh
@@ -200,6 +201,7 @@ if [[ "$docs_only" -eq 1 ]]; then
 fi
 
 run python3 scripts/ci/tests/gate-resources.test.py
+run python3 scripts/ci/tests/gate-reports.test.py
 run python3 scripts/ci/assert-import-audit.py
 run python3 scripts/ci/tests/assert-import-audit.test.py
 run python3 scripts/ci/tests/merge-plan-ci.test.py
@@ -222,6 +224,7 @@ run node_scoped node scripts/ci/tests/peekaboo-release-check.test.cjs
 run bash scripts/ci/tests/dependabot-third-party-workflow-contract.test.sh
 run bash scripts/ci/tests/release-workflow-contract.test.sh
 run python3 scripts/ci/tests/merge-plan-metadata.test.py
+run python3 scripts/ci/tests/merge-plan-policy.test.py
 run bash scripts/ci/tests/shared-helper-adoption-audit.test.sh
 run bash scripts/ci/tests/publish-order-audit.test.sh
 run bash scripts/ci/tests/docs-hygiene-audit.test.sh

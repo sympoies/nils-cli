@@ -74,6 +74,7 @@ intended remote. GitLab and Local are unsupported for these commands.
 forge-cli --repo example/widget release create v1.0.0 --title 'Release 1.0.0' --notes-file notes.md --verify-tag --draft
 forge-cli --repo example/widget release upload v1.0.0 artifact.tar.gz
 forge-cli --repo example/widget workflow dispatch build.yml --ref main --input mode=check
+forge-cli --repo example/widget run rerun 42 --job 19 --expected-head "$EXPECTED_HEAD"
 forge-cli --repo example/widget comment edit 123 --body-file correction.md
 forge-cli --repo example/widget comment delete 123 --kind review --dry-run
 ```
@@ -564,10 +565,13 @@ It requires a current-head published review and a reviewer-owned closed ledger;
 mailbox verdicts never replace provider evidence. See the
 [handoff contract](docs/specs/forge-cli-spec-v1.md#pr-review-handoff-assign--inspect--check--surrender--recover)
 for assignment, writer fencing, generation-bound surrender/recovery, and privacy boundaries.
-A successor can recover a retired coordinator with `--reason coordinator-retired`,
-the recorded `--coordinator-session`, and exact `--base-sha`, `--expected-head`,
-and `--expected-state`. Fresh terminal session-board evidence is required;
-the transfer preserves findings and keeps review verdicts reviewer-owned.
+A repository-configured handoff supervisor can recover a retired coordinator
+with `--reason coordinator-retired`, `--base-sha`, `--expected-head`, and
+`--expected-state`. `--coordinator-session` is optional; the stored coordinator
+digest can identify its registry row. The target base branch's
+`[review_handoff].supervisors` allow-list, a fresh stopped/deleted status, and
+stale terminal-activity evidence are required. The transfer preserves findings
+and keeps review verdicts reviewer-owned.
 
 When an automated review App configured in the user-global config still blocks
 a head the designated reviewer has passed, `pr review-dismiss <id> --review-id <id> --expected-head
@@ -575,3 +579,6 @@ a head the designated reviewer has passed, `pr review-dismiss <id> --review-id <
 refuses human, unconfigured, wrong-head and wrong-state reviews, and any PR
 without a designated PASS at that head. See the
 [dismissal contract](docs/specs/forge-cli-spec-v1.md#pr-review-dismiss).
+
+For fenced CI reruns and attempt/job receipts, see the
+[run rerun contract](docs/specs/forge-run-rerun-v1.md).

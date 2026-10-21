@@ -7,5 +7,10 @@ run_test() (
   for test_identity_key in "${!FORGE_IDENTITY_@}"; do
     unset "$test_identity_key"
   done
-  run "$@"
+  if [[ "${1##*/}" == cargo && ( "${2:-}" == nextest ||
+        ( "${2:-}" == llvm-cov && "${3:-}" == nextest ) ) ]]; then
+    run python3 "$(dirname "${BASH_SOURCE[0]}")/gate-reports.py" "$@"
+  else
+    run "$@"
+  fi
 )

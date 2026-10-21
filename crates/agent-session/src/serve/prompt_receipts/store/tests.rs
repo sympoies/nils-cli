@@ -58,12 +58,14 @@ fn results_are_private_durable_scoped_and_contain_no_prompt_text() {
     let mut submitted = receipt.clone();
     submitted.outcome = Outcome::Submitted;
     submitted.code = None;
+    submitted.confirmation_diagnostic = None;
     finish(
         owner,
         &ResultRecord {
             receipt: submitted.clone(),
             status: 200,
             queued: true,
+            native_confirmation: None,
         },
     )
     .unwrap();

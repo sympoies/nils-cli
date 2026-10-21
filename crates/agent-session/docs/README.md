@@ -30,6 +30,8 @@ or integrating a specific subsystem.
   response/authentication rules, launch profiles, and session survival. Its
   endpoint map routes history, observation, automation, prompts, accounts,
   creation, terminal transport, and usage to topic contracts.
+- [Native busy replies](specs/native-busy-replies.md): immediate client handoff,
+  provider acknowledgment limits, and the separate explicit idle-only option.
 - [Session retitle v2](specs/session-retitle-v2.md): bounded title context,
   automatic scheduling, mutation fences, provider configuration, and privacy.
 - [Session retitle v3](specs/session-retitle-v3.md): bounded semantic memory,
@@ -39,6 +41,8 @@ or integrating a specific subsystem.
   core state machines, trust, authorization, and owned children. Its contract
   map routes schemas, mailbox, runtime recovery, interfaces, and federation
   to topic contracts.
+- [Scoped worker delegation v1](specs/scoped-worker-delegation-v1.md): expiring
+  operation and recipient scopes for supervised workers, revocation and audits.
 - [Session board v1](specs/session-board-v1.md): opt-in cross-host board
   record, closed-session ledger and cursor, relay route, aggregator query
   contract, and the `agent-session board` CLI.

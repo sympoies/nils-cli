@@ -154,6 +154,17 @@ Older callers that omit the UUID still receive a generated identifier.
   including a child created before registration or response delivery failed.
   It does not launch, resume, or reattach the child, and does not assert the
   child is still running. `safe_to_retry` remains false.
+- `start_failed` records a definite provider startup failure, retaining the
+  addressable failed attempt under `session.id`. `failure` includes code
+  `start-failed`, a recognized startup `reason`, nullable numeric
+  `provider_exit_code`, `cleanup`, `retryable`, `safe_to_retry`, `next_action`,
+  and `recovery`. A fresh operation is safe only when cleanup is completed and
+  the provider exit was observed before readiness. Trust/sign-in/setup prompts
+  require configuration first; incomplete cleanup remains unsafe. Replaying or
+  reconciling this operation returns that metadata without another create or
+  board scan, including after daemon restart. The initial error may include a
+  bounded redacted stderr tail, but durable receipts and replay results never
+  retain diagnostic text.
 - `not_created` records a definite pre-create refusal; `safe_to_retry: true`
   permits a new operation after the reported cause is repaired.
 - `ambiguous` means the daemon cannot confirm the upstream outcome. A single

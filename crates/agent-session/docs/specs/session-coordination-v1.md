@@ -516,8 +516,10 @@ details. A retry is safe only when `recovery.safe_to_retry` is true. Definite
 pre-create failures may permit retry; an aggregator authentication rejection is
 safe to repeat after configuration is repaired but is not itself retryable.
 Transport failures, unreadable responses, and unconfirmed create results are
-not safe to retry: inspect Console for the child before submitting again. The
-`--via-console` client preserves only recognized failure fields and treats
+not safe to retry: inspect Console for the child before submitting again.
+A target `start-failed` error preserves its allowlisted startup reason, exit
+code, bounded redacted diagnostic, retained session ID, and cleanup/retry policy.
+The `--via-console` client preserves only recognized failure fields and treats
 missing or malformed details as unsafe.
 
 ### Operation diagnostics and reconciliation
@@ -535,3 +537,11 @@ See [Message categories and recipient forwarding](coordination-federation-v1.md#
 ### Mixed-version rollout
 
 See [Mixed-version rollout](coordination-federation-v1.md#mixed-version-rollout).
+
+## Scoped worker delegations
+
+[Scoped worker delegation v1](scoped-worker-delegation-v1.md) defines a separate
+private credential for supervised workers. Only console-start and message-send
+admission accept it, and enforce its operation/recipient scope, expiry, and the
+current delegating incarnation. Ordinary runtime capabilities retain their
+existing authority.

@@ -201,6 +201,17 @@ review_state_contract:
   record:
     required: [schema, repository, pr, expected_head, generation, previous_digest, payload, record_digest]
     chain: "one genesis; zero-based contiguous generations; previous_digest binds the unique prior record; byte-identical append retries are deduplicated, while conflicting duplicates, forks, stale, missing, or unreachable records fail as review_state_conflict"
+  review_loop_acceptance:
+    input_schema: forge-cli.review-loop-acceptance.v1
+    input: "observe findings-file wrapper; acceptance {stopped_record, attempted_findings, approval_comment?}; explicit current expected-state and stopped head required"
+    record_kind: review-loop-acceptance
+    authority: "newer same-PR OWNER/MEMBER/COLLABORATOR approval comment containing exact acceptance proposal marker; extension approval grants no acceptance authority"
+    proposal: "sha256 of JSON tuple [input schema, stopped record digest, expected head, canonical attempted inventory map, canonical proposed inventory map]; omit approval_comment and dry-run to discover required marker"
+    transition: "prove the stopped observation digest; only open-to-accepted changes allowed; retain every other row and every prior open identity; at least one acceptance and no remaining open blocking findings"
+    preservation: "append immutable receipt; retain original stop, attempted inventory, accepted fingerprints and approval reference; clear active stop without repair round, counter reset, budget extension, or loss of prior records"
+    inspect: "accepted_risks exposes historical acceptance receipts in chain order; omitted when empty"
+    retry: "identical retry at current tip appends nothing; earlier-assignment retry cannot establish a new interval"
+    readback: "replay against preceding chain; reject rehashed counter, budget, fingerprint or stop drift; older clients require upgrade"
   review_loop_correction:
     input_schema: forge-cli.review-loop-correction.v1
     input: "existing observe findings-file wrapper; correction {corrected_record, reason: omitted-findings, attempted_findings?}; complete canonical findings inventory; explicit current expected-state required"
@@ -295,6 +306,22 @@ operations:
       github: [release, upload, <tag>, --repo, <repo>]
     output:
       data: { provider: github, repository: string, tag: string, url: nullable<string>, assets: integer }
+
+  - id: run.rerun
+    schema_version: cli.forge-cli.run.rerun.v1
+    summary: Request one identity-scoped GitHub rerun at the expected current PR head.
+    inputs:
+      - { name: run-id, type: positive-integer, required: true }
+      - { name: --expected-head, type: full-sha, required: true }
+      - { name: --job, type: positive-integer, optional: true }
+      - { name: --failed-only, type: bool, default: false }
+      - { name: --receipt-timeout-secs, type: integer, default: 10 }
+    validations: []
+    backends:
+      github:
+        - { program: gh, argv: [api, "repos/<repo>/actions/runs/<run-id>/rerun", --method, POST], notes: "Whole run; failed-only and selected job use their respective REST rerun endpoints. Preflight fences run, attempt, job ownership, and current PR heads. One write only; bounded receipt reads never replay it." }
+    output:
+      data: { provider: github, repository: string, run_id: integer, head_sha: string, actor: string, selection: "enum<all|failed|job>", selected_job: nullable<integer>, previous_attempt: integer, rerun_requested: bool, receipt_status: "enum<observed|pending|superseded>", receipt_error: nullable<string>, attempt: nullable<integer>, url: string, attempt_url: nullable<string>, jobs: "list<{id,name,html_url}>" }
 
   - id: workflow.dispatch
     schema_version: cli.forge-cli.workflow.dispatch.v1
@@ -756,6 +783,47 @@ operations:
         pending_reviews: list<{id, database_id?, url, author, state, commit_sha?, summary, summary_truncated}>
     notes: "all review pages are read (100 nodes/page, max 100 pages); provider-valid PENDING reviews have no submitted_at, may have no commit_sha, and are returned separately, never as convergence activity. Partial GraphQL data, missing required submitted-review fields, unknown states, head drift, or unsafe pagination return review_snapshot_incomplete. summary is bounded to 4096 UTF-8 bytes and is never parsed as a machine verdict; submitted commit_sha != head_sha is stale/informational."
 
+  - id: pr.review-get
+    schema_version: cli.forge-cli.pr.review-get.v1
+    summary: Read the complete bounded native review body selected by database ID.
+    inputs:
+      - { name: <id>, type: integer, required: true }
+      - { name: --review-id, type: integer, required: true }
+    validations:
+      - review_not_found
+      - review_snapshot_incomplete
+    dry_run:
+      offline: true
+      repo_resolution: "--repo owner/name or recognised forge remote"
+    backends:
+      github:
+        - { program: gh, argv: [pr, view, "{id}", --repo, "{repo}", --json, "<PR fields>"] }
+        - { program: gh, argv: [api, graphql, "--hostname <host when host != github.com>", -f, "query=<bound paginated review snapshot>"] }
+        - { program: gh, argv: [api, "--hostname <host when host != github.com>", "repos/{repo}/pulls/{id}/reviews/{review_id}"] }
+      gitlab: unsupported
+      local: unsupported
+    output:
+      data:
+        provider: enum<github>
+        repository: string
+        number: integer
+        pr_url: string
+        head_sha: string
+        viewer_login: string
+        id: string
+        database_id: integer
+        url: string
+        author: string
+        commit_sha: string|null
+        state: string
+        submitted_at: string|null
+        body: string
+        body_bytes: integer
+        body_truncated: boolean # always false on success
+        complete: boolean # always true on success
+        observed_at: string # UTC observation timestamp
+    notes: "Invoked by pr reviews <id> --review-id <database-id>. Reuses complete-report GET/binding verification and normal read-only provider transport; no arbitrary API, URL following or mutation. The 64 KiB UTF-8 body bound and backend capture limits remain enforced. Incomplete or changed readback fails rather than emitting a shortened success body. The default pr.reviews summary contract is unchanged."
+
   - id: pr.pending-review.inspect
     schema_version: cli.forge-cli.pr.pending-review.inspect.v1
     summary: Read one complete pending GitHub review and its immutable snapshot digest.
@@ -940,7 +1008,7 @@ operations:
       - { name: --review-author, type: string, required: conditional }
       - { name: --base-sha, type: string, required: conditional }
       - { name: --reason, type: enum, values: [reviewer-unreachable, reviewer-closed, reviewer-declined, reviewer-timeout, coordinator-retired], required: conditional }
-      - { name: --coordinator-session, type: string, required: conditional, notes: "recover coordinator-retired only; private selector must match recorded coordinator digest" }
+      - { name: --coordinator-session, type: string, required: false, notes: "optional recovery selector; when supplied, must match the recorded coordinator digest" }
     dry_run:
       offline: false
       repo_resolution: "--repo owner/name or recognised GitHub remote"
@@ -950,7 +1018,7 @@ operations:
     backends:
       github:
         argv: ["gh", "api", "graphql"]
-        note: "Trusted complete provider-state/native-review reads; stale-base inspect retains ownership and exact durable tip with review-scope-changed status. Same-reviewer/exact-author assign may refresh a moved base in the next generation without surrender, retaining findings and requiring fresh observation/publication. Assign/recover recheck head/base before append through the existing head/tip-CAS ledger owner. Surrender retains the old scope and may name the assigned head after an unobserved advance; it records the head snapshot read before append without rechecking the provider head there. Takeover also reads fresh session-board terminal lifecycle evidence. Never publishes raw session or machine selectors."
+        note: "Trusted complete provider-state/native-review reads; stale-base inspect retains ownership and exact durable tip with review-scope-changed status. Same-reviewer/exact-author assign may refresh a moved base in the next generation without surrender, retaining findings and requiring fresh observation/publication. Assign/recover recheck head/base before append through the existing head/tip-CAS ledger owner. Surrender retains the old scope and may name the assigned head after an unobserved advance; it records the head snapshot read before append without rechecking the provider head there. Retired-coordinator takeover reads fresh session-board terminal lifecycle evidence and loads policy only when selected remote host/repository and base-ref commit match the provider's exact base; invalid explicit stale_after fails closed. It also requires a repository-configured supervisor and fresh, stale terminal-activity evidence from the coordinator's recorded host. Never publishes raw session or machine selectors."
     output:
       data:
         provider: enum<github>
@@ -1025,7 +1093,7 @@ operations:
       gitlab: unsupported
       local: unsupported
     output:
-      data: object<{provider,number,url,state_tip_digest?,generation?,state?,appended:false,outcome_posted:false}>
+      data: object<{provider,number,url,state_tip_digest?,generation?,state?,appended:false,outcome_posted:false,accepted_risks?}>
     notes: "The append-only forge-cli.review-loop.v1 chain is completely paginated, hash-validated, and fork-checked. ReviewRunReceipt and ReviewLoop records share one chain; no second provider store is created."
 
   - id: pr.review-loop.observe
@@ -1050,6 +1118,8 @@ operations:
       - review_observation_incomplete
       - review_correction_invalid
       - review_supersession_invalid
+      - review_acceptance_invalid
+      - review_acceptance_approval_invalid
       - review_no_progress
       - review_round_limit_exceeded
       - review_state_comment_invalid
@@ -1061,15 +1131,16 @@ operations:
       github:
         - { program: gh, argv: [pr, view, "{id}", --json, "number,url,...,headRefOid"] }
         - { program: gh, argv: [api, graphql, -f, "query=<complete privileged review-state comments>", -F, "pr={id}"] }
+        - { program: gh, argv: [api, "repos/{repo}/issues/comments/{approval_comment}"], notes: "explicit terminal acceptance only; verify maintainer association, PR, timestamp and exact marker before append" }
         - { program: gh, argv: [api, "repos/{repo}/compare/{stopped-head}...{expected-head}?per_page=100&page={page}"], notes: "explicit supersession only; read all pages and verify every new signature before append" }
         - { program: gh, argv: [api, "repos/{repo}/issues/{id}/comments", --method, POST, --raw-field, "body=<visible ledger metadata line, then canonical state marker, then optional `---` and delivery outcome>"] } # one comment carries both halves; with no --body/--body-file it is metadata plus marker
         - { program: gh, argv: [api, graphql, -f, "query=<complete privileged review-state comments>", -F, "pr={id}"] }
       gitlab: unsupported
       local: unsupported
     output:
-      data: object<{provider,number,url,state_tip_digest,generation,state,appended,outcome_posted}>
+      data: object<{provider,number,url,state_tip_digest,generation,state,appended,outcome_posted,accepted_risks?}>
       dry_run_data: object<{provider,plan,preflight_ok,would_append?,planned_comment?:{visible_metadata,includes_outcome_body,bytes},preflight}>
-    notes: "Explicit signed-fast-forward stop supersession uses the typed findings-file wrapper and preserves history and budgets while requiring a fresh approval at the new head. Defaults are five repair rounds, two consecutive no-progress rounds, and zero automatic reopens. Same-head/same-finding retries append nothing. Delta input retains omitted terminal findings; every previously open finding must be included even on the same head. Full-set input may repeat already fixed findings on the same head without advancing their lifecycle counters; thread references are merged. First-time fixed transitions still require a repaired head, with diagnostics explaining the omit-or-repeat alternative for already fixed findings. A subset cannot infer fixed status from omission: new heads must include every previously open identity. Explicit chain-bound omission correction uses the typed findings-file wrapper and appends a history-preserving review-loop-correction record without extending budgets. Observation rows may carry status/disposition open|fixed|accepted|preference|follow-up, with terminal dispositions recorded non-blocking. A new head advances one round; strict cardinality shrink is the only mechanical progress signal. Extendable terminal errors append a durable hard-stop receipt before returning the exact extension proposal; they never approve, resolve, or merge. --body/--body-file posts the delivery outcome in the same comment as the appended record, so outcome_posted is never true without appended; every outcome-body rule is enforced before the first provider call, and planned_comment/state_comment_body appear in a dry run only when a write is planned — including the unextended-hard-stop case, where the live path returns the stop without appending. See review_state_contract.combined_outcome for the record-vs-comment deduplication boundary. --body-file - consumes stdin once, so a dry-run-then-live sequence must not share a piped body. --preflight runs that same sweep in front of a LIVE append, failing as review_preflight_failed with every failing rule named rather than the first, and replaces the separate --dry-run call a caller would otherwise make. --auto-state reads the tip itself instead of being handed one; it is deliberately WEAKER than --expected-state, which is a claim about a tip the caller already saw and is the only form that catches a resumed shell reusing genesis state. Use --auto-state for the genesis observation and keep --expected-state for a closing observation made against a digest an earlier append returned. With both flags the tip is read twice and a move in between fails as review_state_tip_moved, naming both digests, because the transition was computed against the chain the sweep read. --preflight with --body-file - is refused as review_preflight_body_not_replayable before the first provider call: the sweep and the append each read the body once, so a piped body would be validated in one and submitted in the other."
+    notes: "Explicit terminal accepted-risk disposition uses the acceptance envelope and maintainer marker defined in review_state_contract.review_loop_acceptance. Explicit signed-fast-forward stop supersession uses the typed findings-file wrapper and preserves history and budgets while requiring a fresh approval at the new head. Defaults are five repair rounds, two consecutive no-progress rounds, and zero automatic reopens. Same-head/same-finding retries append nothing. Delta input retains omitted terminal findings; every previously open finding must be included even on the same head. Full-set input may repeat already fixed findings on the same head without advancing their lifecycle counters; thread references are merged. First-time fixed transitions still require a repaired head, with diagnostics explaining the omit-or-repeat alternative for already fixed findings. A subset cannot infer fixed status from omission: new heads must include every previously open identity. Explicit chain-bound omission correction uses the typed findings-file wrapper and appends a history-preserving review-loop-correction record without extending budgets. Observation rows may carry status/disposition open|fixed|accepted|preference|follow-up, with terminal dispositions recorded non-blocking. A new head advances one round; strict cardinality shrink is the only mechanical progress signal. Extendable terminal errors append a durable hard-stop receipt before returning the exact extension proposal; they never approve, resolve, or merge. --body/--body-file posts the delivery outcome in the same comment as the appended record, so outcome_posted is never true without appended; every outcome-body rule is enforced before the first provider call, and planned_comment/state_comment_body appear in a dry run only when a write is planned — including the unextended-hard-stop case, where the live path returns the stop without appending. See review_state_contract.combined_outcome for the record-vs-comment deduplication boundary. --body-file - consumes stdin once, so a dry-run-then-live sequence must not share a piped body. --preflight runs that same sweep in front of a LIVE append, failing as review_preflight_failed with every failing rule named rather than the first, and replaces the separate --dry-run call a caller would otherwise make. --auto-state reads the tip itself instead of being handed one; it is deliberately WEAKER than --expected-state, which is a claim about a tip the caller already saw and is the only form that catches a resumed shell reusing genesis state. Use --auto-state for the genesis observation and keep --expected-state for a closing observation made against a digest an earlier append returned. With both flags the tip is read twice and a move in between fails as review_state_tip_moved, naming both digests, because the transition was computed against the chain the sweep read. --preflight with --body-file - is refused as review_preflight_body_not_replayable before the first provider call: the sweep and the append each read the body once, so a piped body would be validated in one and submitted in the other."
 
   - id: pr.review-loop.extend
     schema_version: cli.forge-cli.pr.review-loop.extend.v1
@@ -1107,6 +1178,7 @@ operations:
     validations:
       - review_findings_invalid
       - review_correction_invalid
+      - review_acceptance_invalid
       - review_supersession_invalid
       - review_fingerprint_required
       - review_fingerprint_collision
@@ -1115,7 +1187,7 @@ operations:
       gitlab: none
       local: none
     output:
-      data: object<{shape:enum<merge-envelope|observation-array|correction-envelope|supersession-envelope>,row_count,identity_count,dispositions:[{disposition:enum<open|fixed|accepted|preference|follow-up>,count}],blocking_count,duplicate_identities?}>
+      data: object<{shape:enum<merge-envelope|observation-array|correction-envelope|supersession-envelope|acceptance-envelope>,row_count,identity_count,dispositions:[{disposition:enum<open|fixed|accepted|preference|follow-up>,count}],blocking_count,duplicate_identities?}>
     notes: >-
       Provider-independent and network-free: the op takes no id, resolves no
       provider context, and runs no backend, so `--provider`, `--repo`,
@@ -1628,6 +1700,26 @@ operations:
     output:
       data: { provider, host, repo, kind, state, limit, limited, items }
     notes: "Repository principal rules apply. States are kind-specific; all omits the filter. Bounded reads: Dependabot follows Link rel=next via decoded after cursors, never page=N; other alert kinds use numbered pages. Stop at the limit or exhausted pages; explicit metadata allowlist excludes secret values and code snippets."
+
+  - id: security.alerts.view
+    schema_version: cli.forge-cli.security.alerts.view.v1
+    summary: Read exact-ref and commit code-scanning alert evidence with optional analysis SARIF.
+    inputs:
+      - { name: number, type: positive-integer, required: true }
+      - { name: --kind, type: enum<code-scanning>, required: true }
+      - { name: --ref, type: string, required: true }
+      - { name: --commit, type: full-commit-sha, required: true }
+      - { name: --include-sarif, type: bool, default: false }
+    backends:
+      github:
+        program: gh
+        argv: [api, "{optional_hostname}", -X, GET, "repos/{repo}/code-scanning/alerts/{number}"]
+        env: { GH_HOST: "{resolved_authority}" }
+      gitlab: provider_unsupported
+      local: provider_unsupported
+    output:
+      data: { provider, host, repo, kind, reference, commit_sha, alert, instances, sarif_requested, sarif_scope, analyses }
+    notes: "Read-only repository principal binding applies to every request. Instances use GET alerts/{number}/instances with ref, per_page=100, page=N and exact local ref/commit filtering. Optional GET analyses uses the same pagination and exact ref/commit/configuration/tool matching (present string bindings, nonempty tool name and matching nonempty alert tool GUID; null alert GUID permits name fallback, tool versions need not match); GET analyses/{id} with Accept:application/sarif+json returns corresponding analysis-level SARIF including provider alert properties/codeFlows, potentially code snippets. No provider URLs are followed. Inventory bound is ten pages per endpoint. Each call uses a 30-second timeout and 8 MiB capture per stream; command limits are 32 requests, 120 seconds and 16 MiB cumulative evidence. Budget exhaustion is security_read_limit and capture overflow is backend_output_limit, without partial evidence. Incomplete reads and missing requested evidence are errors, never clearance. Dry-run previews the first GET only."
 
   - id: security.settings.view
     schema_version: cli.forge-cli.security.settings.view.v1

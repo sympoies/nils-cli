@@ -6,10 +6,7 @@ use nils_common::fs::{SECRET_FILE_MODE, write_atomic};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{
-    authenticate_from_file, authenticate_token, digest_bytes, incarnation, lock_registry,
-    now_epoch, timestamp,
-};
+use super::{authenticate_token, digest_bytes, incarnation, lock_registry, now_epoch, timestamp};
 use crate::{CliContext, CliError};
 
 #[path = "remote_delivery_notice.rs"]
@@ -725,7 +722,23 @@ pub(crate) fn submit(
     token: &str,
     args: Submit,
 ) -> Result<Value, CliError> {
-    let (_, source_incarnation) = authenticate_token(context, session, token)?;
+    let usage = super::delegation::Use::MessageSend {
+        machine: &args.to_machine,
+        recipient: &args.to_session,
+    };
+    // Forwarding reads another message and is outside message-send delegation.
+    if args.forward.is_some() && super::delegation::is_delegation(token) {
+        super::delegation::authenticate_token(
+            context,
+            Some(session),
+            token,
+            super::delegation::Use::CapabilityOnly,
+            true,
+        )?;
+        return Err(super::delegation::scope_denied());
+    }
+    let (_, source_incarnation) =
+        super::delegation::authenticate_token(context, Some(session), token, usage, true)?;
     submit_origin(
         context,
         config,
@@ -1034,24 +1047,33 @@ where
         None
     };
     if let Some(token) = token {
-        let (_, current) = authenticate_token(context, session, token)?;
+        let (_, current) = super::delegation::authenticate_token(
+            context,
+            Some(session),
+            token,
+            super::delegation::Use::MessageSend {
+                machine: &envelope.to.machine,
+                recipient: &envelope.to.session_id,
+            },
+            false,
+        )?;
         if current != source_incarnation {
             return Err(super::unauthorized());
         }
     }
     let locked = lock_registry(context)?;
     if let Some(token) = token {
-        let broker = locked
-            .registry
-            .brokers
-            .get(session)
-            .ok_or_else(super::unauthorized)?;
-        if broker.state != "ready"
-            || broker.incarnation != source_incarnation
-            || broker.capability_digest != digest_bytes(token.as_bytes())
-        {
-            return Err(super::unauthorized());
-        }
+        super::delegation::revalidate(
+            context,
+            &locked.registry,
+            session,
+            &source_incarnation,
+            token,
+            super::delegation::Use::MessageSend {
+                machine: &envelope.to.machine,
+                recipient: &envelope.to.session_id,
+            },
+        )?;
     }
     authorize()?;
     if let Some(parent_id) = envelope.reply_to.as_deref() {
@@ -1781,7 +1803,13 @@ fn local_request(
     body: Option<Value>,
 ) -> Result<Value, CliError> {
     let capability = super::mailbox::resolve_capability_file(capability)?;
-    authenticate_from_file(context, session, Some(&capability))?;
+    super::delegation::authenticate_remote_request(
+        context,
+        session,
+        &capability,
+        path,
+        body.as_ref(),
+    )?;
     let token = String::from_utf8(
         super::read_private_file(&capability, 256).map_err(|_| super::unauthorized())?,
     )
@@ -2270,6 +2298,15 @@ mod tests {
             }
         }
     }
+    fn refresh_recipient_heartbeat(context: &CliContext) {
+        write_atomic(
+            &super::super::heartbeat_path(&context.state_dir, "recipient"),
+            format!("recipient-incarnation:{}\n", now_epoch()).as_bytes(),
+            SECRET_FILE_MODE,
+        )
+        .expect("heartbeat");
+    }
+
     pub(super) fn fixture() -> (tempfile::TempDir, CliContext) {
         let temp = tempfile::TempDir::new().expect("private temp root");
         let context = CliContext {
@@ -2299,12 +2336,7 @@ mod tests {
             SECRET_FILE_MODE,
         )
         .expect("capability");
-        write_atomic(
-            &directory.join("heartbeat"),
-            format!("recipient-incarnation:{}\n", now_epoch()).as_bytes(),
-            SECRET_FILE_MODE,
-        )
-        .expect("heartbeat");
+        refresh_recipient_heartbeat(&context);
         let mut locked = lock_registry(&context).expect("registry");
         locked.registry.schema_version = super::super::LEGACY_REGISTRY_VERSION.into();
         super::super::ensure_fingerprint_key(&mut locked.registry);
@@ -3458,6 +3490,7 @@ mod tests {
         }
         locked.save().unwrap();
         drop(locked);
+        refresh_recipient_heartbeat(&context);
         assert_eq!(
             receive(&context, "destination", envelope())
                 .unwrap_err()
@@ -3471,7 +3504,9 @@ mod tests {
             .iter()
             .map(|m| (m.message_id.clone(), m.revision))
             .collect();
+        // This synthetic broker needs an explicit beat for each authenticated operation.
         for (id, revision) in ids {
+            refresh_recipient_heartbeat(&context);
             super::super::mailbox::ack(
                 &context,
                 crate::cli::MessageAckArgs {
@@ -3489,6 +3524,7 @@ mod tests {
             )
             .unwrap();
         }
+        refresh_recipient_heartbeat(&context);
         assert_eq!(
             receive(&context, "destination", envelope()).unwrap()["state"],
             "delivered"

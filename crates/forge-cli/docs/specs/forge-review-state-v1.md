@@ -287,26 +287,34 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   The current recorded coordinator may assign the next generation using the
   durable `state_tip_digest` returned by recovery or fresh inspection.
 - Successor takeover uses `recover <id> --reason coordinator-retired
-  --coordinator-session <recorded-session-id>[@machine] --base-sha <current-base>
+  [--coordinator-session <recorded-session-id>[@machine]] --base-sha <current-base>
   --expected-head <current-head> --expected-state <exact-tip>`. The selector
-  must hash to the recorded coordinator. A distinct successor (also different
-  from the reviewer) must prove retirement through a fresh, complete
-  `agent-session board --state all --format json` read. The source must be
-  available and observed within 60 seconds; only a terminal `closed` row with a
-  `deleted` or `archived` reason qualifies. A live coordinator is refused with
-  `review_coordinator_live`; absent, stopped, unknown, vanished, stale,
-  truncated, unavailable, malformed, or failed evidence is refused with
-  `review_coordinator_unproven`. Neither elapsed time nor a supplied evidence
-  file grants ownership. A qualified selector binds the proof to that machine;
-  the persisted session identity must have one unambiguous source for either
-  selector form. Any live same-ID row refuses takeover, even on another source;
-  qualifiers cannot resolve ambiguous historical identities.
+  when supplied must hash to the recorded coordinator; otherwise the selector
+  is resolved from the stored coordinator digest in a fresh, complete
+  `agent-session board --state all --format json` read. Only a repository
+  configured handoff supervisor may take over, as listed by `sha256:` digest in
+  `[review_handoff].supervisors` at the exact provider base. The selected
+  remote must match provider host/repository and its base-tracking ref must
+  resolve to that base SHA; invalid explicit `stale_after` refuses takeover.
+  The list is
+  empty by default and is never read from global configuration or the PR head.
+  The supervisor must also prove at operation time that every matching
+  coordinator row is stopped or deleted on one available host and that its
+  `last_terminal_activity_at` is older than `[review_handoff].stale_after`
+  (default `2h`). A live coordinator is refused with
+  `review_coordinator_live`; absent, recent, unknown, vanished, truncated,
+  unavailable, malformed, or failed evidence is refused with
+  `review_coordinator_unproven`. The supervisor identity, reason, host digest,
+  terminal status, activity time, and prior coordinator digest are retained in
+  the new ledger generation. Registry absence alone grants no ownership.
   The opaque source digest binds the final proof read without publishing its
   machine name. Source configuration remains owned by `agent-session`;
   `FORGE_CLI_AGENT_SESSION_BIN` selects its executable (including test adapters).
 - Takeover appends a handoff recovery with `coordinator_transfer` containing
-  `old_coordinator_digest`, `new_coordinator_digest`, `lifecycle_source_digest`, and `reason`
-  (`coordinator-retired`). This optional field is omitted on ordinary records,
+  `old_coordinator_digest`, `new_coordinator_digest`, `lifecycle_source_digest`,
+  `reason` (`coordinator-retired`), `supervisor_digest`, and
+  `retirement_evidence` (`machine_digest`, `session_status`,
+  `last_activity_at`, and `stale_after_seconds`). This optional field is omitted on ordinary records,
   preserving their existing digest bytes. The assignment generation advances,
   the current head/base are captured, reviewer identity and public author stay
   fixed, and every inherited finding/history record remains attached. Takeover
@@ -522,6 +530,65 @@ for deleted tests, assertion changes and new skips in the PR comparison.
   the exact approval marker. The stop code must map to its canonical budget
   field and the proposal must match the active receipt. Each proposal is
   consumable once; retry and delivery paths cannot silently increase a budget.
+- To terminally accept remaining risk after a durable hard stop, use an
+  explicit acceptance envelope with `observe --expected-head <stopped-head>
+  --expected-state <current-tip> --findings-file acceptance.json`:
+
+  ```json
+  {
+    "schema_version": "forge-cli.review-loop-acceptance.v1",
+    "acceptance": {
+      "stopped_record": "sha256:<latest-stopped-review-loop-record>",
+      "attempted_findings": [
+        {"fingerprint": "correctness:component:invariant", "status": "open"}
+      ],
+      "approval_comment": 123
+    },
+    "findings": [
+      {"fingerprint": "correctness:component:invariant", "status": "accepted"}
+    ]
+  }
+  ```
+
+  `attempted_findings` must prove the exact canonical inventory digest in the
+  stop, including thread references and root-cause identities. The proposed
+  `findings` may only change `open` rows to `accepted`; every other row must
+  remain identical, every previously open identity must be present, and no
+  blocking open finding may remain. `accepted` represents accepted risk or a
+  decision not to fix. It does not claim that a repair occurred.
+
+  First omit `approval_comment` and run `observe --dry-run` to obtain the exact
+  required marker in the `observation_transition` verdict. The proposal digest
+  binds the stopped record, head, attempted inventory, and proposed inventory.
+  A maintainer then posts that marker as a standalone line in a newer comment
+  on the same PR, authored by an `OWNER`, `MEMBER`, or `COLLABORATOR`:
+
+  ```text
+  <!-- forge-cli:review-loop-acceptance:v1 proposal=sha256:<proposal-digest> -->
+  ```
+
+  Set `approval_comment` to that comment's numeric ID, rerun `--dry-run`, then
+  perform the live observation against the explicit current tip. An extension
+  approval marker grants no acceptance authority. Missing, unauthorized, stale,
+  wrong-PR, or mismatched approval fails as `review_acceptance_approval_invalid`
+  before any write. Invalid proof, altered dispositions, a stale stopped record,
+  or `--auto-state` fails closed; inventory violations use
+  `review_acceptance_invalid`. Both acceptance errors expose typed recovery
+  details (`retryable`, `next_action`, and `recovery`). Existing head, tip,
+  designated writer, native review, and merge gates continue to apply.
+
+  The appended `review-loop-acceptance` record retains the original stop and
+  canonical attempted inventory, named accepted fingerprints, proposal digest,
+  and approval reference. Original records remain byte-identical. The latest
+  state clears the active stop and records the dispositions at the stopped
+  head, preserving rounds, no-progress counters, budgets, extensions, and
+  existing finding lifecycle counters. No extension or new repair round is
+  required, including when an extension was already applied. Convergence then
+  passes when the other merge gates pass. `inspect` and `observe` expose the
+  historical receipts in `accepted_risks`, including the original stop.
+  Identical retries at the fresh tip append nothing; a retry from an older
+  designated assignment cannot establish a new review interval. Readers must
+  understand the new record kind before consuming a chain that contains it.
 - An applied extension still binds the stopped head and the exact canonical
   inventory: reviewer surrender/reassignment, a new assignment generation, or
   a changed base does not clear that binding. A mismatched observation returns

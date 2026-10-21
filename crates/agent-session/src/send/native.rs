@@ -7,6 +7,11 @@ pub(crate) struct Receipt {
     pub(crate) confirmation: &'static str,
 }
 
+pub(super) struct Attempt<'a> {
+    pub(super) started: Instant,
+    pub(super) acknowledged: &'a mut dyn FnMut(&SessionRecord, &str),
+}
+
 pub(super) fn deliver(
     context: &CliContext,
     args: cli::SendArgs,
@@ -14,7 +19,7 @@ pub(super) fn deliver(
     mut record: SessionRecord,
     tmux_bin: &Path,
     manual_input: &mut ManualInputSection,
-    started: Instant,
+    attempt: Attempt<'_>,
 ) -> Result<SendResult, CliError> {
     let observed = record.clone();
     let admission = send_guard::Admission {
@@ -23,7 +28,7 @@ pub(super) fn deliver(
         args: &args.guards,
         tmux_bin,
         verify_composer: true,
-        deadline: started + send_submit::HOLD_BUDGET,
+        deadline: attempt.started + send_submit::HOLD_BUDGET,
     };
     // This shared gate serializes both proxy turn/start and account mutation.
     // It is nonblocking while the session record lock is owned.
@@ -54,7 +59,8 @@ pub(super) fn deliver(
     record.updated_at = Zoned::now().timestamp().to_string();
     write_session_record(context, &record)?;
     let confirmation = client
-        .dispatch(&text, || {
+        .dispatch(&text, |turn_id| {
+            (attempt.acknowledged)(&record, turn_id);
             // Acknowledged input may wait for synchronous provider ingress
             // before entering history. Ingress needs this record lock. Keep
             // the account gate and durable claim, but perform no further

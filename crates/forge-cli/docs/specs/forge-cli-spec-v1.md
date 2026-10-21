@@ -395,6 +395,11 @@ backend mapping, validation rules, and output schema versions.
 
 See [publication and administration](forge-publication-admin-v1.md#release-create--release-upload) for this contract.
 
+### `run rerun`
+
+See [workflow run reruns](forge-run-rerun-v1.md) for identity-scoped GitHub
+reruns, current PR-head fencing, single-write semantics, and attempt/job receipts.
+
 ### `workflow dispatch`
 
 See [publication and administration](forge-publication-admin-v1.md#workflow-dispatch) for this contract.
@@ -454,6 +459,12 @@ See [checks and review reads](forge-checks-review-reads-v1.md#pr-review-threads-
 ### `pr reviews` (read)
 
 See [checks and review reads](forge-checks-review-reads-v1.md#pr-reviews-read) for this contract.
+
+Use `pr reviews <id> --review-id <database-id>` for a complete native review body when a summary
+has `summary_truncated: true`. This opt-in read emits `cli.forge-cli.pr.review-get.v1`; the default
+summary listing remains unchanged. The complete body is bounded to 64 KiB and returned with exact
+review, repository, PR, author, commit, state, URL and observation bindings. See the same read contract
+for completeness fields and typed refusals.
 
 ### Review transaction state and pending-review recovery
 
@@ -1159,6 +1170,10 @@ timeout = "20m"                      # bounds an active convergence wait
 [[review_convergence.bots]]
 login = "example-review-bot"
 mode = "observed"                    # absence never waits or fails
+
+[review_handoff]
+supervisors = ["sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+stale_after = "2h"                   # default minimum coordinator inactivity
 ```
 
 ### Global config layer
@@ -1284,6 +1299,18 @@ disables a repo/global opt-in. Precedence is explicit flag > repo config >
 global config > default, subject to the enabled-global safety exception.
 Disabling this feature never disables the existing unresolved-thread gate.
 `pr close` has no convergence flag and remains unchanged.
+
+### `[review_handoff]` — retired coordinator takeover
+
+Read `.forge-cli.toml` at the exact provider base; require the selected remote host/repository
+and base-ref commit to match, and reject invalid explicit `stale_after`.
+`supervisors` is an empty-by-default allow-list of `sha256:` digests for
+canonical agent-session UUIDs. `stale_after` defaults to `2h` (range `60s` to
+`30d`). Takeover requires `--reason coordinator-retired` and a fresh board
+proving the coordinator stopped or deleted on one host, with terminal activity
+older than the threshold. Missing, unreadable, recent, or ambiguous proof
+refuses takeover. The ledger records proof and supervisor digests while
+preserving history and incrementing the assignment generation.
 For `pr merge --dry-run` and the merge-capable `pr deliver --dry-run`, the
 resolved policy is additive output under `data.review_convergence`; the same
 GitHub-only provider check runs before the dry/live split.
@@ -1503,6 +1530,49 @@ invocation's managed identity. Provider permission errors remain errors.
   and `resolved`. `all` omits the provider state filter. Incompatible states
   fail with `alert_state_invalid`. Alert output selects safe metadata fields
   and never includes scanned secret values or code snippets.
+- `security alerts view NUMBER --repo owner/repo --kind code-scanning
+  --ref REF --commit SHA [--include-sarif]` emits
+  `cli.forge-cli.security.alerts.view.v1`: `provider`, `host`, `repo`, `kind`,
+  `reference`, `commit_sha`, `alert`, `instances`, `sarif_requested`,
+  `sarif_scope`, and `analyses`. The ref is required and the commit must be a
+  full 40-character SHA. This reader supports code scanning only; the existing
+  list reader retains its metadata-only contract for all alert families.
+
+  `alert` contains selected alert/rule/tool/status metadata. `instances` contains
+  only exact ref/commit matches, including their analysis key, environment,
+  category, state, message, and location. The alert's default-branch
+  `most_recent_instance` is never substituted for a matching instance.
+  `security_instance_not_found` means no requested instance was found, not
+  that an alert is fixed or absent from the pull request.
+
+  Without `--include-sarif`, no analysis endpoint is called and `analyses` is
+  empty. With it, analysis metadata must match the ref, commit, instance
+  configuration (analysis key, environment, category), and tool name. All
+  configuration fields must be present strings; only environment may be empty.
+  Tool names must be present and nonempty. A nonempty alert tool GUID must
+  also match; absent or null alert GUIDs use name matching, without requiring
+  equal tool versions. Each `analyses` item contains selected `metadata` and
+  provider `sarif`.
+
+  `sarif_scope` is `analysis`: SARIF may contain code snippets and other alerts
+  in that analysis. Correlate provider result properties such as
+  `github/alertNumber` / `github/alertUrl`, rules, and locations before assigning
+  source/intermediate/sink steps to an alert. Code flows are preserved as
+  supplied; absent flows do not establish clearance. See
+  [GitHub's code-scanning analysis media type](https://docs.github.com/en/rest/code-scanning/code-scanning#get-a-code-scanning-analysis-for-a-repository).
+
+  Missing matching analysis metadata returns `security_analysis_not_found`.
+  Instance and analysis inventory reads each stop after ten 100-row pages;
+  reaching that bound returns `security_read_incomplete`, with no partial
+  success payload. Each backend call has a 30-second timeout and the existing
+  8 MiB capture limit per stream. The entire read allows at most 32 requests,
+  120 seconds, and 16 MiB cumulative captured evidence. Exhausting the command
+  budget returns `security_read_limit`; backend capture overflow returns
+  `backend_output_limit`. Neither emits partial evidence.
+
+  Provider access refusals remain errors. All calls are fixed GET endpoints
+  under the selected authority/repository; response URLs are not followed.
+  `--dry-run` previews only the first alert request, without calls.
 - `security settings view --repo owner/repo` emits
   `cli.forge-cli.security.settings.view.v1`: `provider`, `host`, `repo`, and
   nullable `security_and_analysis`. A missing block means the provider did
@@ -1511,6 +1581,6 @@ invocation's managed identity. Provider permission errors remain errors.
   that block. See the [GitHub repository API](https://docs.github.com/en/rest/repos/repos).
 - Security reads use explicit or remote-derived repository identity rules,
   including credential, actor, permission, and repository coverage checks.
-- `--dry-run` emits the first page's exact `data.plan` without calling the
+- `--dry-run` emits the first request's exact `data.plan` without calling the
   backend. `limited=true` indicates the returned count reached the requested
   bound; it does not prove that more results exist.

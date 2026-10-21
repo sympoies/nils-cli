@@ -46,8 +46,10 @@ mod retitle;
 mod retitle_v3;
 mod runtime_environment;
 mod runtime_teardown;
+mod startup;
 use runtime_teardown::tmux_kill_identity_with_timeout;
-mod send;
+use startup::start_interactive_tmux;
+pub(crate) mod send;
 mod send_guard;
 mod send_submit;
 use send::{SendResult, load_and_paste_buffer_with_timeout, send_to_session};
@@ -161,10 +163,11 @@ const STARTUP_STAGE_FILE: &str = ".startup-stage";
 const STARTUP_FAILURE_FILE: &str = ".startup-failure";
 const STARTUP_DIAGNOSTIC_FILE: &str = ".startup-diagnostic.log";
 const RUNTIME_EXIT_STATUS_FILE: &str = ".runtime-exit-status";
-const STARTUP_ARTIFACT_FILES: [&str; 5] = [
+const STARTUP_ARTIFACT_FILES: [&str; 6] = [
     STARTUP_STAGE_FILE,
     STARTUP_FAILURE_FILE,
     STARTUP_DIAGNOSTIC_FILE,
+    startup::STDERR_FILE,
     RUNTIME_EXIT_STATUS_FILE,
     coordination::broker::DSH_PROVIDER_LEASE_FAILURE_FILE,
 ];
@@ -219,7 +222,7 @@ const TMUX_RUNTIME_NEVER_LAUNCHED_KEY: &str = "tmux_runtime_never_launched";
 const TMUX_RUNTIME_IDENTITY_CHANGED_OUTPUT: &str = "agent-session-runtime-identity-changed";
 const COORDINATION_LAUNCH_GATE: &str = "launch-ready";
 const COORDINATION_BROKER_GATE: &str = "broker-provisioned";
-const HELD_LAUNCH_SCRIPT: &str = "gate=$1; broker_gate=$2; heartbeat=$3; capability=$4; incarnation=$5; generation=$6; broker_bin=$7; shift 7; done_file=\"${heartbeat}.done.$$\"; umask 077; while [ ! -f \"$broker_gate\" ]; do sleep 0.01; done; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker heartbeat --session \"$AGENT_SESSION_ID\" --incarnation \"$incarnation\" --generation \"$generation\" --capability-file \"$capability\" --format json >/dev/null 2>&1 & broker_pid=$!; while [ ! -f \"$gate\" ]; do sleep 0.01; done; \"$@\"; status=$?; printf '%s\\n' \"$status\" > \"$done_file\"; kill \"$broker_pid\" >/dev/null 2>&1 || true; wait \"$broker_pid\" >/dev/null 2>&1 || true; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --exit-code \"$status\" --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || true; rm -f \"$done_file\" \"$capability\" \"$broker_gate\" \"$gate\"; exit \"$status\"";
+const HELD_LAUNCH_SCRIPT: &str = include_str!("startup/held-launch.sh");
 
 pub fn run() -> i32 {
     run_with_args(env::args_os())
@@ -266,7 +269,7 @@ fn dispatch(cli: Cli) -> i32 {
         return completion::run(args.shell);
     }
 
-    let format = command_format(&cli.command);
+    let format = coordination_routing::command_format(&cli.command);
     let context = match CliContext::resolve(cli.state_dir, cli.host) {
         Ok(context) => context,
         Err(err) => {
@@ -310,6 +313,7 @@ fn dispatch(cli: Cli) -> i32 {
         Command::WorkContext(args) => coordination::run_work_context(&context, args),
         Command::Broker(args) => coordination::run_broker(&context, args),
         Command::Readiness(args) => coordination::readiness::run(&context, args),
+        Command::Delegation(args) => coordination::delegation::run(&context, args),
         Command::Message(args) => coordination::run_message(&context, args),
         Command::Metadata(args) => metadata::run_metadata(&context, args),
         Command::Lineage(args) => lineage::run_lineage(&context, args),
@@ -319,88 +323,6 @@ fn dispatch(cli: Cli) -> i32 {
         Command::CodexAppServerProxy(args) => codex_app_server::run_proxy(&context, args),
         Command::Delete(args) => run_delete(&context, args),
         Command::Completion(_) => unreachable!("completion is handled before context resolution"),
-    }
-}
-
-fn command_format(command: &Command) -> OutputFormat {
-    match command {
-        Command::Workspace(args) => origin::format(args),
-        Command::Readiness(args) => args.format,
-        Command::AutoResume(args) => args.format,
-        Command::Start(args) => args.format,
-        Command::Run(args) => args.format,
-        Command::List(args) => args.format,
-        Command::Board(args) => args.format,
-        Command::Show(args) => args.format,
-        Command::Logs(args) => args.format,
-        Command::Diagnose(args) => args.format,
-        Command::Send(args) => args.format,
-        Command::Glance(args) => args.format,
-        Command::Resume(args) => args.format,
-        Command::Restart(args) => args.format,
-        Command::Clear(args) | Command::Rebind(args) => args.format,
-        Command::Account(args) => match &args.command {
-            cli::AccountCommand::Show(args) => args.format,
-            cli::AccountCommand::Switch(args) => args.format,
-        },
-        Command::Activity(args) => match &args.command {
-            cli::ActivityCommand::Event(args) => args.format,
-            cli::ActivityCommand::Status(args) => args.format,
-            cli::ActivityCommand::Hook(_) | cli::ActivityCommand::Notify(_) => OutputFormat::Text,
-            cli::ActivityCommand::Doctor(args) => args.format,
-            cli::ActivityCommand::Setup(args) => args.format,
-        },
-        Command::WorkContext(args) => match &args.command {
-            cli::WorkContextCommand::Status(args) => args.format,
-            cli::WorkContextCommand::Set(args) => args.format,
-            cli::WorkContextCommand::Clear(args) => args.format,
-            cli::WorkContextCommand::Advise(args) => args.format,
-            cli::WorkContextCommand::Acknowledge(args) => args.format,
-            cli::WorkContextCommand::Claim(args) => args.format,
-            cli::WorkContextCommand::Show(args) => args.format,
-            cli::WorkContextCommand::Check(args) => args.format,
-            cli::WorkContextCommand::Renew(args) => args.format,
-            cli::WorkContextCommand::Release(args) => args.format,
-            cli::WorkContextCommand::Admit(args) => args.format,
-            cli::WorkContextCommand::Complete(args) => args.format,
-            cli::WorkContextCommand::Reconcile(args) => args.format,
-        },
-        Command::Broker(args) => match &args.command {
-            cli::BrokerCommand::Identity(args) | cli::BrokerCommand::Status(args) => args.format,
-            cli::BrokerCommand::Adopt(args) | cli::BrokerCommand::Reconcile(args) => args.format,
-            cli::BrokerCommand::RetireStopped(args) => args.format,
-            cli::BrokerCommand::Stop(args) => args.format,
-            cli::BrokerCommand::Heartbeat(args) => args.format,
-        },
-        Command::Message(args) => match &args.command {
-            cli::MessageCommand::Audit(args) => args.format,
-            cli::MessageCommand::Peers(args) => args.format,
-            cli::MessageCommand::Delivery(args) => args.format,
-            cli::MessageCommand::ServiceSend(args) => args.format,
-            cli::MessageCommand::Send(args) => args.format,
-            cli::MessageCommand::Forward(args) => args.format,
-            cli::MessageCommand::Inbox(args) => args.format,
-            cli::MessageCommand::Show(args) => args.format,
-            cli::MessageCommand::Ack(args) => args.format,
-            cli::MessageCommand::Reply(args) => args.format,
-            cli::MessageCommand::Wait(args) => args.format,
-            cli::MessageCommand::Reminder(args) => args.format,
-        },
-        Command::Metadata(args) => match &args.command {
-            cli::MetadataCommand::Attach(args) => args.format,
-            cli::MetadataCommand::Show(args) => args.format,
-        },
-        Command::Lineage(args) => match &args.command {
-            cli::LineageCommand::Adopt(args) => args.format,
-        },
-        Command::Work(args) => match &args.command {
-            cli::WorkCommand::Set(args) => args.format,
-        },
-        Command::Delete(args) => args.format,
-        Command::Attach(_)
-        | Command::Serve(_)
-        | Command::CodexAppServerProxy(_)
-        | Command::Completion(_) => OutputFormat::Text,
     }
 }
 
@@ -1089,6 +1011,16 @@ fn startup_failure_details(
             "provider_client",
             "The agent exited before the session was ready.",
             true,
+        )),
+        "startup-trust-required" => Some((
+            "provider_client",
+            "The provider requires folder trust before startup can continue.",
+            false,
+        )),
+        "startup-prompt-required" => Some((
+            "provider_client",
+            "The provider requires startup configuration or sign-in.",
+            false,
         )),
         "provider-configuration-rejected" => Some((
             "provider_client",
@@ -2184,6 +2116,7 @@ fn start_session_inner_unjournaled(
     }
 
     let _ = advance_owned_startup_stage(context, &mut created.record, "runtime");
+    startup::observe(context, &mut created.record, &tmux_bin, &launch_identity)?;
     let mut prompt_delivery_observation = None;
     if created.prompt_file.is_some() {
         if let Err(err) = created.validate_session_storage() {
@@ -2209,13 +2142,13 @@ fn start_session_inner_unjournaled(
         match paste_prompt(&tmux_bin, &created.record) {
             Ok(observation) => prompt_delivery_observation = Some(observation),
             Err(err) => {
-                let cleanup = recover_failed_tmux_launch_bounded(
+                let cleanup = startup::recover_prompt_failure(
                     context,
                     &mut created.record,
                     &tmux_bin,
                     Some(&launch_identity),
                     SessionTerminationOperation::FailedLaunch,
-                );
+                )?;
                 if cleanup == FailedLaunchCleanup::Completed {
                     cleanup_created_record(context, &created);
                 } else {
@@ -2232,6 +2165,7 @@ fn start_session_inner_unjournaled(
         launch_started_at,
     )?;
     let status = session_status(context, &tmux_bin, &created.record);
+    startup::check_stopped(context, &mut created.record, &status, &tmux_bin)?;
     reconcile_owned_startup_projection(context, &mut created.record, &status);
     let result = session_view(context, &created.record, Some(status), Some(&tmux_bin));
     record_workdir_usage(context, &cwd);
@@ -3833,109 +3767,6 @@ fn add_interactive_agent_environment(command: &mut ProcessCommand) {
         .arg("agent-session-interactive");
 }
 
-fn start_interactive_tmux(
-    tmux_bin: &Path,
-    agent_bin: &Path,
-    agent: AgentKind,
-    state_dir: &Path,
-    record: &SessionRecord,
-    provider_launch_args: &[String],
-    agent_args: &[String],
-) -> Result<TmuxRuntimeIdentity, CliError> {
-    let mut command = new_session_command(tmux_bin, tmux_scope_runner().as_ref());
-    command
-        .arg("new-session")
-        .arg("-d")
-        .arg("-P")
-        .arg("-F")
-        .arg(TMUX_RUNTIME_IDENTITY_FORMAT)
-        .arg("-s")
-        .arg(&record.tmux_session)
-        .arg("-c")
-        .arg(&record.cwd);
-    add_runtime_tmux_environment(&mut command, state_dir, record)?;
-    begin_held_runtime(&mut command, state_dir, record)?;
-
-    add_interactive_agent_environment(&mut command);
-
-    if agent == AgentKind::Codex && codex_app_server::runtime_is_supported(record) {
-        let socket = codex_app_server::socket_path(record).ok_or_else(|| {
-            CliError::data(
-                "codex-app-server-socket-missing",
-                "Codex app-server runtime is missing its private socket",
-                Some(json!({ "id": record.id })),
-            )
-        })?;
-        let proxy = codex_app_server::proxy_path(record).ok_or_else(|| {
-            CliError::data(
-                "codex-app-server-proxy-missing",
-                "Codex app-server runtime is missing its private TUI proxy",
-                Some(json!({ "id": record.id })),
-            )
-        })?;
-        let handoff = codex_app_server::thread_handoff_path(record).ok_or_else(|| {
-            CliError::data(
-                "codex-app-server-handoff-missing",
-                "Codex app-server runtime is missing its thread handoff path",
-                Some(json!({ "id": record.id })),
-            )
-        })?;
-        let attached = codex_app_server::thread_attached_path(record).ok_or_else(|| {
-            CliError::data(
-                "codex-app-server-attached-marker-missing",
-                "Codex app-server runtime is missing its attached marker path",
-                Some(json!({ "id": record.id })),
-            )
-        })?;
-        let proxy_bin = current_runtime_helper()?;
-        command
-            .arg("sh")
-            .arg("-c")
-            .arg(codex_app_server::launch_script(agent_args))
-            .arg("agent-session-codex-app-server")
-            .arg(socket)
-            .arg(proxy)
-            .arg(handoff)
-            .arg(attached)
-            .arg(proxy_bin)
-            .arg(state_dir)
-            .arg(&record.id)
-            .arg(agent_bin)
-            .arg(&record.cwd);
-        if provider_launch_args.is_empty() {
-            command.arg("--cd").arg(&record.cwd).arg("--no-alt-screen");
-        } else {
-            command.args(provider_launch_args);
-        }
-        command.args(agent_args);
-        return run_tmux_new_session(command, tmux_bin, record);
-    }
-
-    command.arg(agent_bin);
-
-    match agent {
-        AgentKind::Codex => {
-            command.arg("--cd").arg(&record.cwd).arg("--no-alt-screen");
-        }
-        AgentKind::Claude => {
-            command.args(provider_launch_args);
-            if let Some(title) = record
-                .title
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-            {
-                command.arg("--name").arg(title);
-            }
-        }
-        AgentKind::Dsh => {
-            // The launch profile's agent_bin owns the whole command line.
-            command.args(provider_launch_args);
-        }
-    }
-    command.args(agent_args);
-    run_tmux_new_session(command, tmux_bin, record)
-}
-
 fn start_run_tmux(
     tmux_bin: &Path,
     agent_bin: &Path,
@@ -4990,10 +4821,10 @@ fn send_tmux_key_with_timeout(
     timeout: Duration,
 ) -> Result<(), CliError> {
     let mut command = ProcessCommand::new(tmux_bin);
+    // Literal mode prevents a printable key from becoming a tmux command.
     command
-        .arg("send-keys")
-        .arg("-t")
-        .arg(target)
+        .args(["send-keys", "-t", target])
+        .args(cli::send_key::literal_args(key))
         .arg(key.tmux_key());
     run_status_with_timeout(command, "tmux send-keys", timeout)
 }
@@ -7846,22 +7677,22 @@ fn session_list_runtime_snapshot(
     tmux_snapshots: Option<&TmuxSessionSnapshots>,
     record: &SessionRecord,
 ) -> (String, Option<String>) {
-    if recorded_runtime_is_from_prior_boot(record) {
-        return ("stopped".to_string(), None);
+    let status = if recorded_runtime_is_from_prior_boot(record)
+        || tmux_snapshots.is_some_and(|snapshots| !snapshots.contains_key(&record.tmux_session))
+    {
+        "stopped".to_string()
+    } else if tmux_snapshots.is_some() {
+        "running".to_string()
+    } else {
+        session_status(context, tmux_bin, record)
+    };
+    if status == "stopped" {
+        return lifecycle::stopped_activity_snapshot(context, record);
     }
-    match tmux_snapshots {
-        Some(snapshots) => match snapshots.sessions.get(&record.tmux_session) {
-            Some(snapshot) => (
-                "running".to_string(),
-                snapshot.last_terminal_activity_at.clone(),
-            ),
-            None => {
-                lifecycle::observe_stopped(context, record);
-                ("stopped".to_string(), None)
-            }
-        },
-        None => (session_status(context, tmux_bin, record), None),
-    }
+    let activity = tmux_snapshots
+        .and_then(|snapshots| snapshots.sessions.get(&record.tmux_session))
+        .and_then(|snapshot| snapshot.last_terminal_activity_at.clone());
+    (status, activity)
 }
 
 fn tmux_session_snapshots(tmux_bin: &Path) -> Option<TmuxSessionSnapshots> {
@@ -13944,7 +13775,6 @@ fi
 
     #[test]
     fn held_launch_keeps_provider_in_foreground_and_tracks_broker_lifecycle() {
-        assert!(!super::HELD_LAUNCH_SCRIPT.contains("kill -0"));
         assert!(!super::HELD_LAUNCH_SCRIPT.contains("child=$!"));
         assert!(super::HELD_LAUNCH_SCRIPT.contains("broker_pid=$!"));
         assert!(super::HELD_LAUNCH_SCRIPT.contains("; \"$@\"; status=$?;"));

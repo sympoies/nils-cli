@@ -1,0 +1,1 @@
+Local TLS fixtures for WebSocket connector tests. The test-only CA signs a server certificate for `localhost` (not IP addresses), valid from October 2026 through October 2036. `server-key.der` is an unencrypted PKCS#8 key used only by the loopback fixture server. These files contain no production credentials.

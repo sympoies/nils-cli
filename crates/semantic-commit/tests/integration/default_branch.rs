@@ -915,3 +915,7 @@ fn signing_failure_leaves_head_unchanged_and_writes_no_receipt() {
     assert_eq!(git_trim(repo.path(), &["rev-parse", "HEAD"]), old_head);
     assert!(!receipt.exists());
 }
+
+#[cfg(unix)]
+#[path = "default_branch_atomic.rs"]
+mod atomic;

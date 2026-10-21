@@ -55,14 +55,25 @@ their diff and trusted release policy. Wrong reviewed-head or checkout binding
 holds detection before a reduced lane can be selected.
 
 Nonempty `READY/VALIDATE/SCOPED` runs strict Clippy for the selected packages,
-builds their binaries with all features for sibling fixtures, audits selected
-completion-required binaries against committed assets with the existing
-freshness audit and no additional build, and runs their nextest tests. Linux
-runs selected doctests. Cheap workspace audits, formatting and test identity
-isolation remain. Accepted policy escalates scripts, completions, shared
-helpers, manifests and sensitive sources to the complete Linux stack.
-Unknown squash provenance or a mismatch between reconstructed source and the
-actual combined tree uses full fallback rather than granting scoped credit.
+builds their binaries with all features, plus the binaries of unselected packages
+that their tests resolve (found by `scripts/ci/lib/sibling_bins.py`; built, never
+tested), audits selected completion-required binaries against committed assets
+with the existing freshness and flag-parity audits (`--skip-build --bin <name>`,
+no workspace build), and runs their nextest tests. Linux runs selected doctests. Formatting
+and test identity isolation remain.
+
+The scoped lane also runs every cheap, non-compiling workspace audit that a
+crate-only change can break, before compiling: documentation placement,
+hygiene, prose and Markdown lint, CLI output contract, forge-cli fixtures, file
+size, test-stale, tempdir leaks, completion assets and the zsh completion suite.
+The three audit baselines are audit-only paths, so they never force FULL.
+
+Accepted policy escalates other scripts, unmapped completions, shared helpers,
+manifests and sensitive sources to the complete Linux stack. Generated
+`completions/zsh/_<bin>` and `completions/bash/<bin>` assets follow the package
+that owns the binary. Unknown squash provenance or a mismatch between
+reconstructed source and the actual combined tree uses full fallback rather
+than granting scoped credit.
 
 Nightly and release full validation use the canonical full entrypoint directly;
 there is no docs, release-only, preview or affected-scope shortcut. Their final
@@ -72,6 +83,11 @@ failed, cancelled, skipped and missing lanes. Release build checkouts and all
 full-validation checkouts pin the same immutable SHA.
 
 ## Evidence and provenance
+
+Every PR and merge-group run also appends the effective scope, selected
+packages, fallback and a per-code reason table to the job summary, so a
+reviewer sees why a run was FULL without opening the artifact. Changed paths
+are rewritten to inert characters and examples are bounded.
 
 The Linux artifact retains `target/ci-merge-plan/plan.json` when available
 and `validation.json`. Executed `nils-cli.merge-validation.v1` receipts bind
@@ -100,6 +116,12 @@ equivalence and source races, external-driver/attribute holds, escalation/HOLD,
 missing base policy, malformed inputs, dirty source, failed checks, empty scope,
 admission reentry, and full-marker provenance. It does not claim live compiler,
 macOS, coverage, or hosted acceptance.
+
+`python3 scripts/ci/tests/merge-plan-policy.test.py` runs the shipped policy and
+registry over a synthetic workspace graph with real package and binary names.
+It covers audit-only baselines, completion owners, unknown or ambiguous owners,
+and the forge-cli, agent-session and semantic-commit scopes. The merge-plan-ci
+suite covers the scoped audits and job summary.
 
 `python3 scripts/ci/tests/merge-plan-ci-repairs.test.py` retains stale/regenerated
 selected completion controls, unavailable metadata failure, and fake executor

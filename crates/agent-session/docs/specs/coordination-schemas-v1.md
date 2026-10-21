@@ -330,8 +330,8 @@ that field. Older receipts without the field retain their compatible behavior.
 
 The first suppressed admission upgrades the registry to
 `agent-session.coordination-registry.v3`, fencing older registry writers that
-would drop the decision. Later writes keep v3 even after suppressed mail is
-removed. Readers still accept registry v1/v2; they cannot reconstruct decisions
+would drop the decision. Later writes keep v3 or a newer admitted fence even
+after suppressed mail is removed. Readers still accept registry v1/v2; they cannot reconstruct decisions
 an older writer already discarded. Before enabling the policy, upgrade all
 registry writers and projection readers for that state directory. Rollback
 requires a binary that understands v3; there is no automatic downgrade.
