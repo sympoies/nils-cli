@@ -106,3 +106,32 @@ fn generation_projection_excludes_untrusted_broker_metadata() {
     let result = serde_json::to_string(&decode(&value, "alpha").unwrap()).unwrap();
     assert!(!result.contains("sensitive-canary"));
 }
+
+fn assert_inconsistent_publication(change: impl FnOnce(&mut Value)) {
+    let mut value = envelope(2);
+    change(&mut value);
+    let error = decode(&value, "alpha").unwrap_err();
+    assert_eq!(error.code(), "claude-publication-unavailable");
+    assert_eq!(error.details().unwrap()["reason"], "invalid_response");
+}
+
+#[test]
+fn review_guard_regression_publication_rejects_reported_failure() {
+    assert_inconsistent_publication(|value| {
+        value["state"]["publication"]["failure"] = json!({"code": "synthetic_failure"});
+    });
+}
+
+#[test]
+fn review_guard_regression_publication_rejects_authority_snapshot_mismatch() {
+    assert_inconsistent_publication(|value| {
+        value["state"]["authority"]["snapshot_id"] = json!("30000000-0000-4000-8000-000000000099");
+    });
+}
+
+#[test]
+fn review_guard_regression_publication_rejects_publication_timestamp_mismatch() {
+    assert_inconsistent_publication(|value| {
+        value["state"]["publication"]["published_at"] = json!("2030-01-01T00:00:01.000Z");
+    });
+}

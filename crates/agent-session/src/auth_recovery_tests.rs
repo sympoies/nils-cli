@@ -763,3 +763,26 @@ fn auth_recovery_unrelated_capability_does_not_capture_or_restart() {
     assert!(!effects[before.len()..].contains("kill-session"));
     assert!(!effects[before.len()..].contains("new-session"));
 }
+
+#[test]
+fn review_guard_regression_checkpoint_is_bound_to_its_runtime_incarnation() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = failed_runtime(&context, tmp.path(), &tmux, true);
+    assert!(crate::claude_account::generation::baseline(&record).is_some());
+    let mut replacement = record.clone();
+    let runtime = replacement.runtime.as_mut().unwrap();
+    runtime.launch_id = uuid::Uuid::new_v4().to_string();
+    runtime.generation += 1;
+    assert_eq!(
+        replacement.extra["claude_launch_publication"],
+        record.extra["claude_launch_publication"]
+    );
+    assert!(
+        crate::claude_account::generation::baseline(&replacement).is_none(),
+        "a prior runtime's checkpoint cannot be the replacement's baseline"
+    );
+}
