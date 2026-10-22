@@ -1300,7 +1300,9 @@ operations:
     inputs:
       - { name: <id>,           type: integer-or-branch, required: true }
       - { name: --required-only, type: bool,             default: true }
+      - { name: --strict,        type: bool,             default: false }
     validations: []
+    notes: "--strict requires success for every effective-gate row; skipped and neutral join failed without changing checks rows. Non-passing strict gates emit ok=false with snapshot data and exit 1 (checks_failed, or checks_pending for pending-only gates). Default snapshot semantics are unchanged. See checks-scope-and-deadline-v1.md."
     backends:
       github: { program: gh,   argv: [pr, checks, "{id}", --json, "name,state,bucket,workflow,link,startedAt,completedAt,description"] }
       github_required: { program: gh, argv: [pr, checks, "{id}", --required, --json, "name,state,bucket,workflow,link,startedAt,completedAt,description"] }

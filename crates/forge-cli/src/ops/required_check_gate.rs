@@ -101,6 +101,7 @@ pub fn ensure_required_checks_green<R: BackendRunner>(
     presence: CheckPresence,
 ) -> Result<PrChecksPayload, ForgeError> {
     let args = PrChecksArgs {
+        strict: false,
         id: pr_id.to_string(),
         required_only: true,
     };

@@ -21,6 +21,9 @@ pub use security::*;
 mod run;
 pub use run::{RunArgs, RunCommand, RunRerunArgs};
 
+mod checks;
+pub use checks::PrChecksArgs;
+
 mod comment;
 pub use comment::CommentEditArgs;
 
@@ -1192,25 +1195,6 @@ impl MergeMethodFlag {
             Self::Rebase => crate::config::MergeMethod::Rebase,
         }
     }
-}
-
-/// `pr checks` arguments. Maps to
-/// `forge-cli-ops-v1.yaml::operations.pr.checks` inputs.
-#[derive(Args, Debug, Clone)]
-pub struct PrChecksArgs {
-    /// Numeric id or branch name (GitHub accepts both natively; GitLab
-    /// resolves numeric ids via `mr view` to fetch the source branch).
-    pub id: String,
-    /// Restrict the gating decision to required checks (default `true`).
-    /// Non-required checks are always reported in `data.checks` regardless.
-    #[arg(
-        long = "required-only",
-        action = ArgAction::Set,
-        default_value_t = true,
-        num_args = 0..=1,
-        default_missing_value = "true",
-    )]
-    pub required_only: bool,
 }
 
 /// `pr wait-checks` arguments. Maps to

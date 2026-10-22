@@ -34,8 +34,8 @@ fn all_checks() -> String {
 
 fn checks(stub: &StubEnv, extra: &[&str]) -> support::CmdOutput {
     let mut args = vec!["--provider", "github", "--repo", "example/project"];
-    args.extend_from_slice(extra);
     args.extend(["pr", "checks", "1"]);
+    args.extend_from_slice(extra);
     run_forge_cli(stub, &args)
 }
 
@@ -129,4 +129,168 @@ fn non_required_skipped_checks_are_not_listed_as_skipped_required() {
     assert_eq!(data["gate_scope"], "required");
     assert_eq!(data["required_skipped"], 0);
     assert_eq!(data["skipped_required"], json!([]));
+}
+
+#[test]
+fn strict_rejects_each_skipped_or_neutral_required_check() {
+    for state in ["skipped", "neutral"] {
+        let rows = json!([
+            {"name":"build", "bucket":"pass", "state":"SUCCESS"},
+            {"name":"required-job", "bucket":"pass", "conclusion":state,
+             "link":"https://example.test/run/2"}
+        ])
+        .to_string();
+        let stub = backend(&rows, &rows);
+        let out = checks(&stub, &["--format", "json", "--strict"]);
+        assert_eq!(out.code, 1, "{state}: {}", out.stderr);
+        let envelope = parse_envelope(&out.stdout);
+        assert_eq!(envelope["ok"], false);
+        assert_eq!(envelope["error"]["code"], "checks_failed");
+        let data = &envelope["data"];
+        assert_eq!(data["state"], "failure");
+        assert_eq!(data["gate_state"], "failure");
+        assert_eq!(data["success_count"], 1);
+        assert_eq!(data["checks"][1]["state"], state);
+        assert_eq!(data["skipped_required"][0]["state"], state);
+        assert_eq!(data["failed"][0]["name"], "required-job");
+        assert_eq!(data["failed"][0]["url"], "https://example.test/run/2");
+        assert_eq!(data["failed"][0]["conclusion"], state);
+
+        let default = checks(&stub, &["--format", "json"]);
+        assert_eq!(default.code, 0, "{}", default.stderr);
+        assert_eq!(
+            parse_envelope(&default.stdout)["data"]["gate_state"],
+            "success"
+        );
+    }
+}
+
+#[test]
+fn strict_all_success_and_optional_skips_still_pass() {
+    let rows = r#"[{"name":"build","bucket":"pass","state":"SUCCESS"}]"#;
+    let stub = backend(rows, &all_checks());
+    let out = checks(&stub, &["--format", "json", "--strict"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["data"]["gate_state"], "success");
+    assert_eq!(envelope["data"]["failed"], json!([]));
+}
+
+#[test]
+fn strict_applies_to_all_visible_checks_when_they_gate() {
+    for (required, extra) in [
+        ("[]", vec!["--strict"]),
+        (
+            r#"[{"name":"build","bucket":"pass","state":"SUCCESS"}]"#,
+            vec!["--strict", "--required-only=false"],
+        ),
+    ] {
+        let stub = backend(required, &all_checks());
+        let mut args = vec!["--format", "json"];
+        args.extend(extra);
+        let out = checks(&stub, &args);
+        assert_eq!(out.code, 1, "{}", out.stderr);
+        let envelope = parse_envelope(&out.stdout);
+        assert_eq!(envelope["data"]["gate_state"], "failure");
+        assert!(
+            envelope["data"]["failed"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["name"] == "optional-docs")
+        );
+    }
+}
+
+#[test]
+fn strict_text_reports_failure_and_preserves_skipped_names() {
+    let stub = backend(REQUIRED, &all_checks());
+    let out = checks(&stub, &["--strict"]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(out.stdout.starts_with("failure [github]"), "{}", out.stdout);
+    assert!(out.stdout.contains("gate_state=failure"), "{}", out.stdout);
+    assert!(
+        out.stdout
+            .contains("skipped-required: macos-full (skipped)"),
+        "{}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("skipped-required: advisory (neutral)"),
+        "{}",
+        out.stdout
+    );
+}
+
+#[test]
+fn strict_existing_failure_and_pending_are_not_passing() {
+    for (state, code) in [("FAILURE", "checks_failed"), ("PENDING", "checks_pending")] {
+        let rows = json!([{"name":"build", "state":state}]).to_string();
+        let stub = backend(&rows, &rows);
+        let out = checks(&stub, &["--format", "json", "--strict"]);
+        assert_eq!(out.code, 1, "{}", out.stderr);
+        assert_eq!(parse_envelope(&out.stdout)["error"]["code"], code);
+    }
+}
+
+#[test]
+fn strict_empty_snapshot_is_pending_while_default_remains_successful() {
+    let empty = include_str!("fixtures/github/pr_checks/empty.json");
+    let stub = backend(empty.trim(), empty.trim());
+    let out = checks(&stub, &["--format", "json", "--strict"]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["ok"], false);
+    assert_eq!(envelope["error"]["code"], "checks_pending");
+    assert_eq!(envelope["data"]["state"], "pending");
+    assert_eq!(envelope["data"]["gate_state"], "pending");
+    assert_eq!(envelope["data"]["required_count"], 0);
+    assert_eq!(envelope["data"]["checks"], json!([]));
+
+    let default = checks(&stub, &["--format", "json"]);
+    assert_eq!(default.code, 0, "{}", default.stderr);
+    let envelope = parse_envelope(&default.stdout);
+    assert_eq!(envelope["ok"], true);
+    assert_eq!(envelope["data"]["state"], "success");
+}
+
+#[test]
+fn strict_visible_blockers_populate_failure_and_pending_details() {
+    let rows = include_str!("fixtures/github/pr_checks/visible_blockers.json");
+    // Also exercise a required gate to ensure existing details are not duplicated.
+    for required in ["[]", rows] {
+        let stub = backend(required, rows);
+        let out = checks(&stub, &["--format", "json", "--strict"]);
+        assert_eq!(out.code, 1, "{}", out.stderr);
+        let envelope = parse_envelope(&out.stdout);
+        assert_eq!(envelope["ok"], false);
+        assert_eq!(envelope["error"]["code"], "checks_failed");
+        let data = &envelope["data"];
+        assert_eq!(data["state"], "failure");
+        assert_eq!(data["gate_state"], "failure");
+        assert_eq!(
+            data["failed"],
+            json!([
+                {"name":"test", "url":"https://example.test/run/2", "conclusion":"failure"},
+                {"name":"timeout", "url":"https://example.test/run/4", "conclusion":"timed_out"},
+                {"name":"cancelled", "url":"https://example.test/run/5", "conclusion":"cancelled"}
+            ])
+        );
+        assert_eq!(
+            data["pending"],
+            json!([
+                {"name":"integration", "url":"https://example.test/run/3"}
+            ])
+        );
+    }
+}
+
+#[test]
+fn strict_help_explains_default_and_execution_semantics() {
+    let stub = backend("[]", "[]");
+    let out = checks(&stub, &["--help"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(out.stdout.contains("--strict"), "{}", out.stdout);
+    assert!(out.stdout.contains("Skipped and neutral"), "{}", out.stdout);
+    assert!(out.stdout.contains("By default"), "{}", out.stdout);
 }
