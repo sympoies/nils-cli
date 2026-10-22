@@ -174,7 +174,7 @@ The v1 surface distinguishes at least:
   `operation-reconcile-pending`, `broker-replacement-grace`,
   `quota-exceeded`, `rate-limited`,
   `cursor-invalid`, `wait-timeout`, `wait-cancelled`;
-- `mailbox-body-invalid`, `mailbox-body-too-large`, `reply-depth-exceeded`,
+- `mailbox-body-source-invalid`, `mailbox-body-invalid`, `mailbox-body-too-large`, `reply-depth-exceeded`,
   `message-expired`, `message-not-found`;
 - `coordination-store-untrusted`, `coordination-store-corrupt`.
 - `session-not-managed`, `not-in-repository`, `repository-unavailable`,
