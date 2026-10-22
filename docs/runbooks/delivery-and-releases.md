@@ -83,7 +83,7 @@ at the final gate and cannot select a different checkout. Its final gate rejects
 skipped or missing Linux, macOS, coverage, containment or dependency jobs.
 Only then can release builds start. Coverage uses the full-workspace 85% floor,
 with an LCOV report required; source-PR or merge-group green checks cannot
-substitute for this gate. Releases build native Linux/macOS x86_64 and aarch64
+substitute for this gate. Releases build native Linux x86_64/aarch64 and macOS aarch64
 archives, audit third-party notices, upload assets, publish the GitHub Release,
 and confirm that a tap update workflow actually started. Crates.io publication
 is a separate authorized [`publish-crates.yml`](../../.github/workflows/publish-crates.yml) flow.

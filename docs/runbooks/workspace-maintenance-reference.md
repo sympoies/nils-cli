@@ -750,7 +750,8 @@ Release tags matching `v*` trigger `.github/workflows/release.yml`. The workflow
 first authorizes the invocation, then executes full Linux and macOS tests,
 containment, dependency policy and 85% coverage on the exact tagged commit.
 Only successful full validation admits release builds; prior green PR/queue
-checks cannot substitute. It then builds release tarballs for Linux and macOS on x86_64 and aarch64.
+checks cannot substitute. It then builds exactly three release tarballs: Linux x86_64/aarch64 and macOS
+aarch64. Intel macOS release artifacts are no longer supported.
 
 Release tarballs include:
 
