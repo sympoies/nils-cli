@@ -2,6 +2,10 @@
 //! though the queue is empty again by the time the acknowledgement wait ends.
 use super::super::*;
 
+mod recorded_image_queue {
+    include!("claude_prompt_ack/recorded_image_queue.rs");
+}
+
 const DRAINED_CLAUDE_PANE: &str = "● Ran the next tool call.
 ────────────────────────────────────────
 ❯\u{a0}

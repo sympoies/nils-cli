@@ -159,7 +159,7 @@ pub(super) async fn submit_claude_structured_prompt(
         }
     };
 
-    let session_incarnation = {
+    let delivery = {
         let context = state.context.clone();
         let id = record.id.clone();
         let expected = expected_session_incarnation
@@ -174,7 +174,7 @@ pub(super) async fn submit_claude_structured_prompt(
         })
         .await
         {
-            Ok(Ok(session_incarnation)) => session_incarnation,
+            Ok(Ok(delivery)) => delivery,
             Ok(Err(err)) => return envelope_err(err),
             Err(_) => return join_err(),
         }
@@ -185,7 +185,7 @@ pub(super) async fn submit_claude_structured_prompt(
         record,
         &baseline,
         prompt_tail,
-        text,
+        &delivery.acknowledgement_text,
         acknowledgement_wait,
     )
     .await
@@ -194,7 +194,7 @@ pub(super) async fn submit_claude_structured_prompt(
             return envelope_ok(json!({
                 "machine": state.machine,
                 "submitted": true,
-                "session_incarnation": session_incarnation,
+                "session_incarnation": delivery.session_incarnation,
             }));
         }
         // A prompt sent mid-turn starts no turn until the running one ends, but
@@ -204,7 +204,7 @@ pub(super) async fn submit_claude_structured_prompt(
                 "machine": state.machine,
                 "submitted": true,
                 "queued": true,
-                "session_incarnation": session_incarnation,
+                "session_incarnation": delivery.session_incarnation,
             }));
         }
         Ok(claude_prompt_ack::ClaudePromptAck::Unknown) => {
@@ -213,7 +213,7 @@ pub(super) async fn submit_claude_structured_prompt(
                 return envelope_ok(json!({
                     "machine": state.machine,
                     "submitted": true,
-                    "session_incarnation": session_incarnation,
+                    "session_incarnation": delivery.session_incarnation,
                 }));
             }
         }
