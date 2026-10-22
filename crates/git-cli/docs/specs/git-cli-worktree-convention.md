@@ -41,6 +41,7 @@ default `feature`.
 `remove` refuses primary, unmanaged, and unknown worktrees. `--safe` remains
 accepted as a compatibility no-op. Removal prevents known collisions; it does
 not require delivery, network, provider access, or complete process visibility.
+
 ### Delivery evidence
 
 By default, `delivered` uses cached origin default-branch ancestry. Opt in to
