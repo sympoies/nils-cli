@@ -1,7 +1,7 @@
 //! Recovery records selectors, never tool arguments or execution capabilities.
 use super::*;
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub(crate) mod test_support;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
