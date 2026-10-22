@@ -32,6 +32,7 @@ mod read_only;
 pub mod recovery;
 pub mod session_metadata;
 pub mod setup;
+pub mod stop_completion;
 mod strict_json;
 mod trace;
 mod workspace_lease;

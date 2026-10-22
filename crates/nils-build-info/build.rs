@@ -27,27 +27,37 @@ fn git_dir(flag: &str) -> Option<PathBuf> {
         .or_else(|| command_stdout("git", &["rev-parse", flag]).and_then(absolutize))
 }
 
-fn emit_git_dir_rerun_paths(git_dir: &Path) {
-    println!("cargo:rerun-if-changed={}", git_dir.join("HEAD").display());
-    println!("cargo:rerun-if-changed={}", git_dir.join("refs").display());
-    println!(
-        "cargo:rerun-if-changed={}",
-        git_dir.join("packed-refs").display()
-    );
+fn watch_existing(path: &Path) {
+    if path.exists() {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+}
+
+fn watch_creation(path: &Path) {
+    // Cargo treats missing paths as perpetually dirty. An existing ancestor
+    // observes creation of a loose ref or tag directory without that loop.
+    let mut existing = path;
+    while !existing.exists() {
+        let Some(parent) = existing.parent() else {
+            return;
+        };
+        existing = parent;
+    }
+    watch_existing(existing);
 }
 
 fn emit_git_rerun_paths() {
     let Some(worktree_git_dir) = git_dir("--git-dir") else {
         return;
     };
-    emit_git_dir_rerun_paths(&worktree_git_dir);
-
-    let Some(common_dir) = git_dir("--git-common-dir") else {
-        return;
-    };
-    if common_dir != worktree_git_dir {
-        emit_git_dir_rerun_paths(&common_dir);
+    watch_existing(&worktree_git_dir.join("HEAD"));
+    let common_dir = git_dir("--git-common-dir").unwrap_or(worktree_git_dir);
+    if let Some(reference) = command_stdout("git", &["symbolic-ref", "-q", "HEAD"]) {
+        watch_creation(&common_dir.join(reference));
     }
+    // Other worktrees' branch updates do not change this HEAD's description.
+    watch_creation(&common_dir.join("refs/tags"));
+    watch_existing(&common_dir.join("packed-refs"));
 }
 
 fn main() {

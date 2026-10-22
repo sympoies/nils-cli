@@ -10,3 +10,6 @@ repository = "https://github.com/sympoies/nils-cli"
 [lib]
 name = "nils_build_info"
 path = "src/lib.rs"
+
+[dev-dependencies]
+tempfile = "3"

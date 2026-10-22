@@ -199,11 +199,14 @@ observer metadata, and outcome.
 Forward-compatible unknown fields from durable snapshots are deliberately
 excluded.
 
-For `diagnostic.reason: codex_progress_quiet`, the same diagnostic object may
+For `diagnostic.reason: codex_progress_quiet` or `completion_evidence_missing`, the diagnostic object may
 include `quiet_threshold_seconds` (exactly 300), `quiet_since` (a parseable
 timestamp), and `quiet_signal` (`current_turn.last_progress_at` or
-`current_turn.started_at`). These fields are omitted if incomplete or outside
-the bounds; other reasons contain only `reason`. Quiet metadata is diagnostic
+`current_turn.started_at` or `semantic_event.observed_at`). These fields are
+omitted if incomplete or outside the bounds. Completion diagnostics may also
+include the closed `completion_candidate_reason` enum from the
+[turn-state contract](../turn-state-contract.md); other fields are excluded.
+Quiet metadata is diagnostic
 uncertainty and never proves completion, clears attention, or authorizes input.
 
 Prompt, response, command, tool payload, terminal output, transcript/config

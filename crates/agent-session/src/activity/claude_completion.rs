@@ -59,6 +59,7 @@ pub(super) fn settle_claude_completion(document: &mut ActivityDocument, at: &str
     let mut completion = pending.event.clone();
     completion.kind = TurnEventKind::TurnCompleted;
     completion.completion_candidate = false;
+    completion.completion_candidate_reason = None;
     reduce(document, &completion, &deadline.to_string());
     document.state.diagnostic = None;
 }
