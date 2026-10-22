@@ -52,7 +52,7 @@ impl PrChecksPayload {
             } else {
                 self.required_count
             },
-            gate_state: if fallback && !self.checks.is_empty() {
+            gate_state: if fallback && !self.checks.is_empty() && self.state == "success" {
                 visible_state
             } else {
                 self.state
@@ -78,7 +78,7 @@ impl PrChecksPayload {
         }
         let count = |state| skipped.iter().filter(|c| c.state == state).count();
         println!(
-            "required_skipped={} required_neutral={} (satisfy the gate without running; gate_state={} is not proof the work ran)",
+            "required_skipped={} required_neutral={} (concluded without running; gate_state={} is not proof the work ran)",
             count("skipped"),
             count("neutral"),
             scope.gate_state,

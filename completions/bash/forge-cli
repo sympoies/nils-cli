@@ -5104,7 +5104,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__pr__checks)
-            opts="-h --required-only --format --remote --provider --host --repo --store-root --dry-run --help"
+            opts="-h --required-only --strict --format --remote --provider --host --repo --store-root --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

@@ -19,4 +19,9 @@ pub struct PrChecksArgs {
         default_missing_value = "true",
     )]
     pub required_only: bool,
+    /// Require successful execution of every gating check. Skipped and neutral
+    /// checks fail the gate instead of satisfying it; exits 1 for a non-passing
+    /// gate. By default, skipped and neutral checks satisfy the gate.
+    #[arg(long, action = ArgAction::SetTrue)]
+    pub strict: bool,
 }

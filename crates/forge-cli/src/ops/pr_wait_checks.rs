@@ -141,6 +141,7 @@ pub fn run_with<R: BackendRunner, C: Clock, F: Fn(&str) -> Option<String>>(
         remote_url_lookup,
     )?;
     let snapshot_args = PrChecksArgs {
+        strict: false,
         id: args.id.clone(),
         required_only: args.required_only,
     };
@@ -235,6 +236,7 @@ pub fn compute<R: BackendRunner, C: Clock>(
     args: &PrWaitChecksArgs,
 ) -> Result<WaitOutcome, ForgeError> {
     let snapshot_args = PrChecksArgs {
+        strict: false,
         id: args.id.clone(),
         required_only: args.required_only,
     };
@@ -618,6 +620,7 @@ mod tests {
         // We can't easily call run_with without re-implementing the provider
         // detection plumb-through; exercise the pieces directly.
         let snapshot_args = PrChecksArgs {
+            strict: false,
             id: args.id.clone(),
             required_only: args.required_only,
         };
@@ -653,6 +656,7 @@ mod tests {
         let ctx = make_ctx(Provider::GitHub);
         let global = make_global();
         let args = PrChecksArgs {
+            strict: false,
             id: "1".into(),
             required_only: true,
         };
@@ -679,6 +683,7 @@ mod tests {
             completed_at: None,
         };
         let args = PrChecksArgs {
+            strict: false,
             id: "1".into(),
             required_only: true,
         };
@@ -707,6 +712,7 @@ mod tests {
         let ctx = make_ctx(Provider::GitHub);
         let global = make_global();
         let args = PrChecksArgs {
+            strict: false,
             id: "1".into(),
             required_only: true,
         };
@@ -731,6 +737,7 @@ mod tests {
         let ctx = make_ctx(Provider::GitHub);
         let global = make_global();
         let args = PrChecksArgs {
+            strict: false,
             id: "1".into(),
             required_only: true,
         };
@@ -755,6 +762,7 @@ mod tests {
             ..make_args("1")
         };
         let snapshot_args = PrChecksArgs {
+            strict: false,
             id: args.id.clone(),
             required_only: args.required_only,
         };
@@ -802,6 +810,7 @@ mod tests {
             ..make_args("1")
         };
         let snapshot_args = PrChecksArgs {
+            strict: false,
             id: args.id.clone(),
             required_only: args.required_only,
         };
@@ -835,6 +844,7 @@ mod tests {
         let global = make_global();
         let args = make_args("1");
         let snapshot_args = PrChecksArgs {
+            strict: false,
             id: args.id.clone(),
             required_only: args.required_only,
         };
@@ -930,6 +940,7 @@ mod tests {
 
     fn poll(runner: &WorkflowProbeRunner, args: &PrWaitChecksArgs) -> WaitOutcome {
         let snapshot_args = PrChecksArgs {
+            strict: false,
             id: args.id.clone(),
             required_only: args.required_only,
         };

@@ -13,6 +13,7 @@
 
 mod github_gate;
 mod scope;
+mod strict;
 
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -158,12 +159,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         remote_url_lookup,
     )?;
     let payload = snapshot(runner, global, &ctx, args)?;
-    Ok(emit_success(
-        schema_version_for(BINARY, SCHEMA, SCHEMA_VERSION),
-        payload,
-        format,
-        render_text,
-    ))
+    Ok(strict::emit(payload, args.strict, format))
 }
 
 /// Snapshot helper used by both `pr checks` and (via reuse) `pr wait-checks`.

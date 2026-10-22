@@ -35,7 +35,7 @@ rollup boundary; waiters use complete configuration and exact-head reads.
 
 ## Skipped and neutral gate rows
 
-`gate_state=success` keeps GitHub ruleset semantics: a required check that
+By default, `gate_state=success` keeps GitHub ruleset semantics: a required check that
 concluded `skipped` or `neutral` satisfies the rule, and `state`,
 `success_count`, `failed`, and `pending` are unchanged. It is not proof the
 work ran: a check deferred to a later gate, such as a merge group, concludes
@@ -49,6 +49,35 @@ line, one `required_skipped=N required_neutral=N (...)` line and one
 output is unchanged when every gate row succeeded or failed. Rows outside the
 effective gate are never listed; outside `gate_scope=required` the effective
 gate is the visible rows, so those rows are reported under the same names.
+
+## Strict one-shot execution gate
+
+`pr checks <id> --strict` opts into an execution gate. Every row in the
+effective gating set must conclude `success`; `skipped` and `neutral` count
+as failures. The default remains the provider-compatible snapshot above.
+This flag applies only to `pr checks`; wait, merge, and delivery retain their
+existing policies.
+
+In strict mode, skipped and neutral gating rows set both `state` and
+`gate_state` to `failure` and join `failed` with their original name, URL,
+and conclusion (the normalized state is used when no conclusion is supplied).
+The original `checks` rows, skip counts, `skipped_required`, `success_count`,
+and `visible_state` retain their reporting semantics. Text output shows the
+failure summary and the skipped/neutral check names. No JSON fields are removed.
+
+A non-passing strict gate emits `ok=false` with the snapshot in `data` and exits
+`RUNTIME 1`: `error.code=checks_failed` for failed, cancelled, timed-out, skipped,
+or neutral gating checks, or `checks_pending` when only pending checks block.
+A successful strict gate emits the ordinary success snapshot and exits zero.
+An empty gating set retains the ordinary empty-snapshot behavior; strict mode
+does not establish required-check configuration or prove snapshot completeness.
+
+With `--required-only=true`, optional skipped or neutral rows do not block a
+required gate. With `--required-only=false`, or with GitHub's
+`visible_fallback` scope when no checks are required, every visible row gates
+and is subject to strict mode. For example, a required `build=success` and
+`test=skipped` return `gate_state=success`, exit zero by default, and
+`gate_state=failure`, exit 1 with `--strict`.
 
 ## Wait budget
 

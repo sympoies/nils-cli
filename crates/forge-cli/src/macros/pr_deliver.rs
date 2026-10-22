@@ -1064,6 +1064,7 @@ fn pr_wait_checks_dry_plan(ctx: &ProviderContext) -> Vec<String> {
     pr_checks::build_dry_run_call(
         ctx,
         &crate::cli::PrChecksArgs {
+            strict: false,
             id: "<pr-number>".into(),
             required_only: true,
         },
