@@ -3,8 +3,8 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `7a6b8ebeeddd88ef2a5719c9e45deb1f12b583c30842c6561d902c1344401be6`
-- Third-party crates (`source != null`): 504
+- Cargo.lock SHA256: `617591db1922303073212d998c50dc2b4676f32b5b009a8c1d2bf36709cb3bbc`
+- Third-party crates (`source != null`): 493
 
 ## Notice Extraction Policy
 
@@ -486,14 +486,6 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE.txt`
 
-### chrono-tz 0.10.4
-
-- License: `MIT OR Apache-2.0`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file references:
-  - `LICENSE`
-
 ### clap 4.6.7
 
 - License: `MIT OR Apache-2.0`
@@ -903,24 +895,6 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### fallible-iterator 0.3.0
-
-- License: `MIT/Apache-2.0`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file references:
-  - `LICENSE-APACHE`
-  - `LICENSE-MIT`
-
-### fallible-streaming-iterator 0.1.9
-
-- License: `MIT/Apache-2.0`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file references:
-  - `LICENSE-APACHE`
-  - `LICENSE-MIT`
-
 ### fancy-regex 0.19.0
 
 - License: `MIT`
@@ -1214,25 +1188,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### hashbrown 0.16.1
-
-- License: `MIT OR Apache-2.0`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file references:
-  - `LICENSE-APACHE`
-  - `LICENSE-MIT`
-
 ### hashbrown 0.17.1
-
-- License: `MIT OR Apache-2.0`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file references:
-  - `LICENSE-APACHE`
-  - `LICENSE-MIT`
-
-### hashlink 0.12.0
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -1766,14 +1722,6 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE.txt`
 
-### libsqlite3-sys 0.38.2
-
-- License: `MIT`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file references:
-  - `LICENSE`
-
 ### libz-sys 1.1.29
 
 - License: `MIT OR Apache-2.0`
@@ -2278,22 +2226,6 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### phf 0.12.1
-
-- License: `MIT`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file references:
-  - `LICENSE`
-
-### phf_shared 0.12.1
-
-- License: `MIT`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file references:
-  - `LICENSE`
-
 ### pico-args 0.5.0
 
 - License: `MIT`
@@ -2708,21 +2640,6 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
-
-### rsqlite-vfs 0.1.1
-
-- License: `MIT`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file reference: none declared
-
-### rusqlite 0.40.2
-
-- License: `MIT`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file references:
-  - `LICENSE`
 
 ### rustc-hash 2.1.2
 
@@ -3156,14 +3073,6 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
-
-### sqlite-wasm-rs 0.5.5
-
-- License: `MIT`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file references:
-  - `LICENSE`
 
 ### stable_deref_trait 1.2.1
 

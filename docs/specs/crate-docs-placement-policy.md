@@ -97,8 +97,6 @@ crates/<crate>/docs/reports/<topic>.md
 
 Current repository examples:
 
-- `crates/memo/docs/specs/memo-json-contract-v1.md`
-- `crates/memo/docs/runbooks/memo-agent-workflow.md`
 - `crates/codex-cli/docs/specs/codex-cli-diag-rate-limits-and-auth-json-contract-v1.md`
 
 ## New Documentation Contributor Requirements

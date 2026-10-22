@@ -46,7 +46,7 @@ if args[:1] not in (["build"], ["test"]):
 # matches is fresh and leaves the file alone.
 packages = [args[i + 1] for i, arg in enumerate(args) if arg == "-p"]
 identity = 1_000_000_000 * max(len(packages), 1)
-names = {{"nils-agent-session": "agent_session", "nils-memo": "memo"}}
+names = {{"nils-agent-session": "agent_session", "nils-devlog": "devlog"}}
 for package in packages:
     stem = names.get(package)
     if stem is None:
@@ -146,12 +146,12 @@ class LocalFastTargetGuardTest(unittest.TestCase):
         # A solo package build can relink an executable the combined build made
         # with unified features; that is not another lane replacing it.
         result = self.run_local_fast(changed=(
-            'crates/agent-session/src/lib.rs', 'crates/memo/src/lib.rs'))
+            'crates/agent-session/src/lib.rs', 'crates/devlog/src/lib.rs'))
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertNotIn('shared target replaced', result.stdout)
         commands = [json.loads(line) for line in self.log.read_text().splitlines()]
         self.assertIn(['test', '-p', 'nils-agent-session'], commands)
-        self.assertIn(['test', '-p', 'nils-memo'], commands)
+        self.assertIn(['test', '-p', 'nils-devlog'], commands)
 
 
 if __name__ == '__main__':

@@ -12,7 +12,6 @@ members = [
   "crates/agent-runtime",
   "crates/agent-memory",
   "crates/agent-hook",
-  "crates/memo",
   "crates/agent-session",
   "crates/claude-cli",
   "crates/codex-cli",

@@ -37,7 +37,7 @@ Completion obligations for those binaries are tracked in
 | Development log | `devlog` | Record durable outcomes in a repository development log, check its structural integrity, and search past decisions. |
 | Provider lanes | `codex-cli`, `claude-cli` | Run provider-specific diagnostics, auth checks, and workflow adapters. |
 | Markdown rendering | `md-render` | Render `.md.tera` templates from JSON view data through the shared `nils-markdown` engine. |
-| Desktop, media, and local utilities | `docker-tools`, `macos-agent`, `screen-record`, `image-processing`, `fzf-cli`, `memo`, `secrets`, `zsh-kit` | Operate containers, automate desktop tasks, capture or convert media, use interactive shell helpers, manage the encrypted environment store, record/search local memos, or bootstrap an operator-supplied Zsh repository at runtime. |
+| Desktop, media, and local utilities | `docker-tools`, `macos-agent`, `screen-record`, `image-processing`, `fzf-cli`, `secrets`, `zsh-kit` | Operate containers, automate desktop tasks, capture or convert media, use interactive shell helpers, manage the encrypted environment store, or bootstrap an operator-supplied Zsh repository at runtime. |
 | Development-only/internal | `cli-template` | Validate packaging and new-crate patterns; excluded from user-facing completion obligations. |
 
 ## Workspace layout
@@ -85,8 +85,6 @@ Each crate is either a standalone CLI binary, a multi-binary crate, or a shared 
 - [crates/macos-agent](crates/macos-agent): macOS desktop automation primitives for app/window discovery, input actions, screenshot, and
   wait helpers.
 - [crates/fzf-cli](crates/fzf-cli): Interactive `fzf` toolbox for files, Git, processes, ports, and shell history.
-- [crates/memo](crates/memo): Capture-first memo workflow CLI with agent enrichment loop (`add`, `list`, `search`, `report`,
-  `fetch`, `apply`).
 - [crates/zsh-kit](crates/zsh-kit): Runtime entrypoint for cloning/updating an operator-supplied Zsh repository, validating its setup hook,
   optionally writing `ZDOTDIR` bootstrap state, and dispatching shell-specific setup back to the repository.
 - [crates/image-processing](crates/image-processing): Image conversion CLI for `svg/png/webp/jpg` plus SVG validation with JSON/report outputs.

@@ -33,7 +33,6 @@ The serialized order is frozen by Sprint 3 Task 3.1 and is no longer recomputed 
 | 1 | `git-cli` | 37 | 27 | 1 | 94 | `serial-1` |
 | 2 | `macos-agent` | 37 | 7 | 2 | 57 | `serial-2` |
 | 3 | `fzf-cli` | 19 | 5 | 7 | 50 | `serial-3` |
-| 4 | `memo` | 25 | 5 | 5 | 50 | `serial-4` |
 
 All non-listed crates stay `parallel`.
 
@@ -58,7 +57,6 @@ From the current `execution-manifest.md`:
 | git-summary | 0 | 10 | 1 | parallel |
 | image-processing | 0 | 8 | 0 | parallel |
 | macos-agent | 0 | 35 | 2 | serial-2 |
-| memo | 0 | 22 | 3 | serial-4 |
 | nils-common | 0 | 1 | 1 | parallel |
 | nils-term | 0 | 1 | 0 | parallel |
 | nils-test-support | 0 | 6 | 0 | parallel |

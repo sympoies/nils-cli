@@ -27,7 +27,7 @@ PACKAGES = {
     'nils-agent-session': (('agent-session',), ('nils-common', 'nils-agent-hook')),
     'nils-git-cli': (('git-cli',), ('nils-common',)),
     'nils-codex-cli': (('codex-cli',), ('nils-common',)),
-    'nils-memo': (('memo',), ('nils-common',)),
+    'nils-devlog': (('devlog',), ('nils-common',)),
 }
 
 
@@ -117,7 +117,7 @@ class ShippedPolicyTests(unittest.TestCase):
         gone = copy.deepcopy(PACKAGES)
         gone['nils-forge-cli'] = ((), gone['nils-forge-cli'][1])
         twice = copy.deepcopy(PACKAGES)
-        twice['nils-memo'] = (('forge-cli',), twice['nils-memo'][1])
+        twice['nils-devlog'] = (('forge-cli',), twice['nils-devlog'][1])
         for label, packages in (('deleted', gone), ('ambiguous', twice)):
             with self.subTest(label=label):
                 result = self.select('completions/zsh/_forge-cli', candidate=graph(packages))
