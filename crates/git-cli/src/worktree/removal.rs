@@ -12,6 +12,9 @@ use std::{
 };
 
 pub(super) mod backup;
+mod delivery;
+#[cfg(any(not(target_os = "linux"), test))]
+mod lsof;
 #[cfg(target_os = "linux")]
 mod procfs;
 
@@ -32,6 +35,10 @@ pub(super) struct DeliveryProof {
     basis: &'static str,
     default_branch: String,
     default_head: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pull_request: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    head_sha: Option<String>,
 }
 
 fn cached_delivery(target: &Path, head: &str) -> Option<DeliveryProof> {
@@ -67,6 +74,8 @@ fn cached_delivery(target: &Path, head: &str) -> Option<DeliveryProof> {
         basis: "cached-origin-default-ancestry",
         default_branch: branch.to_owned(),
         default_head,
+        pull_request: None,
+        head_sha: None,
     })
 }
 
@@ -263,11 +272,7 @@ fn processes_idle(target: &Path, warnings: &mut Vec<String>) -> Result<(), CliEr
     #[cfg(not(target_os = "linux"))]
     {
         let excluded = ancestor_pids();
-        let output = match probe(
-            "lsof",
-            &["-nP", "-Fpcf", "+D", target.to_str().unwrap()],
-            target.parent().unwrap(),
-        ) {
+        let output = match probe("lsof", &["-nP", "-F0pcfn"], target.parent().unwrap()) {
             Ok(output) => output,
             Err(_) => {
                 warnings.push("lsof visibility unavailable".into());
@@ -280,27 +285,7 @@ fn processes_idle(target: &Path, warnings: &mut Vec<String>) -> Result<(), CliEr
                 String::from_utf8_lossy(&output.stderr).trim()
             ));
         }
-        let mut pid = None;
-        let mut command = String::new();
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            if let Some(value) = line.strip_prefix('p') {
-                pid = value.parse::<u32>().ok();
-                command.clear();
-            }
-            if let Some(value) = line.strip_prefix('c') {
-                command = value.to_owned();
-            }
-            if line.starts_with('f')
-                && let Some(pid) = pid
-                && !excluded.contains(&pid)
-            {
-                return Err(refused(
-                    "removal-process-active",
-                    "a readable process cwd or file is inside the target",
-                )
-                .with_details(json!({"pid":pid,"command":command,"backend":"lsof"})));
-            }
-        }
+        lsof::check(&output.stdout, target, &excluded)?;
         if !matches!(output.status.code(), Some(0 | 1)) {
             warnings.push("lsof inventory incomplete".into());
         }
@@ -449,7 +434,11 @@ fn registry_idle(
     Ok(())
 }
 
-pub(super) fn fence(target: &Path, layout: &WorktreeLayout) -> Result<Fence, CliError> {
+pub(super) fn fence(
+    target: &Path,
+    layout: &WorktreeLayout,
+    forge_delivery: bool,
+) -> Result<Fence, CliError> {
     if !is_managed_worktree(target, layout) {
         return Err(refused(
             "removal-unmanaged",
@@ -586,11 +575,15 @@ pub(super) fn fence(target: &Path, layout: &WorktreeLayout) -> Result<Fence, Cli
             "target identity or HEAD changed",
         ));
     }
-    let delivery_proof = cached_delivery(&target, &head);
+    let delivery_proof = cached_delivery(&target, &head).or_else(|| {
+        forge_delivery
+            .then(|| delivery::lookup(&target, &head, removed_branch.as_deref()))
+            .flatten()
+    });
     let delivered = delivery_proof.is_some();
     if !delivered {
         warnings.push(
-            "HEAD is not in the cached origin default branch; no network proof requested".into(),
+            "delivery proof unavailable; HEAD is not in the cached origin default branch".into(),
         );
     }
     warnings.sort();

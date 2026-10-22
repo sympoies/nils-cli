@@ -80,7 +80,9 @@ subcommands (matching the binary's `--help` output):
 - `list`: List all linked git worktrees and mark entries managed by the git-cli convention.
   Options: `--format text|json`.
 - `remove <slug-or-path>`: Remove a linked worktree by managed slug or explicit path, refusing the
-  primary checkout and the current worktree. Options: `--format text|json`.
+  primary checkout. Options: `--format text|json`, `--forge-delivery` for optional merged PR
+  evidence after squash/rebase delivery. Without it, delivery proof uses cached ancestry
+  and removal makes no network calls. Known foreign holders retain the worktree.
 - `prune`: Run `git worktree prune`. Options: `--format text|json`.
 - `go <slug-or-branch-or-path>`: Resolve a worktree and print its path so you can `cd` into it.
   Matches by branch name, explicit path, managed slug, or worktree directory name. `go` and `remove`
