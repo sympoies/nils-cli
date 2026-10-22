@@ -1,6 +1,8 @@
 //! Access-only remote auth for Claude Code over the shared
 //! `nils_common::provider_runtime::remote` transport.
 
+mod generation;
+
 use nils_common::cli_contract::exit;
 use nils_common::diag_output;
 use nils_common::provider_runtime::remote::{self, AccessOnlyAdapter, RemoteSelector};
@@ -41,6 +43,10 @@ impl AccessOnlyAdapter for ClaudeRemote {
         sanitize(value)
     }
 
+    fn validate_metadata(&self, value: &Value, selector: &RemoteSelector) -> bool {
+        generation::validate(value, selector)
+    }
+
     fn has_access_token(&self, value: &Value) -> bool {
         value
             .get("claudeAiOauth")
@@ -63,6 +69,10 @@ impl AccessOnlyAdapter for ClaudeRemoteAll {
 
     fn sanitize_access_only(&self, value: Value) -> Value {
         sanitize_all(value)
+    }
+
+    fn validate_metadata(&self, value: &Value, selector: &RemoteSelector) -> bool {
+        generation::validate(value, selector)
     }
 
     /// Every exported profile carries an access token, and there is at least one.
@@ -102,10 +112,17 @@ fn sanitize_all(value: Value) -> Value {
 
 /// Keep the profile name, the access fields of `claudeAiOauth`, and `oauthAccount`.
 fn sanitize(value: Value) -> Value {
+    let generation = generation::context(&value).ok().flatten();
     let Value::Object(mut object) = value else {
         return Value::Object(Map::new());
     };
     let mut sanitized = Map::new();
+    if let Some(generation) = generation {
+        sanitized.insert(
+            "credential_generation".to_string(),
+            serde_json::json!(generation),
+        );
+    }
     if let Some(Value::String(profile)) = object.remove("profile") {
         sanitized.insert("profile".to_string(), Value::String(profile));
     }
@@ -191,6 +208,8 @@ pub fn export(name: Option<&str>, current: bool, all: bool, access_only: bool) -
 
 #[derive(Serialize)]
 struct PullResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    credential_generation: Option<generation::Generation>,
     ssh: String,
     profile: Option<String>,
     account_uuid: Option<String>,
@@ -248,6 +267,8 @@ pub fn pull(options: &PullOptions<'_>) -> i32 {
         let selector = selector(options.name, options.current, false)?;
         let export = remote::fetch_access_only(&ClaudeRemote, options.ssh, &selector, false)
             .map_err(transport_error)?;
+        let credential_generation =
+            generation::context(&export.value).map_err(|()| invalid_generation())?;
         let Value::Object(mut payload) = export.value else {
             return Err(AuthError::runtime(
                 "remote-export-invalid-json",
@@ -268,6 +289,7 @@ pub fn pull(options: &PullOptions<'_>) -> i32 {
         })?;
         let written = store::write_active_access_only(&oauth, &account, options.keychain)?;
         Ok(PullResult {
+            credential_generation,
             ssh: options.ssh.to_string(),
             profile,
             account_uuid: Some(identity.account_uuid),
@@ -308,8 +330,17 @@ fn transport_error(failure: remote::RemotePullFailure) -> AuthError {
     }
 }
 
+fn invalid_generation() -> AuthError {
+    AuthError::data(
+        "remote-export-invalid-generation",
+        "remote export generation context is invalid",
+    )
+}
+
 #[derive(Serialize)]
 struct AccountResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    credential_generation: Option<generation::Generation>,
     name: String,
     config_dir: String,
     written: bool,
@@ -381,6 +412,8 @@ fn pull_all(options: &PullOptions<'_>) -> i32 {
         let mut names = BTreeSet::new();
         let mut entries = Vec::new();
         for entry in exported {
+            let credential_generation =
+                generation::context(&entry).map_err(|()| invalid_generation())?;
             let Value::Object(mut entry) = entry else {
                 continue;
             };
@@ -399,12 +432,12 @@ fn pull_all(options: &PullOptions<'_>) -> i32 {
                     format!("remote export listed profile '{name}' twice"),
                 ));
             }
-            entries.push((name, entry));
+            entries.push((name, entry, credential_generation));
         }
 
         let _lock = store::lock_accounts(&into)?;
         let mut profiles = Vec::new();
-        for (name, mut entry) in entries {
+        for (name, mut entry, credential_generation) in entries {
             let oauth = store::take_object(&mut entry, "claudeAiOauth");
             let account = store::take_object(&mut entry, "oauthAccount");
             let written = if store::Identity::from_account(&account).is_none() {
@@ -426,6 +459,7 @@ fn pull_all(options: &PullOptions<'_>) -> i32 {
                 ),
             };
             profiles.push(AccountResult {
+                credential_generation,
                 config_dir: into.join(&name).display().to_string(),
                 name,
                 written: error.is_none(),

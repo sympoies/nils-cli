@@ -18,6 +18,8 @@ mod agent_resume;
 mod auth;
 #[path = "integration/auth_accounts.rs"]
 mod auth_accounts;
+#[path = "integration/auth_generation.rs"]
+mod auth_generation;
 #[path = "integration/auth_profiles.rs"]
 mod auth_profiles;
 #[path = "integration/auth_reset_rate_limits.rs"]
