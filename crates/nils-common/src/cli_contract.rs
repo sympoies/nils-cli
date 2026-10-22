@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn envelope_success_includes_warnings_when_present() {
         let envelope: Envelope<()> = Envelope {
-            schema_version: schema_version_for("memo", "apply", 1),
+            schema_version: schema_version_for("cli-template", "apply", 1),
             ok: true,
             data: None,
             warnings: Vec::new(),
@@ -251,7 +251,7 @@ mod tests {
         let json = serde_json::to_string(&envelope).expect("serialize envelope");
         assert_eq!(
             json,
-            "{\"schema_version\":\"cli.memo.apply.v1\",\"ok\":true,\"warnings\":[\"entry-42 skipped: missing body\"]}"
+            "{\"schema_version\":\"cli.cli-template.apply.v1\",\"ok\":true,\"warnings\":[\"entry-42 skipped: missing body\"]}"
         );
     }
 
@@ -299,7 +299,10 @@ mod tests {
 
     #[test]
     fn schema_version_for_builds_canonical_string() {
-        assert_eq!(schema_version_for("memo", "list", 1), "cli.memo.list.v1");
+        assert_eq!(
+            schema_version_for("cli-template", "list", 1),
+            "cli.cli-template.list.v1"
+        );
         assert_eq!(
             schema_version_for("cli-template", "status", 2),
             "cli.cli-template.status.v2"

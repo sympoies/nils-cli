@@ -146,11 +146,6 @@ add_row() {
 
 seed_manifest() {
   # path	category	helper_target	status	task_id	risk	detection_regex	note
-  add_row "crates/memo/src/output/text.rs" \
-    "runtime.no_color" "nils-common::env + nils-test-support guards" "candidate" "Task 2.1" "medium" \
-    'NO_COLOR|unsafe \{ std::env::(set_var|remove_var)' \
-    "Local NO_COLOR semantics and raw env mutation in unit tests."
-
 
   add_row "crates/git-lock/src/diff.rs" \
     "runtime.git_process" "nils-common::git/process" "candidate" "Task 2.3" "medium" \

@@ -20,7 +20,7 @@ Applies to every crate under `crates/`. Enforced by
 
 - `crates/<dir>` is lowercase kebab-case.
 - A user/service-facing CLI tool directory ends in `-cli`
-  (for example `forge-cli`, `git-cli`, `memo-cli`).
+  (for example `forge-cli`, `git-cli`, `codex-cli`).
 - An internal shared library crate is prefixed `nils-`
   (for example `nils-common`, `nils-term`, `nils-markdown`).
 - A domain/service crate uses a plain descriptive name

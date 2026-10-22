@@ -124,7 +124,6 @@ frozen_serial_crates=(
   git-cli
   macos-agent
   fzf-cli
-  memo
 )
 
 cleanup() {
