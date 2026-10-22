@@ -99,7 +99,9 @@ including supported Codex `codex_app_server` profiles with their managed tmux
 pane. App-server idle is native; composer capture remains a separate signal.
 Unknown or invalid app-server profiles and other providers or runtime kinds
 fail closed for these checks. Exact composer
-verification supports an unambiguous, single visible input line. With Claude,
+verification supports an unambiguous, single visible input line.
+
+With Claude,
 a known single-line ASCII paste may also wrap across visible rows after
 empty-composer admission. The entire region must uniquely match the paste;
 cursor observations must prove its logical start, character count, and end

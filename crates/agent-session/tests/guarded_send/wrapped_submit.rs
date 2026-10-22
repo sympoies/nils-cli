@@ -87,6 +87,100 @@ fn wrapped_draft_collision_never_submits_at_narrow_widths() {
 }
 
 #[test]
+fn wrapped_paste_with_unproven_logical_start_never_submits() {
+    let (fixture, text) = wrapped_fixture(44, "");
+    let path = fixture.root().join("captured-layout");
+    let mut snapshot: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    // C-a lands on the continuation row instead of the logical start.
+    snapshot["start"] = serde_json::json!([2, 2]);
+    std::fs::write(path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    let output = guarded_text(&fixture, &text);
+    let details = details(&output, "send-composer-unobservable");
+    assert_eq!(details["submitted"], false);
+    // Cleanup also needs a proven start; retain the paste if C-a is unreliable.
+    assert_eq!(details["cleared"], false);
+    assert_eq!(composer(&fixture), text);
+    assert!(submissions(&fixture).is_empty());
+    assert!(
+        fixture
+            .calls()
+            .iter()
+            .all(|call| call.last().is_none_or(|key| key != "Enter"))
+    );
+}
+
+#[test]
+fn draft_appearing_during_cursor_proof_never_submits() {
+    let (fixture, text) = wrapped_fixture(32, "");
+    let (drafted, _) = wrapped_fixture(32, " user draft");
+    let original: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixture.root().join("captured-layout")).unwrap())
+            .unwrap();
+    let mut changed: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(drafted.root().join("captured-layout")).unwrap())
+            .unwrap();
+    // Appending a draft keeps the paste's existing cursor positions valid.
+    // The fresh input observation must catch the collision on the first Right.
+    changed["cursor_positions"] = serde_json::json!({});
+    changed["cursor_positions"][(text.len() - 1).to_string()] = original["before_end"].clone();
+    changed["cursor_positions"][text.len().to_string()] = original["prefix_end"].clone();
+    std::fs::write(
+        fixture.root().join("right-layout"),
+        serde_json::to_vec(&changed).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(fixture.root().join("draft-text"), " user draft").unwrap();
+    live(&fixture, &["draft-on-right"]);
+    let output = guarded_text(&fixture, &text);
+    let details = details(&output, "send-composer-unobservable");
+    assert_eq!(details["submitted"], false);
+    assert_eq!(details["cleared"], true);
+    assert_eq!(composer(&fixture), " user draft");
+    assert!(submissions(&fixture).is_empty());
+    assert!(
+        fixture
+            .calls()
+            .iter()
+            .all(|call| call.last().is_none_or(|key| key != "Enter"))
+    );
+}
+
+#[test]
+fn runtime_replacement_stops_cursor_proof_before_more_keys() {
+    for completed_right_steps in [0, 1, 2] {
+        let (fixture, text) = wrapped_fixture(44, "");
+        if completed_right_steps == 0 {
+            live(&fixture, &["replace-on-home"]);
+        } else {
+            std::fs::write(
+                fixture.root().join("replace-after-right"),
+                completed_right_steps.to_string(),
+            )
+            .unwrap();
+        }
+        let output = guarded_text(&fixture, &text);
+        // Identity failure inside the proof invalidates its composer observation.
+        let details = details(&output, "send-composer-unobservable");
+        assert_eq!(details["submitted"], false);
+        assert_eq!(details["cleared"], false);
+        assert_eq!(composer(&fixture), text);
+        assert!(submissions(&fixture).is_empty());
+        let keys: Vec<_> = fixture
+            .calls()
+            .iter()
+            .filter(|call| call[0] == "send-keys")
+            .map(|call| call.last().unwrap().clone())
+            .collect();
+        assert_eq!(
+            keys,
+            ["C-a", "Right", "Right"][..1 + completed_right_steps],
+            "replacement after {completed_right_steps} Right steps"
+        );
+    }
+}
+
+#[test]
 fn wrapped_text_without_empty_composer_admission_never_submits() {
     let (fixture, text) = wrapped_fixture(44, "");
     let output = fixture.send_text(Some(&text), &["--require-idle"]);

@@ -70,6 +70,7 @@ def print_cursor():
             cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
             x, y = snapshot.get('start', [2, 13]) if cursor == 0 else snapshot['prefix_end']
             if cursor == len(text) - 1 and 'before_end' in snapshot: x, y = snapshot['before_end']
+            x, y = snapshot.get('cursor_positions', {}).get(str(cursor), [x, y])
     if (root / 'late-home').exists():
         count_path = root / 'cursor-reads'
         count = int(count_path.read_text()) + 1 if count_path.exists() else 1
@@ -145,6 +146,15 @@ elif command == 'send-keys' and args[-1] == 'Right':
     count = int(args[args.index('-N') + 1])
     (root / 'cursor').write_text(str(min(len((root / 'composer').read_text()), cursor + count)))
     (root / 'right-sent').touch()
+    if (root / 'replace-after-right').exists():
+        path = root / 'right-count'
+        count = int(path.read_text()) + 1 if path.exists() else 1
+        path.write_text(str(count))
+        if count == int((root / 'replace-after-right').read_text()): (root / 'runtime-replaced').touch()
+    if (root / 'draft-on-right').exists() and not (root / 'right-draft-injected').exists():
+        with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text())
+        (root / 'captured-layout').write_text((root / 'right-layout').read_text())
+        (root / 'right-draft-injected').touch()
 elif command == 'send-keys' and args[-1] == 'C-a':
     (root / 'cursor').write_text('0')
     if (root / 'draft-on-home').exists(): (root / 'composer').write_text('replacement draft')

@@ -25,13 +25,15 @@ impl Admission<'_> {
         let text = pasted?;
         let end = send_submit::cleanup_prefix_end(pane, text)?;
         let input = send_submit::cleanup_composer_input("claude", pane, Some(text))?;
-        if input != text || end.0 <= 2 {
+        if input != text {
             return None;
         }
         let target = format!("{}:0.0", self.record.tmux_session);
         // A visual layout may omit or pad spaces. Check the logical length:
         // N-1 characters must stop one cell before the known endpoint, and one
         // more must reach it. This rejects both extra and missing separators.
+        // A matched final row contains a nonempty paste remainder, so its
+        // endpoint is past column 2 and the preceding cell is defined.
         for (key, count, endpoint) in [
             ("C-a", 1, None),
             (
