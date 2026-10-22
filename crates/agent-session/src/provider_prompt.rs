@@ -282,7 +282,7 @@ pub struct ProviderPromptTail {
     discarding_oversized_line: bool,
     pending_claude: VecDeque<PendingClaudePrompt>,
     /// Claude input enqueued behind a running turn during the current poll.
-    /// Only [`ProviderPromptTail::poll_submitted_prompts`] reads it.
+    /// Read by the submission and queue-only acknowledgement projections.
     claude_enqueued: Vec<String>,
     claude_fallback_delay: Duration,
     disabled: bool,
@@ -394,6 +394,12 @@ impl ProviderPromptTail {
             .collect::<Vec<_>>();
         prompts.append(&mut self.claude_enqueued);
         Ok(prompts)
+    }
+
+    /// Newly observed Claude queue records, excluding ordinary prompt events.
+    pub(crate) fn poll_queued_prompts(&mut self) -> io::Result<Vec<String>> {
+        self.poll()?;
+        Ok(std::mem::take(&mut self.claude_enqueued))
     }
 
     fn poll_status(&mut self) -> io::Result<ProviderPromptPoll> {

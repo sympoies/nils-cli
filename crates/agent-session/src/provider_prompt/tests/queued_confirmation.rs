@@ -108,3 +108,28 @@ fn queued_confirmation_skips_inline_image_bytes_across_polls() {
     }
     assert_eq!(observed, vec!["Review this image".to_string()]);
 }
+
+#[test]
+fn queued_confirmation_does_not_classify_user_turns_as_queued() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let path = tmp.path().join("claude.jsonl");
+    fs::write(&path, "").unwrap();
+    let mut tail = ProviderPromptTail::open_path(
+        ProviderKind::Claude,
+        "claude-id",
+        path.clone(),
+        Duration::ZERO,
+    )
+    .unwrap();
+    append(
+        &path,
+        claude_user_with_uuid("claude-id", "turn-fixture", "ordinary prompt").as_bytes(),
+    );
+    assert!(tail.poll_queued_prompts().unwrap().is_empty());
+    let row = queued(json!([{"type":"text", "text":"queued prompt"}]));
+    append(&path, format!("{row}\n").as_bytes());
+    assert_eq!(
+        tail.poll_queued_prompts().unwrap(),
+        vec!["queued prompt".to_string()]
+    );
+}

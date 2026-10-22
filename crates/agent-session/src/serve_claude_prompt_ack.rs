@@ -13,7 +13,7 @@ pub(super) enum ClaudePromptAck {
     Unknown,
 }
 
-/// Watch for the provider's turn event, newly appended transcript prompts, and
+/// Watch for the provider's turn event, newly appended queue records, and
 /// the pane's queued state until `wait` ends. The tail starts before submission,
 /// so an older identical prompt cannot acknowledge this attempt.
 pub(super) async fn await_claude_prompt_ack(
@@ -33,7 +33,7 @@ pub(super) async fn await_claude_prompt_ack(
         let (ack, tail) = tokio::task::spawn_blocking(move || {
             let (record, baseline, text) = observed;
             let transcript_queued = tail.as_mut().is_some_and(|tail| {
-                tail.poll_submitted_prompts()
+                tail.poll_queued_prompts()
                     .is_ok_and(|prompts| prompts.iter().any(|prompt| prompt == &text))
             });
             let ack = if crate::activity::prompt_turn_started_since(&context, &record, &baseline) {
