@@ -303,8 +303,28 @@ Human success output reports the verified stopped state; the v1 JSON
 `killed: true` field remains stable for ordinary successful deletion.
 Its `termination_scope: "recorded-boundaries"` describes the verified recorded
 runtime boundary; it does not certify that no escaped process exists.
-Any observed process carrying both runtime markers still blocks ordinary deletion
-and retains the session record.
+Observed processes carrying both runtime markers block ordinary deletion and
+retain the session record, with one narrow Linux exemption: a shared `sccache`
+server whose executable basename is `sccache`, whose parent is PID 1, and whose
+command line has no work arguments. The executable is checked through `/proc`,
+not the process display name. Missing inspection data does not grant an exemption.
+Attached cache processes, compiler wrappers, and all other survivors still block.
+Recorded process-boundary verification remains required before this exemption is
+considered; a daemon still inside that boundary does not bypass termination.
+
+Retained servers are reported as `shared-daemon-retained: <pid> sccache` in text
+and in the optional `process_inventory.retained_shared_daemons` array in JSON:
+
+```json
+{
+  "retained_shared_daemons": [
+    { "pid": 12345, "command": "sccache", "reason": "shared-daemon-retained" }
+  ]
+}
+```
+
+The same inventory field reports retained servers when another survivor blocks
+deletion. Retaining a shared daemon never grants signaling authority over it.
 
 Every deletion success includes `process_inventory` with `complete`,
 `inspected_processes`, `uninspected_processes`, and a `reasons` count map.
