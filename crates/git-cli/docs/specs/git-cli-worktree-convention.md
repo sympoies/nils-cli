@@ -40,7 +40,8 @@ default `feature`.
 
 `remove` refuses primary, unmanaged, and unknown worktrees. `--safe` remains
 accepted as a compatibility no-op. Removal prevents known collisions; it does
-not require delivery, network, provider access, or complete process visibility.
+not require delivery, network, or provider access. Non-Linux removal requires
+its bounded holder probe to complete without diagnostics.
 
 ### Delivery evidence
 
@@ -58,9 +59,21 @@ bypass collision fencing or change backup behavior.
 
 ### Removal and holder checks
 
-Process holders are matched by cwd, open-file, or mapping paths under the
-target. Shared hard-linked files accessed through other paths do not count as
-holders solely because their inodes match.
+Linux process holders are matched by cwd, open-file, or mapping paths under
+the target. Shared hard-linked files accessed through other paths do not count
+as Linux holders solely because their inodes match.
+
+Non-Linux platforms use `lsof -nP -F0pcfn +D <target> -x f` to select target inodes
+before emitting output. Darwin can report a different hardlink name for a
+mapped vnode, so selected records retain the target regardless of the reported
+path. This deliberately permits conservative refusals for outside hardlink
+aliases. The [upstream lsof FAQ](https://github.com/lsof-org/lsof/blob/master/docs/faq.md#why-doesnt-lsof-report-the-correct-hard-linked-file-path-name)
+explains the hardlink naming limitation. Mappings remain covered after the file
+descriptor closes. An unavailable, timed-out, oversized, malformed, or
+diagnostic-bearing probe
+retains the target with `removal-proof-unavailable`; it cannot authorize
+removal. The existing probe time and output caps also bound directory scanning
+and selected output.
 
 It runs `git worktree remove --force` and prunes metadata from the primary
 checkout. Removing the caller's current worktree leaves its parent shell in a
@@ -82,7 +95,8 @@ Positive evidence retains the target with exit 65 and structured details:
 | --- | --- |
 | `removal-session-active` | Foreign running session cwd inside the target, or a foreign active claim/nonterminal operation bound to it |
 | `removal-lease-active` | Foreign unexpired checkout lease |
-| `removal-process-active` | Readable process cwd, open descriptor, or mapping inside the target; details identify PID and command name |
+| `removal-process-active` | Readable process cwd, open descriptor, or mapping inside the target, or a non-Linux target inode holder; details identify PID and command name |
+| `removal-proof-unavailable` | A bounded non-Linux holder probe could not complete reliably; target retained |
 | `removal-git-busy` | Target Git `index.lock`, `HEAD.lock`, or ref lock modified within the last hour |
 | `removal-lifecycle-busy` | Another launch/removal holds the target lifecycle lock |
 
@@ -91,9 +105,10 @@ its matching hashed checkout lease is released after preservation succeeds.
 The CLI process and its ancestors are excluded from the process inventory.
 Linux scans readable `/proc` cwd, fd, and maps surfaces independently; a denied
 surface cannot hide a readable holder on another surface. Other platforms use
-`lsof` stdout. Unreadable processes (including hidepid/nondumpable processes),
-`lsof` stderr, unavailable or unknown registry data, and stale Git locks produce
-receipt warnings. This is a best-effort collision inventory: opaque holders
+inode-selected `lsof` stdout. Linux unreadable processes (including
+hidepid/nondumpable processes), unavailable or unknown registry data, and stale
+Git locks produce receipt warnings. Non-Linux `lsof` diagnostics or probe
+failures retain the target. This is a best-effort collision inventory: opaque holders
 cannot be proven absent and may be missed. No elevated privilege is required.
 
 The transaction retains the shared lifecycle lock through snapshot and deletion.
