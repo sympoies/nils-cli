@@ -1,0 +1,7 @@
+[
+  {"name":"build","state":"SUCCESS","link":"https://example.test/run/1"},
+  {"name":"test","state":"FAILURE","conclusion":"failure","link":"https://example.test/run/2"},
+  {"name":"integration","state":"PENDING","link":"https://example.test/run/3"},
+  {"name":"timeout","conclusion":"timed_out","link":"https://example.test/run/4"},
+  {"name":"cancelled","conclusion":"cancelled","link":"https://example.test/run/5"}
+]

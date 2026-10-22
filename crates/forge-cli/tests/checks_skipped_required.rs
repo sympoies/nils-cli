@@ -234,6 +234,58 @@ fn strict_existing_failure_and_pending_are_not_passing() {
 }
 
 #[test]
+fn strict_empty_snapshot_is_pending_while_default_remains_successful() {
+    let empty = include_str!("fixtures/github/pr_checks/empty.json");
+    let stub = backend(empty.trim(), empty.trim());
+    let out = checks(&stub, &["--format", "json", "--strict"]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["ok"], false);
+    assert_eq!(envelope["error"]["code"], "checks_pending");
+    assert_eq!(envelope["data"]["state"], "pending");
+    assert_eq!(envelope["data"]["gate_state"], "pending");
+    assert_eq!(envelope["data"]["required_count"], 0);
+    assert_eq!(envelope["data"]["checks"], json!([]));
+
+    let default = checks(&stub, &["--format", "json"]);
+    assert_eq!(default.code, 0, "{}", default.stderr);
+    let envelope = parse_envelope(&default.stdout);
+    assert_eq!(envelope["ok"], true);
+    assert_eq!(envelope["data"]["state"], "success");
+}
+
+#[test]
+fn strict_visible_blockers_populate_failure_and_pending_details() {
+    let rows = include_str!("fixtures/github/pr_checks/visible_blockers.json");
+    // Also exercise a required gate to ensure existing details are not duplicated.
+    for required in ["[]", rows] {
+        let stub = backend(required, rows);
+        let out = checks(&stub, &["--format", "json", "--strict"]);
+        assert_eq!(out.code, 1, "{}", out.stderr);
+        let envelope = parse_envelope(&out.stdout);
+        assert_eq!(envelope["ok"], false);
+        assert_eq!(envelope["error"]["code"], "checks_failed");
+        let data = &envelope["data"];
+        assert_eq!(data["state"], "failure");
+        assert_eq!(data["gate_state"], "failure");
+        assert_eq!(
+            data["failed"],
+            json!([
+                {"name":"test", "url":"https://example.test/run/2", "conclusion":"failure"},
+                {"name":"timeout", "url":"https://example.test/run/4", "conclusion":"timed_out"},
+                {"name":"cancelled", "url":"https://example.test/run/5", "conclusion":"cancelled"}
+            ])
+        );
+        assert_eq!(
+            data["pending"],
+            json!([
+                {"name":"integration", "url":"https://example.test/run/3"}
+            ])
+        );
+    }
+}
+
+#[test]
 fn strict_help_explains_default_and_execution_semantics() {
     let stub = backend("[]", "[]");
     let out = checks(&stub, &["--help"]);

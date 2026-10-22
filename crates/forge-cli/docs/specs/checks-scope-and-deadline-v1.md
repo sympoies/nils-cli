@@ -58,9 +58,11 @@ as failures. The default remains the provider-compatible snapshot above.
 This flag applies only to `pr checks`; wait, merge, and delivery retain their
 existing policies.
 
-In strict mode, skipped and neutral gating rows set both `state` and
-`gate_state` to `failure` and join `failed` with their original name, URL,
-and conclusion (the normalized state is used when no conclusion is supplied).
+In strict mode, `failed` and `pending` describe the effective gating rows,
+including visible fallback rows. Skipped and neutral gating rows set both
+`state` and `gate_state` to `failure` and join `failed` with their original
+name, URL, and conclusion (the normalized state is used when no conclusion is
+supplied).
 The original `checks` rows, skip counts, `skipped_required`, `success_count`,
 and `visible_state` retain their reporting semantics. Text output shows the
 failure summary and the skipped/neutral check names. No JSON fields are removed.
@@ -69,8 +71,11 @@ A non-passing strict gate emits `ok=false` with the snapshot in `data` and exits
 `RUNTIME 1`: `error.code=checks_failed` for failed, cancelled, timed-out, skipped,
 or neutral gating checks, or `checks_pending` when only pending checks block.
 A successful strict gate emits the ordinary success snapshot and exits zero.
-An empty gating set retains the ordinary empty-snapshot behavior; strict mode
-does not establish required-check configuration or prove snapshot completeness.
+When `required_count=0` and `checks` is empty, nothing was checked: strict mode
+sets `state` and `gate_state` to `pending` and returns `checks_pending` with
+exit 1. The default read retains its ordinary empty-snapshot behavior. Strict
+mode does not establish required-check configuration or prove snapshot
+completeness.
 
 With `--required-only=true`, optional skipped or neutral rows do not block a
 required gate. With `--required-only=false`, or with GitHub's
