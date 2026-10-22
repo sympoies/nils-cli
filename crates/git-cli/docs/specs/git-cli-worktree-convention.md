@@ -41,6 +41,8 @@ default `feature`.
 `remove` refuses primary, unmanaged, and unknown worktrees. `--safe` remains
 accepted as a compatibility no-op. Removal prevents known collisions; it does
 not require delivery, network, provider access, or complete process visibility.
+### Delivery evidence
+
 By default, `delivered` uses cached origin default-branch ancestry. Opt in to
 `--forge-delivery` to query `forge-cli` for merged pull requests when ancestry
 cannot prove delivery (including squash and rebase merges). This read-only
@@ -52,6 +54,8 @@ undelivered result. No objects are fetched. The optional proof reports
 `basis: merged-pull-request`, `pull_request`, and `head_sha`; ancestry proofs
 retain `basis: cached-origin-default-ancestry`. Delivery evidence does not
 bypass collision fencing or change backup behavior.
+
+### Removal and holder checks
 
 Process holders are matched by cwd, open-file, or mapping paths under the
 target. Shared hard-linked files accessed through other paths do not count as
