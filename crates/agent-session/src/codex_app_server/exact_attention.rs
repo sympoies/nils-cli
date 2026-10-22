@@ -72,6 +72,19 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn current_native_mcp_form_alias_is_projected_without_content() {
+        let raw = json!({"id": "form-alias", "method": "mcpServer/elicitation/request", "params": {
+            "threadId": "thread-a", "turnId": null, "serverName": "fixture-server",
+            "mode": "openaiForm", "message": "private-form-canary", "requestedSchema": {}
+        }});
+        let ServerProjection::Unique(value) = server_observation(&raw) else {
+            panic!("current native form alias must project");
+        };
+        assert_eq!(value["params"]["kind"], "clarification");
+        assert!(!value.to_string().contains("private-form-canary"));
+    }
+
     #[tokio::test]
     async fn current_protocol_questions_and_approvals_remain_pending_until_exactly_resolved() {
         let tmp = tempfile::tempdir().unwrap();

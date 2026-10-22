@@ -4249,7 +4249,7 @@ fn server_observation(value: &Value) -> ServerProjection {
         "item/tool/requestUserInput" => Some("clarification"),
         "mcpServer/elicitation/request" => {
             match value.pointer("/params/mode").and_then(Value::as_str) {
-                Some("form" | "openai/form") => Some("clarification"),
+                Some("form" | "openai/form" | "openaiForm") => Some("clarification"),
                 Some("url") => Some("authentication"),
                 _ => return ServerProjection::RejectedUnique,
             }

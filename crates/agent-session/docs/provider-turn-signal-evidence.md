@@ -21,8 +21,12 @@ The exact-attention contract was re-audited on 2026-10-22 against Codex CLI
 credentials. Its request IDs, thread/turn binding and `serverRequest/resolved`
 match the existing metadata bridge. `item/tool/requestUserInput` additionally
 requires `isBlocking`; false requests are excluded from attention and malformed
-flags are rejected. The version is explicitly admitted; other newer versions
-remain `unverified` in doctor until audited. Fixture replay covers projection,
+flags are rejected.
+Native MCP form names `form`, `openai/form`, and `openaiForm` share the bounded
+clarification projection; URL requests remain authentication attention.
+
+The version is explicitly admitted; other newer versions remain `unverified`
+in doctor until audited. Fixture replay covers projection,
 parallel pending requests and exact resolution; no live authenticated request
 or UI acceptance is claimed by this audit.
 
