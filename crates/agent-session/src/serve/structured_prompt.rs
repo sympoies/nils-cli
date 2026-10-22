@@ -131,7 +131,8 @@ pub(super) async fn submit_structured_prompt_locked(
 
 /// Submit one structured prompt to a Claude session and report `submitted` only
 /// once Claude's own `UserPromptSubmit` hook has produced a new turn, or the
-/// pane shows the prompt queued behind a running turn (`queued: true`). A tmux
+/// pane or new transcript row shows it queued behind a running turn
+/// (`queued: true`). A tmux
 /// write that is neither is reported as an unknown outcome, never as a
 /// submission.
 pub(super) async fn submit_claude_structured_prompt(
@@ -142,11 +143,14 @@ pub(super) async fn submit_claude_structured_prompt(
     text: &str,
     acknowledgement_wait: Duration,
 ) -> Response {
-    let baseline = {
+    let (baseline, prompt_tail) = {
         let context = state.context.clone();
         let record = record.clone();
         match tokio::task::spawn_blocking(move || {
-            crate::activity::prompt_turn_baseline(&context, &record)
+            let baseline = crate::activity::prompt_turn_baseline(&context, &record);
+            let tail = ProviderPromptTail::resolve_source(&record)
+                .and_then(ProviderPromptTail::open_source_at_eof);
+            (baseline, tail)
         })
         .await
         {
@@ -180,6 +184,7 @@ pub(super) async fn submit_claude_structured_prompt(
         state,
         record,
         &baseline,
+        prompt_tail,
         text,
         acknowledgement_wait,
     )

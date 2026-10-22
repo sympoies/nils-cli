@@ -145,3 +145,62 @@ async fn consecutive_hand_offs_in_one_tool_call_turn_are_each_submitted() {
         }
     }
 }
+
+#[tokio::test]
+async fn list_form_queued_prompt_resolves_delivery_receipt() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let id = "claude-image-receipt";
+    let launch = seed_claude_prompt_session(tmp.path(), id);
+    let provider_root = tmp.path().join("provider");
+    let projects = provider_root.join("projects/project");
+    std::fs::create_dir_all(&projects).unwrap();
+    let transcript = projects.join("provider-fixture.jsonl");
+    let metadata = json!({"type":"user", "sessionId":"provider-fixture", "cwd":"/repo"});
+    std::fs::write(&transcript, format!("{metadata}\n")).unwrap();
+    let record_path = tmp.path().join(format!("sessions/{id}/session.json"));
+    let mut persisted: Value =
+        serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+    persisted["runtime"]["agent_profile_provider_config_dir"] = json!(provider_root);
+    persisted["provider_resume"] = json!({"provider":"claude", "session_id":"provider-fixture", "capture_method":"test", "captured_at":"2000-01-01T00:00:00Z", "resume_args":[]});
+    std::fs::write(&record_path, serde_json::to_vec(&persisted).unwrap()).unwrap();
+    let (tmux, entered) = empty_composer_tmux_marking_enter(tmp.path());
+    let st = state(tmp.path(), Some(TOKEN), tmux);
+    let record = load_session_record(&st.context, id).unwrap();
+    crate::activity::activate_runtime(&st.context, &record).unwrap();
+    let writer = tokio::spawn(async move {
+        while !entered.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let queued = json!({"type":"attachment", "sessionId":"provider-fixture",
+            "attachment":{"type":"queued_command", "commandMode":"prompt", "origin":{"kind":"human"},
+                "prompt":[{"type":"text","text":"Review this image"},
+                    {"type":"image","source":{"type":"base64","media_type":"image/png","data":"fixture"}}]}});
+        use std::io::Write;
+        writeln!(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(transcript)
+                .unwrap(),
+            "{queued}"
+        )
+        .unwrap();
+    });
+    let response = router(st.clone()).oneshot(post_json(
+        &format!("/sessions/{id}/prompt/v2"), Some(TOKEN),
+        json!({"text":"Review this image", "expected_session_incarnation":launch, "request_id":"image-attempt"}),
+    )).await.unwrap();
+    writer.await.unwrap();
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["receipt"]["outcome"], "submitted");
+    assert_eq!(body["data"]["queued"], true);
+    let (status, replay) = call(router(st), post_json(
+        &format!("/sessions/{id}/prompt/v2"), Some(TOKEN),
+        json!({"text":"Review this image", "expected_session_incarnation":launch, "request_id":"image-attempt"}),
+    )).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        replay, body,
+        "the delivered receipt is durable and replayable"
+    );
+}

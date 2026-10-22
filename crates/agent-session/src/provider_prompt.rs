@@ -150,7 +150,7 @@ struct FileIdentity {
     inode: u64,
 }
 
-/// Compact only string-valued image_url fields while framing a JSON line.
+/// Compact string-valued image_url and data payloads while framing a JSON line.
 /// Keep escapes and non-ASCII bytes for serde_json to validate; discard only
 /// ordinary ASCII string content. Text fields and structural bytes stay exact.
 /// State survives read boundaries, so inline images do not consume the line
@@ -179,7 +179,8 @@ impl ImageUrlElision {
                 self.escaped = true;
             } else if byte == b'"' {
                 self.string_start = None;
-                self.image_key = !self.eliding && &partial[start..] == b"\"image_url";
+                self.image_key =
+                    !self.eliding && matches!(&partial[start..], b"\"image_url" | b"\"data");
                 self.eliding = false;
             } else if self.eliding && (b' '..=b'~').contains(&byte) {
                 return true;
@@ -281,7 +282,7 @@ pub struct ProviderPromptTail {
     discarding_oversized_line: bool,
     pending_claude: VecDeque<PendingClaudePrompt>,
     /// Claude input enqueued behind a running turn during the current poll.
-    /// Only [`ProviderPromptTail::poll_submitted_prompts`] reads it.
+    /// Read by the submission and queue-only acknowledgement projections.
     claude_enqueued: Vec<String>,
     claude_fallback_delay: Duration,
     disabled: bool,
@@ -393,6 +394,12 @@ impl ProviderPromptTail {
             .collect::<Vec<_>>();
         prompts.append(&mut self.claude_enqueued);
         Ok(prompts)
+    }
+
+    /// Newly observed Claude queue records, excluding ordinary prompt events.
+    pub(crate) fn poll_queued_prompts(&mut self) -> io::Result<Vec<String>> {
+        self.poll()?;
+        Ok(std::mem::take(&mut self.claude_enqueued))
     }
 
     fn poll_status(&mut self) -> io::Result<ProviderPromptPoll> {
@@ -888,15 +895,20 @@ fn parse_claude_enqueued_prompt(line: &str, session_id: &str) -> Option<ParsedPr
 
 /// Input typed while a Claude turn is running. Claude Code logs it as a
 /// `queue-operation` enqueue, not as a `user` record; the turn later takes it
-/// as a `user` record or absorbs it as a `queued_command` attachment.
+/// as a `user` record or absorbs it as a `queued_command` attachment. Both queue
+/// forms prove acceptance and share the history reader for attachment text.
 fn parse_claude_enqueued_prompt_value(value: &Value, session_id: &str) -> Option<ParsedPrompt> {
-    if value.get("type").and_then(Value::as_str) != Some("queue-operation")
-        || value.get("operation").and_then(Value::as_str) != Some("enqueue")
-        || !claude_session_matches(value, session_id)
-    {
+    if !claude_session_matches(value, session_id) {
         return None;
     }
-    let mut prompt = bounded_prompt(value.get("content")?.as_str()?)?;
+    let text = if value.get("type").and_then(Value::as_str) == Some("queue-operation")
+        && value.get("operation").and_then(Value::as_str) == Some("enqueue")
+    {
+        Cow::Borrowed(value.get("content")?.as_str()?)
+    } else {
+        claude_queued_prompt_text(value)?
+    };
+    let mut prompt = bounded_prompt(&text)?;
     prompt.submitted_at = provider_timestamp(value);
     Some(prompt)
 }
@@ -2156,6 +2168,10 @@ mod tests {
 
     mod source_resolution {
         include!("provider_prompt/tests/source_resolution.rs");
+    }
+
+    mod queued_confirmation {
+        include!("provider_prompt/tests/queued_confirmation.rs");
     }
 
     fn claude_enqueue_line(session_id: &str, timestamp: &str, content: &str) -> String {
