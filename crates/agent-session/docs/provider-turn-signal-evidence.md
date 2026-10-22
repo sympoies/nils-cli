@@ -16,6 +16,16 @@ prompt-identity addendum was audited on 2026-09-30 against Claude Code 2.1.285.
 The support floors are deliberately the oldest versions directly covered by
 this audit, not guesses about earlier releases.
 
+The exact-attention contract was re-audited on 2026-10-22 against Codex CLI
+0.162.1 using `app-server generate-json-schema` with an isolated home and no
+credentials. Its request IDs, thread/turn binding and `serverRequest/resolved`
+match the existing metadata bridge. `item/tool/requestUserInput` additionally
+requires `isBlocking`; false requests are excluded from attention and malformed
+flags are rejected. The version is explicitly admitted; other newer versions
+remain `unverified` in doctor until audited. Fixture replay covers projection,
+parallel pending requests and exact resolution; no live authenticated request
+or UI acceptance is claimed by this audit.
+
 The fixtures under `tests/fixtures/activity/` contain lifecycle identifiers and
 event names. Prompt text, assistant output, tool input/output, commands, transcript paths,
 credentials, and terminal content are removed before the normalized event is
@@ -55,7 +65,7 @@ created.
 
 | Provider | Audited floor | Classification | Start | Completion | Attention | Failure | Setup |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Codex | 0.144.1 baseline; exact-attention versions 0.144.1 and 0.144.3; capacity enum re-audited at 0.153.4 | supported; exact attention and structured failure recovery require an audited agent-session app-server v2 runtime | `UserPromptSubmit`, observed | matching `agent-turn-complete`, authoritative; raw `Stop` remains journal evidence only | managed protocol authority: typed exact request/resolution; raw/unmanaged hook authority: `PermissionRequest` conservative latch | live app-server terminal `failed` + exact `usageLimitExceeded` or `serverOverloaded`, authoritative; raw TUI remains unavailable | additive hooks/notify plus capability-probed private Unix app-server runtime for fresh sessions |
+| Codex | 0.144.1 baseline; exact-attention versions 0.144.1, 0.144.3 and 0.162.1; capacity enum re-audited at 0.153.4 | supported; exact attention and structured failure recovery require an audited agent-session app-server v2 runtime | `UserPromptSubmit`, observed | matching `agent-turn-complete`, authoritative; raw `Stop` remains journal evidence only | managed protocol authority: typed exact request/resolution; raw/unmanaged hook authority: `PermissionRequest` conservative latch | live app-server terminal `failed` + exact `usageLimitExceeded` or `serverOverloaded`, authoritative; raw TUI remains unavailable | additive hooks/notify plus capability-probed private Unix app-server runtime for fresh sessions |
 | Claude Code | 2.1.206 baseline; Elicitation audit 2.1.210; prompt-identity audit 2.1.285 | partial; usage failure supported; Elicitation exact only when both callbacks carry the same non-empty id | `UserPromptSubmit`, observed; general `PreToolUse` provides observed progress/reactivation; `SubagentStop` is ignored | qualifying `Stop`, observed after a one-second quiet window; `idle_prompt` is late confirmation | exact `AskUserQuestion`; conditional exact `Elicitation`; `PermissionRequest`/notification conservative latch | structured `StopFailure.error`, authoritative; only `rate_limit` can arm auto-resume | additive merge into `CLAUDE_CONFIG_DIR/settings.json` when the override is absolute; otherwise `~/.claude/settings.json` |
 
 Versions below the audited floor remain usable. `activity doctor` reports them

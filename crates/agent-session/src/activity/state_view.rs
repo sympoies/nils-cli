@@ -1,4 +1,6 @@
 use super::*;
+#[path = "completion_uncertainty.rs"]
+mod completion_uncertainty;
 
 pub fn state_for_view(context: &CliContext, record: &SessionRecord) -> Option<TurnState> {
     read_state(context, record, true)
@@ -53,6 +55,7 @@ fn read_state(context: &CliContext, record: &SessionRecord, quiet: bool) -> Opti
                 &mut document,
             );
             if quiet {
+                completion_uncertainty::project(&mut document.state, &now());
                 super::codex_quiet::project(record, &mut document.state, &now());
             }
             Some(document.state)

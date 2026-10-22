@@ -249,6 +249,7 @@ fn claude_prompt_id_is_correlated_as_the_provider_turn_id() {
     assert_eq!(stop_json["provider"], "claude");
     assert_eq!(stop_json["kind"], "stop_observed");
     assert_eq!(stop_json["completion_candidate"], true);
+    assert_eq!(stop_json["completion_candidate_reason"], "candidate");
     assert!(
         stop_json["provider_turn_id"]
             .as_str()

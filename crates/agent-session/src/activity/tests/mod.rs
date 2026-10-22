@@ -17,6 +17,7 @@ fn event(kind: TurnEventKind, event_id: &str) -> TurnEvent {
         provider_turn_id: Some("turn-1".to_string()),
         kind,
         completion_candidate: false,
+        completion_candidate_reason: None,
         failure_reason: None,
         attention_id: None,
         attention_kind: None,
@@ -1182,6 +1183,7 @@ mod claude_completion;
 mod claude_permission;
 mod codex_phase;
 mod completion_review;
+mod completion_uncertainty;
 mod provider_hooks;
 mod replay_journal;
 pub(super) mod test_clock;

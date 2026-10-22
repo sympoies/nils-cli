@@ -459,10 +459,19 @@ fn project_turn_state(turn_state: &Map<String, Value>) -> Value {
             json!({
                 "last_progress_at": pick(&current, "last_progress_at"),
                 "attention": object(&current, "attention")
-                    .map(|attention| json!({
-                        "kind": pick(&attention, "kind"),
-                        "requested_at": pick(&attention, "requested_at"),
-                    }))
+                    .map(|attention| {
+                        let mut projected = json!({
+                            "kind": pick(&attention, "kind"),
+                            "requested_at": pick(&attention, "requested_at"),
+                        });
+                        if let Some(count) = attention.get("pending_count").and_then(Value::as_u64) {
+                            projected["pending_count"] = json!(count);
+                        }
+                        if let Some(certainty @ ("exact" | "conservative")) = attention.get("certainty").and_then(Value::as_str) {
+                            projected["certainty"] = json!(certainty);
+                        }
+                        projected
+                    })
                     .unwrap_or(Value::Null),
             })
         })
@@ -669,7 +678,7 @@ mod tests {
                     "phase_changed_at": "2030-01-01T00:00:00Z",
                     "current_turn": {
                         "last_progress_at": "2030-01-01T00:04:00Z",
-                        "attention": {"kind": "approval", "requested_at": "2030-01-01T00:03:00Z"}
+                        "attention": {"kind": "approval", "requested_at": "2030-01-01T00:03:00Z", "pending_count": 2, "certainty": "exact"}
                     },
                     "last_turn": {"outcome": "completed"},
                     "source": {"confidence": "authoritative"}
@@ -688,6 +697,22 @@ mod tests {
                 "launch_env": {}
             })
         );
+    }
+
+    #[test]
+    fn attention_projection_preserves_old_records_and_drops_unbounded_values() {
+        for extra in [
+            json!({}),
+            json!({"pending_count": -1, "certainty": "private-canary"}),
+            json!({"pending_count": "private-canary", "certainty": {"private-canary": true}}),
+        ] {
+            let view = json!({"current_turn": {"attention": extra}});
+            let projected = project_turn_state(view.as_object().unwrap());
+            let attention = &projected["current_turn"]["attention"];
+            assert!(attention.get("pending_count").is_none());
+            assert!(attention.get("certainty").is_none());
+            assert!(!projected.to_string().contains("private-canary"));
+        }
     }
 
     fn session_ref(id: &str) -> Value {

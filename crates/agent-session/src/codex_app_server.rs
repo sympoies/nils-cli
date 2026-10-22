@@ -6,6 +6,7 @@
 //! the same bound thread and turn. Auto-resume distinguishes
 //! `usageLimitExceeded` from bounded `serverOverloaded` capacity recovery.
 
+mod exact_attention;
 pub(crate) mod guarded;
 mod idle_probe;
 #[path = "codex_app_server/prompt_submit.rs"]
@@ -79,7 +80,6 @@ const CONTROL_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 const CONTROL_SUBMISSION_TIMEOUT: Duration = Duration::from_secs(15);
 const CONTROL_SUBMIT_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 const MINIMUM_APP_SERVER_VERSION: (u64, u64, u64) = (0, 145, 0);
-const AUDITED_EXACT_ATTENTION_VERSIONS: &[(u64, u64, u64)] = &[(0, 144, 1), (0, 144, 3)];
 const APP_SERVER_CAPABILITY_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const APP_SERVER_CAPABILITY_PROBE_MAX_OUTPUT_BYTES: u64 = 64 * 1024;
 const CODEX_ACCOUNT_READINESS_SCHEMA_VERSION: &str = "agent-session.codex-account-readiness.v1";
@@ -100,24 +100,7 @@ const MAX_SYSTEM_EPHEMERAL_THREADS: usize = 16;
 const MAX_SYSTEM_EPHEMERAL_THREADS_BYTES: usize = 4096;
 pub(crate) const PROVIDER_RESUME_CAPTURE_METHOD: &str = "codex-app-server-thread-binding";
 
-pub(crate) fn attention_authority(record: &SessionRecord) -> &'static str {
-    if record.runtime.as_ref().is_some_and(|runtime| {
-        runtime.kind == RUNTIME_KIND
-            && runtime
-                .extra
-                .get(ATTENTION_AUTHORITY_KEY)
-                .and_then(Value::as_str)
-                == Some(ATTENTION_AUTHORITY_PROTOCOL)
-    }) {
-        ATTENTION_AUTHORITY_PROTOCOL
-    } else {
-        ATTENTION_AUTHORITY_HOOK
-    }
-}
-
-pub(crate) fn exact_attention_version_is_audited(version: (u64, u64, u64)) -> bool {
-    AUDITED_EXACT_ATTENTION_VERSIONS.contains(&version)
-}
+pub(crate) use exact_attention::{attention_authority, exact_attention_version_is_audited};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct AppServerCapabilities {
@@ -4256,6 +4239,9 @@ fn server_observation(value: &Value) -> ServerProjection {
     let Some(method) = value.get("method").and_then(Value::as_str) else {
         return ServerProjection::Irrelevant;
     };
+    if let Some(projection) = exact_attention::nonblocking_input(value) {
+        return projection;
+    }
     if let Some(kind) = match method {
         "item/commandExecution/requestApproval"
         | "item/fileChange/requestApproval"

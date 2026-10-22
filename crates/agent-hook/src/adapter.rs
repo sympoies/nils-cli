@@ -137,6 +137,8 @@ struct ActivityEvent {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     completion_candidate: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    completion_candidate_reason: Option<crate::stop_completion::CompletionCandidateReason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     failure_reason: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     attention_id: Option<String>,
@@ -873,6 +875,7 @@ pub fn normalize_activity_event(
             provider_turn_id: Some(subject.turn.to_string()),
             kind,
             completion_candidate: false,
+            completion_candidate_reason: None,
             failure_reason: None,
             attention_id: None,
             attention_kind: None,
@@ -1034,6 +1037,9 @@ pub fn normalize_activity_event(
             "unknown"
         }
     });
+    let completion_candidate_reason = (request.product == Product::Claude
+        && request.event == "Stop")
+        .then(|| crate::stop_completion::classify(object));
     let event = ActivityEvent {
         schema_version: "agent-session.turn-event.v1",
         event_id: format!(
@@ -1048,13 +1054,9 @@ pub fn normalize_activity_event(
         provider_session_id,
         provider_turn_id,
         kind,
-        completion_candidate: request.product == Product::Claude
-            && request.event == "Stop"
-            && object.get("stop_hook_active").and_then(Value::as_bool) == Some(false)
-            && object
-                .get("background_tasks")
-                .and_then(Value::as_array)
-                .is_some_and(Vec::is_empty),
+        completion_candidate: completion_candidate_reason
+            == Some(crate::stop_completion::CompletionCandidateReason::Candidate),
+        completion_candidate_reason,
         failure_reason,
         attention_id,
         attention_kind,
