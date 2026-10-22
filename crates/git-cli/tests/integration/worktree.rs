@@ -1959,3 +1959,148 @@ fn worktree_remove_absolute_path_from_another_checkout_keeps_owner_refusals() {
     assert_eq!(parse_json(&missing)["error"]["code"], "worktree-not-found");
     assert!(Path::new(&fixture.target).exists());
 }
+
+#[test]
+fn squash_delivery_requires_merged_matching_clean_head() {
+    for scenario in [
+        "matching",
+        "ancestor",
+        "head-mismatch",
+        "unrelated-head",
+        "malformed",
+        "extra",
+        "untracked",
+        "tracked",
+        "staged",
+        "wrong-base",
+        "wrong-branch",
+        "unmerged",
+        "unavailable",
+        "offline-default",
+    ] {
+        let fixture = RemovalFixture::new();
+        let target = Path::new(&fixture.target);
+        fs::write(target.join("feature"), "feature").unwrap();
+        git(target, &["add", "."]);
+        git(target, &["commit", "-m", "feature"]);
+        fs::write(target.join("feature"), "feature update").unwrap();
+        git(target, &["add", "."]);
+        git(target, &["commit", "-m", "feature update"]);
+        let head = git(target, &["rev-parse", "HEAD"]).trim().to_owned();
+        git(fixture.repo.path(), &["merge", "--squash", "feat/safe"]);
+        git(fixture.repo.path(), &["commit", "-m", "squash"]);
+        git(fixture.repo.path(), &["push", "origin", "main"]);
+        assert!(
+            !git_output(
+                target,
+                &["merge-base", "--is-ancestor", &head, "origin/main"]
+            )
+            .status
+            .success()
+        );
+        let mut pr = serde_json::json!({"ok":true,"data":{"number":42,"state":"merged","merged_at":"2026-01-01T00:00:00Z","head":"feat/safe","base":"main","head_sha":head}});
+        match scenario {
+            "head-mismatch" => pr["data"]["head_sha"] = Value::String("0".repeat(40)),
+            "unrelated-head" => {
+                pr["data"]["head_sha"] =
+                    Value::String(git(target, &["rev-parse", "origin/main"]).trim().into())
+            }
+            "wrong-base" => pr["data"]["base"] = Value::String("release".into()),
+            "wrong-branch" => pr["data"]["head"] = Value::String("other".into()),
+            "unmerged" => pr["data"]["merged_at"] = Value::Null,
+            "unavailable" => pr = serde_json::json!({"ok":false}),
+            "untracked" => fs::write(target.join("dirty"), "dirty").unwrap(),
+            "tracked" | "staged" | "extra" => {
+                fs::write(target.join("feature"), "extra").unwrap();
+                if scenario != "tracked" {
+                    git(target, &["add", "."]);
+                }
+                if scenario == "extra" {
+                    git(target, &["commit", "-m", "extra"]);
+                }
+            }
+            "ancestor" => {
+                git(target, &["checkout", "-B", "feat/safe", "HEAD~1"]);
+            }
+            _ => {}
+        }
+        fixture.probes.write_exe("forge-cli", &format!("#!/bin/sh\ncase \"$2\" in\nlist) printf '%s\\n' '{{\"ok\":true,\"data\":{{\"items\":[{{\"number\":42}}]}}}}' ;;\nview) printf '%s\\n' '{}' ;;\nesac\n", pr));
+        if scenario == "malformed" {
+            fixture
+                .probes
+                .write_exe("forge-cli", "#!/bin/sh\nprintf invalid-json\n");
+        }
+        if scenario == "offline-default" {
+            fixture
+                .probes
+                .write_exe("forge-cli", "#!/bin/sh\nexit 99\n");
+        }
+        let mut args = vec!["worktree", "remove", "safe", "--format", "json"];
+        if scenario != "offline-default" {
+            args.push("--forge-delivery");
+        }
+        let result = run_with(
+            &fixture.harness.git_cli_bin(),
+            &args,
+            &fixture.options(fixture.repo.path()),
+        );
+        assert_eq!(result.code, 0, "{}", result.stdout_text());
+        let receipt = parse_json(&result);
+        let delivered = matches!(scenario, "matching" | "ancestor");
+        assert_eq!(receipt["data"]["delivered"], delivered, "{scenario}");
+        if scenario == "matching" {
+            assert_eq!(
+                receipt["data"]["delivery_proof"]["basis"],
+                "merged-pull-request"
+            );
+            assert_eq!(receipt["data"]["delivery_proof"]["head_sha"], head);
+        }
+    }
+}
+
+#[test]
+fn removal_shared_hardlink_holders_follow_open_and_mapping_paths() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    for kind in ["fd", "maps"] {
+        for inside in [false, true] {
+            let fixture = RemovalFixture::new();
+            let target = Path::new(&fixture.target);
+            let outside = fixture.home.path().join("shared-file");
+            fs::hard_link(target.join("README.md"), &outside).unwrap();
+            let path = if inside {
+                target.join("README.md")
+            } else {
+                outside
+            };
+            let script = if kind == "fd" {
+                "import sys,time; f=open(sys.argv[1]); print('ready',flush=True); time.sleep(30)"
+            } else {
+                "import sys,time,mmap; f=open(sys.argv[1]); m=mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ); f.close(); print('ready',flush=True); time.sleep(30)"
+            };
+            let mut child = Command::new("python3")
+                .args(["-c", script, path.to_str().unwrap()])
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut ready = String::new();
+            BufReader::new(child.stdout.take().unwrap())
+                .read_line(&mut ready)
+                .unwrap();
+            assert_eq!(ready.trim(), "ready");
+            fixture.probes.write_exe("lsof", &format!("#!/bin/sh\nexec /usr/bin/env PATH=/usr/bin:/usr/sbin:/bin:/sbin lsof -p {} -a \"$@\"\n", child.id()));
+            let result = fixture.remove("safe");
+            child.kill().unwrap();
+            child.wait().unwrap();
+            if inside {
+                assert_eq!(
+                    parse_json(&result)["error"]["code"],
+                    "removal-process-active"
+                );
+            } else {
+                assert_eq!(result.code, 0, "{}", result.stdout_text());
+            }
+            assert_eq!(target.exists(), inside);
+        }
+    }
+}

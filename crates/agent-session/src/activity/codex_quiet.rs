@@ -53,9 +53,12 @@ pub(crate) fn diagnostic_for_board(fields: &Map<String, Value>) -> Option<Value>
     Some(value)
 }
 
-/// Age is an uncertainty signal, never a completion or input authorization.
+/// Startup and age are probe candidates, never completion or input authorization.
 pub(crate) fn notification_maybe_idle(state: &TurnState) -> bool {
     state.phase == TurnPhase::Waiting
+        || (state.phase == TurnPhase::Starting
+            && state.current_turn.is_none()
+            && state.last_turn.is_none())
         || (matches!(state.phase, TurnPhase::Working | TurnPhase::Unknown)
             && state.source.confidence == Confidence::Inferred
             && state.diagnostic.as_ref().is_some_and(|diagnostic| {

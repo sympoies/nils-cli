@@ -265,6 +265,36 @@ mod tests {
     }
 
     #[test]
+    fn shared_inode_outside_path_is_idle_but_inside_path_blocks() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("target");
+        fs::create_dir(&target).unwrap();
+        let outside = root.path().join("shared");
+        fs::write(&outside, "shared").unwrap();
+        let inside = target.join("shared");
+        fs::hard_link(&outside, &inside).unwrap();
+        let process = process(root.path(), unsafe { libc::geteuid() }, "S", root.path());
+        for (path, blocks) in [(&outside, false), (&inside, true)] {
+            fs::write(
+                process.join("maps"),
+                format!("1-2 r--p 0 00:00 1 {}\n", path.display()),
+            )
+            .unwrap();
+            assert_eq!(
+                processes_idle(&target, root.path(), &mut Vec::new()).is_err(),
+                blocks
+            );
+            fs::write(process.join("maps"), "").unwrap();
+            symlink(path, process.join("fd/3")).unwrap();
+            assert_eq!(
+                processes_idle(&target, root.path(), &mut Vec::new()).is_err(),
+                blocks
+            );
+            fs::remove_file(process.join("fd/3")).unwrap();
+        }
+    }
+
+    #[test]
     fn process_visibility_idle_and_unrelated_processes_succeed() {
         let root = tempfile::tempdir().unwrap();
         let target = root.path().join("target");

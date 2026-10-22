@@ -14,8 +14,11 @@ jobs:
     name: Authorize release invocation
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    outputs:
+      reused: ${{ steps.reuse.outputs.reused }}
     permissions:
       contents: read
+      actions: read
     steps:
       - name: Checkout release gate
         uses: actions/checkout@v7
@@ -38,7 +41,17 @@ jobs:
             "${RELEASE_RUN_ATTEMPT}" \
             "${GITHUB_REF}"
 
+      - name: Find reusable full validation
+        id: reuse
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { findReusableValidation } = require('./.github/scripts/release-validation-reuse.cjs');
+            const receipt = await findReusableValidation({ github, context, core });
+            core.setOutput('reused', receipt ? 'true' : 'false');
+
   full_validation:
+    if: needs.verify_ci.outputs.reused != 'true'
     needs: verify_ci
     uses: ./.github/workflows/full-validation.yml
     permissions:
@@ -47,9 +60,31 @@ jobs:
     with:
       commit: ${{ github.sha }}
 
+  validation_gate:
+    needs: [verify_ci, full_validation]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout release validation gate
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require authorized full validation
+        env:
+          AUTHORIZATION: ${{ needs.verify_ci.result }}
+          REUSED: ${{ needs.verify_ci.outputs.reused }}
+          FALLBACK: ${{ needs.full_validation.result }}
+        run: |
+          node -e 'require("./.github/scripts/release-validation-reuse.cjs").requireReleaseValidation({authorization: process.env.AUTHORIZATION, reused: process.env.REUSED, fallback: process.env.FALLBACK})'
+
   build:
     name: Build (${{ matrix.target }})
-    needs: full_validation
+    if: ${{ !cancelled() && needs.validation_gate.result == 'success' }}
+    needs: validation_gate
     runs-on: ${{ matrix.runs_on }}
     permissions:
       contents: read
@@ -185,6 +220,7 @@ jobs:
 
   release:
     name: GitHub Release
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     needs: build
     permissions:
@@ -204,6 +240,7 @@ jobs:
 
   dispatch_homebrew_tap:
     name: Dispatch Homebrew tap update
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-latest
     needs: release
     permissions:

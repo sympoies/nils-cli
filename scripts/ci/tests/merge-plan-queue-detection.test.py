@@ -43,7 +43,7 @@ class QueueDetectionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
-    def assert_forced_full(self):
+    def assert_forced_full(self, release_candidate='false'):
         head = self.git('rev-parse', 'HEAD')
         self.shell(detect_script(), EVENT_NAME='merge_group', EVENT_SHA=head,
                    MERGE_GROUP_BASE_SHA=self.base, MERGE_GROUP_HEAD_SHA=head,
@@ -54,7 +54,7 @@ class QueueDetectionTests(unittest.TestCase):
         self.assertEqual(outputs['base_sha'], self.base)
         self.assertEqual(outputs['head_sha'], head)
         self.assertEqual(outputs['docs_only'], 'false', 'docs-only queue candidate bypassed full validation')
-        self.assertEqual(outputs['release_candidate'], 'false', 'release-only queue candidate can reuse base CI')
+        self.assertEqual(outputs['release_candidate'], release_candidate)
 
     def test_docs_only_queue_candidate_forces_full_validation(self):
         with (self.repo / 'README.md').open('a') as stream:
@@ -70,7 +70,7 @@ class QueueDetectionTests(unittest.TestCase):
         self.git('commit', '--amend', '-qm', 'chore(release): bump cli versions to 1.2.4 (#17)')
         self.assertEqual(self.shell('bash scripts/ci/detect-release-only.sh --base "$FIXTURE_BASE" --merge-group',
                                     FIXTURE_BASE=self.base).strip(), 'true')
-        self.assert_forced_full()
+        self.assert_forced_full(release_candidate='true')
 
 
 if __name__ == '__main__':

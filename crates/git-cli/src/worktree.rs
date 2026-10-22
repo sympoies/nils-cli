@@ -67,6 +67,7 @@ struct ListArgs {
 
 #[derive(Debug)]
 struct RemoveArgs {
+    forge_delivery: bool,
     target: String,
     acknowledge_backup_omissions: bool,
     format: OutputFormat,
@@ -712,7 +713,7 @@ fn remove_worktree(args: &RemoveArgs) -> Result<RemoveOutput, CliError> {
     }
 
     let target_arg = display_path(&target);
-    let fence = removal::fence(&target, &layout)?;
+    let fence = removal::fence(&target, &layout, args.forge_delivery)?;
     let backup = removal::backup::capture(&target, &fence, args.acknowledge_backup_omissions)?;
     fence.release_own_lease()?;
     let build = build_dir::path_for_worktree(&target, &layout);
@@ -751,6 +752,7 @@ fn remove_worktree(args: &RemoveArgs) -> Result<RemoveOutput, CliError> {
 pub(crate) fn remove_managed_path(path: &str) -> anyhow::Result<()> {
     remove_worktree(&RemoveArgs {
         target: path.to_string(),
+        forge_delivery: false,
         acknowledge_backup_omissions: false,
         format: OutputFormat::Text,
     })
@@ -990,6 +992,8 @@ fn parse_remove_args(args: &[String]) -> Result<RemoveArgs, CliError> {
         return Err(CliError::usage("help", "help requested"));
     }
 
+    let forge_delivery = args.iter().any(|arg| arg == "--forge-delivery");
+    args.retain(|arg| arg != "--forge-delivery");
     let acknowledge_backup_omissions = args
         .iter()
         .any(|arg| arg == "--acknowledge-backup-omissions");
@@ -1003,6 +1007,7 @@ fn parse_remove_args(args: &[String]) -> Result<RemoveArgs, CliError> {
         ));
     }
     Ok(RemoveArgs {
+        forge_delivery,
         target: positionals[0].to_string(),
         acknowledge_backup_omissions,
         format,
@@ -1168,10 +1173,10 @@ fn print_list_help() {
 
 fn print_remove_help() {
     println!(
-        "Usage: git-cli worktree remove <slug-or-path> [--safe] [--acknowledge-backup-omissions] [--format text|json]"
+        "Usage: git-cli worktree remove <slug-or-path> [--safe] [--forge-delivery] [--acknowledge-backup-omissions] [--format text|json]"
     );
     println!(
-        "Removal blocks known foreign holders and fresh Git locks, preserves unsaved work, and uses no network. --safe is a compatibility no-op."
+        "Removal blocks known foreign holders and fresh Git locks, preserves unsaved work, and uses no network unless --forge-delivery requests merged PR evidence. --safe is a compatibility no-op."
     );
 }
 

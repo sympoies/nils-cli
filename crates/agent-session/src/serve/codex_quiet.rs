@@ -73,7 +73,12 @@ mod tests {
 
     #[tokio::test]
     async fn quiet_candidate_requires_native_idle_and_never_sends_input() {
-        for status in ["idle", "active"] {
+        for (candidate, status) in [
+            ("starting", "idle"),
+            ("starting", "active"),
+            ("quiet", "idle"),
+            ("quiet", "active"),
+        ] {
             let tmp = tempfile::TempDir::new().unwrap();
             let context = CliContext {
                 state_dir: tmp.path().join("state"),
@@ -132,13 +137,16 @@ mod tests {
                 .unwrap()
                 .turn_state;
             let mut value = serde_json::to_value(state).unwrap();
-            value["phase"] = json!("working");
-            value["source"]["confidence"] = json!("inferred");
-            value["diagnostic"] = json!({
-                "reason":"codex_progress_quiet", "quiet_threshold_seconds":300,
-                "quiet_since":"2000-01-01T00:00:00Z", "quiet_signal":"current_turn.last_progress_at"
-            });
+            if candidate == "quiet" {
+                value["phase"] = json!("working");
+                value["source"]["confidence"] = json!("inferred");
+                value["diagnostic"] = json!({
+                    "reason":"codex_progress_quiet", "quiet_threshold_seconds":300,
+                    "quiet_since":"2000-01-01T00:00:00Z", "quiet_signal":"current_turn.last_progress_at"
+                });
+            }
             let state = serde_json::from_value(value).unwrap();
+            assert!(activity::codex_notification_maybe_idle(&state));
             let listener = tokio::net::UnixListener::bind(socket).unwrap();
             let peer = tokio::spawn(async move {
                 let (stream, _) = listener.accept().await.unwrap();
