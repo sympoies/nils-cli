@@ -240,8 +240,8 @@ pub(super) fn start_creates_session_state_without_printing_prompt() {
             .iter()
             .filter(|call| call.first().is_some_and(|arg| arg == "paste-buffer"))
             .count(),
-        2,
-        "an ordinary start must retry a proven ignored pre-submit paste"
+        1,
+        "an unchanged pane cannot authorize replaying the initial prompt"
     );
     assert_eq!(
         calls
@@ -252,7 +252,7 @@ pub(super) fn start_creates_session_state_without_printing_prompt() {
             })
             .count(),
         1,
-        "the resilient pre-submit retry must still submit exactly once"
+        "startup must submit exactly once"
     );
 }
 
