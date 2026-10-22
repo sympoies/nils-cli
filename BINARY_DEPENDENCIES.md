@@ -69,6 +69,7 @@ in `crates/*/src`.
 | Tool | Behavior Impact | Install (brew/linuxbrew) |
 | --- | --- | --- |
 | `file` | MIME-based binary detection in `git-scope` and `git-cli commit context` | Usually preinstalled |
+| `forge-cli` | Optional `git-cli worktree remove --forge-delivery` merged PR evidence; missing CLI, auth, network, or objects keeps the cached undelivered result | Install the matching `nils-forge-cli` package |
 | `lsof` | Preferred backend for `fzf-cli port` (fallback: `netstat`); required for `fzf-cli kill-port`; collision inventory for `git-cli worktree remove` on non-Linux platforms (Linux uses readable procfs; missing/incomplete visibility warns, readable foreign holders retain the target) | `brew install lsof` |
 | `netstat` | Fallback backend for `fzf-cli port` when `lsof` is missing | Usually preinstalled |
 | `bat` | Syntax-highlighted previews in `fzf-cli file` / `directory` (invoked via fzf preview shell) | `brew install bat` |
