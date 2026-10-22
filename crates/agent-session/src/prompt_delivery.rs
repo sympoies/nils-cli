@@ -102,6 +102,8 @@ pub(crate) fn deliver_claude_structured_prompt_locked(
             Some(json!({ "id": record.id })),
         ));
     }
+    crate::auth_incident::recovery::ensure_input_allowed(context, &record)?;
+    crate::restart::ensure_not_fenced(context, &record)?;
     // Recheck blocked activity under the runtime lock before touching input.
     activity::refuse_if_blocked(
         context,

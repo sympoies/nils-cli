@@ -1,4 +1,5 @@
 //! Terminal send delivery; opt-in guards preserve unguarded delivery.
+pub(crate) mod input;
 mod native;
 use std::fs;
 use std::io::{self, Read};
@@ -88,6 +89,7 @@ pub(crate) fn send_to_session_observing(
     let mut manual_input = ManualInputSection::new(record_lock);
     let mut record = load_session_record(context, &observed.id)?;
     ensure_same_session_identity(&observed, &record)?;
+    crate::auth_incident::recovery::guard_input(context, &record, text.as_deref(), &args.keys)?;
     if live_status(&tmux_bin, &record.tmux_session) != "running" {
         return Err(CliError::runtime(
             "session-not-running",

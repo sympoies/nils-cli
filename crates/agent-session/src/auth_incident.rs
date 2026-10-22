@@ -3,6 +3,7 @@
 //! are inspected in memory and never persisted or sent to the owner.
 
 use std::fs;
+pub(crate) mod recovery;
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
@@ -54,6 +55,8 @@ pub(crate) struct AuthIncident {
     pub status: String,
     pub recovery_result: Option<String>,
     pub recovery_observed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub same_account_recovery: Option<recovery::Receipt>,
     notification: Notification,
     recovery_notification: Notification,
 }
@@ -197,6 +200,10 @@ fn observe_locked(
     if store.incidents.len() == MAX_INCIDENTS {
         let settled = store.incidents.iter().position(|incident| {
             incident.status != "auth_failed"
+                && incident
+                    .same_account_recovery
+                    .as_ref()
+                    .is_none_or(|r| !recovery::active(r))
                 && incident.notification.delivered_at.is_some()
                 && incident.recovery_result.is_some()
                 && incident.recovery_notification.delivered_at.is_some()
@@ -226,6 +233,7 @@ fn observe_locked(
         status: "auth_failed".into(),
         recovery_result: None,
         recovery_observed_at: None,
+        same_account_recovery: None,
         notification: Notification::default(),
         recovery_notification: Notification::default(),
     });
@@ -721,6 +729,7 @@ pub(crate) fn tick(
             }
         }
     }
+    recovery::tick(context, record, tmux, jiff::Timestamp::now().as_second())?;
     let discovered = read(context, record)?;
     if !discovered.incidents.iter().any(|incident| {
         (!same_runtime(incident, record) && incident.status == "auth_failed")

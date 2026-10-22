@@ -1,5 +1,6 @@
 pub(crate) mod advisory;
 pub(crate) mod audit;
+pub(crate) mod auth_effects;
 pub(crate) mod broker;
 mod capability;
 pub(crate) use capability::authenticate_token;
@@ -379,7 +380,8 @@ impl SessionQuiescenceGuard {
         &mut self,
         candidate: &NotificationCandidate,
     ) -> Result<bool, CliError> {
-        if candidate.target_session_id != self.session_id
+        if auth_effects::quarantined(&self._locked.path, &self.session_id, &self.incarnation)
+            || candidate.target_session_id != self.session_id
             || candidate.target_incarnation != self.incarnation
             || !self.broker_authoritative
             || self.active_claim

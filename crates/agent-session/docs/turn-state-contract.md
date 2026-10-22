@@ -15,6 +15,9 @@ as a v1 phase.
 
 ## Provider authentication incidents
 
+Claude prompt quarantine and same-account recovery are defined in the
+[Claude auth recovery contract](specs/claude-auth-recovery-v1.md).
+
 Claude `StopFailure.error=authentication_failed` and bound Codex app-server
 `codexErrorInfo="unauthorized"` or a model HTTP error variant with
 `httpStatusCode=401` produce `last_turn.provider_failure_kind="authentication"`.
