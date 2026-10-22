@@ -10,6 +10,8 @@ pub(crate) mod guarded;
 mod idle_probe;
 #[path = "codex_app_server/prompt_submit.rs"]
 pub(crate) mod prompt_submit;
+mod proxy_transport;
+use proxy_transport::{contain_oversized, record_proxy_exit, send_proxy_upstream};
 mod turn_outcome;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -72,8 +74,7 @@ const MAX_REDUCER_PENDING_TURNS: usize = 64;
 const MAX_PENDING_ATTENTION_REQUESTS: usize = 64;
 const MAX_PROXY_OBSERVATIONS: usize = 16;
 const MAX_PROXY_OBSERVATION_BYTES: usize = 64 * 1024;
-const MAX_PROXY_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
-const MAX_PROXY_FRAME_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PROXY_MESSAGE_BYTES: usize = proxy_transport::HARD_MESSAGE_LIMIT_BYTES;
 const CONTROL_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 const CONTROL_SUBMISSION_TIMEOUT: Duration = Duration::from_secs(15);
 const CONTROL_SUBMIT_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -3450,10 +3451,13 @@ pub(crate) fn run_proxy(context: &CliContext, args: crate::cli::CodexAppServerPr
             return nils_common::cli_contract::exit::RUNTIME;
         }
     };
+    let id = args.id.clone();
     match runtime.block_on(run_proxy_session(context.clone(), args)) {
         Ok(()) => nils_common::cli_contract::exit::SUCCESS,
         Err(err) => {
-            eprintln!("error: Codex app-server proxy failed: {err}");
+            let line = format!("error: Codex app-server proxy failed: {err}");
+            eprintln!("{line}");
+            record_proxy_exit(context, &id, &line);
             nils_common::cli_contract::exit::RUNTIME
         }
     }
@@ -4819,22 +4823,7 @@ async fn cancel_before_tui_mutation(
 fn proxy_websocket_config() -> WebSocketConfig {
     WebSocketConfig::default()
         .max_message_size(Some(MAX_PROXY_MESSAGE_BYTES))
-        .max_frame_size(Some(MAX_PROXY_FRAME_BYTES))
-}
-
-async fn send_proxy_upstream<S>(
-    upstream: &mut S,
-    message: Message,
-    timeout: Duration,
-) -> Result<(), String>
-where
-    S: futures_util::Sink<Message> + Unpin,
-    S::Error: std::fmt::Display,
-{
-    tokio::time::timeout(timeout, upstream.send(message))
-        .await
-        .map_err(|_| "upstream app-server write timed out".to_string())?
-        .map_err(|err| format!("upstream app-server write failed: {err}"))
+        .max_frame_size(Some(MAX_PROXY_MESSAGE_BYTES))
 }
 
 async fn run_proxy_session(
@@ -4984,6 +4973,10 @@ async fn run_proxy_session(
                 let message = message
                     .ok_or_else(|| "upstream app-server closed the proxy".to_string())?
                     .map_err(|err| format!("upstream app-server read failed: {err}"))?;
+                if let Some(oversized) = contain_oversized(&message)? {
+                    oversized.contain(&mut tui, &mut upstream).await?;
+                    continue;
+                }
                 let observed = message.clone();
                 let closed = matches!(message, Message::Close(_));
                 if let Some(value) = message_value(&observed)? {
