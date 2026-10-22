@@ -259,3 +259,15 @@ fn nonprovider_progress_cannot_extend_the_provider_quiet_clock() {
         Some("2000-01-01T00:01:00Z")
     );
 }
+
+#[test]
+fn never_turned_codex_is_a_notification_probe_candidate() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (context, created) = test_session(&tmp);
+    activate_runtime(&context, &created.record).unwrap();
+    let state = state_for_view(&context, &created.record).unwrap();
+    assert_eq!(state.phase, TurnPhase::Starting);
+    assert!(state.current_turn.is_none());
+    assert!(state.last_turn.is_none());
+    assert!(codex_notification_maybe_idle(&state));
+}
