@@ -28,8 +28,21 @@ pub(super) fn missing_pinned_binaries(
 ) -> Result<Vec<MissingPinnedBinary>, CliError> {
     let tmux = crate::resolve_tmux_bin(None);
     let mut missing = Vec::new();
-    for session in crate::list_sessions(context, Some(&tmux))? {
-        if session.status != "running" || agent.is_some_and(|agent| agent.as_str() != session.agent)
+    let Ok(entries) = std::fs::read_dir(context.state_dir.join("sessions")) else {
+        return Ok(missing);
+    };
+    for entry in entries.flatten() {
+        if !entry.path().join("session.json").is_file() {
+            continue;
+        }
+        // Use the validated, read-only loader rather than list's startup
+        // reconciliation. An unreadable neighbor must not hide healthy records.
+        let Ok(session) = crate::load_session_record(context, &entry.file_name().to_string_lossy())
+        else {
+            continue;
+        };
+        if agent.is_some_and(|agent| agent.as_str() != session.agent)
+            || crate::session_status(context, &tmux, &session) != "running"
         {
             continue;
         }
