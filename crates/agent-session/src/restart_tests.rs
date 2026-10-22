@@ -5,6 +5,9 @@ use serde_json::{Value, json};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
+#[path = "auth_recovery_tests.rs"]
+mod auth_recovery_tests;
+
 const ID: &str = "restart-fixture";
 const OLD: &str = "exited-incarnation";
 const CONVERSATION: &str = "provider-conversation";
@@ -35,6 +38,10 @@ fn fake_tmux(root: &Path) -> PathBuf {
 root={root}
 printf '%s\n' "$*" >> "$root/tmux.log"
 stop_pane() {{ kill -- "-$(cat "$root/pane")" 2>/dev/null; rm -f "$root/running"; }}
+if [ -f "$root/exit-on-probe" ] && [ "$1" = display-message ]; then
+  stop_pane
+  rm -f "$root/exit-on-probe"
+fi
 if [ "$1" != new-session ] && [ ! -f "$root/running" ]; then
   printf '%s\n' "can't find session: fixture" >&2
   exit 1

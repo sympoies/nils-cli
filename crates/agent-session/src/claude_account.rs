@@ -13,6 +13,7 @@
 //! durable next-account intent that applies on the next launch.
 
 use std::fs;
+pub(crate) mod generation;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
@@ -281,7 +282,9 @@ pub(crate) fn bind_initial(
             config_dir: Some(config_dir.to_string_lossy().into_owned()),
             updated_at: jiff::Timestamp::now().to_string(),
         },
-    )
+    )?;
+    generation::capture(record, account);
+    Ok(())
 }
 
 /// Re-materializes the session's account for a new runtime. A queued next
@@ -326,7 +329,7 @@ pub(crate) fn prepare_launch(record: &mut SessionRecord) -> Result<(), CliError>
         record,
         &DurableBinding {
             schema_version: BINDING_SCHEMA_VERSION.to_string(),
-            selected_account: account,
+            selected_account: account.clone(),
             selection_source,
             revision,
             state: "bound".to_string(),
@@ -334,7 +337,9 @@ pub(crate) fn prepare_launch(record: &mut SessionRecord) -> Result<(), CliError>
             config_dir: Some(config_dir.to_string_lossy().into_owned()),
             updated_at: jiff::Timestamp::now().to_string(),
         },
-    )
+    )?;
+    generation::capture(record, &account);
+    Ok(())
 }
 
 /// Durably queues `account` for the session's next launch. Requesting the

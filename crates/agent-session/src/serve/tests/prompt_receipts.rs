@@ -2,6 +2,9 @@ use super::*;
 use codex_app_server::prompt_submit::{acknowledgement_unknown, not_confirmed, not_dispatched};
 use pretty_assertions::assert_eq;
 
+#[path = "auth_quarantine.rs"]
+mod auth_quarantine;
+
 #[path = "direct_prompt.rs"]
 mod direct_prompt;
 

@@ -6,6 +6,7 @@
 //! resume metadata, so the relaunch picks up whatever binary is installed now.
 
 use std::path::{Path, PathBuf};
+pub(crate) mod auth_recovery;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
