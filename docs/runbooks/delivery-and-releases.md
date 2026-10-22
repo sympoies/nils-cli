@@ -1,6 +1,7 @@
 # Delivery and releases
 
-Pull requests and the merge queue protect Linux development on `main`.
+Pull requests and the merge queue protect development on `main`. Every merge
+group also compiles and lints affected packages on macOS, including test targets.
 Every published release must separately pass full Linux and macOS validation
 on its exact tagged commit. Green PR or queue checks do not authorize a release.
 
@@ -9,7 +10,7 @@ on its exact tagged commit. Green PR or queue checks do not authorize a release.
 | Lane | Work | Failure blocks |
 | --- | --- | --- |
 | Pull request | Linux affected-package Clippy, binary builds, tests and doctests; workspace audits; dependency policy and containment checks | Merge |
-| Merge queue | The same Linux scope planner on the actual combined merge-group tree, including reverse dependencies; full Linux fallback when planning cannot safely select scope | Merge |
+| Merge queue | The same Linux scope planner on the actual combined merge-group tree, including reverse dependencies; affected-package macOS compile/Clippy with all targets and features; workspace fallback when planning cannot safely select scope | Merge |
 | Nightly / manual full CI | Full Linux tests and doctests, Linux containment, dependency policy, full instrumented macOS tests and workspace line coverage of at least 85% | Full CI; opens or updates the nightly tracker |
 | Release | Authorize the invocation, then the same full Linux/macOS/coverage workflow on the exact tag SHA, then build and package four platform targets, publish assets, and dispatch the tap update | Release builds, assets and tap update |
 | Push to `main` | Lightweight status only | No additional merge or release guarantee |
@@ -33,6 +34,18 @@ A canonical release version bump takes the reduced release-only lane (version
 lockstep, third-party artifacts, publish order and a locked `cargo check`, no
 test suites) without waiting for a base-commit receipt; any other dependency
 change stays on the planner. The release workflow still validates the tag in full. Docs-only PRs run substantive documentation audits.
+
+Every merge group runs `macos_clippy` on `macos-latest`, using the same
+trusted-base planner and exact candidate binding. It runs
+`cargo clippy --locked --all-targets --all-features -p <package> -- -D warnings`
+for affected packages and reverse dependencies, including integration test
+crates. FULL, empty, or unavailable scope uses `--workspace`. It executes no
+tests or coverage.
+
+Scope and results are retained in
+`merge-validation-macos-clippy`. PRs skip this job successfully; ordinary and
+release queue groups both require its success through the required `test`
+check. Full macOS tests and coverage remain nightly/release gates.
 The merge queue still invokes the planner for docs and release changes.
 See the [scope consumption contract](../specs/affected-scope-ci-consumption-v1.md).
 
@@ -43,11 +56,21 @@ After migration, both PRs and merge groups require these exact check names:
 
 - `test`
 - `test_containment`
+- `macos_clippy`
 - `cargo-deny (advisories + bans)`
 
 The previous required names are `test`, `test_macos`, and `coverage`.
 `test_macos` and `coverage` now exist only inside full nightly/release validation;
-there is no deferred-full labeler or skipped macOS check in the PR/queue lane.
+there is no deferred-full labeler. `macos_clippy` is a separate compile/lint
+check: skipped on PRs, executed on every merge group. The required `test` job
+fails closed if it fails, is cancelled, or is skipped in a merge group, even
+before the maintainer adds its explicit ruleset context.
+
+For the macOS compile/lint rollout, retain the three Linux contexts and add
+`macos_clippy` to the ruleset after its producer lands. Verify an ordinary queue
+entry and a release entry both report it successfully. This addition does not
+restore full macOS tests or coverage as ordinary queue requirements. The
+following order documents the earlier full-validation migration:
 
 Apply this order at the migration merge:
 

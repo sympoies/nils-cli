@@ -9,10 +9,14 @@ release-only lanes retain their audits and provenance checks. The queue always
 invokes the planner on the combined candidate, with full Linux fallback.
 
 After the maintainer's ruleset migration, required names are `test`,
-`test_containment`, and `cargo-deny (advisories + bans)`. PRs and queue groups
-have no macOS, coverage or deferred-full labeler jobs. The required Linux test
+`test_containment`, `macos_clippy`, and `cargo-deny (advisories + bans)`. Every
+merge group compiles/lints macOS all-target/all-feature code; PRs skip that
+check successfully. Full macOS tests and coverage remain deferred. There is
+no deferred-full labeler. The required Linux test
 job runs a failure guard even when change detection fails, preventing skipped
-needs from admitting a candidate. No plan or receipt alone permits merge.
+needs from admitting a candidate. It also requires macOS Clippy success on
+every merge group, including release-only and docs-only groups. No plan or
+receipt alone permits merge.
 
 Full Linux/macOS validation and the 85% workspace coverage floor run nightly,
 on manual full CI on main, and before release builds on the exact tagged SHA.
@@ -75,6 +79,14 @@ that owns the binary. Unknown squash provenance or a mismatch between
 reconstructed source and the actual combined tree uses full fallback rather
 than granting scoped credit.
 
+The macOS consumer `scripts/ci/nils-cli-macos-clippy.py` reuses the same
+input binding and trusted-base planner on `macos-latest`. Nonempty SCOPED
+selection runs `cargo clippy --locked --all-targets --all-features` for affected
+packages and reverse dependencies, ending with `-- -D warnings`. All targets
+include integration tests and test-only helpers. FULL, empty, and unavailable
+planning select `--workspace`; invalid bindings fail before Cargo. No tests,
+doctests, binary builds, audits, or coverage executors run in this job.
+
 Nightly and release full validation use the canonical full entrypoint directly;
 there is no docs, release-only, preview or affected-scope shortcut. Their final
 failure guard requires Linux, macOS, coverage, containment and dependency policy
@@ -96,6 +108,11 @@ effective scope, packages, fallback, runner, doctest choice, command, exit code
 and PASS/FAIL. A diagnostic `--plan-only` invocation remains available for PRs;
 it has no validation receipt and proves no tests ran. Hosted jobs no longer
 use it to schedule or label macOS work. Deferred receipts are no longer emitted.
+
+`merge-validation-macos-clippy` retains `target/ci-macos-clippy/plan.json`
+when available and `validation.json`. The `nils-cli.macos-clippy.v1` receipt
+binds planning inputs, actual checkout/tree, plan digest, scope, packages,
+fallback, command, exit code and PASS/FAIL. Its PASS means compile/lint only.
 
 PASS is written only after the actual executor succeeds. Planner HOLD and passing full validation are separate
 facts. Executors do not receive `GITHUB_OUTPUT`; the consumer replaces the
@@ -133,6 +150,13 @@ SCOPED and FULL routing, preserved event provenance, and strict reviewed-head,
 checkout and merge-group binding controls. The actual workflow detection script
 also verifies docs/release routing against that snapshot and rejects wrong
 reviewed-head and checkout inputs before policy reads.
+
+`python3 scripts/ci/tests/macos-clippy.test.py` covers test-only helper and
+integration target changes, reverse dependencies, ordinary and release scope,
+docs-only groups, squash queues, unavailable metadata, Clippy failures and
+invalid bindings with offline Git/fake Cargo. Delivery workflow fixtures check
+the required Linux guard rejects failed, skipped or cancelled macOS results.
+Hosted queue execution supplies native macOS compile evidence.
 
 Rollout compares required-check duration, ready-to-merged time, and merges per
 day against preceding full runs, retaining exact inputs, scope, fallback, and

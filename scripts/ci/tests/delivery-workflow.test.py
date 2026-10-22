@@ -25,7 +25,6 @@ def job(text, name):
 class DeliveryTests(unittest.TestCase):
     def test_release_queue_runs_shared_full_validation_before_required_linux_check(self):
         ci = workflow('ci.yml')
-        self.assertNotIn('runs-on: macos', ci)
         self.assertNotIn('\n  test_macos:', ci)
         self.assertNotIn('deferred-full', ci)
         self.assertNotIn('\n  coverage:', ci)
@@ -40,9 +39,31 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn("needs.changes.outputs.release_candidate == 'true'", full)
         self.assertIn("needs.changes.result == 'success'", full)
         linux = job(ci, 'test')
-        self.assertIn('needs: [changes, full_validation]', linux)
+        self.assertIn('needs: [changes, full_validation, macos_clippy]', linux)
         self.assertIn('FULL_VALIDATION_RESULT: ${{ needs.full_validation.result }}', linux)
         self.assertIn('Require release queue validation', linux)
+
+    def test_macos_clippy_runs_on_every_queue_group_and_blocks_required_test(self):
+        ci = workflow('ci.yml')
+        macos = job(ci, 'macos_clippy')
+        self.assertIn("if: always() && github.event_name == 'merge_group'", macos)
+        self.assertIn('runs-on: macos-latest', macos)
+        self.assertIn('needs: changes', macos)
+        self.assertIn('ref: ${{ github.sha }}', macos)
+        self.assertIn('fetch-depth: 0', macos)
+        self.assertIn('components: clippy', macos)
+        self.assertIn('python3 scripts/ci/nils-cli-macos-clippy.py', macos)
+        self.assertNotIn('release_only', macos)
+        self.assertNotIn('docs_only', macos)
+        linux = job(ci, 'test')
+        step = linux.split('      - name: Require macOS queue compile and Clippy\n', 1)[1]
+        script = step.split('        run: |\n', 1)[1].split('\n      - name:', 1)[0]
+        script = '\n'.join(line[10:] for line in script.splitlines() if line.startswith('          '))
+        for event in ('pull_request', 'merge_group'):
+            for state in ('success', 'failure', 'cancelled', 'skipped', ''):
+                result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script],
+                    env=dict(os.environ, EVENT_NAME=event, MACOS_CLIPPY_RESULT=state), capture_output=True)
+                self.assertEqual(result.returncode == 0, event != 'merge_group' or state == 'success')
 
     def test_pr_and_queue_consume_affected_plan(self):
         fixture = fixtures.WorkflowDispatchTests()

@@ -396,7 +396,8 @@ In CI, the `changes` job runs `scripts/ci/detect-docs-only.sh` (sharing the
 every changed file is documentation, the Linux `test` job runs `--docs-only`.
 Dependency policy still runs, and the containment job reports success with its
 Rust steps skipped. The queue invokes the trusted scope planner on its combined
-tree even for docs or release changes. PRs and queue groups run no macOS jobs.
+tree even for docs or release changes. Every queue group also runs macOS
+compile/Clippy; PRs skip that check successfully.
 
 ### 3.2 Local fast changed-scope checks
 
@@ -493,9 +494,14 @@ requires every lane to succeed. Release builds cannot start before that gate
 passes on the exact tagged SHA.
 
 PR and merge-group tests use affected-scope Linux checks with a full Linux
-fallback. They have no macOS or coverage jobs, preview-driven deferral, or
-labeler. Linux `test_containment` and `cargo-deny (advisories + bans)` are
-required checks alongside `test`; the maintainer applies the ruleset migration
+fallback. Every merge group additionally runs affected-package
+`macos_clippy` on `macos-latest` with `--all-targets --all-features -- -D warnings`,
+including integration test crates. It uses workspace scope on uncertain or
+empty selection, with no test execution or coverage. PRs skip this check
+successfully. Linux `test_containment`, `cargo-deny (advisories + bans)`, and
+`macos_clippy` are required alongside `test`; the latter also rejects a failed
+or skipped macOS queue result. There is no preview-driven deferral or labeler.
+The maintainer applies the ruleset migration
 in the [delivery flow](delivery-and-releases.md). Full macOS has 75 minutes.
 See [the CI consumption contract](../specs/affected-scope-ci-consumption-v1.md)
 for candidate bindings and receipts.
@@ -544,6 +550,7 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `node scripts/ci/tests/full-validation-gate.test.cjs`
 - `node scripts/ci/tests/nightly-tracker.test.cjs`
 - `python3 scripts/ci/tests/delivery-workflow.test.py`
+- `python3 scripts/ci/tests/macos-clippy.test.py` (queue scope and compile/lint-only contract)
 - `bash scripts/ci/tests/dependabot-third-party-workflow-contract.test.sh`
 - `bash scripts/ci/tests/release-workflow-contract.test.sh`
 - `bash scripts/ci/tests/shared-helper-adoption-audit.test.sh`
