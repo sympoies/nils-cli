@@ -15,13 +15,40 @@ authority. The GUI grant does not prove that a daemon's CLI grant is ready.
 macOS tracks signed code using its designated requirement, including signing
 identifier and signer. See Apple's
 [code identity reference](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
-Official v4.4.0 and v4.8.0 assets use team `FWJYW4S8P8`; the app identifier is
+Official v4.4.0, v4.8.0, and v4.9.6 assets use team `FWJYW4S8P8`; the app identifier is
 unchanged. The strict lock and installed signatures still need verification.
-The v4.8.0 CLI requires the archive's `libswiftCompatibilitySpan.dylib` beside
+The v4.9.6 CLI requires the archive's `libswiftCompatibilitySpan.dylib` beside
 the executable. The lock binds its exact digest, signing authority/team and all
-three architectures. Install, verification, execution and rollback assess the
+locked architectures (arm64 and x86_64). Install, verification, execution and rollback assess the
 complete CLI runtime; copying the executable alone is insufficient.
 Do not re-sign assets, edit TCC databases, reset grants, or disable trust gates.
+
+## v4.9.6 review and typing expectations
+
+The [official release](https://github.com/openclaw/Peekaboo/releases/tag/v4.9.6)
+was published on 2026-10-20. Archive digests and signing metadata come from
+its `ASSET-INVENTORY.json` and `SIGNING-MANIFEST.json`; executable and sidecar
+digests are computed from the downloaded archives. Both app and CLI now contain
+arm64 and x86_64 slices. The sidecar no longer contains an arm64e slice.
+Native signature, notarization, permission continuity, and interaction checks
+remain resident acceptance responsibilities.
+
+The [v4.8.0 to v4.9.6 changelog](https://github.com/openclaw/Peekaboo/blob/v4.9.6/CHANGELOG.md)
+contains relevant improvements:
+
+- v4.9.0 fixes signed typing receipts for already-empty clears and already-satisfied
+  caret moves, aligns native/Bridge literal replacement eligibility, and updates
+  AXorcist modifier handling. Foreground file dialogs retain parent-window ownership.
+- v4.9.0 preserves accepted dispatch evidence after unchanged readback and keeps
+  response-loss/pending-operation outcomes indeterminate and unsafe to retry.
+- v4.9.4–v4.9.5 improve granted app-host selection and declare route-specific
+  typing/paste/key permission needs.
+
+These changes may improve typing reliability and receipt accuracy, but the
+changelog does not claim a general fix for stale focused-element refusals or
+foreground typing that lands while returning indeterminate/exit 70. Do not treat
+this upgrade as proof that either symptom is resolved. Existing stale-focus
+and uncertain-mutation guards remain in force pending native acceptance.
 
 ## Establish the accepted baseline
 
@@ -36,8 +63,9 @@ candidate_bin="$candidate_target_dir/release/macos-agent"
 "$candidate_bin" doctor --strict --format json
 ```
 
-The candidate lock authorizes the exact v4.4.0 predecessor. Before installing
-v4.8.0, confirm that the current receipt is still v4.4.0. `backend verify`
+The candidate lock authorizes the exact v4.8.0 predecessor and retains the
+v4.4.0 rollback tuple. Before installing v4.9.6, confirm that the current receipt
+is still the intended authenticated predecessor. `backend verify`
 establishes the stable CLI from that authenticated receipt when migrating a
 version-specific CLI layout, and restarts one owned app. It does not
 install the candidate. Changed stable files are refused.
@@ -68,14 +96,19 @@ probe. GUI doctor readiness alone does not establish CLI permission readiness.
 "$candidate_bin" capabilities --strict --format json
 ```
 
-The resident tester checks the following before the maintainer selects the
-candidate or merges its lock update:
+Maintenance follows the latest stable upstream release through an exact-lock
+PR. The maintainer schedules native acceptance after release; merging a lock
+update does not establish native interaction acceptance. The resident tester
+checks the following before accepting the installed candidate:
 
 - With unchanged signing identity and stable paths, no new permission prompt
   appears during upgrade, restart, or interaction, and strict doctor is ready.
 - Exactly one owned backend GUI app remains after install and verify.
 - Observe, click, type, key, and screenshot work through the selected runtime.
 - Three independent Calculator reset/result trials pass.
+- Background typing with freshly observed focus and foreground typing both
+  receive accurate delivery receipts. If text lands with an indeterminate
+  result, observe state before recovery; never replay uncertain input.
 - Explicitly recheck `BRIDGE_UNAVAILABLE` for app runtime and `CAPTURE_FAILED`
   for daemon runtime. Use `exec --runtime app` or `exec --runtime daemon`;
   `doctor` and `capabilities` have no `--runtime` option.

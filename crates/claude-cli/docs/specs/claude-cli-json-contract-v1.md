@@ -189,6 +189,48 @@ owner-only, replaced atomically under the accounts lock), the file the host
 account broker reads, and removes a stale `.current` when the authority reports
 none.
 
+### Remote credential generation context
+
+An access-only SSH payload may carry an optional `credential_generation`
+annotation on each profile. A successful single pull returns it in `result`;
+an all-account pull returns it beside each profile's `written`, `keychain`,
+and optional `error`. Unannotated payloads keep their existing result shape.
+The annotation is not written into provider credential or configuration files.
+
+The annotation has exactly these fields:
+
+| Field | Contract |
+| --- | --- |
+| `schema_version`, `provider`, `account` | `nils.auth-generation.v1`, `claude`, and the profile nickname |
+| `version` | Exactly `authority_id`, `authority_epoch` (canonical lowercase UUIDv4), and `generation` (positive canonical decimal-string u64) |
+| `snapshot_id` | Canonical lowercase UUIDv4 identifying the received snapshot |
+| `authority_committed_at` | Calendar-valid UTC timestamp, exactly `YYYY-MM-DDTHH:MM:SS.sssZ` |
+| `issued_at`, `expires_at` | Required nullable timestamps in the same format |
+| `auth` | Exactly `revision` (positive canonical decimal-string u64), `state`, `reason`, `source`, and required nullable `observed_at` |
+
+Accepted auth observations are `valid/provider_accepted` from `provider_refresh`
+or `provider_validation`; `expired/provider_expired` from `provider_validation`;
+`expired/expiry_elapsed` from `expiry_clock`; `revoked/provider_revoked` or
+`revoked/provider_rejected` from either provider source; and
+`unknown/unvalidated` or `unknown/ambiguous_rotation` from `unknown`.
+Only unknown observations may omit the observation time with an explicit null.
+Unknown fields, including nested fields, are rejected.
+
+The received annotation must match the payload's profile and, for a named pull,
+the requested nickname. Invalid, null, or mismatched annotations fail with
+`remote-export-invalid-generation` before any store write or pruning. For an
+all-account pull, every annotation is checked before the first account write.
+Rejected metadata and credential values never appear in this error.
+
+This is received transport context, not a publication or recovery assertion.
+An all-account entry with `written: false` still identifies the attempted
+snapshot; its annotation does not override that failure. Store outcomes,
+including an unavailable or skipped Keychain, retain their existing meaning.
+The authority and deployment owners must separately bind the annotation to
+the exported bytes and verify every required local store before declaring a
+generation published. Runtime adoption, monotonic replay fences, generation-required
+negotiation, and automatic session recovery are separate contracts.
+
 ## Diag rate-limits limit resets
 
 `diag rate-limits` emits the shared `diag rate-limits` result shape that

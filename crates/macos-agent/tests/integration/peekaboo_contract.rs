@@ -74,8 +74,8 @@ fn repository_contains_a_complete_immutable_peekaboo_lock() {
 
     assert_eq!(lock["schema_version"], 2);
     assert_eq!(lock["repository"], "https://github.com/openclaw/Peekaboo");
-    assert_eq!(lock["tag"], "v4.8.0");
-    assert_eq!(lock["commit"], "4d43dc9d80cd2aa3787a27f54b76d692db1dcf8f");
+    assert_eq!(lock["tag"], "v4.9.6");
+    assert_eq!(lock["commit"], "e08807d08c956471012b595a4d2bddb4dc8031ea");
     assert_eq!(lock["minimum_macos"], "15.0");
     assert_eq!(lock["assets"].as_array().map(Vec::len), Some(2));
     assert_eq!(lock["assets"][0]["notarization"]["policy"], "required");
@@ -84,26 +84,37 @@ fn repository_contains_a_complete_immutable_peekaboo_lock() {
         lock["assets"][0]["runtime_libraries"],
         serde_json::json!([{
             "name":"libswiftCompatibilitySpan.dylib",
-            "sha256":"7eff39be935575664872f1d3f05e813fcc4458e5f22ac98ce156608cd9bf7ebd",
-            "architectures":["arm64", "arm64e", "x86_64"]
+            "sha256":"1494ac3b87798ace618b601779624c43a85cc9644fa9f2f35554aa06cd3bdf42",
+            "architectures":["arm64", "x86_64"]
         }])
     );
-    assert_eq!(lock["rollback_releases"].as_array().map(Vec::len), Some(1));
+    assert_eq!(lock["rollback_releases"].as_array().map(Vec::len), Some(2));
     assert_eq!(lock["rollback_releases"][0]["tag"], "v4.4.0");
     assert_eq!(
         lock["rollback_releases"][0]["commit"],
         "d82dbd88832688252cbed2254af6433ed9699abd"
     );
+    assert_eq!(lock["rollback_releases"][1]["tag"], "v4.8.0");
+    assert_eq!(
+        lock["rollback_releases"][1]["commit"],
+        "4d43dc9d80cd2aa3787a27f54b76d692db1dcf8f"
+    );
+    for asset in lock["assets"].as_array().expect("assets") {
+        assert_eq!(
+            asset["architectures"],
+            serde_json::json!(["arm64", "x86_64"])
+        );
+    }
     for (index, archive, executable) in [
         (
             0,
-            "78c35068b1c12c10cd4e3e9082d2d5a3af9358cc2f16430e425f70178477ac75",
-            "ea98a240218854d754f24ea3b18184733375bebc48bec42779fcea51f20aa18c",
+            "01bdd139b7b010630378bbf0e31f54f38fde4501a5805b2bf66b64521b7ceca2",
+            "8905299aabe23649dc259a30863f11a02ea66d4e90024260a12c5ceb1fdf8e01",
         ),
         (
             1,
-            "bd063e66bd5270d3e58181fb8717466a90607380b393bab129b0bd7fed8bc0e8",
-            "6400c9c5b1ba1d4bb47cd461df81ca2e93c6a6fff48c432d6773fce8ccbc7435",
+            "eab12d6ffa348de3b74e4f69ea420a63611ceab198a4aea81e1c166e7089eaed",
+            "5d22f2f67befcea9b48cd1ce7dbb6bd9aad7addb648a1cb459ddb20b0412c5ae",
         ),
     ] {
         assert_eq!(lock["assets"][index]["sha256"], archive);
