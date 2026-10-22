@@ -1,5 +1,7 @@
 use super::*;
 
+mod shared_daemons;
+
 pub(super) fn capture_tmux_runtime_identity(
     context: &CliContext,
     record: &SessionRecord,
@@ -175,6 +177,7 @@ struct ProcessSummary {
 #[derive(Default)]
 struct ProcessScan {
     processes: Vec<ProcessSummary>,
+    shared_daemons: Vec<shared_daemons::RetainedDaemon>,
     complete: bool,
     inspected: usize,
     uninspected: usize,
@@ -187,6 +190,8 @@ pub struct ProcessInventory {
     pub inspected_processes: usize,
     pub uninspected_processes: usize,
     pub reasons: std::collections::BTreeMap<&'static str, usize>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub retained_shared_daemons: Vec<shared_daemons::RetainedDaemon>,
 }
 
 impl ProcessScan {
@@ -217,6 +222,7 @@ impl ProcessScan {
             inspected_processes: self.inspected,
             uninspected_processes: self.uninspected,
             reasons,
+            retained_shared_daemons: self.shared_daemons.clone(),
         }
     }
 }
@@ -253,6 +259,9 @@ pub(super) fn run_delete(context: &CliContext, args: cli::DeleteArgs) -> i32 {
                         process.pid, process.command
                     ));
                 }
+                text.push_str(&shared_daemons::render_retained(
+                    &result.deleted.process_inventory,
+                ));
                 if !result.survivor_scan_complete {
                     text.push_str(&inventory_warning(&result.deleted.process_inventory));
                 }
@@ -489,7 +498,7 @@ fn termination_error_with_scan(
         "action": reason.action(operation),
     });
     if operation == SessionTerminationOperation::Delete
-        && (!scan.processes.is_empty() || !scan.complete)
+        && (!scan.processes.is_empty() || !scan.shared_daemons.is_empty() || !scan.complete)
     {
         details["blocking_processes"] = json!(scan.processes);
         details["process_scan_complete"] = json!(scan.complete);
@@ -522,6 +531,7 @@ fn termination_error_with_scan(
         .iter()
         .map(|process| format!("blocking process: {} {}\n", process.pid, process.command))
         .collect::<String>();
+    hint.push_str(&shared_daemons::render_retained(&scan.inventory()));
     hint.push_str(&inventory_warning(&scan.inventory()));
     if !scan.processes.is_empty() {
         hint.push_str("inspect associated processes or use delete --leave-processes\n");
@@ -594,7 +604,7 @@ fn scan_linux_processes(
             scan.incomplete("time-budget-exhausted", 0);
             break;
         }
-        if scan.processes.len() >= 128 {
+        if scan.processes.len() + scan.shared_daemons.len() >= 128 {
             scan.incomplete("entry-limit-reached", 0);
             break;
         }
@@ -640,19 +650,29 @@ fn scan_linux_processes(
         }
         let command =
             fs::read_to_string(entry.path().join("comm")).unwrap_or_else(|_| "unknown".into());
+        let shared_daemon = shared_daemons::linux_shared_daemon(&entry.path());
         // Recheck incarnation after reading diagnostics; reused PIDs must not
         // acquire a former process's runtime marker or command.
         if matches!(read_identity(pid), Ok(Some(after)) if after.start_time == before.start_time && !after.zombie)
         {
-            scan.processes.push(ProcessSummary {
-                pid,
-                command: command_name(&command),
-            });
+            if let Some(command) = shared_daemon {
+                scan.shared_daemons.push(shared_daemons::RetainedDaemon {
+                    pid,
+                    command,
+                    reason: "shared-daemon-retained",
+                });
+            } else {
+                scan.processes.push(ProcessSummary {
+                    pid,
+                    command: command_name(&command),
+                });
+            }
         } else {
             scan.incomplete("process-changed", 0);
         }
     }
     scan.processes.sort_by_key(|process| process.pid);
+    scan.shared_daemons.sort_by_key(|process| process.pid);
     scan
 }
 
@@ -744,7 +764,7 @@ fn scan_macos_processes(
             id,
             runtime,
         );
-        if scan.processes.len() >= 128 {
+        if scan.processes.len() + scan.shared_daemons.len() >= 128 {
             scan.incomplete("entry-limit-reached", 0);
             break;
         }
@@ -1090,6 +1110,99 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    fn cache_daemon_scan(commands: &[(&str, u32, &[u8])]) -> ProcessScan {
+        let tmp = tempfile::tempdir().unwrap();
+        for (index, (executable, parent, arguments)) in commands.iter().enumerate() {
+            let pid = 41000 + index;
+            let process = tmp.path().join(pid.to_string());
+            fs::create_dir(&process).unwrap();
+            fs::write(
+                process.join("environ"),
+                b"AGENT_SESSION_ID=session\0AGENT_SESSION_RUNTIME_ID=runtime\0",
+            )
+            .unwrap();
+            fs::write(process.join("comm"), "sccache\n").unwrap();
+            fs::write(
+                process.join("stat"),
+                format!("{pid} (sccache) S {parent} 0 0"),
+            )
+            .unwrap();
+            fs::write(process.join("cmdline"), arguments).unwrap();
+            std::os::unix::fs::symlink(executable, process.join("exe")).unwrap();
+        }
+        scan_linux_processes("session", "runtime", tmp.path(), |pid| {
+            Ok(Some(LinuxProcessIdentity {
+                pid,
+                process_group_id: pid,
+                session_id: pid,
+                start_time: 100,
+                zombie: false,
+            }))
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn shared_cache_daemon_allows_delete_and_reports_retention() {
+        let scan = cache_daemon_scan(&[("/opt/bin/sccache", 1, b"/opt/bin/sccache\0")]);
+        assert!(
+            scan.processes.is_empty(),
+            "shared daemon must not block deletion"
+        );
+        let (_tmp, context, record) = session_fixture();
+        let directory = session_dir(&context, &record.id);
+        let result = finish_session_delete_with_scan(
+            &context,
+            record.clone(),
+            directory.clone(),
+            SessionRegistryFence::from_record(&record),
+            board::CloseReason::Deleted,
+            scan,
+        )
+        .unwrap();
+        let value = serde_json::to_value(&result).unwrap();
+        assert_eq!(
+            value["process_inventory"]["retained_shared_daemons"][0],
+            json!({"pid": 41000, "command": "sccache", "reason": "shared-daemon-retained"})
+        );
+        assert!(render_delete_text(&result).contains("shared-daemon-retained: 41000 sccache"));
+        assert!(!directory.exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn shared_cache_daemon_does_not_hide_other_survivors() {
+        for candidate in [
+            ("/opt/bin/worker", 1, b"worker\0".as_slice()),
+            ("/opt/bin/sccache", 42, b"sccache\0".as_slice()),
+            ("/opt/bin/sccache", 1, b"sccache\0rustc\0".as_slice()),
+        ] {
+            let scan = cache_daemon_scan(&[("/opt/bin/sccache", 1, b"sccache\0"), candidate]);
+            assert_eq!(scan.processes.len(), 1);
+            assert_eq!(scan.processes[0].pid, 41001);
+            let (_tmp, context, record) = session_fixture();
+            let directory = session_dir(&context, &record.id);
+            let error = finish_session_delete_with_scan(
+                &context,
+                record.clone(),
+                directory.clone(),
+                SessionRegistryFence::from_record(&record),
+                board::CloseReason::Deleted,
+                scan,
+            )
+            .unwrap_err();
+            assert!(error.0.message.contains("surviving processes"));
+            let details = error.0.details.unwrap();
+            assert_eq!(details["blocking_processes"].as_array().unwrap().len(), 1);
+            assert_eq!(
+                details["process_inventory"]["retained_shared_daemons"][0]["reason"],
+                "shared-daemon-retained"
+            );
+            assert!(directory.join("session.json").exists());
+        }
+    }
+
     #[test]
     fn runtime_markers_require_exact_values_and_both_names() {
         assert!(matches_runtime(
@@ -1399,6 +1512,7 @@ pub(super) fn render_delete_text(result: &DeleteResult) -> String {
     {
         text.push_str(&format!("orphaned child: {}\n", child.session_id));
     }
+    text.push_str(&shared_daemons::render_retained(&result.process_inventory));
     text.push_str(&inventory_warning(&result.process_inventory));
     text
 }
