@@ -78,6 +78,47 @@ fn flags_supported_new_skip_markers() {
 }
 
 #[test]
+fn skip_markers_require_standalone_identifiers() {
+    for line in [
+        "sys.exit(1)",
+        "raise SystemExit(2)",
+        "os._exit(0)",
+        "sys.dont_write_bytecode = True",
+        "prefix_xit('contract')",
+        "$xit('contract')",
+        "éxit('contract')",
+        "myit.skip('contract')",
+        "mytest.skip('contract')",
+        "mydescribe.skip('contract')",
+        "prefix_xtest('contract')",
+        "prefix_xdescribe('contract')",
+    ] {
+        assert_eq!(
+            kinds(&patch("tests/test_sample.py", "", line)),
+            Vec::<&str>::new(),
+            "{line}"
+        );
+    }
+    for line in [
+        "xit('contract')",
+        "it.skip('contract')",
+        "xdescribe('contract')",
+        "xtest('contract')",
+        "test.skip('contract')",
+        "describe.skip('contract')",
+        "return xit ('contract')",
+        "await it . skip ('contract')",
+        "{ xdescribe('contract') }",
+    ] {
+        assert_eq!(
+            kinds(&patch("api.test.ts", "", line)),
+            vec!["new-skip"],
+            "{line}"
+        );
+    }
+}
+
+#[test]
 fn unchanged_assertions_reordering_additions_docs_and_comments_are_clean() {
     for (path, before, after) in [
         (

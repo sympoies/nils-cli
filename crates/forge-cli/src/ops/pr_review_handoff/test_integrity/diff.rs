@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{ForgeError, incomplete, limit};
 
+mod skip_calls;
+
 #[derive(Debug, serde::Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct Finding {
     pub path: String,
@@ -297,7 +299,8 @@ fn signals(lines: &[String], test_path: bool) -> (Counts, Counts, Counts) {
                 depth = 0;
             }
         }
-        if compact.contains("cfg(any())")
+        if skip_calls::contains(line)
+            || compact.contains("cfg(any())")
             || (compact.contains("cfg_attr(") && compact.contains("ignore"))
             || [
                 "#[ignore",
@@ -310,12 +313,6 @@ fn signals(lines: &[String], test_path: bool) -> (Counts, Counts, Counts) {
                 "unittest.expectedFailure",
                 "@Ignore",
                 "@Disabled",
-                "test.skip(",
-                "it.skip(",
-                "describe.skip(",
-                "xit(",
-                "xtest(",
-                "xdescribe(",
                 ".Skip(",
             ]
             .iter()
