@@ -7,10 +7,50 @@ pub(crate) fn send_input_unlocked(
     text: Option<&str>,
     keys: &[SpecialKey],
     tmux_bin: &Path,
-    mut manual_input: Option<&mut ManualInputSection>,
+    manual_input: Option<&mut ManualInputSection>,
     paste_mode: PasteMode,
 ) -> Result<(), CliError> {
     crate::auth_incident::recovery::guard_input(context, record, text, keys)?;
+    deliver_input_unlocked(
+        context,
+        record,
+        text,
+        keys,
+        tmux_bin,
+        manual_input,
+        paste_mode,
+    )
+}
+
+/// The sealed command can only be constructed by the restart controller after
+/// identity/idle admission and input fencing. External send paths cannot opt
+/// out of quarantine, even when their text happens to be `/exit`.
+pub(crate) fn send_restart_exit_unlocked(
+    context: &CliContext,
+    record: &SessionRecord,
+    command: crate::restart::ProviderExitCommand,
+    tmux_bin: &Path,
+) -> Result<(), CliError> {
+    deliver_input_unlocked(
+        context,
+        record,
+        Some(command.text()),
+        &[SpecialKey::Enter],
+        tmux_bin,
+        None,
+        PasteMode::Raw,
+    )
+}
+
+fn deliver_input_unlocked(
+    context: &CliContext,
+    record: &SessionRecord,
+    text: Option<&str>,
+    keys: &[SpecialKey],
+    tmux_bin: &Path,
+    mut manual_input: Option<&mut ManualInputSection>,
+    paste_mode: PasteMode,
+) -> Result<(), CliError> {
     let target = format!("{}:0.0", record.tmux_session);
     let mut pasted_literal_text = false;
     if let Some(text) = text {

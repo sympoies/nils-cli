@@ -1,4 +1,5 @@
 use super::*;
+use crate::cli::SpecialKey;
 use crate::coordination::broker::test_support;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -73,6 +74,7 @@ case "$1" in
   has-session) [ -f "$root/stall-status" ] && {{ : > "$root/status-stalled"; sleep 20; }} ;;
   show-environment) [ -f "$root/stall" ] && sleep 20; grep "^$4=" "$root/env" || exit 1 ;;
   capture-pane) cat "$root/screen" ;;
+  load-buffer) cat "$4" >> "$root/pasted-input" ;;
   send-keys) case " $* " in *" Enter "*) [ -f "$root/hold-exit" ] || stop_pane ;; esac ;;
   if-shell|kill-session) stop_pane ;;
 esac

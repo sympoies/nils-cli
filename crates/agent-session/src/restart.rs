@@ -15,7 +15,7 @@ use jiff::Timestamp;
 use serde::Serialize;
 use serde_json::json;
 
-use crate::cli::{AgentKind, RestartArgs, SpecialKey};
+use crate::cli::{AgentKind, RestartArgs};
 use crate::send_guard::{Admission, GuardArgs};
 use crate::{CliContext, CliError, SessionRecord, coordination, load_session_record};
 
@@ -556,6 +556,17 @@ fn record_provider_version(
     Ok(relaunched)
 }
 
+/// A one-shot lifecycle command, constructed only after restart admission.
+/// Its private field prevents general input paths from creating a quarantine
+/// bypass from caller-supplied text.
+pub(crate) struct ProviderExitCommand(&'static str);
+
+impl ProviderExitCommand {
+    pub(crate) fn text(self) -> &'static str {
+        self.0
+    }
+}
+
 /// Type the provider's own exit command into a verified idle, empty composer
 /// once the incarnation's input is fenced. Returns whether it was sent and the
 /// fence, held until the old runtime is stopped. Without `force` an unverified
@@ -624,14 +635,11 @@ fn request_provider_exit(
     };
     crate::codex_account::authorize_terminal_input_locked(context, &mut current)?;
     crate::auto_resume::cancel_for_manual_input_locked(context, &current.id, &now())?;
-    crate::send_input_unlocked(
+    crate::send::input::send_restart_exit_unlocked(
         context,
         &current,
-        Some(command),
-        &[SpecialKey::Enter],
+        ProviderExitCommand(command),
         tmux,
-        None,
-        crate::PasteMode::Raw,
     )?;
     Ok((true, fence))
 }

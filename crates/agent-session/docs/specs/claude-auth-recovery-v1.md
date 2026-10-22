@@ -16,6 +16,14 @@ admission rule. `allow_blocked`, bare Enter and printable keys cannot bypass it.
 Control keys that do not submit text remain available for interruption.
 Unavailable incident storage fails closed for prompt input.
 
+Operator `restart` remains available for a quarantined runtime, with or without
+`--force`. After the existing runtime identity, idle/empty-composer checks and
+input fence, only the restart controller's fixed `/exit` command bypasses prompt
+quarantine. A sealed internal command authorizes that single lifecycle input;
+CLI, HTTP, raw terminal and mailbox input cannot construct it. Sending `/exit`
+through those input paths remains quarantined. `--force` still overrides only
+idle quiescence; runtime identity and verified-stop requirements remain in force.
+
 HTTP quarantine returns `409 auth-quarantined`. Keyed prompt-v2 attempts retain
 a `refused` receipt with admission proof (`pasted: false`, `submitted: false`);
 repeating the same request key returns that receipt without dispatch.

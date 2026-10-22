@@ -430,3 +430,69 @@ fn auth_recovery_caps_publication_polls_even_without_clock_progress() {
     );
     assert_eq!(log(tmp.path()).matches("new-session").count(), 1);
 }
+
+fn assert_quarantined_operator_restart(force: bool) {
+    let tmp = tempfile::tempdir().unwrap();
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = failed_runtime(&context, tmp.path(), &tmux, false);
+    let old_launch = launch_id(&record).unwrap();
+    let before = log(tmp.path());
+    // The same text from external input must remain quarantined. The
+    // lifecycle controller alone may submit its fixed exit command.
+    for text in ["/exit", "synthetic prompt"] {
+        let error = crate::send_input_serialized(
+            &context,
+            &record,
+            Some(text),
+            &[SpecialKey::Enter],
+            &tmux,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "auth-quarantined");
+    }
+    assert!(!log(tmp.path())[before.len()..].contains("paste-buffer"));
+    assert!(!log(tmp.path())[before.len()..].contains("send-keys"));
+    let watcher = on_relaunched_prompt(&context, tmp.path(), &old_launch);
+
+    let result = restart(&context, &restart_args(&tmux, force, 10));
+    // Fail on the admission regression before waiting for a relaunch that
+    // cannot happen. The fixture watcher is independently bounded.
+    let receipt = serde_json::to_value(result.expect("restart quarantined runtime")).unwrap();
+    watcher.join().unwrap();
+
+    let current = load_session_record(&context, ID).unwrap();
+    assert_eq!(receipt["outcome"], "ready");
+    assert_eq!(receipt["stop_method"], "provider-exit");
+    assert_eq!(current.id, record.id);
+    assert_eq!(current.tmux_session, record.tmux_session);
+    assert_eq!(
+        current.provider_resume.as_ref().unwrap().session_id,
+        CONVERSATION
+    );
+    assert_ne!(launch_id(&current), Some(old_launch));
+    assert_eq!(
+        current.runtime.as_ref().unwrap().generation,
+        record.runtime.as_ref().unwrap().generation + 1
+    );
+    let effects = log(tmp.path());
+    let effects = &effects[before.len()..];
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("pasted-input")).unwrap(),
+        "/exit"
+    );
+    assert_eq!(effects.matches("paste-buffer").count(), 1);
+    assert_eq!(effects.matches("send-keys").count(), 1);
+    assert_eq!(effects.matches("new-session").count(), 1);
+    assert!(!effects.contains("if-shell"));
+}
+
+#[test]
+fn auth_quarantined_operator_restart_without_force_preserves_conversation() {
+    assert_quarantined_operator_restart(false);
+}
+
+#[test]
+fn auth_quarantined_operator_restart_with_force_preserves_conversation() {
+    assert_quarantined_operator_restart(true);
+}
