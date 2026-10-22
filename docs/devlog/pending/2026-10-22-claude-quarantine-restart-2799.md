@@ -10,7 +10,8 @@
   activity-only quarantine when the incident store is full, printable keys,
   equal/lower generations with different publication snapshots, and rejection
   of unrelated broker capabilities, inconsistent publication evidence and
-  checkpoints copied from another runtime incarnation.
+  checkpoints copied from another runtime incarnation, and the bounded
+  unknown-effect selector sample with a separately retained total count.
 
 ### Why / context
 
@@ -30,6 +31,11 @@
   Four independent publication-evidence and checkpoint-binding regressions
   fail with their matching guards removed. Production guards are restored
   before successful final validation.
+- The follow-up selector-bound regression fails when the sample cap rises to
+  nine. With the cap restored, it and the original two-operation recovery case
+  pass; twelve unknown effects retain a total count of twelve and only eight
+  metadata-only selectors. The external `/exit` assertion also fails under a
+  text-only exception in both force modes, independently of Enter admission.
 - Scoped Clippy with warnings denied, strict file-size audit, documentation
   audits, Markdown lint and devlog fragment validation pass. The combined
   `lib.rs` implementation baseline is measured as 12891 lines.

@@ -440,6 +440,9 @@ fn assert_quarantined_operator_restart(force: bool) {
     let before = log(tmp.path());
     // The same text from external input must remain quarantined. The
     // lifecycle controller alone may submit its fixed exit command.
+    let error = crate::send_input_serialized(&context, &record, Some("/exit"), &[], &tmux)
+        .expect_err("text-only external /exit must stay quarantined");
+    assert_eq!(error.code(), "auth-quarantined");
     for text in ["/exit", "synthetic prompt"] {
         let error = crate::send_input_serialized(
             &context,
@@ -785,4 +788,44 @@ fn review_guard_regression_checkpoint_is_bound_to_its_runtime_incarnation() {
         crate::claude_account::generation::baseline(&replacement).is_none(),
         "a prior runtime's checkpoint cannot be the replacement's baseline"
     );
+}
+
+#[test]
+fn auth_recovery_unknown_effect_sample_is_bounded_without_losing_the_total() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = failed_runtime(&context, tmp.path(), &tmux, true);
+    crate::coordination::auth_effects::test_support::seed_many(&context, &record, 12);
+    tick(&context, &record, &tmux, 100);
+    publish(tmp.path(), 2);
+    fs::write(tmp.path().join("exit-on-probe"), "").unwrap();
+    let watcher = on_relaunched_prompt(&context, tmp.path(), &launch_id(&record).unwrap());
+    tick(&context, &record, &tmux, 115);
+    watcher.join().unwrap();
+
+    let receipt = recovery_receipt(&context);
+    assert_eq!(receipt["state"], "runtime_resumed");
+    assert_eq!(receipt["unknown_operation_count"], 12);
+    let sample = receipt["unknown_in_flight_effects"].as_array().unwrap();
+    assert_eq!(sample.len(), 8);
+    let leases: std::collections::BTreeSet<_> = sample
+        .iter()
+        .map(|entry| entry["lease_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(leases.len(), 8);
+    for entry in sample {
+        assert_eq!(entry["state"], "unknown");
+        let mut fields: Vec<_> = entry
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort_unstable();
+        assert_eq!(fields, ["claim_id", "lease_id", "revision", "state"]);
+    }
+    assert!(!receipt.to_string().contains("sensitive-canary"));
 }
