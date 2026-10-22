@@ -32,10 +32,9 @@ fn paste_prompt_file_observing(
     // reached the provider's input at all.
     await_pane_drawn_before_paste(tmux_bin, &target, pane_ready_deadline);
 
-    // A drawn pane is still not proof that the provider reads stdin yet: Claude
-    // Code parks its cursor on the input line before it accepts input. Ordinary
-    // starts may therefore use a pane digest to prove that the first paste was
-    // ignored and retry it while no submit key has been sent.
+    // Observe rendering for diagnostics only. An accepted paste may still be
+    // queued while the visible pane stays unchanged; no pane digest can prove
+    // non-delivery or authorize replaying the prompt bytes.
     let before = capture_pane_digest(tmux_bin, &target);
     load_and_paste_buffer(tmux_bin, &buffer_name, &target, prompt_file)
         .map_err(prompt_delivery_failure)?;
@@ -55,11 +54,6 @@ fn paste_prompt_file_observing(
         },
         proof: "tmux-pane-digest-before-submit",
     };
-    if pane_ignored_paste(before, after) {
-        load_and_paste_buffer(tmux_bin, &buffer_name, &target, prompt_file)
-            .map_err(prompt_delivery_failure)?;
-        thread::sleep(POST_PASTE_KEY_SETTLE_DELAY);
-    }
     if let Some(observe) = before_enter
         && let Some(pane) = capture_visible_pane(tmux_bin, &target)
     {
@@ -78,8 +72,8 @@ fn paste_prompt_file_observing(
 /// session record lock fences the exact runtime, returning the incarnation the
 /// text was written to and its observed provider representation. The staged
 /// file keeps the prompt out of argv, and the
-/// shared start-path delivery keeps the pane-readiness and ignored-paste guards
-/// that a freshly launched provider TUI needs.
+/// shared start-path delivery keeps the pane-readiness wait and delivers the
+/// prompt bytes once, even when rendering or acknowledgement is uncertain.
 pub(crate) fn deliver_claude_structured_prompt_locked(
     context: &CliContext,
     id: &str,

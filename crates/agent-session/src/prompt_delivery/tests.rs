@@ -44,3 +44,5 @@ fn image_rewrite_requires_an_exact_observed_composer_label() {
         None
     );
 }
+
+mod startup;
