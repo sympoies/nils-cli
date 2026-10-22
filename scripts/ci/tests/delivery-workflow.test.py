@@ -23,7 +23,7 @@ def job(text, name):
 
 
 class DeliveryTests(unittest.TestCase):
-    def test_pr_and_queue_have_only_linux_jobs(self):
+    def test_release_queue_runs_shared_full_validation_before_required_linux_check(self):
         ci = workflow('ci.yml')
         self.assertNotIn('runs-on: macos', ci)
         self.assertNotIn('\n  test_macos:', ci)
@@ -34,6 +34,15 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn("github.event_name == 'workflow_dispatch'", full)
         self.assertIn("github.ref == 'refs/heads/main'", full)
         self.assertIn('uses: ./.github/workflows/full-validation.yml', full)
+        self.assertIn('needs: changes', full)
+        self.assertIn('always()', full)
+        self.assertIn("github.event_name == 'merge_group'", full)
+        self.assertIn("needs.changes.outputs.release_candidate == 'true'", full)
+        self.assertIn("needs.changes.result == 'success'", full)
+        linux = job(ci, 'test')
+        self.assertIn('needs: [changes, full_validation]', linux)
+        self.assertIn('FULL_VALIDATION_RESULT: ${{ needs.full_validation.result }}', linux)
+        self.assertIn('Require release queue validation', linux)
 
     def test_pr_and_queue_consume_affected_plan(self):
         fixture = fixtures.WorkflowDispatchTests()
@@ -50,7 +59,15 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn('uses: ./.github/workflows/full-validation.yml', full)
         self.assertIn('commit: ${{ github.sha }}', full)
         self.assertIn('ref: ${{ github.sha }}', job(release, 'build'))
-        self.assertIn('needs: full_validation', job(release, 'build'))
+        self.assertIn('reused: ${{ steps.reuse.outputs.reused }}', verify)
+        self.assertIn('actions: read', verify)
+        self.assertIn('findReusableValidation', verify)
+        self.assertIn("if: needs.verify_ci.outputs.reused != 'true'", full)
+        gate = job(release, 'validation_gate')
+        self.assertIn('needs: [verify_ci, full_validation]', gate)
+        self.assertIn('if: always()', gate)
+        self.assertIn('requireReleaseValidation', gate)
+        self.assertIn('needs: validation_gate', job(release, 'build'))
         self.assertIn('needs: build', job(release, 'release'))
         self.assertIn('needs: release', job(release, 'dispatch_homebrew_tap'))
 
@@ -145,6 +162,38 @@ class DeliveryTests(unittest.TestCase):
             result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script],
                 env=dict(os.environ, CHANGES_RESULT=state), capture_output=True)
             self.assertEqual(result.returncode == 0, state == 'success')
+
+    def test_release_queue_failures_block_the_required_linux_check(self):
+        body = job(workflow('ci.yml'), 'test')
+        step = body.split('      - name: Require release queue validation\n', 1)[1]
+        script = step.split('        run: |\n', 1)[1].split('\n      - name:', 1)[0]
+        script = '\n'.join(line[10:] for line in script.splitlines() if line.startswith('          '))
+        for event in ('pull_request', 'merge_group'):
+            for candidate in ('true', 'false'):
+                for state in ('success', 'failure', 'cancelled', 'skipped', ''):
+                    with self.subTest(event=event, candidate=candidate, state=state):
+                        result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script],
+                            env=dict(os.environ, EVENT_NAME=event, RELEASE_CANDIDATE=candidate,
+                                     FULL_VALIDATION_RESULT=state), capture_output=True)
+                        allowed = event != 'merge_group' or candidate != 'true' or state == 'success'
+                        self.assertEqual(result.returncode == 0, allowed)
+
+    def test_full_workflow_runs_for_release_queues_and_nightly_even_when_detection_skips(self):
+        full = job(workflow('ci.yml'), 'full_validation')
+        condition = next(line.removeprefix('    if: ') for line in full.splitlines()
+                         if line.startswith('    if: '))
+        for event in ('pull_request', 'merge_group', 'push', 'schedule', 'workflow_dispatch'):
+            for candidate in ('true', 'false'):
+                for detection in ('success', 'failure', 'cancelled', 'skipped'):
+                    expression = condition.replace('github.event_name', repr(event))
+                    expression = expression.replace('github.ref', repr('refs/heads/main'))
+                    expression = expression.replace('needs.changes.result', repr(detection))
+                    expression = expression.replace('needs.changes.outputs.release_candidate', repr(candidate))
+                    observed = eval(expression.replace('always()', 'True').replace('&&', 'and').replace('||', 'or'),
+                                    {'__builtins__': {}}, {})
+                    expected = event in ('schedule', 'workflow_dispatch') or (
+                        event == 'merge_group' and candidate == 'true' and detection == 'success')
+                    self.assertEqual(observed, expected)
 
     def test_nightly_report_serializes_tracker_updates_with_least_permissions(self):
         ci = workflow('ci.yml')
