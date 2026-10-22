@@ -4309,15 +4309,6 @@ fn capture_pane_digest(tmux_bin: &Path, target: &str) -> Option<u64> {
     Some(hasher.finish())
 }
 
-/// Byte-identical observable panes prove that the provider ignored an ordinary
-/// pre-submit paste. Missing observations never authorize another delivery.
-fn pane_ignored_paste(before: Option<u64>, after: Option<u64>) -> bool {
-    match (before, after) {
-        (Some(before), Some(after)) => before == after,
-        _ => false,
-    }
-}
-
 /// Load `file` into a named tmux buffer and paste it into `target`, deleting the
 /// buffer after paste (`-d`) or on failure. The staged error distinguishes a
 /// proven pre-delivery load failure from a paste result that may have landed.
