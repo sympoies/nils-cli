@@ -790,14 +790,19 @@ fn safe_removal_retains_process_cwd_and_open_file() {
                 "import os,sys,time; os.chdir(sys.argv[1]); print('ready',flush=True); time.sleep(30)"
             }
             "fd" => {
-                "import sys,time; f=open(sys.argv[1]+'/README.md'); print('ready',flush=True); time.sleep(30)"
+                "import sys,time; f=open(sys.argv[1]); print('ready',flush=True); time.sleep(30)"
             }
             _ => {
-                "import sys,time,mmap; f=open(sys.argv[1]+'/README.md'); m=mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ); f.close(); print('ready',flush=True); time.sleep(30)"
+                include_str!("worktree/mapped_holder.py")
             }
         };
+        let holder_path = if kind == "cwd" {
+            PathBuf::from(&fixture.target)
+        } else {
+            Path::new(&fixture.target).join("README.md")
+        };
         let mut child = Command::new("python3")
-            .args(["-c", script, &fixture.target])
+            .args(["-c", script, holder_path.to_str().unwrap()])
             .stdout(Stdio::piped())
             .spawn()
             .unwrap();
@@ -2076,7 +2081,7 @@ fn removal_shared_hardlink_holders_follow_open_and_mapping_paths() {
             let script = if kind == "fd" {
                 "import sys,time; f=open(sys.argv[1]); print('ready',flush=True); time.sleep(30)"
             } else {
-                "import sys,time,mmap; f=open(sys.argv[1]); m=mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ); f.close(); print('ready',flush=True); time.sleep(30)"
+                include_str!("worktree/mapped_holder.py")
             };
             let mut child = Command::new("python3")
                 .args(["-c", script, path.to_str().unwrap()])
@@ -2092,15 +2097,24 @@ fn removal_shared_hardlink_holders_follow_open_and_mapping_paths() {
             let result = fixture.remove("safe");
             child.kill().unwrap();
             child.wait().unwrap();
-            if inside {
+            // Darwin reports a vnode name, not necessarily the opened hardlink.
+            // Non-Linux inode selection therefore retains either alias.
+            let retained = inside || !cfg!(target_os = "linux");
+            if retained {
                 assert_eq!(
                     parse_json(&result)["error"]["code"],
-                    "removal-process-active"
+                    "removal-process-active",
+                    "kind={kind}, inside={inside}: {}",
+                    result.stdout_text()
                 );
             } else {
                 assert_eq!(result.code, 0, "{}", result.stdout_text());
             }
-            assert_eq!(target.exists(), inside);
+            assert_eq!(target.exists(), retained, "kind={kind}, inside={inside}");
         }
     }
 }
+
+#[cfg(not(target_os = "linux"))]
+#[path = "worktree/non_linux.rs"]
+mod non_linux;

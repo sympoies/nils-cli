@@ -271,25 +271,8 @@ fn processes_idle(target: &Path, warnings: &mut Vec<String>) -> Result<(), CliEr
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let excluded = ancestor_pids();
-        let output = match probe("lsof", &["-nP", "-F0pcfn"], target.parent().unwrap()) {
-            Ok(output) => output,
-            Err(_) => {
-                warnings.push("lsof visibility unavailable".into());
-                return Ok(());
-            }
-        };
-        if !output.stderr.is_empty() {
-            warnings.push(format!(
-                "lsof: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        lsof::check(&output.stdout, target, &excluded)?;
-        if !matches!(output.status.code(), Some(0 | 1)) {
-            warnings.push("lsof inventory incomplete".into());
-        }
-        Ok(())
+        let _ = warnings;
+        lsof::processes_idle(target, &ancestor_pids())
     }
 }
 
