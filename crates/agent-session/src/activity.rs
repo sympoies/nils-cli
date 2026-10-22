@@ -748,13 +748,8 @@ pub(crate) struct ProviderDoctor {
     pub(crate) helper_executable: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct DoctorResult {
-    /// The running agent-session binary's own version (git-describe form), so a
-    /// stale or split install is diagnosable against the source it should match.
-    pub(crate) binary_version: String,
-    pub(crate) providers: Vec<ProviderDoctor>,
-}
+pub(crate) mod doctor;
+pub(crate) use doctor::DoctorResult;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct ActivityDiagnostic {
@@ -3817,6 +3812,7 @@ pub(crate) fn doctor(
     }
     Ok(DoctorResult {
         binary_version: nils_build_info::long_version(env!("CARGO_PKG_VERSION")),
+        missing_pinned_binaries: doctor::missing_pinned_binaries(context, agent)?,
         providers,
     })
 }

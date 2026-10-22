@@ -90,3 +90,84 @@ fn codex_activity_doctor_surfaces_notification_config_errors() {
             .contains("fix the provider configuration before running repair")
     );
 }
+
+#[test]
+fn activity_doctor_lists_running_sessions_with_removed_pinned_binaries() {
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let state = tmp.path().join("state");
+    let home = tmp.path().join("home");
+    fs::create_dir_all(&home).unwrap();
+    let (tmux, log) = super::cli::fake_tmux(tmp.path());
+    let helper = tmp.path().join("removed-agent-session");
+    write_executable(&helper, "#!/bin/sh\nexit 0\n");
+    let session = state.join("sessions/pinned-fixture");
+    fs::create_dir_all(&session).unwrap();
+    let record = json!({
+        "schema_version": "agent-session.session.v1", "id": "pinned-fixture",
+        "agent": "codex", "mode": "interactive", "title": null,
+        "cwd": tmp.path(), "tmux_session": "pinned-fixture",
+        "prompt_file": null, "log_file": null,
+        "created_at": "2030-01-01T00:00:00Z", "updated_at": "2030-01-01T00:00:00Z"
+    });
+    fs::write(
+        session.join("session.json"),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+    // tmux records the pinned helper in the session environment at launch.
+    fs::write(
+        format!("{}.environments", log.display()),
+        format!("pinned-fixture\tAGENT_SESSION_BIN\t{}\n", helper.display()),
+    )
+    .unwrap();
+    let envs = [
+        ("HOME", home.to_str().unwrap()),
+        ("AGENT_SESSION_TMUX_BIN", tmux.to_str().unwrap()),
+        ("AGENT_SESSION_FAKE_TMUX_LOG", log.to_str().unwrap()),
+    ];
+    let args = [
+        "--state-dir",
+        state.to_str().unwrap(),
+        "activity",
+        "doctor",
+        "--format",
+        "json",
+    ];
+    let run = |args: &[&str], extra: &[(&str, &str)]| {
+        let mut envs = envs.to_vec();
+        envs.extend_from_slice(extra);
+        let output = super::cli::run(tmp.path(), args, &envs);
+        assert_eq!(output.code, 0, "{}", output.stderr_text());
+        output
+    };
+    fs::remove_file(&helper).unwrap();
+    let removed = run(&args, &[]).stdout_json();
+    assert_eq!(
+        super::cli::data(&removed)["missing_pinned_binaries"],
+        json!([{
+            "session_id": "pinned-fixture", "binary_path": helper,
+            "code": "pinned-agent-session-binary-missing"
+        }])
+    );
+    let mut text_args = args;
+    text_args[5] = "text";
+    let text = run(&text_args, &[]).stdout_text();
+    assert!(text.contains("pinned-fixture"));
+    assert!(text.contains("pinned-agent-session-binary-missing"));
+    assert!(text.contains(helper.to_str().unwrap()));
+    // Stopped sessions and helpers that still exist are not stale findings.
+    let stopped = run(&args, &[("AGENT_SESSION_FAKE_TMUX_HAS_SESSION", "0")]).stdout_json();
+    assert_eq!(
+        super::cli::data(&stopped)["missing_pinned_binaries"],
+        json!([])
+    );
+    write_executable(&helper, "#!/bin/sh\nexit 0\n");
+    let present = run(&args, &[]).stdout_json();
+    assert_eq!(
+        super::cli::data(&present)["missing_pinned_binaries"],
+        json!([])
+    );
+}

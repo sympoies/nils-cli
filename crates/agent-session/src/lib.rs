@@ -13033,8 +13033,7 @@ fn render_activity_text(result: &activity::ActivityResult) -> String {
 }
 
 fn render_doctor_text(result: &activity::DoctorResult) -> String {
-    let mut text = String::new();
-    text.push_str(&format!("binary: {}\n", result.binary_version));
+    let mut text = activity::doctor::render_header(result);
     for provider in &result.providers {
         text.push_str(&format!(
             "{}: {} (configured: {}, can launch worker: {})\n",

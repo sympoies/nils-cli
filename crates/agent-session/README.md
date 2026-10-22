@@ -109,6 +109,15 @@ agent-session metadata attach <id> --request-file metadata.json --if-revision 0 
 agent-session metadata show <id> --label acceptance.synthetic --format json
 ```
 
+`activity doctor` also checks running local sessions for removed helper binaries
+using their recorded tmux `AGENT_SESSION_BIN` value. Text output names each
+session and missing path; JSON adds `missing_pinned_binaries`, an array of
+`session_id`, `binary_path`, and `code` (`pinned-agent-session-binary-missing`).
+The array is empty when no missing paths are observed. Stopped sessions,
+unavailable environment values, and filesystem lookup errors are excluded;
+this is a best-effort diagnostic. `--agent` also filters these session findings.
+Restart an affected session to bind the installed helper.
+
 Provider hooks project metadata-only lifecycle events into a private,
 runtime-bound activity snapshot. Provider registration is owned by
 `agent-hook`; `activity setup` is a compatibility forwarder. See the
