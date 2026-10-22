@@ -447,10 +447,10 @@ mod tests {
     #[test]
     fn embedded_lock_is_complete_and_immutable() {
         let lock = PeekabooLock::embedded().expect("embedded lock");
-        assert_eq!(lock.tag, "v4.8.0");
+        assert_eq!(lock.tag, "v4.9.6");
         assert_eq!(lock.assets.len(), 2);
         assert_eq!(lock.cli_asset().architectures, ["arm64", "x86_64"]);
-        assert_eq!(lock.cli_asset().bridge_build, "4.8.0 (4.8.0)");
+        assert_eq!(lock.cli_asset().bridge_build, "4.9.6 (4.9.6)");
         assert_eq!(
             lock.cli_asset().notarization.policy,
             NotarizationPolicy::Required
@@ -459,12 +459,12 @@ mod tests {
             lock.app_asset().notarization.policy,
             NotarizationPolicy::Required
         );
-        assert_eq!(lock.app_asset().bridge_build, "4.8.0 (4080099)");
+        assert_eq!(lock.app_asset().bridge_build, "4.9.6 (4090699)");
         assert_eq!(
             lock.app_asset().bundle_id.as_deref(),
             Some("boo.peekaboo.mac")
         );
-        assert_eq!(lock.rollback_releases.len(), 1);
+        assert_eq!(lock.rollback_releases.len(), 2);
         let accepted = lock
             .rollback_release("v4.4.0", "d82dbd88832688252cbed2254af6433ed9699abd")
             .expect("accepted backend remains available for rollback");
