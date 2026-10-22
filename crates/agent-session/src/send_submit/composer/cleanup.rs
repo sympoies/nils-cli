@@ -1,8 +1,8 @@
-//! Wrapped rows may be matched for cleanup, never for submit admission.
+//! Wrapped-row matching for cleanup and cursor-verified submit admission.
 use super::{claude_composer, codex_composer, exact_composer_input, styled_text};
 
 /// The known single-line paste can disambiguate written padding at a wrap.
-/// It is never used to relax submission admission or guess unknown draft rows.
+/// Matching alone is not submit admission or proof of unknown draft rows.
 pub(crate) fn input(agent: &str, pane: &str, pasted: Option<&str>) -> Option<String> {
     if let Some(input) = exact_composer_input(agent, pane) {
         return Some(input);

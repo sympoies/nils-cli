@@ -18,6 +18,7 @@ pub(crate) use composer::require_empty_composer;
 mod key;
 mod observation;
 mod ownership;
+mod pasted;
 mod text;
 
 #[derive(Debug, Default, Args)]
@@ -104,7 +105,7 @@ impl Admission<'_> {
         if self.args.require_empty_composer || self.verify_composer || pasted_text.is_some() {
             let target = format!("{}:0.0", self.record.tmux_session);
             let input = capture_styled(self.tmux_bin, &target, self.timeout(stage)?)
-                .and_then(|pane| send_submit::exact_composer_input(&self.record.agent, &pane))
+                .and_then(|pane| self.pasted_composer_input(&pane, pasted_text, stage))
                 .ok_or_else(|| {
                     self.refusal(
                         "send-composer-unobservable",

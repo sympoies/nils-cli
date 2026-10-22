@@ -256,13 +256,52 @@ fn text_made_only_of_line_breaks_is_refused_before_anything_is_pasted() {
 }
 
 #[test]
+fn codex_wrapped_single_line_refusal_clears_only_the_pasted_text() {
+    let text = "x".repeat(190);
+    for claude_transcript in [false, true] {
+        let fixture = Fixture::new("codex");
+        live(&fixture, &["bare-composer", "wrap-80"]);
+        if claude_transcript {
+            // A Claude-shaped transcript above the active Codex composer must not
+            // authorize Claude's cursor proof for a Codex session.
+            let rows = format!(
+                "{}\n  {}\n  {}",
+                "x".repeat(78),
+                "x".repeat(78),
+                "x".repeat(34)
+            );
+            let border = "─".repeat(80);
+            fs::write(
+                fixture.root().join("captured-layout"),
+                serde_json::to_vec(&serde_json::json!({
+                    "input": text,
+                    "pane": format!("{border}\n❯ {rows}\n{border}\n› {rows}\n\n  status"),
+                    "start": [2, 1], "before_end": [35, 3], "prefix_end": [36, 3]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        let output = guarded_text(&fixture, &text);
+        let details = details(&output, "send-composer-unobservable");
+        assert_eq!(details["stage"], "submit");
+        assert_eq!(details["pasted"], true);
+        assert_eq!(details["submitted"], false);
+        assert_eq!(details["cleared"], true, "{details}");
+        assert_eq!(composer(&fixture), "");
+        assert_eq!(deletions(&fixture), text.len());
+        assert!(submissions(&fixture).is_empty());
+    }
+}
+
+#[test]
 fn wrapped_single_line_refusal_clears_only_the_pasted_text() {
     let text = "x".repeat(190);
     for provider in ["claude", "codex"] {
         let fixture = Fixture::new(provider);
-        live(&fixture, &["bare-composer", "wrap-80"]);
+        live(&fixture, &["bare-composer", "wrap-80", "start-after-paste"]);
         let output = guarded_text(&fixture, &text);
-        let details = details(&output, "send-composer-unobservable");
+        let details = details(&output, "send-session-not-idle");
         assert_eq!(details["stage"], "submit");
         assert_eq!(details["pasted"], true);
         assert_eq!(details["submitted"], false);
@@ -317,9 +356,9 @@ fn stalled_backspace_requires_a_fresh_observation() {
 fn known_paste_disambiguates_claude_wrap_boundary_spaces() {
     let text = format!("{} {}", "x".repeat(77), "y".repeat(100));
     let fixture = Fixture::new("claude");
-    live(&fixture, &["bare-composer", "wrap-80"]);
+    live(&fixture, &["bare-composer", "wrap-80", "start-after-paste"]);
     let output = guarded_text(&fixture, &text);
-    let details = details(&output, "send-composer-unobservable");
+    let details = details(&output, "send-session-not-idle");
     assert_eq!(details["cleared"], true);
     assert_eq!(details["remaining_input"], "empty");
     assert_eq!(details["pasted_text_present"], false);
@@ -330,3 +369,5 @@ fn known_paste_disambiguates_claude_wrap_boundary_spaces() {
 
 #[path = "rollback.rs"]
 mod rollback;
+#[path = "wrapped_submit.rs"]
+mod wrapped_submit;
