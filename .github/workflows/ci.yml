@@ -7,7 +7,7 @@ on:
   pull_request:
   # A required merge queue runs every required check on its temporary merge
   # branch before landing the pull request. Linux consumes the combined-tree
-  # affected plan; full validation belongs to nightly and release.
+  # affected plan; release-only groups also run full Linux/macOS validation.
   merge_group:
   schedule:
     - cron: "23 5 * * *"
@@ -123,7 +123,6 @@ jobs:
           esac
           if [ "${EVENT_NAME}" = "merge_group" ]; then
             docs_only=false
-            release_candidate=false
           fi
           {
             echo "base_sha=${base}"
@@ -152,8 +151,8 @@ jobs:
           RELEASE_CANDIDATE: ${{ steps.detect.outputs.release_candidate }}
         run: |
           # The exact-base detector proves the diff is only the canonical version
-          # bump. The release workflow validates the tagged commit in full, so the
-          # reduced lane needs no full base-CI receipt (scoped queue runs have none).
+          # bump. Release queue entries run the shared full workflow before the
+          # required Linux check passes; PRs keep the reduced preparation lane.
           release_only=false
           if [ "${RELEASE_CANDIDATE}" = "true" ]; then
             release_only=true
@@ -182,7 +181,7 @@ jobs:
 
   test:
     if: always() && github.event_name != 'push' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
-    needs: changes
+    needs: [changes, full_validation]
     outputs:
       validation_scope: ${{ steps.validation.outputs.validation_scope }}
     runs-on: ubuntu-24.04
@@ -208,6 +207,18 @@ jobs:
         run: |
           if [ "${CHANGES_RESULT}" != "success" ]; then
             echo 'error: change detection did not succeed; Linux validation is blocked' >&2
+            exit 1
+          fi
+
+      - name: Require release queue validation
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_CANDIDATE: ${{ needs.changes.outputs.release_candidate }}
+          FULL_VALIDATION_RESULT: ${{ needs.full_validation.result }}
+        run: |
+          if [ "${EVENT_NAME}" = "merge_group" ] && [ "${RELEASE_CANDIDATE}" = "true" ] && \
+             [ "${FULL_VALIDATION_RESULT}" != "success" ]; then
+            echo 'error: release queue full validation did not succeed' >&2
             exit 1
           fi
 
@@ -491,7 +502,8 @@ jobs:
 
 
   full_validation:
-    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    needs: changes
+    if: always() && ((github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.changes.outputs.release_candidate == 'true') || ((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'))
     uses: ./.github/workflows/full-validation.yml
     permissions:
       contents: read
@@ -499,7 +511,7 @@ jobs:
     with:
       commit: ${{ github.sha }}
       # Nightly and manual runs also run the poisoned-environment isolation guard.
-      isolation_guard: true
+      isolation_guard: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
   nightly_report:
     if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
