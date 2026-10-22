@@ -175,10 +175,10 @@ the extension. A session with lineage and work looks like this:
 | Progress | `turn_state` | object or null | `SessionView.turn_state` (the [turn-state contract](../turn-state-contract.md)), projected to the allowlisted fields below. `null` when the session has no turn state. |
 | Progress | `turn_state.phase` | string | `TurnState.phase`: `starting`, `working`, `waiting`, `needs_input`, or `unknown`. |
 | Progress | `turn_state.phase_changed_at` | string | `TurnState.phase_changed_at`. |
-| Progress | `turn_state.diagnostic` | optional object | Quiet-only bounded metadata: `reason: codex_progress_quiet`, `quiet_threshold_seconds: 300`, parseable timestamp `quiet_since`, and `quiet_signal` (`current_turn.last_progress_at` or `current_turn.started_at`). Omitted when unavailable or unrecognized. |
+| Progress | `turn_state.diagnostic` | optional object | Bounded reasons `completion_evidence_pending`, `completion_evidence_missing`, or `codex_progress_quiet`. Quiet reasons include `quiet_threshold_seconds: 300`, parseable `quiet_since`, and `quiet_signal` (`current_turn.last_progress_at`, `current_turn.started_at`, or `semantic_event.observed_at`). Completion reasons may include the allowlisted `completion_candidate_reason` enum. Unknown members are excluded. |
 | Progress | `turn_state.current_turn` | object or null | `TurnState.current_turn`, projected to `last_progress_at` and `attention`. |
 | Progress | `turn_state.current_turn.last_progress_at` | string or null | `CurrentTurn.last_progress_at`. |
-| Progress | `turn_state.current_turn.attention` | object or null | `CurrentTurn.attention`, projected to `kind` and `requested_at`. |
+| Progress | `turn_state.current_turn.attention` | object or null | `CurrentTurn.attention`, projected to `kind`, `requested_at`, optional nonnegative integer `pending_count`, and optional `certainty` (`exact` or `conservative`). Older inputs omit the new fields. |
 | Progress | `turn_state.last_turn` | object or null | `TurnState.last_turn`, projected to `outcome` and an optional allowlisted `provider_failure_kind` (`authentication` or `provider_capacity`). |
 | Progress | `auth_incident` | optional object | Typed, runtime-bound provider authentication incident and notification receipts; see the [turn-state contract](../turn-state-contract.md#provider-authentication-incidents). Absent before an incident is observed. |
 | Progress | `auth_detection_health` | optional string | `structured`, `degraded_terminal_fallback`, `degraded_source_unavailable`, `degraded_store_unavailable`, or `degraded_queue_capacity`; absent before observation. Unrecognized values are omitted. |
@@ -204,8 +204,9 @@ counts and capabilities. The bounded `role`,
 sessions and public provider references only. Unknown upstream
 `turn_state` fields are dropped, not passed through.
 
-The quiet diagnostic is omitted unless all four fields meet these bounds.
-Other diagnostic reasons and unknown nested fields are dropped. It explains
+Quiet diagnostics are omitted unless all four fields meet these bounds.
+Pending completion diagnostics retain only the reason and optional candidate
+classification. Other reasons and unknown nested fields are dropped. This explains
 inferred uncertainty; it never proves completion, clears attention, or
 authorizes input. Native wake still requires separate bound idle proof.
 

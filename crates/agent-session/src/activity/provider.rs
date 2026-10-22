@@ -169,6 +169,9 @@ pub(super) fn normalize_provider_hook(
         TurnEventKind::AttentionCleared => exact_attention_id,
         _ => None,
     };
+    let completion_candidate_reason = (agent == AgentKind::Claude && event_name == "Stop")
+        .then(|| raw.as_object().map(agent_hook::stop_completion::classify))
+        .flatten();
     let event_id = uuid::Uuid::new_v4().to_string();
     Ok(Some(TurnEvent {
         schema_version: TURN_EVENT_VERSION.to_string(),
@@ -183,13 +186,9 @@ pub(super) fn normalize_provider_hook(
         attention_kind: attention_kind.map(str::to_string),
         attention_correlation_ambiguous,
         attention_correlation_exact: exact_clarification || exact_elicitation,
-        completion_candidate: agent == AgentKind::Claude
-            && event_name == "Stop"
-            && raw.get("stop_hook_active").and_then(Value::as_bool) == Some(false)
-            && raw
-                .get("background_tasks")
-                .and_then(Value::as_array)
-                .is_some_and(Vec::is_empty),
+        completion_candidate: completion_candidate_reason
+            == Some(agent_hook::stop_completion::CompletionCandidateReason::Candidate),
+        completion_candidate_reason,
         confidence,
         source_kind: SourceKind::ProviderHook,
         provider_time: None,
@@ -256,6 +255,7 @@ pub(super) fn normalize_provider_notification(
         attention_correlation_ambiguous: false,
         attention_correlation_exact: false,
         completion_candidate: false,
+        completion_candidate_reason: None,
         confidence: Confidence::Authoritative,
         source_kind: SourceKind::ProviderHook,
         provider_time: None,
@@ -335,6 +335,7 @@ pub(crate) fn ingest_codex_app_server_completion(
             attention_correlation_ambiguous: false,
             attention_correlation_exact: false,
             completion_candidate: false,
+            completion_candidate_reason: None,
             confidence: Confidence::Authoritative,
             source_kind: SourceKind::ProviderHook,
             provider_time: None,

@@ -15,7 +15,8 @@ pub(super) fn metadata(diagnostic: &ActivityDiagnosticView) -> Option<QuietMetad
 }
 
 fn metadata_fields(reason: &str, fields: &Map<String, Value>) -> Option<QuietMetadata> {
-    if reason != REASON || fields.get("quiet_threshold_seconds")?.as_u64()? != QUIET_SECONDS as u64
+    if !matches!(reason, REASON | "completion_evidence_missing")
+        || fields.get("quiet_threshold_seconds")?.as_u64()? != QUIET_SECONDS as u64
     {
         return None;
     }
@@ -27,7 +28,7 @@ fn metadata_fields(reason: &str, fields: &Map<String, Value>) -> Option<QuietMet
     let signal = fields.get("quiet_signal")?.as_str()?;
     if !matches!(
         signal,
-        "current_turn.last_progress_at" | "current_turn.started_at"
+        "current_turn.last_progress_at" | "current_turn.started_at" | "semantic_event.observed_at"
     ) {
         return None;
     }
@@ -39,9 +40,16 @@ fn metadata_fields(reason: &str, fields: &Map<String, Value>) -> Option<QuietMet
 }
 
 pub(crate) fn diagnostic_for_board(fields: &Map<String, Value>) -> Option<Value> {
-    let quiet = metadata_fields(fields.get("reason")?.as_str()?, fields)?;
-    let mut value = serde_json::to_value(quiet).ok()?;
-    value["reason"] = json!(REASON);
+    let reason = fields.get("reason")?.as_str()?;
+    let mut value = if reason == "completion_evidence_pending" {
+        json!({})
+    } else {
+        serde_json::to_value(metadata_fields(reason, fields)?).ok()?
+    };
+    value["reason"] = json!(reason);
+    if let Some(candidate) = super::completion_diagnostic::candidate_reason(fields) {
+        value["completion_candidate_reason"] = json!(candidate);
+    }
     Some(value)
 }
 
@@ -53,13 +61,21 @@ pub(crate) fn notification_maybe_idle(state: &TurnState) -> bool {
             && state.last_turn.is_none())
         || (matches!(state.phase, TurnPhase::Working | TurnPhase::Unknown)
             && state.source.confidence == Confidence::Inferred
-            && state.diagnostic.as_ref().and_then(metadata).is_some())
+            && state.diagnostic.as_ref().is_some_and(|diagnostic| {
+                diagnostic.reason == REASON && metadata(diagnostic).is_some()
+            }))
 }
 
 /// Read-only projection also heals old snapshots on the first post-upgrade
 /// read; polling does not rewrite the journal, revision, or progress clock.
 pub(super) fn project(record: &SessionRecord, state: &mut TurnState, at: &str) {
-    if record.agent != "codex" || state.phase != TurnPhase::Working {
+    if record.agent != "codex"
+        || state.phase != TurnPhase::Working
+        || state
+            .diagnostic
+            .as_ref()
+            .is_some_and(|diagnostic| diagnostic.reason == "completion_evidence_pending")
+    {
         return;
     }
     let Some(current) = state

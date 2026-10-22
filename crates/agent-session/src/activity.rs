@@ -42,6 +42,7 @@ use registration::{
 };
 #[path = "activity/completion_admission.rs"]
 mod completion_admission;
+mod completion_diagnostic;
 #[path = "activity/completion_receipts.rs"]
 mod completion_receipts;
 mod stream_diagnostic;
@@ -454,6 +455,9 @@ pub(crate) struct TurnEvent {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) completion_candidate: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) completion_candidate_reason:
+        Option<agent_hook::stop_completion::CompletionCandidateReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) failure_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) attention_id: Option<String>,
@@ -530,6 +534,7 @@ pub(crate) fn ingest_codex_app_server_failure_with_kind(
             attention_correlation_ambiguous: false,
             attention_correlation_exact: false,
             completion_candidate: false,
+            completion_candidate_reason: None,
             confidence: Confidence::Authoritative,
             // `provider_hook` is the stable v1 wire value for authoritative,
             // provider-structured evidence, including the app-server protocol.
@@ -596,6 +601,7 @@ pub(crate) fn ingest_codex_app_server_attention(
             attention_correlation_ambiguous: false,
             attention_correlation_exact: true,
             completion_candidate: false,
+            completion_candidate_reason: None,
             confidence: Confidence::Authoritative,
             // `provider_hook` is the stable v1 wire value for all structured
             // provider evidence, including the app-server protocol.
@@ -1208,15 +1214,7 @@ fn semantic_event_key(event: &TurnEvent) -> String {
         event.provider.as_str(),
         event.provider_session_id.as_deref().unwrap_or(""),
         event.provider_turn_id.as_deref().unwrap_or(""),
-        match event.kind {
-            TurnEventKind::TurnStarted => "turn_started",
-            TurnEventKind::AttentionRequested => "attention_requested",
-            TurnEventKind::AttentionCleared => "attention_cleared",
-            TurnEventKind::Progress => "progress",
-            TurnEventKind::StopObserved => "stop_observed",
-            TurnEventKind::TurnCompleted => "turn_completed",
-            TurnEventKind::TurnFailed => "turn_failed",
-        },
+        turn_event_kind_name(&event.kind),
         event.attention_kind.as_deref().unwrap_or(""),
         correlated_attention_id,
     ] {
@@ -1225,6 +1223,9 @@ fn semantic_event_key(event: &TurnEvent) -> String {
     }
     if event.kind == TurnEventKind::StopObserved {
         digest.update([u8::from(event.completion_candidate)]);
+        if let Some(reason) = event.completion_candidate_reason {
+            digest.update(serde_json::to_vec(&reason).expect("bounded completion reason"));
+        }
     }
     format!("sha256:{}", hex_digest(digest.finalize()))
 }
@@ -2822,10 +2823,7 @@ fn ingest_event_with_lock(
         });
         document.state.diagnostic = (event.kind == TurnEventKind::StopObserved
             && document.state.current_turn.is_some())
-        .then(|| ActivityDiagnosticView {
-            reason: "completion_evidence_pending".to_string(),
-            extra: Map::new(),
-        });
+        .then(|| completion_diagnostic::pending(&event));
         document.state.shadow_observation = None;
         document.last_semantic_event = Some(semantic_key);
         document.last_semantic_event_at = Some(received_at.clone());

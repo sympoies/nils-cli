@@ -2,6 +2,20 @@ use super::*;
 use jiff::Zoned;
 
 pub(super) fn validate_event(event: &TurnEvent, admission: EventAdmission) -> Result<(), CliError> {
+    if let Some(reason) = event.completion_candidate_reason
+        && (event.provider != "claude"
+            || event.kind != TurnEventKind::StopObserved
+            || event.source_kind != SourceKind::ProviderHook
+            || event.confidence != Confidence::Observed
+            || event.completion_candidate
+                != (reason == agent_hook::stop_completion::CompletionCandidateReason::Candidate))
+    {
+        return Err(CliError::data(
+            "activity-completion-candidate-invalid",
+            "completion reason requires a consistent observed Claude Stop",
+            None,
+        ));
+    }
     if event.completion_candidate
         && !(event.provider == "claude"
             && event.kind == TurnEventKind::StopObserved

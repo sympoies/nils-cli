@@ -38,9 +38,11 @@ pub mod lineage;
 mod maintenance;
 #[doc(hidden)]
 pub mod metadata;
+mod prompt_delivery;
 mod provider_history;
 #[doc(hidden)]
 pub mod provider_prompt;
+use prompt_delivery::{deliver_claude_structured_prompt_locked, paste_prompt_file};
 mod restart;
 mod retitle;
 mod retitle_v3;
@@ -52,7 +54,7 @@ use runtime_teardown::tmux_kill_identity_with_timeout;
 use stable_executable::resolve_agent_session_executable;
 use startup::start_interactive_tmux;
 pub(crate) mod send;
-use send::input::{deliver_claude_structured_prompt_locked, send_input_unlocked};
+use send::input::send_input_unlocked;
 mod send_guard;
 mod send_submit;
 use send::{SendResult, load_and_paste_buffer_with_timeout, send_to_session};
@@ -4250,64 +4252,6 @@ pub fn paste_prompt(
         Path::new(prompt_file),
         PANE_PASTE_READY_DEADLINE,
     )
-}
-
-/// Deliver one staged prompt file into the session pane and submit it. The
-/// caller owns the file so that both session startup and the post-start
-/// structured prompt route share exactly one hardened delivery, and it owns the
-/// pane-ready deadline because a request-bound caller must answer its client
-/// sooner than a launch may wait.
-fn paste_prompt_file(
-    tmux_bin: &Path,
-    record: &SessionRecord,
-    prompt_file: &Path,
-    pane_ready_deadline: Duration,
-) -> Result<PromptDeliveryObservation, CliError> {
-    let buffer_name = format!("{}-prompt", record.id);
-    let target = format!("{}:0.0", record.tmux_session);
-
-    // The caller's fixed pre-paste delay is only a guess at provider startup.
-    // Confirm the pane has actually been drawn before pasting: bytes delivered
-    // while the launch shell still owns the tty are echoed into scrollback and
-    // lost, and the single-Enter recovery cannot restore a prompt that never
-    // reached the provider's input at all.
-    await_pane_drawn_before_paste(tmux_bin, &target, pane_ready_deadline);
-
-    // A drawn pane is still not proof that the provider reads stdin yet: Claude
-    // Code parks its cursor on the input line before it accepts input. Ordinary
-    // starts may therefore use a pane digest to prove that the first paste was
-    // ignored and retry it while no submit key has been sent.
-    let before = capture_pane_digest(tmux_bin, &target);
-    load_and_paste_buffer(tmux_bin, &buffer_name, &target, prompt_file)
-        .map_err(prompt_delivery_failure)?;
-
-    // The initial prompt is submitted; `send` deliberately leaves this to
-    // an explicit `--key enter`. Tmux confirms that it wrote the paste bytes,
-    // but provider TUIs can still be processing the bracketed paste when an
-    // immediately adjacent Enter arrives. Keep the key a separate command and
-    // give both Codex and Claude one bounded settle interval first.
-    thread::sleep(POST_PASTE_KEY_SETTLE_DELAY);
-    let after = capture_pane_digest(tmux_bin, &target);
-    let composer = PromptComposerObservation {
-        state: match (before, after) {
-            (Some(before), Some(after)) if before == after => "unchanged_after_paste",
-            (Some(_), Some(_)) => "changed_after_paste",
-            _ => "unavailable",
-        },
-        proof: "tmux-pane-digest-before-submit",
-    };
-    if pane_ignored_paste(before, after) {
-        load_and_paste_buffer(tmux_bin, &buffer_name, &target, prompt_file)
-            .map_err(prompt_delivery_failure)?;
-        thread::sleep(POST_PASTE_KEY_SETTLE_DELAY);
-    }
-    let mut enter = ProcessCommand::new(tmux_bin);
-    enter.arg("send-keys").arg("-t").arg(&target).arg("Enter");
-    run_status(enter, "tmux send-keys")?;
-    Ok(PromptDeliveryObservation {
-        schema_version: "agent-session.prompt-delivery-observation.v1",
-        composer,
-    })
 }
 
 /// Parse `#{cursor_y}|#{cursor_x}` from a tmux `display-message` reply. `None`

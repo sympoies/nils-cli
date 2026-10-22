@@ -167,13 +167,32 @@ Required fields:
 
 Optional allowlisted fields are `provider_session_id`, `provider_turn_id`,
 `failure_reason`, `attention_id`, `attention_kind`, `source_kind`, and
-`provider_time`, and optional `completion_candidate`. The latter is admitted only
+`provider_time`, optional `completion_candidate_reason`, and optional
+`completion_candidate`. These completion fields are admitted only
 on observed Claude provider-hook `stop_observed` events and contains no raw hook
 payload. Unknown
 keys fail parsing. Identifiers are bounded, non-empty, and control-free.
 `attention_requested` requires an opaque correlation id and one of `approval`,
 `clarification`, `authentication`, or `other`; `attention_cleared` requires the
 matching id.
+
+`completion_candidate_reason` is a content-free Claude Stop classification:
+`candidate`, `stop_hook_active`, `stop_hook_active_missing`,
+`stop_hook_active_invalid`, `background_tasks_present`,
+`background_tasks_missing`, or `background_tasks_invalid`. Only `candidate`
+may accompany `completion_candidate: true`. Missing fields do not prove the
+absence of continuing hooks or background work. New producers and consumers
+must be upgraded together before using this optional event field.
+
+When completion evidence remains pending for 300 seconds after the latest Stop
+or provider progress, every harness projects `phase: unknown`, inferred
+confidence, and diagnostic reason `completion_evidence_missing` in read views.
+The diagnostic includes the bounded quiet threshold, evidence timestamp, signal
+name, and optional candidate reason. Pending attention takes precedence.
+Reads leave activity snapshots, journals, revision, and completion history
+unchanged; control admission and lease renewal retain the stored working state.
+Fresh progress removes this uncertainty, and an admitted completion still
+produces normal waiting state. This rule does not infer completion or attention.
 
 `failure_reason` is valid only on an authoritative `turn_failed` event and is
 limited to `usage_exhausted`, `authentication`, `organization`, `billing`,
@@ -243,8 +262,9 @@ recovery; a bare completion or Stop cannot supply the missing binding.
 
 Existing stuck snapshots recover on their first view read, including after
 daemon startup, when a retained completion still matches the latest progress.
-Without such proof, a Codex working view remains `working` with inferred
-confidence after 300 seconds without provider progress. The
+Without such proof or pending Stop completion evidence, a Codex working view
+remains `working` with inferred confidence after 300 seconds without provider
+progress. The
 `codex_progress_quiet` diagnostic reports `current_turn.last_progress_at` as
 the signal; snapshots lacking it use the observed turn start. Reads preserve
 stored provider history and use a stable quiet deadline.
@@ -338,10 +358,11 @@ therefore deserialize conservatively.
 Optional `diagnostic.reason` values are producer-owned allowlisted codes:
 `completion_evidence_pending`, `attention_authority_mismatch`,
 `provider_projection_unavailable`, `runtime_activity_unhealthy`,
-`activity_state_unavailable`, `interrupted_suspected`, and
-`codex_progress_quiet`. The quiet reason may include only the bounded
+`activity_state_unavailable`, `interrupted_suspected`, `codex_progress_quiet`,
+and `completion_evidence_missing`. Quiet diagnostics include only bounded
 `quiet_threshold_seconds`, `quiet_since`, and `quiet_signal` fields described
-above; it never proves completion, clears attention, or authorizes input.
+above, plus the optional allowlisted `completion_candidate_reason`. They never
+prove completion, clear attention, or authorize input.
 Free-form provider or runtime errors never cross the session-view or stream
 boundary.
 
