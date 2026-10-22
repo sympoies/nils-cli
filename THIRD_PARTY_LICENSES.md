@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `4f359a638da5fa9e96d16aa5c7b37e158a58ff0578a74aa56f84f4fdc169d3a3`
+- Cargo.lock SHA256: `10a0a1f436ac84cfa220461d1f0d6020c46d72171e30ff58d08c86d9b274dcd6`
 - Third-party crates (`source != null`): 504
 - Workspace crates (`source == null`, excluded below): 41
 
@@ -255,7 +255,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | kqueue-sys | 1.1.2 | MIT | crates.io |
 | kurbo | 0.13.1 | Apache-2.0 OR MIT | crates.io |
 | lazy_static | 1.5.0 | MIT OR Apache-2.0 | crates.io |
-| libc | 0.2.190 | MIT OR Apache-2.0 | crates.io |
+| libc | 0.2.191 | MIT OR Apache-2.0 | crates.io |
 | libgit2-sys | 0.18.8+1.9.7 | MIT OR Apache-2.0 | crates.io |
 | libm | 0.2.16 | MIT | crates.io |
 | libsqlite3-sys | 0.38.2 | MIT | crates.io |
@@ -273,7 +273,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | micromap | 0.3.0 | MIT | crates.io |
 | mime | 0.3.17 | MIT OR Apache-2.0 | crates.io |
 | mime_guess | 2.0.5 | MIT | crates.io |
-| minijinja | 3.0.0 | Apache-2.0 | crates.io |
+| minijinja | 3.0.2 | Apache-2.0 | crates.io |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | crates.io |
 | mio | 1.2.1 | MIT | crates.io |
 | moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 | crates.io |
@@ -403,7 +403,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | serde_with_macros | 3.24.0 | MIT OR Apache-2.0 | crates.io |
 | serde_yaml_ng | 0.10.0 | MIT | crates.io |
 | sha1 | 0.10.6 | MIT OR Apache-2.0 | crates.io |
-| sha2 | 0.11.0 | MIT OR Apache-2.0 | crates.io |
+| sha2 | 0.11.1 | MIT OR Apache-2.0 | crates.io |
 | sharded-slab | 0.1.7 | MIT | crates.io |
 | shell-words | 1.1.1 | MIT/Apache-2.0 | crates.io |
 | shlex | 2.0.1 | MIT OR Apache-2.0 | crates.io |
@@ -444,7 +444,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | tinystr | 0.8.3 | Unicode-3.0 | crates.io |
 | tinyvec | 1.11.0 | Zlib OR Apache-2.0 OR MIT | crates.io |
 | tinyvec_macros | 0.1.1 | MIT OR Apache-2.0 OR Zlib | crates.io |
-| tokio | 1.53.2 | MIT | crates.io |
+| tokio | 1.54.1 | MIT | crates.io |
 | tokio-macros | 2.7.0 | MIT | crates.io |
 | tokio-rustls | 0.26.4 | MIT OR Apache-2.0 | crates.io |
 | tokio-tungstenite | 0.29.0 | MIT | crates.io |
@@ -563,6 +563,6 @@ This file documents third-party Rust crate licenses used by this workspace.
 
 ## Locked Runtime Backend
 
-- Peekaboo `v4.8.0` is licensed under `MIT`.
-- Source and license: <https://github.com/openclaw/Peekaboo/blob/v4.8.0/LICENSE>
+- Peekaboo `v4.9.6` is licensed under `MIT`.
+- Source and license: <https://github.com/openclaw/Peekaboo/blob/v4.9.6/LICENSE>
 - The nils-cli package does not embed Peekaboo. `macos-agent backend install` downloads the exact official release assets named and SHA256-locked in `crates/macos-agent/peekaboo-lock.json` into user-scoped storage.

@@ -3,7 +3,7 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `4f359a638da5fa9e96d16aa5c7b37e158a58ff0578a74aa56f84f4fdc169d3a3`
+- Cargo.lock SHA256: `10a0a1f436ac84cfa220461d1f0d6020c46d72171e30ff58d08c86d9b274dcd6`
 - Third-party crates (`source != null`): 504
 
 ## Notice Extraction Policy
@@ -1740,7 +1740,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### libc 0.2.190
+### libc 0.2.191
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -1898,7 +1898,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### minijinja 3.0.0
+### minijinja 3.0.2
 
 - License: `Apache-2.0`
 - Source: `crates.io`
@@ -3010,7 +3010,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### sha2 0.11.0
+### sha2 0.11.1
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -3364,7 +3364,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-MIT.md`
   - `LICENSE-ZLIB.md`
 
-### tokio 1.53.2
+### tokio 1.54.1
 
 - License: `MIT`
 - Source: `crates.io`
@@ -4372,9 +4372,9 @@ This file documents third-party notice-file discovery for Rust crates used by th
 
 ## Locked Runtime Backend Notice
 
-### Peekaboo v4.8.0
+### Peekaboo v4.9.6
 
 - License: `MIT`
-- Source: <https://github.com/openclaw/Peekaboo/tree/v4.8.0>
-- License text: <https://github.com/openclaw/Peekaboo/blob/v4.8.0/LICENSE>
+- Source: <https://github.com/openclaw/Peekaboo/tree/v4.9.6>
+- License text: <https://github.com/openclaw/Peekaboo/blob/v4.9.6/LICENSE>
 - Distribution model: official release assets are downloaded on demand, verified against the immutable lock, and are not embedded in nils-cli release artifacts.
