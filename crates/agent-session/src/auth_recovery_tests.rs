@@ -717,3 +717,49 @@ fn auth_guard_regression_printable_key_is_quarantined_in_cli_send() {
 fn auth_guard_regression_printable_key_is_quarantined_in_raw_input() {
     assert_printable_key_quarantine(true);
 }
+
+#[test]
+fn auth_recovery_unrelated_capability_does_not_capture_or_restart() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = failed_runtime(&context, tmp.path(), &tmux, true);
+    assert!(crate::claude_account::generation::baseline(&record).is_some());
+    fs::write(
+        tmp.path().join("inventory.json"),
+        serde_json::to_vec(&json!({
+            "schema_version": "agent-session.account-broker.v2", "provider": "claude",
+            "capabilities": ["unrelated_v1"],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let broker_before = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
+    let before = log(tmp.path());
+
+    let error = crate::claude_account::generation::published("alpha").unwrap_err();
+    assert_eq!(error.code(), "claude-publication-unavailable");
+    assert_eq!(error.details().unwrap()["reason"], "capability_missing");
+    let mut compatibility_launch = record.clone();
+    crate::claude_account::generation::capture(&mut compatibility_launch, "alpha");
+    assert!(crate::claude_account::generation::baseline(&compatibility_launch).is_none());
+    assert!(
+        !compatibility_launch
+            .extra
+            .contains_key("claude_launch_publication")
+    );
+    tick(&context, &record, &tmux, 100);
+    assert_eq!(recovery_receipt(&context)["state"], "blocked");
+    assert_eq!(
+        recovery_receipt(&context)["last_reason"],
+        "capability_missing"
+    );
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
+    let calls = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
+    assert!(!calls[broker_before.len()..].contains("credential-state"));
+    let effects = log(tmp.path());
+    assert!(!effects[before.len()..].contains("kill-session"));
+    assert!(!effects[before.len()..].contains("new-session"));
+}

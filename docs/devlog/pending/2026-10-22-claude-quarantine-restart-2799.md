@@ -8,7 +8,8 @@
   quarantined.
 - Cover replacement quarantine before readiness and after readiness failure,
   activity-only quarantine when the incident store is full, printable keys,
-  and equal/lower generations with different publication snapshots.
+  equal/lower generations with different publication snapshots, and rejection
+  of unrelated broker capabilities.
 
 ### Why / context
 
@@ -18,11 +19,13 @@
 ### Evidence
 
 - Both new restart regressions first failed with auth-quarantined at admission
-  on the previous PR head. All 32 focused restart/recovery tests and three
+  on the previous PR head. All 33 focused restart/recovery tests and three
   publication-generation tests pass, including exact exit bytes, both force
   modes and external input refusal.
 - All six added admission regressions fail when their guards are removed;
   the generation boundary test fails when strict ordering permits equality.
+  A non-empty unrelated capability list also fails when any capability is
+  accepted; the exact capability check passes after restoration.
   Production guards were restored before successful validation.
 - Scoped Clippy with warnings denied, strict file-size audit, documentation
   audits, Markdown lint and devlog fragment validation pass.
