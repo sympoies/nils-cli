@@ -12,9 +12,12 @@ fn word_wrapped_paste_only_refusal_restores_empty_composer() {
     let text = payload();
     assert_eq!(text.len(), 314);
     let fixture = Fixture::new("claude");
-    live(&fixture, &["bare-composer", "wrap-80", "word-wrap"]);
+    live(
+        &fixture,
+        &["bare-composer", "wrap-80", "word-wrap", "start-after-paste"],
+    );
     let output = guarded_text(&fixture, &text);
-    let receipt = details(&output, "send-composer-unobservable");
+    let receipt = details(&output, "send-session-not-idle");
     assert_eq!(receipt["stage"], "submit");
     assert_eq!(receipt["pasted"], true);
     assert_eq!(receipt["submitted"], false);
@@ -130,7 +133,8 @@ fn captured_word_wrap_refusals_restore_empty_or_draft_only() {
         let snapshot = serde_json::json!({
             "input": format!("{paste}{draft}"),
             "pane": pane,
-            "prefix_end": [if index == 0 { 15 } else { 7 }, 13 + rows.len() - 1]
+            "prefix_end": [if index == 0 { 15 } else { 7 }, 13 + rows.len() - 1],
+            "before_end": [if index == 0 { 14 } else { 6 }, 13 + rows.len() - 1]
         });
         std::fs::write(
             fixture.root().join("captured-layout"),
@@ -138,6 +142,15 @@ fn captured_word_wrap_refusals_restore_empty_or_draft_only() {
         )
         .unwrap();
         let output = guarded_text(&fixture, &paste);
+        if index == 0 {
+            assert_eq!(output.code, 0, "{}", output.stdout_text());
+            assert_eq!(
+                submissions(&fixture),
+                [serde_json::to_string(&paste).unwrap()]
+            );
+            assert_eq!(composer(&fixture), "");
+            continue;
+        }
         let receipt = details(&output, "send-composer-unobservable");
         assert_eq!(receipt["cleared"], true, "case {index}: {receipt}");
         assert_eq!(composer(&fixture), draft);
@@ -195,7 +208,10 @@ fn review_f2_exact_single_row_with_trailing_spaces_uses_only_backspace() {
 #[test]
 fn review_f3_wrapped_cleanup_bounds_tmux_roundtrips_without_timing_assertions() {
     let fixture = Fixture::new("claude");
-    live(&fixture, &["bare-composer", "wrap-80", "word-wrap"]);
+    live(
+        &fixture,
+        &["bare-composer", "wrap-80", "word-wrap", "start-after-paste"],
+    );
     let output = guarded_text(&fixture, &payload());
     let calls = fixture.calls();
     let paste = calls
@@ -207,10 +223,7 @@ fn review_f3_wrapped_cleanup_bounds_tmux_roundtrips_without_timing_assertions() 
         after_paste <= 16,
         "{after_paste} post-paste tmux round trips: {calls:?}"
     );
-    assert_eq!(
-        details(&output, "send-composer-unobservable")["cleared"],
-        true
-    );
+    assert_eq!(details(&output, "send-session-not-idle")["cleared"], true);
     assert_eq!(composer(&fixture), "");
 }
 

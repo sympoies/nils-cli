@@ -260,9 +260,9 @@ fn wrapped_single_line_refusal_clears_only_the_pasted_text() {
     let text = "x".repeat(190);
     for provider in ["claude", "codex"] {
         let fixture = Fixture::new(provider);
-        live(&fixture, &["bare-composer", "wrap-80"]);
+        live(&fixture, &["bare-composer", "wrap-80", "start-after-paste"]);
         let output = guarded_text(&fixture, &text);
-        let details = details(&output, "send-composer-unobservable");
+        let details = details(&output, "send-session-not-idle");
         assert_eq!(details["stage"], "submit");
         assert_eq!(details["pasted"], true);
         assert_eq!(details["submitted"], false);
@@ -317,9 +317,9 @@ fn stalled_backspace_requires_a_fresh_observation() {
 fn known_paste_disambiguates_claude_wrap_boundary_spaces() {
     let text = format!("{} {}", "x".repeat(77), "y".repeat(100));
     let fixture = Fixture::new("claude");
-    live(&fixture, &["bare-composer", "wrap-80"]);
+    live(&fixture, &["bare-composer", "wrap-80", "start-after-paste"]);
     let output = guarded_text(&fixture, &text);
-    let details = details(&output, "send-composer-unobservable");
+    let details = details(&output, "send-session-not-idle");
     assert_eq!(details["cleared"], true);
     assert_eq!(details["remaining_input"], "empty");
     assert_eq!(details["pasted_text_present"], false);
@@ -330,3 +330,5 @@ fn known_paste_disambiguates_claude_wrap_boundary_spaces() {
 
 #[path = "rollback.rs"]
 mod rollback;
+#[path = "wrapped_submit.rs"]
+mod wrapped_submit;
