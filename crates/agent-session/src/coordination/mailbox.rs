@@ -21,6 +21,8 @@ use super::{
 
 const MESSAGE_VERSION: &str = "agent-session.message.v1";
 pub(super) const BODY_MAX_BYTES: usize = 16 * 1024;
+pub(super) const BODY_SOURCE_INVALID_MESSAGE: &str =
+    "body file must be a readable regular file; symbolic links are not supported";
 const DEFAULT_EXPIRY_SECS: i64 = 24 * 60 * 60;
 pub(super) const MAX_EXPIRY_SECS: i64 = 7 * 24 * 60 * 60;
 pub(super) const MAX_SESSION_MESSAGES: usize = 256;
@@ -1155,8 +1157,8 @@ pub(crate) fn read_body(path: &Path) -> Result<String, CliError> {
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(path)
-        .map_err(|_| body_invalid())?;
-    let metadata = file.metadata().map_err(|_| body_invalid())?;
+        .map_err(|_| body_source_invalid())?;
+    let metadata = file.metadata().map_err(|_| body_source_invalid())?;
     if !metadata.is_file() || metadata.len() as usize > BODY_MAX_BYTES {
         return Err(if metadata.len() as usize > BODY_MAX_BYTES {
             CliError::data(
@@ -1165,14 +1167,14 @@ pub(crate) fn read_body(path: &Path) -> Result<String, CliError> {
                 None,
             )
         } else {
-            body_invalid()
+            body_source_invalid()
         });
     }
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
     file.by_ref()
         .take((BODY_MAX_BYTES + 1) as u64)
         .read_to_end(&mut bytes)
-        .map_err(|_| body_invalid())?;
+        .map_err(|_| body_source_invalid())?;
     if bytes.len() > BODY_MAX_BYTES {
         return Err(CliError::data(
             "mailbox-body-too-large",
@@ -1341,6 +1343,14 @@ fn parse_duration(value: &str) -> Result<u64, CliError> {
                 None,
             )
         })
+}
+
+fn body_source_invalid() -> CliError {
+    CliError::data(
+        "mailbox-body-source-invalid",
+        BODY_SOURCE_INVALID_MESSAGE,
+        None,
+    )
 }
 
 fn body_invalid() -> CliError {

@@ -36,6 +36,15 @@ JSON contract, stale target incarnation, permission drift, corrupt state,
 symlink escape, lock timeout, and quota/rate violations have distinct
 content-free errors.
 
+CLI `--body-file` inputs must be readable regular files opened without following
+symbolic links. Open, metadata, read, and non-regular-source failures return
+`mailbox-body-source-invalid`; this includes Linux `/proc/self/fd/N` memfd paths
+because they require following a symbolic link. Diagnostics never include the
+source path or file contents. Empty, invalid UTF-8, or forbidden-control contents
+return `mailbox-body-invalid`, while bodies over 16 KiB return
+`mailbox-body-too-large`. Service submission preserves these codes with
+`retryable: false` recovery metadata.
+
 ### Same-session resume continuity
 
 Every mailbox read and mutation stays fenced to the exact current recipient

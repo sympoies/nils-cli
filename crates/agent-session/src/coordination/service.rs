@@ -212,6 +212,10 @@ pub(crate) fn recovery(error: CliError) -> CliError {
             "mailbox-service-forbidden",
             "service submission accepts direct loopback connections only",
         ),
+        "mailbox-body-source-invalid" => (
+            "mailbox-body-source-invalid",
+            mailbox::BODY_SOURCE_INVALID_MESSAGE,
+        ),
         "mailbox-body-invalid" => (
             "mailbox-body-invalid",
             "mailbox body is empty, invalid UTF-8 or contains forbidden controls",
