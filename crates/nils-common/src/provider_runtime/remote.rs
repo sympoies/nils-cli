@@ -23,6 +23,12 @@ pub trait AccessOnlyAdapter {
     /// Keep only the fields a replica may hold. Must drop every refresh token.
     fn sanitize_access_only(&self, value: Value) -> Value;
 
+    /// Validate provider-owned metadata before sanitization or local writes.
+    /// The transport never includes rejected metadata in diagnostics.
+    fn validate_metadata(&self, _value: &Value, _selector: &RemoteSelector) -> bool {
+        true
+    }
+
     /// Whether a sanitized payload carries a usable access token.
     fn has_access_token(&self, value: &Value) -> bool;
 }
@@ -163,6 +169,17 @@ fn sanitize_output(
             details: details(),
             exit_code: 1,
         })?;
+    if !adapter.validate_metadata(&imported, selector) {
+        return Err(RemotePullFailure {
+            code: "remote-export-invalid-generation",
+            message: format!(
+                "{}: remote export generation context is invalid",
+                adapter.log_prefix()
+            ),
+            details: details(),
+            exit_code: 1,
+        });
+    }
     let imported = adapter.sanitize_access_only(imported);
     if !adapter.has_access_token(&imported) {
         return Err(RemotePullFailure {
