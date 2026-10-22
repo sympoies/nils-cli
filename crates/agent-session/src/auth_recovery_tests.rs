@@ -496,3 +496,224 @@ fn auth_quarantined_operator_restart_without_force_preserves_conversation() {
 fn auth_quarantined_operator_restart_with_force_preserves_conversation() {
     assert_quarantined_operator_restart(true);
 }
+
+fn assert_replacement_quarantine(become_ready: bool) {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = failed_runtime(&context, tmp.path(), &tmux, true);
+    tick(&context, &record, &tmux, 100);
+    publish(tmp.path(), 2);
+    fs::write(tmp.path().join("exit-on-probe"), "").unwrap();
+    let watcher = on_relaunch(
+        &context,
+        &launch_id(&record).unwrap(),
+        move |context, launch| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while recovery_receipt(context)["state"] != "awaiting_ready"
+                && Instant::now() < deadline
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            let receipt = recovery_receipt(context);
+            assert_eq!(receipt["state"], "awaiting_ready");
+            assert_eq!(receipt["new_runtime_incarnation"], launch);
+            let replacement = load_session_record(context, ID).unwrap();
+            assert_eq!(launch_id(&replacement).as_deref(), Some(launch));
+            if become_ready {
+                let error =
+                    crate::auth_incident::recovery::ensure_input_allowed(context, &replacement)
+                        .expect_err("replacement must stay quarantined before readiness");
+                assert_eq!(error.code(), "auth-quarantined");
+                session_ready(context, launch);
+            }
+        },
+    );
+
+    tick(&context, &record, &tmux, 115);
+    watcher.join().unwrap();
+
+    let replacement = load_session_record(&context, ID).unwrap();
+    let receipt = recovery_receipt(&context);
+    let before = log(tmp.path());
+    if become_ready {
+        assert_eq!(receipt["state"], "runtime_resumed");
+        assert!(
+            crate::auth_incident::recovery::ensure_input_allowed(&context, &replacement).is_ok()
+        );
+    } else {
+        assert_eq!(receipt["state"], "blocked");
+        assert_eq!(receipt["last_reason"], "runtime_not_ready");
+        assert_eq!(
+            receipt["new_runtime_incarnation"],
+            launch_id(&replacement).unwrap()
+        );
+        let error = crate::auth_incident::recovery::ensure_input_allowed(&context, &replacement)
+            .expect_err("failed readiness must keep replacement quarantined");
+        assert_eq!(error.code(), "auth-quarantined");
+        let error = crate::send_input_serialized(
+            &context,
+            &replacement,
+            Some("synthetic prompt"),
+            &[SpecialKey::Enter],
+            &tmux,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "auth-quarantined");
+    }
+    assert!(!log(tmp.path())[before.len()..].contains("paste-buffer"));
+    assert!(!log(tmp.path())[before.len()..].contains("send-keys"));
+}
+
+#[test]
+fn auth_guard_regression_replacement_holds_until_readiness_completes() {
+    assert_replacement_quarantine(true);
+}
+
+#[test]
+fn auth_guard_regression_replacement_survives_blocked_runtime_not_ready() {
+    assert_replacement_quarantine(false);
+}
+
+fn assert_activity_capacity_quarantine(structured: bool) {
+    let tmp = tempfile::tempdir().unwrap();
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    seed_exited_session(&context, tmp.path());
+    let launch = running_session(&context, &tmux);
+    session_ready(&context, &launch);
+    let record = load_session_record(&context, ID).unwrap();
+    // Fill the store through its observation API with unsettled incidents
+    // belonging to prior runtimes. Discover its capacity without coupling
+    // the regression to the configured incident count.
+    for n in 0..64 {
+        let mut prior = record.clone();
+        let runtime = prior.runtime.as_mut().unwrap();
+        runtime.launch_id = format!("prior-auth-runtime-{n}");
+        runtime.generation = n + 10;
+        crate::write_session_record(&context, &prior).unwrap();
+        crate::auth_incident::observe(
+            &context,
+            &prior,
+            &format!("prior-auth-failure-{n}"),
+            crate::auth_incident::AuthSource::ClaudeStopFailure,
+            crate::activity::Confidence::Authoritative,
+            &jiff::Timestamp::now().to_string(),
+        )
+        .unwrap();
+        if crate::auth_incident::detection_health(&context, &prior).as_deref()
+            == Some("degraded_queue_capacity")
+        {
+            break;
+        }
+    }
+    crate::write_session_record(&context, &record).unwrap();
+    assert_eq!(
+        crate::auth_incident::detection_health(&context, &record).as_deref(),
+        Some("degraded_queue_capacity")
+    );
+    assert!(crate::auth_incident::view(&context, &record).is_none());
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_ok());
+    claude_hook(
+        &context,
+        &launch,
+        json!({
+            "hook_event_name": "StopFailure", "error": "authentication_failed",
+            "session_id": CONVERSATION,
+        }),
+    );
+    // The bounded store cannot commit this runtime's incident. Its activity
+    // evidence alone must fence both external prompt paths.
+    assert!(crate::auth_incident::view(&context, &record).is_none());
+    assert_eq!(
+        crate::auth_incident::detection_health(&context, &record).as_deref(),
+        Some("degraded_queue_capacity")
+    );
+    assert_eq!(
+        crate::activity::state_for_view(&context, &record)
+            .unwrap()
+            .last_turn
+            .unwrap()
+            .provider_failure_kind(),
+        Some("authentication")
+    );
+    let before = log(tmp.path());
+    let error = if structured {
+        crate::deliver_claude_structured_prompt_locked(
+            &context,
+            ID,
+            &launch,
+            "synthetic prompt",
+            &tmux,
+        )
+        .err()
+        .expect("structured prompt must be refused")
+    } else {
+        crate::send::send_to_session(
+            &context,
+            crate::send::unguarded_args(
+                ID.into(),
+                Some("synthetic prompt".into()),
+                vec![SpecialKey::Enter],
+                true,
+                tmux,
+            ),
+        )
+        .unwrap_err()
+    };
+    assert_eq!(error.code(), "auth-quarantined");
+    assert!(!log(tmp.path())[before.len()..].contains("paste-buffer"));
+    assert!(!log(tmp.path())[before.len()..].contains("send-keys"));
+}
+
+#[test]
+fn auth_guard_regression_activity_blocks_cli_when_incident_store_is_full() {
+    assert_activity_capacity_quarantine(false);
+}
+
+#[test]
+fn auth_guard_regression_activity_blocks_structured_prompt_when_incident_store_is_full() {
+    assert_activity_capacity_quarantine(true);
+}
+
+fn assert_printable_key_quarantine(raw: bool) {
+    let tmp = tempfile::tempdir().unwrap();
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = failed_runtime(&context, tmp.path(), &tmux, false);
+    let parsed = <crate::cli::Cli as clap::Parser>::try_parse_from([
+        "agent-session",
+        "send",
+        ID,
+        "--key",
+        "x",
+    ])
+    .unwrap();
+    let crate::cli::Command::Send(mut args) = parsed.command else {
+        panic!("send command expected");
+    };
+    assert!(matches!(args.keys.as_slice(), [SpecialKey::Printable(_)]));
+    let before = log(tmp.path());
+    let error = if raw {
+        crate::send_input_serialized(&context, &record, None, &args.keys, &tmux).unwrap_err()
+    } else {
+        args.tmux_bin = Some(tmux);
+        args.allow_blocked = true;
+        crate::send::send_to_session(&context, args).unwrap_err()
+    };
+    assert_eq!(error.code(), "auth-quarantined");
+    assert!(!log(tmp.path())[before.len()..].contains("paste-buffer"));
+    assert!(!log(tmp.path())[before.len()..].contains("send-keys"));
+}
+
+#[test]
+fn auth_guard_regression_printable_key_is_quarantined_in_cli_send() {
+    assert_printable_key_quarantine(false);
+}
+
+#[test]
+fn auth_guard_regression_printable_key_is_quarantined_in_raw_input() {
+    assert_printable_key_quarantine(true);
+}

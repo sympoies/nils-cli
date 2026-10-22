@@ -1,5 +1,5 @@
 use super::*;
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 
 pub(crate) fn envelope(n: u64) -> Value {
     let version = json!({"authority_id":"10000000-0000-4000-8000-000000000001", "authority_epoch":"20000000-0000-4000-8000-000000000001", "generation":n.to_string()});
@@ -22,6 +22,14 @@ fn generation_order_is_same_account_host_authority_epoch_and_strictly_newer() {
     assert!(new.newer_than(&old));
     assert!(!old.newer_than(&new));
     assert!(!new.newer_than(&new));
+    // A different snapshot cannot turn an equal or lower generation into a
+    // newer publication. Keep the snapshot guard satisfied in both cases.
+    for generation in ["9", "8"] {
+        let mut other = new.clone();
+        other.version.generation = generation.into();
+        assert_ne!(other.snapshot_id, old.snapshot_id);
+        assert!(!other.newer_than(&old), "generation {generation}");
+    }
     for change in ["account", "host", "authority", "epoch", "snapshot"] {
         let mut other = new.clone();
         match change {
