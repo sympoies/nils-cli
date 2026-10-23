@@ -334,6 +334,7 @@ fn coordination_rule_cardinality_bounds_expensive_liveness_io() {
 }
 
 #[test]
+#[ignore = "wall-latency benchmark; non-required nightly signal (issue #1705)"]
 fn codex_apply_patch_target_binding_meets_dispatch_latency_budget() {
     let fixture = Fixture::new(ALLOW_POLICY);
     init_repository(&fixture.root);
