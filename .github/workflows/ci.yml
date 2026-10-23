@@ -7,7 +7,8 @@ on:
   pull_request:
   # A required merge queue runs every required check on its temporary merge
   # branch before landing the pull request. Linux consumes the combined-tree
-  # affected plan; release-only groups also run full Linux/macOS validation.
+  # affected plan; every group also compiles/lints macOS test targets.
+  # Release-only groups additionally run full Linux/macOS validation.
   merge_group:
   schedule:
     - cron: "23 5 * * *"
@@ -160,6 +161,58 @@ jobs:
           echo "release_only=${release_only}" >> "$GITHUB_OUTPUT"
           echo "release_only=${release_only}"
 
+  # PRs report this required context as skipped/success. Every queue group,
+  # including docs and release bumps, must compile/lint before test can pass.
+  macos_clippy:
+    if: always() && github.event_name == 'merge_group'
+    needs: changes
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Require change detection
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+        run: |
+          if [ "${CHANGES_RESULT}" != "success" ]; then
+            echo 'error: change detection did not succeed; macOS validation is blocked' >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Restore dependencies saved by the nightly full macOS lane on main.
+          # Queue refs are temporary, so saving their copies adds no reuse.
+          shared-key: macos-test
+          key: llvm-cov
+          save-if: false
+
+      - name: Compile and lint affected packages including integration tests
+        env:
+          NILS_CLI_MERGE_PLAN_PREPARE_METADATA: "1"
+        run: python3 scripts/ci/nils-cli-macos-clippy.py
+
+      - name: Upload macOS scope and validation receipt
+        if: always() && hashFiles('target/ci-macos-clippy/validation.json') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: merge-validation-macos-clippy
+          path: target/ci-macos-clippy
+
   cargo_deny:
     if: github.event_name != 'push' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     name: cargo-deny (advisories + bans)
@@ -181,7 +234,7 @@ jobs:
 
   test:
     if: always() && github.event_name != 'push' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
-    needs: [changes, full_validation]
+    needs: [changes, full_validation, macos_clippy]
     outputs:
       validation_scope: ${{ steps.validation.outputs.validation_scope }}
     runs-on: ubuntu-24.04
@@ -207,6 +260,16 @@ jobs:
         run: |
           if [ "${CHANGES_RESULT}" != "success" ]; then
             echo 'error: change detection did not succeed; Linux validation is blocked' >&2
+            exit 1
+          fi
+
+      - name: Require macOS queue compile and Clippy
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MACOS_CLIPPY_RESULT: ${{ needs.macos_clippy.result }}
+        run: |
+          if [ "${EVENT_NAME}" = "merge_group" ] && [ "${MACOS_CLIPPY_RESULT}" != "success" ]; then
+            echo 'error: macOS queue compile/Clippy did not succeed' >&2
             exit 1
           fi
 

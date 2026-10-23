@@ -274,6 +274,7 @@ jobs:
           # this job ran instrumented tests holds no llvm-cov-target
           # dependencies, so every run rebuilt ~400 crates (~6 min). A distinct
           # key lets main save a cache that includes them.
+          shared-key: macos-test
           key: llvm-cov
           # Only main saves. rust-cache stores dependencies, not workspace
           # crates, so a PR copy (~1 GB) adds nothing over main's and just
