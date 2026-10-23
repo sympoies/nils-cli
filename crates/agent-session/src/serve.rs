@@ -10178,8 +10178,7 @@ impl AttachBroker {
             let fifo = OpenOptions::new()
                 .read(true)
                 .custom_flags(libc::O_NONBLOCK)
-                .open(fifo_path)?;
-            // SAFETY: `fifo` owns a valid open descriptor and `AsyncFd` retains it unchanged.
+                .open(fifo_path)?; // SAFETY: `fifo` stays valid and owned by `AsyncFd`.
             unsafe { tokio::io::unix::AsyncFd::register(fifo) }.map_err(Into::into)
         })
         .await
