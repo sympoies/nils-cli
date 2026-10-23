@@ -179,6 +179,12 @@ JSON
     exit 0 ;;
   "api repos/acme/widgets/compare/"*)
     cat "${{TEST_INTEGRITY_DIFF:-/dev/null}}"; exit 0 ;;
+  "api repos/acme/widgets/pulls/7/files?"*)
+    cat "$TEST_PROVENANCE_DIR/page${{2##*page=}}.json"; exit $? ;;
+  "api repos/acme/upstream/git/commits/"*)
+    cat "$TEST_PROVENANCE_DIR/commit.json"; exit $? ;;
+  "api repos/acme/upstream/git/trees/"*)
+    cat "$TEST_PROVENANCE_DIR/tree.json"; exit $? ;;
   "api repos/acme/widgets/pulls/7") case "$*" in
     *'author:'*)
       if [ -n "${{TEST_INTEGRITY_METADATA:-}}" ]; then

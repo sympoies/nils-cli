@@ -1,6 +1,9 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+#[path = "provenance_import.rs"]
+mod provenance_import;
+
 const DIFF: &str = "diff --git a/tests/test_sample.py b/tests/test_sample.py\nindex 1111111..2222222 100644\n--- a/tests/test_sample.py\n+++ b/tests/test_sample.py\n@@ -1,2 +1,3 @@\n-def test_exact():\n-    assert result == 42\n+@pytest.mark.skip(reason='pending')\n+def test_exact():\n+    assert result is not None\n";
 
 fn integrity_fixture(body: &str, confirmation: &str, author: &str) -> StubEnv {
