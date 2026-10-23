@@ -44,7 +44,7 @@ pub fn assert_credential_absent(label: &str, haystack: &str, secret: &str) {
 #[track_caller]
 pub fn assert_credential_file_eq(label: &str, path: &std::path::Path, expected: &str) {
     let actual = std::fs::read_to_string(path)
-        .unwrap_or_else(|err| panic!("{label}: read {}: {err}", path.display()));
+        .unwrap_or_else(|err| panic!("{label}: credential file unreadable: {err}"));
     assert_credential_eq(label, &actual, expected);
 }
 
@@ -99,5 +99,14 @@ mod tests {
         assert_credential_file_eq("auth", &path, CANARY);
         let message = panic_text(|| assert_credential_file_eq("auth", &path, "different"));
         assert!(!message.contains(CANARY), "{message}");
+    }
+
+    #[test]
+    fn an_unreadable_file_reports_the_label_but_not_its_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing-auth.json");
+        let message = panic_text(|| assert_credential_file_eq("auth", &path, CANARY));
+        assert!(message.contains("auth"), "{message}");
+        assert!(!message.contains("missing-auth.json"), "{message}");
     }
 }
