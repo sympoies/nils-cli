@@ -9,6 +9,8 @@ pub(crate) struct Declaration {
     pub commit: String,
     pub mappings: Vec<Mapping>,
     pub adaptations: Vec<String>,
+    #[serde(default)]
+    pub additions: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -22,7 +24,7 @@ fn invalid() -> ForgeError {
     refusal(
         "provenance_import_invalid",
         "invalid provenance import declaration",
-        "Use one ## Provenance import section with repository owner/name, a full commit SHA, non-overlapping directory mappings and exact adaptation paths. See crates/forge-cli/docs/specs/test-change-admission-v1.md#provenance-imports.",
+        "Use one ## Provenance import section with repository owner/name, a full commit SHA, non-overlapping directory mappings and exact adaptation/addition paths. See crates/forge-cli/docs/specs/test-change-admission-v1.md#provenance-imports.",
     )
 }
 
@@ -97,6 +99,11 @@ pub(crate) fn parse(body: &str) -> Result<Option<Declaration>, ForgeError> {
             .iter()
             .any(|m| !prefix(&m.destination) || (!m.source.is_empty() && !prefix(&m.source)))
         || d.adaptations.iter().any(|p| !valid_path(p))
+        || d.additions.iter().any(|p| {
+            !valid_path(p)
+                || d.adaptations.contains(p)
+                || !d.mappings.iter().any(|m| p.starts_with(&m.destination))
+        })
     {
         return Err(invalid());
     }
@@ -109,7 +116,8 @@ pub(crate) fn parse(body: &str) -> Result<Option<Declaration>, ForgeError> {
         }
     }
     let unique: std::collections::BTreeSet<_> = d.adaptations.iter().collect();
-    if unique.len() != d.adaptations.len() {
+    let additions: std::collections::BTreeSet<_> = d.additions.iter().collect();
+    if unique.len() != d.adaptations.len() || additions.len() != d.additions.len() {
         return Err(invalid());
     }
     Ok(Some(d))

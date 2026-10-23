@@ -22,6 +22,7 @@ Each finding names an exact repository-relative file and one of:
 | `deleted-test` | Deleted test source file, rename of an old test source path, removed recognizable test signature or Rust test-module declaration |
 | `assertion-change` | Removed or edited assertion, including potential weakening |
 | `new-skip` | Added skip, ignore or expected-failure marker |
+| `import-addition` | A declared new mapped file has no upstream counterpart; inspect its complete ordinary patch |
 | `import-adaptation` | A mapped added file differs from its declared upstream blob; review the full adaptation against upstream |
 
 The detector is a conservative diff heuristic, not a proof of logical
@@ -59,7 +60,7 @@ It requires no assignment or existing review and writes no provider state. Text
 output prints exact file/kind rows and `Test changes confirmed: sha256:<digest>`.
 With `--format json`, `data` contains `number`, `head_sha`, `base_sha`, `findings`
 (`path`/`kind` objects), `digest`, `confirmation` and nullable `provenance_import`.
-The latter contains the upstream source, mappings, adaptation paths, complete
+The latter contains the upstream source, mappings, adaptation and addition paths, complete
 file count, verified-file count, manifest digest, comparison digest and declaration
 digest when the mode below is active. This is inspection evidence,
 not review admission. It uses the same complete comparison, metadata re-read
@@ -101,7 +102,10 @@ the line in the first passing review when satisfied.
 A complete large initial import may declare immutable upstream provenance in
 one PR-body section. This mode applies only to mapped **added** files; existing
 modified, removed and renamed files always retain normal test-change inspection.
-The upstream repository must be on the selected GitHub host.
+The upstream repository must be on the selected GitHub host. Its reads resolve
+through the normal identity policy under that repository's own `api_read` scope,
+then restore the PR command scope. The principal must be authorized to read the
+upstream repository; PR authorization alone grants no upstream access.
 
 ````markdown
 ## Provenance import
@@ -111,7 +115,8 @@ The upstream repository must be on the selected GitHub host.
   "repository": "example/upstream-library",
   "commit": "0123456789abcdef0123456789abcdef01234567",
   "mappings": [{"destination": "vendor/library/", "source": "packages/library/"}],
-  "adaptations": ["vendor/library/tests/api.test.ts"]
+  "adaptations": ["vendor/library/tests/api.test.ts"],
+  "additions": ["vendor/library/NOTICE.txt"]
 }
 ```
 ````
@@ -120,9 +125,11 @@ Use a full 40-character commit SHA. Directory prefixes end in `/`; an empty
 `source` maps from the upstream root. Destination prefixes cannot overlap.
 Paths must be normalized relative printable ASCII without whitespace, control,
 quote, pipe or backslash bytes. Adaptations are exact destination paths, without
-globs. Duplicate sections, unknown JSON fields, invalid mappings and stale
-adaptation entries are refusals. A heading inside a fenced example does not
-activate the mode. Remove the section to use ordinary comparison admission.
+globs. Optional `additions` lists exact genuinely new paths under a mapping
+that have no upstream counterpart, such as added license notices. These paths
+must be distinct from adaptations. Duplicate sections, unknown JSON fields,
+invalid mappings, duplicate paths and stale adaptation/addition entries are
+refusals. A heading inside a fenced example does not activate the mode. Remove the section to use ordinary comparison admission.
 
 The tool enumerates PR files in 100-file pages and requires each page's size
 and unique paths to agree with the PR's `changed_files`. It reads the pinned
@@ -130,8 +137,11 @@ upstream commit and its complete recursive tree, checking object identities and
 refusing `truncated` trees. Equal full Git blob IDs prove identical blob bytes;
 no checkout, user-provided manifest or downloaded patch excerpt substitutes for
 these provider reads. Only these verified additions may omit their inline patch.
-Missing upstream blobs, unsupported upstream object types and undeclared byte
-mismatches fail closed. Unmapped additions remain in ordinary inspection.
+Missing upstream blobs outside declared `additions`, unsupported upstream object
+types and undeclared byte mismatches fail closed. Declared additions and unmapped
+files remain in ordinary inspection; additions are never counted as verified
+identical files. Every declared addition produces `import-addition` and needs a
+`## Test changes` row and the same independent confirmation as other findings.
 
 Verified additions are represented by a SHA-256 digest of sorted JSON tuples
 `[destination_path, upstream_path, blob_sha]`. The confirmation digest binds that
@@ -149,8 +159,24 @@ and retained-coverage explanation, alongside any ordinary findings. The reviewer
 must compare the adaptation with upstream: an added-file patch alone cannot
 reveal assertions removed from the upstream version. Residual patches must be
 readable and complete; both hunk lengths and total additions/deletions are checked.
-Missing patches and omitted whole hunks are refusals. The residual comparison
-retains the ordinary 4 MiB / fewer-than-300-files bounds.
+Omitted whole hunks are refusals.
+
+When a residual provider patch is absent, the
+tool reads the file metadata at the exact base/head commits, fetches the named
+Git blobs, and verifies their sizes and full Git SHA-1 identities after Base64
+decoding. Added/removed files use an empty missing side; renames read the old
+path at base and the new path at head. Complete UTF-8 text without NUL bytes is
+compared locally with Git, with a 15-second process deadline and bounded output,
+then inspected by the same detector. No local checkout content or mutable branch
+ref is used. The existing backend response ceiling still applies to every blob
+response. See the provider's [blob contract](https://docs.github.com/en/rest/git/blobs#get-a-blob).
+
+A binary residual without a provider patch uses `test_changes_incomplete` with
+`details.cause.code=residual_binary_patch_unavailable`, the exact path,
+`retryable=false` and `next_action=correct_provenance_declaration`.
+Keep upstream-identical binary additions mapped; binary patch omissions cannot
+be declared away. The residual comparison retains the ordinary 4 MiB /
+fewer-than-300-files bounds, including locally reconstructed patches.
 
 The complete import must contain fewer than 3,000 changed paths (the provider
 PR-files ceiling is not accepted as proof of completeness). Each provider response
@@ -164,7 +190,8 @@ and [tree](https://docs.github.com/en/rest/git/trees#get-a-tree) contracts.
 Provenance refusals use exit 65 and typed recovery hints:
 `provenance_import_invalid` and `provenance_import_mismatch` require
 `correct_provenance_declaration`; `provenance_import_incomplete` requires
-`retry_complete_upstream`. Incomplete PR pages/patches remain
+`retry_complete_upstream`. Backend failures preserve their typed cause and recovery
+metadata, including identity-policy and provider refusals. Incomplete PR pages/patches remain
 `test_changes_incomplete`. Re-run preview after correcting the source, mappings,
 adaptations or declarations; stale confirmations cannot admit a changed import.
 

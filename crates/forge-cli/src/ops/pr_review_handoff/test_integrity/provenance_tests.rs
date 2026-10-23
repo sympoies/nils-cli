@@ -340,3 +340,95 @@ fn invalid_or_example_declarations_cannot_activate_an_import_exemption() {
         );
     }
 }
+
+fn added_fixture(count: usize) -> ImportFixture {
+    let mut fixture = ImportFixture::new(count);
+    fixture.tree["tree"] = json!([]);
+    let paths: Vec<_> = fixture
+        .files
+        .iter()
+        .map(|file| file["filename"].clone())
+        .collect();
+    fixture.body = fixture.body.replace(
+        "\"adaptations\":[]",
+        &format!("\"adaptations\":[],\"additions\":{}", json!(paths)),
+    );
+    fixture
+}
+
+#[test]
+fn declared_additions_retain_skip_detection_patch_completeness_and_residual_limits() {
+    let mut fixture = added_fixture(1);
+    fixture.files[0]["patch"] = json!("@@ -0,0 +1 @@\n+test.skip('contract', () => {});");
+    let (_, _, findings) = fixture.inspect().unwrap();
+    assert_eq!(
+        findings,
+        vec![
+            diff::Finding {
+                path: "vendor/tests/import0.test.ts".into(),
+                kind: "import-addition"
+            },
+            diff::Finding {
+                path: "vendor/tests/import0.test.ts".into(),
+                kind: "new-skip"
+            },
+        ]
+    );
+    fixture.files[0]["patch"] = Value::Null;
+    assert_eq!(
+        fixture.inspect().unwrap_err().kind(),
+        "test_changes_incomplete"
+    );
+    fixture.files[0]["patch"] = json!(format!("@@ -0,0 +1 @@\n+{}", "x".repeat(4 * 1024 * 1024)));
+    assert_limit(fixture.inspect().unwrap_err(), "diff_bytes");
+    assert_limit(added_fixture(300).inspect().unwrap_err(), "file_count");
+}
+
+#[test]
+fn additions_must_be_exact_unique_new_mapped_paths_not_adaptations() {
+    let original = added_fixture(1).body;
+    for body in [
+        original.replace(
+            "\"additions\":[\"vendor/tests/import0.test.ts\"]",
+            "\"additions\":[\"vendor/tests/import0.test.ts\",\"vendor/tests/import0.test.ts\"]",
+        ),
+        original.replace(
+            "\"additions\":[\"vendor/tests/import0.test.ts\"]",
+            "\"additions\":[\"outside/NOTICE.txt\"]",
+        ),
+        original.replace(
+            "\"additions\":[\"vendor/tests/import0.test.ts\"]",
+            "\"additions\":[\"vendor/../NOTICE.txt\"]",
+        ),
+        original.replace(
+            "\"adaptations\":[]",
+            "\"adaptations\":[\"vendor/tests/import0.test.ts\"]",
+        ),
+    ] {
+        let mut fixture = added_fixture(1);
+        fixture.body = body;
+        assert_eq!(
+            fixture.inspect().unwrap_err().kind(),
+            "provenance_import_invalid"
+        );
+    }
+    let mut fixture = added_fixture(1);
+    fixture.body = fixture.body.replace("import0.test.ts", "missing.test.ts");
+    assert_eq!(
+        fixture.inspect().unwrap_err().kind(),
+        "provenance_import_mismatch"
+    );
+    let mut fixture = added_fixture(1);
+    fixture.tree["tree"] =
+        json!([{"path":"tests/import0.test.ts","type":"blob","mode":"100644","sha":BLOB}]);
+    assert_eq!(
+        fixture.inspect().unwrap_err().kind(),
+        "provenance_import_mismatch"
+    );
+    let mut fixture = added_fixture(1);
+    fixture.files[0]["status"] = json!("modified");
+    assert_eq!(
+        fixture.inspect().unwrap_err().kind(),
+        "provenance_import_mismatch"
+    );
+}

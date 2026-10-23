@@ -16,6 +16,8 @@ name = "forge-cli"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "0.22"
+sha1 = "0.10"
 clap = { workspace = true }
 clap_complete = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
