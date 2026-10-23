@@ -799,6 +799,24 @@ fn appears_path_or_url(value: &str) -> bool {
         })
         .map(|(_, value)| value.trim())
         .unwrap_or(value);
+    if path_like_fragment(value) {
+        return true;
+    }
+
+    value
+        .split(|character: char| {
+            !(character.is_ascii_alphanumeric() || "/\\._-~:".contains(character))
+        })
+        .filter(|fragment| !fragment.is_empty())
+        .any(|fragment| {
+            path_like_fragment(fragment)
+                || fragment
+                    .find('/')
+                    .is_some_and(|slash| path_like_fragment(&fragment[slash..]))
+        })
+}
+
+fn path_like_fragment(value: &str) -> bool {
     value.starts_with('/')
         || value.starts_with("~/")
         || value.starts_with("file:")
@@ -814,6 +832,7 @@ fn looks_like_relative_path(value: &str) -> bool {
             '(' | ')' | '[' | ']' | '{' | '}' | '\'' | '"' | ',' | ';' | ':'
         )
     });
+    let value = strip_source_location(value);
     let segments: Vec<_> = value.split('/').collect();
     segments.len() > 1
         && segments.iter().all(|segment| {
@@ -822,6 +841,22 @@ fn looks_like_relative_path(value: &str) -> bool {
                     character.is_ascii_alphanumeric() || "._-~".contains(character)
                 })
         })
+}
+
+fn strip_source_location(mut value: &str) -> &str {
+    for _ in 0..2 {
+        let Some((prefix, suffix)) = value.rsplit_once(':') else {
+            break;
+        };
+        if !prefix.contains('/')
+            || suffix.is_empty()
+            || !suffix.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            break;
+        }
+        value = prefix;
+    }
+    value
 }
 
 fn redact_text(value: &str) -> String {

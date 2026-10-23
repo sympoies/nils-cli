@@ -167,7 +167,7 @@ fn summaries_redact_credentials_and_relative_paths() {
 
     let mut result = fixture("codex").remove(3);
     result["payload"]["output"] = Value::String(
-        "opened (src/private/config) path=/private/location/file cwd: /private/location [~/session.jsonl] \"/private/session/transcript.jsonl\","
+        "opened (src/private/config) path=/private/location/file cwd: /private/location [~/session.jsonl] \"/private/session/transcript.jsonl\", redirect>/private/redirect.log value,/private/comma.log trace=src/lib.rs:12:5 {\"arg\":\"/private/json/value\"}"
             .to_string(),
     );
     let (parts, _) = record_parts("codex", Some("0.134.0"), &result, true, &[], "fallback");
@@ -178,8 +178,15 @@ fn summaries_redact_credentials_and_relative_paths() {
         "/private/location",
         "~/session.jsonl",
         "/private/session/transcript.jsonl",
+        "/private/redirect.log",
+        "/private/comma.log",
+        "src/lib.rs:12",
+        "/private/json/value",
     ] {
-        assert!(!output.contains(private_path));
+        assert!(
+            !output.contains(private_path),
+            "path leaked: {private_path}"
+        );
     }
     assert!(output.contains("[redacted]"));
 }
