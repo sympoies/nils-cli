@@ -2566,6 +2566,7 @@ pub(crate) async fn run_control(
     .await
     .map_err(|err| format!("initialize failed: {err}"))?;
     send_json(&mut websocket, initialized_notification()).await?;
+    let external_auth_connection_id = uuid::Uuid::new_v4().to_string();
     let mut external_auth_account = None;
     if let Some((account, revision)) = crate::codex_account::account_for_control_rebind(&record)
         .map_err(|err| format!("Codex account binding is invalid: {}", err.code()))?
@@ -2657,9 +2658,14 @@ pub(crate) async fn run_control(
             &mut websocket,
             request_id,
             None,
-            external_auth_account
-                .as_deref()
-                .map(|account| (&context, &record, account)),
+            external_auth_account.as_deref().map(|account| {
+                (
+                    &context,
+                    &record,
+                    account,
+                    external_auth_connection_id.as_str(),
+                )
+            }),
             CONTROL_RESPONSE_TIMEOUT,
         )
         .await
@@ -2693,9 +2699,14 @@ pub(crate) async fn run_control(
             &mut websocket,
             request_id,
             None,
-            external_auth_account
-                .as_deref()
-                .map(|account| (&context, &record, account)),
+            external_auth_account.as_deref().map(|account| {
+                (
+                    &context,
+                    &record,
+                    account,
+                    external_auth_connection_id.as_str(),
+                )
+            }),
             CONTROL_RESPONSE_TIMEOUT,
         )
         .await
@@ -2721,9 +2732,14 @@ pub(crate) async fn run_control(
             &mut websocket,
             request_id,
             Some((&context, &record, &mut reducer)),
-            external_auth_account
-                .as_deref()
-                .map(|account| (&context, &record, account)),
+            external_auth_account.as_deref().map(|account| {
+                (
+                    &context,
+                    &record,
+                    account,
+                    external_auth_connection_id.as_str(),
+                )
+            }),
             CONTROL_RESPONSE_TIMEOUT,
         )
         .await
@@ -2767,7 +2783,7 @@ pub(crate) async fn run_control(
                             Some((&context, &record, &mut reducer)),
                             external_auth_account
                                 .as_deref()
-                                .map(|account| (&context, &record, account)),
+                                .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                             CONTROL_RESPONSE_TIMEOUT,
                         ).await;
                         let _ = response.send(result.map(|value| usage_snapshot(&value)));
@@ -2792,7 +2808,7 @@ pub(crate) async fn run_control(
                             Some((&context, &record, &mut reducer)),
                             external_auth_account
                                 .as_deref()
-                                .map(|account| (&context, &record, account)),
+                                .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                             CONTROL_SUBMISSION_TIMEOUT,
                         ).await;
                         let result = match result {
@@ -2840,7 +2856,7 @@ pub(crate) async fn run_control(
                                 Some((&context, &record, &mut reducer)),
                                 external_auth_account
                                     .as_deref()
-                                    .map(|account| (&context, &record, account)),
+                                    .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                                 CONTROL_RESPONSE_TIMEOUT,
                             )
                             .await
@@ -2894,7 +2910,7 @@ pub(crate) async fn run_control(
                             Some((&context, &record, &mut reducer)),
                             external_auth_account
                                 .as_deref()
-                                .map(|account| (&context, &record, account)),
+                                .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                             CONTROL_SUBMISSION_TIMEOUT,
                         )
                         .await
@@ -2942,7 +2958,7 @@ pub(crate) async fn run_control(
                                 Some((&context, &record, &mut reducer)),
                                 external_auth_account
                                     .as_deref()
-                                    .map(|account| (&context, &record, account)),
+                                    .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                                 CONTROL_RESPONSE_TIMEOUT,
                             ).await {
                                 let _ = response.send(Err(err));
@@ -2964,7 +2980,7 @@ pub(crate) async fn run_control(
                             Some((&context, &record, &mut reducer)),
                             external_auth_account
                                 .as_deref()
-                                .map(|account| (&context, &record, account)),
+                                .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                             CONTROL_SUBMISSION_TIMEOUT,
                         ).await.and_then(|value| {
                             value.pointer("/turn/id")
@@ -3022,7 +3038,7 @@ pub(crate) async fn run_control(
                                 Some((&context, &record, &mut reducer)),
                                 external_auth_account
                                     .as_deref()
-                                    .map(|account| (&context, &record, account)),
+                                    .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                                 CONTROL_RESPONSE_TIMEOUT,
                             )
                             .await;
@@ -3075,7 +3091,7 @@ pub(crate) async fn run_control(
                     &value,
                     external_auth_account
                         .as_deref()
-                        .map(|account| (&context, &record, account)),
+                        .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                 )
                 .await?
                 {
@@ -5062,7 +5078,7 @@ async fn receive_response_with_timeout<S>(
     websocket: &mut S,
     id: u64,
     live: Option<(&CliContext, &SessionRecord, &mut FailureReducer)>,
-    external_auth: Option<(&CliContext, &SessionRecord, &str)>,
+    external_auth: Option<(&CliContext, &SessionRecord, &str, &str)>,
     timeout: Duration,
 ) -> Result<Value, String>
 where
@@ -5079,184 +5095,8 @@ where
     .map_err(prompt_submit::PromptResponseFailure::into_string)
 }
 
-async fn respond_to_external_auth_refresh<S>(
-    websocket: &mut S,
-    value: &Value,
-    external_auth: Option<(&CliContext, &SessionRecord, &str)>,
-) -> Result<bool, String>
-where
-    S: futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
-{
-    let result = respond_to_external_auth_refresh_inner(websocket, value, external_auth).await;
-    if value.get("method").and_then(Value::as_str) == Some("account/chatgptAuthTokens/refresh")
-        && value.pointer("/params/reason").and_then(Value::as_str) == Some("unauthorized")
-        && let Some((context, record, _)) = external_auth
-    {
-        let recovery = if matches!(result, Ok(true)) {
-            "credentials_refreshed"
-        } else {
-            "refresh_failed"
-        };
-        let context = context.clone();
-        let record = record.clone();
-        if !matches!(
-            tokio::task::spawn_blocking(move || crate::auth_incident::recover(
-                &context,
-                &record,
-                recovery,
-                &jiff::Timestamp::now().to_string()
-            ))
-            .await,
-            Ok(Ok(()))
-        ) {
-            eprintln!("warning: provider authentication recovery reporting degraded");
-        }
-    }
-    result
-}
-
-async fn respond_to_external_auth_refresh_inner<S>(
-    websocket: &mut S,
-    value: &Value,
-    external_auth: Option<(&CliContext, &SessionRecord, &str)>,
-) -> Result<bool, String>
-where
-    S: futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
-{
-    if value.get("method").and_then(Value::as_str) != Some("account/chatgptAuthTokens/refresh") {
-        return Ok(false);
-    }
-    if value.pointer("/params/reason").and_then(Value::as_str) != Some("unauthorized") {
-        return Err("Codex requested an unsupported external-auth refresh".to_string());
-    }
-    let id = value
-        .get("id")
-        .filter(|id| json_id_key(id).is_some())
-        .cloned()
-        .ok_or_else(|| "Codex external-auth refresh request omitted a valid id".to_string())?;
-    let (context, record, account) = external_auth.ok_or_else(|| {
-        "Codex requested an external-auth refresh without a bound account".to_string()
-    })?;
-    let launch_id = record
-        .runtime
-        .as_ref()
-        .map(|runtime| runtime.launch_id.clone())
-        .ok_or_else(|| "Codex runtime identity is missing".to_string())?;
-    let incident_context = context.clone();
-    let incident_record = record.clone();
-    let incident_event = format!(
-        "external-refresh:{}:{}",
-        json_id_key(&id).unwrap_or_default(),
-        uuid::Uuid::new_v4()
-    );
-    if !matches!(
-        tokio::task::spawn_blocking(move || crate::auth_incident::observe(
-            &incident_context,
-            &incident_record,
-            &incident_event,
-            crate::auth_incident::AuthSource::CodexExternalRefresh,
-            crate::activity::Confidence::Authoritative,
-            &jiff::Timestamp::now().to_string()
-        ))
-        .await,
-        Ok(Ok(()))
-    ) {
-        eprintln!("warning: provider authentication incident persistence degraded");
-    }
-    let begin_context = context.clone();
-    let begin_id = record.id.clone();
-    let begin_launch_id = launch_id.clone();
-    let begin_account = account.to_string();
-    let attempt = tokio::task::spawn_blocking(move || {
-        crate::codex_account::begin_refresh_binding(
-            &begin_context,
-            &begin_id,
-            &begin_launch_id,
-            &begin_account,
-        )
-    })
-    .await
-    .map_err(|_| "Codex account refresh worker failed".to_string())?
-    .map_err(|err| format!("Codex account refresh rejected: {}", err.code()))?;
-    let revision = attempt.revision();
-    let refresh_account = account.to_string();
-    let credentials_result = tokio::task::spawn_blocking(move || {
-        crate::codex_account::resolve_account(&refresh_account, true)
-    })
-    .await
-    .map_err(|_| "Codex account refresh worker failed".to_string());
-    let credentials = match credentials_result {
-        Ok(Ok(credentials)) => credentials,
-        Ok(Err(err)) => {
-            let _ = restore_account_binding_after_refresh_failure(
-                context, record, &launch_id, account, attempt,
-            )
-            .await;
-            return Err(format!("Codex account refresh failed: {}", err.code()));
-        }
-        Err(error) => {
-            let _ = restore_account_binding_after_refresh_failure(
-                context, record, &launch_id, account, attempt,
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let fence_context = context.clone();
-    let fence_id = record.id.clone();
-    let fence_launch_id = launch_id.clone();
-    let fence_account = account.to_string();
-    let refresh_fence = tokio::task::spawn_blocking(move || {
-        let lock = crate::acquire_session_record_lock(&fence_context, &fence_id)?;
-        let current = crate::load_session_record(&fence_context, &fence_id)?;
-        if current
-            .runtime
-            .as_ref()
-            .is_none_or(|runtime| runtime.launch_id != fence_launch_id)
-        {
-            return Err(CliError::runtime(
-                "codex-account-refresh-superseded",
-                "Codex runtime changed during credential refresh",
-                Some(json!({ "id": current.id })),
-            ));
-        }
-        let view = crate::codex_account::view_for_record(&current);
-        if view.state != "pending"
-            || view.selected_account.as_deref() != Some(fence_account.as_str())
-            || view.revision != revision
-        {
-            return Err(CliError::runtime(
-                "codex-account-refresh-superseded",
-                "Codex account binding changed during credential refresh",
-                Some(json!({ "id": current.id })),
-            ));
-        }
-        Ok::<_, CliError>(lock)
-    })
-    .await
-    .map_err(|_| "Codex account refresh fence worker failed".to_string())?
-    .map_err(|err| format!("Codex account refresh rejected: {}", err.code()))?;
-    let send_result = send_json(
-        websocket,
-        external_auth_refresh_response(
-            id,
-            &credentials.access_token,
-            &credentials.chatgpt_account_id,
-            credentials.chatgpt_plan_type.as_deref(),
-        ),
-    )
-    .await;
-    drop(refresh_fence);
-    if let Err(error) = send_result {
-        let _ = restore_account_binding_after_refresh_failure(
-            context, record, &launch_id, account, attempt,
-        )
-        .await;
-        return Err(error);
-    }
-    finish_account_binding(context, record, &launch_id, account, revision, Ok(())).await?;
-    Ok(true)
-}
+mod auth_refresh;
+use auth_refresh::respond_to_external_auth_refresh;
 
 fn protocol_error_category(message: &str) -> &'static str {
     for (needle, category) in [

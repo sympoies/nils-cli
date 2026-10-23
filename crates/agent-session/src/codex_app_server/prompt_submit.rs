@@ -74,7 +74,7 @@ pub(super) async fn receive_prompt_response_with_timeout<S>(
     websocket: &mut S,
     id: u64,
     live: Option<(&CliContext, &SessionRecord, &mut FailureReducer)>,
-    external_auth: Option<(&CliContext, &SessionRecord, &str)>,
+    external_auth: Option<(&CliContext, &SessionRecord, &str, &str)>,
     timeout: Duration,
 ) -> Result<Value, PromptResponseFailure>
 where
@@ -95,7 +95,7 @@ pub(super) async fn submit_prompt_request<S>(
     id: u64,
     request: Value,
     live: Option<(&CliContext, &SessionRecord, &mut FailureReducer)>,
-    external_auth: Option<(&CliContext, &SessionRecord, &str)>,
+    external_auth: Option<(&CliContext, &SessionRecord, &str, &str)>,
     timeout: Duration,
 ) -> Result<String, PromptRequestFailure>
 where
@@ -131,7 +131,7 @@ pub(super) async fn receive_response<S>(
     websocket: &mut S,
     id: u64,
     mut live: Option<(&CliContext, &SessionRecord, &mut FailureReducer)>,
-    external_auth: Option<(&CliContext, &SessionRecord, &str)>,
+    external_auth: Option<(&CliContext, &SessionRecord, &str, &str)>,
 ) -> Result<Value, PromptResponseFailure>
 where
     S: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>

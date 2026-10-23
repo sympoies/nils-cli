@@ -60,6 +60,33 @@ credentials alone do not claim a healthy model turn. Reporting failures do not
 prevent the provider's existing refresh path from running. Sessions without an
 owner route report `owner_unavailable` in the notification receipt.
 
+Codex same-account refresh additionally writes a private, token-free
+`agent-session.codex-auth-recovery.v1` receipt store. Runtime incarnation and
+generation fence the store; each operation hashes the connection scope and
+provider JSON-RPC request ID and captures the selected account, binding revision, provider conversation,
+start time and deadline. Duplicate IDs within a connection are refused without another
+broker call or credential response; reconnects can reuse request IDs. A committed `resolving` or
+`response_unknown` operation blocks later requests after a controller crash;
+credentials and prompts are never replayed to resolve uncertainty.
+
+The existing broker force-refresh deadline remains eight seconds. A refresh
+operation permits a response only before its nine-second deadline; the response
+write itself has at most 500 milliseconds. At most three refresh operations may
+start within sixty seconds, including successful credential responses that are
+followed by another unauthorized request. Failed resolutions have a one-second
+backoff. The store retains up to sixty-four operations per runtime and refuses
+further operations at capacity rather than discarding replay identities. A new
+runtime receives a fresh fenced store; in-place recovery keeps the runtime,
+conversation, account and coordination claims unchanged.
+
+Receipts distinguish `credentials_supplied`, `refresh_failed`, and
+`response_unknown`; credential delivery alone does not prove provider health.
+Each receipt retains a bounded snapshot of unknown in-flight operation selectors
+and their total count, marks untracked effects unknown, and records
+`replayed: false`. Existing authentication incident reporting remains best effort;
+the recovery receipt must persist before broker or transport side effects.
+Account failover and terminal candidate selection belong to a subsequent slice.
+
 Missing/stale structured evidence permits an inferred fallback: at most eight
 terminal lines and 4096 bytes, with a 250 ms sampling deadline. Only a bottom
 provider UI error status immediately above an empty prompt (or the final status
