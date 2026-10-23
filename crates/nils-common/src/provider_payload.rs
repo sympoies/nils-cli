@@ -279,6 +279,10 @@ mod tests {
             "{detail}"
         );
         assert!(detail.contains(ALLOW_LOCAL_PATH_ENV), "{detail}");
+        assert!(
+            detail.contains(&format!("{ALLOW_LOCAL_PATH_ENV}=1")),
+            "{detail}"
+        );
     }
 
     #[test]
