@@ -43,6 +43,7 @@ pub(crate) fn ensure_input_allowed(
     context: &CliContext,
     record: &SessionRecord,
 ) -> Result<(), CliError> {
+    super::failover::ensure_input_allowed(context, record)?;
     if record.agent != "claude" {
         return Ok(());
     }

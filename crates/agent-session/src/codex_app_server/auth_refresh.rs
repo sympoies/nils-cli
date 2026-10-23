@@ -176,6 +176,17 @@ fn current(context: &CliContext, expected: &SessionRecord) -> Result<SessionReco
     Ok(record)
 }
 
+/// The caller holds the record lock. Never switch while an official refresh
+/// might still deliver credentials to the old account.
+pub(crate) fn failover_safe(context: &CliContext, record: &SessionRecord) -> bool {
+    read(context, record).is_ok_and(|store| {
+        store
+            .operations
+            .iter()
+            .all(|r| matches!(r.state.as_str(), "refresh_failed" | "credentials_supplied"))
+    })
+}
+
 fn begin(
     context: &CliContext,
     expected: &SessionRecord,
@@ -187,6 +198,11 @@ fn begin(
         .map_err(|_| "Codex refresh session-lock-unavailable")?;
     let record = current(context, expected)?;
     let binding = crate::codex_account::view_for_record(&record);
+    if crate::codex_account::next_transition_state(&record)
+        != crate::codex_account::NextTransitionState::Absent
+    {
+        return Err("Codex refresh account-switch-pending".into());
+    }
     if binding.state != "bound"
         || binding.selected_account.as_deref() != Some(account)
         || binding.applied_runtime_id.as_deref()

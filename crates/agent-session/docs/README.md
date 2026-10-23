@@ -20,6 +20,8 @@ or integrating a specific subsystem.
 
 ## Stable contracts
 
+- [Authentication failover v1](specs/auth-failover-v1.md): fresh broker policy
+  and capacity, fenced switching, terminal outcomes and rollback.
 - [Claude auth recovery v1](specs/claude-auth-recovery-v1.md): prompt quarantine,
   published-generation prerequisites, bounded same-account stop/resume and
   unknown-effect receipts.

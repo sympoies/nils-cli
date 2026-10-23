@@ -213,7 +213,8 @@ mismatched nickname is `claude-account-broker-invalid-response`.
   that code; startup reports `claude-account-switch-cleanup-incomplete` with `retry_safe: false`; the
   durable startup record retains bounded cleanup state. The local `agent-session account switch` CLI
   shares this path; run from inside the session's own tmux session it only queues, since restarting the
-  runtime that hosts it would stop the switch mid-way. There is no automatic failover for Claude.
+  runtime that hosts it would stop the switch mid-way. Automatic authentication
+  failover requires the separate [broker policy preflight](auth-failover-v1.md).
 - History: catalog scans attribute each physical transcript once, by its
   canonical path, so an account directory whose `projects/` links to the
   shared `~/.claude/projects` is not counted twice.

@@ -5095,7 +5095,7 @@ where
     .map_err(prompt_submit::PromptResponseFailure::into_string)
 }
 
-mod auth_refresh;
+pub(crate) mod auth_refresh;
 use auth_refresh::respond_to_external_auth_refresh;
 
 fn protocol_error_category(message: &str) -> &'static str {

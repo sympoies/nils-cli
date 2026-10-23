@@ -1,4 +1,6 @@
 use super::*;
+#[path = "auth_failover_claude_tests.rs"]
+mod failover;
 use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::assert_eq;
 

@@ -3,8 +3,8 @@
 The serve daemon reconciles current-runtime Claude authentication incidents on
 its existing 15-second observation loop. Managed session and provider
 conversation identities remain stable; a successful stop/resume advances the
-runtime incarnation and generation. Account failover and Codex recovery are
-separate contracts.
+runtime incarnation and generation. Account failover follows the separate
+[policy-gated failover contract](auth-failover-v1.md).
 
 ## Prompt quarantine
 
