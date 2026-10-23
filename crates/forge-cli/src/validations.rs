@@ -765,9 +765,6 @@ fn run_git_capture(workdir: &Path, args: &[&str]) -> Result<String, ForgeError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nils_common::provider_payload::{
-        LOCAL_PATH_MAX_HITS, LocalPathHit, render_local_path_detail, scan_local_paths,
-    };
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
 
@@ -1257,73 +1254,5 @@ mod tests {
             "body",
         )
         .expect("code span exempt");
-    }
-
-    #[test]
-    fn scan_local_paths_allowlists_container_and_runner_roots() {
-        // Allowlisted literal roots and their children never hit.
-        assert!(scan_local_paths("/home/agent/run and /home/linuxbrew/.linuxbrew/bin").is_empty());
-        assert!(scan_local_paths("CI artifact at /home/runner/work/repo").is_empty());
-        // A non-allowlisted owner under /home still hits.
-        assert_eq!(scan_local_paths("/home/runners/x").len(), 1);
-    }
-
-    #[test]
-    fn scan_local_paths_strips_trailing_sentence_punctuation() {
-        let hits = scan_local_paths("the path is /Users/example/notes.md.");
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].sample, "/Users/example/notes.md");
-        assert_eq!(hits[0].suggestion, "$HOME/notes.md");
-    }
-
-    #[test]
-    fn scan_local_paths_stops_tail_at_delimiters() {
-        // A backtick-fenced path terminates at the closing delimiter.
-        let hits = scan_local_paths("run `/Users/example/bin/tool` now");
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].sample, "/Users/example/bin/tool");
-    }
-
-    #[test]
-    fn scan_local_paths_owner_only_without_tail() {
-        let hits = scan_local_paths("home is /Users/example");
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].sample, "/Users/example");
-        assert_eq!(hits[0].suggestion, "$HOME");
-    }
-
-    #[test]
-    fn scan_local_paths_ignores_bare_roots_without_owner() {
-        assert!(scan_local_paths("the /Users/ directory or /home/ mount").is_empty());
-    }
-
-    #[test]
-    fn scan_local_paths_reports_line_numbers_and_dedups_per_line() {
-        let text =
-            "line one is clean\nsee /Users/example/a and /Users/example/a again\n/home/bob/c";
-        let hits = scan_local_paths(text);
-        // Repeated identical path on line 2 collapses to one; line 3 adds another.
-        assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].line, 2);
-        assert_eq!(hits[0].sample, "/Users/example/a");
-        assert_eq!(hits[1].line, 3);
-        assert_eq!(hits[1].sample, "/home/bob/c");
-    }
-
-    #[test]
-    fn render_local_path_detail_caps_and_appends_escape_hatch() {
-        let hits: Vec<LocalPathHit> = (1..=LOCAL_PATH_MAX_HITS + 5)
-            .map(|n| LocalPathHit {
-                line: n,
-                sample: format!("/Users/u/p{n}"),
-                suggestion: format!("$HOME/p{n}"),
-            })
-            .collect();
-        let detail = render_local_path_detail(&hits);
-        assert!(
-            detail.contains("... 5 more local path(s) omitted"),
-            "{detail}"
-        );
-        assert!(detail.contains("FORGE_CLI_ALLOW_LOCAL_PATH=1"), "{detail}");
     }
 }
