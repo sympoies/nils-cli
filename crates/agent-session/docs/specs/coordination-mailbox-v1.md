@@ -111,24 +111,18 @@ changes, so a direct CLI send made while the controller is absent catches up
 after restart.
 
 Multiple notification-eligible unread messages coalesce into one mailbox-level
-notification for the newest pending generation. Both fixed templates fit one
-composer row in a 72-column pane: at most 58 ASCII characters including the
-full queue date, independent of recipient ID length. Dated generations use:
-
-```text
-Mailbox: <queued-at>; agent-session message inbox
-```
-
-Only `<queued-at>` varies. It is one second past the generation's recorded
-queue time, as an RFC 3339 UTC second. Since queue time is recorded in whole
-seconds, this is an upper bound on every covered message. Harnesses may queue
-typed input until the next safe point; the date lets a recipient recognize a
-reminder already covered by a later inbox read. A receipt without a valid
-positive queue time uses the undated template:
+notification for the newest pending generation. The body-free wake is always
+35 ASCII characters, fitting one exactly observable input row in a 51-column
+pane for Claude and Codex:
 
 ```text
 Mailbox: agent-session message inbox
 ```
+
+Generation and queue-time fences remain in durable receipts rather than wake
+text. An extra inbox check is harmless if the recipient already drained the
+mailbox; unread metadata is authoritative. Panes too narrow to observe even
+this prompt still defer without bypassing composer guards.
 
 `message inbox` resolves an omitted `--session` from `AGENT_SESSION_ID` and still
 requires the matching recipient capability. An explicit `--session` takes
@@ -149,8 +143,10 @@ prompts remain visible. The prior `Coordination mailbox has unread messages`
 prefix remains compatible, including dated and undated prior forms.
 
 New durable attempt receipts retain the additive `attempted_prompt_format`
-value `mailbox-short.v1`. A known-format attempt uses its exact bytes for both
-submission and absence. For unversioned receipts, exact current or prior
+value `mailbox-short.v2`. A known-format attempt uses its exact bytes for both
+submission and absence. Prior `mailbox-short.v1` attempts retain their original
+dated bytes (or undated bytes for invalid queue times); they are never compared
+against the new short form. For unversioned receipts, exact current or prior
 dated/undated bytes after the attempt boundary can confirm submission; their
 absence cannot prove an unknown format absent. Unrecognized formats and
 ambiguous transcript timestamps remain parked. Prefix recognition alone never

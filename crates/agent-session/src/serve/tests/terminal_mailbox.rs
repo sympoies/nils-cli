@@ -50,7 +50,8 @@ exit 0
   capture-pane)
     value=""
     if [ -s {} ]; then value=$(cat {}); fi
-    printf '› %s\n\n  status\n' "$value"
+    printf '› %s\n' "$value" | fold -w 51
+    printf '\n  status\n'
     exit 0 ;;
   *) exit 1 ;;
 esac
@@ -288,7 +289,7 @@ esac
                     "{}\n",
                     json!({
                         "type": "event_msg",
-                        "timestamp": "2030-01-01T00:01:41Z",
+                        "timestamp": jiff::Timestamp::now().to_string(),
                         "payload": {"type": "user_message", "message": prompt}
                     })
                 );
@@ -333,22 +334,8 @@ esac
         "terminal-notification-reentry-timeout-0002",
     )
     .await;
-    // Pin generation two into a later second than generation one so the
-    // two dated prompts never share bytes, however fast the runner is.
-    let mut registry: Value =
-        serde_json::from_slice(&fs::read(&coordination_registry).expect("registry"))
-            .expect("registry json");
-    registry["notifications"]
-        .as_object_mut()
-        .expect("notifications")
-        .values_mut()
-        .next()
-        .expect("notification")["queued_at_epoch"] = json!(candidate.queued_at_epoch + 1);
-    fs::write(
-        &coordination_registry,
-        serde_json::to_vec_pretty(&registry).expect("registry json"),
-    )
-    .expect("pin generation two queue time");
+    // Identical wake bytes still belong to separate, timestamp-fenced attempts.
+    assert_eq!(fixture_notification_prompt(tmp.path()), prompt);
     drain_coordination_notifications(state.clone()).await;
     let notification = notification_fixture(tmp.path());
     assert_eq!(notification["state"], "attempt_unknown");

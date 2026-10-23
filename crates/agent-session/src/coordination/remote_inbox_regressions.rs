@@ -155,10 +155,6 @@ fn compacted_unknown_attempt_does_not_hide_a_new_remote_generation() {
         .find(|m| m.message_id == fresh.message_id)
         .unwrap();
     assert_eq!(candidates[0].queued_at_epoch, newest.created_at_epoch);
-    assert!(
-        notification::fixed_prompt("recipient", candidates[0].queued_at_epoch)
-            .contains(&timestamp(newest.created_at_epoch + 1))
-    );
     drop(locked);
     assert!(
         !notification::mark_submitted(&context, &old).unwrap(),

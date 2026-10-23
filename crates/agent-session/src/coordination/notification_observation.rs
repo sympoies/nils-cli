@@ -3,7 +3,7 @@ use super::{NotificationCandidate, fixed_prompt, receipt_key};
 use crate::provider_prompt::{ProviderPromptTail, prompt_observed_after};
 use crate::{CliContext, load_session_record};
 
-pub(super) const PROMPT_FORMAT: &str = "mailbox-short.v1";
+pub(super) const PROMPT_FORMAT: &str = "mailbox-short.v2";
 
 pub(crate) fn observe_attempt(
     context: &CliContext,
@@ -42,12 +42,22 @@ pub(crate) fn observe_attempt(
     let current = fixed_prompt(&candidate.target_session_id, candidate.queued_at_epoch);
     match format.as_deref() {
         Some(PROMPT_FORMAT) => prompt_observed_after(&source, &current, &attempted_at),
+        Some("mailbox-short.v1") => prompt_observed_after(
+            &source,
+            &dated_prompt(candidate.queued_at_epoch),
+            &attempted_at,
+        ),
         Some(_) => None,
         None => {
             // Older receipts retained no format. Exact known bytes can prove
             // submission, but their absence cannot prove an unknown format absent.
             let prior = prior_prompt(&candidate.target_session_id, candidate.queued_at_epoch);
             if prompt_observed_after(&source, &current, &attempted_at) == Some(true)
+                || prompt_observed_after(
+                    &source,
+                    &dated_prompt(candidate.queued_at_epoch),
+                    &attempted_at,
+                ) == Some(true)
                 || prompt_observed_after(&source, &prior, &attempted_at) == Some(true)
             {
                 Some(true)
@@ -55,6 +65,15 @@ pub(crate) fn observe_attempt(
                 None
             }
         }
+    }
+}
+
+fn dated_prompt(queued_at_epoch: i64) -> String {
+    match jiff::Timestamp::from_second(queued_at_epoch.saturating_add(1)) {
+        Ok(queued_at) if queued_at_epoch > 0 => {
+            format!("Mailbox: {queued_at}; agent-session message inbox")
+        }
+        _ => fixed_prompt("", queued_at_epoch),
     }
 }
 

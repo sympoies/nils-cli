@@ -523,9 +523,6 @@ async fn mailbox_wake_keeps_unreadable_pane_unverified_after_enter() {
         fs::read_to_string(fixture.temp.path().join("composer")).unwrap(),
         crate::coordination::notification_prompt(&fixture.candidate)
     );
-    let residual = fs::read_to_string(fixture.temp.path().join("composer")).unwrap();
-    assert!(residual.starts_with("Mailbox: "));
-    assert!(residual.ends_with("; agent-session message inbox"));
     fixture
         .candidate
         .mark_unknown_after_paste(

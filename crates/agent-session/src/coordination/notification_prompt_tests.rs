@@ -1,5 +1,6 @@
 //! One-row reminders and compatibility with prior transcript prefixes.
 use super::{fixed_prompt, is_mailbox_reminder_prompt};
+use pretty_assertions::assert_eq;
 
 #[test]
 fn mailbox_reminder_fits_one_row_for_worst_case_date_and_session() {
@@ -15,10 +16,48 @@ fn mailbox_reminder_fits_one_row_for_worst_case_date_and_session() {
             prompt.is_ascii(),
             "visible width must not depend on Unicode"
         );
-        assert!(prompt.len() <= 60, "{} columns: {prompt}", prompt.len());
+        for provider in ["claude", "codex"] {
+            let capture = narrow_composer(provider, &prompt, 51);
+            assert_eq!(
+                crate::send_submit::exact_composer_input(provider, &capture),
+                Some(prompt.clone()),
+                "{provider}: the fixed wake must remain exactly observable at 51 columns"
+            );
+        }
         assert!(!prompt.contains(['\n', '\r']));
         assert!(prompt.ends_with("agent-session message inbox"));
         assert!(!prompt.contains(&session));
+    }
+}
+
+// Model visual wrapping without joining unknown draft rows.
+fn narrow_composer(provider: &str, prompt: &str, columns: usize) -> String {
+    let rows = prompt
+        .as_bytes()
+        .chunks(columns - 2)
+        .map(|row| std::str::from_utf8(row).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n  ");
+    if provider == "claude" {
+        let rule = "─".repeat(columns);
+        format!("{rule}\n❯ {rows}\n{rule}\n  status\n")
+    } else {
+        format!("› {rows}\n\n  status\n")
+    }
+}
+
+#[test]
+fn dated_mailbox_wrap_remains_unobservable_to_exact_parser() {
+    let dated = "Mailbox: 2026-09-21T14:13:21Z; agent-session message inbox";
+    for provider in ["claude", "codex"] {
+        assert_eq!(
+            crate::send_submit::exact_composer_input(
+                provider,
+                &narrow_composer(provider, dated, 51)
+            ),
+            None,
+            "wrapped input must not authorize Enter"
+        );
     }
 }
 
