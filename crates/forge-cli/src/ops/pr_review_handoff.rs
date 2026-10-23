@@ -17,6 +17,7 @@ use crate::provider::{Provider, ProviderContext, detect, git_remote_url};
 use crate::rate_limit::default_runner;
 
 mod approval;
+mod surrender;
 mod test_integrity;
 use crate::cli::ApprovalPolicy;
 use approval::{Admission, PublishedApproval};
@@ -97,7 +98,7 @@ fn fail(kind: &'static str, message: &str) -> ForgeError {
         schema(),
         kind,
         message,
-        Some("recovery=return control to the coordinator; do not self-review".into()),
+        Some(surrender::recovery(kind, message).into()),
     )
 }
 
@@ -372,22 +373,16 @@ pub(crate) fn ensure_observation(
 }
 
 pub(crate) fn ensure_writer(chain: &review_state::ReviewStateChain) -> Result<(), ForgeError> {
-    let Some(handoff) = assigned(chain)? else {
+    let Some(handoff) = surrender::require_reviewer(chain)? else {
         return Ok(());
     };
-    if actor_digest()? != handoff.reviewer_digest {
-        return Err(fail(
-            "review_writer_conflict",
-            "only the designated reviewer session may append or publish this review",
-        ));
-    }
     let generation = std::env::var("AGENT_REVIEW_ASSIGNMENT_GENERATION")
         .ok()
         .and_then(|v| v.parse::<u64>().ok());
     if generation != Some(handoff.assignment_generation) {
         return Err(fail(
             "review_assignment_generation_conflict",
-            "designated append/publication requires the retained assignment generation",
+            "designated append/publication requires AGENT_REVIEW_ASSIGNMENT_GENERATION from `forge-cli pr review-handoff inspect`",
         ));
     }
     Ok(())
@@ -447,7 +442,7 @@ pub(crate) fn ensure_handoff_append(
     let actor = actor_digest()?;
     if let Some(old) = latest(chain) {
         if next.assignment_generation == old.assignment_generation && next.surrendered {
-            return ensure_writer(chain);
+            return surrender::require_reviewer(chain).map(|_| ());
         }
         if valid_coordinator_transfer(old, next) {
             if actor != next.coordinator_digest {
@@ -1368,7 +1363,7 @@ pub fn run(
                 require_head(head, &a.expected_head)?;
             }
             require_tip(chain.tip_digest.as_deref(), &a.expected_state)?;
-            ensure_writer(&chain)?;
+            surrender::require_reviewer(&chain)?;
             let mut h = handoff.clone();
             if unobserved_head_advance {
                 h.assigned_head = head.to_string();
