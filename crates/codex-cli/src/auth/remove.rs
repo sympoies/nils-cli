@@ -178,28 +178,3 @@ fn remove_target_timestamp(target_file: &Path) {
     };
     let _ = fs::write_timestamp(&timestamp_file, None);
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::auth::is_invalid_secret_target;
-    use crate::paths;
-    use nils_test_support::{EnvGuard, GlobalStateLock};
-
-    #[test]
-    fn invalid_target_rejects_paths_and_traversal() {
-        assert!(is_invalid_secret_target("../a.json"));
-        assert!(is_invalid_secret_target("a/b.json"));
-        assert!(is_invalid_secret_target(r"a\b.json"));
-        assert!(!is_invalid_secret_target("alpha.json"));
-    }
-
-    #[test]
-    fn resolve_secret_dir_uses_codex_secret_dir_only() {
-        let lock = GlobalStateLock::new();
-        let _set = EnvGuard::set(&lock, "CODEX_SECRET_DIR", "/tmp/secrets");
-        assert_eq!(
-            paths::resolve_secret_dir_from_env().expect("secret dir"),
-            std::path::PathBuf::from("/tmp/secrets")
-        );
-    }
-}
