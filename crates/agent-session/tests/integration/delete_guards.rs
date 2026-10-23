@@ -324,6 +324,34 @@ fn stopped_only_delete_serializes_a_concurrent_resume_through_removal() {
 }
 
 #[test]
+fn stopped_only_delete_preserves_pending_termination_recovery() {
+    let mut fixture = Fixture::new();
+    let incarnation = fixture.mark_runtime_stopped();
+    let record_path = fixture.session.join("session.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record["delete_tmux_termination_state"] = json!({
+        "launch_id": incarnation,
+        "state": "pending",
+        "thaw_on_recovery": true,
+    });
+    fs::write(&record_path, serde_json::to_vec(&record).unwrap()).unwrap();
+    fs::write(&fixture.name_status, "stopped").unwrap();
+
+    let output = fixture.delete_if_stopped(&incarnation);
+    assert_ne!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["error"]["code"],
+        "session-termination-in-progress"
+    );
+    assert_eq!(output.stdout_json()["error"]["details"]["retryable"], true);
+    assert!(
+        !fixture.killed.exists(),
+        "conditional delete must not signal"
+    );
+    assert!(fixture.session.exists(), "recovery state must be retained");
+}
+
+#[test]
 fn delete_recovery_rejects_a_replacement_tmux_target_without_killing_it() {
     let mut fixture = Fixture::new();
     for (field, replacement) in [("session_id", "$90"), ("pane_id", "%90")] {

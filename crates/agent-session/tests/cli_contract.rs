@@ -22,6 +22,26 @@ fn delete_help_documents_the_stopped_only_contract() {
 }
 
 #[test]
+fn delete_rejects_combining_stopped_only_and_leave_processes_modes() {
+    let output = Command::new(bin::resolve("agent-session"))
+        .args([
+            "delete",
+            "guarded-delete",
+            "--if-stopped",
+            "--expected-incarnation",
+            "fixture-incarnation",
+            "--leave-processes",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("agent-session delete with conflicting modes");
+    assert_eq!(output.status.code(), Some(64));
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["error"]["code"], "parse-error");
+}
+
+#[test]
 fn launch_env_rejects_unapproved_keys_before_creating_a_session() {
     for agent in ["codex", "claude", "dsh"] {
         let tmp = tempfile::TempDir::new().unwrap();

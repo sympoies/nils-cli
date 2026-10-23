@@ -344,6 +344,16 @@ fn delete_if_stopped(
         _ => return Err(conditional_status_unknown(&record)),
     }
     ensure_session_deletion_supported(&record)?;
+    if persisted_tmux_termination_state(&record)
+        .map_err(|_| conditional_status_unknown(&record))?
+        .is_some()
+    {
+        return Err(CliError::runtime(
+            "session-termination-in-progress",
+            "conditional deletion must recover interrupted termination before removing session state",
+            Some(json!({"id": record.id, "action": "retry-delete", "retryable": true})),
+        ));
+    }
     let identity = persisted_tmux_runtime_identity(&record)
         .map_err(|_| conditional_status_unknown(&record))?
         .ok_or_else(|| conditional_status_unknown(&record))?;
