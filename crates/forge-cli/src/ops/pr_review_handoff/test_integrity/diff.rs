@@ -107,12 +107,6 @@ pub(super) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
         return Err(incomplete());
     }
     finish(&file, &mut findings);
-    if findings.len() > 32 {
-        return Err(limit(
-            "declaration_pairs",
-            "comparison requires more than 32 file/kind pairs",
-        ));
-    }
     Ok(findings.into_iter().collect())
 }
 
