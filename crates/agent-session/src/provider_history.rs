@@ -2,9 +2,7 @@
 use history_images::normalize_message;
 pub(crate) mod history_images;
 pub(crate) use history_images::HistoryMessage;
-use history_images::{
-    push_incremental_message, push_reverse_message, read_compacted_image_line, read_messages,
-};
+use history_images::{push_incremental_message, read_compacted_image_line, read_messages};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -110,6 +108,8 @@ pub(crate) struct HistorySession {
     pub(crate) archived_title_mode: crate::display_metadata::TitleMode,
     pub(crate) id: String,
     pub(crate) provider: String,
+    #[serde(skip)]
+    pub(crate) provider_version: Option<String>,
     pub(crate) provider_session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) agent_profile: Option<String>,
@@ -377,6 +377,7 @@ impl HistoryCatalog {
                             .unwrap_or_default(),
                         id,
                         provider: "dsh".to_string(),
+                        provider_version: None,
                         provider_session_id: item.provider_session_id,
                         agent_profile: Some(source.agent_profile.clone()),
                         title: archive.as_ref().and_then(|archive| archive.title.clone()),
@@ -507,6 +508,17 @@ impl HistoryCatalog {
         limit: usize,
         direction: HistoryMessageDirection,
     ) -> Result<HistoryMessagesPage, HistoryError> {
+        self.messages_with_parts(history_id, cursor, limit, direction, false)
+    }
+
+    pub(crate) fn messages_with_parts(
+        &self,
+        history_id: &str,
+        cursor: Option<&str>,
+        limit: usize,
+        direction: HistoryMessageDirection,
+        include_parts: bool,
+    ) -> Result<HistoryMessagesPage, HistoryError> {
         let snapshot = self.snapshot();
         let session = snapshot
             .sessions
@@ -525,24 +537,38 @@ impl HistoryCatalog {
                 cursor,
                 limit,
                 direction,
+                include_parts,
             );
         }
-        match direction {
-            HistoryMessageDirection::Forward => {
-                read_messages(session, parse_message_cursor(cursor)?, limit.clamp(1, 100))
-            }
+        let mut page = match direction {
+            HistoryMessageDirection::Forward => read_messages(
+                session,
+                parse_message_cursor(cursor)?,
+                limit.clamp(1, 100),
+                include_parts,
+            ),
             HistoryMessageDirection::Latest => {
                 if cursor.is_some() {
                     return Err(HistoryError::InvalidCursor);
                 }
-                read_messages_reverse(session, None, limit.clamp(1, 100))
+                history_images::read_messages_reverse(
+                    session,
+                    None,
+                    limit.clamp(1, 100),
+                    include_parts,
+                )
             }
-            HistoryMessageDirection::Older => read_messages_reverse(
+            HistoryMessageDirection::Older => history_images::read_messages_reverse(
                 session,
                 Some(parse_required_message_cursor(cursor)?),
                 limit.clamp(1, 100),
+                include_parts,
             ),
+        }?;
+        if include_parts {
+            history_images::correlate_tool_status(session, &mut page.messages);
         }
+        Ok(page)
     }
 
     #[cfg(test)]
@@ -1169,6 +1195,7 @@ fn scan_catalog(
                 archived_title_mode: Default::default(),
                 id: id.clone(),
                 provider: "dsh".to_string(),
+                provider_version: None,
                 provider_session_id: item.provider_session_id,
                 agent_profile: Some(source.agent_profile.clone()),
                 title: None,
@@ -1424,6 +1451,7 @@ fn read_dsh_messages(
     cursor: Option<&str>,
     limit: usize,
     direction: HistoryMessageDirection,
+    include_parts: bool,
 ) -> Result<HistoryMessagesPage, HistoryError> {
     if cursor.is_some_and(|value| value.parse::<u64>().is_err())
         || matches!(direction, HistoryMessageDirection::Latest) && cursor.is_some()
@@ -1447,12 +1475,17 @@ fn read_dsh_messages(
     if let Some(cursor) = cursor {
         args.extend(["--cursor".to_string(), cursor.to_string()]);
     }
-    let page: DshMessagesPage = decode_dsh_adapter(&run_dsh_adapter(
+    let mut page: DshMessagesPage = decode_dsh_adapter(&run_dsh_adapter(
         source,
         "messages",
         &args,
         DSH_ADAPTER_READ_TIMEOUT,
     )?)?;
+    // DSH retains its adapter-owned text-only history contract. Typed parts are
+    // projected only from the version-gated Codex and Claude transcript parsers.
+    for message in &mut page.messages {
+        message.parts = include_parts.then(Vec::new);
+    }
     if page.messages.iter().any(|message| {
         !matches!(message.role.as_str(), "user" | "assistant")
             || !valid_dsh_text(&message.id, 512)
@@ -1497,18 +1530,19 @@ pub(crate) fn messages(
     let session = find_session(sources, history_id).ok_or(HistoryError::NotFound)?;
     match direction {
         HistoryMessageDirection::Forward => {
-            read_messages(&session, parse_message_cursor(cursor)?, limit)
+            read_messages(&session, parse_message_cursor(cursor)?, limit, false)
         }
         HistoryMessageDirection::Latest => {
             if cursor.is_some() {
                 return Err(HistoryError::InvalidCursor);
             }
-            read_messages_reverse(&session, None, limit)
+            history_images::read_messages_reverse(&session, None, limit, false)
         }
-        HistoryMessageDirection::Older => read_messages_reverse(
+        HistoryMessageDirection::Older => history_images::read_messages_reverse(
             &session,
             Some(parse_required_message_cursor(cursor)?),
             limit,
+            false,
         ),
     }
 }
@@ -1620,19 +1654,20 @@ fn inspect_history_file(
     }
     let metadata = fs::metadata(path).ok()?;
     let updated_at = format_system_time(metadata.modified().ok()?);
-    let (provider_session_id, cwd, created_at) = match source.provider.as_str() {
+    let (provider_session_id, cwd, created_at, provider_version) = match source.provider.as_str() {
         "codex" => {
             let meta = nils_provider_resume::read_codex_resumable_session_meta(path)?;
             (
                 meta.session_id,
                 meta.cwd,
                 format_system_time(meta.created_at),
+                history_images::provider_version(path, "codex"),
             )
         }
         "claude" => {
             let id = path.file_stem()?.to_str()?.to_string();
             let cwd = nils_provider_resume::read_claude_session_cwd(path, &id)?;
-            (id, cwd, updated_at.clone())
+            (id, cwd, updated_at.clone(), None)
         }
         _ => return None,
     };
@@ -1647,6 +1682,7 @@ fn inspect_history_file(
         archived_title_mode: Default::default(),
         id,
         provider: source.provider.clone(),
+        provider_version,
         provider_session_id,
         agent_profile: source.agent_profile.clone(),
         title: None,
@@ -2572,191 +2608,6 @@ fn digest_parts(parts: &[&[u8]]) -> String {
     format!("sha256:{hex}")
 }
 
-fn read_messages_reverse(
-    session: &HistorySession,
-    before: Option<u64>,
-    limit: usize,
-) -> Result<HistoryMessagesPage, HistoryError> {
-    let deadline = Instant::now() + MESSAGE_SCAN_MAX_DURATION;
-    let mut file = fs::File::open(&session.transcript_path).map_err(|_| HistoryError::NotFound)?;
-    let file_len = file.metadata().map_err(|_| HistoryError::Io)?.len();
-    read_messages_reverse_from_reader(session, &mut file, file_len, before, limit, deadline)
-}
-
-fn read_messages_reverse_from_reader<R: Read + Seek>(
-    session: &HistorySession,
-    reader: &mut R,
-    file_len: u64,
-    before: Option<u64>,
-    limit: usize,
-    deadline: Instant,
-) -> Result<HistoryMessagesPage, HistoryError> {
-    let end = before.unwrap_or(file_len);
-    if end > file_len {
-        return Err(HistoryError::InvalidCursor);
-    }
-    if end == 0 {
-        return Ok(HistoryMessagesPage {
-            messages: Vec::new(),
-            next_cursor: None,
-            older_cursor: None,
-        });
-    }
-    if before.is_some() {
-        reader
-            .seek(SeekFrom::Start(end.saturating_sub(1)))
-            .map_err(|_| HistoryError::InvalidCursor)?;
-        let mut preceding = [0u8; 1];
-        reader
-            .read_exact(&mut preceding)
-            .map_err(|_| HistoryError::InvalidCursor)?;
-        if preceding[0] != b'\n' {
-            return Err(HistoryError::InvalidCursor);
-        }
-    }
-
-    let lower_bound = end.saturating_sub(REVERSE_MESSAGE_MAX_BYTES);
-    let mut position = end;
-    let mut partial: Vec<Vec<u8>> = Vec::new();
-    let mut partial_len = 0usize;
-    let mut partial_oversized = false;
-    let mut messages = Vec::new();
-    let mut bound_reached = false;
-    let mut oldest_offset = None;
-    let mut earliest_boundary = None;
-    let mut scanned = 0usize;
-
-    'chunks: while position > lower_bound && messages.len() < limit {
-        if scanned >= MAX_MESSAGE_SCAN_LINES || Instant::now() >= deadline {
-            bound_reached = true;
-            break;
-        }
-        let chunk_start = position
-            .saturating_sub(REVERSE_MESSAGE_CHUNK_BYTES as u64)
-            .max(lower_bound);
-        let chunk_len = usize::try_from(position - chunk_start).map_err(|_| HistoryError::Io)?;
-        let mut chunk = vec![0u8; chunk_len];
-        reader
-            .seek(SeekFrom::Start(chunk_start))
-            .map_err(|_| HistoryError::Io)?;
-        reader
-            .read_exact(&mut chunk)
-            .map_err(|_| HistoryError::Io)?;
-        position = chunk_start;
-
-        let mut right = chunk.len();
-        let mut rightmost = true;
-        while let Some(newline) = chunk[..right].iter().rposition(|byte| *byte == b'\n') {
-            if scanned >= MAX_MESSAGE_SCAN_LINES || Instant::now() >= deadline {
-                bound_reached = true;
-                break 'chunks;
-            }
-            let line_start = newline + 1;
-            let line_offset = chunk_start.saturating_add(line_start as u64);
-            earliest_boundary = Some(line_offset);
-            scanned += 1;
-
-            if rightmost && (partial_len > 0 || partial_oversized) {
-                if !partial_oversized
-                    && chunk.len().saturating_sub(line_start) + partial_len
-                        <= MAX_IMAGE_RECORD_BYTES
-                {
-                    let mut joined =
-                        Vec::with_capacity(chunk.len().saturating_sub(line_start) + partial_len);
-                    joined.extend_from_slice(&chunk[line_start..]);
-                    for fragment in partial.iter().rev() {
-                        joined.extend_from_slice(fragment);
-                    }
-                    push_reverse_message(session, &joined, line_offset, &mut messages);
-                }
-                partial.clear();
-                partial_len = 0;
-                partial_oversized = false;
-            } else {
-                push_reverse_message(
-                    session,
-                    &chunk[line_start..right],
-                    line_offset,
-                    &mut messages,
-                );
-            }
-            if messages.len() == limit {
-                break 'chunks;
-            }
-            right = newline;
-            rightmost = false;
-        }
-
-        if chunk_start == 0 {
-            if scanned >= MAX_MESSAGE_SCAN_LINES || Instant::now() >= deadline {
-                bound_reached = true;
-                break;
-            }
-            earliest_boundary = Some(0);
-            if rightmost && (partial_len > 0 || partial_oversized) {
-                if !partial_oversized && chunk.len() + partial_len <= MAX_IMAGE_RECORD_BYTES {
-                    let mut joined = Vec::with_capacity(chunk.len() + partial_len);
-                    joined.extend_from_slice(&chunk);
-                    for fragment in partial.iter().rev() {
-                        joined.extend_from_slice(fragment);
-                    }
-                    push_reverse_message(session, &joined, 0, &mut messages);
-                }
-            } else {
-                push_reverse_message(session, &chunk[..right], 0, &mut messages);
-            }
-            break;
-        }
-
-        let fragment = &chunk[..right];
-        if rightmost {
-            if partial_oversized || fragment.len() + partial_len > MAX_IMAGE_RECORD_BYTES {
-                partial.clear();
-                partial_len = 0;
-                partial_oversized = true;
-            } else {
-                partial.push(fragment.to_vec());
-                partial_len += fragment.len();
-            }
-        } else if fragment.len() > MAX_IMAGE_RECORD_BYTES {
-            partial.clear();
-            partial_len = 0;
-            partial_oversized = true;
-        } else {
-            partial.clear();
-            partial.push(fragment.to_vec());
-            partial_len = fragment.len();
-        }
-    }
-
-    for message in &messages {
-        let Some(offset) = message
-            .id
-            .rsplit('-')
-            .next()
-            .and_then(|value| value.parse().ok())
-        else {
-            continue;
-        };
-        oldest_offset = Some(oldest_offset.map_or(offset, |current: u64| current.min(offset)));
-    }
-    messages.reverse();
-    let unread_older = position > 0
-        || lower_bound > 0
-        || bound_reached
-        || (messages.len() == limit && oldest_offset.is_some_and(|offset| offset > 0));
-    let continuation =
-        oldest_offset.or_else(|| unread_older.then_some(earliest_boundary).flatten());
-    let older_cursor = continuation
-        .filter(|offset| *offset > 0 && unread_older)
-        .map(|offset| offset.to_string());
-    Ok(HistoryMessagesPage {
-        messages,
-        next_cursor: None,
-        older_cursor,
-    })
-}
-
 fn matches_metadata(session: &HistorySession, machine: &str, query: Option<&str>) -> bool {
     let Some(query) = query.map(str::trim).filter(|value| !value.is_empty()) else {
         return true;
@@ -2916,11 +2767,12 @@ mod tests {
                     serde_json::json!({"type":"user","message":{"role":"user","content":content}})
                 };
                 let mut messages = Vec::new();
-                push_reverse_message(
+                history_images::push_reverse_message(
                     &session,
                     &serde_json::to_vec(&row).unwrap(),
                     0,
                     &mut messages,
+                    false,
                 );
                 assert_eq!(
                     messages.len(),
@@ -3050,6 +2902,7 @@ mod tests {
             archived_title_mode: Default::default(),
             id: id.to_string(),
             provider: "codex".to_string(),
+            provider_version: None,
             provider_session_id: id.to_string(),
             agent_profile: None,
             title: None,
@@ -3546,13 +3399,14 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             bytes_read: 0,
         };
 
-        let page = read_messages_reverse_from_reader(
+        let page = history_images::read_messages_reverse_from_reader(
             &session,
             &mut reader,
             file_len,
             None,
             50,
             Instant::now() + MESSAGE_SCAN_MAX_DURATION,
+            false,
         )
         .unwrap();
 
@@ -3582,13 +3436,14 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             bytes_read: 0,
         };
 
-        let page = read_messages_reverse_from_reader(
+        let page = history_images::read_messages_reverse_from_reader(
             &session,
             &mut reader,
             file_len,
             None,
             100,
             Instant::now() + Duration::from_secs(60),
+            false,
         )
         .unwrap();
 
@@ -3777,13 +3632,14 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
         assert_eq!(page.next_offset, file_len);
 
         let mut reverse_reader = Cursor::new(bytes);
-        let reverse = read_messages_reverse_from_reader(
+        let reverse = history_images::read_messages_reverse_from_reader(
             &session,
             &mut reverse_reader,
             file_len,
             None,
             20,
             Instant::now() + MESSAGE_SCAN_MAX_DURATION,
+            false,
         )
         .unwrap();
         assert_eq!(reverse.messages.len(), 1);
@@ -3903,13 +3759,14 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
         bytes.push(b'\n');
         assert!(bytes.len() <= MAX_IMAGE_RECORD_BYTES);
         let mut reader = Cursor::new(bytes.clone());
-        let page = read_messages_reverse_from_reader(
+        let page = history_images::read_messages_reverse_from_reader(
             &session,
             &mut reader,
             bytes.len() as u64,
             None,
             20,
             Instant::now() + Duration::from_secs(5),
+            false,
         )
         .unwrap();
         assert_eq!(page.messages.len(), 1);
@@ -3953,13 +3810,14 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
         assert_eq!(bytes.len(), MAX_IMAGE_RECORD_BYTES);
         bytes.push(b'\n');
         let mut reader = Cursor::new(bytes.clone());
-        let page = read_messages_reverse_from_reader(
+        let page = history_images::read_messages_reverse_from_reader(
             &session,
             &mut reader,
             bytes.len() as u64,
             None,
             20,
             Instant::now() + Duration::from_secs(5),
+            false,
         )
         .unwrap();
         assert_eq!(page.messages.len(), 1);
@@ -4061,13 +3919,14 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             bytes.push(b'\n');
         }
         let mut reader = Cursor::new(bytes.clone());
-        let page = read_messages_reverse_from_reader(
+        let page = history_images::read_messages_reverse_from_reader(
             &session,
             &mut reader,
             bytes.len() as u64,
             None,
             20,
             Instant::now() + MESSAGE_SCAN_MAX_DURATION,
+            false,
         )
         .unwrap();
         assert_eq!(page.messages.len(), 2);
@@ -5073,6 +4932,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
                 archived_title_mode: Default::default(),
                 id: id.clone(),
                 provider: "codex".to_string(),
+                provider_version: None,
                 provider_session_id: "provider-id".to_string(),
                 agent_profile: Some("profile-a".to_string()),
                 title: None,

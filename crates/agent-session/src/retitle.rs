@@ -4138,17 +4138,15 @@ mod tests {
                 id: "provider-turn-a".into(),
                 role: "user".into(),
                 text: "continue".into(),
-                timestamp: None,
                 human_prompt: true,
-                images: Vec::new(),
+                ..HistoryMessage::default()
             },
             HistoryMessage {
                 id: "provider-turn-b".into(),
                 role: "user".into(),
                 text: "continue".into(),
-                timestamp: None,
                 human_prompt: true,
-                images: Vec::new(),
+                ..HistoryMessage::default()
             },
         ]);
         assert_eq!(turns.len(), 2);
@@ -4164,25 +4162,22 @@ mod tests {
                 id: "setup".into(),
                 role: "user".into(),
                 text: "injected setup".into(),
-                timestamp: None,
                 human_prompt: false,
-                images: Vec::new(),
+                ..HistoryMessage::default()
             },
             HistoryMessage {
                 id: "setup-answer".into(),
                 role: "assistant".into(),
                 text: "private setup output".into(),
-                timestamp: None,
                 human_prompt: false,
-                images: Vec::new(),
+                ..HistoryMessage::default()
             },
             HistoryMessage {
                 id: "turn-real".into(),
                 role: "user".into(),
                 text: "Review #449".into(),
-                timestamp: None,
                 human_prompt: true,
-                images: Vec::new(),
+                ..HistoryMessage::default()
             },
         ]);
         assert_eq!(turns.len(), 1);
