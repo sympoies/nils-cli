@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `8ef64497f5eea793b9dc8c4fb823ff6cdfc0626d58c22211d225169a8d630b52`
+- Cargo.lock SHA256: `98da6afd30c755a1e344f066da73d36c8a4516963ee4092fcbf269caef46d8bd`
 - Third-party crates (`source != null`): 493
 - Workspace crates (`source == null`, excluded below): 40
 
@@ -250,7 +250,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | kqueue-sys | 1.1.2 | MIT | crates.io |
 | kurbo | 0.13.1 | Apache-2.0 OR MIT | crates.io |
 | lazy_static | 1.5.0 | MIT OR Apache-2.0 | crates.io |
-| libc | 0.2.190 | MIT OR Apache-2.0 | crates.io |
+| libc | 0.2.191 | MIT OR Apache-2.0 | crates.io |
 | libgit2-sys | 0.18.8+1.9.7 | MIT OR Apache-2.0 | crates.io |
 | libm | 0.2.16 | MIT | crates.io |
 | libz-sys | 1.1.29 | MIT OR Apache-2.0 | crates.io |
@@ -267,7 +267,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | micromap | 0.3.0 | MIT | crates.io |
 | mime | 0.3.17 | MIT OR Apache-2.0 | crates.io |
 | mime_guess | 2.0.5 | MIT | crates.io |
-| minijinja | 3.0.0 | Apache-2.0 | crates.io |
+| minijinja | 3.0.2 | Apache-2.0 | crates.io |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | crates.io |
 | mio | 1.2.1 | MIT | crates.io |
 | moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 | crates.io |
@@ -393,7 +393,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | serde_with_macros | 3.24.0 | MIT OR Apache-2.0 | crates.io |
 | serde_yaml_ng | 0.10.0 | MIT | crates.io |
 | sha1 | 0.10.6 | MIT OR Apache-2.0 | crates.io |
-| sha2 | 0.11.0 | MIT OR Apache-2.0 | crates.io |
+| sha2 | 0.11.1 | MIT OR Apache-2.0 | crates.io |
 | sharded-slab | 0.1.7 | MIT | crates.io |
 | shell-words | 1.1.1 | MIT/Apache-2.0 | crates.io |
 | shlex | 2.0.1 | MIT OR Apache-2.0 | crates.io |
@@ -433,7 +433,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | tinystr | 0.8.3 | Unicode-3.0 | crates.io |
 | tinyvec | 1.11.0 | Zlib OR Apache-2.0 OR MIT | crates.io |
 | tinyvec_macros | 0.1.1 | MIT OR Apache-2.0 OR Zlib | crates.io |
-| tokio | 1.53.2 | MIT | crates.io |
+| tokio | 1.54.1 | MIT | crates.io |
 | tokio-macros | 2.7.0 | MIT | crates.io |
 | tokio-rustls | 0.26.4 | MIT OR Apache-2.0 | crates.io |
 | tokio-tungstenite | 0.29.0 | MIT | crates.io |

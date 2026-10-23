@@ -3,7 +3,7 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `8ef64497f5eea793b9dc8c4fb823ff6cdfc0626d58c22211d225169a8d630b52`
+- Cargo.lock SHA256: `98da6afd30c755a1e344f066da73d36c8a4516963ee4092fcbf269caef46d8bd`
 - Third-party crates (`source != null`): 493
 
 ## Notice Extraction Policy
@@ -1696,7 +1696,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### libc 0.2.190
+### libc 0.2.191
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -1846,7 +1846,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### minijinja 3.0.0
+### minijinja 3.0.2
 
 - License: `Apache-2.0`
 - Source: `crates.io`
@@ -2927,7 +2927,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### sha2 0.11.0
+### sha2 0.11.1
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -3273,7 +3273,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-MIT.md`
   - `LICENSE-ZLIB.md`
 
-### tokio 1.53.2
+### tokio 1.54.1
 
 - License: `MIT`
 - Source: `crates.io`
