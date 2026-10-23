@@ -168,7 +168,9 @@ impl RasterInput {
     ) -> anyhow::Result<ImageInfo> {
         let base_width = self.image.width();
         let base_height = self.image.height();
-        let (width, height) = resolve_raster_dimensions(base_width, base_height, raster_size_hint)?;
+        let (width, height) =
+            svg_validate::resolve_raster_dimensions(base_width, base_height, raster_size_hint)
+                .ok_or_else(|| anyhow::anyhow!("input image has invalid dimensions"))?;
         let rendered = if width == base_width && height == base_height {
             self.image.clone()
         } else {
@@ -249,35 +251,6 @@ fn display_format(raw: &str) -> &'static str {
         "svg" => "SVG",
         _ => "UNKNOWN",
     }
-}
-
-fn resolve_raster_dimensions(
-    base_width: u32,
-    base_height: u32,
-    hint: RasterSizeHint,
-) -> anyhow::Result<(u32, u32)> {
-    if base_width == 0 || base_height == 0 {
-        return Err(anyhow::anyhow!("input image has invalid dimensions"));
-    }
-
-    let dims = match (hint.width, hint.height) {
-        (Some(width), Some(height)) => (width, height),
-        (Some(width), None) => {
-            let height = ((width as f64 * base_height as f64) / base_width as f64)
-                .round()
-                .max(1.0) as u32;
-            (width, height)
-        }
-        (None, Some(height)) => {
-            let width = ((height as f64 * base_width as f64) / base_height as f64)
-                .round()
-                .max(1.0) as u32;
-            (width, height)
-        }
-        (None, None) => (base_width, base_height),
-    };
-
-    Ok((dims.0.max(1), dims.1.max(1)))
 }
 
 fn write_png(path: &Path, image: &DynamicImage) -> anyhow::Result<()> {
@@ -367,31 +340,6 @@ mod tests {
         assert_eq!(normalize_convert_target("jpg"), Some("jpg"));
         assert_eq!(normalize_convert_target("jpeg"), Some("jpg"));
         assert_eq!(normalize_convert_target("gif"), None);
-    }
-
-    #[test]
-    fn resolve_raster_dimensions_preserves_aspect_when_single_dimension_is_set() {
-        let by_width = resolve_raster_dimensions(
-            80,
-            40,
-            RasterSizeHint {
-                width: Some(200),
-                height: None,
-            },
-        )
-        .unwrap();
-        assert_eq!(by_width, (200, 100));
-
-        let by_height = resolve_raster_dimensions(
-            80,
-            40,
-            RasterSizeHint {
-                width: None,
-                height: Some(120),
-            },
-        )
-        .unwrap();
-        assert_eq!(by_height, (240, 120));
     }
 
     #[test]
