@@ -54,7 +54,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
                     "previousAccountId": "workspace-old"
                 }
             }),
-            Some((&context, &record, "acct1")),
+            Some((&context, &record, "acct1", "fixture-connection")),
         )
         .await
         .unwrap()
@@ -90,7 +90,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         "resolve --account acct1 --force-refresh --format json"
     );
     let previous_incident = incident.incident_id;
-    assert!(respond_to_external_auth_refresh(&mut sink, &json!({"id":"refresh-1", "method":"account/chatgptAuthTokens/refresh", "params":{"reason":"unauthorized"}}), Some((&context, &record, "acct1"))).await.is_err());
+    assert!(respond_to_external_auth_refresh(&mut sink, &json!({"id":"refresh-1", "method":"account/chatgptAuthTokens/refresh", "params":{"reason":"unauthorized"}}), Some((&context, &record, "acct1", "fixture-connection"))).await.is_err());
     assert_eq!(sink.messages.len(), 1);
     assert_eq!(
         crate::auth_incident::view(&context, &record)
@@ -104,7 +104,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         b"invalid",
     )
     .unwrap();
-    assert!(respond_to_external_auth_refresh(&mut sink, &json!({"id":"refresh-2", "method":"account/chatgptAuthTokens/refresh", "params":{"reason":"unauthorized"}}), Some((&context, &record, "acct1"))).await.unwrap());
+    assert!(respond_to_external_auth_refresh(&mut sink, &json!({"id":"refresh-2", "method":"account/chatgptAuthTokens/refresh", "params":{"reason":"unauthorized"}}), Some((&context, &record, "acct1", "fixture-connection"))).await.unwrap());
     assert_eq!(sink.messages.len(), 2);
     assert_eq!(fs::read_to_string(calls).unwrap().lines().count(), 2);
     assert_eq!(
@@ -147,7 +147,7 @@ async fn external_auth_refresh_failure_restores_bound_binding_for_retry() {
             "method": "account/chatgptAuthTokens/refresh",
             "params": { "reason": "unauthorized" }
         }),
-        Some((&context, &record, "acct1")),
+        Some((&context, &record, "acct1", "fixture-connection")),
     )
     .await
     .unwrap_err();
@@ -172,7 +172,7 @@ async fn external_auth_refresh_failure_restores_bound_binding_for_retry() {
     let backoff = respond_to_external_auth_refresh(
         &mut RecordingMessageSink::default(),
         &json!({"id":20,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}),
-        Some((&context, &record, "acct1")),
+        Some((&context, &record, "acct1", "fixture-connection")),
     ).await.unwrap_err();
     assert!(backoff.contains("retry-backoff"), "{backoff}");
     let receipt_path = crate::session_dir(&context, &record.id).join("codex-auth-recovery.json");
@@ -197,7 +197,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
                 "method": "account/chatgptAuthTokens/refresh",
                 "params": { "reason": "unauthorized" }
             }),
-            Some((&context, &record, "acct1")),
+            Some((&context, &record, "acct1", "fixture-connection")),
         )
         .await
         .unwrap()
@@ -249,7 +249,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             "method": "account/chatgptAuthTokens/refresh",
             "params": { "reason": "unauthorized" }
         }),
-        Some((&context, &record, "acct1")),
+        Some((&context, &record, "acct1", "fixture-connection")),
     )
     .await
     .unwrap_err();
@@ -328,9 +328,9 @@ async fn external_auth_refresh_bounds_consecutive_faults_and_keeps_identity() {
         .await
         .unwrap();
     for id in 1..=3 {
-        assert!(respond_to_external_auth_refresh(&mut sink, &json!({"id":id,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}), Some((&context,&record,"acct1"))).await.unwrap());
+        assert!(respond_to_external_auth_refresh(&mut sink, &json!({"id":id,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}), Some((&context,&record,"acct1", "fixture-connection"))).await.unwrap());
     }
-    let error = respond_to_external_auth_refresh(&mut sink, &json!({"id":4,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}), Some((&context,&record,"acct1"))).await.unwrap_err();
+    let error = respond_to_external_auth_refresh(&mut sink, &json!({"id":4,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}), Some((&context,&record,"acct1", "fixture-connection"))).await.unwrap_err();
     assert!(error.contains("retry-budget-exhausted"), "{error}");
     assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 3);
     // Expiring the rate window admits a new official request, but never
@@ -341,8 +341,8 @@ async fn external_auth_refresh_bounds_consecutive_faults_and_keeps_identity() {
         operation["started_at_epoch_ms"] = json!(Timestamp::now().as_millisecond() - 61_000);
     }
     fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
-    respond_to_external_auth_refresh(&mut sink, &json!({"id":4,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}), Some((&context,&record,"acct1"))).await.unwrap();
-    assert!(respond_to_external_auth_refresh(&mut sink, &json!({"id":1,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}), Some((&context,&record,"acct1"))).await.unwrap_err().contains("duplicate-request"));
+    respond_to_external_auth_refresh(&mut sink, &json!({"id":4,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}), Some((&context,&record,"acct1", "fixture-connection"))).await.unwrap();
+    assert!(respond_to_external_auth_refresh(&mut sink, &json!({"id":1,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}), Some((&context,&record,"acct1", "fixture-connection"))).await.unwrap_err().contains("duplicate-request"));
     assert_eq!(fs::read_to_string(calls).unwrap().lines().count(), 4);
     sink.close(None).await.unwrap();
     let received = peer.await.unwrap();
@@ -395,7 +395,7 @@ async fn external_auth_refresh_rejects_stale_runtime_before_broker_or_incident()
     let mut current = crate::load_session_record(&context, &record.id).unwrap();
     current.runtime.as_mut().unwrap().generation += 1;
     crate::write_session_record(&context, &current).unwrap();
-    let error = respond_to_external_auth_refresh(&mut RecordingMessageSink::default(), &json!({"id":1,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}), Some((&context,&record,"acct1"))).await.unwrap_err();
+    let error = respond_to_external_auth_refresh(&mut RecordingMessageSink::default(), &json!({"id":1,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}), Some((&context,&record,"acct1", "fixture-connection"))).await.unwrap_err();
     assert!(error.contains("superseded"), "{error}");
     assert!(crate::auth_incident::view(&context, &current).is_none());
     assert_eq!(
@@ -423,9 +423,13 @@ async fn external_auth_refresh_crash_receipts_never_repeat_broker_or_response() 
     let (context, record) = recovery_fixture(&tmp);
     let mut sink = RecordingMessageSink::default();
     let request = json!({"id":1,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}});
-    respond_to_external_auth_refresh(&mut sink, &request, Some((&context, &record, "acct1")))
-        .await
-        .unwrap();
+    respond_to_external_auth_refresh(
+        &mut sink,
+        &request,
+        Some((&context, &record, "acct1", "fixture-connection")),
+    )
+    .await
+    .unwrap();
     let path = crate::session_dir(&context, &record.id).join("codex-auth-recovery.json");
     for state in ["resolving", "response_unknown"] {
         let mut receipt: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -437,18 +441,28 @@ async fn external_auth_refresh_crash_receipts_never_repeat_broker_or_response() 
             respond_to_external_auth_refresh(
                 &mut sink,
                 &request,
-                Some((&context, &reloaded, "acct1"))
+                Some((&context, &reloaded, "acct1", "fixture-connection"))
             )
             .await
             .unwrap_err()
             .contains("duplicate-request")
+        );
+        assert!(
+            respond_to_external_auth_refresh(
+                &mut sink,
+                &request,
+                Some((&context, &reloaded, "acct1", "replacement-connection"))
+            )
+            .await
+            .unwrap_err()
+            .contains("previous-outcome-unknown")
         );
         let new_request = json!({"id":2,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}});
         assert!(
             respond_to_external_auth_refresh(
                 &mut sink,
                 &new_request,
-                Some((&context, &reloaded, "acct1"))
+                Some((&context, &reloaded, "acct1", "fixture-connection"))
             )
             .await
             .unwrap_err()
@@ -500,7 +514,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
     );
     let (context, record) = recovery_fixture(&tmp);
     let error = tokio::time::timeout(Duration::from_secs(2), respond_to_external_auth_refresh(&mut StalledSink,
-        &json!({"id":1,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}), Some((&context,&record,"acct1"))))
+        &json!({"id":1,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}), Some((&context,&record,"acct1", "fixture-connection"))))
         .await.expect("response deadline must release the controller").unwrap_err();
     assert!(error.contains("response-outcome-unknown"), "{error}");
     let receipt: Value = serde_json::from_slice(
@@ -538,7 +552,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         &serde_json::to_string(&argv).unwrap(),
     );
     let mut sink = RecordingMessageSink::default();
-    let error = respond_to_external_auth_refresh(&mut sink, &json!({"id":1,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}), Some((&context,&record,"acct1"))).await.unwrap_err();
+    let error = respond_to_external_auth_refresh(&mut sink, &json!({"id":1,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}), Some((&context,&record,"acct1", "fixture-connection"))).await.unwrap_err();
     assert!(
         error.contains("conversation-or-binding-superseded"),
         "{error}"
@@ -549,4 +563,33 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         current.provider_resume.unwrap().session_id,
         "replacement-thread"
     );
+}
+
+#[tokio::test]
+async fn external_auth_refresh_allows_request_id_reuse_after_reconnect() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let broker = tmp.path().join("broker");
+    fs::write(&broker, r#"#!/bin/sh
+printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"acct1","access_token":"reconnect-fixture-token","chatgpt_account_id":"fixture-workspace"}'
+"#).unwrap();
+    fs::set_permissions(&broker, fs::Permissions::from_mode(0o700)).unwrap();
+    let _broker = EnvGuard::set(
+        &lock,
+        "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+        &serde_json::to_string(&vec![broker]).unwrap(),
+    );
+    let (context, record) = recovery_fixture(&tmp);
+    for connection in ["first-connection", "second-connection"] {
+        let (client, server) = tokio::net::UnixStream::pair().unwrap();
+        let peer = tokio::spawn(async move {
+            let mut socket = tokio_tungstenite::accept_async(server).await.unwrap();
+            socket.next().await.unwrap().unwrap()
+        });
+        let (mut socket, _) = tokio_tungstenite::client_async("ws://localhost", client)
+            .await
+            .unwrap();
+        respond_to_external_auth_refresh(&mut socket, &json!({"id":1,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}), Some((&context,&record,"acct1", connection))).await.expect("a new connection can reuse a JSON-RPC request id");
+        assert!(matches!(peer.await.unwrap(), Message::Text(_)));
+    }
 }

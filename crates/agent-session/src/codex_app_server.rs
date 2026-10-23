@@ -2566,6 +2566,7 @@ pub(crate) async fn run_control(
     .await
     .map_err(|err| format!("initialize failed: {err}"))?;
     send_json(&mut websocket, initialized_notification()).await?;
+    let external_auth_connection_id = uuid::Uuid::new_v4().to_string();
     let mut external_auth_account = None;
     if let Some((account, revision)) = crate::codex_account::account_for_control_rebind(&record)
         .map_err(|err| format!("Codex account binding is invalid: {}", err.code()))?
@@ -2657,9 +2658,14 @@ pub(crate) async fn run_control(
             &mut websocket,
             request_id,
             None,
-            external_auth_account
-                .as_deref()
-                .map(|account| (&context, &record, account)),
+            external_auth_account.as_deref().map(|account| {
+                (
+                    &context,
+                    &record,
+                    account,
+                    external_auth_connection_id.as_str(),
+                )
+            }),
             CONTROL_RESPONSE_TIMEOUT,
         )
         .await
@@ -2693,9 +2699,14 @@ pub(crate) async fn run_control(
             &mut websocket,
             request_id,
             None,
-            external_auth_account
-                .as_deref()
-                .map(|account| (&context, &record, account)),
+            external_auth_account.as_deref().map(|account| {
+                (
+                    &context,
+                    &record,
+                    account,
+                    external_auth_connection_id.as_str(),
+                )
+            }),
             CONTROL_RESPONSE_TIMEOUT,
         )
         .await
@@ -2721,9 +2732,14 @@ pub(crate) async fn run_control(
             &mut websocket,
             request_id,
             Some((&context, &record, &mut reducer)),
-            external_auth_account
-                .as_deref()
-                .map(|account| (&context, &record, account)),
+            external_auth_account.as_deref().map(|account| {
+                (
+                    &context,
+                    &record,
+                    account,
+                    external_auth_connection_id.as_str(),
+                )
+            }),
             CONTROL_RESPONSE_TIMEOUT,
         )
         .await
@@ -2767,7 +2783,7 @@ pub(crate) async fn run_control(
                             Some((&context, &record, &mut reducer)),
                             external_auth_account
                                 .as_deref()
-                                .map(|account| (&context, &record, account)),
+                                .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                             CONTROL_RESPONSE_TIMEOUT,
                         ).await;
                         let _ = response.send(result.map(|value| usage_snapshot(&value)));
@@ -2792,7 +2808,7 @@ pub(crate) async fn run_control(
                             Some((&context, &record, &mut reducer)),
                             external_auth_account
                                 .as_deref()
-                                .map(|account| (&context, &record, account)),
+                                .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                             CONTROL_SUBMISSION_TIMEOUT,
                         ).await;
                         let result = match result {
@@ -2840,7 +2856,7 @@ pub(crate) async fn run_control(
                                 Some((&context, &record, &mut reducer)),
                                 external_auth_account
                                     .as_deref()
-                                    .map(|account| (&context, &record, account)),
+                                    .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                                 CONTROL_RESPONSE_TIMEOUT,
                             )
                             .await
@@ -2894,7 +2910,7 @@ pub(crate) async fn run_control(
                             Some((&context, &record, &mut reducer)),
                             external_auth_account
                                 .as_deref()
-                                .map(|account| (&context, &record, account)),
+                                .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                             CONTROL_SUBMISSION_TIMEOUT,
                         )
                         .await
@@ -2942,7 +2958,7 @@ pub(crate) async fn run_control(
                                 Some((&context, &record, &mut reducer)),
                                 external_auth_account
                                     .as_deref()
-                                    .map(|account| (&context, &record, account)),
+                                    .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                                 CONTROL_RESPONSE_TIMEOUT,
                             ).await {
                                 let _ = response.send(Err(err));
@@ -2964,7 +2980,7 @@ pub(crate) async fn run_control(
                             Some((&context, &record, &mut reducer)),
                             external_auth_account
                                 .as_deref()
-                                .map(|account| (&context, &record, account)),
+                                .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                             CONTROL_SUBMISSION_TIMEOUT,
                         ).await.and_then(|value| {
                             value.pointer("/turn/id")
@@ -3022,7 +3038,7 @@ pub(crate) async fn run_control(
                                 Some((&context, &record, &mut reducer)),
                                 external_auth_account
                                     .as_deref()
-                                    .map(|account| (&context, &record, account)),
+                                    .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                                 CONTROL_RESPONSE_TIMEOUT,
                             )
                             .await;
@@ -3075,7 +3091,7 @@ pub(crate) async fn run_control(
                     &value,
                     external_auth_account
                         .as_deref()
-                        .map(|account| (&context, &record, account)),
+                        .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                 )
                 .await?
                 {
@@ -5062,7 +5078,7 @@ async fn receive_response_with_timeout<S>(
     websocket: &mut S,
     id: u64,
     live: Option<(&CliContext, &SessionRecord, &mut FailureReducer)>,
-    external_auth: Option<(&CliContext, &SessionRecord, &str)>,
+    external_auth: Option<(&CliContext, &SessionRecord, &str, &str)>,
     timeout: Duration,
 ) -> Result<Value, String>
 where

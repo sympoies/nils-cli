@@ -99,6 +99,7 @@ fn begin(
     expected: &SessionRecord,
     account: &str,
     id: &Value,
+    connection_id: &str,
 ) -> Result<(String, i64), String> {
     let _lock = crate::acquire_session_record_lock(context, &expected.id)
         .map_err(|_| "Codex refresh session-lock-unavailable")?;
@@ -112,14 +113,19 @@ fn begin(
         return Err("Codex account refresh superseded".into());
     }
     let mut store = read(context, &record)?;
-    let operation_id: String = Sha256::digest(
+    let mut identity = Sha256::new();
+    identity.update(connection_id.as_bytes());
+    identity.update([0]);
+    identity.update(
         json_id_key(id)
             .ok_or("Codex refresh invalid request id")?
             .as_bytes(),
-    )
-    .iter()
-    .map(|byte| format!("{byte:02x}"))
-    .collect();
+    );
+    let operation_id: String = identity
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     if store
         .operations
         .iter()
@@ -239,7 +245,7 @@ fn finish(
 pub(super) async fn respond_to_external_auth_refresh<S>(
     websocket: &mut S,
     value: &Value,
-    external_auth: Option<(&CliContext, &SessionRecord, &str)>,
+    external_auth: Option<(&CliContext, &SessionRecord, &str, &str)>,
 ) -> Result<bool, String>
 where
     S: futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
@@ -254,7 +260,7 @@ where
         .get("id")
         .filter(|id| json_id_key(id).is_some())
         .ok_or("Codex external-auth refresh request omitted a valid id")?;
-    let (context, record, account) =
+    let (context, record, account, connection_id) =
         external_auth.ok_or("Codex requested an external-auth refresh without a bound account")?;
     let lock_context = context.clone();
     let lock_id = record.id.clone();
@@ -271,8 +277,15 @@ where
     let begin_record = record.clone();
     let begin_account = account.to_string();
     let begin_id = id.clone();
+    let connection_id = connection_id.to_string();
     let (operation_id, deadline) = tokio::task::spawn_blocking(move || {
-        begin(&begin_context, &begin_record, &begin_account, &begin_id)
+        begin(
+            &begin_context,
+            &begin_record,
+            &begin_account,
+            &begin_id,
+            &connection_id,
+        )
     })
     .await
     .map_err(|_| "Codex refresh receipt worker failed")??;
@@ -316,7 +329,7 @@ where
 async fn respond_to_external_auth_refresh_inner<S>(
     websocket: &mut S,
     value: &Value,
-    external_auth: Option<(&CliContext, &SessionRecord, &str)>,
+    external_auth: Option<(&CliContext, &SessionRecord, &str, &str)>,
     operation_id: &str,
     deadline_epoch_ms: i64,
 ) -> Result<bool, String>
@@ -334,7 +347,7 @@ where
         .filter(|id| json_id_key(id).is_some())
         .cloned()
         .ok_or_else(|| "Codex external-auth refresh request omitted a valid id".to_string())?;
-    let (context, record, account) = external_auth.ok_or_else(|| {
+    let (context, record, account, _) = external_auth.ok_or_else(|| {
         "Codex requested an external-auth refresh without a bound account".to_string()
     })?;
     let launch_id = record

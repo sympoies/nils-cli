@@ -62,10 +62,10 @@ owner route report `owner_unavailable` in the notification receipt.
 
 Codex same-account refresh additionally writes a private, token-free
 `agent-session.codex-auth-recovery.v1` receipt store. Runtime incarnation and
-generation fence the store; each operation hashes the provider JSON-RPC request
-ID and captures the selected account, binding revision, provider conversation,
-start time and deadline. Duplicate request IDs are refused without another
-broker call or credential response. A committed `resolving` or
+generation fence the store; each operation hashes the connection scope and
+provider JSON-RPC request ID and captures the selected account, binding revision, provider conversation,
+start time and deadline. Duplicate IDs within a connection are refused without another
+broker call or credential response; reconnects can reuse request IDs. A committed `resolving` or
 `response_unknown` operation blocks later requests after a controller crash;
 credentials and prompts are never replayed to resolve uncertainty.
 
