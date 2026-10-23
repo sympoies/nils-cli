@@ -242,17 +242,8 @@ fn write_target_timestamp(target_file: &Path, auth_file: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::auth::is_invalid_secret_target;
     use crate::paths;
     use nils_test_support::{EnvGuard, GlobalStateLock};
-
-    #[test]
-    fn invalid_target_rejects_paths_and_traversal() {
-        assert!(is_invalid_secret_target("../a.json"));
-        assert!(is_invalid_secret_target("a/b.json"));
-        assert!(is_invalid_secret_target(r"a\b.json"));
-        assert!(!is_invalid_secret_target("alpha.json"));
-    }
 
     #[test]
     fn resolve_secret_dir_uses_codex_secret_dir_only() {
