@@ -131,10 +131,11 @@ is already complete.
 ## 3. Canonical validation flows
 
 Local development defaults to changed-scope validation. Normal PRs run
-affected-scope Linux checks; the full workspace test stack and coverage gate
-belong to the nightly, manual and release full-validation workflow. Run them
-locally only when you need CI parity, release-quality verification, coverage
-maintenance, or explicit debugging evidence.
+affected-scope Linux checks, with a full Linux fallback when scope cannot be
+narrowed; coverage and full macOS tests run only in the nightly, manual and
+release full-validation workflow. Run them locally only when you need CI
+parity, release-quality verification, coverage maintenance, or explicit
+debugging evidence.
 
 Primary local entrypoint for day-to-day implementation work:
 
