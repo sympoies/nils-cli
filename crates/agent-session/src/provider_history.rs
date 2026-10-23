@@ -652,7 +652,7 @@ impl HistoryCatalog {
 
     /// Compatibility lookup for callers that predate profile-aware identity.
     /// Ambiguous provider/session pairs fail closed.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn incremental_messages_for_provider_session(
         &self,
         provider: &str,

@@ -359,7 +359,7 @@ pub(crate) fn account_for_control_rebind(
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn set_initial_binding(
     record: &mut SessionRecord,
     account: Option<&str>,
@@ -1374,7 +1374,7 @@ fn validate_intent_id(intent_id: &str) -> Result<(), CliError> {
 
 /// Explicitly cancel any queued next-account intent. Idempotent; the applied
 /// binding is never changed.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn cancel_next_account(
     context: &CliContext,
     id: &str,

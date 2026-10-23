@@ -325,7 +325,7 @@ pub fn view_for_record(context: &CliContext, record: &SessionRecord) -> AutoResu
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn set_enabled(
     context: &CliContext,
     id: &str,
