@@ -104,11 +104,10 @@ pub(super) fn correlate_tool_status(
             ended_at,
             ..
         } = part
+            && let Some((is_error, timestamp)) = statuses.get(call_id)
         {
-            if let Some((is_error, timestamp)) = statuses.get(call_id) {
-                *status = if *is_error { "failed" } else { "completed" }.to_string();
-                *ended_at = timestamp.clone();
-            }
+            *status = if *is_error { "failed" } else { "completed" }.to_string();
+            *ended_at = timestamp.clone();
         }
     }
 }
@@ -408,14 +407,14 @@ fn claude_parts(
                 }
             }
         }
-    } else if kind == "system" {
-        if let Some(notice) = claude_notice(value) {
-            parts.push(HistoryPart::Notice {
-                id: id.to_string(),
-                timestamp: timestamp.map(str::to_string),
-                notice: notice.to_string(),
-            });
-        }
+    } else if kind == "system"
+        && let Some(notice) = claude_notice(value)
+    {
+        parts.push(HistoryPart::Notice {
+            id: id.to_string(),
+            timestamp: timestamp.map(str::to_string),
+            notice: notice.to_string(),
+        });
     }
 }
 
@@ -634,7 +633,12 @@ fn push_image_range(
     timestamp: Option<&str>,
     parts: &mut Vec<HistoryPart>,
 ) {
-    for index in start..start.saturating_add(count).min(images.len()) {
+    for (index, image) in images
+        .iter()
+        .enumerate()
+        .take(start.saturating_add(count).min(images.len()))
+        .skip(start)
+    {
         if parts.len() >= MAX_PARTS_PER_MESSAGE {
             break;
         }
@@ -645,7 +649,7 @@ fn push_image_range(
         parts.push(HistoryPart::Image {
             id: id.to_string(),
             timestamp: timestamp.map(str::to_string),
-            image_ref: images[index].id.clone(),
+            image_ref: image.id.clone(),
             mime,
             bytes,
         });
@@ -678,7 +682,7 @@ fn safe_mime(value: &str) -> Option<String> {
 }
 
 fn base64_decoded_len(value: &str) -> Option<u64> {
-    if value.len() % 4 != 0
+    if !value.len().is_multiple_of(4)
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
