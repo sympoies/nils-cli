@@ -199,7 +199,7 @@ fn begin(
     let record = current(context, expected)?;
     let binding = crate::codex_account::view_for_record(&record);
     if crate::codex_account::next_transition_state(&record)
-        != crate::codex_account::NextTransitionState::Absent
+        == crate::codex_account::NextTransitionState::Pending
     {
         return Err("Codex refresh account-switch-pending".into());
     }
