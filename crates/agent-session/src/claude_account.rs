@@ -95,7 +95,7 @@ pub(crate) struct ClaudeAccountView {
     pub(crate) selected_account: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     selection_source: Option<String>,
-    revision: u64,
+    pub(crate) revision: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     applied_runtime_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

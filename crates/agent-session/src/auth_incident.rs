@@ -3,6 +3,9 @@
 //! are inspected in memory and never persisted or sent to the owner.
 
 use std::fs;
+pub(crate) mod failover;
+#[cfg(test)]
+mod failover_tests;
 pub(crate) mod recovery;
 use std::path::Path;
 use std::process::Command;
@@ -57,6 +60,8 @@ pub(crate) struct AuthIncident {
     pub recovery_observed_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub same_account_recovery: Option<recovery::Receipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failover: Option<failover::Receipt>,
     notification: Notification,
     recovery_notification: Notification,
 }
@@ -188,11 +193,16 @@ fn observe_locked(
     {
         return true;
     }
-    if store
-        .incidents
-        .last()
-        .is_some_and(|incident| same_runtime(incident, record) && incident.status == "auth_failed")
-    {
+    let account_nickname = if record.agent == "codex" {
+        crate::codex_account::selected_account(record)
+    } else {
+        crate::claude_account::view_for_record(record).and_then(|view| view.selected_account)
+    };
+    if store.incidents.last().is_some_and(|incident| {
+        same_runtime(incident, record)
+            && incident.status == "auth_failed"
+            && incident.account_nickname == account_nickname
+    }) {
         store.last_failure_key = Some(event_key);
         return true;
     }
@@ -200,6 +210,10 @@ fn observe_locked(
     if store.incidents.len() == MAX_INCIDENTS {
         let settled = store.incidents.iter().position(|incident| {
             incident.status != "auth_failed"
+                && incident
+                    .failover
+                    .as_ref()
+                    .is_none_or(|r| !r.retains_chain())
                 && incident
                     .same_account_recovery
                     .as_ref()
@@ -215,11 +229,6 @@ fn observe_locked(
         store.incidents.remove(index);
     }
     store.last_failure_key = Some(event_key.clone());
-    let account_nickname = if record.agent == "codex" {
-        crate::codex_account::selected_account(record)
-    } else {
-        crate::claude_account::view_for_record(record).and_then(|view| view.selected_account)
-    };
     store.incidents.push(AuthIncident {
         incident_id: event_key,
         session_id: record.id.clone(),
@@ -234,6 +243,7 @@ fn observe_locked(
         recovery_result: None,
         recovery_observed_at: None,
         same_account_recovery: None,
+        failover: None,
         notification: Notification::default(),
         recovery_notification: Notification::default(),
     });
@@ -340,6 +350,7 @@ pub(crate) fn recover(
         return Ok(());
     }
     let mut store = read(context, &current)?;
+    let changed = failover::observe_result(&mut store, &current, result, at);
     if let Some(incident) = store.incidents.last_mut().filter(|incident| {
         same_runtime(incident, &current)
             && incident.status == "auth_failed"
@@ -357,6 +368,8 @@ pub(crate) fn recover(
         .into();
         incident.recovery_result = Some(result.into());
         incident.recovery_observed_at = Some(at.into());
+        save(context, &current, &store)?;
+    } else if changed {
         save(context, &current, &store)?;
     }
     Ok(())
@@ -523,7 +536,7 @@ fn send(
             None,
         )
     })?;
-    let idempotency_key = format!(
+    let mut idempotency_key = format!(
         "auth:{}:{}",
         incident.incident_id,
         if recovery { "recovery" } else { "observed" }
@@ -533,6 +546,13 @@ fn send(
     } else {
         "authentication"
     };
+    if recovery && let Some(failover) = &incident.failover {
+        idempotency_key = format!(
+            "auth:{}:{}",
+            key(&incident.incident_id, failover.operation_id()),
+            result
+        );
+    }
     let body = serde_json::json!({"kind":if recovery {"provider_auth_recovery_result"} else {"provider_auth_incident"}, "incident_id":incident.incident_id, "session_id":incident.session_id, "runtime_incarnation":incident.runtime_incarnation, "provider":incident.provider, "account_nickname":incident.account_nickname, "observed_at":if recovery {incident.recovery_observed_at.as_ref()} else {Some(&incident.observed_at)}, "source":incident.source, "confidence":incident.confidence, "result":result}).to_string();
     let local_digest = crate::coordination::request_digest(
         "message-send",
@@ -730,6 +750,7 @@ pub(crate) fn tick(
         }
     }
     recovery::tick(context, record, tmux, jiff::Timestamp::now().as_second())?;
+    failover::tick(context, record, tmux, jiff::Timestamp::now().as_second())?;
     let discovered = read(context, record)?;
     if !discovered.incidents.iter().any(|incident| {
         (!same_runtime(incident, record) && incident.status == "auth_failed")

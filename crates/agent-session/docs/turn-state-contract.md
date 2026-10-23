@@ -96,7 +96,8 @@ Each receipt retains a bounded snapshot of unknown in-flight operation selectors
 and their total count, marks untracked effects unknown, and records
 `replayed: false`. Existing authentication incident reporting remains best effort;
 the recovery receipt must persist before broker or transport side effects.
-Account failover and terminal candidate selection belong to a subsequent slice.
+Account failover and terminal outcomes follow the
+[policy-gated authentication failover contract](specs/auth-failover-v1.md).
 
 Missing/stale structured evidence permits an inferred fallback: at most eight
 terminal lines and 4096 bytes, with a 250 ms sampling deadline. Only a bottom

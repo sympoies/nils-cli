@@ -840,6 +840,7 @@ pub(crate) fn authorize_proxy_input_locked(
     record: &mut SessionRecord,
     record_turn_fence: bool,
 ) -> Result<(), CliError> {
+    crate::auth_incident::failover::ensure_input_allowed(context, record)?;
     if record.agent != "codex" || !binding_is_present(record) {
         return Ok(());
     }
@@ -962,6 +963,7 @@ pub(crate) fn begin_queued_switch_repair(
     let Some(account) = queued_switch_repair(&record) else {
         return Ok(None);
     };
+    crate::auth_incident::failover::pre_apply_codex(context, &record)?;
     let revision =
         publish_switch_binding_locked(context, &mut record, expected_launch_id, &account)?;
     Ok(Some((account, revision)))
@@ -1180,9 +1182,34 @@ pub(crate) fn queue_auto_failover_locked(
     record: &mut SessionRecord,
     account: &str,
 ) -> Result<(), CliError> {
+    queue_failover_locked(context, record, account, "auto_failover", None)
+}
+
+pub(crate) fn queue_auth_failover_locked(
+    context: &CliContext,
+    record: &mut SessionRecord,
+    account: &str,
+    operation_id: &str,
+) -> Result<(), CliError> {
+    queue_failover_locked(context, record, account, "explicit", Some(operation_id))
+}
+
+fn queue_failover_locked(
+    context: &CliContext,
+    record: &mut SessionRecord,
+    account: &str,
+    source: &str,
+    intent_id: Option<&str>,
+) -> Result<(), CliError> {
     validate_account(account)?;
     let current = match decode_binding(record) {
-        DecodedBinding::Valid(binding) if binding.state == "bound" => binding,
+        DecodedBinding::Valid(binding)
+            if binding.state == "bound"
+                || source == "explicit"
+                    && matches!(binding.state.as_str(), "pending" | "failed") =>
+        {
+            binding
+        }
         DecodedBinding::Valid(_) | DecodedBinding::Absent | DecodedBinding::Invalid => {
             return Err(not_bound_error(record, None));
         }
@@ -1206,9 +1233,13 @@ pub(crate) fn queue_auto_failover_locked(
         &DurableNextAccount {
             schema_version: NEXT_SCHEMA_VERSION.to_string(),
             account: account.to_string(),
-            selection_source: Some("auto_failover".to_string()),
+            selection_source: Some(source.to_string()),
             revision: 1,
-            intent_id: Some(uuid::Uuid::new_v4().simple().to_string()),
+            intent_id: Some(
+                intent_id
+                    .map(str::to_string)
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()),
+            ),
             state: "queued".to_string(),
             applying_runtime_id: None,
             failure_reason: None,
@@ -1507,6 +1538,7 @@ fn begin_next_apply_inner(
     if next.intent_id.is_none() {
         next.intent_id = Some(uuid::Uuid::new_v4().simple().to_string());
     }
+    crate::auth_incident::failover::pre_apply_codex(context, &record)?;
     next.state = "applying".to_string();
     next.applying_runtime_id = Some(expected_launch_id.to_string());
     next.failure_reason = None;
