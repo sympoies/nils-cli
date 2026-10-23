@@ -18,6 +18,7 @@ Crate-local documentation for the `forge-cli` binary.
 - [Review transaction and handoff state](specs/forge-review-state-v1.md) — review receipts, handoff ownership, convergence state, and recovery.
 - [Review publication and thread writes](specs/forge-review-publication-v1.md) — publish and validate reviews, then reply to or resolve threads.
 - [Pull request merge](specs/forge-merge-v1.md) — merge admission, provider compare-and-swap, and branch cleanup.
+- [Workflow run reruns](specs/forge-run-rerun-v1.md) — fenced GitHub Actions run or job reruns at an expected head.
 
 ### Related specifications
 
