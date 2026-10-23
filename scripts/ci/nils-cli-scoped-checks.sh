@@ -138,6 +138,30 @@ print("\n".join(sorted(names - selected)))
     ;;
 esac
 if [[ "${NILS_CLI_SKIP_DOCTESTS:-0}" != "1" ]]; then
-  run_test cargo test "${package_args[@]}" --all-features --doc
+  doctest_packages="$(cargo metadata --offline --locked --no-deps --format-version 1 | python3 -c '
+import json, sys
+metadata = json.load(sys.stdin)
+selected = set(sys.argv[1:])
+members = set(metadata["workspace_members"])
+packages = [p for p in metadata["packages"] if p["id"] in members]
+names = {p["name"] for p in packages}
+if not selected <= names:
+    raise SystemExit("selected doctest package missing from workspace")
+has_library = lambda package: any(
+    kind in ("lib", "proc-macro")
+    for target in package["targets"]
+    for kind in target["kind"])
+print("\n".join(sorted(p["name"] for p in packages
+                     if p["name"] in selected and has_library(p))))
+' "$@")"
+  doctest_args=()
+  while IFS= read -r package; do
+    if [[ -n "$package" ]]; then
+      doctest_args+=(-p "$package")
+    fi
+  done <<< "$doctest_packages"
+  if (( ${#doctest_args[@]} > 0 )); then
+    run_test cargo test "${doctest_args[@]}" --all-features --doc
+  fi
 fi
 echo "ok: selected CI packages passed ($# package(s))"
