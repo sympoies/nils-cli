@@ -48,13 +48,15 @@ exact runtime; provider error text stays out of that row. Session views combine
 those rows with the exact generation's stop evidence into `runtime_exit` and an
 explicit Resume action. See
 [unexpected provider exit](session-lifecycle.md#unexpected-provider-exit).
+
 Inventory and controller probes also record a stopped runtime once per
 incarnation when the wrapper cannot report. They retain its exit-status marker
 when available; otherwise the reason is `runtime-disappeared`, unless a
 successful CLI or serve runtime stop is recorded for that exact incarnation and
-generation. Broker
-release is a separate `broker-stop` operation and does not identify an operator
-stop. For sessions stopped before journaling began, missing records cannot
+generation.
+
+Broker release is a separate `broker-stop` operation and does not identify an
+operator stop. For sessions stopped before journaling began, missing records cannot
 identify the actor or distinguish an external stop from an unrecorded stop. Unknown exit status, signal,
 and actor stay null. A lost heartbeat records a broker degradation transition,
 not an invented process exit. Absence of a lifecycle exit record does not prove
