@@ -187,6 +187,7 @@ the extension. A session with lineage and work looks like this:
 | Lifecycle | `runtime_status` | string or null | `SessionView.status` (`running`, `stopped`, `missing`, or `unknown`) at projection time; `null` on a closed record. New on the board so a consumer can tell a proven stop from an unverified probe. |
 | Lifecycle | `created_at` | string | `SessionView.created_at`. |
 | Lifecycle | `updated_at` | string | `SessionView.updated_at`; on a closed record, the last value before close. |
+| Lifecycle | `runtime_exit` | object or absent | Current stopped runtime exit reason and explicit Resume action; see [Unexpected provider exit](../runbooks/session-lifecycle.md#unexpected-provider-exit). Present when `runtime_exit.v1` is advertised and evidence exists. |
 | Lifecycle | `last_terminal_activity_at` | string or null | `SessionView.last_terminal_activity_at`; the latest observed terminal activity, or null when unavailable or absent from an older record. Present when `terminal_activity.v1` is advertised. |
 | Lifecycle | `closed_at` | string or null | New. The ledger append time for `deleted` or `archived`; the aggregator's first confirmed absence for `vanished`. `null` unless `state` is `closed`. |
 | Lifecycle | `close_reason` | string or null | New. `deleted`, `archived`, `exited`, or `vanished`. See [Close reasons](#close-reasons). `null` unless `state` is `closed`. |
@@ -289,6 +290,7 @@ naming the additive capabilities the producer supports:
 | `work.v1` | Record `work`. |
 | `context_usage.v1` | Optional record `context_usage`; [raw context facts](session-context-usage-v1.md). |
 | `launch_env.v1` | Record `launch_env`, the public non-secret launch switches. |
+| `runtime_exit.v1` | Record `runtime_exit`, with bounded exit reason and explicit recovery action. |
 | `terminal_activity.v1` | Record `last_terminal_activity_at`, the latest observed terminal activity timestamp. |
 | `programs.v1` | The daemon route `GET /board/programs/v1` and the aggregator view `programs` member. Named by the daemon snapshot only. |
 
@@ -313,7 +315,7 @@ strings, so a deployed reader that requires the exact v1 strings keeps working.
   "schema_version": "agent-session.board.v1",
   "record_schema": "agent-session.board-record.v1",
   "machine": "host-a",
-  "extensions": ["lineage.v1", "work.v1", "programs.v1", "context_usage.v1", "launch_env.v1", "terminal_activity.v1"],
+  "extensions": ["lineage.v1", "work.v1", "programs.v1", "context_usage.v1", "launch_env.v1", "terminal_activity.v1", "runtime_exit.v1"],
   "generated_at": "2030-01-01T00:05:00Z",
   "ledger_cursor": "opaque",
   "records": [],

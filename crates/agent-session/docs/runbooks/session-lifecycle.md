@@ -152,6 +152,37 @@ conversation. The next provider turn and a later `resume` use the new ID. The
 [turn-state contract](../turn-state-contract.md#conversation-transitions)
 defines the observation and recovery rules.
 
+## Unexpected provider exit
+
+A provider quit or interrupt without a successful control-plane stop leaves the
+managed session and its exact conversation available for explicit recovery.
+`agent-session list` shows the exit reason and a
+`Resume: agent-session resume SESSION_ID` action when resume metadata is valid.
+`agent-session command SESSION_ID --format json` includes the same structured
+metadata; text `command` keeps its existing attach-command output. There is no automatic relaunch; repeated reads cannot create a restart
+loop. A provider-side quit may be intentional, so recovery requires this action.
+
+Session JSON adds `runtime_exit` for the current stopped runtime generation:
+`code` and `signal` (nullable), `reason`, `unexpected`, `observed_at`, `message`,
+and optional `recovery`. Reasons are `provider-exited`, `app-server-close`,
+`runtime-disappeared`, and `runtime-stopped`. The recovery object carries
+`label: "Resume"`, the CLI `command`, and the existing HTTP action
+`method: "POST"`, `path: "/sessions/SESSION_ID/resume"`. API consumers can
+render the reason beside that action. Existing Console rendering is unchanged.
+A successful explicit stop suppresses this unexpected-exit recovery offer.
+
+The launcher supplies the observed shell status (for example, 130 after a
+SIGINT handler exits). A shell status alone cannot distinguish a signal from an
+explicit exit with the same status, so the signal stays null unless known.
+A known process code or signal takes precedence over earlier app-server control
+closure; `app-server-close` is the fallback when process status is unavailable.
+Missing evidence stays null; provider output is never copied into the public
+reason. The board advertises `runtime_exit.v1` and carries the same bounded
+metadata. A running or replaced generation omits the prior exit.
+
+Resume still uses all existing locking, exact identity, profile, and stopped
+runtime checks below. A recovery offer is not proof that those checks will pass.
+
 ## Resume a stopped runtime
 
 `resume` recreates a missing tmux runtime only when the session has exact

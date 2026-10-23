@@ -1515,6 +1515,8 @@ pub struct SessionView {
     cwd: String,
     tmux_session: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_exit: Option<lifecycle::recovery::RuntimeExit>,
     resumable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     resume_blocked_reason: Option<String>,
@@ -7203,6 +7205,7 @@ fn session_view_from_parts(
             .filter(|launch_id| !launch_id.is_empty()),
         cwd: record.cwd.clone(),
         tmux_session: record.tmux_session.clone(),
+        runtime_exit: lifecycle::recovery::projection(context, record, &status),
         status,
         resumable,
         resume_blocked_reason,
@@ -12836,10 +12839,7 @@ fn render_list_success(format: OutputFormat, results: &[SessionView], machine: &
                 println!("no agent sessions");
             } else {
                 for result in results {
-                    println!(
-                        "{}  {}  {}  {}",
-                        result.id, result.agent, result.status, result.cwd
-                    );
+                    println!("{}", lifecycle::recovery::list_line(result));
                 }
             }
             exit::SUCCESS

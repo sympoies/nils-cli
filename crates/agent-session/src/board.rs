@@ -30,21 +30,23 @@ pub(crate) const BOARD_SCHEMA: &str = "agent-session.board.v1";
 pub(crate) const RECORD_SCHEMA: &str = "agent-session.board-record.v1";
 /// Additive capabilities of the v1 envelopes. A reader feature-detects from
 /// this list, never from the presence of a record field.
-pub(crate) const EXTENSIONS: [&str; 5] = [
+pub(crate) const EXTENSIONS: [&str; 6] = [
     "lineage.v1",
     "work.v1",
     "context_usage.v1",
     "launch_env.v1",
     "terminal_activity.v1",
+    "runtime_exit.v1",
 ];
 /// What the daemon snapshot names: the extensions plus the programs route.
-const DAEMON_EXTENSIONS: [&str; 6] = [
+const DAEMON_EXTENSIONS: [&str; 7] = [
     "lineage.v1",
     "work.v1",
     "programs.v1",
     "context_usage.v1",
     "launch_env.v1",
     "terminal_activity.v1",
+    "runtime_exit.v1",
 ];
 /// `AGENT_SESSION_BOARD=1` enables the daemon board routes, like `--board`.
 pub(crate) const BOARD_ENV: &str = "AGENT_SESSION_BOARD";
@@ -315,6 +317,11 @@ pub(crate) fn project_record(
         "work": project_work(view),
         "launch_env": crate::launch_env::projection(view.get("launch_env")),
     });
+    if let Some(exit) =
+        crate::lifecycle::recovery::board_projection(view.get("runtime_exit"), session_id)
+    {
+        projected["runtime_exit"] = exit;
+    }
     if let Some(incident) = view.get("auth_incident").and_then(|value| {
         serde_json::from_value::<crate::auth_incident::AuthIncident>(value.clone()).ok()
     }) {

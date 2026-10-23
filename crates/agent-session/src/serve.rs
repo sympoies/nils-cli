@@ -8600,12 +8600,12 @@ async fn codex_control_loop(state: Arc<ServeState>) {
                 );
             }
             let registry = state.codex_controls.clone();
-            let context = state.context.clone();
+            let cx = state.context.clone();
             tokio::spawn(async move {
                 if let Err(err) =
-                    codex_app_server::run_control(context, record.clone(), commands, ready).await
+                    codex_app_server::run_control(cx.clone(), record.clone(), commands, ready).await
                 {
-                    eprintln!("warning: Codex app-server control ended: {err}");
+                    crate::lifecycle::recovery::record_control_close(&cx, &record, &err);
                 }
                 if let Ok(mut controls) = registry.lock()
                     && controls

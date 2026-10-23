@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use crate::{CliContext, CliError, SessionRecord};
 use serde_json::{Value, json};
 
+pub(crate) mod recovery;
+
 const SEGMENT_BYTES: u64 = 256 * 1024;
 const RECORD_BYTES: usize = 8192;
 thread_local! {
@@ -592,9 +594,7 @@ pub(crate) fn observe_stopped(context: &CliContext, target: &SessionRecord) {
         "exit-observed",
         "controller",
         Ok(()),
-        Some(
-            json!({"code": null, "signal": null, "reason": if known { "runtime-stopped" } else { "runtime-disappeared" }, "stopped_by": if known { Some("agent-session") } else { None }}),
-        ),
+        Some(recovery::observed_exit(context, target, known)),
     );
 }
 
@@ -896,3 +896,6 @@ mod tests {
         assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
     }
 }
+
+#[cfg(test)]
+mod recovery_tests;
