@@ -73,7 +73,7 @@ The diagnostic lists the required rows.
 - tests/test_old.py | deleted-test | The consolidated API test retains the obsolete case's contract.
 ```
 
-The small per-PR allowlist uses the same exact file/kind format with `allow`
+The per-PR allowlist uses the same exact file/kind format with `allow`
 before the path. Use it for intentional removals, quarantines, or false positives:
 
 ```markdown
@@ -82,7 +82,8 @@ before the path. Use it for intentional removals, quarantines, or false positive
 - allow tests/test_old.py | deleted-test | Intentional removal; tests/test_api.py retains the response contract.
 ```
 
-There are at most 32 accepted rows, with no globs or repository-wide exemptions.
+There is no file/kind pair or declaration row count cap. Globs and repository-wide
+exemptions are not accepted.
 Rows inside fenced examples do not count. An allowlisted finding still requires
 reviewer confirmation. Missing declarations fail with `test_changes_undeclared`.
 No command-line override bypasses this requirement.
@@ -102,7 +103,6 @@ The diagnostic names the bound and recovery; there is no silent bypass.
 | --- | --- | --- |
 | `file_count` | Fewer than 300 files, including binary assets | Split the PR into smaller comparisons |
 | `diff_bytes` | At most 4 MiB (4,194,304 UTF-8 bytes) | Split the PR into smaller comparisons |
-| `declaration_pairs` | At most 32 distinct finding file/kind pairs and at most 32 accepted declaration rows | Split the PR; consolidate duplicate declaration rows if those alone exceed the bound |
 | `path_bytes` | Unquoted printable ASCII paths without whitespace, control, quote or pipe bytes | Rename affected paths to supported names, splitting the PR if needed |
 
 Both Git-quoted headers (including escaped non-ASCII paths) and unsupported
