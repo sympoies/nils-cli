@@ -11,6 +11,7 @@ use super::{
 };
 
 mod declaration;
+mod residual;
 pub(super) use declaration::parse;
 use declaration::{Declaration, valid_path};
 
@@ -38,7 +39,7 @@ fn mismatch() -> ForgeError {
     refusal(
         "provenance_import_mismatch",
         "import does not match the declared upstream provenance",
-        "Correct the upstream repository, full commit SHA and path mapping. Restore identical additions or list each changed mapped addition in adaptations, then declare and review its import-adaptation finding. Missing upstream blobs cannot be adapted.",
+        "Correct the upstream repository, full commit SHA and path mapping. Restore identical additions or list each changed mapped addition in adaptations, then declare and review its import-adaptation finding. List exact newly added mapped paths in additions; missing upstream blobs cannot be adapted.",
     )
 }
 
@@ -48,13 +49,11 @@ fn read<R: BackendRunner, T: DeserializeOwned>(
     endpoint: String,
     failure: fn() -> ForgeError,
 ) -> Result<T, ForgeError> {
-    let output = runner
-        .run(&api(ctx, endpoint, &[]))
-        .map_err(|_| failure())?;
+    let output = runner.run(&api(ctx, endpoint, &[]))?;
     serde_json::from_str(&output.stdout).map_err(|_| failure())
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct ChangedFile {
     filename: String,
     status: String,
@@ -96,6 +95,7 @@ fn upstream<R: BackendRunner>(
     ctx: &ProviderContext,
     d: &Declaration,
 ) -> Result<BTreeMap<String, Entry>, ForgeError> {
+    let _scope = crate::identity::api_read_scope(&ctx.host, &d.repository)?;
     let commit: Commit = read(
         runner,
         ctx,
@@ -219,9 +219,18 @@ pub(super) fn comparison<R: BackendRunner>(
 ) -> Result<(String, Vec<diff::Finding>), ForgeError> {
     let files = files(runner, ctx, number, subject)?;
     let tree = upstream(runner, ctx, d)?;
+    let merge_base = if files
+        .iter()
+        .any(|file| file.patch.is_none() && file.status != "added")
+    {
+        Some(residual::merge_base(runner, ctx, subject)?)
+    } else {
+        None
+    };
     let mut manifest = Vec::new();
     let mut residual = String::new();
     let mut adaptations = BTreeSet::new();
+    let mut additions = BTreeSet::new();
     for file in &files {
         if file.status == "added"
             && let Some(mapping) = d
@@ -234,22 +243,41 @@ pub(super) fn comparison<R: BackendRunner>(
                 mapping.source,
                 &file.filename[mapping.destination.len()..]
             );
-            let blob = tree.get(&path).ok_or_else(mismatch)?;
-            if blob.kind != "blob" || !matches!(blob.mode.as_str(), "100644" | "100755") {
-                return Err(mismatch());
+            if d.additions.contains(&file.filename) {
+                if tree.contains_key(&path) {
+                    return Err(mismatch());
+                }
+                additions.insert(file.filename.clone());
+            } else {
+                let blob = tree.get(&path).ok_or_else(mismatch)?;
+                if blob.kind != "blob" || !matches!(blob.mode.as_str(), "100644" | "100755") {
+                    return Err(mismatch());
+                }
+                if blob.sha == file.sha {
+                    manifest.push((&file.filename, path, &blob.sha));
+                    continue;
+                }
+                if !d.adaptations.contains(&file.filename) {
+                    return Err(mismatch());
+                }
+                adaptations.insert(file.filename.clone());
             }
-            if blob.sha == file.sha {
-                manifest.push((&file.filename, path, &blob.sha));
-                continue;
-            }
-            if !d.adaptations.contains(&file.filename) {
-                return Err(mismatch());
-            }
-            adaptations.insert(file.filename.clone());
         }
-        residual.push_str(&residual_patch(file)?);
+        if file.patch.is_some() {
+            residual.push_str(&residual_patch(file)?);
+        } else {
+            residual.push_str(&residual::patch(
+                runner,
+                ctx,
+                subject,
+                merge_base.as_deref().unwrap_or(&subject.base),
+                file,
+            )?);
+        }
     }
-    if adaptations != d.adaptations.iter().cloned().collect() {
+    if adaptations != d.adaptations.iter().cloned().collect()
+        || additions != d.additions.iter().cloned().collect()
+    {
         return Err(mismatch());
     }
     let mut findings = diff::detect(&residual)?;
@@ -257,13 +285,20 @@ pub(super) fn comparison<R: BackendRunner>(
         path: path.clone(),
         kind: "import-adaptation",
     }));
+    findings.extend(additions.iter().map(|path| diff::Finding {
+        path: path.clone(),
+        kind: "import-addition",
+    }));
     findings.sort();
-    let binding = json!({"repository":d.repository, "commit":d.commit,
+    let mut binding = json!({"repository":d.repository, "commit":d.commit,
         "file_count":files.len(), "verified_files":manifest.len(),
         "manifest_digest":sha256_digest(&serde_json::to_vec(&manifest).unwrap()),
         "comparison_digest":sha256_digest(&serde_json::to_vec(&files).unwrap()),
-        "mappings":d.mappings, "adaptations":d.adaptations,
+        "mappings":d.mappings, "adaptations":d.adaptations, "additions":d.additions,
         "declaration_digest":sha256_digest(subject.body.as_bytes())});
+    if let Some(base) = merge_base {
+        binding["merge_base"] = json!(base);
+    }
     Ok((format!("{PREFIX}{binding}"), findings))
 }
 

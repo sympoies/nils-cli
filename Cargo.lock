@@ -2533,6 +2533,7 @@ dependencies = [
 name = "nils-forge-cli"
 version = "1.36.28"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "clap",
  "clap_complete",
@@ -2548,6 +2549,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "sha1",
  "sha2",
  "tempfile",
  "thiserror",

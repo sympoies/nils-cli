@@ -20,6 +20,11 @@ pub(crate) fn current_scope() -> Option<(Target, Operation)> {
 pub(crate) fn enter_scope(scope: Option<(Target, Operation)>) -> Scope {
     Scope(SCOPE.with(|s| s.replace(scope)))
 }
+/// Temporarily resolve explicit upstream API calls as reads of that repository.
+pub(crate) fn api_read_scope(host: &str, repo: &str) -> Result<Scope, ForgeError> {
+    let target = Target::new(host, repo).map_err(error)?;
+    Ok(enter_scope(Some((target, Operation::ApiRead))))
+}
 impl Drop for Scope {
     fn drop(&mut self) {
         SCOPE.with(|s| *s.borrow_mut() = self.0.take());
