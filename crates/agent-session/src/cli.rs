@@ -1735,7 +1735,11 @@ pub struct ServeArgs {
 pub struct DeleteArgs {
     /// Delete only a positively verified stopped session; refuses running, working, or
     /// unknown state and never stops the runtime. Requires --expected-incarnation.
-    #[arg(long, requires = "expected_incarnation")]
+    #[arg(
+        long,
+        requires = "expected_incarnation",
+        conflicts_with = "leave_processes"
+    )]
     pub if_stopped: bool,
 
     /// Refuse deletion if the session runtime incarnation has changed.

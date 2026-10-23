@@ -344,6 +344,29 @@ may remain. For example:
 }
 ```
 
+### Delete only an already-stopped session
+
+Use `--if-stopped` when a caller must remove session state without asking
+`agent-session` to stop the runtime. The caller must provide the expected
+runtime incarnation:
+
+```bash
+agent-session delete <id> --if-stopped --expected-incarnation <incarnation> --format json
+```
+
+This option is mutually exclusive with `--leave-processes`. It removes the
+record only after rechecking the incarnation under the lifecycle lock and
+positively verifying that tmux and the recorded process boundaries are stopped,
+with no associated processes remaining. It never signals the runtime. Success
+reports `killed: false` and `termination_scope: "none"`.
+
+The operation fails closed with `session-incarnation-conflict` if the record
+has changed, `session-state-mismatch` if it is running or still has associated
+processes, and `session-status-unknown` if stopped state cannot be proved. If
+`session-termination-in-progress` is returned, a durable interrupted
+termination still owns recovery (including any thaw obligation); retry with
+ordinary `delete` to complete that recovery before removing the record.
+
 ### Leave processes running explicitly
 
 A daemon can escape the pane tree or move out of its Linux cgroup while retaining
