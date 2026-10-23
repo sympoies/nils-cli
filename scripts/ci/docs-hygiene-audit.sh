@@ -125,7 +125,6 @@ declare -a removed_transient_docs=(
   "docs/specs/markdown-github-handling-audit-v1.md"
   "crates/api-test/docs/runbooks/api-test-websocket-adoption.md"
   "crates/api-websocket/docs/runbooks/api-websocket-rollout.md"
-  "crates/memo/docs/runbooks/memo-rollout.md"
 )
 
 for path in "${removed_transient_docs[@]}"; do

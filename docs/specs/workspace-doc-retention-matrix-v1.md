@@ -147,12 +147,6 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/git-cli/docs/specs/git-cli-worktree-convention.md`
 - `crates/macos-agent/docs/runbooks/backend-upgrade-v1.md`
 - `crates/macos-agent/docs/specs/macos-agent-journal-v2.md`
-- `crates/memo/docs/runbooks/memo-agent-workflow.md`
-- `crates/memo/docs/specs/memo-command-contract-v1.md`
-- `crates/memo/docs/specs/memo-json-contract-v1.md`
-- `crates/memo/docs/specs/memo-release-policy.md`
-- `crates/memo/docs/specs/memo-storage-schema-v1.md`
-- `crates/memo/docs/specs/memo-workflow-extension-contract-v1.md`
 - `crates/nils-common/docs/specs/forge-identity-policy-v1.md`
 - `crates/nils-common/docs/specs/markdown-helpers-contract-v1.md`
 - `crates/nils-markdown/CHANGELOG.md`
@@ -165,7 +159,7 @@ as the GitHub crate-directory landing page) and a `docs/README.md` index for cra
 These files are excluded from the canonical Crate-Local Inventory `find` pattern, so they are
 tracked here.
 
-Top-level crate READMEs (one per workspace member, 41 total):
+Top-level crate READMEs (one per workspace member, 40 total):
 
 - `crates/agent-hook/README.md`
 - `crates/agent-memory/README.md`
@@ -194,7 +188,6 @@ Top-level crate READMEs (one per workspace member, 41 total):
 - `crates/github-app-cli/README.md`
 - `crates/image-processing/README.md`
 - `crates/macos-agent/README.md`
-- `crates/memo/README.md`
 - `crates/nils-build-info/README.md`
 - `crates/nils-common/README.md`
 - `crates/nils-evidence/README.md`
@@ -209,7 +202,7 @@ Top-level crate READMEs (one per workspace member, 41 total):
 - `crates/web-evidence/README.md`
 - `crates/zsh-kit/README.md`
 
-Crate `docs/README.md` index files (one per workspace member, 41 total):
+Crate `docs/README.md` index files (one per workspace member, 40 total):
 
 - `crates/agent-hook/docs/README.md`
 - `crates/agent-memory/docs/README.md`
@@ -238,7 +231,6 @@ Crate `docs/README.md` index files (one per workspace member, 41 total):
 - `crates/github-app-cli/docs/README.md`
 - `crates/image-processing/docs/README.md`
 - `crates/macos-agent/docs/README.md`
-- `crates/memo/docs/README.md`
 - `crates/nils-build-info/docs/README.md`
 - `crates/nils-common/docs/README.md`
 - `crates/nils-evidence/docs/README.md`
