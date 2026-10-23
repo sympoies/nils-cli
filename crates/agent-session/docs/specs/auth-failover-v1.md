@@ -92,6 +92,9 @@ The official same-account refresh path remains available after a refusal
 when no account intent is pending. A successful credential response releases
 input quarantine as `credentials_refreshed`; it still does not prove model
 health. Damaged incident reporting must not disable that official retry path.
+Queued and applying intents refuse refresh. Failed or malformed intents do
+not prevent refresh of the current bound account; their evidence remains
+intact and continues to fence new prompts until applied or cancelled.
 
 A later successful explicit Codex binding supersedes the prior automatic
 refusal's input quarantine. Official refresh and health observations also

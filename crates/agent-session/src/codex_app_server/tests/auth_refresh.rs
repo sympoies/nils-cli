@@ -605,3 +605,6 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
 
 #[path = "auth_refresh_retention.rs"]
 mod retention;
+
+#[path = "auth_refresh_intents.rs"]
+mod intents;
