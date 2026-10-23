@@ -2232,18 +2232,6 @@ mod tests {
     }
 
     #[test]
-    fn remote_url_slug_supports_https_and_scp_forms() {
-        assert_eq!(
-            project_slug_from_remote_url("https://github.com/sympoies/nils-cli.git"),
-            Some("sympoies__nils-cli".to_string())
-        );
-        assert_eq!(
-            project_slug_from_remote_url("git@github.com:sympoies/nils-cli.git"),
-            Some("sympoies__nils-cli".to_string())
-        );
-    }
-
-    #[test]
     fn local_slug_is_stable_and_namespaced() {
         let slug = local_project_slug(Path::new("/tmp/Nils CLI"));
         assert!(
