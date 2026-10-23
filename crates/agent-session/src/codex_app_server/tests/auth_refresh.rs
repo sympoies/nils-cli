@@ -534,7 +534,6 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
 async fn external_auth_refresh_fences_conversation_changed_during_broker_call() {
     let lock = GlobalStateLock::new();
     let tmp = tempfile::TempDir::new().unwrap();
-    let (context, record) = recovery_fixture(&tmp);
     let broker = tmp.path().join("broker");
     fs::write(&broker, r#"#!/bin/sh
 sed 's/fixture-thread/replacement-thread/g' "$1" > "$1.tmp"
@@ -542,6 +541,12 @@ mv "$1.tmp" "$1"
 printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"acct1","access_token":"fenced-fixture-token","chatgpt_account_id":"fixture-workspace"}'
 "#).unwrap();
     fs::set_permissions(&broker, fs::Permissions::from_mode(0o700)).unwrap();
+    let _configured = EnvGuard::set(
+        &lock,
+        "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+        &serde_json::to_string(&vec![&broker]).unwrap(),
+    );
+    let (context, record) = recovery_fixture(&tmp);
     let argv = vec![
         broker,
         crate::session_dir(&context, &record.id).join("session.json"),
@@ -559,6 +564,10 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
     );
     assert!(sink.messages.is_empty());
     let current = crate::load_session_record(&context, &record.id).unwrap();
+    assert_eq!(
+        crate::codex_account::view_for_record(&current).state,
+        "bound"
+    );
     assert_eq!(
         current.provider_resume.unwrap().session_id,
         "replacement-thread"

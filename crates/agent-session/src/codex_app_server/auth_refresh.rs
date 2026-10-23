@@ -454,7 +454,14 @@ where
         .await;
         return Err("Codex account refresh deadline-exceeded".into());
     }
-    mark_response_unknown(context, record, operation_id)?;
+    if let Err(error) = mark_response_unknown(context, record, operation_id) {
+        drop(refresh_fence);
+        let _ = restore_account_binding_after_refresh_failure(
+            context, record, &launch_id, account, attempt,
+        )
+        .await;
+        return Err(error);
+    }
     let remaining = (deadline_epoch_ms - Timestamp::now().as_millisecond()).clamp(1, 500) as u64;
     let send_result = tokio::time::timeout(
         Duration::from_millis(remaining),
