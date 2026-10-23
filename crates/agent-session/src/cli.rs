@@ -1733,6 +1733,15 @@ pub struct ServeArgs {
 
 #[derive(Debug, Args)]
 pub struct DeleteArgs {
+    /// Delete only a positively verified stopped session; refuses running, working, or
+    /// unknown state and never stops the runtime. Requires --expected-incarnation.
+    #[arg(long, requires = "expected_incarnation")]
+    pub if_stopped: bool,
+
+    /// Refuse deletion if the session runtime incarnation has changed.
+    #[arg(long, requires = "if_stopped")]
+    pub expected_incarnation: Option<String>,
+
     /// Stop only the verified tmux target and delete state, leaving processes running.
     #[arg(long)]
     pub leave_processes: bool,

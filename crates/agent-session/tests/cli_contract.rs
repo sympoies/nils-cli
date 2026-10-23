@@ -4,6 +4,24 @@ use nils_test_support::bin;
 use pretty_assertions::assert_eq;
 
 #[test]
+fn delete_help_documents_the_stopped_only_contract() {
+    let output = Command::new(bin::resolve("agent-session"))
+        .args(["delete", "--help"])
+        .output()
+        .expect("agent-session delete help");
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{help}");
+    for phrase in [
+        "--if-stopped",
+        "--expected-incarnation",
+        "running, working, or unknown",
+        "never stops the runtime",
+    ] {
+        assert!(help.contains(phrase), "missing {phrase}: {help}");
+    }
+}
+
+#[test]
 fn launch_env_rejects_unapproved_keys_before_creating_a_session() {
     for agent in ["codex", "claude", "dsh"] {
         let tmp = tempfile::TempDir::new().unwrap();
