@@ -22,6 +22,10 @@ struct Store {
 #[serde(deny_unknown_fields)]
 struct Receipt {
     operation_id: String,
+    #[serde(default)]
+    connection_id: Option<String>,
+    #[serde(default)]
+    connection_closed: bool,
     account: String,
     binding_revision: u64,
     provider_session_id: Option<String>,
@@ -33,6 +37,84 @@ struct Receipt {
     unknown_operation_count: usize,
     untracked_effects: String,
     replayed: bool,
+}
+
+// The guard is owned by the real control loop, so every normal/error return
+// and task cancellation retires that connection. A crash without retirement
+// evidence keeps its receipts conservatively; a different UUID is not proof
+// that an older control connection has closed.
+pub(super) struct Connection {
+    id: String,
+    context: CliContext,
+    record: SessionRecord,
+}
+
+impl Connection {
+    pub(super) fn new(context: &CliContext, record: &SessionRecord) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            context: context.clone(),
+            record: record.clone(),
+        }
+    }
+
+    pub(super) fn as_str(&self) -> &str {
+        &self.id
+    }
+}
+
+fn retire(context: &CliContext, expected: &SessionRecord, id: &str) -> Result<(), String> {
+    let _lock =
+        crate::acquire_session_record_lock_timed(context, &expected.id, Duration::from_millis(500))
+            .map_err(|_| "Codex refresh session-lock-unavailable")?;
+    let record = current(context, expected)?;
+    let mut store = read(context, &record)?;
+    let mut changed = false;
+    for receipt in &mut store.operations {
+        if receipt.connection_id.as_deref() == Some(id) {
+            receipt.connection_closed = true;
+            changed = true;
+        }
+    }
+    if changed {
+        prune_closed(&mut store, Timestamp::now().as_millisecond());
+        save(context, &record, &store)?;
+    }
+    Ok(())
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        // Never block a runtime worker on a record lock: another connection
+        // may hold it across an awaited credential write. Retirement is safe
+        // to delay because unretired receipts are retained conservatively.
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let id = self.id.clone();
+        let context = self.context.clone();
+        let record = self.record.clone();
+        runtime.spawn_blocking(move || {
+            if retire(&context, &record, &id).is_err() {
+                eprintln!("warning: Codex refresh connection retirement degraded");
+            }
+        });
+    }
+}
+
+fn prune_closed(store: &mut Store, now: i64) {
+    store.operations.retain(|receipt| {
+        // Retain the entire retry window even after close, and never expire
+        // uncertain outcomes, live-connection identities or unscoped receipts
+        // whose connection lifetime is not known.
+        !(receipt.connection_closed
+            && receipt.connection_id.is_some()
+            && matches!(
+                receipt.state.as_str(),
+                "credentials_supplied" | "refresh_failed"
+            )
+            && now.saturating_sub(receipt.started_at_epoch_ms) >= WINDOW_MS)
+    });
 }
 
 fn save(context: &CliContext, record: &SessionRecord, store: &Store) -> Result<(), String> {
@@ -155,6 +237,7 @@ fn begin(
     }) {
         return Err("Codex account refresh retry-backoff".into());
     }
+    prune_closed(&mut store, now);
     if store.operations.len() == MAX_OPERATIONS {
         return Err("Codex refresh receipt capacity-exhausted".into());
     }
@@ -163,6 +246,8 @@ fn begin(
             .map_err(|_| "Codex refresh effect-snapshot-unavailable")?;
     store.operations.push(Receipt {
         operation_id: operation_id.clone(),
+        connection_id: Some(connection_id.into()),
+        connection_closed: false,
         account: account.into(),
         binding_revision: binding.revision,
         provider_session_id: record

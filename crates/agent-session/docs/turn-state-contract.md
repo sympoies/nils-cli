@@ -74,8 +74,19 @@ operation permits a response only before its nine-second deadline; the response
 write itself has at most 500 milliseconds. At most three refresh operations may
 start within sixty seconds, including successful credential responses that are
 followed by another unauthorized request. Failed resolutions have a one-second
-backoff. The store retains up to sixty-four operations per runtime and refuses
-further operations at capacity rather than discarding replay identities. A new
+backoff. Each new receipt records its connection scope. The control loop marks
+that connection closed on return or task cancellation through a blocking worker
+with a bounded record-lock wait.
+
+Terminal `credentials_supplied` and `refresh_failed` receipts from proven closed
+connections are pruned after sixty seconds, preserving the full retry window
+and failure backoff across reconnects. Live-connection replay identities,
+uncertain outcomes, unknown states and unscoped receipts without connection
+lifetime evidence remain retained. A process crash or retirement-write failure
+also retains receipts conservatively.
+
+The store retains up to sixty-four unpruned operations per runtime and refuses
+further operations at capacity rather than discarding protected identities. A new
 runtime receives a fresh fenced store; in-place recovery keeps the runtime,
 conversation, account and coordination claims unchanged.
 
