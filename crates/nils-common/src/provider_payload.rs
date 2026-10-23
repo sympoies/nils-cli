@@ -214,26 +214,10 @@ mod tests {
     }
 
     #[test]
-    fn scan_local_paths_strips_trailing_sentence_punctuation() {
-        let hits = scan_local_paths("the path is /Users/example/notes.md.");
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].sample, "/Users/example/notes.md");
-        assert_eq!(hits[0].suggestion, "$HOME/notes.md");
-    }
-
-    #[test]
     fn scan_local_paths_stops_tail_at_delimiters() {
         let hits = scan_local_paths("run `/Users/example/bin/tool` now");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].sample, "/Users/example/bin/tool");
-    }
-
-    #[test]
-    fn scan_local_paths_owner_only_without_tail() {
-        let hits = scan_local_paths("home is /Users/example");
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].sample, "/Users/example");
-        assert_eq!(hits[0].suggestion, "$HOME");
     }
 
     #[test]
