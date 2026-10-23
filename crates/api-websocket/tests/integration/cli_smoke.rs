@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use nils_test_support::bin::resolve;
 use nils_test_support::cmd::{CmdOutput, run};
-use pretty_assertions::{assert_eq, assert_ne};
+use pretty_assertions::assert_eq;
 
 fn api_websocket_bin() -> PathBuf {
     resolve("api-websocket")
@@ -22,12 +22,6 @@ fn help_includes_key_flags() {
     assert!(text.contains("completion"));
     assert!(text.contains("--config-dir"));
     assert!(text.contains("--format"));
-}
-
-#[test]
-fn invalid_flag_exits_nonzero() {
-    let out = run_api_websocket(&["--definitely-not-a-flag"]);
-    assert_ne!(out.code, 0);
 }
 
 #[test]
@@ -60,7 +54,7 @@ fn call_json_failure_uses_contract_envelope() {
 
 #[test]
 fn unknown_arg_returns_usage_exit_code() {
-    let out = run_api_websocket(&["--definitely-not-a-real-flag"]);
+    let out = run_api_websocket(&["--definitely-not-a-flag"]);
     assert_eq!(out.code, 64, "stderr={}", out.stderr_text());
 }
 
