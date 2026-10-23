@@ -52,7 +52,6 @@ pub(super) fn select(
     record: &crate::SessionRecord,
     operation_id: &str,
     after: &str,
-    now: i64,
 ) -> Result<(String, Proof), &'static str> {
     // One bounded inventory and one bounded selection per incident. The new
     // capability opts the broker into the auth-specific policy contract;
@@ -122,7 +121,10 @@ pub(super) fn select(
         return Err("policy_denied");
     }
     let account = response.account.ok_or("no_candidate")?;
-    if !response.auth_failover.fresh(now) {
+    if !response
+        .auth_failover
+        .fresh(jiff::Timestamp::now().as_second())
+    {
         return Err("capacity_unconfirmed_or_stale");
     }
     if account == after || !names.contains(&account) {

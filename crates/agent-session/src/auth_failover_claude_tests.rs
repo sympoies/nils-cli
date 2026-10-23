@@ -99,16 +99,13 @@ fn auth_failover_claude_preserves_conversation_retires_claims_and_never_replays(
     let before = log(tmp.path());
     fs::write(tmp.path().join("exit-on-probe"), "").unwrap();
     let watcher = on_relaunched_prompt(&context, tmp.path(), &launch_id(&record).unwrap());
-    crate::auth_incident::failover::tick(
-        &context,
-        &record,
-        &tmux,
-        jiff::Timestamp::now().as_second(),
-    )
-    .unwrap();
-    watcher.join().unwrap();
+    // The broker stamps during select, after this controller clock sample.
+    let before_broker = jiff::Timestamp::now().as_second() - 1;
+    crate::auth_incident::failover::tick(&context, &record, &tmux, before_broker).unwrap();
     let receipt = failover_receipt(&context);
     assert_eq!(receipt["state"], "account_switched", "{receipt}");
+    watcher.join().unwrap();
+    assert!(receipt["proof"]["checked_at_epoch"].as_i64().unwrap() > before_broker);
     assert_eq!(receipt["replayed"], false);
     assert_eq!(receipt["unknown_operation_count"], 2);
     assert_eq!(receipt["unknown_in_flight_effects"][0]["state"], "unknown");

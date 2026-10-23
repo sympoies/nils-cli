@@ -317,7 +317,6 @@ pub(crate) fn tick(
         &record,
         &receipt.operation_id,
         &receipt.source_account,
-        now,
     );
     let (target, proof) = match selection {
         Ok(selected) => selected,
@@ -523,16 +522,16 @@ pub(crate) fn pre_apply_codex(
                 record,
                 &receipt.operation_id,
                 &receipt.source_account,
-                now,
             )
         },
         Err,
     );
+    let completed_at = jiff::Timestamp::now().as_second();
     match decision {
         Ok((target, proof))
             if Some(&target) == receipt.target_account.as_ref()
                 && target == next.account
-                && proof.fresh(jiff::Timestamp::now().as_second()) =>
+                && proof.fresh(completed_at) =>
         {
             receipt.proof = Some(proof);
             persist(context, record, &mut store, index, &receipt)

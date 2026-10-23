@@ -464,3 +464,62 @@ fn auth_failover_new_official_refresh_and_model_health_settle_prior_refusals() {
     .unwrap();
     assert_eq!(receipt(&context, &record)["state"], "healthy");
 }
+
+#[test]
+fn auth_failover_tick_uses_post_broker_time_for_a_newer_stamp() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock, json!("beta"), true);
+    let (context, record) = fixture(tmp.path());
+    let before_broker = jiff::Timestamp::now().as_second() - 1;
+    let path = tmp.path().join("selection.json");
+    let mut selection: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    selection["auth_failover"]["checked_at_epoch"] = json!(before_broker + 1);
+    selection["auth_failover"]["expires_at_epoch"] = json!(before_broker + 11);
+    fs::write(path, selection.to_string()).unwrap();
+    super::failover::tick(&context, &record, Path::new("unused"), before_broker).unwrap();
+    let receipt = receipt(&context, &record);
+    assert_eq!(receipt["state"], "switching", "{receipt}");
+    assert_eq!(receipt["proof"]["checked_at_epoch"], before_broker + 1);
+}
+
+#[test]
+fn auth_failover_codex_apply_uses_time_after_the_broker_returns() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock, json!("beta"), true);
+    let (context, record) = fixture(tmp.path());
+    reconcile(&context, &record);
+    assert_eq!(receipt(&context, &record)["state"], "switching");
+    let script = tmp.path().join("broker");
+    let body = fs::read_to_string(&script).unwrap().replace(
+        r#"select) cat "$root/selection.json" ;;"#,
+        r#"select)
+  sleep 1
+  checked=$(date +%s)
+  sed -e "s/\"checked_at_epoch\":[0-9]*/\"checked_at_epoch\":$checked/" \
+      -e "s/\"expires_at_epoch\":[0-9]*/\"expires_at_epoch\":$((checked+10))/" "$root/selection.json"
+  ;;"#,
+    );
+    fs::write(script, body).unwrap();
+    let runtime = &record.runtime.as_ref().unwrap().launch_id;
+    let next = crate::codex_account::begin_next_apply(&context, &record.id, runtime)
+        .unwrap()
+        .unwrap();
+    crate::codex_account::finish_next_apply(
+        &context,
+        &record.id,
+        runtime,
+        &next.account,
+        next.revision,
+        next.intent_id.as_deref().unwrap(),
+        Ok(()),
+    )
+    .unwrap();
+    let current = crate::load_session_record(&context, &record.id).unwrap();
+    assert_eq!(
+        crate::codex_account::selected_account(&current).as_deref(),
+        Some("beta")
+    );
+    assert_eq!(current.runtime.as_ref().unwrap().launch_id, *runtime);
+}
