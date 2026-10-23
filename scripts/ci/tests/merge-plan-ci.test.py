@@ -186,8 +186,26 @@ if args[0] == 'metadata':
     ids = {n: f'path+{root.as_uri()}/crates/{n}#{n}@0.1.0' for n in names}
     bins = [{'kind': ['bin'], 'name': os.environ['FIXTURE_SELECTED_BIN']}] if os.environ.get('FIXTURE_SELECTED_BIN') else []
     sibling = [{'kind': ['bin'], 'name': 'sibling-cli'}] if os.environ.get('FIXTURE_SIBLING_BIN') else []
-    packages = [{'id': ids[n], 'name': n, 'manifest_path': str(root/f'crates/{n}/Cargo.toml'),
-                 'targets': bins if n == 'selected' else (sibling if n == 'unrelated' else [])} for n in names]
+    libs = {n: [{'kind': ['lib'], 'crate_types': ['lib'], 'name': n}] for n in names}
+    if os.environ.get('FIXTURE_SELECTED_BIN_ONLY'):
+        libs['selected'] = []
+    if os.environ.get('FIXTURE_ALL_BIN_ONLY'):
+        libs['selected'] = []
+        libs['consumer'] = []
+    packages = []
+    for n in names:
+        targets = libs[n]
+        if n == 'selected' and (os.environ.get('FIXTURE_SELECTED_BIN_ONLY')
+                                or os.environ.get('FIXTURE_ALL_BIN_ONLY')):
+            targets = targets + (bins or [{'kind': ['bin'], 'name': 'selected-cli'}])
+        elif n == 'consumer' and os.environ.get('FIXTURE_ALL_BIN_ONLY'):
+            targets = targets + [{'kind': ['bin'], 'name': 'consumer-cli'}]
+        elif n == 'selected':
+            targets = targets + bins
+        elif n == 'unrelated':
+            targets = targets + sibling
+        packages.append({'id': ids[n], 'name': n, 'manifest_path': str(root/f'crates/{n}/Cargo.toml'),
+                         'targets': targets})
     nodes = [{'id': ids[n], 'deps': [{'pkg': ids['selected']}] if n == 'consumer' else []} for n in names]
     print(json.dumps({'workspace_root': str(root), 'workspace_members': list(ids.values()), 'packages': packages, 'resolve': {'nodes': nodes}}))
 else:
@@ -283,6 +301,24 @@ else:
                              ['consumer', 'selected'])
         self.assertEqual(next(c for c in calls if c[0] == 'clippy')[-2:], ['-D', 'warnings'])
         self.assertTrue(all(not r['identity_present'] for r in rows if r['args'][0] in ('nextest', 'test')))
+
+    def test_bin_only_selected_package_skips_doctests(self):
+        self.selected_binary()
+        self.candidate()
+        result, rows = self.execute(env={'FIXTURE_SELECTED_BIN_ONLY': '1'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.receipt()['packages'], ['consumer', 'selected'])
+        doctest = next(row['args'] for row in rows if row['args'][0] == 'test')
+        self.assertEqual([doctest[index + 1] for index, arg in enumerate(doctest) if arg == '-p'],
+                         ['consumer'])
+
+    def test_all_bin_only_selected_packages_skip_doctests(self):
+        self.selected_binary()
+        self.candidate()
+        result, rows = self.execute(env={'FIXTURE_ALL_BIN_ONLY': '1'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.receipt()['packages'], ['consumer', 'selected'])
+        self.assertFalse(any(row['args'][0] == 'test' for row in rows))
 
     def selected_binary(self):
         """Give `selected` a required `selected-cli` binary and its generated asset."""
