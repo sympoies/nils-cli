@@ -62,7 +62,8 @@ With `--format json`, `data` contains `number`, `head_sha`, `base_sha`, `finding
 (`path`/`kind` objects), `digest`, `confirmation` and nullable `provenance_import`.
 The latter contains the upstream source, mappings, adaptation and addition paths, complete
 file count, verified-file count, manifest digest, comparison digest and declaration
-digest when the mode below is active. This is inspection evidence,
+digest when the mode below is active. Reconstructed old sides also expose their
+`merge_base` SHA and bind it into the confirmation digest. This is inspection evidence,
 not review admission. It uses the same complete comparison, metadata re-read
 and digest calculation as admission.
 

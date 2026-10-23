@@ -219,13 +219,13 @@ pub(super) fn comparison<R: BackendRunner>(
 ) -> Result<(String, Vec<diff::Finding>), ForgeError> {
     let files = files(runner, ctx, number, subject)?;
     let tree = upstream(runner, ctx, d)?;
-    let comparison_base = if files
+    let merge_base = if files
         .iter()
         .any(|file| file.patch.is_none() && file.status != "added")
     {
-        residual::merge_base(runner, ctx, subject)?
+        Some(residual::merge_base(runner, ctx, subject)?)
     } else {
-        subject.base.clone()
+        None
     };
     let mut manifest = Vec::new();
     let mut residual = String::new();
@@ -270,7 +270,7 @@ pub(super) fn comparison<R: BackendRunner>(
                 runner,
                 ctx,
                 subject,
-                &comparison_base,
+                merge_base.as_deref().unwrap_or(&subject.base),
                 file,
             )?);
         }
@@ -290,12 +290,15 @@ pub(super) fn comparison<R: BackendRunner>(
         kind: "import-addition",
     }));
     findings.sort();
-    let binding = json!({"repository":d.repository, "commit":d.commit,
+    let mut binding = json!({"repository":d.repository, "commit":d.commit,
         "file_count":files.len(), "verified_files":manifest.len(),
         "manifest_digest":sha256_digest(&serde_json::to_vec(&manifest).unwrap()),
         "comparison_digest":sha256_digest(&serde_json::to_vec(&files).unwrap()),
         "mappings":d.mappings, "adaptations":d.adaptations, "additions":d.additions,
         "declaration_digest":sha256_digest(subject.body.as_bytes())});
+    if let Some(base) = merge_base {
+        binding["merge_base"] = json!(base);
+    }
     Ok((format!("{PREFIX}{binding}"), findings))
 }
 

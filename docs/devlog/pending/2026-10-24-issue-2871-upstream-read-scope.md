@@ -9,7 +9,7 @@
 - Exact added paths under mapped directories remain visible as additions,
   retain ordinary inspection limits, and require independent confirmation.
   Omitted text patches are reconstructed from verified immutable blobs at
-  the three-dot merge base and head;
+  the three-dot merge base and head, with that base bound into confirmation;
   missing binary patches identify the exact unavailable evidence.
 
 ### Why / context
@@ -25,7 +25,8 @@
   Focused test-integrity tests pass with read-only upstream authorization,
   denied repository/operation cases, restored downstream scope, declared
   notice admission, omitted large text patches, binary refusals, blob
-  corruption checks, a moved base tip, and unchanged residual bounds.
+  corruption checks, modified/removed/renamed paths after a moved base tip,
+  and unchanged residual bounds.
 
 ### Links
 

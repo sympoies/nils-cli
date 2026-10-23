@@ -1,6 +1,6 @@
 use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 use sha1::{Digest, Sha1};
 
 fn blob(content: &[u8]) -> Value {
@@ -123,25 +123,77 @@ fn omitted_text_reconstruction_retains_the_ordinary_diff_byte_limit() {
     assert_refusal(&preview(&stub), 65, "test_changes_limit_exceeded");
 }
 
-#[test]
-fn omitted_text_uses_the_pr_merge_base_when_the_base_branch_advanced() {
+fn check_moved_base(status: &str) {
     const MERGE_BASE: &str = "ffffffffffffffffffffffffffffffffffffffff";
-    let stub = omitted(
-        Some(b"assert(value === 42);\n"),
-        b"assert(value);\n",
-        "tests/large.test.ts",
-    );
+    const OTHER_BASE: &str = "1111111111111111111111111111111111111111";
+    let after = if status == "removed" {
+        b"".as_slice()
+    } else {
+        b"assert(value);\n".as_slice()
+    };
+    let path = if status == "renamed" {
+        "tests/renamed.test.ts"
+    } else {
+        "tests/large.test.ts"
+    };
+    let stub = omitted(Some(b"assert(value === 42);\n"), after, path);
     let root = stub.tempdir.path();
+    let mut page: Vec<Value> =
+        serde_json::from_str(&fs::read_to_string(root.join("page7.json")).unwrap()).unwrap();
+    page[0]["status"] = json!(status);
+    if status == "removed" {
+        page[0]["sha"] = blob(b"assert(value === 42);\n")["sha"].clone();
+        page[0]["additions"] = json!(0);
+    }
+    if status == "renamed" {
+        page[0]["previous_filename"] = json!("tests/large.test.ts");
+    }
+    fs::write(root.join("page7.json"), serde_json::to_vec(&page).unwrap()).unwrap();
     let script = fs::read_to_string(root.join("gh")).unwrap()
         .replace(&format!("*ref={OLD}) cat \"$TEST_PROVENANCE_DIR/base-content.json\""),
             &format!("*ref={OLD}) cat \"$TEST_PROVENANCE_DIR/head-content.json\" ;;\n      *ref={MERGE_BASE}) cat \"$TEST_PROVENANCE_DIR/base-content.json\""))
         .replace("case \"$1 $2\" in", &format!("case \"$1 $2\" in\n  \"api repos/acme/widgets/compare/{OLD}...{HEAD}\") echo '{{\"sha\":\"{MERGE_BASE}\"}}'; exit 0 ;;"));
-    fs::write(root.join("gh"), script).unwrap();
+    fs::write(root.join("gh"), &script).unwrap();
     let out = preview(&stub);
     assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
-    assert_eq!(
-        parse_envelope(&out.stdout)["data"]["findings"],
-        json!([
-        {"path":"tests/large.test.ts", "kind":"assertion-change"}])
+    let data = &parse_envelope(&out.stdout)["data"];
+    assert!(
+        data["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["kind"] == "assertion-change")
     );
+    if status != "modified" {
+        assert!(
+            data["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["kind"] == "deleted-test")
+        );
+    }
+    assert_eq!(data["provenance_import"]["merge_base"], MERGE_BASE);
+    fs::write(root.join("gh"), script.replace(MERGE_BASE, OTHER_BASE)).unwrap();
+    let other = preview(&stub);
+    assert_eq!(other.code, 0, "{} {}", other.stdout, other.stderr);
+    assert_ne!(
+        parse_envelope(&other.stdout)["data"]["digest"],
+        data["digest"]
+    );
+}
+
+#[test]
+fn moved_base_modified_text_keeps_assertion_findings_and_merge_base_binding() {
+    check_moved_base("modified");
+}
+
+#[test]
+fn moved_base_removed_text_keeps_deletion_findings_and_merge_base_binding() {
+    check_moved_base("removed");
+}
+
+#[test]
+fn moved_base_renamed_text_keeps_deletion_findings_and_merge_base_binding() {
+    check_moved_base("renamed");
 }
