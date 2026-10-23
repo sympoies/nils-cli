@@ -3679,9 +3679,8 @@ mod tests {
             id: id.to_string(),
             role: role.to_string(),
             text: text.to_string(),
-            timestamp: None,
             human_prompt,
-            images: Vec::new(),
+            ..HistoryMessage::default()
         }
     }
 

@@ -141,6 +141,99 @@ async fn history_images_are_authenticated_bounded_and_bound_to_the_source_row() 
 }
 
 #[tokio::test]
+async fn history_parts_are_opt_in_and_keep_provider_item_identity() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path().join("history");
+    let transcript_dir = root.join("2026/10/23");
+    fs::create_dir_all(&transcript_dir).unwrap();
+    fs::write(
+        transcript_dir.join("rollout.jsonl"),
+        concat!(
+            "{\"timestamp\":\"2026-10-23T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"parts-session\",\"cwd\":\"/workspace/fixture\",\"source\":\"cli\",\"cli_version\":\"0.134.0\",\"timestamp\":\"2026-10-23T00:00:00Z\"}}\n",
+            "{\"timestamp\":\"2026-10-23T00:00:01Z\",\"type\":\"response_item\",\"payload\":{\"id\":\"item-1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello\"}]}}\n",
+            "{\"timestamp\":\"2026-10-23T00:00:02Z\",\"type\":\"response_item\",\"payload\":{\"id\":\"call-item\",\"call_id\":\"tool-1\",\"type\":\"function_call\",\"name\":\"Read\",\"arguments\":\"{\\\"file_path\\\":\\\"src/config.rs\\\"}\"}}\n",
+            "{\"timestamp\":\"2026-10-23T00:00:03Z\",\"type\":\"response_item\",\"payload\":{\"id\":\"result-item\",\"call_id\":\"tool-1\",\"type\":\"function_call_output\",\"output\":\"read complete\"}}\n"
+        ),
+    )
+    .unwrap();
+    let mut state = super::super::tests::state(
+        temp.path(),
+        Some("test-image-token"),
+        PathBuf::from("/unused-tmux"),
+    );
+    Arc::get_mut(&mut state).unwrap().history_catalog = Arc::new(HistoryCatalog::new(
+        vec![provider_history::HistorySource {
+            provider: "codex".into(),
+            agent_profile: None,
+            root,
+        }],
+        provider_history::archive_root(temp.path()),
+        provider_history::star_root(temp.path()),
+    ));
+    let history = provider_history::stable_history_id("codex", None, "parts-session");
+    let app = super::super::router(state);
+
+    let opt_in = app
+        .clone()
+        .oneshot(request(
+            &format!("/history/sessions/{history}/messages?parts=v1"),
+            true,
+        ))
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(opt_in.into_body(), 4096)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["data"]["messages"][0]["text"], "hello");
+    assert_eq!(body["data"]["messages"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        body["data"]["messages"][0]["parts"][0],
+        json!({
+            "kind": "text",
+            "id": "item-1",
+            "timestamp": "2026-10-23T00:00:01Z",
+            "text": "hello"
+        })
+    );
+    assert_eq!(body["data"]["messages"][1]["role"], "assistant");
+    assert_eq!(body["data"]["messages"][1]["parts"][0]["kind"], "tool_call");
+    assert_eq!(body["data"]["messages"][1]["parts"][0]["id"], "call-item");
+    assert_eq!(body["data"]["messages"][1]["parts"][0]["call_id"], "tool-1");
+    assert_eq!(
+        body["data"]["messages"][2]["parts"][0]["kind"],
+        "tool_result"
+    );
+    assert_eq!(body["data"]["messages"][2]["parts"][0]["id"], "result-item");
+    assert_eq!(body["data"]["messages"][2]["parts"][0]["call_id"], "tool-1");
+
+    let default_shape = app
+        .clone()
+        .oneshot(request(
+            &format!("/history/sessions/{history}/messages"),
+            true,
+        ))
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(default_shape.into_body(), 4096)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["data"]["messages"][0]["text"], "hello");
+    assert_eq!(body["data"]["messages"].as_array().unwrap().len(), 1);
+    assert!(body["data"]["messages"][0].get("parts").is_none());
+
+    let unsupported = app
+        .oneshot(request(
+            &format!("/history/sessions/{history}/messages?parts=v2"),
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(unsupported.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn history_attachment_reads_check_live_and_archived_session_identity() {
     use base64::Engine;
     let temp = tempfile::TempDir::new().unwrap();
