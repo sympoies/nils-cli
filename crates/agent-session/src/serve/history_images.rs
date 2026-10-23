@@ -1,5 +1,13 @@
 use super::*;
 
+#[derive(Debug, Deserialize)]
+struct HistoryMessagesQuery {
+    cursor: Option<String>,
+    limit: Option<usize>,
+    direction: Option<HistoryMessageDirection>,
+    parts: Option<HistoryPartsVersion>,
+}
+
 pub(super) fn routes() -> Router<Arc<ServeState>> {
     Router::new()
         .route(
@@ -22,12 +30,14 @@ async fn history_messages_handler(
         return response;
     }
     let catalog = state.history_catalog.clone();
+    let include_parts = query.parts == Some(HistoryPartsVersion::V1);
     match tokio::task::spawn_blocking(move || {
-        catalog.messages(
+        catalog.messages_with_parts(
             &id,
             query.cursor.as_deref(),
             query.limit.unwrap_or(50),
             query.direction.unwrap_or_default(),
+            include_parts,
         )
     })
     .await
@@ -74,3 +84,8 @@ async fn image_handler(
 #[cfg(test)]
 #[path = "history_images_tests.rs"]
 mod tests;
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+pub(super) enum HistoryPartsVersion {
+    #[serde(rename = "v1")]
+    V1,
+}

@@ -2,7 +2,10 @@ use super::*;
 use crate::provider_prompt::claude_queued_prompt_blocks;
 use std::borrow::Cow;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[path = "history_parts.rs"]
+mod history_parts;
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct HistoryMessage {
     pub(crate) id: String,
     pub(crate) role: String,
@@ -11,14 +14,96 @@ pub(crate) struct HistoryMessage {
     pub(crate) timestamp: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) images: Vec<HistoryImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) parts: Option<Vec<history_parts::HistoryPart>>,
     #[serde(skip)]
     pub(crate) human_prompt: bool,
+}
+
+const MAX_TOOL_STATUS_CONTEXT_BYTES: u64 = 1024 * 1024;
+const MAX_TOOL_STATUS_CONTEXT_LINES: usize = 1024;
+
+pub(super) fn correlate_tool_status(session: &HistorySession, messages: &mut [HistoryMessage]) {
+    let results = messages
+        .iter()
+        .filter_map(|message| message.id.rsplit_once('-')?.1.parse::<u64>().ok())
+        .max()
+        .map(|offset| {
+            matching_tool_results(
+                &session.transcript_path,
+                &session.provider,
+                session.provider_version.as_deref(),
+                offset,
+            )
+        })
+        .unwrap_or_default();
+    history_parts::correlate_tool_status(messages, &results);
+}
+
+fn matching_tool_results(
+    path: &Path,
+    provider: &str,
+    provider_version: Option<&str>,
+    offset: u64,
+) -> Vec<history_parts::HistoryPart> {
+    let Ok(mut file) = fs::File::open(path) else {
+        return Vec::new();
+    };
+    if file.seek(SeekFrom::Start(offset)).is_err() {
+        return Vec::new();
+    }
+    let mut reader = BufReader::new(&mut file).take(MAX_TOOL_STATUS_CONTEXT_BYTES);
+    let mut line = Vec::new();
+    let mut results = Vec::new();
+    for _ in 0..MAX_TOOL_STATUS_CONTEXT_LINES {
+        match read_image_line(&mut reader, &mut line) {
+            Ok(BoundedLine::Line) => {}
+            Ok(BoundedLine::Eof | BoundedLine::Oversized) | Err(_) => break,
+        }
+        let Ok(value) = serde_json::from_slice::<Value>(&line) else {
+            continue;
+        };
+        let (parts, _) = history_parts::record_parts(
+            provider,
+            provider_version,
+            &value,
+            false,
+            &[],
+            "status-context",
+        );
+        results.extend(
+            parts
+                .into_iter()
+                .filter(|part| matches!(part, history_parts::HistoryPart::ToolResult { .. })),
+        );
+    }
+    results
+}
+
+pub(super) fn projected_timestamp(value: &Value) -> Option<String> {
+    history_parts::projected_timestamp(value)
+}
+
+pub(super) fn provider_version(path: &Path, provider: &str) -> Option<String> {
+    let mut reader = BufReader::new(fs::File::open(path).ok()?).take(64 * 1024);
+    let mut line = Vec::new();
+    reader.read_until(b'\n', &mut line).ok()?;
+    let value: Value = serde_json::from_slice(&line).ok()?;
+    match provider {
+        "codex" => value
+            .pointer("/payload/cli_version")
+            .or_else(|| value.get("cli_version"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        _ => None,
+    }
 }
 
 pub(super) fn read_messages(
     session: &HistorySession,
     offset: u64,
     limit: usize,
+    include_parts: bool,
 ) -> Result<HistoryMessagesPage, HistoryError> {
     let file = fs::File::open(&session.transcript_path).map_err(|_| HistoryError::NotFound)?;
     let mut reader = BufReader::new(file);
@@ -58,16 +143,38 @@ pub(super) fn read_messages(
         if line.len() > MAX_LINE_BYTES && image_sources(&value).is_empty() {
             continue;
         }
-        let Some((role, text, timestamp, human_prompt)) = normalize_message(
+        let normalized = normalize_message(
             &session.provider,
             &session.provider_session_id,
             &line,
             &value,
-        ) else {
+        );
+        let images = descriptors(session, line_offset, &value);
+        let (parts, part_role) = if include_parts {
+            history_parts::record_parts(
+                &session.provider,
+                session.provider_version.as_deref(),
+                &value,
+                normalized.is_some(),
+                &images,
+                &format!("{}-{line_offset}", session.id),
+            )
+        } else {
+            (Vec::new(), None)
+        };
+        let Some((role, text, timestamp, human_prompt)) = normalized.or_else(|| {
+            (!parts.is_empty()).then(|| {
+                (
+                    part_role.unwrap_or("notice").to_string(),
+                    String::new(),
+                    projected_timestamp(&value),
+                    false,
+                )
+            })
+        }) else {
             continue;
         };
-        let images = descriptors(session, line_offset, &value);
-        if text.trim().is_empty() && images.is_empty() {
+        if text.trim().is_empty() && images.is_empty() && parts.is_empty() {
             continue;
         }
         messages.push(HistoryMessage {
@@ -77,6 +184,7 @@ pub(super) fn read_messages(
             timestamp,
             human_prompt,
             images,
+            parts: include_parts.then_some(parts),
         });
     }
     let next = reader.stream_position().map_err(|_| HistoryError::Io)?;
@@ -180,6 +288,7 @@ pub(super) fn push_incremental_message(
         timestamp,
         human_prompt,
         images,
+        parts: None,
     });
 }
 
@@ -188,6 +297,7 @@ pub(super) fn push_reverse_message(
     raw_line: &[u8],
     line_offset: u64,
     messages: &mut Vec<HistoryMessage>,
+    include_parts: bool,
 ) {
     let raw_line = raw_line.strip_suffix(b"\r").unwrap_or(raw_line);
     if raw_line.is_empty() || raw_line.len() > MAX_IMAGE_RECORD_BYTES {
@@ -200,16 +310,38 @@ pub(super) fn push_reverse_message(
     if line.len() > MAX_LINE_BYTES && image_sources(&value).is_empty() {
         return;
     }
-    let Some((role, text, timestamp, human_prompt)) = normalize_message(
+    let normalized = normalize_message(
         &session.provider,
         &session.provider_session_id,
         line,
         &value,
-    ) else {
+    );
+    let images = descriptors(session, line_offset, &value);
+    let (parts, part_role) = if include_parts {
+        history_parts::record_parts(
+            &session.provider,
+            session.provider_version.as_deref(),
+            &value,
+            normalized.is_some(),
+            &images,
+            &format!("{}-{line_offset}", session.id),
+        )
+    } else {
+        (Vec::new(), None)
+    };
+    let Some((role, text, timestamp, human_prompt)) = normalized.or_else(|| {
+        (!parts.is_empty()).then(|| {
+            (
+                part_role.unwrap_or("notice").to_string(),
+                String::new(),
+                projected_timestamp(&value),
+                false,
+            )
+        })
+    }) else {
         return;
     };
-    let images = descriptors(session, line_offset, &value);
-    if text.trim().is_empty() && images.is_empty() {
+    if text.trim().is_empty() && images.is_empty() && parts.is_empty() {
         return;
     }
     messages.push(HistoryMessage {
@@ -219,6 +351,7 @@ pub(super) fn push_reverse_message(
         timestamp,
         human_prompt,
         images,
+        parts: include_parts.then_some(parts),
     });
 }
 
@@ -799,6 +932,208 @@ fn sniff_mime(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
+pub(super) fn read_messages_reverse(
+    session: &HistorySession,
+    before: Option<u64>,
+    limit: usize,
+    include_parts: bool,
+) -> Result<HistoryMessagesPage, HistoryError> {
+    let deadline = Instant::now() + MESSAGE_SCAN_MAX_DURATION;
+    let mut file = fs::File::open(&session.transcript_path).map_err(|_| HistoryError::NotFound)?;
+    let file_len = file.metadata().map_err(|_| HistoryError::Io)?.len();
+    read_messages_reverse_from_reader(
+        session,
+        &mut file,
+        file_len,
+        before,
+        limit,
+        deadline,
+        include_parts,
+    )
+}
+
+pub(super) fn read_messages_reverse_from_reader<R: Read + Seek>(
+    session: &HistorySession,
+    reader: &mut R,
+    file_len: u64,
+    before: Option<u64>,
+    limit: usize,
+    deadline: Instant,
+    include_parts: bool,
+) -> Result<HistoryMessagesPage, HistoryError> {
+    let end = before.unwrap_or(file_len);
+    if end > file_len {
+        return Err(HistoryError::InvalidCursor);
+    }
+    if end == 0 {
+        return Ok(HistoryMessagesPage {
+            messages: Vec::new(),
+            next_cursor: None,
+            older_cursor: None,
+        });
+    }
+    if before.is_some() {
+        reader
+            .seek(SeekFrom::Start(end.saturating_sub(1)))
+            .map_err(|_| HistoryError::InvalidCursor)?;
+        let mut preceding = [0u8; 1];
+        reader
+            .read_exact(&mut preceding)
+            .map_err(|_| HistoryError::InvalidCursor)?;
+        if preceding[0] != b'\n' {
+            return Err(HistoryError::InvalidCursor);
+        }
+    }
+
+    let lower_bound = end.saturating_sub(REVERSE_MESSAGE_MAX_BYTES);
+    let mut position = end;
+    let mut partial: Vec<Vec<u8>> = Vec::new();
+    let mut partial_len = 0usize;
+    let mut partial_oversized = false;
+    let mut messages = Vec::new();
+    let mut bound_reached = false;
+    let mut oldest_offset = None;
+    let mut earliest_boundary = None;
+    let mut scanned = 0usize;
+
+    'chunks: while position > lower_bound && messages.len() < limit {
+        if scanned >= MAX_MESSAGE_SCAN_LINES || Instant::now() >= deadline {
+            bound_reached = true;
+            break;
+        }
+        let chunk_start = position
+            .saturating_sub(REVERSE_MESSAGE_CHUNK_BYTES as u64)
+            .max(lower_bound);
+        let chunk_len = usize::try_from(position - chunk_start).map_err(|_| HistoryError::Io)?;
+        let mut chunk = vec![0u8; chunk_len];
+        reader
+            .seek(SeekFrom::Start(chunk_start))
+            .map_err(|_| HistoryError::Io)?;
+        reader
+            .read_exact(&mut chunk)
+            .map_err(|_| HistoryError::Io)?;
+        position = chunk_start;
+
+        let mut right = chunk.len();
+        let mut rightmost = true;
+        while let Some(newline) = chunk[..right].iter().rposition(|byte| *byte == b'\n') {
+            if scanned >= MAX_MESSAGE_SCAN_LINES || Instant::now() >= deadline {
+                bound_reached = true;
+                break 'chunks;
+            }
+            let line_start = newline + 1;
+            let line_offset = chunk_start.saturating_add(line_start as u64);
+            earliest_boundary = Some(line_offset);
+            scanned += 1;
+
+            if rightmost && (partial_len > 0 || partial_oversized) {
+                if !partial_oversized
+                    && chunk.len().saturating_sub(line_start) + partial_len
+                        <= MAX_IMAGE_RECORD_BYTES
+                {
+                    let mut joined =
+                        Vec::with_capacity(chunk.len().saturating_sub(line_start) + partial_len);
+                    joined.extend_from_slice(&chunk[line_start..]);
+                    for fragment in partial.iter().rev() {
+                        joined.extend_from_slice(fragment);
+                    }
+                    push_reverse_message(
+                        session,
+                        &joined,
+                        line_offset,
+                        &mut messages,
+                        include_parts,
+                    );
+                }
+                partial.clear();
+                partial_len = 0;
+                partial_oversized = false;
+            } else {
+                push_reverse_message(
+                    session,
+                    &chunk[line_start..right],
+                    line_offset,
+                    &mut messages,
+                    include_parts,
+                );
+            }
+            if messages.len() == limit {
+                break 'chunks;
+            }
+            right = newline;
+            rightmost = false;
+        }
+
+        if chunk_start == 0 {
+            if scanned >= MAX_MESSAGE_SCAN_LINES || Instant::now() >= deadline {
+                bound_reached = true;
+                break;
+            }
+            earliest_boundary = Some(0);
+            if rightmost && (partial_len > 0 || partial_oversized) {
+                if !partial_oversized && chunk.len() + partial_len <= MAX_IMAGE_RECORD_BYTES {
+                    let mut joined = Vec::with_capacity(chunk.len() + partial_len);
+                    joined.extend_from_slice(&chunk);
+                    for fragment in partial.iter().rev() {
+                        joined.extend_from_slice(fragment);
+                    }
+                    push_reverse_message(session, &joined, 0, &mut messages, include_parts);
+                }
+            } else {
+                push_reverse_message(session, &chunk[..right], 0, &mut messages, include_parts);
+            }
+            break;
+        }
+
+        let fragment = &chunk[..right];
+        if rightmost {
+            if partial_oversized || fragment.len() + partial_len > MAX_IMAGE_RECORD_BYTES {
+                partial.clear();
+                partial_len = 0;
+                partial_oversized = true;
+            } else {
+                partial.push(fragment.to_vec());
+                partial_len += fragment.len();
+            }
+        } else if fragment.len() > MAX_IMAGE_RECORD_BYTES {
+            partial.clear();
+            partial_len = 0;
+            partial_oversized = true;
+        } else {
+            partial.clear();
+            partial.push(fragment.to_vec());
+            partial_len = fragment.len();
+        }
+    }
+
+    for message in &messages {
+        let Some(offset) = message
+            .id
+            .rsplit('-')
+            .next()
+            .and_then(|value| value.parse().ok())
+        else {
+            continue;
+        };
+        oldest_offset = Some(oldest_offset.map_or(offset, |current: u64| current.min(offset)));
+    }
+    messages.reverse();
+    let unread_older = position > 0
+        || lower_bound > 0
+        || bound_reached
+        || (messages.len() == limit && oldest_offset.is_some_and(|offset| offset > 0));
+    let continuation =
+        oldest_offset.or_else(|| unread_older.then_some(earliest_boundary).flatten());
+    let older_cursor = continuation
+        .filter(|offset| *offset > 0 && unread_older)
+        .map(|offset| offset.to_string());
+    Ok(HistoryMessagesPage {
+        messages,
+        next_cursor: None,
+        older_cursor,
+    })
+}
+
 #[cfg(test)]
 mod queued_list_prompt_tests;
 
@@ -806,6 +1141,30 @@ mod queued_list_prompt_tests;
 mod image_tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn parts_query_serializes_empty_array_while_legacy_shape_omits_field() {
+        let message = HistoryMessage {
+            id: "message".to_string(),
+            role: "user".to_string(),
+            text: "text".to_string(),
+            timestamp: None,
+            images: Vec::new(),
+            parts: Some(Vec::new()),
+            human_prompt: true,
+        };
+        let typed = serde_json::to_value(&message).unwrap();
+        assert_eq!(typed["parts"], serde_json::json!([]));
+
+        let mut default_shape = message;
+        default_shape.parts = None;
+        assert!(
+            serde_json::to_value(default_shape)
+                .unwrap()
+                .get("parts")
+                .is_none()
+        );
+    }
 
     #[test]
     fn history_image_data_and_descriptor_bounds_are_explicit() {

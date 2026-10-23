@@ -3383,13 +3383,6 @@ struct HistoryListQuery {
 }
 
 #[derive(Debug, Deserialize)]
-struct HistoryMessagesQuery {
-    cursor: Option<String>,
-    limit: Option<usize>,
-    direction: Option<HistoryMessageDirection>,
-}
-
-#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ArchiveBody {
     expected_session_incarnation: String,

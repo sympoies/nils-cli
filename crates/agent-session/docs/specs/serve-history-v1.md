@@ -65,6 +65,24 @@ provider JSONL records.
 Both history reads require the server bearer because conversation content is more sensitive than the live
 list projection.
 
+Clients may opt into typed transcript parts with `?parts=v1` on the messages route. Each message then
+adds an ordered `parts` array, including an empty array when no typed part is available. Parts include
+visible `text`, `tool_call`, `tool_result`, `image`, `question`, and recognized `notice` records. Every
+part carries the provider item `id` and its timestamp when available. Tool input and result summaries
+are capped at 2,048 characters and redact path-like values and sensitive input fields. Typed output is
+capped at 64 KiB per message. `tool_call.status` is `unknown` when a matching result is not found in
+the returned page or the following 1 MiB transcript context; a result sets `completed` or `failed`,
+with `started_at` and `ended_at` when provider timestamps are available. Image `ref` values are opaque ids for the authenticated image route;
+`mime` and `bytes` may be absent when the source does not safely expose them. The `parts` query value
+is versioned and unknown values are rejected. Without it, the existing response shape is unchanged.
+
+Claude Code typed parts are projected only from transcript records tagged with version `2.1.x`; records
+with missing or other versions remain available through the existing text and image projection. Codex
+typed parts are projected only when the session metadata records a `0.x.y` CLI version, and are gated
+by recognized `response_item` and `event_msg` record shapes. Missing or other Codex versions and
+unrecognized record types are omitted. The `history-parts` fixtures pin the supported Claude Code
+`2.1.x` and Codex `0.x.y` ranges.
+
 Message pages also carry bounded optional image descriptors, including image-only
 messages. [History images v1](history-images-v1.md) owns the authenticated binary
 read route, source/path boundaries, byte limits and deleted/unavailable outcomes.
