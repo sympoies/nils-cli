@@ -37,6 +37,7 @@ fn omitted(before: Option<&[u8]>, after: &[u8], path: &str) -> StubEnv {
         "case \"$1 $2\" in",
         &format!(
             r#"case "$1 $2" in
+  "api repos/acme/widgets/compare/{OLD}...{HEAD}") echo '{{"sha":"{OLD}"}}'; exit 0 ;;
   "api repos/acme/widgets/contents/"*)
     case "$2" in
       *ref={OLD}) cat "$TEST_PROVENANCE_DIR/base-content.json" ;;
@@ -120,4 +121,27 @@ fn omitted_text_reconstruction_retains_the_ordinary_diff_byte_limit() {
         "tests/large.test.ts",
     );
     assert_refusal(&preview(&stub), 65, "test_changes_limit_exceeded");
+}
+
+#[test]
+fn omitted_text_uses_the_pr_merge_base_when_the_base_branch_advanced() {
+    const MERGE_BASE: &str = "ffffffffffffffffffffffffffffffffffffffff";
+    let stub = omitted(
+        Some(b"assert(value === 42);\n"),
+        b"assert(value);\n",
+        "tests/large.test.ts",
+    );
+    let root = stub.tempdir.path();
+    let script = fs::read_to_string(root.join("gh")).unwrap()
+        .replace(&format!("*ref={OLD}) cat \"$TEST_PROVENANCE_DIR/base-content.json\""),
+            &format!("*ref={OLD}) cat \"$TEST_PROVENANCE_DIR/head-content.json\" ;;\n      *ref={MERGE_BASE}) cat \"$TEST_PROVENANCE_DIR/base-content.json\""))
+        .replace("case \"$1 $2\" in", &format!("case \"$1 $2\" in\n  \"api repos/acme/widgets/compare/{OLD}...{HEAD}\") echo '{{\"sha\":\"{MERGE_BASE}\"}}'; exit 0 ;;"));
+    fs::write(root.join("gh"), script).unwrap();
+    let out = preview(&stub);
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    assert_eq!(
+        parse_envelope(&out.stdout)["data"]["findings"],
+        json!([
+        {"path":"tests/large.test.ts", "kind":"assertion-change"}])
+    );
 }

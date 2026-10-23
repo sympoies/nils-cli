@@ -162,10 +162,11 @@ readable and complete; both hunk lengths and total additions/deletions are check
 Omitted whole hunks are refusals.
 
 When a residual provider patch is absent, the
-tool reads the file metadata at the exact base/head commits, fetches the named
+tool resolves the three-dot merge base from the immutable base/head comparison,
+reads file metadata at that merge base and the exact head, and fetches the named
 Git blobs, and verifies their sizes and full Git SHA-1 identities after Base64
 decoding. Added/removed files use an empty missing side; renames read the old
-path at base and the new path at head. Complete UTF-8 text without NUL bytes is
+path at the merge base and the new path at head. Complete UTF-8 text without NUL bytes is
 compared locally with Git, with a 15-second process deadline and bounded output,
 then inspected by the same detector. No local checkout content or mutable branch
 ref is used. The existing backend response ceiling still applies to every blob

@@ -219,6 +219,14 @@ pub(super) fn comparison<R: BackendRunner>(
 ) -> Result<(String, Vec<diff::Finding>), ForgeError> {
     let files = files(runner, ctx, number, subject)?;
     let tree = upstream(runner, ctx, d)?;
+    let comparison_base = if files
+        .iter()
+        .any(|file| file.patch.is_none() && file.status != "added")
+    {
+        residual::merge_base(runner, ctx, subject)?
+    } else {
+        subject.base.clone()
+    };
     let mut manifest = Vec::new();
     let mut residual = String::new();
     let mut adaptations = BTreeSet::new();
@@ -258,7 +266,13 @@ pub(super) fn comparison<R: BackendRunner>(
         if file.patch.is_some() {
             residual.push_str(&residual_patch(file)?);
         } else {
-            residual.push_str(&residual::patch(runner, ctx, subject, file)?);
+            residual.push_str(&residual::patch(
+                runner,
+                ctx,
+                subject,
+                &comparison_base,
+                file,
+            )?);
         }
     }
     if adaptations != d.adaptations.iter().cloned().collect()

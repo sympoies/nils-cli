@@ -77,6 +77,12 @@ impl BackendRunner for ImportFixture {
             json!({"sha": self.commit, "tree": {"sha": TREE}}).to_string()
         } else if endpoint.contains("/git/trees/") {
             self.tree.to_string()
+        } else if endpoint.contains("/compare/")
+            && argv
+                .iter()
+                .any(|arg| arg == "{sha: .merge_base_commit.sha}")
+        {
+            json!({"sha": BASE}).to_string()
         } else if endpoint.contains("/compare/") {
             self.files.iter().map(|file| format!("diff --git a/{0} b/{0}\nnew file mode 100644\n--- /dev/null\n+++ b/{0}\n{1}\n", file["filename"].as_str().unwrap(), file["patch"].as_str().unwrap())).collect()
         } else {

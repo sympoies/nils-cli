@@ -74,10 +74,31 @@ fn bytes<R: BackendRunner>(
     Ok(bytes)
 }
 
+pub(super) fn merge_base<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    subject: &Subject,
+) -> Result<String, ForgeError> {
+    let repo = ctx.repo.as_deref().ok_or_else(incomplete)?;
+    let _scope = crate::identity::api_read_scope(&ctx.host, repo)?;
+    // Only metadata is read here; the capped compare file list is never used.
+    let output = runner.run(&super::api(
+        ctx,
+        format!("repos/{repo}/compare/{}...{}", subject.base, subject.head),
+        &["--jq", "{sha: .merge_base_commit.sha}"],
+    ))?;
+    let base: super::Object = serde_json::from_str(&output.stdout).map_err(|_| incomplete())?;
+    if !super::super::super::valid_sha(&base.sha) {
+        return Err(incomplete());
+    }
+    Ok(base.sha)
+}
+
 pub(super) fn patch<R: BackendRunner>(
     runner: &R,
     ctx: &ProviderContext,
     subject: &Subject,
+    comparison_base: &str,
     file: &ChangedFile,
 ) -> Result<String, ForgeError> {
     // A write-capable PR command must still authorize these reads as api_read.
@@ -90,7 +111,7 @@ pub(super) fn patch<R: BackendRunner>(
             runner,
             ctx,
             file.previous_filename.as_deref().unwrap_or(&file.filename),
-            &subject.base,
+            comparison_base,
             (file.status == "removed").then_some(file.sha.as_str()),
         )?
     };
