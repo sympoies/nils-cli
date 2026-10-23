@@ -2367,3 +2367,6 @@ mod retired_coordinator;
 
 #[path = "pr_review_handoff/test_integrity.rs"]
 mod test_integrity;
+
+#[path = "pr_review_handoff/wrong_reviewer.rs"]
+mod wrong_reviewer;

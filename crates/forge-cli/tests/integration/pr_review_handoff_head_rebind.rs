@@ -150,22 +150,14 @@ fn moved_head_surrender_pins_expected_head_and_writer_guards() {
     );
 
     for (actor, generation, expected_error) in [
-        (Some("worker-session"), Some("1"), "review_writer_conflict"),
         (
-            Some("reviewer-session"),
-            Some("0"),
-            "review_assignment_generation_conflict",
+            Some("worker-session"),
+            Some("1"),
+            Some("review_writer_conflict"),
         ),
-        (
-            Some("reviewer-session"),
-            Some("not-a-generation"),
-            "review_assignment_generation_conflict",
-        ),
-        (
-            Some("reviewer-session"),
-            None,
-            "review_assignment_generation_conflict",
-        ),
+        (Some("reviewer-session"), Some("0"), None),
+        (Some("reviewer-session"), Some("not-a-generation"), None),
+        (Some("reviewer-session"), None, None),
     ] {
         let mut stub = writable_ledger(fixture(CURRENT_HEAD, &seeded, vec![]), &seeded);
         if let Some(actor) = actor {
@@ -178,11 +170,20 @@ fn moved_head_surrender_pins_expected_head_and_writer_guards() {
         }
         let out = surrender(&stub, ASSIGNED_HEAD, &tip, true);
         assert_eq!(
-            out.code, 65,
+            out.code,
+            if expected_error.is_some() { 65 } else { 0 },
             "actor={actor:?} generation={generation:?}: {} {}",
-            out.stdout, out.stderr
+            out.stdout,
+            out.stderr
         );
-        assert_eq!(parse_envelope(&out.stdout)["error"]["code"], expected_error);
+        let envelope = parse_envelope(&out.stdout);
+        if let Some(expected_error) = expected_error {
+            assert_eq!(envelope["error"]["code"], expected_error);
+        } else {
+            assert_eq!(envelope["data"]["handoff"]["surrendered"], true);
+            assert_eq!(envelope["data"]["handoff"]["assignment_generation"], 1);
+            assert_eq!(envelope["data"]["handoff"]["assigned_head"], CURRENT_HEAD);
+        }
         assert!(
             !fs::read_to_string(stub.tempdir.path().join("calls.log"))
                 .unwrap()

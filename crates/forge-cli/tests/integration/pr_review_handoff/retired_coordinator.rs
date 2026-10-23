@@ -298,6 +298,14 @@ fn supervisor_takeover_requires_configured_identity_and_fresh_stale_retirement_p
             expected_tip
         };
         let out = supervisor_takeover(&stub, HEAD, OLD, expected_tip, allowlisted, true);
+        if !allowlisted {
+            assert!(out.stdout.contains("reviewer-declined"), "{}", out.stdout);
+            assert!(
+                out.stdout.contains("[review_handoff].supervisors"),
+                "{}",
+                out.stdout
+            );
+        }
         if expected == "accepted" {
             assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
             let handoff = parse_envelope(&out.stdout)["data"]["handoff"].clone();

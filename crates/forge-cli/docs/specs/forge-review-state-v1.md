@@ -266,7 +266,14 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   that contains the new record kind or a handoff `base_ref`. The fleet must
   run this release before the first live carry-over or assignment writes one.
 - `surrender <id> --expected-head <sha> --expected-state <digest>` is a
-  reviewer-owned relinquishment at the current assignment generation.
+  reviewer-owned relinquishment at the current assignment generation. The
+  exact retained ledger tip selects that generation, so surrender does not
+  require `AGENT_REVIEW_ASSIGNMENT_GENERATION` in the reviewer environment.
+  Review observations and publication still require that variable, using the
+  generation returned by `inspect`. Surrender does not publish a review or
+  authorize a verdict. A wrong public-author assignment can therefore be
+  surrendered by its persisted reviewer and reassigned at the same PR head.
+
   Ordinary reassignment requires this explicit surrender; inspection alone
   never transfers ownership. Surrender may name the current provider head
   whether or not an observation exists, but after an advance it may name the
@@ -286,6 +293,12 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   Recovery captures the current provider head/base even after base drift.
   The current recorded coordinator may assign the next generation using the
   durable `state_tip_digest` returned by recovery or fresh inspection.
+
+  For an incorrect assignment, the original coordinator can use
+  `--reason reviewer-declined`; this does not require supervisor configuration
+  or `--reason coordinator-retired`. Assignment-time validation of a remote
+  reviewer session's publishing author remains unavailable: the identity
+  policy authenticates the calling session, not an arbitrary remote reviewer.
 - Successor takeover uses `recover <id> --reason coordinator-retired
   [--coordinator-session <recorded-session-id>[@machine]] --base-sha <current-base>
   --expected-head <current-head> --expected-state <exact-tip>`. The selector
