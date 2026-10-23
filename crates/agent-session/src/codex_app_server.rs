@@ -2566,7 +2566,7 @@ pub(crate) async fn run_control(
     .await
     .map_err(|err| format!("initialize failed: {err}"))?;
     send_json(&mut websocket, initialized_notification()).await?;
-    let external_auth_connection_id = uuid::Uuid::new_v4().to_string();
+    let external_auth_connection_id = auth_refresh::Connection::new(&context, &record);
     let mut external_auth_account = None;
     if let Some((account, revision)) = crate::codex_account::account_for_control_rebind(&record)
         .map_err(|err| format!("Codex account binding is invalid: {}", err.code()))?

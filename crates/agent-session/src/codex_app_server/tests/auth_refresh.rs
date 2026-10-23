@@ -602,3 +602,6 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         assert!(matches!(peer.await.unwrap(), Message::Text(_)));
     }
 }
+
+#[path = "auth_refresh_retention.rs"]
+mod retention;
