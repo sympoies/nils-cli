@@ -42,10 +42,17 @@ engine's original error code and message. Failed runtime creation returns an
 error envelope instead of a successful stopped-session response; retained
 session diagnostics remain available through the normal session read routes.
 
-The launch wrapper reports observed exit status. Inventory and controller
-probes also record a stopped runtime once per incarnation when the wrapper
-cannot report. Such evidence says `runtime-disappeared` unless a successful CLI or serve
-runtime stop is recorded for that exact incarnation and generation. Broker
+The launch wrapper reports observed exit status. The app-server control owner
+also records a `provider-close` row with fixed `app-server-close` reason for its
+exact runtime; provider error text stays out of that row. Session views combine
+those rows with the exact generation's stop evidence into `runtime_exit` and an
+explicit Resume action. See
+[unexpected provider exit](session-lifecycle.md#unexpected-provider-exit).
+Inventory and controller probes also record a stopped runtime once per
+incarnation when the wrapper cannot report. They retain its exit-status marker
+when available; otherwise the reason is `runtime-disappeared`, unless a
+successful CLI or serve runtime stop is recorded for that exact incarnation and
+generation. Broker
 release is a separate `broker-stop` operation and does not identify an operator
 stop. For sessions stopped before journaling began, missing records cannot
 identify the actor or distinguish an external stop from an unrecorded stop. Unknown exit status, signal,

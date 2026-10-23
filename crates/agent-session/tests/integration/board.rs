@@ -418,7 +418,8 @@ fn board_snapshot_is_opt_in_and_operator_authenticated() {
                 "programs.v1",
                 "context_usage.v1",
                 "launch_env.v1",
-                "terminal_activity.v1"
+                "terminal_activity.v1",
+                "runtime_exit.v1"
             ])
         );
         assert!(board["generated_at"].as_str().is_some(), "{board}");
@@ -1034,7 +1035,8 @@ fn the_board_carries_role_lineage_work_and_the_tree_filter() {
             "work.v1",
             "context_usage.v1",
             "launch_env.v1",
-            "terminal_activity.v1"
+            "terminal_activity.v1",
+            "runtime_exit.v1"
         ])
     );
     let records = board["records"].as_array().expect("records");
@@ -1098,7 +1100,8 @@ fn the_board_carries_role_lineage_work_and_the_tree_filter() {
             "programs.v1",
             "context_usage.v1",
             "launch_env.v1",
-            "terminal_activity.v1"
+            "terminal_activity.v1",
+            "runtime_exit.v1"
         ])
     );
     let root = snapshot["records"]
@@ -1122,7 +1125,8 @@ fn the_board_carries_role_lineage_work_and_the_tree_filter() {
             "work.v1",
             "context_usage.v1",
             "launch_env.v1",
-            "terminal_activity.v1"
+            "terminal_activity.v1",
+            "runtime_exit.v1"
         ])
     );
 }
