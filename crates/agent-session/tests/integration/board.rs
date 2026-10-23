@@ -2,7 +2,8 @@
 //! projection, the closed-session ledger, and the `machine` label on
 //! `agent-session list`.
 
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{ErrorKind, Write};
 use std::net::SocketAddr;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -58,29 +59,80 @@ fn write_record(state_dir: &Path, id: &str, cwd: &Path, updated_at: &str) {
     .expect("write record");
 }
 
-fn fake_tmux(root: &Path) -> PathBuf {
+fn install_fake_tmux(root: &Path) -> PathBuf {
     let bin = root.join("tmux");
-    fs::write(
-        &bin,
-        "#!/bin/sh\nprintf '%s\\n' 'no server running on /tmp/tmux-test/default' >&2\nexit 1\n",
-    )
-    .expect("fake tmux");
-    fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).expect("fake tmux mode");
+    let mut script = tempfile::NamedTempFile::new_in(root).expect("fake tmux temp file");
+    script
+        .write_all(b"#!/bin/sh\nprintf '%s\\n' 'no server running on /tmp/tmux-test/default' >&2\nexit 1\n")
+        .expect("write fake tmux");
+    script
+        .as_file()
+        .set_permissions(fs::Permissions::from_mode(0o755))
+        .expect("fake tmux mode");
+    script.persist(&bin).expect("install fake tmux");
+    bin
+}
+
+fn prewarm_fake_tmux(bin: &Path) {
     // Pre-warm the fixture: the first exec of a freshly written script pays a
     // host EDR/filesystem cold-start tail that can exceed the product's bounded
     // termination-probe budget, turning the probe into verification-failed
     // (sympoies/nils-cli#2131). Exec it once here so the product's first exec
     // runs warm. The script's `display-message` path is side-effect-free and
     // exits 1 by design, which is the fixture's "session absent" answer.
-    let prewarm = Command::new(&bin)
-        .arg("display-message")
-        .output()
-        .expect("prewarm fake tmux");
+    let mut retries_left = 3;
+    let prewarm = loop {
+        match Command::new(bin).arg("display-message").output() {
+            Ok(output) => break output,
+            Err(error) if error.kind() == ErrorKind::ExecutableFileBusy && retries_left > 0 => {
+                retries_left -= 1;
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("prewarm fake tmux: {error}"),
+        }
+    };
     assert!(
         prewarm.status.code() == Some(1),
         "fake tmux prewarm exited unexpectedly: {prewarm:?}"
     );
+}
+
+fn fake_tmux(root: &Path) -> PathBuf {
+    let bin = install_fake_tmux(root);
+    prewarm_fake_tmux(&bin);
     bin
+}
+
+#[test]
+fn fake_tmux_replacement_does_not_execute_a_file_open_for_writing() {
+    let root = tempfile::tempdir().expect("fixture root");
+    let bin = fake_tmux(root.path());
+    let writer = OpenOptions::new()
+        .write(true)
+        .open(&bin)
+        .expect("hold old fake tmux open for writing");
+
+    assert_eq!(fake_tmux(root.path()), bin);
+
+    drop(writer);
+}
+
+#[test]
+fn fake_tmux_prewarm_retries_a_transient_executable_writer() {
+    let root = tempfile::tempdir().expect("fixture root");
+    let bin = install_fake_tmux(root.path());
+    let writer = OpenOptions::new()
+        .write(true)
+        .open(&bin)
+        .expect("hold fake tmux open for writing");
+    let release = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(15));
+        drop(writer);
+    });
+
+    prewarm_fake_tmux(&bin);
+
+    release.join().expect("writer release");
 }
 
 /// Kills its serve on drop, so a failed assertion cannot orphan a daemon.
