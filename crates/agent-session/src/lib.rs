@@ -10260,38 +10260,9 @@ struct LinuxProcessIdentity {
 }
 
 #[cfg(target_os = "linux")]
-fn read_linux_process_identity(
-    pid: libc::pid_t,
-) -> Result<Option<LinuxProcessIdentity>, SessionTerminationFailure> {
-    let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(stat) => stat,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => return Err(SessionTerminationFailure::VerificationFailed),
-    };
-    let fields: Vec<&str> = stat
-        .rsplit_once(") ")
-        .map(|(_, fields)| fields.split_whitespace().collect())
-        .ok_or(SessionTerminationFailure::VerificationFailed)?;
-    if fields.len() <= 19 {
-        return Err(SessionTerminationFailure::VerificationFailed);
-    }
-    let process_group_id = fields[2]
-        .parse()
-        .map_err(|_| SessionTerminationFailure::VerificationFailed)?;
-    let session_id = fields[3]
-        .parse()
-        .map_err(|_| SessionTerminationFailure::VerificationFailed)?;
-    let start_time = fields[19]
-        .parse()
-        .map_err(|_| SessionTerminationFailure::VerificationFailed)?;
-    Ok(Some(LinuxProcessIdentity {
-        pid,
-        process_group_id,
-        session_id,
-        start_time,
-        zombie: fields[0] == "Z",
-    }))
-}
+mod linux_process_identity;
+#[cfg(target_os = "linux")]
+use linux_process_identity::read_linux_process_identity;
 
 #[cfg(target_os = "linux")]
 fn linux_process_session_members(
