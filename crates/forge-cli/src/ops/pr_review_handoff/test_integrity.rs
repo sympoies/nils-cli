@@ -179,12 +179,6 @@ pub(super) fn ensure<R: BackendRunner>(
                 .any(|(path, kind)| *path == f.path && *kind == f.kind)
         })
         .collect();
-    if rows.len() > 32 {
-        return Err(limit(
-            "declaration_pairs",
-            "declaration contains more than 32 file/kind rows",
-        ));
-    }
     if !missing.is_empty() {
         let files = findings
             .iter()
@@ -195,7 +189,7 @@ pub(super) fn ensure<R: BackendRunner>(
             "test_changes_undeclared",
             "test changes require explicit PR-body declarations under ## Test changes",
             Some(format!(
-                "Before requesting review, run `forge-cli pr review-handoff test-changes {number} --expected-head {head}` to print findings and the digest without an existing review. Add the following rows to ## Test changes with a concrete reason (at least 12 characters), then rerun that preview for the updated digest. Intentional removals/false positives may use '- allow <path> | <kind> | <reason>'; at most 32 exact entries, no globs. All entries still need independent reviewer confirmation.\n{files}"
+                "Before requesting review, run `forge-cli pr review-handoff test-changes {number} --expected-head {head}` to print findings and the digest without an existing review. Add the following rows to ## Test changes with a concrete reason (at least 12 characters), then rerun that preview for the updated digest. Intentional removals/false positives may use '- allow <path> | <kind> | <reason>'; exact entries only, no globs. All entries still need independent reviewer confirmation.\n{files}"
             )),
         ));
     }

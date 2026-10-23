@@ -448,17 +448,27 @@ fn deterministic_diff_limits_are_non_retryable_and_name_recovery() {
 }
 
 #[test]
-fn deterministic_pair_limit_is_non_retryable() {
-    let body = format!(
-        "## Test changes\n{}",
-        "- tests/sample.rs | assertion-change | Replacement retains the supported contract.\n"
-            .repeat(33)
-    );
+fn fifty_declared_and_confirmed_file_kind_pairs_are_admitted() {
+    let patch = (0..50)
+        .map(|n| patch(&format!("tests/sample{n}.rs"), "assert!(value);", ""))
+        .collect::<String>();
+    let rows = (0..50)
+        .map(|n| {
+            format!(
+                "- tests/sample{n}.rs | assertion-change | Replacement retains the supported contract.\n"
+            )
+        })
+        .collect::<String>();
+    let body = format!("## Test changes\n{rows}");
     let metadata = subject(HEAD, BASE, &body);
-    assert_limit(
-        admit(metadata.clone(), metadata, &assertion_patch(), "").unwrap_err(),
-        "declaration_pairs",
-    );
+    assert_eq!(diff::detect(&patch).unwrap().len(), 50);
+    admit(
+        metadata.clone(),
+        metadata,
+        &patch,
+        &confirmation(&patch, BASE, HEAD, &body),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -476,21 +486,14 @@ fn a_rename_with_only_a_quoted_destination_is_a_non_retryable_path_limit() {
 }
 
 #[test]
-fn comparison_pair_limit_and_declaration_boundaries_are_enforced() {
-    let patch = (0..33)
-        .map(|n| patch(&format!("tests/sample{n}.rs"), "assert!(value);", ""))
-        .collect::<String>();
-    assert_limit(diff::detect(&patch).unwrap_err(), "declaration_pairs");
-    let body = format!(
-        "## Test changes\n{}",
-        "- tests/sample.rs | assertion-change | Exactly12chr\n".repeat(32)
-    );
-    let metadata = subject(HEAD, BASE, &body);
+fn declaration_reason_at_minimum_length_is_admitted() {
+    let body = "## Test changes\n- tests/sample.rs | assertion-change | Exactly12chr\n";
+    let metadata = subject(HEAD, BASE, body);
     admit(
         metadata.clone(),
         metadata,
         &assertion_patch(),
-        &confirmation(&assertion_patch(), BASE, HEAD, &body),
+        &confirmation(&assertion_patch(), BASE, HEAD, body),
     )
     .unwrap();
 }
