@@ -2,7 +2,7 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[derive(Clone, Copy)]
-enum AttemptPrompt { Current, PriorDated, PriorUndated, UnknownFormat }
+enum AttemptPrompt { Current, ShortV1, UnversionedShortV1, V1WithCurrentBytes, PriorDated, PriorUndated, UnknownFormat }
 
 #[tokio::test]
 async fn coordination_notification_reconcile_finds_delivered_prompt_before_later_prompt() {
@@ -14,6 +14,21 @@ async fn mailbox_reminder_upgrade_recognizes_prior_attempt_bytes() {
     for form in [AttemptPrompt::PriorDated, AttemptPrompt::PriorUndated] {
         check_attempt(form, "2030-01-01T00:01:40.800000000Z", "prompt_submitted").await;
     }
+}
+
+#[tokio::test]
+async fn mailbox_reminder_upgrade_reconciles_exact_dated_v1_bytes() {
+    for form in [AttemptPrompt::ShortV1, AttemptPrompt::UnversionedShortV1] {
+        check_attempt(form, "2030-01-01T00:01:40.800000000Z", "prompt_submitted").await;
+    }
+    // A receipt's version must select the old bytes, never today's shorter form.
+    check_attempt(AttemptPrompt::V1WithCurrentBytes, "2030-01-01T00:01:40.800000000Z", "queued").await;
+}
+
+#[tokio::test]
+async fn mailbox_short_reminder_does_not_consume_a_previous_attempt_or_ambiguous_timestamp() {
+    check_attempt(AttemptPrompt::Current, "2030-01-01T00:01:40.600000000Z", "queued").await;
+    check_attempt(AttemptPrompt::Current, "", "attempt_unknown").await;
 }
 
 #[tokio::test]
@@ -69,8 +84,11 @@ async fn check_attempt(form: AttemptPrompt, submitted_at: &str, expected_state: 
         let mut registry: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         let receipt = registry["notifications"].as_object_mut().unwrap().values_mut().next().unwrap();
         assert!(receipt.get("composer_recovery_prompt").is_none());
-        if matches!(form, AttemptPrompt::PriorDated | AttemptPrompt::PriorUndated) {
+        if matches!(form, AttemptPrompt::PriorDated | AttemptPrompt::PriorUndated | AttemptPrompt::UnversionedShortV1) {
             receipt.as_object_mut().unwrap().remove("attempted_prompt_format");
+        }
+        if matches!(form, AttemptPrompt::ShortV1 | AttemptPrompt::V1WithCurrentBytes) {
+            receipt["attempted_prompt_format"] = json!("mailbox-short.v1");
         }
         if matches!(form, AttemptPrompt::PriorUndated) {
             receipt["attempted_queued_at_epoch"] = json!(0);
@@ -80,6 +98,10 @@ async fn check_attempt(form: AttemptPrompt, submitted_at: &str, expected_state: 
         }
         fs::write(path, serde_json::to_vec_pretty(&registry).unwrap()).unwrap();
         let prompt = match form {
+            AttemptPrompt::ShortV1 | AttemptPrompt::UnversionedShortV1 => {
+                let date = jiff::Timestamp::from_second(candidate.queued_at_epoch + 1).unwrap();
+                format!("Mailbox: {date}; agent-session message inbox")
+            }
             AttemptPrompt::PriorDated => prior_prompt(candidate.queued_at_epoch),
             AttemptPrompt::PriorUndated => prior_prompt(0),
             _ => crate::coordination::notification_prompt(&candidate),
@@ -105,11 +127,11 @@ async fn check_attempt(form: AttemptPrompt, submitted_at: &str, expected_state: 
         let notification = notification_fixture(tmp.path());
         assert_eq!(notification["state"], expected_state);
         assert_eq!(notification["notified_generation"], if expected_state == "prompt_submitted" { 1 } else { 0 });
-        assert!(
+        assert_eq!(
             crate::coordination::pending_notifications(&state.context)
-                .expect("pending notifications")
-                .is_empty(),
-            "the acknowledged generation must not be queued for duplicate delivery"
+                .expect("pending notifications").len(),
+            if expected_state == "queued" { 1 } else { 0 },
+            "only proven absence may queue another delivery"
         );
 }
 

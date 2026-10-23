@@ -36,7 +36,9 @@ exit 0
   capture-pane)
 value=""
 if [ -s {} ]; then value=$(cat {}); fi
-printf '────────────────────\n❯ %s\n────────────────────\n  status\n' "$value"
+printf '───────────────────────────────────────────────────\n'
+printf '❯ %s\n' "$value" | fold -w 51
+printf '───────────────────────────────────────────────────\n  status\n'
 exit 0
 ;;
   *) exit 1 ;;
@@ -267,7 +269,9 @@ exit 0
   capture-pane)
 value=""
 if [ -s {} ]; then value=$(cat {}); fi
-printf '────────────────────\n❯ %s\n────────────────────\n  status\n' "$value"
+printf '───────────────────────────────────────────────────\n'
+printf '❯ %s\n' "$value" | fold -w 51
+printf '───────────────────────────────────────────────────\n  status\n'
 exit 0
 ;;
   *) exit 1 ;;

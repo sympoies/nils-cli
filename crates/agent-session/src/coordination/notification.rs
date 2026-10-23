@@ -18,9 +18,7 @@ const NOTIFICATION_VERSION: &str = "agent-session.notification-generation.v1";
 /// Transcript readers recognize both the current short reminder and prior releases.
 const PROMPT_PREFIX: &str = "Mailbox: ";
 const LEGACY_PROMPT_PREFIX: &str = "Coordination mailbox has unread messages";
-const PROMPT_TEMPLATE: &str = "Mailbox: <queued-at>; agent-session message inbox";
-/// A receipt without a queue time must not claim a stale-looking epoch date.
-const UNDATED_PROMPT_TEMPLATE: &str = "Mailbox: agent-session message inbox";
+const PROMPT_TEMPLATE: &str = "Mailbox: agent-session message inbox";
 const REASON_PENDING: &str = "notification-pending";
 const REASON_ATTEMPTING: &str = "notification-attempting";
 const REASON_MIGRATED_UNKNOWN: &str = "migrated-attempt-outcome-unknown";
@@ -145,28 +143,18 @@ impl NotificationCandidate {
     }
 }
 
-/// The body-free prompt for one generation. Its bytes depend only on the
-/// generation's queue time, so an attempt and its
-/// later transcript reconciliation derive the same exact prompt.
-///
-/// The queue time is recorded in whole seconds, so the prompt states the next
-/// second: an upper bound on every covered message, which makes a recipient
-/// err toward one extra inbox check rather than skipping mail queued later in
-/// the same second as its last read.
-pub(crate) fn fixed_prompt(_session_id: &str, queued_at_epoch: i64) -> String {
-    match jiff::Timestamp::from_second(queued_at_epoch.saturating_add(1)) {
-        Ok(queued_at) if queued_at_epoch > 0 => {
-            prompt_template().replace("<queued-at>", &queued_at.to_string())
-        }
-        _ => UNDATED_PROMPT_TEMPLATE.to_string(),
-    }
+/// Body-free, provider-neutral wake that fits one input row in a narrow pane.
+/// Generations and queue times remain in the receipt; reconciliation compares
+/// these exact bytes only after the matching attempt's timestamp.
+pub(crate) fn fixed_prompt(_session_id: &str, _queued_at_epoch: i64) -> String {
+    prompt_template().to_string()
 }
 
 /// Whether a transcript prompt is a mailbox reminder this crate injected.
 pub(crate) fn is_mailbox_reminder_prompt(prompt: &str) -> bool {
     let prompt = prompt.trim_start();
     prompt.starts_with(LEGACY_PROMPT_PREFIX)
-        || prompt == UNDATED_PROMPT_TEMPLATE
+        || prompt == PROMPT_TEMPLATE
         || (prompt.len() <= 60
             && prompt
                 .strip_prefix(PROMPT_PREFIX)
@@ -984,16 +972,10 @@ mod tests {
     }
 
     #[test]
-    fn notification_prompt_is_fixed_dated_and_contains_no_body() {
+    fn notification_prompt_is_fixed_short_and_contains_no_body() {
         let prompt = fixed_prompt("target-session", 1_790_000_000);
-        assert_eq!(
-            prompt,
-            "Mailbox: 2026-09-21T14:13:21Z; agent-session message inbox"
-        );
-        assert_eq!(
-            prompt_template(),
-            "Mailbox: <queued-at>; agent-session message inbox"
-        );
+        assert_eq!(prompt, "Mailbox: agent-session message inbox");
+        assert_eq!(prompt_template(), "Mailbox: agent-session message inbox");
         assert!(!prompt.contains("message show"));
         assert!(!prompt.contains("target-session"));
         assert!(!prompt.contains("--capability-file"));
