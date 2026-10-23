@@ -22,6 +22,7 @@ Each finding names an exact repository-relative file and one of:
 | `deleted-test` | Deleted test source file, rename of an old test source path, removed recognizable test signature or Rust test-module declaration |
 | `assertion-change` | Removed or edited assertion, including potential weakening |
 | `new-skip` | Added skip, ignore or expected-failure marker |
+| `import-adaptation` | A mapped added file differs from its declared upstream blob; review the full adaptation against upstream |
 
 The detector is a conservative diff heuristic, not a proof of logical
 implication or a language parser. Assertion strengthening and test renames can
@@ -57,7 +58,10 @@ forge-cli pr review-handoff test-changes 123 --expected-head <full-head-sha>
 It requires no assignment or existing review and writes no provider state. Text
 output prints exact file/kind rows and `Test changes confirmed: sha256:<digest>`.
 With `--format json`, `data` contains `number`, `head_sha`, `base_sha`, `findings`
-(`path`/`kind` objects), `digest` and `confirmation`. This is inspection evidence,
+(`path`/`kind` objects), `digest`, `confirmation` and nullable `provenance_import`.
+The latter contains the upstream source, mappings, adaptation paths, complete
+file count, verified-file count, manifest digest, comparison digest and declaration
+digest when the mode below is active. This is inspection evidence,
 not review admission. It uses the same complete comparison, metadata re-read
 and digest calculation as admission.
 
@@ -92,6 +96,78 @@ Rerun the preview after editing declarations. Give its updated confirmation line
 to the designated reviewer, who independently inspects the changes and includes
 the line in the first passing review when satisfied.
 
+## Provenance imports
+
+A complete large initial import may declare immutable upstream provenance in
+one PR-body section. This mode applies only to mapped **added** files; existing
+modified, removed and renamed files always retain normal test-change inspection.
+The upstream repository must be on the selected GitHub host.
+
+````markdown
+## Provenance import
+
+```json
+{
+  "repository": "example/upstream-library",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "mappings": [{"destination": "vendor/library/", "source": "packages/library/"}],
+  "adaptations": ["vendor/library/tests/api.test.ts"]
+}
+```
+````
+
+Use a full 40-character commit SHA. Directory prefixes end in `/`; an empty
+`source` maps from the upstream root. Destination prefixes cannot overlap.
+Paths must be normalized relative printable ASCII without whitespace, control,
+quote, pipe or backslash bytes. Adaptations are exact destination paths, without
+globs. Duplicate sections, unknown JSON fields, invalid mappings and stale
+adaptation entries are refusals. A heading inside a fenced example does not
+activate the mode. Remove the section to use ordinary comparison admission.
+
+The tool enumerates PR files in 100-file pages and requires each page's size
+and unique paths to agree with the PR's `changed_files`. It reads the pinned
+upstream commit and its complete recursive tree, checking object identities and
+refusing `truncated` trees. Equal full Git blob IDs prove identical blob bytes;
+no checkout, user-provided manifest or downloaded patch excerpt substitutes for
+these provider reads. Only these verified additions may omit their inline patch.
+Missing upstream blobs, unsupported upstream object types and undeclared byte
+mismatches fail closed. Unmapped additions remain in ordinary inspection.
+
+Verified additions are represented by a SHA-256 digest of sorted JSON tuples
+`[destination_path, upstream_path, blob_sha]`. The confirmation digest binds that
+manifest, complete provider file records, upstream source/mappings, full PR body,
+and exact provider base/head. Text preview prints the verified count and manifest
+digest; JSON exposes the same summary. The independent review report must include
+the exact `Test changes confirmed: sha256:<digest>` line even when every file is
+identical and findings are empty. The existing designated publication and ledger
+gates bind the report to the assignment and exact head; there is no alternate
+approval route.
+
+Every declared byte adaptation produces `import-adaptation`, including changes
+without recognizable test syntax. Give it a concrete `## Test changes` reason
+and retained-coverage explanation, alongside any ordinary findings. The reviewer
+must compare the adaptation with upstream: an added-file patch alone cannot
+reveal assertions removed from the upstream version. Residual patches must be
+readable and complete; both hunk lengths and total additions/deletions are checked.
+Missing patches and omitted whole hunks are refusals. The residual comparison
+retains the ordinary 4 MiB / fewer-than-300-files bounds.
+
+The complete import must contain fewer than 3,000 changed paths (the provider
+PR-files ceiling is not accepted as proof of completeness). Each provider response
+also retains the backend's 8 MiB capture ceiling. The complete upstream recursive
+tree must fit GitHub's tree limits (100,000 entries / 7 MB); splitting only the
+downstream PR does not shrink that tree. Use ordinary smaller comparisons when
+the import cannot satisfy these requirements; no partial-list or environment
+bypass exists. See the provider's [PR-files](https://docs.github.com/en/rest/pulls/pulls#list-pull-requests-files)
+and [tree](https://docs.github.com/en/rest/git/trees#get-a-tree) contracts.
+
+Provenance refusals use exit 65 and typed recovery hints:
+`provenance_import_invalid` and `provenance_import_mismatch` require
+`correct_provenance_declaration`; `provenance_import_incomplete` requires
+`retry_complete_upstream`. Incomplete PR pages/patches remain
+`test_changes_incomplete`. Re-run preview after correcting the source, mappings,
+adaptations or declarations; stale confirmations cannot admit a changed import.
+
 ## Limits and recovery
 
 Deterministic bounds never become retryable just because provider evidence is
@@ -104,6 +180,12 @@ The diagnostic names the bound and recovery; there is no silent bypass.
 | `file_count` | Fewer than 300 files, including binary assets | Split the PR into smaller comparisons |
 | `diff_bytes` | At most 4 MiB (4,194,304 UTF-8 bytes) | Split the PR into smaller comparisons |
 | `path_bytes` | Unquoted printable ASCII paths without whitespace, control, quote or pipe bytes | Rename affected paths to supported names, splitting the PR if needed |
+
+These ordinary bounds remain unchanged without a provenance declaration. With
+one, `file_count` and `diff_bytes` apply to the residual preview; the complete
+enumeration additionally enforces `provider_file_count` below 3,000. A large
+initial import can use [verified provenance](#provenance-imports) instead of
+splitting identical upstream additions solely to fit the preview.
 
 Both Git-quoted headers (including escaped non-ASCII paths) and unsupported
 `---`/`+++` or rename paths use `path_bytes`. A retry cannot clear these bounds;

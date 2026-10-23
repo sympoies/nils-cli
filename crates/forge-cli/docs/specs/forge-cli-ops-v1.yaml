@@ -1000,7 +1000,7 @@ operations:
     schema_version: cli.forge-cli.pr.review-handoff.v1
     summary: "Explicit designated-review ownership and published-current-head admission"
     inputs:
-      - { name: subcommand, type: enum, values: [assign, inspect, check, surrender, recover], required: true }
+      - { name: subcommand, type: enum, values: [assign, inspect, check, surrender, recover, test-changes], required: true }
       - { name: id, type: u64, required: true }
       - { name: --expected-head, type: string, required: conditional }
       - { name: --expected-state, type: string, required: conditional }
@@ -1014,6 +1014,10 @@ operations:
       repo_resolution: "--repo owner/name or recognised GitHub remote"
     validations:
       - designated_review_handoff
+      # test-changes and designated check share test-change-admission-v1.md:
+      # optional PR-body provenance imports enumerate complete PR-files pages,
+      # verify mapped additions against pinned upstream blob IDs, and require
+      # exact independent confirmation of the complete comparison/manifest.
       # Published specialist Reviewable uses the same exact reference binding as pr.review; an optional full-SHA qualifier must match the native review head; mismatch returns awaiting_designated_review with detail review_id=<id>; field=Reviewable; cause=<validation message>.
     backends:
       github:
@@ -1032,6 +1036,10 @@ operations:
         status: string
         ignored_stale_records: array<string> # omitted when empty
         sync_carry_over: object<{review_url,reviewed_head,head,base_commit,merge_tree}> # check/inspect only; omitted when absent
+        # test-changes instead returns number, head_sha, base_sha, findings,
+        # digest, confirmation, and provenance_import (null without a declaration;
+        # otherwise repository/commit/mappings/adaptations, file_count,
+        # verified_files, manifest_digest, comparison_digest, declaration_digest).
 
   - id: pr.review-dismiss
     schema_version: cli.forge-cli.pr.review-dismiss.v1

@@ -1,6 +1,9 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+#[path = "provenance_tests.rs"]
+mod provenance_tests;
+
 fn patch(path: &str, before: &str, after: &str) -> String {
     let old = before.lines().count();
     let new = after.lines().count();

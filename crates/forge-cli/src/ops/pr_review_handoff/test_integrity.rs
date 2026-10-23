@@ -9,6 +9,7 @@ use crate::provider::ProviderContext;
 use serde::Deserialize;
 
 mod diff;
+mod provenance;
 #[cfg(test)]
 mod tests;
 
@@ -18,6 +19,8 @@ struct Subject {
     base: String,
     author: String,
     body: String,
+    #[serde(default)]
+    changed_files: Option<usize>,
 }
 
 fn error(kind: &'static str, message: impl Into<String>, detail: Option<String>) -> ForgeError {
@@ -74,11 +77,12 @@ fn comparison<R: BackendRunner>(
         format!("repos/{repo}/pulls/{number}"),
         &[
             "--jq",
-            "{head: .head.sha, base: .base.sha, author: .user.login, body: (.body // \"\")}",
+            "{head: .head.sha, base: .base.sha, author: .user.login, body: (.body // \"\"), changed_files: .changed_files}",
         ],
     );
     let read_subject = || -> Result<Subject, ForgeError> {
-        serde_json::from_str(&runner.run(&subject_call)?.stdout).map_err(|_| incomplete())
+        serde_json::from_str(&runner.run(&subject_call).map_err(|_| incomplete())?.stdout)
+            .map_err(|_| incomplete())
     };
     let subject = read_subject()?;
     if subject.head != head
@@ -88,14 +92,19 @@ fn comparison<R: BackendRunner>(
     {
         return Err(incomplete());
     }
-    let patch = runner
-        .run(&api(
-            ctx,
-            format!("repos/{repo}/compare/{}...{head}", subject.base),
-            &["--header", "Accept: application/vnd.github.diff"],
-        ))?
-        .stdout;
-    let findings = diff::detect(&patch)?;
+    let (patch, findings) = if let Some(declaration) = provenance::parse(&subject.body)? {
+        provenance::comparison(runner, ctx, number, &subject, &declaration)?
+    } else {
+        let patch = runner
+            .run(&api(
+                ctx,
+                format!("repos/{repo}/compare/{}...{head}", subject.base),
+                &["--header", "Accept: application/vnd.github.diff"],
+            ))?
+            .stdout;
+        let findings = diff::detect(&patch)?;
+        (patch, findings)
+    };
     if read_subject()? != subject {
         return Err(error(
             "test_changes_incomplete",
@@ -129,12 +138,19 @@ pub(super) fn preview<R: BackendRunner>(
     let (subject, patch, findings) = comparison(runner, ctx, number, head)?;
     let digest = digest(&subject, &patch);
     let confirmation = format!("Test changes confirmed: {digest}");
-    let payload = serde_json::json!({"number": number, "head_sha": head, "base_sha": subject.base, "findings": findings, "digest": digest, "confirmation": confirmation});
+    let payload = serde_json::json!({"number": number, "head_sha": head, "base_sha": subject.base, "findings": findings, "digest": digest, "confirmation": confirmation, "provenance_import": provenance::summary(&patch)});
     Ok(crate::envelope::emit_success(
         super::schema(),
         payload,
         format,
         |p| {
+            if !p["provenance_import"].is_null() {
+                println!(
+                    "Provenance import: {} verified files; manifest {}",
+                    p["provenance_import"]["verified_files"],
+                    p["provenance_import"]["manifest_digest"].as_str().unwrap()
+                );
+            }
             for finding in p["findings"].as_array().unwrap() {
                 println!(
                     "- {} | {} | <reason and retained coverage>",
@@ -157,7 +173,7 @@ pub(super) fn ensure<R: BackendRunner>(
     report: &str,
 ) -> Result<(), ForgeError> {
     let (subject, patch, findings) = comparison(runner, ctx, number, head)?;
-    if findings.is_empty() {
+    if findings.is_empty() && provenance::summary(&patch).is_none() {
         return Ok(());
     }
     let declarations = declarations(&subject.body);
