@@ -22,4 +22,3 @@ tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 nils-test-support = { version = "1.36.26", path = "../nils-test-support" }
-pretty_assertions = { workspace = true }
