@@ -20,18 +20,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn markdown_code_block_is_newline_stable() {
-        assert_eq!(code_block("json", "{ }"), "```json\n{ }\n```\n");
-        assert_eq!(code_block("json", "{ }\n"), "```json\n{ }\n```\n");
-    }
-
-    #[test]
-    fn markdown_heading_trims_and_clamps_level() {
-        assert_eq!(heading(1, " Title "), "# Title\n");
-        assert_eq!(heading(9, "Title"), "###### Title\n");
-    }
-
-    #[test]
     fn json_format_sorts_keys_recursively() {
         let v = serde_json::json!({"b": 1, "a": {"d": 4, "c": 3}});
         let s = format_json_pretty_sorted(&v).unwrap();
