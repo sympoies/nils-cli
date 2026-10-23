@@ -141,6 +141,38 @@ jobs:
           NILS_TEST_REQUIRE_SIBLING_BINS: "1"
         run: bash scripts/ci/nils-cli-checks-entrypoint.sh --xvfb
 
+      # Preserve wall p95 as a separate nightly/manual signal: a Nextest pool
+      # reservation cannot exclude outside scheduler delay (issue #1705).
+      - name: Dispatch latency benchmark (non-required)
+        if: ${{ !cancelled() && inputs.isolation_guard }}
+        continue-on-error: true
+        timeout-minutes: 5
+        run: >-
+          python3 scripts/ci/gate-reports.py cargo nextest run --locked
+          --profile performance -p nils-agent-hook --test performance_contract
+          --run-ignored ignored-only --test-threads 1
+
+      - name: Publish dispatch latency benchmark
+        if: ${{ !cancelled() && inputs.isolation_guard }}
+        continue-on-error: true
+        uses: mikepenz/action-junit-report@v6
+        with:
+          token: ${{ github.token }}
+          check_name: Dispatch latency benchmark (non-required)
+          report_paths: ${{ env.NILS_CLI_REPORT_DIR }}/nextest/performance/junit.xml
+          fail_on_failure: false
+          detailed_summary: false
+          include_passed: true
+
+      - name: Upload dispatch latency JUnit
+        continue-on-error: true
+        if: ${{ !cancelled() && inputs.isolation_guard }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-dispatch-performance
+          path: ${{ env.NILS_CLI_REPORT_DIR }}/nextest/performance/junit.xml
+          if-no-files-found: warn
+
       # Re-run representative tests under a poisoned environment and fail if any
       # sentinel changes. Only the nightly and manual call in ci.yml sets the
       # input; release validation and the merge queue never run it.
