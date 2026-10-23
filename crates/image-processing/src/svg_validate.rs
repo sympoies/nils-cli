@@ -236,7 +236,8 @@ pub fn render_svg_to_output(
             let base_width = size.width();
             let base_height = size.height();
             let (width, height) =
-                resolve_raster_dimensions(base_width, base_height, raster_size_hint)?;
+                resolve_raster_dimensions(base_width, base_height, raster_size_hint)
+                    .ok_or_else(|| anyhow::anyhow!("sanitized svg has invalid dimensions"))?;
 
             if !dry_run {
                 util::ensure_parent_dir(output_path, false)?;
@@ -326,13 +327,13 @@ fn output_info(
     })
 }
 
-fn resolve_raster_dimensions(
+pub(super) fn resolve_raster_dimensions(
     base_width: u32,
     base_height: u32,
     hint: RasterSizeHint,
-) -> anyhow::Result<(u32, u32)> {
+) -> Option<(u32, u32)> {
     if base_width == 0 || base_height == 0 {
-        return Err(anyhow::anyhow!("sanitized svg has invalid dimensions"));
+        return None;
     }
     let dims = match (hint.width, hint.height) {
         (Some(width), Some(height)) => (width, height),
@@ -350,7 +351,7 @@ fn resolve_raster_dimensions(
         }
         (None, None) => (base_width, base_height),
     };
-    Ok((dims.0.max(1), dims.1.max(1)))
+    Some((dims.0.max(1), dims.1.max(1)))
 }
 
 fn parse_view_box(raw: &str) -> Result<(u32, u32), String> {
