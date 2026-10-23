@@ -33,6 +33,5 @@ sha2 = { workspace = true }
 tempfile = "3"
 
 [dev-dependencies]
-libc = "0.2"
 nils-test-support = { version = "1.36.26", path = "../nils-test-support" }
 pretty_assertions = { workspace = true }
