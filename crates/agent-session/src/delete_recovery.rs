@@ -244,6 +244,16 @@ fn inventory_warning(inventory: &ProcessInventory) -> String {
 }
 
 pub(super) fn run_delete(context: &CliContext, args: cli::DeleteArgs) -> i32 {
+    if args.if_stopped {
+        return match crate::lifecycle::attempt(context, &args.id, "delete", || {
+            delete_if_stopped(context, &args)
+        }) {
+            Ok(result) => {
+                render_single_success(DELETE_COMMAND, args.format, &result, render_delete_text)
+            }
+            Err(error) => render_error(DELETE_COMMAND, args.format, error),
+        };
+    }
     if args.leave_processes {
         return match crate::lifecycle::attempt(context, &args.id, "delete", || {
             delete_leaving_processes(context, &args)
@@ -290,6 +300,106 @@ pub(super) fn run_delete(context: &CliContext, args: cli::DeleteArgs) -> i32 {
         }
         Err(err) => render_error(DELETE_COMMAND, args.format, err),
     }
+}
+
+fn delete_if_stopped(
+    context: &CliContext,
+    args: &cli::DeleteArgs,
+) -> Result<DeleteResult, CliError> {
+    let machine = board::machine_identity(None, context);
+    let children = lineage::guard_children(context, &machine, &args.id, args.orphan_children)?;
+    let observed = load_session_record(context, &args.id)?;
+    let _record_lock = acquire_session_record_lock(context, &observed.id)?;
+    let record = load_session_record(context, &observed.id)?;
+    ensure_same_session_identity(&observed, &record)?;
+    let resolved = resolve_session_record_path(context, &record.id)?;
+
+    let expected = args.expected_incarnation.as_deref().unwrap_or_default();
+    let actual = record
+        .runtime
+        .as_ref()
+        .map(|runtime| runtime.launch_id.as_str())
+        .filter(|incarnation| !incarnation.is_empty());
+    if actual != Some(expected) {
+        return Err(CliError::data(
+            "session-incarnation-conflict",
+            "session runtime changed before conditional delete",
+            Some(json!({
+                "id": record.id,
+                "expected_session_incarnation": expected,
+                "actual_session_incarnation": actual,
+            })),
+        ));
+    }
+
+    match session_status(
+        context,
+        &resolve_tmux_bin(args.tmux_bin.as_deref()),
+        &record,
+    )
+    .as_str()
+    {
+        "stopped" => {}
+        "running" => return Err(conditional_state_mismatch(&record, "running")),
+        _ => return Err(conditional_status_unknown(&record)),
+    }
+    ensure_session_deletion_supported(&record)?;
+    let identity = persisted_tmux_runtime_identity(&record)
+        .map_err(|_| conditional_status_unknown(&record))?
+        .ok_or_else(|| conditional_status_unknown(&record))?;
+    let prior = persisted_prior_tmux_runtime_identities(&record)
+        .map_err(|_| conditional_status_unknown(&record))?;
+    match verify_stopped_tmux_runtime(
+        &resolve_tmux_bin(args.tmux_bin.as_deref()),
+        &record.tmux_session,
+        &identity,
+        DELETE_TERMINATION_VERIFY_TIMEOUT,
+    ) {
+        Ok(()) => {}
+        Err(SessionTerminationFailure::StillRunning) => {
+            return Err(conditional_state_mismatch(&record, "running"));
+        }
+        Err(SessionTerminationFailure::ProcessStillRunning) => {
+            return Err(conditional_state_mismatch(&record, "working"));
+        }
+        Err(_) => return Err(conditional_status_unknown(&record)),
+    }
+    if verify_stopped_process_runtimes(&prior, DELETE_TERMINATION_VERIFY_TIMEOUT).is_err() {
+        return Err(conditional_status_unknown(&record));
+    }
+    let scan = associated_processes(&record);
+    if !scan.processes.is_empty() {
+        return Err(conditional_state_mismatch(&record, "working"));
+    }
+
+    let registry_fence = SessionRegistryFence::from_record(&record);
+    let mut deleted = finish_session_delete(
+        context,
+        record,
+        resolved.session_dir,
+        registry_fence,
+        board::CloseReason::Deleted,
+    )?;
+    deleted.killed = false;
+    deleted.termination_scope = "none";
+    deleted.children = Some(children);
+    Ok(deleted)
+}
+
+fn conditional_state_mismatch(record: &SessionRecord, state: &str) -> CliError {
+    CliError::data(
+        "session-state-mismatch",
+        "session is not stopped and quiescent",
+        Some(json!({ "id": record.id, "state": state })),
+    )
+}
+
+fn conditional_status_unknown(record: &SessionRecord) -> CliError {
+    CliError::runtime(
+        "session-status-unknown",
+        "session stopped state could not be verified",
+        Some(json!({ "id": record.id, "state": "unknown" })),
+    )
 }
 
 #[derive(Serialize)]
