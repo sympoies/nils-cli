@@ -396,6 +396,29 @@ pub(crate) fn adopt_serve_brokers(state_dir: &Path) {
     }
 }
 
+/// A Codex switch must validate membership using serve's broker command, even
+/// when the owner-run CLI inherited a different broker. Other commands keep
+/// the ordinary caller-first adoption policy.
+pub(crate) fn adopt_serve_codex_switch_broker(state_dir: &Path) {
+    let Some(brokers) = read_serve_brokers(&state_dir.join(SERVE_BROKERS_RECORD)) else {
+        return;
+    };
+    let client = &crate::codex_account::BROKER;
+    let Some(argv) = brokers
+        .get(client.env)
+        .and_then(|value| serde_json::from_value::<Vec<String>>(value.clone()).ok())
+        .filter(|argv| valid_argv(argv))
+    else {
+        return;
+    };
+    let Ok(encoded) = serde_json::to_string(&argv) else {
+        return;
+    };
+    // SAFETY: run_account calls this on the CLI main thread before starting
+    // lifecycle or account-switch helpers, just like adopt_serve_brokers.
+    unsafe { env::set_var(client.env, encoded) };
+}
+
 fn read_serve_brokers(path: &Path) -> Option<serde_json::Map<String, Value>> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     let mut file = std::fs::OpenOptions::new()

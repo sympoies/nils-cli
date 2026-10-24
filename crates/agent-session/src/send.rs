@@ -63,11 +63,11 @@ pub(crate) fn send_to_session_observing(
 ) -> Result<SendResult, CliError> {
     // Picker shortcuts type into the terminal rather than paste. Never send
     // them into a working/unknown session, even with --allow-blocked.
-    if args
+    let has_printable_key = args
         .keys
         .iter()
-        .any(|key| matches!(key, SpecialKey::Printable(_)))
-    {
+        .any(|key| matches!(key, SpecialKey::Printable(_)));
+    if has_printable_key {
         args.guards.require_idle = true;
     }
     let text = read_send_text(&args.text, args.text_stdin)?;
@@ -122,6 +122,12 @@ pub(crate) fn send_to_session_observing(
             &record,
             "answer the dialog with a special key, or resend with allow_blocked to type into it",
         )?;
+    }
+    // Pasting or typing without Enter changes the provider's composer. Validate
+    // the applied binding under the same lock as the pane write, while leaving
+    // control-only keys and the existing next-intent submission fence intact.
+    if record.agent == "codex" && (carries_literal_text(text.as_deref()) || has_printable_key) {
+        codex_account::ensure_terminal_input_allowed(&record)?;
     }
     let submits = codex_app_server::input_contains_submission(text.as_deref(), &args.keys);
     if submits {

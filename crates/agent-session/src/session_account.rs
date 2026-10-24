@@ -39,6 +39,11 @@ pub(crate) fn run_account(context: &CliContext, args: AccountArgs) -> i32 {
             Err(err) => render_error(SHOW_COMMAND, args.format, err),
         },
         AccountCommand::Switch(args) => {
+            if load_session_record(context, &args.id)
+                .is_ok_and(|record| record.agent == AgentKind::Codex.as_str())
+            {
+                crate::account_broker::adopt_serve_codex_switch_broker(&context.state_dir);
+            }
             let format = args.format;
             let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
             match switch(
