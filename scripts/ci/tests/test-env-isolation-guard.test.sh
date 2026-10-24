@@ -101,4 +101,17 @@ expect_fail "a run that could not build fails the guard" "exited 101"
 write_fake_cargo 'exit 100'
 expect_pass "failing tests alone are left to the regular gate"
 
+# Cargo keeps CARGO_HOME so its toolchain/config is available, but the guard
+# points XDG_CACHE_HOME at a poison sentinel. Model the configured sccache
+# wrapper writing its cache there when no isolated RUSTC_WRAPPER is supplied.
+printf '[build]\nrustc-wrapper = "sccache"\n' >"$CARGO_HOME/config.toml"
+export ENV_GUARD_SELECTION='nils-test-support|lib|'
+write_fake_cargo 'if grep -q sccache "$CARGO_HOME/config.toml" && [ "${RUSTC_WRAPPER-__unset__}" != "" ]; then
+  mkdir -p "$XDG_CACHE_HOME/sccache" || exit 1
+  printf x > "$XDG_CACHE_HOME/sccache/cache-entry" || exit 1
+fi
+exit 0'
+expect_pass "configured sccache cache writes stay outside poisoned XDG"
+unset ENV_GUARD_SELECTION
+
 echo "ok: test environment isolation guard"

@@ -96,6 +96,8 @@ print("\n".join(sorted(rows)))
 PY
 }
 
+# Empty RUSTC_WRAPPER overrides Cargo's build.rustc-wrapper config, preventing
+# a user sccache cache from writing under the poisoned XDG_CACHE_HOME sentinel.
 poisoned_env() {
   env -i \
     PATH="$PATH" \
@@ -107,6 +109,7 @@ poisoned_env() {
     RUSTUP_HOME="$real_rustup_home" \
     CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$repo_root/target}" \
     CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}" \
+    RUSTC_WRAPPER="" \
     HOME="$sentinels/home" \
     AGENT_HOME="$sentinels/agent-home" \
     CODEX_HOME="$sentinels/codex-home" \
