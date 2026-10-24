@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -45,11 +46,31 @@ pub(in crate::worktree) struct Receipt {
 
 fn failure(message: &str) -> CliError {
     refused("removal-backup-failed", message)
-        .with_hint("Target retained; resolve the snapshot error and retry")
+        .with_hint("Target retained; inspect the reported cause, resolve it, and retry")
 }
 
 fn caused_failure(message: &str, cause: CliError) -> CliError {
+    let reason = cause
+        .details
+        .as_deref()
+        .and_then(|details| details["reason"].as_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let hint = if reason.contains("identity") {
+        "Target retained; configure a valid Git author and committer identity, then retry"
+    } else if reason.contains("signing") {
+        "Target retained; repair the configured Git signing setup, then retry"
+    } else if reason.contains("storage is full") {
+        "Target retained; free repository storage, then retry"
+    } else if reason.contains("access denied") {
+        "Target retained; restore repository write access, then retry"
+    } else if reason.contains("reference conflict") {
+        "Target retained; resolve the Git reference conflict, then retry"
+    } else {
+        "Target retained; inspect the reported cause, resolve it, and retry"
+    };
     let mut error = failure(message);
+    error = error.with_hint(hint);
     error.details = cause
         .details
         .or_else(|| Some(Box::new(json!({"reason": cause.message}))));
@@ -204,14 +225,25 @@ pub(in crate::worktree) fn capture(
         .map_err(|error| io_failure("snapshot temporary directory unavailable", error))?;
     let index = temporary.path().join("index");
     indexed(target, &index, &["read-tree", &fence.removed_head])?;
-    let exclusions = receipt
-        .omissions
-        .iter()
-        .map(|omission| format!(":(exclude,literal){}", omission.path))
-        .collect::<Vec<_>>();
-    let mut add_args = vec!["add", "-A", "--", "."];
-    add_args.extend(exclusions.iter().map(String::as_str));
-    indexed(target, &index, &add_args)?;
+    let pathspecs = temporary.path().join("pathspecs");
+    let mut pathspec_file = fs::File::create(&pathspecs)
+        .map_err(|error| io_failure("snapshot pathspec file unavailable", error))?;
+    pathspec_file
+        .write_all(b".\0")
+        .map_err(|error| io_failure("snapshot pathspec file unavailable", error))?;
+    for omission in &receipt.omissions {
+        pathspec_file
+            .write_all(b":(exclude,literal)")
+            .and_then(|()| pathspec_file.write_all(omission.path.as_bytes()))
+            .and_then(|()| pathspec_file.write_all(&[0]))
+            .map_err(|error| io_failure("snapshot pathspec file unavailable", error))?;
+    }
+    let pathspec_arg = format!("--pathspec-from-file={}", pathspecs.display());
+    indexed(
+        target,
+        &index,
+        &["add", "-A", &pathspec_arg, "--pathspec-file-nul"],
+    )?;
     // Excluded tracked paths retain HEAD content; excluded untracked paths
     // never enter the index. Omitting an edit must not invent a deletion.
     let tree = indexed(target, &index, &["write-tree"])?;
@@ -233,13 +265,18 @@ pub(in crate::worktree) fn capture(
     };
     let message =
         serde_json::to_string(&metadata).map_err(|_| failure("snapshot metadata unavailable"))?;
+    let message_file = temporary.path().join("message");
+    fs::write(&message_file, &message)
+        .map_err(|error| io_failure("snapshot metadata file unavailable", error))?;
     let mut args = vec![
         "commit-tree",
         &tree,
         "-p",
         &fence.removed_head,
-        "-m",
-        &message,
+        "-F",
+        message_file
+            .to_str()
+            .ok_or_else(|| failure("snapshot metadata path unreadable"))?,
     ];
     if git(target, &["config", "--bool", "--get", "commit.gpgsign"])
         .is_ok_and(|value| value == "true")
