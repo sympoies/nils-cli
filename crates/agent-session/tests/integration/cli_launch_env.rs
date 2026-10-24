@@ -3,7 +3,7 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
 
 use crate::cli::{fake_agent, fake_tmux, run, sha256_hex, spawn_test_process_group, tmux_calls};
@@ -15,6 +15,8 @@ fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
         let state = tmp.path().join("state");
         let (tmux, log) = fake_tmux(tmp.path());
         let provider = fake_agent(tmp.path(), agent);
+        let script = fs::read_to_string(&tmux).unwrap();
+        fs::write(&tmux, script.replacen('\n', "\nfor arg; do case \"$arg\" in AGENT_SESSION_PRIVATE_PROVIDER_ENV=*) rm -f \"${arg#*=}\";; esac; done\n", 1)).unwrap();
         let pane = spawn_test_process_group();
         let pane_pid = pane.pid().to_string();
         let values =
@@ -39,6 +41,10 @@ fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
                 ("AGENT_SESSION_FAKE_TMUX_SESSION_ID", "$77"),
                 ("AGENT_SESSION_FAKE_TMUX_AGENT_SESSION_ID", "launch-env"),
                 ("AGENT_SESSION_FAKE_TMUX_STATE_DIR", state.to_str().unwrap()),
+                ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "131072"),
+                ("ANTHROPIC_BASE_URL", "http://127.0.0.1:9/private-canary"),
+                ("ANTHROPIC_API_KEY", ""),
+                ("ANTHROPIC_AUTH_TOKEN", ""),
             ],
         ]
         .concat();
@@ -78,6 +84,28 @@ fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
         let path = state.join("sessions/launch-env/session.json");
         let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(record["launch_env"], values);
+        assert_eq!(
+            record["provider_launch_facts"]["runtime_id"],
+            record["runtime"]["launch_id"]
+        );
+        assert_eq!(
+            record["provider_launch_facts"]["account_applicable"],
+            agent != "claude"
+        );
+        assert_eq!(
+            record["provider_launch_facts"]["claude_window_tokens"],
+            if agent == "claude" {
+                json!(131072)
+            } else {
+                Value::Null
+            }
+        );
+        assert!(
+            !record["provider_launch_facts"]
+                .to_string()
+                .contains("private-canary")
+        );
+        assert!(!start.stdout_text().contains("private-canary"));
         let list = run(
             tmp.path(),
             &[
@@ -164,6 +192,10 @@ fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
                 ("AGENT_SESSION_FAKE_TMUX_SESSION_ID", "$78"),
                 ("AGENT_SESSION_FAKE_TMUX_AGENT_SESSION_ID", "launch-env"),
                 ("AGENT_SESSION_FAKE_TMUX_STATE_DIR", state.to_str().unwrap()),
+                ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "262144"),
+                ("ANTHROPIC_BASE_URL", ""),
+                ("ANTHROPIC_API_KEY", ""),
+                ("ANTHROPIC_AUTH_TOKEN", ""),
             ],
         ]
         .concat();
@@ -197,6 +229,24 @@ fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
         let resumed: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(resumed["origin"], origin);
         assert_eq!(resumed["workspace"], "example-workspace");
+        assert_ne!(
+            resumed["runtime"]["launch_id"],
+            record["runtime"]["launch_id"]
+        );
+        assert_eq!(
+            resumed["provider_launch_facts"]["runtime_id"],
+            resumed["runtime"]["launch_id"]
+        );
+        assert_eq!(
+            resumed["provider_launch_facts"]["claude_window_tokens"],
+            if agent == "claude" {
+                json!(262144)
+            } else {
+                Value::Null
+            }
+        );
+        assert_eq!(resumed["provider_launch_facts"]["account_applicable"], true);
+        assert!(!resume.stdout_text().contains("private-canary"));
         let launches: Vec<_> = tmux_calls(&log)
             .into_iter()
             .filter(|args| args.first().is_some_and(|arg| arg == "new-session"))
@@ -213,6 +263,74 @@ fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
                     .windows(2)
                     .any(|args| args == ["-e", "AGENT_RUNTIME_SUPPRESS_HEALTH=0"])
             );
+        }
+    }
+}
+
+#[test]
+fn custom_capacity_survives_cli_list_and_inspection_without_private_inputs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let state = tmp.path().join("state");
+    let session = state.join("sessions/custom-capacity");
+    fs::create_dir_all(&session).unwrap();
+    let root = tmp.path().join("private-config-canary");
+    let projects = root.join("projects/project");
+    fs::create_dir_all(&projects).unwrap();
+    fs::write(projects.join("provider-session.jsonl"), concat!(
+        r#"{"type":"assistant","sessionId":"provider-session","cwd":"/workspace/project","message":{"model":"custom-model","usage":{"input_tokens":10,"cache_read_input_tokens":100,"cache_creation_input_tokens":20}}}"#, "\n"
+    )).unwrap();
+    let record = json!({
+        "schema_version":"agent-session.session.v1", "id":"custom-capacity", "agent":"claude",
+        "mode":"interactive", "cwd":tmp.path(), "tmux_session":"fixture",
+        "created_at":"2030-01-01T00:00:00Z", "updated_at":"2030-01-01T00:00:00Z",
+        "agent_args":["--settings", json!({"env":{
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS":"131072", "ANTHROPIC_BASE_URL":"http://127.0.0.1:9/endpoint-canary",
+            "ANTHROPIC_AUTH_TOKEN":"synthetic-auth-canary"
+        }}).to_string()],
+        "runtime":{"kind":"tmux", "tmux_session":"fixture", "generation":1,
+            "started_at":"2030-01-01T00:00:00Z", "launch_id":"fixture-runtime", "agent_profile_provider_config_dir":root},
+        "provider_resume":{"provider":"claude", "session_id":"provider-session", "captured_at":"2030-01-01T00:00:00Z", "capture_method":"fixture", "resume_args":[]}
+    });
+    fs::write(
+        session.join("session.json"),
+        serde_json::to_vec_pretty(&record).unwrap(),
+    )
+    .unwrap();
+    let state_arg = state.to_str().unwrap();
+    for (args, list) in [
+        (
+            vec!["--state-dir", state_arg, "list", "--format", "json"],
+            true,
+        ),
+        (
+            vec![
+                "--state-dir",
+                state_arg,
+                "command",
+                "custom-capacity",
+                "--format",
+                "json",
+            ],
+            false,
+        ),
+    ] {
+        let output = run(tmp.path(), &args, &[]);
+        assert_eq!(output.code, 0, "{}", output.stderr_text());
+        let envelope = output.stdout_json();
+        let view = if list {
+            &envelope["data"][0]
+        } else {
+            &envelope["data"]
+        };
+        assert_eq!(view["context_usage"]["used_tokens"], 130);
+        assert_eq!(view["context_usage"]["window_tokens"], 131072);
+        assert_eq!(view["claude_account"]["applicable"], false);
+        for private in [
+            "endpoint-canary",
+            "synthetic-auth-canary",
+            "private-config-canary",
+        ] {
+            assert!(!output.stdout_text().contains(private), "{private}");
         }
     }
 }

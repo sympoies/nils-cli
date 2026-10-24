@@ -2,6 +2,139 @@ use super::*;
 use pretty_assertions::assert_eq;
 use std::fs;
 
+fn local_backend_record(agent: &str) -> crate::SessionRecord {
+    serde_json::from_value(serde_json::json!({
+        "schema_version":"agent-session.session.v1", "id":"local-fixture", "agent":agent,
+        "mode":"interactive", "title":null, "cwd":"/workspace/project", "tmux_session":"fixture",
+        "prompt_file":null, "log_file":null, "created_at":"2026-01-01T00:00:00Z", "updated_at":"2026-01-01T00:00:00Z",
+        "runtime":{"kind":"codex_app_server", "tmux_session":"fixture", "generation":1,
+          "started_at":"2026-01-01T00:00:00Z", "launch_id":"local-fixture-runtime", "codex_app_server_protocol":"v2",
+          "codex_app_server_socket":"/fixture/socket", "codex_app_server_proxy":"/fixture/proxy",
+          "codex_app_server_thread_handoff":"/fixture/handoff", "codex_app_server_thread_attached":"/fixture/attached"}
+    })).unwrap()
+}
+
+#[test]
+fn configured_local_claude_window_reaches_public_usage() {
+    let tmp = tempfile::tempdir().unwrap();
+    let context = crate::CliContext {
+        state_dir: tmp.path().join("state"),
+        host: None,
+    };
+    let root = tmp.path().join("provider");
+    fs::create_dir_all(root.join("projects/project")).unwrap();
+    let mut row: Value = serde_json::from_str(fixture("claude").lines().next().unwrap()).unwrap();
+    row["message"]["model"] = serde_json::json!("custom-local-model");
+    fs::write(
+        root.join("projects/project/provider-session.jsonl"),
+        format!("{row}\n"),
+    )
+    .unwrap();
+    let mut record = local_backend_record("claude");
+    record.runtime.as_mut().unwrap().extra.insert(
+        "agent_profile_provider_config_dir".into(),
+        serde_json::json!(root),
+    );
+    record.provider_resume = Some(serde_json::from_value(serde_json::json!({
+        "provider":"claude", "session_id":"provider-session", "captured_at":"2026-01-01T00:00:00Z", "capture_method":"fixture", "resume_args":[]
+    })).unwrap());
+    record.agent_args = vec!["--settings".into(), serde_json::json!({"env":{
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS":"131072", "ANTHROPIC_BASE_URL":"http://127.0.0.1:9/private-canary"
+    }}).to_string()];
+    let usage = require_usage(projection(&context, &record));
+    assert_eq!(usage.used_tokens, Some(130));
+    assert_eq!(usage.window_tokens, Some(131072));
+    let view = serde_json::to_value(crate::session_view(
+        &context,
+        &record,
+        Some("stopped".into()),
+        None,
+    ))
+    .unwrap();
+    assert_eq!(view["context_usage"]["window_tokens"], 131072);
+    let board = crate::board::project_record(&view, "machine", None, false).unwrap();
+    assert_eq!(board["context_usage"], view["context_usage"]);
+    assert!(
+        !serde_json::to_string(&view)
+            .unwrap()
+            .contains("private-canary")
+    );
+    for invalid in [
+        serde_json::json!("0"),
+        serde_json::json!("-1"),
+        serde_json::json!("not-a-capacity"),
+        serde_json::json!(131072),
+    ] {
+        record.agent_args = vec![
+            "--settings".into(),
+            serde_json::json!({"env":{"CLAUDE_CODE_MAX_CONTEXT_TOKENS":invalid}}).to_string(),
+        ];
+        assert_eq!(
+            require_usage(projection(&context, &record)).window_tokens,
+            None
+        );
+    }
+    row["message"]["model"] = serde_json::json!("claude-haiku-4-5-20251001");
+    fs::write(
+        root.join("projects/project/provider-session.jsonl"),
+        format!("{row}\n"),
+    )
+    .unwrap();
+    assert_eq!(
+        require_usage(projection(&context, &record)).window_tokens,
+        Some(200000),
+        "invalid override keeps the known-model fallback"
+    );
+}
+
+#[test]
+fn local_backend_accounts_are_explicitly_inapplicable_for_both_providers() {
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+    let lock = GlobalStateLock::new();
+    let _claude = EnvGuard::set(
+        &lock,
+        "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER",
+        r#"["/configured/broker"]"#,
+    );
+    let _codex = EnvGuard::set(
+        &lock,
+        "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+        r#"["/configured/broker"]"#,
+    );
+    for agent in ["claude", "codex"] {
+        let mut record = local_backend_record(agent);
+        record.agent_args = if agent == "claude" {
+            vec!["--settings".into(), serde_json::json!({"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9/private-canary"}}).to_string()]
+        } else {
+            [
+                "model_provider=\"fixture_local\"",
+                "model_providers.fixture_local.requires_openai_auth=false",
+                "model_providers.fixture_local.base_url=\"http://127.0.0.1:9/private-canary\"",
+            ]
+            .into_iter()
+            .flat_map(|value| ["-c".to_string(), value.to_string()])
+            .collect()
+        };
+        let view = if agent == "claude" {
+            serde_json::to_value(crate::claude_account::view_for_record(&record).unwrap()).unwrap()
+        } else {
+            serde_json::to_value(crate::codex_account::view_for_record(&record)).unwrap()
+        };
+        assert_eq!(view["applicable"], false, "{agent}");
+        assert_eq!(view["supported"], false, "{agent}");
+        assert_eq!(view["state"], "unsupported", "{agent}");
+        assert!(!view.to_string().contains("private-canary"));
+        record.agent_args.clear();
+        let normal = if agent == "claude" {
+            serde_json::to_value(crate::claude_account::view_for_record(&record).unwrap()).unwrap()
+        } else {
+            serde_json::to_value(crate::codex_account::view_for_record(&record)).unwrap()
+        };
+        assert_eq!(normal["applicable"], true, "{agent}");
+        assert_eq!(normal["supported"], true, "{agent}");
+    }
+}
+
 fn fixture(provider: &str) -> &'static str {
     match provider {
         "claude" => include_str!("../tests/fixtures/context-usage/claude.jsonl"),
@@ -302,4 +435,35 @@ fn managed_codex_profile_uses_its_configured_rollout() {
     assert_eq!(view["context_usage"]["used_tokens"], 130);
     assert_eq!(view["context_usage"]["window_tokens"], 272000);
     assert_eq!(view["context_usage"]["model"], "example-model");
+}
+
+#[test]
+fn managed_binding_applicability_survives_current_broker_unavailability() {
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+    let lock = GlobalStateLock::new();
+    let _claude = EnvGuard::remove(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER");
+    let _codex = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
+    for agent in ["claude", "codex"] {
+        let mut record = local_backend_record(agent);
+        record.extra.insert(
+            format!("{agent}_account_binding"),
+            serde_json::json!({
+                "schema_version":format!("agent-session.{agent}-account-binding.v1"),
+                "selected_account":"fixture-account", "revision":1, "state":"bound",
+                "applied_runtime_id":"local-fixture-runtime", "updated_at":"2030-01-01T00:00:00Z"
+            }),
+        );
+        let view = if agent == "claude" {
+            serde_json::to_value(crate::claude_account::view_for_record(&record).unwrap()).unwrap()
+        } else {
+            serde_json::to_value(crate::codex_account::view_for_record(&record)).unwrap()
+        };
+        assert_eq!(view["supported"], false);
+        assert_eq!(view["state"], "unsupported");
+        assert_eq!(
+            view["applicable"], true,
+            "{agent}: backend applicability is independent from current broker support"
+        );
+        assert_eq!(view["selected_account"], "fixture-account");
+    }
 }

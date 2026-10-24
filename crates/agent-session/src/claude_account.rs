@@ -90,6 +90,7 @@ enum Decoded<T> {
 pub(crate) struct ClaudeAccountView {
     schema_version: &'static str,
     pub(crate) supported: bool,
+    pub(crate) applicable: bool,
     pub(crate) state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) selected_account: Option<String>,
@@ -146,8 +147,13 @@ pub(crate) fn view_for_record(record: &SessionRecord) -> Option<ClaudeAccountVie
     }
     let binding = decode_binding(record);
     let next = decode_next(record);
-    let configured = broker_is_configured();
-    if !configured && matches!(binding, Decoded::Absent) && matches!(next, Decoded::Absent) {
+    let eligible = crate::runtime_environment::provider_facts::account_applicable(record);
+    let configured = broker_is_configured() && eligible;
+    if !configured
+        && eligible
+        && matches!(binding, Decoded::Absent)
+        && matches!(next, Decoded::Absent)
+    {
         return None;
     }
     let next_view = match &next {
@@ -174,6 +180,7 @@ pub(crate) fn view_for_record(record: &SessionRecord) -> Option<ClaudeAccountVie
     let mut view = ClaudeAccountView {
         schema_version: VIEW_SCHEMA_VERSION,
         supported: configured,
+        applicable: eligible,
         state: "unbound",
         selected_account: None,
         selection_source: None,
