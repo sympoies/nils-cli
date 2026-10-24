@@ -80,7 +80,7 @@ fn occupancy(
             continue;
         }
         let id = entry.file_name().into_string().map_err(|_| state_error())?;
-        validate_id(&id)?;
+        validate_id(&id).map_err(|_| state_error())?;
         if exclude_id == Some(id.as_str()) {
             continue;
         }
@@ -121,9 +121,10 @@ fn occupancy(
             Err(_) => return Err(state_error()),
             Ok(_) => {}
         }
-        let resolved = ensure_record_in_session_dir(context, &path, &entry.path(), &id)?;
-        let record = read_session_record(&resolved.record_path)?;
-        validate_record_id(&record, &id, &resolved.record_path)?;
+        let resolved = ensure_record_in_session_dir(context, &path, &entry.path(), &id)
+            .map_err(|_| state_error())?;
+        let record = read_session_record(&resolved.record_path).map_err(|_| state_error())?;
+        validate_record_id(&record, &id, &resolved.record_path).map_err(|_| state_error())?;
         // A busy stopped record is not yet admitted: resume sets starting
         // under the global guard before releasing it. One-shot records have
         // no startup projection, but hold the same lifecycle lock at launch.

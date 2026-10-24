@@ -16,9 +16,9 @@
 
 ### Evidence
 
-- Seven focused CLI/HTTP boundary tests and a real loopback Console relay test pass. Retained pre-fix RED showed both
-  concurrent creates succeeding at limit one and a stopped-record resume
-  bypassing occupied capacity.
+- Eight focused CLI/HTTP boundary tests and one real loopback Console relay
+  test pass. Retained RED covers atomic creation, stopped reactivation, typed
+  recovery/forwarding, and path-free occupancy failures.
 
 ### Links
 

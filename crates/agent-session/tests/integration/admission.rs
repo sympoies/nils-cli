@@ -502,3 +502,39 @@ fn admission_zero_and_invalid_settings_do_not_launch() {
     assert!(!f.dir.path().join("state/sessions/zero").exists());
     assert!(!f.dir.path().join("state/sessions/invalid").exists());
 }
+
+#[test]
+fn admission_corrupt_occupancy_refuses_without_exposing_local_paths() {
+    let f = Fixture::new(Some(1));
+    let record_dir = f.dir.path().join("state/sessions/diagnostic-path-sentinel");
+    fs::create_dir_all(&record_dir).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&record_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(record_dir.join("session.json"), "{").unwrap();
+    let diagnose = f
+        .command()
+        .args(["diagnose", "--format", "json"])
+        .output()
+        .unwrap();
+    let start = f.start("refused").output().unwrap();
+    for output in [diagnose, start] {
+        for stream in [&output.stdout, &output.stderr] {
+            let rendered = String::from_utf8_lossy(stream);
+            assert!(
+                !rendered.contains("diagnostic-path-sentinel"),
+                "diagnostics must not expose the local record path"
+            );
+            assert!(
+                !rendered.contains(f.dir.path().to_str().unwrap()),
+                "diagnostics must not expose the local state root"
+            );
+        }
+        assert_eq!(output.status.code(), Some(1));
+        let error = envelope(&output)["error"].clone();
+        assert_eq!(error["code"], "session-admission-state-unavailable");
+        assert_eq!(error["details"]["retryable"], true);
+        assert_eq!(error["details"]["next_action"], "retry-admission");
+    }
+    assert_eq!(f.starts(), 0);
+    assert!(!f.dir.path().join("state/sessions/refused").exists());
+}

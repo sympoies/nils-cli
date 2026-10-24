@@ -60,6 +60,10 @@ HTTP `409`; see [session creation v1](../specs/serve-session-create-v1.md).
 An unreadable or invalid settings document refuses admission with
 `session-admission-config-invalid` instead of silently disabling the limit.
 
+Occupancy read or validation failures refuse admission with the path-free
+`session-admission-state-unavailable` error. They never treat unavailable state
+as empty capacity or expose a local record path.
+
 ## Start origin and workspace
 
 `agent-session start --agent codex --workspace example-workspace` selects a
