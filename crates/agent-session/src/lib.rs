@@ -1,3 +1,5 @@
+mod admission;
+use admission::create_record_with_lineage;
 mod account_broker;
 #[doc(hidden)]
 pub mod activity;
@@ -1938,6 +1940,7 @@ fn start_session_inner_unjournaled(
             agent_bin: Some(display_path(&agent_bin)),
         },
         initial_lineage,
+        Some(&tmux_bin),
     )?;
     created
         .record
@@ -2231,6 +2234,7 @@ fn start_run_session_unjournaled(
     if let Some(warning) = warning {
         eprintln!("warning: {warning}");
     }
+    let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let mut created = create_record_with_lineage(
         RecordRequest {
             context,
@@ -2248,9 +2252,9 @@ fn start_run_session_unjournaled(
             agent_bin: None,
         },
         Some(initial_lineage),
+        Some(&tmux_bin),
     )?;
 
-    let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let agent_bin = resolve_agent_bin(args.agent, args.agent_bin.as_deref());
     if let Err(err) = created.validate_session_storage() {
         cleanup_created_record(context, &created);
@@ -2500,6 +2504,7 @@ fn start_resolved_provider_resume_session(
             agent_bin: Some(display_path(&agent_bin)),
         },
         Some(initial_lineage),
+        Some(&tmux_bin),
     )?;
 
     created
@@ -2865,7 +2870,7 @@ struct RecordRequest<'a> {
 
 #[cfg(test)]
 fn create_record(request: RecordRequest<'_>) -> Result<CreatedRecord, CliError> {
-    create_record_with_lineage(request, None)
+    create_record_with_lineage(request, None, None)
 }
 
 /// The lineage and work a new record is created with
@@ -2877,174 +2882,6 @@ pub struct InitialLineage {
     pub work: Option<lineage::SessionWork>,
     /// `coordinator` for a session started with `--role coordinator`.
     pub role: Option<String>,
-}
-
-fn create_record_with_lineage(
-    request: RecordRequest<'_>,
-    initial_lineage: Option<InitialLineage>,
-) -> Result<CreatedRecord, CliError> {
-    let now = Zoned::now();
-    let timestamp = now.strftime("%Y%m%d-%H%M%S").to_string();
-    let iso = now.timestamp().to_string();
-    let title_supplied = request.title.is_some();
-    let title = request.title.map(str::to_string);
-    let (title, title_state) = match request.title_state {
-        Some(title_state) => {
-            canonicalize_structured_title_pair(title, title_supplied, title_state)?
-        }
-        None => (title, None),
-    };
-    let title_slug = title.as_deref().map(slugify);
-    let id = resolve_session_id(
-        request.context,
-        request.explicit_id,
-        request.agent,
-        &timestamp,
-        title_slug.as_deref(),
-    )?;
-    let state_root = private_session_state_root(request.context)?;
-    let lifecycle_lock = acquire_new_session_record_lock(request.context, &state_root, &id)?;
-    let tmux_session = format!("hs-{}-{id}", request.agent.as_str());
-    let session_dir = session_dir(request.context, &id);
-    if session_dir.exists() {
-        return Err(CliError::runtime(
-            "session-exists",
-            format!("session already exists: {id}"),
-            Some(json!({ "id": id })),
-        ));
-    }
-    let session_storage = private_session_dir(request.context, &state_root, &session_dir)?;
-    if let Err(error) = pause_session_ancestor_for_test("session-dir-created") {
-        session_storage.cleanup_if_current();
-        return Err(error);
-    }
-    if let Err(error) = session_storage.validate() {
-        session_storage.cleanup_if_current();
-        return Err(error);
-    }
-    if let Err(error) = pause_session_ancestor_for_test("initialization-authority-validated") {
-        session_storage.cleanup_if_current();
-        return Err(error);
-    }
-
-    let prompt_file = match request.prompt {
-        Some(prompt) => {
-            let path = session_dir.join("prompt.md");
-            if let Err(error) = session_storage.write_private_file("prompt.md", prompt.as_bytes()) {
-                session_storage.cleanup_if_current();
-                return Err(error);
-            }
-            if let Err(error) = session_storage.validate() {
-                session_storage.cleanup_if_current();
-                return Err(error);
-            }
-            Some(path)
-        }
-        None => None,
-    };
-    let log_file = request.log_file_name.map(|name| session_dir.join(name));
-    let mut record = SessionRecord {
-        schema_version: SESSION_DOCUMENT_VERSION.to_string(),
-        id,
-        agent: request.agent.as_str().to_string(),
-        mode: request.mode.to_string(),
-        coordination_mode: request.coordination_mode,
-        title,
-        title_state,
-        title_revision: 0,
-        cwd: display_path(request.cwd),
-        tmux_session: tmux_session.clone(),
-        prompt_file: prompt_file.as_ref().map(|path| display_path(path)),
-        log_file: log_file.as_ref().map(|path| display_path(path)),
-        created_at: iso.clone(),
-        updated_at: iso.clone(),
-        provider_resume: request.provider_resume,
-        runtime: Some(RuntimeInfo {
-            kind: "tmux".to_string(),
-            tmux_session: tmux_session.clone(),
-            generation: 1,
-            started_at: now.timestamp().to_string(),
-            launch_id: uuid::Uuid::new_v4().to_string(),
-            extra: if request.agent == AgentKind::Codex {
-                BTreeMap::from([(
-                    codex_app_server::ATTENTION_AUTHORITY_KEY.to_string(),
-                    json!("hook"),
-                )])
-            } else {
-                BTreeMap::new()
-            },
-        }),
-        public_metadata: None,
-        agent_args: request.agent_args,
-        agent_bin: request.agent_bin,
-        extra: BTreeMap::new(),
-        lineage: None,
-        work: None,
-        lineage_adoption: None,
-        role: None,
-        resume_sidecar_extra: BTreeMap::new(),
-    };
-    runtime_environment::store_launch(&mut record);
-    origin::Fields::default().store(&mut record);
-    if let Some(mut initial) = initial_lineage {
-        initial.origin.store(&mut record);
-        initial.seed.set_forge_role(initial.role.clone());
-        record.lineage = Some(initial.seed.finalize(&record.id, &record.created_at));
-        record.work = initial.work;
-        record.role = initial.role;
-    }
-    if request.mode == "interactive" {
-        store_startup_projection(&mut record, &starting_projection(&iso, "record"));
-    }
-
-    if let Err(error) = write_initial_session_record(&session_storage, &record) {
-        session_storage.cleanup_if_current();
-        return Err(error);
-    }
-    if let Err(error) = session_storage.validate() {
-        session_storage.cleanup_if_current();
-        return Err(error);
-    }
-    #[cfg(target_os = "linux")]
-    let activity_result =
-        activity::activate_runtime_in_dir(&session_storage.session_descriptor_path(), &record);
-    #[cfg(all(unix, not(target_os = "linux")))]
-    let activity_result = activity::activate_new_runtime_with(&record, |name, bytes| {
-        session_storage.write_private_file(name, bytes)
-    });
-    #[cfg(not(unix))]
-    let activity_result =
-        activity::activate_runtime_in_dir(&session_storage.session_descriptor_path(), &record);
-    if let Err(err) = activity_result {
-        session_storage.cleanup_if_current();
-        return Err(err);
-    }
-    if let Err(error) = session_storage.validate() {
-        session_storage.cleanup_if_current();
-        return Err(error);
-    }
-    #[cfg(target_os = "linux")]
-    let coordination_result =
-        coordination::prepare_in_dir(&session_storage.session_descriptor_path(), &record);
-    #[cfg(all(unix, not(target_os = "linux")))]
-    let coordination_result = session_storage.create_private_dir("coordination");
-    #[cfg(not(unix))]
-    let coordination_result =
-        coordination::prepare_in_dir(&session_storage.session_descriptor_path(), &record);
-    if let Err(err) = coordination_result {
-        session_storage.cleanup_if_current();
-        return Err(err);
-    }
-    if let Err(error) = session_storage.validate() {
-        session_storage.cleanup_if_current();
-        return Err(error);
-    }
-    Ok(CreatedRecord {
-        record,
-        prompt_file,
-        session_storage,
-        _lifecycle_lock: Some(lifecycle_lock),
-    })
 }
 
 /// Keep a launch-failed session record whose cleanup could not finish.
@@ -5166,6 +5003,7 @@ fn resume_session_locked(
     let previous_activity = activity::capture_snapshot(context, &record.id)?;
     let mut startup_artifacts = StartupArtifactBackup::stage(context, &record)?;
     let agent_bin = restart::resume_agent_bin(durable_profile_context, &record, agent);
+    let admission = admission::reserve(context, Some(tmux_bin), Some(&record.id))?;
     let now = Zoned::now();
     let next_generation = record
         .runtime
@@ -5199,6 +5037,7 @@ fn resume_session_locked(
     }
     record.updated_at = now.timestamp().to_string();
     runtime_environment::write_launch_record(context, &mut record)?;
+    drop(admission);
     activity::activate_runtime(context, &record)?;
     if let Err(error) = coordination::prepare(context, &record) {
         let _ = write_session_record(context, &previous_record);

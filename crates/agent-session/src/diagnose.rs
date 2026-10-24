@@ -55,6 +55,7 @@ struct Bundle {
     health: Health,
     runtime: Runtime,
     observation: Observation,
+    admission: crate::admission::Snapshot,
 }
 
 #[derive(Serialize)]
@@ -129,6 +130,7 @@ fn build(context: &CliContext, args: &DiagnoseArgs) -> Result<Bundle, CliError> 
         other => other,
     };
     Ok(Bundle {
+        admission: crate::admission::snapshot(context, None)?,
         schema_version: BUNDLE_VERSION,
         binary_version: nils_build_info::long_version(env!("CARGO_PKG_VERSION")),
         health,
@@ -208,6 +210,10 @@ fn text(bundle: &Bundle) -> String {
     let mut out = String::new();
     out.push_str(&format!("health: {}\n", bundle.health.as_str()));
     out.push_str(&format!("binary: {}\n", bundle.binary_version));
+    out.push_str(&format!(
+        "admission: {}\n",
+        serde_json::to_string(&bundle.admission).expect("snapshot serializes")
+    ));
     out.push_str(&format!(
         "executable: {}\n",
         bundle.runtime.executable_state

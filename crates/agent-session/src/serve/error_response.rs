@@ -17,7 +17,8 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         "coordination-unauthorized" | "mailbox-service-unauthorized" => StatusCode::UNAUTHORIZED,
         "rate-limited" | "retitle-provider-rate-limited" => StatusCode::TOO_MANY_REQUESTS,
         "wait-timeout" | "retitle-provider-timeout" => StatusCode::REQUEST_TIMEOUT,
-        "session-exists"
+        "session-capacity-exceeded"
+        | "session-exists"
         | "shell-incarnation-conflict"
         | "shell-not-running"
         | "shell-name-conflict"

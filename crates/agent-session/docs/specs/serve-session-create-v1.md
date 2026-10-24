@@ -133,3 +133,30 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   writer changed only the compatibility title. Session and glance responses advertise
   `title_state_supported: true` independently of whether that session already has structured state,
   allowing upgraded clients to migrate title-only records conservatively.
+
+## Active-session capacity refusal
+
+`POST /sessions`, including Console-originated creates and history imports, uses
+[host-local admission](../runbooks/session-lifecycle.md#active-session-admission)
+at the same atomic persistence boundary as CLI starts. The request cannot
+override `admission.json` or evict a session. A full state root returns HTTP `409`:
+
+```json
+{
+  "schema_version": "cli.agent-session.serve.v1",
+  "ok": false,
+  "error": {
+    "code": "session-capacity-exceeded",
+    "message": "session capacity reached (1/1); stop or delete an active session before creating another",
+    "details": {"max_active_sessions": 1, "active_sessions": 1}
+  }
+}
+```
+
+Clients should branch on the code and numeric details, not match the message.
+The failed attempt launches no tmux pane/provider and leaves no partial session
+record. Retrying after capacity is released is safe under the existing creation
+and idempotency rules. Resuming a stopped record also requires capacity; an
+already-active resume retains its slot. Daemon restart does not reset occupancy.
+Operators can inspect the read-only `agent-session diagnose --format json`
+`data.admission` snapshot without sending a create request.
