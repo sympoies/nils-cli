@@ -89,3 +89,7 @@ pub(super) enum HistoryPartsVersion {
     #[serde(rename = "v1")]
     V1,
 }
+
+#[cfg(test)]
+#[path = "uploaded_image_tests.rs"]
+mod uploaded_image_tests;

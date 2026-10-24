@@ -5,6 +5,9 @@ use std::borrow::Cow;
 #[path = "history_parts.rs"]
 mod history_parts;
 
+#[path = "upload_references.rs"]
+mod upload_references;
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct HistoryMessage {
     pub(crate) id: String,
@@ -688,12 +691,17 @@ impl HistoryCatalog {
         let offset = parts[1]
             .parse::<u64>()
             .map_err(|_| ImageReadError::Unavailable)?;
-        let index = parts[2]
-            .parse::<usize>()
-            .map_err(|_| ImageReadError::Unavailable)?;
-        if index >= MAX_IMAGES {
-            return Err(ImageReadError::Unavailable);
-        }
+        let index = if parts[2].starts_with('u') {
+            None
+        } else {
+            Some(
+                parts[2]
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|index| *index < MAX_IMAGES)
+                    .ok_or(ImageReadError::Unavailable)?,
+            )
+        };
         let snapshot = self.snapshot();
         let sessions = snapshot
             .incremental_segments
@@ -740,6 +748,9 @@ impl HistoryCatalog {
         {
             return Err(ImageReadError::Deleted);
         }
+        let Some(index) = index else {
+            return self.read_upload_reference(session, &value, &parts[2][1..]);
+        };
         let sources = image_sources(&value);
         match sources.get(index).ok_or(ImageReadError::Deleted)? {
             ImageSource::Url(url) => {

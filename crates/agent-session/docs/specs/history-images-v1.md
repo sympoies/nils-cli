@@ -2,15 +2,22 @@
 
 History message pages add optional `images: [{ id: string }]`. There are at most
 16 descriptors per message. The opaque id is at most 96 ASCII bytes and binds a
-provider transcript segment, byte offset, image index and source-row digest. It
+provider transcript segment, byte offset, source selector and source-row digest. It
 contains no file path, external URL or image bytes. Text and paging fields keep
 their existing meaning. Image-only messages have empty `text`; they are visible
 without becoming human text evidence for retitling.
 
 Supported source forms are Codex `input_image` / `output_image` content blocks,
 Claude `image` blocks (base64, URL or file source), nested tool-result images,
-and Markdown image references in visible message text. A source that cannot be
-read safely still gets a descriptor, so clients can display an unavailable
+and Markdown image references in visible message text. Codex user `input_text`
+also recognizes single- or double-quoted absolute paths to raster images in the
+same managed session's upload directory. These upload references become ordered
+image parts, leaving the surrounding caption text visible. Other quoted paths
+remain text: they must pass the attachment identity, path, size, extension and
+raster signature checks before a descriptor is emitted. Projection does not
+change the transcript or deliver native images to the model.
+
+A structured or Markdown source that cannot be read safely still gets a descriptor, so clients can display an unavailable
 placeholder. Injected/meta context remains excluded. Other providers retain
 their existing text-only contract.
 
@@ -21,7 +28,11 @@ including on loopback. Consumers proxy this route through their normal
 session/history ownership boundary; they must not expose a public file URL.
 The caller supplies only ids minted by the daemon. The daemon resolves the
 selected transcript again, checks the row boundary and digest, and selects the
-referenced image from that row. A changed/deleted row cannot silently replace
+referenced image from that row. Quoted uploads use their original block and
+quoted-text position so removing an upload cannot shift an existing descriptor
+to a neighboring image. The upload boundary is checked again on every read,
+even when the working directory contains the attachment directory.
+A changed/deleted row cannot silently replace
 an image behind an old id. No external HTTP request is performed.
 
 Success is a raw raster body with `Content-Type: image/png`, `image/jpeg`,
