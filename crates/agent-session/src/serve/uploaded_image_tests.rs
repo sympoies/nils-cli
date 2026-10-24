@@ -317,3 +317,6 @@ async fn quoted_upload_history_keeps_structured_and_markdown_images_and_image_on
     assert_eq!(messages[1]["images"].as_array().unwrap().len(), 1);
     assert_eq!(messages[1]["parts"][0]["kind"], "image");
 }
+
+#[path = "download_filename_tests.rs"]
+mod download_filename_tests;

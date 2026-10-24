@@ -669,6 +669,7 @@ pub(crate) enum ImageReadError {
 pub(crate) struct ImageBytes {
     pub(crate) mime: &'static str,
     pub(crate) bytes: Vec<u8>,
+    pub(crate) filename: Option<String>,
 }
 
 impl HistoryCatalog {
@@ -813,7 +814,30 @@ impl HistoryCatalog {
             return Err(ImageReadError::Unavailable);
         }
         let mime = sniff_mime(&bytes).ok_or(ImageReadError::Unavailable)?;
-        Ok(ImageBytes { mime, bytes })
+        Ok(ImageBytes {
+            mime,
+            bytes,
+            filename: self.image_filename(session, &path),
+        })
+    }
+
+    fn image_filename(&self, session: &HistorySession, path: &Path) -> Option<String> {
+        if let Ok((root, relative)) = self.attachment_root(session, path) {
+            let metadata = crate::attachment_filename::metadata_path(&relative)?;
+            let mut file = open_beneath(&root, &metadata).ok()?;
+            let info = file.metadata().ok()?;
+            if !info.is_file() || info.len() > 4096 {
+                return None;
+            }
+            let mut bytes = Vec::new();
+            file.by_ref().take(4097).read_to_end(&mut bytes).ok()?;
+            if bytes.len() > 4096 {
+                return None;
+            }
+            let name: String = serde_json::from_slice(&bytes).ok()?;
+            return crate::attachment_filename::sanitize_download_filename(&name);
+        }
+        crate::attachment_filename::sanitize_download_filename(path.file_name()?.to_str()?)
     }
 
     fn attachment_root(
@@ -926,6 +950,7 @@ fn decode_image(mime: &str, encoded: &str) -> Result<ImageBytes, ImageReadError>
     Ok(ImageBytes {
         mime: actual,
         bytes,
+        filename: None,
     })
 }
 
