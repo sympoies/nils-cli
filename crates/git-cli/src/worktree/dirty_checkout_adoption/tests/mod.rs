@@ -18,6 +18,7 @@ mod supervisor_lifecycle;
 mod supervisor_status;
 mod user_namespace;
 mod wire_contract;
+mod worker_path;
 
 use super::*;
 
