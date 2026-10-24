@@ -391,3 +391,100 @@ pub struct CompletionArgs {
     #[arg(value_enum)]
     pub shell: crate::completion::CompletionShell,
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::{CommandFactory, error::ErrorKind};
+    use pretty_assertions::assert_eq;
+
+    use super::Cli;
+
+    #[test]
+    fn hidden_json_aliases_remain_accepted() {
+        let cases: &[(&[&str], &[&str])] = &[
+            (&["check"], &[]),
+            (&["list"], &[]),
+            (
+                &["add"],
+                &[
+                    "--name",
+                    "note",
+                    "--type",
+                    "reference",
+                    "--description",
+                    "summary",
+                ],
+            ),
+            (&["search"], &["term"]),
+            (&["recall", "startup"], &[]),
+            (&["recall", "on-demand"], &["term"]),
+            (&["recall", "candidates"], &[]),
+            (&["candidate", "add"], &["producer", "--name", "note"]),
+            (&["candidate", "list"], &[]),
+            (
+                &["candidate", "promote"],
+                &[
+                    "producer",
+                    "note",
+                    "--type",
+                    "reference",
+                    "--description",
+                    "summary",
+                    "--session-id",
+                    "00000000-0000-0000-0000-000000000000",
+                ],
+            ),
+            (&["archive", "list"], &[]),
+            (&["archive", "search"], &["term"]),
+            (
+                &["archive", "retire"],
+                &[
+                    "note",
+                    "--reason",
+                    "superseded",
+                    "--superseded-by",
+                    "policy",
+                    "--archived-at",
+                    "2026-01-01",
+                ],
+            ),
+        ];
+
+        for &(path, required) in cases {
+            let mut argv = vec!["agent-memory"];
+            argv.extend_from_slice(path);
+            argv.extend_from_slice(required);
+            argv.push("--json");
+            let matches = Cli::command()
+                .try_get_matches_from(&argv)
+                .unwrap_or_else(|err| panic!("{path:?}: {err}"));
+            let mut leaf = &matches;
+            for &command in path {
+                leaf = leaf.subcommand_matches(command).expect("parsed command");
+            }
+            assert!(leaf.get_flag("json"), "{path:?}");
+
+            let mut command = Cli::command();
+            for &name in path {
+                command = command.find_subcommand_mut(name).expect("command").clone();
+            }
+            assert!(
+                !command.render_help().to_string().contains("--json"),
+                "{path:?}"
+            );
+            assert!(
+                !command.render_long_help().to_string().contains("--json"),
+                "{path:?}"
+            );
+
+            for format in ["text", "json"] {
+                let mut conflicting = argv.clone();
+                conflicting.extend_from_slice(&["--format", format]);
+                let err = Cli::command()
+                    .try_get_matches_from(conflicting)
+                    .expect_err("compatibility alias conflicts with explicit format");
+                assert_eq!(err.kind(), ErrorKind::ArgumentConflict, "{path:?}");
+            }
+        }
+    }
+}

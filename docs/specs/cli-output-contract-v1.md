@@ -207,17 +207,23 @@ The worked example is in
 [`crates/cli-template/src/main.rs`](../../crates/cli-template/src/main.rs)
 (see `parse_or_exit` and `detect_format_from_argv`).
 
-## Deprecation: `--json` boolean flag
+## Compatibility retention: `--json` boolean flag
 
-The workspace converges on `--format text|json`. For binaries that
-previously shipped `--json`:
+The canonical output selector is `--format text|json`. Existing hidden
+`--json` flags are retained for compatibility with scripts and other CLI
+consumers; they do not expire automatically after a minor release cycle.
 
-- Keep `--json` as a hidden alias for one minor release cycle:
-  `#[arg(long, global = true, hide = true, conflicts_with = "format")]`.
-- The clap `conflicts_with` declaration makes `--json --format text`
-  fail at parse time (exit `64`) instead of relying on a runtime check.
-- After the minor cycle, remove the alias. The contract lint script
-  fails any new binary that re-introduces `--json` without `hide = true`.
+- Keep existing aliases hidden (`hide = true`) and preserve their current
+  parsing and output behavior. For commands that already declare
+  `conflicts_with = "format"`, combining `--json` with an explicit `--format`
+  remains a parse-time usage error (exit `64`).
+- New commands should use `--format text|json` rather than introduce a
+  `--json` alias. The contract lint rejects `--json` clap flags without
+  `hide = true`; internal serialization fields are not CLI aliases.
+- Removal requires a separate, explicit breaking-change decision that names
+  the affected commands and consumers, documents the migration path, and
+  announces the removal version. Until that decision is approved and
+  documented, retain the aliases regardless of elapsed minor releases.
 
 `agent-workflow-primitives` and `staged-context` carry their own
 schema-version aliases; their deprecation timelines are documented in
