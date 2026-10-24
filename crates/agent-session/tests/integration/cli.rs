@@ -6057,6 +6057,12 @@ esac
 "#,
     );
 
+    // Keep the fresh script's first execution outside the bounded deletion probe.
+    // This stopped fixture reports absence with status 1; it has no version query.
+    let prewarm = Command::new(&tmux_bin).arg("has-session").output().unwrap();
+    assert_eq!(prewarm.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&prewarm.stderr).contains("can't find session:"));
+
     for state in ["pending", "kill-confirmed"] {
         let id = format!("delete-transition-{state}");
         let tmux_session = format!("hs-codex-delete-transition-{state}");
@@ -6082,13 +6088,7 @@ esac
             "session_id": "resume-session-id",
             "captured_at": "2000-01-01T00:00:00Z",
             "capture_method": "fixture",
-            "resume_args": [
-                "resume",
-                "resume-session-id",
-                "--cd",
-                "/tmp",
-                "--no-alt-screen"
-            ],
+            "resume_args": ["resume", "resume-session-id", "--cd", "/tmp", "--no-alt-screen"],
         });
         record["agent_args"] = json!([]);
         fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
