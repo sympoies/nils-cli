@@ -90,6 +90,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/agent-session/docs/specs/claude-auth-recovery-v1.md`
 - `crates/agent-session/docs/specs/auth-failover-v1.md`
 - `crates/agent-session/docs/specs/serve-api-v1.md`
+- `crates/agent-session/docs/specs/broker-evidence-v1.md`
 - `crates/agent-session/docs/specs/coordination-federation-v1.md`
 - `crates/agent-session/docs/specs/coordination-interface-v1.md`
 - `crates/agent-session/docs/specs/coordination-mailbox-v1.md`

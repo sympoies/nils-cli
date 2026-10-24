@@ -1,3 +1,6 @@
+#[path = "admission_request.rs"]
+pub(super) mod admission_request;
+
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -700,46 +703,15 @@ pub(crate) fn admit(context: &CliContext, args: WorkContextAdmitArgs) -> Result<
     let capability_token = capability_token_from_file(args.capability_file.as_deref())?;
     let capability_digest = digest_bytes(capability_token.as_bytes());
     let (record, incarnation) = authenticate_token(context, &args.session, &capability_token)?;
-    validate_operation_kind(&args.operation)?;
-    let execution_token =
-        read_private_text(&args.execution_token_file, 256, "invalid-execution-token")?;
-    validate_execution_token(&execution_token)?;
-    let input: OperationTargetsInput =
-        read_bounded_json(&args.targets_file, 64 * 1024, "invalid-scope")?;
-    if input.schema_version != "agent-session.operation-targets.v1" {
-        return Err(CliError::data(
-            "invalid-scope",
-            "operation target schema is unsupported",
-            None,
-        ));
-    }
-    validate_descendant(input.descendant.as_ref())?;
-    let targets = canonicalize_targets(input.targets)?;
-    let provider_targets = canonicalize_provider_refs(input.provider_refs)?;
-    let pull_request_targets = canonicalize_pull_request_targets(input.pull_requests)?;
-    if targets.is_empty() && provider_targets.is_empty() && pull_request_targets.is_empty() {
-        return Err(CliError::data(
-            "invalid-scope",
-            "operation targets must name at least one filesystem or provider mutation",
-            None,
-        ));
-    }
-    let mut digest_input = json!({
-        "claim": args.claim,
-        "if_revision": args.if_revision,
-        "operation": args.operation,
-        "targets": targets,
-        "provider_targets": provider_targets,
-        "checkouts": input.checkouts,
-        "descendant": input.descendant,
-        "execution_token_digest": digest_bytes(execution_token.as_bytes()),
-    });
-    // Omitted when empty so requests without pull-request targets keep the
-    // digest released builds computed for them.
-    if !pull_request_targets.is_empty() {
-        digest_input["pull_request_targets"] = json!(pull_request_targets);
-    }
-    let digest = request_digest("work-context-admit", &digest_input);
+    let admission_request::AdmissionRequest {
+        targets,
+        provider_targets,
+        pull_request_targets,
+        checkouts,
+        descendant,
+        token_digest,
+        digest,
+    } = admission_request::prepare(&args)?;
     {
         let _session_authority = lock_claim_session_authority(context, &record, &incarnation)?;
         let locked = lock_registry_observational(context)?;
@@ -761,7 +733,7 @@ pub(crate) fn admit(context: &CliContext, args: WorkContextAdmitArgs) -> Result<
             return Ok(replay);
         }
     }
-    validate_physical_targets(&record.cwd, &targets, &input.checkouts)?;
+    validate_physical_targets(&record.cwd, &targets, &checkouts)?;
     pause_claim_mutation_for_test("before_final_authority_lock")?;
     let _session_authority = lock_claim_session_authority(context, &record, &incarnation)?;
     let mut locked = lock_registry(context)?;
@@ -893,11 +865,11 @@ pub(crate) fn admit(context: &CliContext, args: WorkContextAdmitArgs) -> Result<
         expires_at: timestamp(now.saturating_add(OPERATION_TTL_SECS)),
         expires_at_epoch: now.saturating_add(OPERATION_TTL_SECS),
         terminal_at_epoch: None,
-        execution_token_digest: digest_bytes(execution_token.as_bytes()),
+        execution_token_digest: token_digest,
         activity_revision: activity.revision,
         activity_identity_digest: activity_identity_digest(&activity),
         runtime_identity_digest: runtime.identity_digest,
-        descendant: input.descendant,
+        descendant,
         reconcile_observed_at_epoch: None,
         outcome: None,
     };

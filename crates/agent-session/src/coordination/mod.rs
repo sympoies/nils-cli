@@ -2,6 +2,7 @@ pub(crate) mod advisory;
 pub(crate) mod audit;
 pub(crate) mod auth_effects;
 pub(crate) mod broker;
+mod broker_proof;
 mod capability;
 pub(crate) use capability::authenticate_token;
 pub mod claims;
