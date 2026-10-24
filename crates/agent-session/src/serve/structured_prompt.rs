@@ -143,22 +143,6 @@ pub(super) async fn submit_claude_structured_prompt(
     text: &str,
     acknowledgement_wait: Duration,
 ) -> Response {
-    let (baseline, prompt_tail) = {
-        let context = state.context.clone();
-        let record = record.clone();
-        match tokio::task::spawn_blocking(move || {
-            let baseline = crate::activity::prompt_turn_baseline(&context, &record);
-            let tail = ProviderPromptTail::resolve_source(&record)
-                .and_then(ProviderPromptTail::open_source_at_eof);
-            (baseline, tail)
-        })
-        .await
-        {
-            Ok(baseline) => baseline,
-            Err(_) => return join_err(),
-        }
-    };
-
     let delivery = {
         let context = state.context.clone();
         let id = record.id.clone();
@@ -183,8 +167,9 @@ pub(super) async fn submit_claude_structured_prompt(
     match claude_prompt_ack::await_claude_prompt_ack(
         state,
         record,
-        &baseline,
-        prompt_tail,
+        &delivery.turn_baseline,
+        delivery.prompt_tail,
+        delivery.queue_before.as_deref(),
         &delivery.acknowledgement_text,
         acknowledgement_wait,
     )

@@ -210,18 +210,24 @@ fn claude_box(lines: &[&str]) -> Option<(usize, usize)> {
     Some((titled.into_iter().chain(ruled).max()?, bottom))
 }
 
-/// Whether a Claude pane shows the sent text accepted into its queue: the
-/// composer shows the queued hint and the queued messages above it include the
-/// start of the text. The hint alone also appears for an earlier message.
-pub(crate) fn claude_queue_holds(pane: &str, probe: &Probe) -> bool {
-    if classify("claude", pane, probe) != Composer::Queued {
-        return false;
+/// Count full-text sightings above a recognized Claude queue composer. A caller
+/// must compare with its pre-submit snapshot: an existing sighting is not proof
+/// that another paste arrived. Unreadable or ambiguous panes cannot prove zero.
+pub(crate) fn claude_queue_occurrences(pane: &str, text: &str) -> Option<usize> {
+    let probe = probe(text)?;
+    match classify("claude", pane, &probe) {
+        Composer::Clear => Some(0),
+        Composer::Queued => {
+            let lines: Vec<&str> = pane.lines().map(str::trim_end).collect();
+            let (top, _) = claude_box(&lines)?;
+            Some(
+                compact(&lines[..top].join("\n"))
+                    .matches(&compact(text))
+                    .count(),
+            )
+        }
+        Composer::Pending | Composer::Unrecognized => None,
     }
-    let lines: Vec<&str> = pane.lines().map(str::trim_end).collect();
-    let Some((top, _)) = claude_box(&lines) else {
-        return false;
-    };
-    compact(&lines[..top].join("\n")).contains(&probe.head)
 }
 
 /// Claude Code draws its input box between the last two horizontal rules and
@@ -778,19 +784,23 @@ mod tests {
     }
 
     #[test]
-    fn a_queue_holds_only_the_text_listed_above_the_composer() {
-        assert!(claude_queue_holds(
-            CLAUDE_QUEUED,
-            &probe_of("Second queued message.")
-        ));
-        assert!(!claude_queue_holds(
-            CLAUDE_QUEUED,
-            &probe_of("A different prompt")
-        ));
-        assert!(!claude_queue_holds(
-            CLAUDE_PENDING,
-            &probe_of("Second queued message.")
-        ));
+    fn a_queue_counts_only_full_text_above_the_composer() {
+        assert_eq!(
+            claude_queue_occurrences(CLAUDE_QUEUED, "Second queued message."),
+            Some(1)
+        );
+        assert_eq!(
+            claude_queue_occurrences(CLAUDE_QUEUED, "Second queued message. different suffix"),
+            Some(0)
+        );
+        assert_eq!(
+            claude_queue_occurrences(CLAUDE_PENDING, "Second queued message."),
+            Some(0)
+        );
+        assert_eq!(
+            claude_queue_occurrences(CLAUDE_TRUST_DIALOG, "Second queued message."),
+            None
+        );
     }
 
     #[test]

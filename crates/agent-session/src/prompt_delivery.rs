@@ -118,6 +118,13 @@ pub(crate) fn deliver_claude_structured_prompt_locked(
         &Timestamp::now().to_string(),
     )?;
 
+    // Each proof starts under the same lock as its own paste. Concurrent
+    // requests must not share evidence produced by the earlier lock holder.
+    let turn_baseline = activity::prompt_turn_baseline(context, &record);
+    let prompt_tail = crate::provider_prompt::ProviderPromptTail::resolve_source(&record)
+        .and_then(crate::provider_prompt::ProviderPromptTail::open_source_at_eof);
+    let queue_before = capture_visible_pane(tmux_bin, &format!("{}:0.0", record.tmux_session));
+
     let nonce = uuid::Uuid::new_v4();
     let staged = session_dir(context, &record.id).join(format!("structured-prompt-{nonce}"));
     write_private_file(&staged, text.as_bytes())?;
@@ -143,6 +150,9 @@ pub(crate) fn deliver_claude_structured_prompt_locked(
     Ok(ClaudePromptDelivery {
         session_incarnation: expected_launch_id.to_string(),
         acknowledgement_text,
+        turn_baseline,
+        prompt_tail,
+        queue_before,
     })
 }
 
@@ -150,6 +160,9 @@ pub(crate) fn deliver_claude_structured_prompt_locked(
 pub(crate) struct ClaudePromptDelivery {
     pub(crate) session_incarnation: String,
     pub(crate) acknowledgement_text: String,
+    pub(crate) turn_baseline: activity::PromptTurnBaseline,
+    pub(crate) prompt_tail: Option<crate::provider_prompt::ProviderPromptTail>,
+    pub(crate) queue_before: Option<String>,
 }
 
 /// Only a single existing image path may be rewritten to an observed image

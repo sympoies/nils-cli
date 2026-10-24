@@ -14,16 +14,19 @@ pub(super) enum ClaudePromptAck {
 }
 
 /// Watch for the provider's turn event, newly appended queue records, and
-/// the pane's queued state until `wait` ends. The tail starts before submission,
-/// so an older identical prompt cannot acknowledge this attempt.
+/// new full-text pane queue sightings until `wait` ends. Both baselines start
+/// before submission, so an older identical prompt cannot acknowledge it.
 pub(super) async fn await_claude_prompt_ack(
     state: &Arc<ServeState>,
     record: &SessionRecord,
     baseline: &crate::activity::PromptTurnBaseline,
     mut prompt_tail: Option<ProviderPromptTail>,
+    queue_before: Option<&str>,
     text: &str,
     wait: Duration,
 ) -> Result<ClaudePromptAck, ()> {
+    let queue_count_before =
+        queue_before.and_then(|pane| crate::send_submit::claude_queue_occurrences(pane, text));
     let deadline = Instant::now() + wait;
     loop {
         let context = state.context.clone();
@@ -36,9 +39,13 @@ pub(super) async fn await_claude_prompt_ack(
                 tail.poll_queued_prompts()
                     .is_ok_and(|prompts| prompts.iter().any(|prompt| prompt == &text))
             });
+            let pane_queued = queue_count_before.is_some_and(|before| {
+                crate::claude_prompt_queue_count(&record, &text, &tmux_bin)
+                    .is_some_and(|now| now > before)
+            });
             let ack = if crate::activity::prompt_turn_started_since(&context, &record, &baseline) {
                 ClaudePromptAck::Turn
-            } else if transcript_queued || crate::claude_prompt_queued(&record, &text, &tmux_bin) {
+            } else if transcript_queued || pane_queued {
                 ClaudePromptAck::Queued
             } else {
                 ClaudePromptAck::Unknown
