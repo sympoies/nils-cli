@@ -247,7 +247,10 @@ so a PR head cannot remove its configured hold names.
 When the base branch requires a merge queue, `pr merge` still runs every gate.
 It then enqueues the verified head with `enqueuePullRequest` instead of calling
 the direct merge API, and waits for the queue to land it, bounded by
-`--queue-timeout <seconds>` (default 2700). A PR that is already queued or
+`--queue-timeout <seconds>` (default 5700: the documented 90-minute queue
+check window plus five minutes of polling margin). The flag overrides the
+built-in default; there is no environment or configuration setting for this
+budget. A PR that is already queued or
 already merged is not enqueued again, so a rerun resumes the wait. Without
 `--method`, `pr merge` and `pr deliver` use the queue's method. Failures are
 typed:
@@ -260,8 +263,12 @@ typed:
   `--queue-timeout` ends the wait inside the grace, the result is
   `merge_queue_timeout` instead.
 - `merge_queue_checks_failed`: the queue reports the PR as unmergeable.
-- `merge_queue_timeout`: the wait exceeded `--queue-timeout`. The PR is still
-  queued and will merge unless it is dequeued; rerun `pr merge` to resume.
+- `merge_queue_timeout` (`UNAVAILABLE 69`): observation exceeded
+  `--queue-timeout`; this is not a rejection. The last poll still showed a queue
+  entry, or queue membership is unknown during a transition. The final merge
+  outcome is unknown. Inspect `forge-cli pr view <id>` and
+  `forge-cli pr checks <id>`; the timeout detail supplies exact commands bound
+  to the same repository and host. Rerun `pr merge <id>` to resume observation.
 - `merge_queue_method_mismatch`: an explicit `--method` differs from the
   queue's configured method.
 

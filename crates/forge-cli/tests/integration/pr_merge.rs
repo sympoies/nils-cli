@@ -2151,6 +2151,34 @@ fn pr_merge_enqueues_when_the_base_requires_a_merge_queue() {
 }
 
 #[test]
+fn pr_merge_explicit_queue_timeout_preserves_queued_state_and_read_actions() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let extra = r#"      *"ForgeEnqueuePullRequest"*) printf '%s\n' '{"data":{"enqueuePullRequest":{"mergeQueueEntry":{"state":"QUEUED","position":1}}}}' ;;
+      *"ForgeMergeQueuePoll"*) printf '%s\n' '{"data":{"repository":{"pullRequest":{"state":"OPEN","mergeCommit":null,"mergeQueueEntry":{"state":"QUEUED","position":1}}}}}' ;;"#;
+    let body = github_policy_stub(&stub, SQUASH_QUEUE_POLICY, extra);
+    let stub = stub.gh_gate_stub(&body);
+
+    // Zero proves the CLI override reaches the queue without a real wait.
+    let out = run_github_merge(&stub, &repo_path, &["--queue-timeout", "0"]);
+
+    assert_eq!(out.code, 69, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["error"]["code"], "merge_queue_timeout");
+    let error = envelope["error"].to_string();
+    for expected in [
+        "still queued",
+        "entry_state=QUEUED",
+        "timeout_secs=0",
+        "forge-cli pr view 7",
+        "forge-cli pr checks 7",
+    ] {
+        assert!(error.contains(expected), "missing {expected}: {error}");
+    }
+}
+
+#[test]
 fn pr_merge_reports_a_pull_request_dequeued_by_the_merge_queue() {
     let tempdir = make_github_repo(None);
     let repo_path = tempdir.path().join("repo");

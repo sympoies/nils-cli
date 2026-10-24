@@ -1247,7 +1247,7 @@ operations:
       - { name: --allow-no-checks-reason,   type: string,                        default: null }
       - { name: --allow-merge-freeze,       type: list<integer>,                 default: [] } # repeatable; requires --allow-merge-freeze-reason; must name every active freeze
       - { name: --allow-merge-freeze-reason, type: string,                       default: null }
-      - { name: --queue-timeout,            type: integer,                       default: 2700 } # seconds; merge-queue wait bound
+      - { name: --queue-timeout,            type: integer,                       default: 5700 } # seconds; 90-minute queue window + 5-minute polling margin; flag > built-in default, no env/config setting
     validations:
       - worktree_clean
       - test_first_evidence_provider_head_mismatch # when --expected-head is supplied, the first provider snapshot must still match it before merge mutation

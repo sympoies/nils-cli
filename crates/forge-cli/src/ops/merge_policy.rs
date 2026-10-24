@@ -27,8 +27,8 @@ use crate::provider::ProviderContext;
 /// Label whose open issues are active merge freezes.
 pub const FREEZE_LABEL: &str = "merge-freeze";
 
-/// Default bound on waiting for a merge queue to merge an enqueued PR.
-pub const DEFAULT_QUEUE_TIMEOUT: Duration = Duration::from_secs(45 * 60);
+/// Cover the declared 90-minute queue check window plus five minutes for polling.
+pub const DEFAULT_QUEUE_TIMEOUT: Duration = Duration::from_secs(95 * 60);
 const QUEUE_POLL_INTERVAL: Duration = Duration::from_secs(15);
 /// How long an open PR may read as out of the queue, or a merged PR as having
 /// no merge commit, before that reading is final. GitHub removes the queue
@@ -336,7 +336,7 @@ pub fn wait_for_merge<R: BackendRunner, C: Clock>(
                 } else if grace_over {
                     Err(dequeued(pr, state))
                 } else {
-                    Err(queue_timeout(pr, "none", timeout))
+                    Err(queue_timeout(pr, "none", timeout, ctx, owner, name))
                 };
             }
             clock.sleep(QUEUE_EXIT_POLL_INTERVAL);
@@ -359,20 +359,36 @@ pub fn wait_for_merge<R: BackendRunner, C: Clock>(
                 pr,
                 entry["state"].as_str().unwrap_or("unknown"),
                 timeout,
+                ctx,
+                owner,
+                name,
             ));
         }
         clock.sleep(QUEUE_POLL_INTERVAL);
     }
 }
 
-fn queue_timeout(pr: u64, entry_state: &str, timeout: Duration) -> ForgeError {
+fn queue_timeout(
+    pr: u64,
+    entry_state: &str,
+    timeout: Duration,
+    ctx: &ProviderContext,
+    owner: &str,
+    name: &str,
+) -> ForgeError {
+    let message = if entry_state == "none" {
+        "the wait timed out during a queue transition; queue membership and the final merge outcome are unknown"
+    } else {
+        "the wait timed out while the pull request was still queued; its final merge outcome is unknown"
+    };
     ForgeError::unavailable(
         schema_err(),
         "merge_queue_timeout",
-        "the pull request is still queued and will merge unless it is dequeued; the wait timed out before it landed",
+        message,
         Some(format!(
-            "pr={pr}; entry_state={entry_state}; timeout_secs={}",
-            timeout.as_secs()
+            "pr={pr}; entry_state={entry_state}; timeout_secs={}; next: forge-cli pr view {pr} --repo {owner}/{name} --host {host}; forge-cli pr checks {pr} --repo {owner}/{name} --host {host}",
+            timeout.as_secs(),
+            host = ctx.host
         )),
     )
 }
@@ -479,6 +495,7 @@ fn schema_err() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
     use std::cell::{Cell, RefCell};
     use std::time::Instant;
 
@@ -574,9 +591,46 @@ mod tests {
     #[test]
     fn a_queue_entry_stuck_past_the_bound_times_out() {
         let queued = poll("OPEN", r#"{"state":"QUEUED","position":3}"#);
-        let err = wait(&[&queued], Duration::from_secs(60)).unwrap_err();
-        assert_eq!(err.kind(), "merge_queue_timeout");
-        assert!(err.message().contains("still queued"), "{}", err.message());
+        for timeout in [DEFAULT_QUEUE_TIMEOUT, Duration::from_secs(60)] {
+            let clock = StepClock::new();
+            let err = wait_for_merge(
+                &ScriptedRunner::new(&[&queued]),
+                &clock,
+                &github(),
+                "acme",
+                "widgets",
+                7,
+                timeout,
+            )
+            .unwrap_err();
+            assert_eq!(err.kind(), "merge_queue_timeout");
+            assert_eq!(err.exit_code(), 69);
+            assert_eq!(clock.offset.get(), timeout);
+            assert!(err.message().contains("still queued"), "{}", err.message());
+            let detail = err.detail().expect("timeout detail");
+            assert!(detail.contains("entry_state=QUEUED"), "{detail}");
+            assert!(
+                detail.contains("forge-cli pr view 7 --repo acme/widgets --host github.com"),
+                "{detail}"
+            );
+            assert!(
+                detail.contains("forge-cli pr checks 7 --repo acme/widgets --host github.com"),
+                "{detail}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_default_queue_budget_covers_ninety_minutes_with_polling_margin() {
+        assert_eq!(DEFAULT_QUEUE_TIMEOUT, Duration::from_secs(5700));
+        let queued = poll("OPEN", r#"{"state":"QUEUED","position":3}"#);
+        // Land one poll beyond the declared 90-minute check window.
+        let mut responses = vec![queued.as_str(); 361];
+        responses.push(r#"{"data":{"repository":{"pullRequest":{"state":"MERGED","mergeCommit":{"oid":"abc"},"mergeQueueEntry":null}}}}"#);
+        assert_eq!(
+            wait(&responses, DEFAULT_QUEUE_TIMEOUT).unwrap().as_deref(),
+            Some("abc")
+        );
     }
 
     #[test]
@@ -668,6 +722,18 @@ mod tests {
             "a timeout inside the grace may still see the pull request land"
         );
         assert_eq!(clock.offset.get(), Duration::ZERO);
+        assert!(err.message().contains("unknown"), "{}", err.message());
+        assert!(!err.message().contains("still queued"), "{}", err.message());
+        let detail = err.detail().expect("timeout detail");
+        assert!(detail.contains("entry_state=none"), "{detail}");
+        assert!(
+            detail.contains("forge-cli pr view 7 --repo acme/widgets --host github.com"),
+            "{detail}"
+        );
+        assert!(
+            detail.contains("forge-cli pr checks 7 --repo acme/widgets --host github.com"),
+            "{detail}"
+        );
     }
 
     #[test]

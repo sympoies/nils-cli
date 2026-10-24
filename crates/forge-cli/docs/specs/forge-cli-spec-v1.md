@@ -804,7 +804,10 @@ backend implementations cannot diverge.
       `enqueuePullRequest` and `expectedHeadOid`. Enqueue is skipped when the PR
       is already queued or already merged, so a retried merge resumes the wait
       instead of failing. The command then polls until the PR is merged,
-      bounded by `--queue-timeout` (default 2700 s). Failures:
+      bounded by `--queue-timeout` (default 5700 s: the documented 90-minute
+      queue check window plus a bounded five-minute polling margin). The flag
+      overrides the built-in default; no environment or configuration setting
+      supplies this budget. Failures:
       - `merge_queue_enqueue_rejected` (`RUNTIME 1`): the enqueue mutation
         returned GraphQL errors or no queue entry.
       - `merge_queue_dequeued` (`RUNTIME 1`): the PR was closed, or stayed open
@@ -819,9 +822,12 @@ backend implementations cannot diverge.
         unmergeable.
       - `merge_queue_poll_failed` (`UNAVAILABLE 69`): a poll returned GraphQL
         errors.
-      - `merge_queue_timeout` (`UNAVAILABLE 69`): the bound was exceeded. The
-        PR is still queued and will merge unless it is dequeued, so rerunning
-        `pr merge` resumes the wait.
+      - `merge_queue_timeout` (`UNAVAILABLE 69`): the observation bound was
+        exceeded, not a rejection. The last poll showed a queue entry, or queue
+        membership is unknown during a transition; the final merge outcome is
+        unknown. Read `forge-cli pr view <id>` and `forge-cli pr checks <id>`.
+        The timeout detail supplies exact commands with the same repository
+        and host. Rerunning `pr merge <id>` resumes the wait.
     - The queue's configured method wins. An explicit `--method` that differs is
       refused with `merge_queue_method_mismatch` before enqueue; `pr deliver`
       without `--method` lets the queue decide. The payload sets

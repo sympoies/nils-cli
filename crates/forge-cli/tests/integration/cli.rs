@@ -522,3 +522,15 @@ fn pr_review_loop_validate_ignores_provider_globals() {
 
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
 }
+
+#[test]
+fn pr_merge_help_documents_queue_timeout_default_and_override() {
+    let out = run_forge_cli(&StubEnv::new(), &["pr", "merge", "--help"]);
+    assert_eq!(out.code, 0);
+    assert!(
+        out.stdout.contains("--queue-timeout <SECONDS>"),
+        "{}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("default 5700"), "{}", out.stdout);
+}

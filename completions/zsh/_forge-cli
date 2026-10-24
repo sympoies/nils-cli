@@ -1032,7 +1032,7 @@ _arguments "${_arguments_options[@]}" : \
 '--allow-unchecked-tasks-reason=[Required when \`--allow-unchecked-tasks\` is set. Non-empty free-form text describing why the unchecked items are safe to merge past; the reason is recorded in the merge envelope payload]:TEXT:_default' \
 '*--allow-merge-freeze=[Merge despite an active merge freeze (an open \`merge-freeze\` issue) the caller holds. Repeat to name every active freeze; one left unnamed still triggers \`merge_freeze_active\`. Requires \`--allow-merge-freeze-reason\`]:ISSUE:_default' \
 '--allow-merge-freeze-reason=[Required when \`--allow-merge-freeze\` is set; recorded in the merge envelope payload]:TEXT:_default' \
-'--queue-timeout=[Upper bound, in seconds, on waiting for a required merge queue to merge the enqueued PR (default 2700)]:SECONDS:_default' \
+'--queue-timeout=[Upper bound, in seconds, on waiting for a required merge queue to merge the enqueued PR (default 5700\: 90 minutes plus 5 minutes polling margin). This flag overrides the built-in default; no environment/config setting]:SECONDS:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
