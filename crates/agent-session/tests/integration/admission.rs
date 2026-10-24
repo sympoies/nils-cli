@@ -175,6 +175,15 @@ fn refused(value: &Value) {
     assert_eq!(value["error"]["code"], "session-capacity-exceeded");
     assert_eq!(value["error"]["details"]["max_active_sessions"], 1);
     assert_eq!(value["error"]["details"]["active_sessions"], 1);
+    assert_eq!(value["error"]["details"]["retryable"], true);
+    assert_eq!(
+        value["error"]["details"]["next_action"],
+        "wait-for-capacity"
+    );
+    assert_eq!(
+        value["error"]["details"]["recovery"],
+        json!({"kind":"wait", "condition":"active_sessions_below_limit","safe_to_retry":true})
+    );
 }
 #[test]
 fn admission_simultaneous_cli_creates_are_atomic() {
@@ -471,7 +480,7 @@ fn admission_zero_and_invalid_settings_do_not_launch() {
     assert_eq!(value["error"]["code"], "session-capacity-exceeded");
     assert_eq!(
         value["error"]["details"],
-        json!({"max_active_sessions":0,"active_sessions":0})
+        json!({"max_active_sessions":0,"active_sessions":0,"retryable":true,"next_action":"wait-for-capacity","recovery":{"kind":"wait","condition":"active_sessions_below_limit","safe_to_retry":true}})
     );
     fs::write(
         f.dir.path().join("state/admission.json"),
@@ -483,6 +492,11 @@ fn admission_zero_and_invalid_settings_do_not_launch() {
     assert_eq!(
         envelope(&invalid)["error"]["code"],
         "session-admission-config-invalid"
+    );
+    assert_eq!(envelope(&invalid)["error"]["details"]["retryable"], false);
+    assert_eq!(
+        envelope(&invalid)["error"]["details"]["next_action"],
+        "repair-admission-config"
     );
     assert_eq!(f.starts(), 0);
     assert!(!f.dir.path().join("state/sessions/zero").exists());

@@ -13,6 +13,9 @@ fn identifier(value: &Value) -> Option<&str> {
 }
 
 pub(super) fn forward(error: &Value) -> Option<CliError> {
+    if error["code"] == "session-capacity-exceeded" {
+        return crate::admission::forward_refusal(error);
+    }
     if error["code"] != "start-failed" {
         return None;
     }

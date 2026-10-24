@@ -8,7 +8,7 @@ struct Settings {
     max_active_sessions: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub(crate) struct Snapshot {
     max_active_sessions: Option<u64>,
     active_sessions: usize,
@@ -40,7 +40,9 @@ fn config_error() -> CliError {
     CliError::data(
         "session-admission-config-invalid",
         "admission.json must contain an optional non-negative integer max_active_sessions",
-        None,
+        Some(
+            json!({"retryable":false,"next_action":"repair-admission-config","recovery":{"kind":"repair_configuration","safe_to_retry":true}}),
+        ),
     )
 }
 
@@ -147,7 +149,9 @@ fn state_error() -> CliError {
     CliError::runtime(
         "session-admission-state-unavailable",
         "session admission occupancy could not be read safely",
-        None,
+        Some(
+            json!({"retryable":true,"next_action":"retry-admission","recovery":{"kind":"retry","safe_to_retry":true}}),
+        ),
     )
 }
 
@@ -165,15 +169,39 @@ pub(super) fn reserve(
     let lock = coordination::lock_private_store(context, "session-admission.lock")?;
     let active = occupancy(context, tmux_bin, exclude_id)?;
     if active as u64 >= max {
-        return Err(CliError::runtime(
-            "session-capacity-exceeded",
-            format!(
-                "session capacity reached ({active}/{max}); stop or delete an active session before creating another"
-            ),
-            Some(json!({"max_active_sessions": max, "active_sessions":active})),
-        ));
+        return Err(capacity_error(max, active as u64));
     }
     Ok(Some(lock))
+}
+
+fn capacity_error(max: u64, active: u64) -> CliError {
+    CliError::runtime(
+        "session-capacity-exceeded",
+        format!(
+            "session capacity reached ({active}/{max}); stop or delete an active session before creating another"
+        ),
+        Some(json!({
+            "max_active_sessions":max, "active_sessions":active,
+            "retryable":true, "next_action":"wait-for-capacity",
+            "recovery":{"kind":"wait", "condition":"active_sessions_below_limit", "safe_to_retry":true}
+        })),
+    )
+}
+
+/// Preserve only the proven pre-create refusal across Console's two HTTP
+/// hops. Reconstruct typed recovery; never forward upstream text or extras.
+pub(crate) fn forward_refusal(error: &Value) -> Option<CliError> {
+    if error["code"] != "session-capacity-exceeded" {
+        return None;
+    }
+    let details = &error["details"];
+    let max = details["max_active_sessions"].as_u64()?;
+    let active = details["active_sessions"].as_u64()?;
+    if active < max || details["retryable"] != true || details["recovery"]["safe_to_retry"] != true
+    {
+        return None;
+    }
+    Some(capacity_error(max, active))
 }
 
 pub(super) fn create_record_with_lineage(
@@ -344,4 +372,79 @@ pub(super) fn create_record_with_lineage(
         session_storage,
         _lifecycle_lock: Some(lifecycle_lock),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nils_test_support::http::{HttpResponse, LoopbackServer};
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn admission_console_relay_retains_capacity_and_not_created_receipt() {
+        let temporary = tempfile::tempdir().unwrap();
+        let context = CliContext {
+            state_dir: temporary.path().join("state"),
+            host: Some("example-host".into()),
+        };
+        let id =
+            crate::tests::create_test_record_id(&context, AgentKind::Codex, None, Some("caller"));
+        let record = load_session_record(&context, &id).unwrap();
+        let capability = coordination::provision(&context, &record).unwrap();
+        let token = fs::read_to_string(capability).unwrap();
+        let incarnation = record.runtime.as_ref().unwrap().launch_id.as_str();
+        write_private_file(
+            &coordination::heartbeat_path(&context.state_dir, &id),
+            format!("{incarnation}:{}\n", Timestamp::now().as_second()).as_bytes(),
+        )
+        .unwrap();
+        let server = LoopbackServer::new().unwrap();
+        server.add_route("POST", "/api/coordination/sessions/v1", HttpResponse::new(409, json!({"ok":false,"error":{
+            "code":"session-capacity-exceeded", "message":"untrusted-sentinel",
+            "details":{"max_active_sessions":1,"active_sessions":1,"retryable":true,"recovery":{"safe_to_retry":true},"private_payload":"untrusted-sentinel"}
+        }}).to_string()));
+        let config = coordination::remote::Config {
+            machine: "example-host".into(),
+            url: server.url(),
+            token: "fixture-relay".into(),
+            ingress_token: "fixture-ingress".into(),
+        };
+        let operation = uuid::Uuid::now_v7().to_string();
+        let error = coordination::console_start::relay_route(
+            &context,
+            Some(&config),
+            &id,
+            token.trim(),
+            &json!({"operation_id":operation,"session":{"agent":"claude","cwd":"/repo"}}),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "session-capacity-exceeded");
+        assert_eq!(
+            server.take_requests().len(),
+            1,
+            "the real HTTP refusal must arrive"
+        );
+        let details = error.details().unwrap();
+        assert_eq!(details["max_active_sessions"], 1);
+        assert_eq!(details["active_sessions"], 1);
+        assert_eq!(details["retryable"], true);
+        assert_eq!(details["next_action"], "wait-for-capacity");
+        assert_eq!(details["recovery"]["safe_to_retry"], true);
+        assert!(!details.to_string().contains("untrusted-sentinel"));
+        assert!(!error.into_inner().message.contains("untrusted-sentinel"));
+        let receipt = coordination::console_start::relay_route(
+            &context,
+            Some(&config),
+            &id,
+            token.trim(),
+            &json!({"operation_id":operation,"reconcile":true}),
+        )
+        .unwrap();
+        assert_eq!(receipt["reconciliation"]["state"], "not_created");
+        assert_eq!(receipt["reconciliation"]["safe_to_retry"], true);
+        assert!(
+            server.take_requests().is_empty(),
+            "a known refusal must not submit or probe again"
+        );
+    }
 }

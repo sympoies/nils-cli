@@ -16,7 +16,7 @@
 
 ### Evidence
 
-- Seven focused CLI/HTTP boundary tests pass. Retained pre-fix RED showed both
+- Seven focused CLI/HTTP boundary tests and a real loopback Console relay test pass. Retained pre-fix RED showed both
   concurrent creates succeeding at limit one and a stopped-record resume
   bypassing occupied capacity.
 

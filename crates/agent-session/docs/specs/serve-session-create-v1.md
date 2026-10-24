@@ -148,7 +148,17 @@ override `admission.json` or evict a session. A full state root returns HTTP `40
   "error": {
     "code": "session-capacity-exceeded",
     "message": "session capacity reached (1/1); stop or delete an active session before creating another",
-    "details": {"max_active_sessions": 1, "active_sessions": 1}
+    "details": {
+      "max_active_sessions": 1,
+      "active_sessions": 1,
+      "retryable": true,
+      "next_action": "wait-for-capacity",
+      "recovery": {
+        "kind": "wait",
+        "condition": "active_sessions_below_limit",
+        "safe_to_retry": true
+      }
+    }
   }
 }
 ```
@@ -160,3 +170,8 @@ and idempotency rules. Resuming a stopped record also requires capacity; an
 already-active resume retains its slot. Daemon restart does not reset occupancy.
 Operators can inspect the read-only `agent-session diagnose --format json`
 `data.admission` snapshot without sending a create request.
+
+Console forwarding retains only validated numeric capacity and canonical recovery
+fields, discarding upstream free text and extra payload. A proven pre-create
+capacity refusal reconciles through the existing operation receipt as
+`not_created` with `safe_to_retry: true`; reconciliation does not create again.

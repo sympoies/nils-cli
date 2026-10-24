@@ -320,6 +320,7 @@ mod tests {
     #[test]
     fn the_text_projection_names_the_recovery_for_each_code() {
         let bundle = Bundle {
+            admission: crate::admission::Snapshot::default(),
             schema_version: BUNDLE_VERSION,
             binary_version: "1.2.3".to_string(),
             health: Health::Degraded,
@@ -365,6 +366,7 @@ mod tests {
     #[test]
     fn an_empty_plane_renders_an_explicit_empty_projection() {
         let bundle = Bundle {
+            admission: crate::admission::Snapshot::default(),
             schema_version: BUNDLE_VERSION,
             binary_version: "1.2.3".to_string(),
             health: Health::Healthy,

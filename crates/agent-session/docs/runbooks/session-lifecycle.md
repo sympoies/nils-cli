@@ -19,7 +19,9 @@ in the directory selected by `--state-dir` or `AGENT_SESSION_STATE_DIR`:
 The optional value is a non-negative integer: `0` refuses all new admissions;
 missing file, omitted key, or `null` keeps the default unlimited behavior.
 The setting is read on each admission, so CLI and daemon callers using the same
-state root share the effective policy without restarting the daemon. Keep the
+state root share the effective policy without restarting the daemon. Capacity
+admission is independent of advisory work-context claims and applies across
+coordination modes. Keep the
 state root operator-owned and replace the settings file atomically when editing
 it. Lowering the limit never evicts an existing session.
 
@@ -49,7 +51,9 @@ probe tmux liveness. Occupancy can change immediately after the snapshot.
 
 At capacity, CLI commands exit `1` with `error.code` set to
 `session-capacity-exceeded`. The refusal's `error.details` contains
-`max_active_sessions` and `active_sessions`; the human message tells the operator
+`max_active_sessions`, `active_sessions`, `retryable: true`,
+`next_action: "wait-for-capacity"`, and bounded `recovery` metadata with
+`safe_to_retry: true`; the human message tells the operator
 to stop or delete an active session. No refused create leaves a session directory
 or starts tmux/provider work. HTTP callers receive the same code and details with
 HTTP `409`; see [session creation v1](../specs/serve-session-create-v1.md).
