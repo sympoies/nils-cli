@@ -241,6 +241,45 @@ fn synthetic_dim_suggestions_are_empty_for_both_harnesses_but_typed_twins_are_dr
 }
 
 #[test]
+fn codex_dim_empty_hint_allows_unstyled_trailing_layout_spaces() {
+    let pane = codex(
+        "\u{1b}[2mAsk Codex to do anything\u{1b}[22m   ",
+        "",
+        "status",
+    );
+    assert_eq!(exact_composer_input("codex", &pane).as_deref(), Some(""));
+    assert_eq!(direct_composer_input("codex", &pane).as_deref(), Some(""));
+
+    let draft = codex("user draft   ", "", "status");
+    assert_eq!(
+        direct_composer_input("codex", &draft).as_deref(),
+        Some("user draft   ")
+    );
+
+    let wrapped = codex("user draft", "  second line\n", "status");
+    assert_eq!(direct_composer_input("codex", &wrapped), None);
+
+    let dialog = codex("", "", "enter to confirm · esc to cancel");
+    assert_eq!(direct_composer_input("codex", &dialog), None);
+
+    let unobservable = codex("\u{1b}[?25h", "", "status");
+    assert_eq!(direct_composer_input("codex", &unobservable), None);
+}
+
+#[test]
+fn codex_dim_styled_trailing_spaces_remain_nonempty() {
+    let pane = codex(
+        "\u{1b}[2mAsk Codex to do anything   \u{1b}[22m",
+        "",
+        "status",
+    );
+    assert_eq!(
+        direct_composer_input("codex", &pane).as_deref(),
+        Some("Ask Codex to do anything   ")
+    );
+}
+
+#[test]
 fn claude_nbsp_separator_preserves_empty_suggestion_and_draft_states() {
     for (input, expected) in [
         ("", ""),

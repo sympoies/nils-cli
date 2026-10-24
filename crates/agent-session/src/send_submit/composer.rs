@@ -58,7 +58,16 @@ fn composer_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Option<St
     } else {
         input
     };
-    let fully_dim = dim_hint(input, &dim[offset..offset + input.len()]);
+    // Codex can leave unstyled layout cells after its native dim hint. Ignore
+    // only trailing spaces without dim styling; styled whitespace and any
+    // unstyled draft text still prevent an empty classification.
+    let mut hint_end = input.len();
+    if agent == "codex" {
+        while input[..hint_end].ends_with(' ') && !dim[offset + hint_end - 1] {
+            hint_end -= 1;
+        }
+    }
+    let fully_dim = dim_hint(&input[..hint_end], &dim[offset..offset + hint_end]);
     let compressed = compact(input);
     if compressed == CLAUDE_QUEUED_HINT {
         if !allow_queued_hint || agent != "claude" {
