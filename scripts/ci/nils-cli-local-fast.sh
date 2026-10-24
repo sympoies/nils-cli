@@ -156,7 +156,9 @@ if [[ "${NILS_CLI_GATE_ACTIVE:-0}" == "1" && -n "${NILS_CLI_LOCAL_FAST_PLAN:-}" 
 else
   unset NILS_CLI_LOCAL_FAST_PLAN
   changed_input="$(collect_changed_files)"
-  plan="$(python3 - "$repo_root" "$changed_input" <<'PY'
+  # Assignment values do not word-split. Leave this substitution unquoted:
+  # Bash 3.2 misparses quotes in the embedded heredoc inside a quoted $(...).
+  plan=$(python3 - "$repo_root" "$changed_input" <<'PY'
 import json
 import pathlib
 import shutil
@@ -375,7 +377,7 @@ for reason in sorted(set(workspace_reasons)):
 for shell_file in sorted(set(shell_files)):
     emit("shell", shell_file)
 PY
-)"
+)
 fi
 
 mode=""
