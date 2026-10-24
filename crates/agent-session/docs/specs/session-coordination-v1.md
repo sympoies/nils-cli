@@ -345,11 +345,15 @@ States are `active`, `completing`, `reconcile_pending`, `completed`, `failed`, a
   ended, which also supplies no descendant identity, is therefore unsupported
   under `enforce` coordination: it can be finalized while it runs. Run
   mutations in the foreground turn that admitted them.
-- No `broker prepare-admission-proof` or `broker proof` command exists. A
-  guard that lost an admission reply replays the exact `admit` request by its
-  idempotency key to recover the lease and its execution token, then finalizes
-  it with `complete` or `reconcile`; that replay, together with the reclaim
-  above, is the supported recovery for a lost admission.
+- Exact non-executing recovery uses authenticated `broker prepare-admission-proof`
+  and `broker proof`, as specified in [Broker evidence v1](broker-evidence-v1.md).
+  Preparation binds the existing admission request digest without issuing or
+  replaying admission. Only an exact retained active operation with no outcome
+  can restore its issued lease; uncertainty grants no execution authority.
+- Exact `admit` replay remains supported for older consumers and producers.
+  A guard replays the unchanged idempotency key, token and targets, then uses
+  `complete` or `reconcile`. Proof-capable consumers prefer evidence to replay;
+  neither aggregate counts nor missing retention prove terminality.
 
 ## Idempotency
 

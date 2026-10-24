@@ -72,3 +72,6 @@ mod mailbox_reminder;
 
 #[path = "integration/delete_escaped.rs"]
 mod delete_escaped;
+
+#[path = "integration/broker_proof.rs"]
+mod broker_proof;

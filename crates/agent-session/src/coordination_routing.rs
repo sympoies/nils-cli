@@ -28,6 +28,8 @@ pub(crate) fn command_name(command: &Command) -> Option<&'static str> {
             cli::WorkContextCommand::Reconcile(_) => "work-context-reconcile",
         }),
         Command::Broker(args) => Some(match &args.command {
+            cli::BrokerCommand::PrepareAdmissionProof(_) => "broker-prepare-admission-proof",
+            cli::BrokerCommand::Proof(_) => "broker-proof",
             cli::BrokerCommand::Identity(_) => "broker-identity",
             cli::BrokerCommand::Status(_) => "broker-status",
             cli::BrokerCommand::Adopt(_) => "broker-adopt",
@@ -93,6 +95,8 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             ("work-context", "admit") => Some("work-context-admit"),
             ("work-context", "complete") => Some("work-context-complete"),
             ("work-context", "reconcile") => Some("work-context-reconcile"),
+            ("broker", "prepare-admission-proof") => Some("broker-prepare-admission-proof"),
+            ("broker", "proof") => Some("broker-proof"),
             ("broker", "identity") => Some("broker-identity"),
             ("broker", "status") => Some("broker-status"),
             ("broker", "adopt") => Some("broker-adopt"),
@@ -166,6 +170,8 @@ pub(crate) fn command_format(command: &Command) -> OutputFormat {
             cli::WorkContextCommand::Reconcile(args) => args.format,
         },
         Command::Broker(args) => match &args.command {
+            cli::BrokerCommand::PrepareAdmissionProof(args) => args.format,
+            cli::BrokerCommand::Proof(args) => args.format,
             cli::BrokerCommand::Identity(args) | cli::BrokerCommand::Status(args) => args.format,
             cli::BrokerCommand::Adopt(args) | cli::BrokerCommand::Reconcile(args) => args.format,
             cli::BrokerCommand::RetireStopped(args) => args.format,

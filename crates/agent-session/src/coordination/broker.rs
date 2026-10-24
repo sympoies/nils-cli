@@ -1709,6 +1709,16 @@ fn heartbeat_fresh_with_clock(
 /// coordination incarnation.
 pub(crate) fn run_broker(context: &CliContext, args: crate::cli::BrokerArgs) -> i32 {
     let (command, format, result) = match args.command {
+        crate::cli::BrokerCommand::PrepareAdmissionProof(args) => (
+            "broker-prepare-admission-proof",
+            args.format,
+            super::broker_proof::prepare(context, args),
+        ),
+        crate::cli::BrokerCommand::Proof(args) => (
+            "broker-proof",
+            args.format,
+            super::broker_proof::proof(context, args),
+        ),
         crate::cli::BrokerCommand::Identity(args) => (
             "broker-identity",
             args.format,

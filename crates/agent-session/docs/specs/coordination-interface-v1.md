@@ -34,6 +34,8 @@ agent-session work-context complete --session ID --lease UUID --if-revision N --
 agent-session work-context reconcile --session ID --lease UUID --if-revision N --proof-file JSON --capability-file FILE --idempotency-key KEY
 
 agent-session broker status --session ID [--capability-file FILE]
+agent-session broker prepare-admission-proof [--session ID] --claim UUID --claim-revision N --operation KIND --targets-file JSON --execution-token-file FILE --admit-idempotency-key KEY [--capability-file FILE]
+agent-session broker proof --session ID --expected-incarnation ID --expected-generation N --batch-file JSON [--capability-file FILE]
 agent-session broker adopt --session ID --capability-file FILE --proof-file JSON --idempotency-key KEY
 agent-session broker reconcile --session ID --capability-file FILE --proof-file JSON --operation UUID --if-revision N --attest-inactive --idempotency-key KEY
 agent-session readiness --format json

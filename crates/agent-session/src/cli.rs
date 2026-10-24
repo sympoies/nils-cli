@@ -1,3 +1,4 @@
+pub mod broker_proof;
 pub(crate) mod send_key;
 
 use std::path::PathBuf;
@@ -697,6 +698,10 @@ pub struct BrokerArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum BrokerCommand {
+    /// Prepare an exact digest selector without admitting or replaying an operation.
+    PrepareAdmissionProof(broker_proof::PrepareAdmissionProofArgs),
+    /// Inspect a bounded batch of authenticated exact admission and operation proofs.
+    Proof(broker_proof::BrokerProofArgs),
     /// Show privacy-safe broker readiness and claim/operation summaries.
     Status(BrokerStatusArgs),
     /// Authenticate and project the immutable forge launch binding (no credential access).
