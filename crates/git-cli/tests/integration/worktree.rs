@@ -1638,6 +1638,13 @@ fn safe_removal_missing_author_identity_reports_reason_and_retains_target() {
         reason.contains("identity"),
         "missing identity reason: {error}"
     );
+    assert!(
+        error["error"]["hint"]
+            .as_str()
+            .unwrap_or("")
+            .contains("identity"),
+        "missing identity recovery hint: {error}"
+    );
     assert!(target.exists());
     assert_eq!(
         fs::read_to_string(target.join("README.md")).unwrap(),
@@ -1708,6 +1715,123 @@ fn safe_removal_backup_cap_requires_acknowledgment_and_records_omissions() {
     let result = fixture.restore(backup, None);
     assert_eq!(result.code, 0, "{}", result.stdout_text());
     assert!(!Path::new(&fixture.target).join("large.bin").exists());
+}
+
+fn write_oversize_omissions(target: &Path, count: usize) -> Vec<String> {
+    let mut paths = Vec::with_capacity(count);
+    for index in 0..count {
+        let name = format!("{index:05}{}.bin", "x".repeat(180));
+        fs::write(target.join(&name), b"x").unwrap();
+        paths.push(name);
+    }
+    paths
+}
+
+#[test]
+fn safe_removal_large_omission_metadata_uses_bounded_git_input() {
+    let fixture = RemovalFixture::new();
+    let target = Path::new(&fixture.target);
+    git(
+        fixture.repo.path(),
+        &["config", "worktree.backupMaxBytes", "1"],
+    );
+    let paths = write_oversize_omissions(target, 2_000);
+
+    let result = run_with(
+        &fixture.harness.git_cli_bin(),
+        &[
+            "worktree",
+            "remove",
+            "safe",
+            "--acknowledge-backup-omissions",
+            "--format",
+            "json",
+        ],
+        &fixture.options(fixture.repo.path()),
+    );
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    let receipt = parse_json(&result);
+    let omissions = receipt["data"]["backup_omissions"].as_array().unwrap();
+    assert_eq!(omissions.len(), paths.len());
+    let omitted_paths = omissions
+        .iter()
+        .filter_map(|row| row["path"].as_str())
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(
+        paths
+            .iter()
+            .filter(|path| omitted_paths.contains(path.as_str()))
+            .count(),
+        paths.len() - 1
+    );
+    let backup = receipt["data"]["backup_ref"].as_str().unwrap();
+    let restored = fixture.restore(backup, None);
+    assert_eq!(restored.code, 0, "{}", restored.stdout_text());
+    assert_eq!(
+        paths
+            .iter()
+            .filter(|path| target.join(path).exists())
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn safe_removal_large_omission_set_uses_bounded_git_arguments() {
+    let fixture = RemovalFixture::new();
+    let target = Path::new(&fixture.target);
+    git(
+        fixture.repo.path(),
+        &["config", "worktree.backupMaxBytes", "1"],
+    );
+
+    let paths = write_oversize_omissions(target, 20_000);
+
+    let result = run_with(
+        &fixture.harness.git_cli_bin(),
+        &[
+            "worktree",
+            "remove",
+            "safe",
+            "--acknowledge-backup-omissions",
+            "--format",
+            "json",
+        ],
+        &fixture.options(fixture.repo.path()),
+    );
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    let receipt = parse_json(&result);
+    let omissions = receipt["data"]["backup_omissions"].as_array().unwrap();
+    assert_eq!(omissions.len(), paths.len());
+    let omitted_paths = omissions
+        .iter()
+        .filter_map(|row| row["path"].as_str())
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(
+        paths
+            .iter()
+            .filter(|path| omitted_paths.contains(path.as_str()))
+            .count(),
+        paths.len() - 1
+    );
+
+    let backup = receipt["data"]["backup_ref"].as_str().unwrap();
+    let restored = fixture.restore(backup, None);
+    assert_eq!(restored.code, 0, "{}", restored.stdout_text());
+    assert_eq!(
+        paths
+            .iter()
+            .filter(|path| target.join(path).exists())
+            .count(),
+        1
+    );
+    assert_eq!(
+        paths
+            .iter()
+            .filter(|path| !target.join(path).exists())
+            .count(),
+        paths.len() - 1
+    );
 }
 
 #[test]
