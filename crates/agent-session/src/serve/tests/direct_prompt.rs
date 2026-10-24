@@ -3,6 +3,17 @@ use super::*;
 use pretty_assertions::assert_eq;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+fn codex_pane_after_backspace(working: bool) -> String {
+    format!(
+        "{}› \u{1b}[2mAsk Codex to do anything\u{1b}[22m   \n\n  status",
+        if working {
+            "• Working (esc to interrupt)\n\n"
+        } else {
+            ""
+        }
+    )
+}
+
 struct DirectFixture {
     tmp: tempfile::TempDir,
     state: Arc<ServeState>,
@@ -177,6 +188,13 @@ async fn preserves_draft_then_retries(provider: &str) {
 async fn empty_composer_delivers(provider: &str) {
     for route in ["prompt", "prompt/v2"] {
         let fixture = DirectFixture::new(provider);
+        if provider == "codex" {
+            fs::write(
+                fixture.tmp.path().join("pane-override"),
+                codex_pane_after_backspace(false),
+            )
+            .unwrap();
+        }
         let (status, sent) = fixture.submit(route, fixture.body(route)).await;
         assert_eq!(status, StatusCode::OK, "{provider} {route}: {sent}");
         assert_eq!(sent["data"]["submitted"], true);
@@ -272,7 +290,7 @@ async fn direct_working_codex_with_empty_composer_delivers() {
         let fixture = DirectFixture::new("codex");
         fs::write(
             fixture.tmp.path().join("pane-override"),
-            "• Working (esc to interrupt)\n\n› \n\n  status",
+            codex_pane_after_backspace(true),
         )
         .unwrap();
         let (status, result) = fixture.submit(route, fixture.body(route)).await;
