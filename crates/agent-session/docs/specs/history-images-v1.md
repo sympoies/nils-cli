@@ -43,6 +43,16 @@ embedded source's declared type. SVG and other active/unsupported formats are
 unavailable. Clients should also replace decode failures with an unavailable
 placeholder rather than a broken-image icon.
 
+When an original filename is known, success also includes
+`Content-Disposition: attachment; filename*=UTF-8''<percent-encoded-name>`.
+Names contain only the leaf component, with control characters removed; UTF-8
+bytes are percent encoded. Uploads retain bounded original display-name metadata
+separately from their compatible sanitized on-disk names. That metadata is
+session-owned and read through the same no-follow boundary. File-backed sources
+outside managed uploads use their leaf name; embedded images and older uploads
+without original-name metadata omit the header. Image bytes, MIME, length and
+authorization are unchanged.
+
 Errors use the ordinary JSON `ok: false` envelope:
 
 | Status | Code | Display |
@@ -71,7 +81,8 @@ the trusted root with descriptor-relative `O_NOFOLLOW` opens, including parent
 directories; FIFOs/devices and other non-regular files are refused.
 
 Uploads live on the upstream session machine under
-`<state>/sessions/<id>/attachments/`. Archive/delete logically removes the whole
+`<state>/sessions/<id>/attachments/`, with display-name metadata under the sibling
+`attachment-names/` directory. Archive/delete logically removes the whole
 session directory into a private tombstone and attempts recursive cleanup;
 physical cleanup can remain pending. Provider transcripts and generated files
 live in provider/tool-owned storage. This API adds no image cache, copy or TTL,

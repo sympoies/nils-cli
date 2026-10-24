@@ -175,7 +175,11 @@ impl HistoryCatalog {
             return Err(ImageReadError::Unavailable);
         }
         let mime = sniff_mime(&bytes).ok_or(ImageReadError::Unavailable)?;
-        Ok(ImageBytes { mime, bytes })
+        Ok(ImageBytes {
+            mime,
+            bytes,
+            filename: self.image_filename(session, Path::new(path)),
+        })
     }
 
     fn upload_file(

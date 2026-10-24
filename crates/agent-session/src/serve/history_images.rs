@@ -63,7 +63,14 @@ async fn image_handler(
     }
     let catalog = state.history_catalog.clone();
     let mut response = match tokio::task::spawn_blocking(move || catalog.image(&id, &image_id)).await {
-        Ok(Ok(image)) => ([(CONTENT_TYPE, image.mime)], image.bytes).into_response(),
+        Ok(Ok(image)) => {
+            let filename = image.filename.as_deref().and_then(crate::attachment_filename::content_disposition);
+            let mut response = ([(CONTENT_TYPE, image.mime)], image.bytes).into_response();
+            if let Some(filename) = filename {
+                response.headers_mut().insert("content-disposition", filename);
+            }
+            response
+        },
         Ok(Err(provider_history::history_images::ImageReadError::Deleted)) => (
             StatusCode::NOT_FOUND, Json(json!({"ok":false,"error":{"code":"history-image-deleted","message":"Image deleted"}}))
         ).into_response(),

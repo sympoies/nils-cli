@@ -3,6 +3,8 @@ mod account_broker;
 pub mod activity;
 mod activity_ingress;
 mod agent_bin;
+mod attachment_filename;
+use attachment_filename::{attachment_candidate_path, sanitize_attachment_filename};
 mod auth_incident;
 #[doc(hidden)]
 pub mod auto_resume;
@@ -5842,6 +5844,7 @@ fn effective_session_title_state(record: &SessionRecord) -> Option<SessionTitleS
 struct PendingAttachment {
     id: String,
     filename: String,
+    original_filename: Option<String>,
     dir: PathBuf,
     content_type: Option<String>,
     file: tempfile::NamedTempFile,
@@ -5862,6 +5865,7 @@ impl PendingAttachment {
         let Self {
             id,
             filename,
+            original_filename,
             dir,
             content_type,
             file,
@@ -5871,6 +5875,12 @@ impl PendingAttachment {
             let path = attachment_candidate_path(&dir, &filename, attempt);
             match file.persist_noclobber(&path) {
                 Ok(_) => {
+                    if let Err(error) =
+                        attachment_filename::store(&path, original_filename.as_deref())
+                    {
+                        let _ = fs::remove_file(&path);
+                        return Err(error);
+                    }
                     return Ok(AttachmentResult {
                         id,
                         filename,
@@ -5906,6 +5916,7 @@ fn prepare_session_attachment(
     content_type: Option<String>,
 ) -> Result<PendingAttachment, CliError> {
     let record = load_session_record(context, id)?;
+    let original_filename = filename.and_then(attachment_filename::sanitize_download_filename);
     let filename = sanitize_attachment_filename(filename.unwrap_or("attachment.bin"));
     let dir = session_dir(context, &record.id).join("attachments");
     ensure_private_dir(&dir)?;
@@ -5923,46 +5934,11 @@ fn prepare_session_attachment(
     Ok(PendingAttachment {
         id: record.id,
         filename,
+        original_filename,
         dir,
         content_type,
         file,
     })
-}
-
-fn sanitize_attachment_filename(raw: &str) -> String {
-    let leaf = Path::new(raw)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("attachment.bin");
-    let mut safe = leaf
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    safe = safe
-        .trim_matches(|ch| matches!(ch, '.' | '-' | '_'))
-        .to_string();
-    if safe.is_empty() {
-        safe = "attachment.bin".to_string();
-    }
-    if safe.len() > 120 {
-        safe.truncate(120);
-    }
-    safe
-}
-
-fn attachment_candidate_path(dir: &Path, filename: &str, attempt: usize) -> PathBuf {
-    let stamp = Zoned::now().strftime("%Y%m%d-%H%M%S").to_string();
-    if attempt == 0 {
-        dir.join(format!("{stamp}-{filename}"))
-    } else {
-        dir.join(format!("{stamp}-{attempt}-{filename}"))
-    }
 }
 
 const WORKDIR_SEARCH_MAX_DEPTH: usize = 4;
