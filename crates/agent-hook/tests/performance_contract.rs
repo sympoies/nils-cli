@@ -34,27 +34,6 @@ override_class = "locked"
 capability = { id = "decision.allow.v1", reason_code = "allowed" }
 "#;
 
-fn owner_policy() -> String {
-    format!(
-        r#"schema_version = "agent-hook.policy.v1"
-bundle_id = "runtime-kit"
-version = "2026.07.20.1"
-
-[[rules]]
-id = "runtime.owner"
-products = ["codex"]
-events = ["PreToolUse"]
-matcher = "apply_patch"
-priority = 10
-mode = "enforce"
-failure_posture = "closed"
-override_class = "locked"
-capability = {{ id = "agent-session.owner-liveness.v1", reason_code = "owner", {} = 300 }}
-"#,
-        concat!("leg", "acy_ttl_seconds")
-    )
-}
-
 fn owner_policy_with_rules(cardinality: usize) -> String {
     let mut policy = String::from(
         "schema_version = \"agent-hook.policy.v1\"\nbundle_id = \"runtime-kit\"\nversion = \"2026.07.20.1\"\n",
@@ -72,7 +51,7 @@ const TARGET_CARDINALITIES: [usize; 4] = [1, 16, 64, 256];
 
 #[test]
 fn ordinary_worktree_target_binding_avoids_git_root_processes() {
-    let fixture = Fixture::new(&owner_policy());
+    let fixture = Fixture::new(ALLOW_POLICY);
     init_repository(&fixture.root);
     let shim = fixture.root.join("shim");
     fs::create_dir(&shim).expect("shim dir");
@@ -103,8 +82,9 @@ fn ordinary_worktree_target_binding_avoids_git_root_processes() {
                 ("AGENT_HOOK_GIT_ROOT_LOG", log_arg.as_str()),
             ],
         );
-        assert!(
-            matches!(output.code, 0 | 1),
+        assert_eq!(
+            output.code,
+            0,
             "targets={cardinality} stdout={} stderr={}",
             output.stdout_text(),
             output.stderr_text()
