@@ -28,6 +28,7 @@ pub struct PrepareAdmissionProofArgs {
 
 #[derive(Debug, Args)]
 pub struct BrokerProofArgs {
+    /// Managed session id whose exact broker evidence is inspected.
     #[arg(long)]
     pub session: String,
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
