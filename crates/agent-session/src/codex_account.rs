@@ -152,6 +152,7 @@ impl RefreshBindingAttempt {
 pub struct CodexAccountView {
     pub(crate) schema_version: &'static str,
     pub supported: bool,
+    pub applicable: bool,
     pub state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_account: Option<String>,
@@ -232,13 +233,17 @@ pub(crate) fn broker_is_configured() -> bool {
 
 pub fn view_for_record(record: &SessionRecord) -> CodexAccountView {
     let decoded = decode_binding(record);
+    let applicable = record.agent == "codex"
+        && crate::runtime_environment::provider_facts::account_applicable(record);
     if record.agent != "codex"
         || !crate::codex_app_server::runtime_is_supported(record)
         || !broker_is_configured()
+        || !applicable
     {
         return CodexAccountView {
             schema_version: VIEW_SCHEMA_VERSION,
             supported: false,
+            applicable,
             state: "unsupported",
             selected_account: match &decoded {
                 DecodedBinding::Valid(binding) => Some(binding.selected_account.clone()),
@@ -266,6 +271,7 @@ pub fn view_for_record(record: &SessionRecord) -> CodexAccountView {
             return CodexAccountView {
                 schema_version: VIEW_SCHEMA_VERSION,
                 supported: true,
+                applicable: true,
                 state: "unbound",
                 selected_account: None,
                 effective_account: None,
@@ -280,6 +286,7 @@ pub fn view_for_record(record: &SessionRecord) -> CodexAccountView {
             return CodexAccountView {
                 schema_version: VIEW_SCHEMA_VERSION,
                 supported: true,
+                applicable: true,
                 state: "failed",
                 selected_account: None,
                 effective_account: None,
@@ -302,6 +309,7 @@ pub fn view_for_record(record: &SessionRecord) -> CodexAccountView {
     CodexAccountView {
         schema_version: VIEW_SCHEMA_VERSION,
         supported: true,
+        applicable: true,
         state,
         selected_account: Some(binding.selected_account.clone()),
         effective_account,

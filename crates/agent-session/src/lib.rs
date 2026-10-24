@@ -2700,7 +2700,7 @@ fn persist_initial_profile_context(
             json!(account),
         );
     }
-    if let Err(err) = write_session_record(context, &created.record) {
+    if let Err(err) = runtime_environment::write_launch_record(context, &mut created.record) {
         cleanup_created_record(context, created);
         return Err(err);
     }
@@ -2984,7 +2984,7 @@ fn create_record_with_lineage(
         role: None,
         resume_sidecar_extra: BTreeMap::new(),
     };
-    session_model::ModelSettings::store_launch(&mut record);
+    runtime_environment::store_launch(&mut record);
     origin::Fields::default().store(&mut record);
     if let Some(mut initial) = initial_lineage {
         initial.origin.store(&mut record);
@@ -3783,20 +3783,20 @@ fn start_run_tmux(
     command.arg("sh").arg("-lc").arg(script);
     run_tmux_new_session(command, tmux_bin, record)
 }
-
 fn run_tmux_new_session(
     command: ProcessCommand,
     tmux_bin: &Path,
     record: &SessionRecord,
 ) -> Result<TmuxRuntimeIdentity, CliError> {
-    let output = run_output_with_timeout(command, PANE_INPUT_COMMAND_TIMEOUT).map_err(|err| {
-        let code = if err.kind() == io::ErrorKind::TimedOut {
-            "command-timeout"
-        } else {
-            "command-wait-failed"
-        };
-        CliError::runtime(code, format!("failed to run tmux new-session: {err}"), None)
-    })?;
+    let output =
+        runtime_environment::output(command, PANE_INPUT_COMMAND_TIMEOUT).map_err(|err| {
+            let code = if err.kind() == io::ErrorKind::TimedOut {
+                "command-timeout"
+            } else {
+                "command-wait-failed"
+            };
+            CliError::runtime(code, format!("failed to run tmux new-session: {err}"), None)
+        })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(CliError::runtime(
@@ -5198,7 +5198,7 @@ fn resume_session_locked(
         claude_account::prepare_launch(&mut record)?;
     }
     record.updated_at = now.timestamp().to_string();
-    write_session_record(context, &record)?;
+    runtime_environment::write_launch_record(context, &mut record)?;
     activity::activate_runtime(context, &record)?;
     if let Err(error) = coordination::prepare(context, &record) {
         let _ = write_session_record(context, &previous_record);

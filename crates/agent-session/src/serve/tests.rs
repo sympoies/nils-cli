@@ -11254,11 +11254,11 @@ async fn codex_account_switch_serializes_full_id_and_prefix_as_one_transaction()
             .is_err(),
         "the second same-session switch must not enter the control plane before the first finishes"
     );
-
     first_response
         .send(Ok(crate::codex_account::CodexAccountView {
             schema_version: crate::codex_account::VIEW_SCHEMA_VERSION,
             supported: true,
+            applicable: true,
             state: "bound",
             selected_account: Some(first_account.clone()),
             effective_account: Some(first_account),
@@ -11270,7 +11270,6 @@ async fn codex_account_switch_serializes_full_id_and_prefix_as_one_transaction()
         }))
         .unwrap();
     assert_eq!(first.await.unwrap().0, StatusCode::OK);
-
     let Some(codex_app_server::ControlCommand::BindAccount {
         account: second_account,
         revision: second_revision,
@@ -11287,6 +11286,7 @@ async fn codex_account_switch_serializes_full_id_and_prefix_as_one_transaction()
         .send(Ok(crate::codex_account::CodexAccountView {
             schema_version: crate::codex_account::VIEW_SCHEMA_VERSION,
             supported: true,
+            applicable: true,
             state: "bound",
             selected_account: Some(second_account.clone()),
             effective_account: Some(second_account),

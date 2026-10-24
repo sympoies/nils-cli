@@ -5,21 +5,34 @@ async fn launch_env_create_matches_cli_for_all_provider_profiles() {
     let lock = GlobalStateLock::new();
     let _policy = EnvGuard::remove(&lock, crate::launch_env::ALLOWLIST_ENV);
     let _runtime = EnvGuard::set(&lock, "AGENT_SESSION_CODEX_RUNTIME", "off");
+    let _api = EnvGuard::remove(&lock, "ANTHROPIC_API_KEY");
+    let _auth = EnvGuard::remove(&lock, "ANTHROPIC_AUTH_TOKEN");
+    let _capacity = EnvGuard::set(&lock, "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "131072");
+    let _endpoint = EnvGuard::set(
+        &lock,
+        "ANTHROPIC_BASE_URL",
+        "http://127.0.0.1:9/endpoint-canary",
+    );
     let _codex_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
     let _claude_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER");
     for agent in ["codex", "claude", "dsh"] {
         let tmp = tempfile::TempDir::new().unwrap();
         let launcher = fake_agent(tmp.path(), "provider-fixture");
+        let provider_root = tmp.path().join("profile-config");
+        fs::create_dir_all(&provider_root).unwrap();
         let profiles = AgentLaunchProfiles::from_json(
             &json!([{
                 "id":"local-fixture", "label":"Local fixture", "agent":agent,
-                "agent_bin":launcher, "readiness_args":["--check"]
+                "agent_bin":launcher, "provider_config_dir":provider_root, "readiness_args":["--check"]
             }])
             .to_string(),
         )
         .unwrap();
         let log = tmp.path().join("tmux.log");
-        let mut st = state(tmp.path(), Some(TOKEN), logging_tmux(tmp.path(), &log));
+        let tmux = logging_tmux(tmp.path(), &log);
+        let script = fs::read_to_string(&tmux).unwrap();
+        fs::write(&tmux, script.replacen('\n', "\nfor arg; do case \"$arg\" in AGENT_SESSION_PRIVATE_PROVIDER_ENV=*) rm -f \"${arg#*=}\";; esac; done\n", 1)).unwrap();
+        let mut st = state(tmp.path(), Some(TOKEN), tmux);
         Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
         let values = json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1"});
         let (status, body) = call(
@@ -38,6 +51,18 @@ async fn launch_env_create_matches_cli_for_all_provider_profiles() {
         assert_eq!(body["data"]["session"]["launch_env"], values);
         let record = load_session_record(&st.context, "env-profile").unwrap();
         assert_eq!(record.extra["launch_env"], values);
+        if agent == "claude" {
+            assert_eq!(
+                crate::runtime_environment::provider_facts::claude_window(&record),
+                Some(131072)
+            );
+            assert!(!crate::runtime_environment::provider_facts::account_applicable(&record));
+            assert_eq!(
+                body["data"]["session"]["claude_account"]["applicable"],
+                false
+            );
+            assert!(!body.to_string().contains("endpoint-canary"));
+        }
         assert!(
             fs::read_to_string(&log)
                 .unwrap()
@@ -131,6 +156,7 @@ async fn codex_account_switch_routes_the_nickname_to_the_exact_runtime_control()
             .send(Ok(crate::codex_account::CodexAccountView {
                 schema_version: crate::codex_account::VIEW_SCHEMA_VERSION,
                 supported: true,
+                applicable: true,
                 state: "bound",
                 selected_account: Some(account.clone()),
                 effective_account: Some(account),

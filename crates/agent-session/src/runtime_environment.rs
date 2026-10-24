@@ -1,6 +1,22 @@
 use super::*;
 
+mod claude_environment;
+pub(crate) mod provider_facts;
+pub(crate) use claude_environment::output;
 pub(crate) mod session_tmp;
+
+pub(crate) fn store_launch(record: &mut SessionRecord) {
+    session_model::ModelSettings::store_launch(record);
+    provider_facts::capture(record);
+}
+
+pub(crate) fn write_launch_record(
+    context: &CliContext,
+    record: &mut SessionRecord,
+) -> Result<(), CliError> {
+    provider_facts::capture(record);
+    write_session_record(context, record)
+}
 
 /// Checkout-lease namespace for worktree lifecycle guards.
 ///
@@ -30,6 +46,9 @@ pub(super) fn add_runtime_tmux_environment(
     state_dir: &Path,
     record: &SessionRecord,
 ) -> Result<(), CliError> {
+    if record.agent == "claude" {
+        claude_environment::prepare(command, state_dir, record);
+    }
     for (key, value) in launch_env::from_record(record)? {
         command.arg("-e").arg(format!("{key}={value}"));
     }

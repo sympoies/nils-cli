@@ -1,3 +1,11 @@
+# A private launch-only file carries provider environment values outside argv.
+if [ -n "${AGENT_SESSION_PRIVATE_PROVIDER_ENV:-}" ]; then
+  provider_env_file=$AGENT_SESSION_PRIVATE_PROVIDER_ENV
+  unset AGENT_SESSION_PRIVATE_PROVIDER_ENV
+  . "$provider_env_file" || { rm -f "$provider_env_file"; exit 78; }
+  rm -f "$provider_env_file" || exit 78
+  unset provider_env_file
+fi
 gate=$1; broker_gate=$2; heartbeat=$3; capability=$4; incarnation=$5; generation=$6; broker_bin=$7; shift 7
 done_file="${heartbeat}.done.$$"
 umask 077

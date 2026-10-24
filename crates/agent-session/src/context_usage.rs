@@ -88,9 +88,15 @@ pub(crate) fn projection(context: &CliContext, record: &SessionRecord) -> Option
         );
     }
     let source = cache.sources.get(&key)?.1.as_ref()?.clone();
-    cache
+    let mut usage = cache
         .reader
-        .read_source(&source, &record.agent, &resume.session_id)
+        .read_source(&source, &record.agent, &resume.session_id)?;
+    if record.agent == "claude"
+        && let Some(window) = crate::runtime_environment::provider_facts::claude_window(record)
+    {
+        usage.window_tokens = Some(window);
+    }
+    Some(usage)
 }
 
 #[derive(Debug, PartialEq, Eq)]

@@ -123,6 +123,31 @@ bound to the current runtime still cancels a queued switch without requiring ros
 
 The per-provider differences are the protocol and what the broker returns.
 
+Per-session account views add `applicable: boolean`. It is false when the
+configured launch does not use a broker account, even if a broker exists on
+the daemon. Claude custom `ANTHROPIC_BASE_URL` or direct API/auth-token launch
+overrides, Codex `--oss`, and a selected Codex provider explicitly configured
+with `requires_openai_auth=false` are inapplicable. Model names do not decide
+applicability. These views also return `supported: false` and
+`state: "unsupported"` so existing clients hide account controls and badges.
+
+Ordinary broker backends retain `applicable: true` even if current broker or
+runtime support is unavailable; `supported` still reports current control
+availability. Repeating the default `https://api.anthropic.com` endpoint preserves applicability unless
+direct authentication overrides it. Any retained selected account remains
+historical binding metadata; it does not assert applicability to this backend.
+
+Only derived capacity/applicability facts are retained with the exact launch
+runtime and launch-configuration digest, refreshed on resume and after initial
+profile resolution. Reads reject snapshots after launch arguments, executable,
+profile or configured provider-root changes and re-evaluate explicit arguments;
+they never adopt a later daemon environment. Explicit inline Claude settings
+and Codex configuration overrides remain available for older records. Settings
+files and wrapper-internal configuration are not inferred. Endpoint URLs,
+configuration paths, credentials and raw environment are not added to public
+views. This is display applicability; account binding and authentication
+behavior are unchanged.
+
 ### Codex account broker
 
 The Codex broker speaks `agent-session.codex-auth-broker.v1`, without a `--provider` argument. The daemon
@@ -175,12 +200,13 @@ mismatched nickname is `claude-account-broker-invalid-response`.
   whose broker is no longer configured fails closed with
   `409 claude-account-unsupported` rather than falling back to the host login.
 - Projection: Claude sessions carry an additive `claude_account` object
-  (`agent-session.claude-account.v1`: `supported`, `state`
+  (`agent-session.claude-account.v1`: `supported`, `applicable`, `state`
   `bound`/`unbound`/`failed`/`unsupported`, `selected_account`,
   `selection_source`, `revision`, `applied_runtime_id`, optional
   `next: {account, revision, state: "queued" | "failed", blocking_reason?, failure_reason?}`). It is omitted for other
-  providers and for Claude sessions without binding state on a daemon without
-  a Claude broker. It never contains the directory path.
+  providers and for applicable Claude sessions without binding state on a daemon
+  without a Claude broker. Explicitly inapplicable Claude launches retain the
+  unsupported view even without a broker or binding state. It never contains the directory path.
 - Switch: `PUT /sessions/{id}/account` with `{ "account", "expected_session_incarnation" }` on a Claude
   session durably queues `agent-session.claude-account-next.v1`; requesting the bound account cancels a
   queued intent. A nickname the broker does not list is refused with `claude-account-unknown`. Claude
