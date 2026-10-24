@@ -3,7 +3,7 @@
 
 ### Result
 
-- Literal terminal text is refused before paste or keys when the selected Codex
+- Terminal text and printable keys are refused before input when the selected Codex
   binding is not applied to the current runtime. Codex account switches prefer
   the valid serve-recorded broker command, and the daemon rechecks membership
   before promoting a queued repair.
@@ -11,7 +11,7 @@
 ### Why / context
 
 - Authentication-recovery quarantine does not cover generic failed account
-  bindings. Text without Enter must obey the binding boundary, and a
+  bindings. Text and printable keys without Enter must obey the binding boundary, and a
   caller-specific broker must not reject an account configured for serve or
   admit an unknown repair.
 
@@ -21,6 +21,9 @@
   separate failing-first daemon regression proves unknown repair accounts leave
   the binding and queued intent unchanged; existing account, roster,
   incarnation, input-fence and recovery suites pass.
+- A native-idle printable-key regression reproduces the same boundary gap before
+  its repair, then verifies bound input and failed/pending refusal without
+  changing session or recovery metadata.
 
 ### Links
 

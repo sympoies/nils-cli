@@ -70,7 +70,7 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   a daemon restart) also accepts a queued explicit account; the binding stays fenced until the daemon, at
   `waiting`, promotes the intent into this route's immediate switch with the same incarnation fence.
   Promotion rechecks the daemon's broker roster before changing the binding or consuming the intent;
-  a removed account leaves both unchanged. Literal terminal text is also refused before paste or keys
+  a removed account leaves both unchanged. Terminal text and printable keys are refused before input
   when the Codex binding is not bound to this runtime, including text without a submitting Enter.
   Control-only non-submitting keys remain available for dialogs.
 

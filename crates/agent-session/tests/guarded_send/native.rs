@@ -5,6 +5,7 @@ mod confirmation_lock;
 mod trace;
 use super::*;
 use futures_util::{SinkExt, StreamExt};
+use nils_test_support::cmd::{CmdOptions, run_resolved};
 use pretty_assertions::assert_eq;
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
@@ -151,6 +152,65 @@ impl Drop for Server {
     fn drop(&mut self) {
         let _ = self.stop.take().unwrap().send(());
         self.thread.take().unwrap().join().unwrap();
+    }
+}
+
+#[test]
+fn native_printable_keys_require_an_applied_binding() {
+    for state in ["bound", "failed", "pending"] {
+        let fixture = Fixture::new("codex");
+        let _lease = fixture.bind_codex();
+        let server = Server::start(&fixture, "idle");
+        let recovery = fixture.arm_recovery();
+        let path = fixture.root().join("state/sessions/guarded/session.json");
+        let mut record = fixture.document("session.json");
+        record["codex_account_binding"]["state"] = json!(state);
+        fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+        let before = fs::read(&path).unwrap();
+        let output = run_resolved(
+            "agent-session",
+            &[
+                "--state-dir",
+                fixture.root().join("state").to_str().unwrap(),
+                "send",
+                "guarded",
+                "--tmux-bin",
+                fixture.root().join("tmux").to_str().unwrap(),
+                "--key",
+                "y",
+                "--expect-runtime",
+                "runtime-one",
+                "--expect-provider-session",
+                "provider-one",
+                "--format",
+                "json",
+            ],
+            &CmdOptions::new()
+                .with_cwd(fixture.root())
+                .with_env_remove_prefix("AGENT_SESSION_"),
+        );
+        assert!(
+            server
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|request| request["method"] == "thread/read"),
+            "the printable-key send must reach native idle observation"
+        );
+        assert!(server.mutations().is_empty());
+        if state == "bound" {
+            assert_eq!(output.code, 0, "{}", output.stdout_text());
+            assert!(fixture.calls().iter().any(|call| {
+                call[0] == "send-keys"
+                    && call.iter().any(|arg| arg == "-l")
+                    && call.last().is_some_and(|arg| arg == "y")
+            }));
+        } else {
+            fixture.refused(&output, "codex-account-not-bound");
+            fixture.unchanged_control_state(&recovery);
+            assert_eq!(fs::read(&path).unwrap(), before, "{state}");
+        }
     }
 }
 
