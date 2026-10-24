@@ -130,7 +130,8 @@ pub struct PrMergeArgs {
     )]
     pub allow_merge_freeze_reason: Option<String>,
     /// Upper bound, in seconds, on waiting for a required merge queue to merge
-    /// the enqueued PR (default 2700).
+    /// the enqueued PR (default 5700: 90 minutes plus 5 minutes polling margin).
+    /// This flag overrides the built-in default; no environment/config setting.
     #[arg(long = "queue-timeout", value_name = "SECONDS")]
     pub queue_timeout: Option<u64>,
 }
