@@ -963,6 +963,9 @@ pub(crate) fn begin_queued_switch_repair(
     let Some(account) = queued_switch_repair(&record) else {
         return Ok(None);
     };
+    // The roster may have changed since the CLI queued this repair. Use the
+    // daemon's precheck before consuming the intent or publishing a binding.
+    crate::session_account::codex_switch_precheck(&record, expected_launch_id, &account)?;
     crate::auth_incident::failover::pre_apply_codex(context, &record)?;
     let revision =
         publish_switch_binding_locked(context, &mut record, expected_launch_id, &account)?;
@@ -2757,7 +2760,8 @@ esac
     #[test]
     fn queued_repair_promotes_like_an_immediate_switch_under_the_same_fences() {
         let lock = GlobalStateLock::new();
-        let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
+        let broker_dir = tempfile::TempDir::new().unwrap();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, &listing_broker(&broker_dir, "acct1"));
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
         rebuild_daemon_with_failed_rebind(&context, &record);
@@ -3535,6 +3539,30 @@ esac
         let switched = serde_json::to_value(&switched).unwrap();
         assert_eq!(switched["codex_account"]["state"], "bound");
         assert!(switched["codex_account"].get("next").is_none());
+    }
+
+    #[test]
+    fn queued_repair_rechecks_serve_roster_before_promoting_the_intent() {
+        let lock = GlobalStateLock::new();
+        let broker_dir = tempfile::TempDir::new().unwrap();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, &listing_broker(&broker_dir, "acct2"));
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = persisted_bound(&tmp);
+        rebuild_daemon_with_failed_rebind(&context, &record);
+        mark_waiting(&context, &record);
+        queue_next_account_with_unbound(&context, &record.id, "runtime-binding-fixture", "acct1")
+            .unwrap();
+        let before =
+            fs::read(crate::session_dir(&context, &record.id).join("session.json")).unwrap();
+
+        let error = begin_queued_switch_repair(&context, &record.id, "runtime-binding-fixture")
+            .unwrap_err();
+        assert_eq!(error.code(), "codex-account-unknown");
+        assert_eq!(
+            fs::read(crate::session_dir(&context, &record.id).join("session.json")).unwrap(),
+            before,
+            "a removed account cannot change the binding or consume the repair intent"
+        );
     }
 
     #[test]

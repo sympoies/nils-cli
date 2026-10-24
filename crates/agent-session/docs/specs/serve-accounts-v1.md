@@ -69,6 +69,10 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   prompt. With the unbound opt-in, a binding that is `failed`, `pending`, or malformed (for example after
   a daemon restart) also accepts a queued explicit account; the binding stays fenced until the daemon, at
   `waiting`, promotes the intent into this route's immediate switch with the same incarnation fence.
+  Promotion rechecks the daemon's broker roster before changing the binding or consuming the intent;
+  a removed account leaves both unchanged. Literal terminal text is also refused before paste or keys
+  when the Codex binding is not bound to this runtime, including text without a submitting Enter.
+  Control-only non-submitting keys remain available for dialogs.
 
 ## Account brokers
 
@@ -111,6 +115,11 @@ mode `0600`) at startup, and removes it when no broker is configured. Owner-run
 serve's environment; they adopt that record for any provider whose broker
 variable is unset in their own environment, and ignore a record that is not a
 private, owner-owned regular file.
+
+For Codex `account switch`, the valid serve-recorded broker command takes precedence even when the
+caller's broker variable is set, so repair membership is checked against the configured serve roster.
+Other commands and Claude retain the caller-first adoption policy. Re-selecting the account already
+bound to the current runtime still cancels a queued switch without requiring roster membership.
 
 The per-provider differences are the protocol and what the broker returns.
 

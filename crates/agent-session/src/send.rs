@@ -123,6 +123,12 @@ pub(crate) fn send_to_session_observing(
             "answer the dialog with a special key, or resend with allow_blocked to type into it",
         )?;
     }
+    // Pasting without Enter still changes the provider's composer. Validate
+    // the applied binding under the same lock as the pane write, while leaving
+    // control-only keys and the existing next-intent submission fence intact.
+    if record.agent == "codex" && carries_literal_text(text.as_deref()) {
+        codex_account::ensure_terminal_input_allowed(&record)?;
+    }
     let submits = codex_app_server::input_contains_submission(text.as_deref(), &args.keys);
     if submits {
         codex_app_server::ensure_manual_input_capability(context, &record)?;

@@ -88,13 +88,17 @@ mod tests {
 
     #[tokio::test]
     async fn queued_switch_repairs_a_binding_left_failed_by_a_daemon_rebuild() {
+        use std::os::unix::fs::PermissionsExt;
         let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let broker = tmp.path().join("broker");
+        std::fs::write(&broker, "#!/bin/sh\nprintf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"accounts\":[{\"account\":\"acct1\"}]}'\n").unwrap();
+        std::fs::set_permissions(&broker, std::fs::Permissions::from_mode(0o700)).unwrap();
         let _broker = EnvGuard::set(
             &lock,
             "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
-            r#"["/configured/broker"]"#,
+            &serde_json::to_string(&[broker]).unwrap(),
         );
-        let tmp = tempfile::TempDir::new().unwrap();
         let context = CliContext {
             state_dir: tmp.path().join("state"),
             host: None,
