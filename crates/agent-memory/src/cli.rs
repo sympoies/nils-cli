@@ -482,7 +482,7 @@ mod tests {
                 conflicting.extend_from_slice(&["--format", format]);
                 let err = Cli::command()
                     .try_get_matches_from(conflicting)
-                    .expect_err("legacy alias conflicts with explicit format");
+                    .expect_err("compatibility alias conflicts with explicit format");
                 assert_eq!(err.kind(), ErrorKind::ArgumentConflict, "{path:?}");
             }
         }
