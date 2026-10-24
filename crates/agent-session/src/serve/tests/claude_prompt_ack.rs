@@ -212,3 +212,7 @@ async fn list_form_queued_prompt_resolves_delivery_receipt() {
 mod queue_identity {
     include!("claude_prompt_ack/queue_identity.rs");
 }
+
+mod concurrent_queue {
+    include!("claude_prompt_ack/concurrent_queue.rs");
+}

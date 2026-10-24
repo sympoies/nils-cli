@@ -30,7 +30,9 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
 
   On a Claude (pane-delivered) runtime, success means Claude's `UserPromptSubmit` hook started a new turn within the
   acknowledgement wait, a newly appended provider queue record matches the complete prompt, or the complete
-  whitespace-free prompt gains a pane queue sighting relative to a readable pre-submit snapshot. A pre-existing
+  whitespace-free prompt gains a pane queue sighting relative to a readable pre-submit snapshot.
+  Acknowledgement snapshots are captured under the same session-record lock as their own paste, so concurrent
+  requests cannot reuse an earlier lock holder's evidence. A pre-existing
   sibling or identical entry alone cannot acknowledge the new attempt; a shared prefix never suffices.
   Missing or ambiguous baseline pane evidence cannot prove a queue transition, but a new matching provider
   queue record can still confirm it. A tool-call turn can absorb the queue at its next tool call, so any proven
