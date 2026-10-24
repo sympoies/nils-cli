@@ -144,7 +144,7 @@ async fn consecutive_hand_offs_in_one_tool_call_turn_are_each_submitted() {
         assert_eq!(body["data"]["queued"], true, "{text}");
         assert_eq!(body["data"]["session_incarnation"], launch_id);
         // The first hand-off's queue window closes before the next one starts.
-        while crate::claude_prompt_queued(&record, text, &st.tmux_bin) {
+        while crate::claude_prompt_queue_count(&record, text, &st.tmux_bin).is_some_and(|n| n > 0) {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
@@ -207,4 +207,8 @@ async fn list_form_queued_prompt_resolves_delivery_receipt() {
         replay, body,
         "the delivered receipt is durable and replayable"
     );
+}
+
+mod queue_identity {
+    include!("claude_prompt_ack/queue_identity.rs");
 }

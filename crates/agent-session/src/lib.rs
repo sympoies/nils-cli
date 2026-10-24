@@ -4403,16 +4403,16 @@ fn capture_visible_pane_with_timeout(
         .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Whether the Claude pane lists `text` among its queued messages behind a
-/// running turn. An unreadable pane or text with nothing to match is `false`.
-pub(crate) fn claude_prompt_queued(record: &SessionRecord, text: &str, tmux_bin: &Path) -> bool {
-    let Some(probe) = send_submit::probe(text) else {
-        return false;
-    };
+/// Full-text queue sightings; missing or ambiguous pane evidence stays unknown.
+/// A sighting alone never acknowledges a submission; compare its pre-submit count.
+pub(crate) fn claude_prompt_queue_count(
+    record: &SessionRecord,
+    text: &str,
+    tmux_bin: &Path,
+) -> Option<usize> {
     let target = format!("{}:0.0", record.tmux_session);
-    capture_visible_pane(tmux_bin, &target).is_some_and(|pane| {
-        record.agent == "claude" && send_submit::claude_queue_holds(&pane, &probe)
-    })
+    let pane = (record.agent == "claude").then(|| capture_visible_pane(tmux_bin, &target))??;
+    send_submit::claude_queue_occurrences(&pane, text)
 }
 
 /// Claude Code exposes no control socket, so its structured prompt submission

@@ -143,14 +143,17 @@ pub(super) async fn submit_claude_structured_prompt(
     text: &str,
     acknowledgement_wait: Duration,
 ) -> Response {
-    let (baseline, prompt_tail) = {
+    let (baseline, prompt_tail, queue_before) = {
         let context = state.context.clone();
         let record = record.clone();
+        let tmux_bin = state.tmux_bin.clone();
         match tokio::task::spawn_blocking(move || {
             let baseline = crate::activity::prompt_turn_baseline(&context, &record);
             let tail = ProviderPromptTail::resolve_source(&record)
                 .and_then(ProviderPromptTail::open_source_at_eof);
-            (baseline, tail)
+            let queue_before =
+                crate::capture_visible_pane(&tmux_bin, &format!("{}:0.0", record.tmux_session));
+            (baseline, tail, queue_before)
         })
         .await
         {
@@ -185,6 +188,7 @@ pub(super) async fn submit_claude_structured_prompt(
         record,
         &baseline,
         prompt_tail,
+        queue_before.as_deref(),
         &delivery.acknowledgement_text,
         acknowledgement_wait,
     )
