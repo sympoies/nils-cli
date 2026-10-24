@@ -76,9 +76,15 @@ struct Fixture {
 }
 
 fn fixture(id: &str) -> Fixture {
-    let tmp = tempfile::TempDir::new().unwrap();
+    // Keep both socket names within the Unix pathname budget even with a long TMPDIR.
+    let tmp = tempfile::tempdir_in("/tmp").unwrap();
     let upstream = tmp.path().join("upstream.sock");
-    let listener = std::os::unix::net::UnixListener::bind(&upstream).unwrap();
+    let listener = std::os::unix::net::UnixListener::bind(&upstream).unwrap_or_else(|err| {
+        panic!(
+            "bind fixture upstream socket ({} bytes): {err}",
+            upstream.as_os_str().len()
+        )
+    });
     listener.set_nonblocking(true).unwrap();
     let listener = UnixListener::from_std(listener).unwrap();
     let context = CliContext {
@@ -362,4 +368,31 @@ async fn proxy_exit_keeps_the_final_error_line_for_session_diagnostics() {
         fs::metadata(&diagnostic).unwrap().permissions().mode() & 0o777,
         0o600
     );
+}
+
+#[test]
+fn proxy_fixture_works_with_short_and_long_temporary_roots() {
+    // Use child processes because temp_dir reads process-wide environment.
+    let short = tempfile::tempdir_in("/tmp").unwrap();
+    let long = short.path().join("long-root-".repeat(16));
+    fs::create_dir(&long).unwrap();
+    assert!(long.as_os_str().len() > 108);
+    let test_name = "codex_app_server::proxy_transport::tests::proxy_exit_keeps_the_final_error_line_for_session_diagnostics";
+    for root in [short.path(), long.as_path()] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([test_name, "--exact", "--nocapture"])
+            .env("TMPDIR", root)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "proxy fixture child failed: {stdout}\n{stderr}"
+        );
+        assert!(
+            stdout.contains("1 passed"),
+            "child must run the selected test: {stdout}"
+        );
+    }
 }
