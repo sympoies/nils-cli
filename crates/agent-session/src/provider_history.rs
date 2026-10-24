@@ -565,9 +565,7 @@ impl HistoryCatalog {
                 include_parts,
             ),
         }?;
-        if include_parts {
-            history_images::correlate_tool_status(session, &mut page.messages);
-        }
+        self.project_upload_references(session, &mut page.messages, include_parts);
         Ok(page)
     }
 
