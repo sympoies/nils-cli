@@ -11,24 +11,22 @@ use crate::SessionRecord;
 const TRANSPORT_ENV: &str = "AGENT_SESSION_PRIVATE_PROVIDER_ENV";
 
 pub(super) fn prepare(command: &mut Command, state_dir: &Path, record: &SessionRecord) {
-    if CLAUDE_KEYS
-        .iter()
-        .all(|key| std::env::var_os(key).is_none_or(|value| value.is_empty()))
-    {
-        command
-            .env_remove(TRANSPORT_ENV)
-            .arg("-e")
-            .arg(format!("{TRANSPORT_ENV}="));
-        for key in CLAUDE_KEYS {
-            command.arg("-e").arg(format!("{key}="));
-        }
-        return;
-    }
     let path = state_dir
         .join("sessions")
         .join(&record.id)
         .join(format!(".provider-env-{}", uuid::Uuid::new_v4()));
     command.env(TRANSPORT_ENV, &path);
+
+    if CLAUDE_KEYS
+        .iter()
+        .all(|key| std::env::var_os(key).is_none_or(|value| value.is_empty()))
+    {
+        command.arg("-e").arg(format!("{TRANSPORT_ENV}="));
+        for key in CLAUDE_KEYS {
+            command.arg("-e").arg(format!("{key}="));
+        }
+        return;
+    }
     let mut assignment = std::ffi::OsString::from(format!("{TRANSPORT_ENV}="));
     assignment.push(path);
     command.arg("-e").arg(assignment);
@@ -47,6 +45,7 @@ pub(crate) fn output(mut command: Command, timeout: Duration) -> io::Result<Outp
     let Some(path) = path else {
         return crate::run_output_with_timeout(command, timeout);
     };
+    command.env_remove(TRANSPORT_ENV);
     // A prior interrupted launch may have left a private transport. The
     // lifecycle lock excludes another launch for this session.
     for entry in std::fs::read_dir(path.parent().expect("session directory"))? {
@@ -60,6 +59,14 @@ pub(crate) fn output(mut command: Command, timeout: Duration) -> io::Result<Outp
         {
             std::fs::remove_file(entry.path())?;
         }
+    }
+    // Empty snapshots still carry the private cleanup target, but their
+    // literal empty tmux assignments need no file or consumption handshake.
+    if CLAUDE_KEYS
+        .iter()
+        .all(|key| !command.get_envs().any(|(name, _)| name == *key))
+    {
+        return crate::run_output_with_timeout(command, timeout);
     }
     let mut script = Vec::new();
     for key in CLAUDE_KEYS {
@@ -76,7 +83,6 @@ pub(crate) fn output(mut command: Command, timeout: Duration) -> io::Result<Outp
         }
         script.extend_from_slice(b"'\n");
     }
-    command.env_remove(TRANSPORT_ENV);
     // The lifecycle owner already validated this private session directory.
     // O_EXCL prevents a retained path or symlink from being overwritten.
     let mut file = std::fs::OpenOptions::new()
@@ -142,6 +148,37 @@ mod tests {
                 .unwrap_err()
                 .kind(),
             io::ErrorKind::TimedOut
+        );
+        assert_eq!(std::fs::read_dir(dir).unwrap().count(), 0);
+    }
+    #[test]
+    fn empty_environment_launch_removes_stale_transport_files() {
+        let lock = GlobalStateLock::new();
+        let _clear: Vec<_> = CLAUDE_KEYS
+            .iter()
+            .map(|key| EnvGuard::remove(&lock, key))
+            .collect();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("sessions/fixture");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!(".provider-env-{}", uuid::Uuid::new_v4())),
+            "synthetic-stale-canary",
+        )
+        .unwrap();
+        let record: SessionRecord = serde_json::from_value(serde_json::json!({
+            "schema_version":crate::SESSION_DOCUMENT_VERSION, "id":"fixture", "agent":"claude",
+            "mode":"interactive", "cwd":"/workspace/project", "tmux_session":"fixture",
+            "created_at":"2030-01-01T00:00:00Z", "updated_at":"2030-01-01T00:00:00Z"
+        }))
+        .unwrap();
+        let mut command = Command::new("true");
+        prepare(&mut command, tmp.path(), &record);
+        assert!(
+            output(command, Duration::from_secs(1))
+                .unwrap()
+                .status
+                .success()
         );
         assert_eq!(std::fs::read_dir(dir).unwrap().count(), 0);
     }

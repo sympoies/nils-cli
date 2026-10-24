@@ -208,7 +208,12 @@ fn runtime_facts_match_claude_environment_in_existing_tmux_server() {
             .status
             .success()
     );
-    for direct_auth in [false, true] {
+    for (case, capacity, direct_auth) in [
+        ("empty", "", false),
+        ("capacity", "131072", false),
+        ("direct", "131072", true),
+    ] {
+        let _capacity = EnvGuard::set(&lock, CLAUDE_KEYS[0], capacity);
         let endpoint = if direct_auth {
             "http://127.0.0.1:9/current-canary"
         } else {
@@ -230,17 +235,25 @@ fn runtime_facts_match_claude_environment_in_existing_tmux_server() {
         let mut record = record("claude", &[]);
         capture(&mut record);
         fs::create_dir_all(tmp.path().join("sessions").join(&record.id)).unwrap();
+        fs::write(
+            tmp.path()
+                .join("sessions")
+                .join(&record.id)
+                .join(format!(".provider-env-{}", uuid::Uuid::new_v4())),
+            "synthetic-stale-canary",
+        )
+        .unwrap();
         let gate = tmp.path().join("gate");
         let broker_gate = tmp.path().join("broker-gate");
         fs::write(&gate, "").unwrap();
         fs::write(&broker_gate, "").unwrap();
-        let output = tmp.path().join(format!("capacity-{direct_auth}"));
+        let output = tmp.path().join(format!("capacity-{case}"));
         let mut command = Command::new(&tmux);
         command
             .arg("-S")
             .arg(&server.socket)
             .args(["new-session", "-d", "-s"])
-            .arg(format!("facts-{direct_auth}"));
+            .arg(format!("facts-{case}"));
         crate::add_runtime_tmux_environment(&mut command, tmp.path(), &record).unwrap();
         command
             .args(["sh", "-c", crate::HELD_LAUNCH_SCRIPT, "fixture"])
@@ -270,12 +283,10 @@ fn runtime_facts_match_claude_environment_in_existing_tmux_server() {
         let observed = fs::read_to_string(output).unwrap();
         assert_eq!(
             observed,
-            format!(
-                "{}:{endpoint}:{api}:{auth}",
-                claude_window(&record).unwrap()
-            ),
+            format!("{capacity}:{endpoint}:{api}:{auth}"),
             "reported capacity and account applicability must match the child, including clearing stale tmux values"
         );
+        assert_eq!(claude_window(&record), capacity.parse::<u64>().ok());
         assert_eq!(account_applicable(&record), !direct_auth);
         assert!(
             fs::read_dir(tmp.path().join("sessions").join(&record.id))
