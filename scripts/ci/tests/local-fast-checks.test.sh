@@ -19,6 +19,10 @@ if [[ ! -f "$script" ]]; then
   exit 2
 fi
 
+# Also parse with the platform Bash: on macOS this is Bash 3.2 even when
+# the test runner selects a newer Bash from PATH. This must precede execution.
+/bin/bash -n "$script"
+
 python3 "$repo_root/scripts/ci/tests/local-fast-graph.test.py"
 python3 "$repo_root/scripts/ci/tests/sibling-bins.test.py"
 python3 "$repo_root/scripts/ci/tests/local-fast-execution.test.py"
