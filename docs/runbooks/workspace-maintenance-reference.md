@@ -500,9 +500,15 @@ fallback. Every merge group additionally runs affected-package
 `macos_clippy` on `macos-latest` with `--all-targets --all-features -- -D warnings`,
 including integration test crates. It uses workspace scope on uncertain or
 empty selection, with no test execution or coverage. PRs skip this check
-successfully. Linux `test_containment`, `cargo-deny (advisories + bans)`, and
-`macos_clippy` are required alongside `test`; the latter also rejects a failed
-or skipped macOS queue result. There is no preview-driven deferral or labeler.
+successfully and are exempt from this job.
+
+The required contexts are `test`,
+`test_containment`, and `cargo-deny (advisories + bans)`. Required `test` fails
+closed unless every merge group's `macos_clippy` result is `success`, rejecting
+failed, cancelled, skipped, or missing results. Per the
+[maintainer decision in #2809](https://github.com/sympoies/nils-cli/issues/2809#issuecomment-6356110500),
+no separate `macos_clippy` ruleset context is needed; add one only if that
+fail-closed dependency is loosened. There is no preview-driven deferral or labeler.
 The maintainer applies the ruleset migration
 in the [delivery flow](delivery-and-releases.md). Full macOS has 75 minutes.
 See [the CI consumption contract](../specs/affected-scope-ci-consumption-v1.md)

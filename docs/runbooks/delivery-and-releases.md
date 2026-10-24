@@ -56,21 +56,22 @@ After migration, both PRs and merge groups require these exact check names:
 
 - `test`
 - `test_containment`
-- `macos_clippy`
 - `cargo-deny (advisories + bans)`
 
 The previous required names are `test`, `test_macos`, and `coverage`.
 `test_macos` and `coverage` now exist only inside full nightly/release validation;
 there is no deferred-full labeler. `macos_clippy` is a separate compile/lint
-check: skipped on PRs, executed on every merge group. The required `test` job
-fails closed if it fails, is cancelled, or is skipped in a merge group, even
-before the maintainer adds its explicit ruleset context.
+job: ordinary PRs are exempt, and every merge group executes it. The required
+`test` job fails closed unless its macOS queue result is `success`; failed,
+cancelled, skipped, or missing results block merge.
 
-For the macOS compile/lint rollout, retain the three Linux contexts and add
-`macos_clippy` to the ruleset after its producer lands. Verify an ordinary queue
-entry and a release entry both report it successfully. This addition does not
-restore full macOS tests or coverage as ordinary queue requirements. The
-following order documents the earlier full-validation migration:
+Retain the three Linux required contexts above. Per the
+[maintainer decision in #2809](https://github.com/sympoies/nils-cli/issues/2809#issuecomment-6356110500),
+no separate `macos_clippy` ruleset context is needed while required `test`
+enforces that dependency. Add it only if that wiring is loosened. Verify an
+ordinary queue entry and a release entry both report macOS Clippy success.
+Full macOS tests and coverage remain nightly/release gates. The following
+order documents the earlier full-validation migration:
 
 Apply this order at the migration merge:
 

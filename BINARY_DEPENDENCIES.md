@@ -33,7 +33,7 @@ These tools are required for common command paths. Each row is anchored to at le
 | `ssh` | `codex-cli auth remote pull`; `claude-cli auth remote pull`; `macos-agent --host` fixed-command JSON transport | Required for those remote flows | Usually preinstalled (`brew install openssh`) |
 | `curl` | locked Peekaboo asset download for `macos-agent backend install` | Required for those flows | Usually preinstalled (`brew install curl`) |
 | `/bin/ps` | `claude-cli` nested CLI usage-probe timeout cleanup on non-Linux Unix | Required for reliable descendant cleanup on macOS/BSD; Linux reads `/proc` directly | Usually preinstalled |
-| `tmux` | `agent-session` start/run/resume/attach/glance/send/delete/serve flows | Required for tmux-backed `agent-session` runtime | `brew install tmux` |
+| `tmux` >= 3.4 | `agent-session` start/run/resume/attach/glance/send/delete/serve flows | Required for tmux-backed `agent-session` runtime; older versions are unsupported | `brew install tmux` (or `brew upgrade tmux`); verify `tmux -V` reports 3.4 or newer |
 | `agent-hook` | `agent-session activity setup` compatibility forwarder | Required only for provider registration through the retained setup command; override lookup with `AGENT_HOOK_BIN` | Install the matching `nils-agent-hook` package |
 | `agent-session` | `agent-hook` policies using `agent-session.activity.v1` or DSH `agent-activity` / `operation-lifecycle` | Required only when selected policy records managed activity or coordinates managed DSH mutation; invoked through metadata-only activity, exact same-release work-context contracts, and authenticated broker status | Install the matching `nils-agent-session` package |
 | `sops` | `secrets pull/add/edit` encryption and decryption flows | Required for `secrets` runtime | `brew install sops` |
@@ -127,6 +127,14 @@ These are repository scripts (not third-party packages):
 ```bash
 brew install git gh glab fzf webp ffmpeg bat zsh python bash-completion rustup-init tmux sops
 ```
+
+For tmux-backed `agent-session`, verify `tmux -V` reports **3.4 or newer**.
+If an older tmux is installed, run `brew upgrade tmux`, or install a supported
+version through the platform package manager or the
+[upstream installation guide](https://github.com/tmux/tmux/wiki/Installing).
+Ensure the supported executable is on `PATH`, or select it with `--tmux-bin`
+or `AGENT_SESSION_TMUX_BIN` and check that executable's `-V` output. See the
+[bounded compatibility evidence](crates/agent-session/README.md#runtime-requirements).
 
 ### 5.2 Linux extra profile (audio/clipboard/network ergonomics)
 

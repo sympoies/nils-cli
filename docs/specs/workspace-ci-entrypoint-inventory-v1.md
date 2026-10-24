@@ -27,12 +27,12 @@ out of scope for this governance inventory; flag it as a follow-up.
 | --- | --- | --- | --- | --- |
 | (workflow) | `concurrency` | workflow-local expression | keep | Groups `pull_request` runs by PR number and cancels a superseded run; `merge_group` runs get a unique `run_id` group. Main pushes use the `main-push` group and run only the lightweight `main_push` status job. Scheduled nightly and manual runs execute the full validation on main, serialized as `nightly-main`. |
 | `changes` | `Detect change set` | `scripts/ci/detect-docs-only.sh` plus exact-base `scripts/ci/detect-release-only.sh` policy | keep | Emits `base_sha`, `docs_only`, `head_sha`, `release_branch`, and `release_candidate`. Release policy is loaded from the exact base SHA; missing or invalid policy emits `release_candidate=false`. |
-| `changes` | `Finalize fail-closed CI lane` | workflow-local boolean | keep | Emits `release_only=true` only when the exact-base detector proved a canonical release bump (`release_candidate=true`); every other state emits false. No full base-CI receipt is required: the release workflow validates the tagged commit in full, and scoped queue runs carry no full-validation marker. |
+| `changes` | `Finalize fail-closed CI lane` | workflow-local boolean | keep | Emits `release_only=true` only when the exact-base detector proved a canonical release bump (`release_candidate=true`); every other state emits false. No full base-CI receipt is required. Release PRs keep the reduced preparation lane; release-candidate merge groups run shared full validation on the combined candidate, and required Linux `test` waits for its success. Ordinary scoped PR/queue checks alone supply no reusable full-validation evidence. |
 | `test` | Linux affected checks | `scripts/ci/nils-cli-checks-entrypoint.sh --ci-merge-plan` | keep | PR and combined merge-group candidate; accepted-base plan, strict binding and full Linux fallback. Docs/release PR shortcuts retain their proven audits. |
 | `test` | change-detection failure guard | workflow-local result check | keep | Runs with `always()` so failed change detection produces a failed required test rather than an accepted skip. |
 | `test_containment` | Linux cgroup canary | workflow-local test command and systemd setup | keep | Required alongside `test`; steps skip on docs-only/proven release-only PRs. |
 | `cargo_deny` | dependency policy | `scripts/ci/cargo-deny-audit.sh` | keep | Required name is `cargo-deny (advisories + bans)`. |
-| `full_validation` | nightly/manual full run | `.github/workflows/full-validation.yml` | keep | Main only, daily 05:23 UTC and dispatch; full tests, macOS and coverage stay outside PR and queue jobs. |
+| `full_validation` | nightly/manual and release-candidate queue full run | `.github/workflows/full-validation.yml` | keep | Runs daily at 05:23 UTC and on dispatch on main, and for release-candidate merge groups on the exact combined candidate SHA. Required Linux `test` waits for this result and fails closed unless it succeeds for a release-candidate group. Ordinary PRs and non-release queue groups do not run this full suite. |
 | `nightly_report` | failure tracking and recovery | `.github/scripts/nightly-tracker.cjs` | keep | Serialized bot-owned issue, failed SHA and last green scheduled range; closes on full recovery, reopens on later failure. |
 | `main_push` | lightweight main status | workflow-local summary | keep | Main pushes do not repeat the test matrix. |
 | `coverage_badge` | badge generation/publish | `scripts/ci/coverage-badge.sh` | keep | Successful nightly/manual full validation supplies LCOV. |
@@ -52,8 +52,9 @@ out of scope for this governance inventory; flag it as a follow-up.
 
 | Job | Step | Canonical owner | Decision | Notes |
 | --- | --- | --- | --- | --- |
-| `verify_ci` | authorize release invocation | `.github/scripts/validate-release-invocation.sh` | keep | Stable tag and trusted invocation/rerun policy. |
-| `full_validation` | full tagged-commit tests | `.github/workflows/full-validation.yml` | keep | Runs after authorization; build depends on full success at the immutable tag SHA. Previous green CI cannot substitute. |
+| `verify_ci` | authorize release invocation and find reusable full validation | `.github/scripts/validate-release-invocation.sh` + `.github/scripts/release-validation-reuse.cjs` | keep | Authorizes the stable tag and trusted invocation/rerun first, then looks for successful same-repository `ci.yml` merge-group evidence at the exact release commit or a commit whose tree is verified identical through the commit API. Reuse requires exactly one completed successful `full_validation /` job for each of `test`, `test_macos`, `coverage`, `test_containment`, `cargo-deny (advisories + bans)`, and `gate`, plus successful full-validation markers in `test`, `test_macos`, and `coverage`; PR leaf checks or names alone are insufficient. |
+| `full_validation` | fallback full tagged-commit tests | `.github/workflows/full-validation.yml` | keep | After authorization, runs on the immutable tag SHA unless complete reusable evidence was verified. Missing, failed, incomplete, unverifiable, or unavailable evidence falls back to full tag validation. |
+| `validation_gate` | require authorized full validation | `.github/scripts/release-validation-reuse.cjs` `requireReleaseValidation` | keep | Runs with `always()` and requires successful authorization plus either verified reuse with the fallback skipped, or a successful full tag fallback. Builds depend on this gate. |
 | `build` | ripgrep bootstrap | inline OS bootstrap shell | keep | Platform package manager differences remain workflow-local. |
 | `build` | `Regenerate third-party artifacts` | `scripts/generate-third-party-artifacts.sh` | keep | Canonical artifact generation gate. |
 | `build` | `Package` | `scripts/workspace-bins.sh` + inline packaging shell | keep | Packaging owns workspace binary discovery through script entrypoint. |
@@ -133,6 +134,7 @@ records the keep/delete decision plus the active caller evidence.
 | Path | Decision | Active caller evidence |
 | --- | --- | --- |
 | `.github/scripts/release-ci-gate.cjs` | keep | historical receipt compatibility helpers + `scripts/ci/tests/release-ci-gate.test.cjs` |
+| `.github/scripts/release-validation-reuse.cjs` | keep | `.github/workflows/release.yml` authorization/reuse and final validation gate + `scripts/ci/tests/release-ci-gate.test.cjs` |
 | `scripts/ci/lib/cargo-target-dir.sh` | keep | sourced by `scripts/ci/completion-freshness-audit.sh` + `scripts/ci/completion-flag-parity-audit.sh` to locate binaries under `CARGO_TARGET_DIR` / `cargo metadata` `target_directory` |
 | `scripts/ci/lib/doc_classify.py` | keep | imported by `scripts/ci/nils-cli-local-fast.sh` planner + `scripts/ci/detect-docs-only.sh` |
 | `wrappers/git-cli` | keep | `README.md` wrapper contributor flow + `git-cli` wrapper behavior |

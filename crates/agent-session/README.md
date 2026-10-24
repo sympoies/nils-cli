@@ -13,6 +13,38 @@ user to continue from Termius, glance at the pane, or steer it with keystrokes.
 | Package name | `nils-agent-session` |
 | Binary name  | `agent-session`      |
 
+## Runtime requirements
+
+Tmux-backed sessions require **tmux 3.4 or newer**. Install with
+`brew install tmux` or upgrade with `brew upgrade tmux`, then check `tmux -V`.
+On other package managers, install a version meeting that minimum; if the
+available package is older, follow the
+[upstream installation guide](https://github.com/tmux/tmux/wiki/Installing).
+Select a different executable with `--tmux-bin` or `AGENT_SESSION_TMUX_BIN`,
+and verify its `-V` output too. See the workspace
+[dependency inventory](../../BINARY_DEPENDENCIES.md) for other prerequisites.
+
+The supported floor is 3.4, based on the bounded Linux probe below, rerun on
+2026-10-24 using the [upstream 3.4 release](https://github.com/tmux/tmux/releases/tag/3.4).
+This establishes a tested support baseline, not the earliest tmux that might
+work. Earlier versions are unverified and unsupported; version differences
+alone do not establish shell injection or another incompatibility.
+
+The probe used a private socket with `-S <socket> -f /dev/null`, ten-second
+command deadlines and five-second observation limits; it killed only that
+server afterward. Every tmux invocation used a direct subprocess argv array.
+
+| Command shape | Observed on tmux 3.4 |
+| --- | --- |
+| `new-session -d -P -F <identity> -s <session> -c <cwd> <executable> <args...>` | Receiver got semicolons, command substitutions, backticks and newlines as literal arguments; session, pane and PID identity fields were returned. No canary executed. |
+| Single-string `new-session` shell-command positive control | The harmless canary file was created, proving the probe could observe execution. This is distinct from the multi-argument launch above. |
+| `load-buffer -b <name> <file>` | Semicolons in the buffer name and file path stayed literal; reading the loaded buffer returned the original payload bytes. |
+| `paste-buffer -b <name> -d -t <pane>` | A raw terminal receiver got the payload with tmux's normal LF-to-CR conversion; shell-like payload text was not executed, and the named buffer was deleted. |
+| Raw-paste `paste-buffer -S ...` compatibility path | 3.4 rejected the unknown `-S` flag; retrying without it succeeded, matching the existing pre-3.7 fallback. |
+
+These probes cover startup and prompt transport argv behavior, not every
+provider flow or platform. No code change was needed for the tested minimum.
+
 ## Quick start
 
 Each group below lists common commands and links the document that owns their
