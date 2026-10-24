@@ -189,6 +189,10 @@ fn summaries_redact_credentials_and_relative_paths() {
         );
     }
     assert!(output.contains("[redacted]"));
+    assert!(
+        output.contains("opened"),
+        "non-path text must survive: {output}"
+    );
 }
 
 #[test]
@@ -311,4 +315,17 @@ fn tool_ids_fall_back_when_unbounded_or_path_like() {
     let (parts, _) = record_parts("claude", None, &question, true, &[], "fallback");
     let serialized = serde_json::to_string(&parts).unwrap();
     assert!(!serialized.contains("/private/session/question.txt"));
+}
+
+#[test]
+fn command_summaries_preserve_words_around_path_fragments() {
+    assert_eq!(
+        redact_text("ls -la src/ then done"),
+        "ls -la [redacted] then done"
+    );
+    assert_eq!(
+        redact_text("cat\tpath=src/lib.rs:12:5\nfinished"),
+        "cat\t[redacted]\nfinished"
+    );
+    assert_eq!(redact_text("/private/path with spaces"), "[redacted]");
 }

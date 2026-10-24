@@ -376,3 +376,26 @@ fn guarded_send_clap_contract_accepts_independent_opt_ins() {
             && args.guards.idempotency_key.is_none()
     );
 }
+
+#[test]
+fn delete_zsh_completion_excludes_conflicting_modes_in_both_directions() {
+    let output = Command::new(bin::resolve("agent-session"))
+        .args(["completion", "zsh"])
+        .output()
+        .expect("agent-session zsh completion");
+    assert!(output.status.success());
+    let completion = String::from_utf8(output.stdout).unwrap();
+    for (flag, conflict) in [
+        ("--if-stopped", "--leave-processes"),
+        ("--leave-processes", "--if-stopped"),
+    ] {
+        let line = completion
+            .lines()
+            .find(|line| line.contains(&format!("{flag}[")))
+            .expect("delete flag completion");
+        assert!(
+            line.split(')').next().unwrap().contains(conflict),
+            "missing reciprocal conflict: {line}"
+        );
+    }
+}

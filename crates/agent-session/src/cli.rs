@@ -1747,7 +1747,7 @@ pub struct DeleteArgs {
     pub expected_incarnation: Option<String>,
 
     /// Stop only the verified tmux target and delete state, leaving processes running.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "if_stopped")]
     pub leave_processes: bool,
 
     /// Session id.

@@ -80,12 +80,13 @@ fn prewarm_fake_tmux(bin: &Path) {
     // (sympoies/nils-cli#2131). Exec it once here so the product's first exec
     // runs warm. The script's `display-message` path is side-effect-free and
     // exits 1 by design, which is the fixture's "session absent" answer.
-    let mut retries_left = 3;
+    let deadline = Instant::now() + Duration::from_secs(5);
     let prewarm = loop {
         match Command::new(bin).arg("display-message").output() {
             Ok(output) => break output,
-            Err(error) if error.kind() == ErrorKind::ExecutableFileBusy && retries_left > 0 => {
-                retries_left -= 1;
+            Err(error)
+                if error.kind() == ErrorKind::ExecutableFileBusy && Instant::now() < deadline =>
+            {
                 thread::sleep(Duration::from_millis(10));
             }
             Err(error) => panic!("prewarm fake tmux: {error}"),
@@ -126,7 +127,8 @@ fn fake_tmux_prewarm_retries_a_transient_executable_writer() {
         .open(&bin)
         .expect("hold fake tmux open for writing");
     let release = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(15));
+        // Exceed the old fixed retry window while remaining well inside the deadline.
+        thread::sleep(Duration::from_millis(100));
         drop(writer);
     });
 

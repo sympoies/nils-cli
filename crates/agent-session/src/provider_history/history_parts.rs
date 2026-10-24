@@ -783,6 +783,11 @@ fn sensitive_key(key: &str) -> bool {
 }
 
 fn appears_path_or_url(value: &str) -> bool {
+    let value = path_or_url_candidate(value);
+    path_like_fragment(value) || word_contains_path_or_url(value)
+}
+
+fn path_or_url_candidate(value: &str) -> &str {
     let value = value.trim();
     let value = value.trim_matches(|character: char| {
         matches!(
@@ -790,7 +795,7 @@ fn appears_path_or_url(value: &str) -> bool {
             '(' | ')' | '[' | ']' | '{' | '}' | '\'' | '"' | ',' | ';' | ':'
         )
     });
-    let value = value
+    value
         .rsplit_once('=')
         .or_else(|| {
             value
@@ -798,11 +803,10 @@ fn appears_path_or_url(value: &str) -> bool {
                 .filter(|(prefix, _)| !prefix.contains('/'))
         })
         .map(|(_, value)| value.trim())
-        .unwrap_or(value);
-    if path_like_fragment(value) {
-        return true;
-    }
+        .unwrap_or(value)
+}
 
+fn word_contains_path_or_url(value: &str) -> bool {
     value
         .split(|character: char| {
             !(character.is_ascii_alphanumeric() || "/\\._-~:".contains(character))
@@ -860,7 +864,7 @@ fn strip_source_location(mut value: &str) -> &str {
 }
 
 fn redact_text(value: &str) -> String {
-    if appears_path_or_url(value) {
+    if path_like_fragment(path_or_url_candidate(value)) {
         "[redacted]".to_string()
     } else {
         let mut output = String::with_capacity(value.len());

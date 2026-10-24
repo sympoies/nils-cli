@@ -359,8 +359,13 @@ fn auth_quarantine_blocks_bare_enter_even_with_allow_blocked() {
     let tmux = fake_tmux(tmp.path());
     failed_runtime(&context, tmp.path(), &tmux, false);
     let before = log(tmp.path());
-    let args =
-        crate::send::unguarded_args(ID.to_string(), None, vec![SpecialKey::Enter], true, tmux);
+    let args = crate::send::unguarded_args(
+        ID.to_string(),
+        None,
+        vec![SpecialKey::Enter],
+        true,
+        tmux.to_path_buf(),
+    );
     let result = crate::send::send_to_session(&context, args);
     assert_eq!(
         result.err().map(|e| e.code().to_string()),
@@ -409,7 +414,13 @@ fn auth_quarantine_blocks_raw_terminal_and_notifications_but_allows_interrupt() 
     assert!(!try_notification(&context, &candidate));
     crate::send::send_to_session(
         &context,
-        crate::send::unguarded_args(ID.into(), None, vec![SpecialKey::CtrlC], false, tmux),
+        crate::send::unguarded_args(
+            ID.into(),
+            None,
+            vec![SpecialKey::CtrlC],
+            false,
+            tmux.to_path_buf(),
+        ),
     )
     .unwrap();
 }
@@ -663,7 +674,7 @@ fn assert_activity_capacity_quarantine(structured: bool) {
                 Some("synthetic prompt".into()),
                 vec![SpecialKey::Enter],
                 true,
-                tmux,
+                tmux.to_path_buf(),
             ),
         )
         .unwrap_err()
@@ -704,7 +715,7 @@ fn assert_printable_key_quarantine(raw: bool) {
     let error = if raw {
         crate::send_input_serialized(&context, &record, None, &args.keys, &tmux).unwrap_err()
     } else {
-        args.tmux_bin = Some(tmux);
+        args.tmux_bin = Some(tmux.to_path_buf());
         args.allow_blocked = true;
         crate::send::send_to_session(&context, args).unwrap_err()
     };
