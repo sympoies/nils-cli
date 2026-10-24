@@ -1310,9 +1310,8 @@ const PRIVATE_TEST_WORKER_STAGING_TTL: Duration = Duration::from_secs(600);
 /// adopt untrusted state. Adopt-first keeps concurrent reinstalls bounded to
 /// cold start; the resulting shared-path rewrite window can only be observed by
 /// the non-Linux (`command_path == candidate`) re-stat in
-/// [`snapshot_worker_executable`], and never on CI: the Linux runner execs via
-/// `/proc/self/fd`, and the macOS runners build under a `0o22` umask so the
-/// binary is not group-writable and this copy path is skipped entirely.
+/// [`snapshot_worker_executable`]. Linux execs via `/proc/self/fd`; non-Linux
+/// launch still validates the canonical copy path and its ancestry.
 #[cfg(test)]
 fn private_test_worker_executable(candidate: PathBuf) -> Result<PathBuf> {
     let source = File::open(&candidate)
@@ -1366,31 +1365,10 @@ fn private_test_worker_executable(candidate: PathBuf) -> Result<PathBuf> {
     Ok(private_candidate)
 }
 
-/// Trusted per-user directory holding reusable private worker copies. Created
-/// `0o700`; a pre-existing directory that is group/other writable or not owned
-/// by the effective user is rejected as untrusted.
 #[cfg(test)]
-fn private_test_worker_dir() -> Result<PathBuf> {
-    let euid = unsafe { libc::geteuid() };
-    let directory = env::temp_dir().join(format!("git-cli-test-worker.{euid}"));
-    match fs::DirBuilder::new().mode(0o700).create(&directory) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-        Err(error) => {
-            return Err(error)
-                .context("private dirty snapshot worker test root could not be created");
-        }
-    }
-    let metadata = fs::symlink_metadata(&directory)
-        .context("private dirty snapshot worker test root metadata is unavailable")?;
-    if !metadata.file_type().is_dir() || metadata.uid() != euid || metadata.mode() & 0o022 != 0 {
-        return Err(domain_error(
-            DirtyCheckoutErrorKind::ResourceUnavailable,
-            "private dirty snapshot worker test root is not trusted",
-        ));
-    }
-    Ok(directory)
-}
+mod test_worker_root;
+#[cfg(test)]
+use test_worker_root::private_test_worker_dir;
 
 /// Stable, collision-resistant file name derived from the source path so
 /// distinct source binaries (the real target binary, test fixtures) never share

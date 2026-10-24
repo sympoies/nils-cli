@@ -65,7 +65,13 @@ fn snapshot_worker_executable_rejects_group_and_world_writable_files() {
     let executable = root.path().join("git-cli");
     fs::write(&executable, b"worker").expect("write worker fixture");
 
-    for (mode, trusted) in [(0o700, true), (0o755, true), (0o775, false), (0o702, false)] {
+    for (mode, trusted) in [
+        (0o700, true),
+        (0o755, true),
+        (0o600, false),
+        (0o775, false),
+        (0o702, false),
+    ] {
         fs::set_permissions(&executable, fs::Permissions::from_mode(mode))
             .expect("set worker fixture mode");
         let metadata = fs::metadata(&executable).expect("worker fixture metadata");
