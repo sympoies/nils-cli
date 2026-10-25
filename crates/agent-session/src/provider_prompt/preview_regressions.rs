@@ -101,6 +101,63 @@ fn codex_mid_turn_input_is_current_at_each_growing_list_poll() {
     }
 }
 
+#[test]
+fn claude_queue_interruption_keeps_latest_accepted_input_until_next_input() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("synthetic.jsonl");
+    fs::write(&path, "").unwrap();
+    append(&path, user(ProviderKind::Claude, "initial request"));
+    let mut tracker = ProviderLastPromptTracker::open_path(
+        ProviderKind::Claude,
+        "synthetic",
+        path.clone(),
+        Duration::from_secs(60),
+    )
+    .unwrap();
+    append(
+        &path,
+        json!({"type":"queue-operation", "operation":"enqueue", "sessionId":"synthetic", "content":"accepted queued request"}),
+    );
+    assert!(matches!(
+        tracker.cached_refresh(),
+        ProviderLastPromptRefresh::Current(_)
+    ));
+    // A non-enqueue queue update is queue state, not a new human message.
+    append(
+        &path,
+        json!({"type":"queue-operation", "operation":"dequeue", "sessionId":"synthetic", "content":"queue state"}),
+    );
+    append(
+        &path,
+        json!({"type":"user", "sessionId":"synthetic",
+        "message":{"role":"user", "content":"[Request interrupted by user]"}}),
+    );
+    append(
+        &path,
+        json!({"type":"last-prompt", "sessionId":"synthetic", "lastPrompt":"initial request"}),
+    );
+    let ProviderLastPromptRefresh::Current(Some(prompt)) = tracker.cached_refresh() else {
+        panic!("current accepted input")
+    };
+    assert_eq!(prompt.text, "accepted queued request");
+    assert_eq!(tracker.last_message().unwrap().text, prompt.text);
+    let mut cold = ProviderLastPromptTracker::open_path(
+        ProviderKind::Claude,
+        "synthetic",
+        path.clone(),
+        Duration::ZERO,
+    )
+    .unwrap();
+    assert_eq!(cold.refresh(), tracker.refresh());
+    assert_eq!(cold.last_message(), tracker.last_message());
+    append(&path, user(ProviderKind::Claude, "replacement request"));
+    let ProviderLastPromptRefresh::Current(Some(prompt)) = tracker.cached_refresh() else {
+        panic!("current replacement")
+    };
+    assert_eq!(prompt.text, "replacement request");
+    assert_eq!(tracker.last_message().unwrap().text, prompt.text);
+}
+
 fn assistant(provider: ProviderKind, text: &str) -> Value {
     match provider {
         ProviderKind::Claude => json!({"type":"assistant", "sessionId":"synthetic",
