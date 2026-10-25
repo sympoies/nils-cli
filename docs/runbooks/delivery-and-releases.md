@@ -2,17 +2,19 @@
 
 Pull requests and the merge queue protect development on `main`. Every merge
 group also compiles and lints affected packages on macOS, including test targets.
-Every published release must separately pass full Linux and macOS validation
-on its exact tagged commit. Green PR or queue checks do not authorize a release.
+Every published release must separately pass full Linux and macOS validation:
+a fresh run on its exact tagged commit, or verified reuse of a complete
+successful release-candidate merge-group full validation at the same commit or
+an identical tree. Ordinary PR or scoped queue checks do not authorize a release.
 
 ## What runs
 
 | Lane | Work | Failure blocks |
 | --- | --- | --- |
 | Pull request | Linux affected-package Clippy, binary builds, tests and doctests; workspace audits; dependency policy and containment checks | Merge |
-| Merge queue | The same Linux scope planner on the actual combined merge-group tree, including reverse dependencies; affected-package macOS compile/Clippy with all targets and features; workspace fallback when planning cannot safely select scope | Merge |
+| Merge queue | The same Linux scope planner on the actual combined merge-group tree, including reverse dependencies; affected-package macOS compile/Clippy with all targets and features; workspace fallback when planning cannot safely select scope; release-candidate groups also run full validation on the combined candidate | Merge |
 | Nightly / manual full CI | Full Linux tests and doctests, Linux containment, dependency policy, full instrumented macOS tests and workspace line coverage of at least 85% | Full CI; opens or updates the nightly tracker |
-| Release | Authorize the invocation, then the same full Linux/macOS/coverage workflow on the exact tag SHA, then build and package four platform targets, publish assets, and dispatch the tap update | Release builds, assets and tap update |
+| Release | Authorize the invocation, then the same full Linux/macOS/coverage workflow on the exact tag SHA (skipped only when complete merge-group evidence is verified for reuse), then build and package four platform targets, publish assets, and dispatch the tap update | Release builds, assets and tap update |
 | Push to `main` | Lightweight status only | No additional merge or release guarantee |
 
 [`ci.yml`](../../.github/workflows/ci.yml) runs on PRs, merge groups and main pushes. Its full
@@ -33,7 +35,9 @@ scoped; each run's job summary lists the scope, packages and reasons.
 A canonical release version bump takes the reduced release-only lane (version
 lockstep, third-party artifacts, publish order and a locked `cargo check`, no
 test suites) without waiting for a base-commit receipt; any other dependency
-change stays on the planner. The release workflow still validates the tag in full. Docs-only PRs run substantive documentation audits.
+change stays on the planner. The release workflow still requires full validation
+of the tag, fresh or by verified reuse. Docs-only PRs run substantive
+documentation audits.
 
 Every merge group runs `macos_clippy` on `macos-latest`, using the same
 trusted-base planner and exact candidate binding. It runs
@@ -101,13 +105,17 @@ must not tag or publish from an ordinary delivery session.
 [`release.yml`](../../.github/workflows/release.yml) also supports authorized recovery dispatch
 on an existing stable tag. Invocation and rerun identity checks still apply.
 
-The release runs full validation itself. Every validation and build checkout
+The release runs full validation itself, unless it verifies complete reusable
+evidence from a release-candidate merge group (the `verify_ci` job in
+[workspace-ci-entrypoint-inventory-v1](../specs/workspace-ci-entrypoint-inventory-v1.md)).
+
+Every validation and build checkout
 pins the caller's immutable `github.sha`; the expected commit input is checked
 at the final gate and cannot select a different checkout. Its final gate rejects failed, cancelled,
 skipped or missing Linux, macOS, coverage, containment or dependency jobs.
 Only then can release builds start. Coverage uses the full-workspace 85% floor,
-with an LCOV report required; source-PR or merge-group green checks cannot
-substitute for this gate. Releases build native Linux x86_64/aarch64 and macOS aarch64
+with an LCOV report required; source-PR checks and ordinary merge-group checks
+cannot substitute for this gate. Releases build native Linux x86_64/aarch64 and macOS aarch64
 archives, audit third-party notices, upload assets, publish the GitHub Release,
 and confirm that a tap update workflow actually started. Crates.io publication
 is a separate authorized [`publish-crates.yml`](../../.github/workflows/publish-crates.yml) flow.

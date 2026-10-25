@@ -762,10 +762,12 @@ export PATH="$HOME/.local/nils-cli/bin:$PATH"
 ### 9.2 GitHub release packaging
 
 Release tags matching `v*` trigger `.github/workflows/release.yml`. The workflow
-first authorizes the invocation, then executes full Linux and macOS tests,
-containment, dependency policy and 85% coverage on the exact tagged commit.
-Only successful full validation admits release builds; prior green PR/queue
-checks cannot substitute. It then builds exactly three release tarballs: Linux x86_64/aarch64 and macOS
+first authorizes the invocation, then requires full Linux and macOS tests,
+containment, dependency policy and 85% coverage: a fresh run on the exact tagged
+commit, or verified reuse of a complete successful merge-group full validation
+at the same commit or an identical tree
+(`.github/scripts/release-validation-reuse.cjs`). Only that admits release
+builds; ordinary PR or scoped queue checks cannot substitute. It then builds exactly three release tarballs: Linux x86_64/aarch64 and macOS
 aarch64. Intel macOS release artifacts are no longer supported.
 
 Release tarballs include:
