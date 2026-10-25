@@ -1209,7 +1209,7 @@ pub(super) fn validate_body(body: &str) -> Result<(), CliError> {
 pub(crate) fn resolve_capability_file(path: Option<&Path>) -> Result<PathBuf, CliError> {
     path.map(PathBuf::from)
         .or_else(|| std::env::var_os(super::CAPABILITY_ENV).map(PathBuf::from))
-        .ok_or_else(super::unauthorized)
+        .ok_or_else(|| super::capability::refusal("capability-file-missing"))
 }
 
 fn body_classification(message: &StoredMessage) -> &'static str {
