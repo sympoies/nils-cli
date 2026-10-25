@@ -1422,8 +1422,15 @@ pub(crate) fn receive<F: Into<Origin>>(
     machine: &str,
     envelope: Envelope<F>,
 ) -> Result<Value, CliError> {
-    receive_admitted(context, machine, envelope.into_origin(), None, &|| Ok(()))
-        .map_err(|error| super::quota_origin(error, machine, "destination"))
+    receive_admitted(
+        context,
+        machine,
+        envelope.into_origin(),
+        None,
+        &|| Ok(()),
+        &super::mailbox::now_epoch_millis,
+    )
+    .map_err(|error| super::quota_origin(error, machine, "destination"))
 }
 
 struct LocalSubmission {
@@ -1522,6 +1529,7 @@ where
         envelope,
         Some(&source),
         &authorize,
+        &super::mailbox::now_epoch_millis,
     )
 }
 fn reject_remote_key(context: &CliContext, source: &LocalSubmission) -> Result<(), CliError> {
@@ -1549,6 +1557,7 @@ fn receive_admitted(
     envelope: Envelope<Origin>,
     source: Option<&LocalSubmission>,
     authorize: &dyn Fn() -> Result<(), CliError>,
+    admission_millis: &dyn Fn() -> i64,
 ) -> Result<Value, CliError> {
     let now = now_epoch();
     if envelope.schema_version
@@ -1664,7 +1673,7 @@ fn receive_admitted(
         })
         .ok_or_else(unavailable)?;
     let recipient_incarnation = broker.incarnation.clone();
-    let now_millis = super::mailbox::now_epoch_millis();
+    let now_millis = admission_millis();
     super::mailbox::admit_message(
         &mut locked.registry,
         &envelope.from.stored_id(),
@@ -2863,15 +2872,23 @@ mod tests {
     #[test]
     fn remote_burst_admission_refuses_eleventh_before_persistence() {
         let (_temp, context) = fixture();
+        let frozen_millis = super::super::mailbox::now_epoch_millis();
+        let receive_burst = || {
+            receive_admitted(
+                &context,
+                "destination",
+                envelope().into_origin(),
+                None,
+                &|| Ok(()),
+                &|| frozen_millis,
+            )
+        };
         for _ in 0..10 {
-            receive(&context, "destination", envelope()).unwrap();
+            receive_burst().unwrap();
         }
-        assert_eq!(
-            receive(&context, "destination", envelope())
-                .unwrap_err()
-                .code(),
-            "rate-limited"
-        );
+        // Storage latency must not move this burst-boundary fixture out of its window.
+        std::thread::sleep(Duration::from_millis(1100));
+        assert_eq!(receive_burst().unwrap_err().code(), "rate-limited");
         assert_eq!(lock_registry(&context).unwrap().registry.messages.len(), 10);
     }
     #[test]
