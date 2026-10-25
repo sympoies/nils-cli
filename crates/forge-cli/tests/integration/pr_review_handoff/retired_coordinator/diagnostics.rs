@@ -205,5 +205,12 @@ fn lifecycle_refusals_name_the_missing_evidence_and_who_can_supply_it() {
         assert_eq!(error["details"]["retryable"], retryable, "{context}");
         assert!(error["details"]["next_action"].is_string(), "{context}");
         assert!(error["details"]["recovery"].is_object(), "{context}");
+        if matches!(
+            prerequisite,
+            "coordinator_not_on_board" | "terminal_activity_missing"
+        ) {
+            let message = error["message"].as_str().unwrap();
+            assert!(message.contains("agent-session board"), "{context}");
+        }
     }
 }

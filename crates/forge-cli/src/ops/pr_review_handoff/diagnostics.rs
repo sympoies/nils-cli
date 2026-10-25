@@ -58,7 +58,8 @@ pub(super) fn coordinator_not_on_board() -> ForgeError {
         false,
         "request_lifecycle_evidence",
         "the recorded coordinator has no row on the session board, so its retirement cannot be \
-         proven; the session-board operator must supply authoritative lifecycle evidence",
+         proven; `agent-session board --state all --format json` must return a retained stopped \
+         or closed row for it, which only the session-board operator can supply",
     )
 }
 
@@ -99,8 +100,8 @@ pub(super) fn terminal_activity_missing() -> ForgeError {
         "request_lifecycle_evidence",
         "the coordinator's retained board row has no last_terminal_activity_at, so staleness \
          cannot be proven; waiting cannot create it and no substitute or caller-supplied timestamp \
-         is accepted. The session-board operator must publish authoritative terminal activity for \
-         this row",
+         is accepted. `agent-session board --state all --format json` must return that field for \
+         this row, which only the session-board operator can supply",
     )
 }
 
