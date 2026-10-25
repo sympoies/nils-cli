@@ -25,7 +25,7 @@ mod checks;
 pub use checks::PrChecksArgs;
 
 mod comment;
-pub use comment::CommentEditArgs;
+pub use comment::*;
 
 mod review_loop;
 pub use review_loop::PrReviewLoopObserveArgs;
@@ -345,34 +345,6 @@ pub struct WorkflowDispatchArgs {
     #[arg(long)]
     pub inputs_file: Option<String>,
 }
-#[derive(Args, Debug)]
-pub struct CommentArgs {
-    #[command(subcommand)]
-    pub command: CommentCommand,
-}
-#[derive(Subcommand, Debug)]
-pub enum CommentCommand {
-    /// Replace the body of an issue/PR timeline or review comment.
-    Edit(CommentEditArgs),
-    /// Delete an issue/PR timeline or review comment.
-    Delete(CommentDeleteArgs),
-}
-#[derive(Clone, Copy, Debug, ValueEnum, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CommentKind {
-    /// Issue and PR timeline comments.
-    Issue,
-    /// Pull request review (diff) comments.
-    Review,
-}
-#[derive(Args, Debug)]
-pub struct CommentDeleteArgs {
-    #[arg(value_parser = clap::value_parser!(u64).range(1..))]
-    pub id: u64,
-    #[arg(long, value_enum, default_value = "issue")]
-    pub kind: CommentKind,
-}
-
 #[derive(Args, Debug)]
 pub struct IdentityArgs {
     #[command(subcommand)]

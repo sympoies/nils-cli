@@ -121,6 +121,9 @@ _forge__cli() {
             forge__cli__comment,help)
                 cmd="forge__cli__comment__help"
                 ;;
+            forge__cli__comment,redact)
+                cmd="forge__cli__comment__redact"
+                ;;
             forge__cli__comment__help,delete)
                 cmd="forge__cli__comment__help__delete"
                 ;;
@@ -129,6 +132,9 @@ _forge__cli() {
                 ;;
             forge__cli__comment__help,help)
                 cmd="forge__cli__comment__help__help"
+                ;;
+            forge__cli__comment__help,redact)
+                cmd="forge__cli__comment__help__redact"
                 ;;
             forge__cli__help,activity)
                 cmd="forge__cli__help__activity"
@@ -204,6 +210,9 @@ _forge__cli() {
                 ;;
             forge__cli__help__comment,edit)
                 cmd="forge__cli__help__comment__edit"
+                ;;
+            forge__cli__help__comment,redact)
+                cmd="forge__cli__help__comment__redact"
                 ;;
             forge__cli__help__identity,doctor)
                 cmd="forge__cli__help__identity__doctor"
@@ -1642,7 +1651,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__comment)
-            opts="-h --format --remote --provider --host --repo --store-root --dry-run --help edit delete help"
+            opts="-h --format --remote --provider --host --repo --store-root --dry-run --help edit redact delete help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1776,7 +1785,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__comment__help)
-            opts="edit delete help"
+            opts="edit redact delete help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1824,6 +1833,70 @@ _forge__cli() {
                 return 0
             fi
             case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__comment__help__redact)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__comment__redact)
+            opts="-h --inspect --expected-author --expected-body-sha256 --body-file --format --remote --provider --host --repo --store-root --dry-run --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --expected-author)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expected-body-sha256)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --body-file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --remote)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --provider)
+                    COMPREPLY=($(compgen -W "github gitlab local" -- "${cur}"))
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --store-root)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 *)
                     COMPREPLY=()
                     ;;
@@ -1982,7 +2055,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__help__comment)
-            opts="edit delete"
+            opts="edit redact delete"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2010,6 +2083,20 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__help__comment__edit)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__help__comment__redact)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

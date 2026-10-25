@@ -6,6 +6,8 @@ use crate::error::ForgeError;
 use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
+#[path = "comment_redact.rs"]
+mod redact;
 #[derive(Deserialize)]
 struct EditedComment {
     id: u64,
@@ -32,9 +34,14 @@ pub fn run(
     command: CommentCommand,
     format: OutputFormat,
 ) -> Result<i32, ForgeError> {
+    let command = match command {
+        CommentCommand::Redact(args) => return redact::run(global, args, format),
+        command => command,
+    };
     let op = match &command {
         CommentCommand::Edit(_) => "comment.edit",
         CommentCommand::Delete(_) => "comment.delete",
+        CommentCommand::Redact(_) => unreachable!(),
     };
     let ctx = write::target(global, op)?;
     let (id, kind, body, expected_updated_at) = match command {
@@ -59,6 +66,7 @@ pub fn run(
             (args.id, args.kind, Some(body), args.expected_updated_at)
         }
         CommentCommand::Delete(args) => (args.id, args.kind, None, None),
+        CommentCommand::Redact(_) => unreachable!(),
     };
     let category = match kind {
         CommentKind::Issue => "issues",

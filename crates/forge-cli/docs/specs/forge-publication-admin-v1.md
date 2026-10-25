@@ -253,3 +253,67 @@ module, and its conformance corpus is vendored unchanged under
   `data.actions[] = { kind, plan }`, where `kind` is `edit-body` or `comment`.
 
 (See `forge-cli-ops-v1.yaml` for the remaining ops.)
+
+### `comment redact`
+
+GitHub repository write access permits editing another author's comment, as
+specified in [GitHub's moderation documentation](https://docs.github.com/en/communities/moderating-comments-and-conversations/managing-disruptive-comments#editing-a-comment).
+The [issue-comment REST update endpoint](https://docs.github.com/en/rest/issues/comments#update-an-issue-comment)
+requires Issues or Pull requests write permission for fine-grained tokens.
+
+`--repo <owner/name> comment redact <database-id> --inspect` reads one issue or
+PR timeline comment and returns its author and lowercase SHA-256 digest of the
+exact UTF-8 body, without returning the body. Inspection uses `api_read`;
+redaction uses `api_write`. Both verify the selected authenticated actor,
+repository identity and repository write access (`permissions.push`).
+The provider remains responsible for enforcing token permissions on PATCH.
+
+To replace that current body, use `--repo <owner/name> comment redact
+<database-id> --expected-author <login> --expected-body-sha256 <digest>
+--body-file <replacement.md>`. The explicit repository, positive native comment
+ID, expected original author, digest, and nonempty replacement file are required.
+Inline bodies and stdin are not accepted. The current author's login must match
+without ASCII case sensitivity; the comment ID and issue URL must belong to the
+exact repository and authority. Review diff comments are outside this command.
+Normal `comment edit` retains its own-author guard. Review ledger and handoff
+records carrying forge-cli review markers are protected from this operation.
+Replacement review markers are refused locally before any provider read, including
+in dry-run. GitHub Enterprise managed author logins containing underscores are accepted.
+
+The command reads the body privately in an encoded provider response field so
+credential scrubbing cannot alter the bytes being hashed. Provider responses,
+backend diagnostics and original/replacement bodies are never printed. The
+replacement passes the normal publication guards and is sent in a scoped JSON
+payload file. Every backend request has a 30-second deadline.
+
+A mismatched author, digest or target refuses before PATCH; missing repository
+write access yields `comment_redaction_forbidden`. Malformed/unavailable reads
+return `comment_redaction_read_failed` without provider content. Identity-preparation
+policy and credential errors retain their original typed code and exit status
+(for example `DATA 65` / `identity_operation_denied`). Like normal
+editing, this digest check is read-then-write, **not atomic CAS**: another edit
+between the GET and PATCH can be overwritten. Coordinate concurrent edits.
+
+If the current body already equals the replacement, the command verifies the
+author/target/permission and succeeds as `already_replaced` without PATCH,
+regardless of the old digest. Otherwise it issues at most one PATCH, then always
+performs a separate GET, including after a failed or lost PATCH response.
+Only an exact replacement body with the expected author and target succeeds as
+`verified`. All unverified post-write outcomes return `UNAVAILABLE 69` /
+`comment_redaction_unresolved` with `retryable: false` and
+`next_action: inspect_comment_and_permissions`. Inspect before deciding whether
+to retry; no automatic replay, deletion, impersonation or credential fallback
+occurs. An unchanged readback after a backend failure is conservatively unresolved.
+
+Success uses `cli.forge-cli.comment.redact.v1` with `provider`, `repository`,
+`id`, `author`, `body_sha256`, `status` (`inspected`, `already_replaced`, or
+`verified`), and `history_redacted: false`. Text output also discloses the
+history limitation. Offline `--dry-run` validates local inputs and returns
+`status: planned` and the sibling-compatible `plan` array, without proving author,
+permission or freshness. The plan uses a payload-file placeholder and contains no body.
+
+**Replacing the current body does not redact edit history.** Readers can still
+see earlier revisions. An authorized maintainer must separately use GitHub's
+[Delete revision from history](https://docs.github.com/en/communities/moderating-comments-and-conversations/tracking-changes-in-a-comment#deleting-sensitive-information-from-a-comments-history)
+flow when historical content also needs removal. This command never claims
+complete privacy remediation or silently deletes a historical comment.
