@@ -69,7 +69,20 @@ fn call(ctx: &ProviderContext, endpoint: &str) -> BackendCall {
 fn read<T: DeserializeOwned>(call: &BackendCall) -> Result<T, ForgeError> {
     let output = crate::rate_limit::default_runner()
         .run_with_timeout(call, Some(Duration::from_secs(30)))
-        .map_err(|_| read_failed())?;
+        .map_err(|error| {
+            // Identity preparation has not read a comment response. Preserve
+            // its typed policy/credential failures; backend diagnostics may
+            // contain provider content and must stay private.
+            if error.kind().starts_with("identity_") {
+                return error;
+            }
+            match error {
+                ForgeError::BackendError { .. } | ForgeError::BackendUnavailable { .. } => {
+                    read_failed()
+                }
+                error => error,
+            }
+        })?;
     serde_json::from_str(&output.stdout).map_err(|_| read_failed())
 }
 fn digest(body: &[u8]) -> String {
@@ -106,7 +119,7 @@ fn snapshot(
     if !valid_login(&current.user.login) {
         return Err(invalid(
             "comment_snapshot_invalid",
-            "comment author is missing",
+            "comment author login is missing or invalid",
         ));
     }
     let body = STANDARD
@@ -119,7 +132,7 @@ fn valid_login(login: &str) -> bool {
     !login.is_empty()
         && login
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'[' | b']'))
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'[' | b']'))
 }
 fn protected_record(body: &[u8]) -> bool {
     let body = String::from_utf8_lossy(body);
@@ -196,15 +209,34 @@ pub(super) fn run(
             ));
         }
         write::guard_text(&body, "replacement comment")?;
+        if protected_record(body.as_bytes()) {
+            return Err(invalid(
+                "comment_redaction_protected",
+                "review ledger and handoff records require their owning workflow",
+            ));
+        }
         Some(body)
     };
     if global.dry_run {
+        let mut planned = call(&ctx, &endpoint);
+        if args.inspect {
+            planned.argv.extend(["--jq".into(), SNAPSHOT_QUERY.into()]);
+        } else {
+            planned.argv.extend([
+                "--method".into(),
+                "PATCH".into(),
+                "--input".into(),
+                "<payload-file>".into(),
+            ]);
+        }
+        let plan = planned.plan_argv();
+        let text_plan = plan.join(" ");
         return Ok(emit_success(
             schema_version_for(BINARY, OP, 1),
             serde_json::json!({"provider":"github", "repository":repo, "id":args.id,
-                "status":"planned", "history_redacted":false}),
+                "status":"planned", "history_redacted":false, "plan":plan}),
             format,
-            |_| println!("comment.redact: planned; author, permission and digest are unverified"),
+            |_| println!("would run: {text_plan}; author, permission and digest are unverified"),
         ));
     }
     // All reads and the PATCH inherit the enclosing invocation's selected
@@ -227,7 +259,7 @@ pub(super) fn run(
     let status = if let Some(replacement) = &replacement {
         let author = args.expected_author.as_deref().expect("required author");
         // Machine-owned review records must keep their immutable history.
-        if protected_record(&body) || protected_record(replacement.as_bytes()) {
+        if protected_record(&body) {
             return Err(invalid(
                 "comment_redaction_protected",
                 "review ledger and handoff records require their owning workflow",

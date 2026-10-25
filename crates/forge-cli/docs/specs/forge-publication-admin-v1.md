@@ -277,6 +277,8 @@ without ASCII case sensitivity; the comment ID and issue URL must belong to the
 exact repository and authority. Review diff comments are outside this command.
 Normal `comment edit` retains its own-author guard. Review ledger and handoff
 records carrying forge-cli review markers are protected from this operation.
+Replacement review markers are refused locally before any provider read, including
+in dry-run. GitHub Enterprise managed author logins containing underscores are accepted.
 
 The command reads the body privately in an encoded provider response field so
 credential scrubbing cannot alter the bytes being hashed. Provider responses,
@@ -286,7 +288,9 @@ payload file. Every backend request has a 30-second deadline.
 
 A mismatched author, digest or target refuses before PATCH; missing repository
 write access yields `comment_redaction_forbidden`. Malformed/unavailable reads
-return `comment_redaction_read_failed` without provider content. Like normal
+return `comment_redaction_read_failed` without provider content. Identity-preparation
+policy and credential errors retain their original typed code and exit status
+(for example `DATA 65` / `identity_operation_denied`). Like normal
 editing, this digest check is read-then-write, **not atomic CAS**: another edit
 between the GET and PATCH can be overwritten. Coordinate concurrent edits.
 
@@ -305,7 +309,8 @@ Success uses `cli.forge-cli.comment.redact.v1` with `provider`, `repository`,
 `id`, `author`, `body_sha256`, `status` (`inspected`, `already_replaced`, or
 `verified`), and `history_redacted: false`. Text output also discloses the
 history limitation. Offline `--dry-run` validates local inputs and returns
-`status: planned`, without proving author, permission or freshness.
+`status: planned` and the sibling-compatible `plan` array, without proving author,
+permission or freshness. The plan uses a payload-file placeholder and contains no body.
 
 **Replacing the current body does not redact edit history.** Readers can still
 see earlier revisions. An authorized maintainer must separately use GitHub's

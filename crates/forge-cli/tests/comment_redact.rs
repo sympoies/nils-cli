@@ -18,6 +18,11 @@ case "$1:$2" in
  api:repos/example/widget/issues/comments/17)
  case "$*" in
  *PATCH*)
+   previous=''
+   for arg in "$@"; do
+     if test "$previous" = --input; then cat "$arg" > "$PATCH_PAYLOAD"; fi
+     previous="$arg"
+   done
    test "$MODE" = deny && { printf 'private-fixture-canary' >&2; exit 1; }
    test "$MODE" = lost && { touch "$WRITTEN"; printf 'private-fixture-canary' >&2; exit 1; }
    test "$MODE" = unchanged && exit 1
@@ -31,6 +36,7 @@ case "$1:$2" in
    test "$MODE" = already && body='[REDACTED]'
    test "$MODE" = stale && body='Changed fixture'
    test "$MODE" = protected && body='<!-- forge-cli:review-state:v1 fixture -->'
+   test "$MODE" = protected-thread && body='<!-- forge-cli:thread-disposition:v1 fixture -->'
    test "$MODE" = malformed && { printf 'private-fixture-canary'; exit 0; }
    test -f "$WRITTEN" && test "$MODE" = changed && body='Changed fixture'
    body=$(printf '%s' "$body" | base64 | tr -d '\n')
@@ -45,9 +51,11 @@ fn fixture(mode: &str) -> StubEnv {
     let stub = StubEnv::new().gh_stub(STUB);
     let calls = stub.tempdir.path().join("calls");
     let written = stub.tempdir.path().join("written");
+    let payload = stub.tempdir.path().join("patch-payload.json");
     fs::write(stub.tempdir.path().join("replacement.md"), REPLACEMENT).unwrap();
     stub.env("CALLS", calls.to_string_lossy())
         .env("WRITTEN", written.to_string_lossy())
+        .env("PATCH_PAYLOAD", payload.to_string_lossy())
         .env("CAN_WRITE", "true")
         .env("COMMENT_ID", "17")
         .env("COMMENT_REPO", "example/widget")
@@ -56,6 +64,10 @@ fn fixture(mode: &str) -> StubEnv {
 }
 
 fn invoke(stub: &StubEnv, extra: &[&str]) -> support::CmdOutput {
+    invoke_author(stub, "retired-bot", extra)
+}
+
+fn invoke_author(stub: &StubEnv, author: &str, extra: &[&str]) -> support::CmdOutput {
     let digest = Sha256::digest(ORIGINAL)
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -72,7 +84,7 @@ fn invoke(stub: &StubEnv, extra: &[&str]) -> support::CmdOutput {
         "redact",
         "17",
         "--expected-author",
-        "retired-bot",
+        author,
         "--expected-body-sha256",
         &digest,
         "--body-file",
@@ -98,6 +110,14 @@ fn maintainer_redaction_reads_back_and_retry_is_idempotent() {
     assert_eq!(data["status"], "verified");
     assert_eq!(data["history_redacted"], false);
     assert!(data.get("body").is_none());
+    assert!(
+        calls(&stub)
+            .contains("api repos/example/widget/issues/comments/17 --method PATCH --input ")
+    );
+    let payload: serde_json::Value =
+        serde_json::from_slice(&fs::read(stub.tempdir.path().join("patch-payload.json")).unwrap())
+            .unwrap();
+    assert_eq!(payload, serde_json::json!({"body":REPLACEMENT}));
     assert_eq!(calls(&stub).matches("PATCH").count(), 1);
     assert_eq!(invoke(&stub, &[]).code, 0);
     assert_eq!(calls(&stub).matches("PATCH").count(), 1);
@@ -134,6 +154,9 @@ fn stale_author_target_and_permission_refuse_before_write() {
     for (key, value, kind) in [
         ("MODE", "stale", "comment_stale"),
         ("MODE", "protected", "comment_redaction_protected"),
+        ("MODE", "protected-thread", "comment_redaction_protected"),
+        ("AUTHOR", "", "comment_snapshot_invalid"),
+        ("AUTHOR", "invalid login", "comment_snapshot_invalid"),
         ("AUTHOR", "unrelated-author", "comment_author_mismatch"),
         ("COMMENT_ID", "18", "comment_response_mismatch"),
         ("COMMENT_REPO", "other/widget", "comment_response_mismatch"),
@@ -190,6 +213,16 @@ fn dry_run_is_offline_and_discloses_history_and_concurrency_limits() {
     let output = invoke(&stub, &["--dry-run"]);
     assert_eq!(output.code, 0, "{} {}", output.stdout, output.stderr);
     assert!(calls(&stub).is_empty());
+    let data = &parse_envelope(&output.stdout)["data"];
+    assert!(data["plan"].is_array());
+    assert!(
+        data["plan"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|arg| arg == "repos/example/widget/issues/comments/17")
+    );
+    assert_eq!(data["status"], "planned");
     let output = run_forge_cli(&stub, &["comment", "redact", "--help"]);
     assert!(output.stdout.contains("not atomic"));
     assert!(output.stdout.contains("edit history"));
@@ -285,5 +318,47 @@ fn invalid_digest_stdin_and_empty_replacements_are_offline_refusals() {
         assert_eq!(output.code, 65, "{} {}", output.stdout, output.stderr);
         assert_eq!(parse_envelope(&output.stdout)["error"]["code"], kind);
     }
+    assert!(calls(&stub).is_empty());
+}
+
+#[test]
+fn protected_replacement_is_refused_before_reads_including_dry_run() {
+    for marker in [
+        "<!-- forge-cli:review-state:v1 fixture -->",
+        "<!-- forge-cli:thread-disposition:v1 fixture -->",
+    ] {
+        for extra in [vec![], vec!["--dry-run"]] {
+            let stub = fixture("normal");
+            fs::write(stub.tempdir.path().join("replacement.md"), marker).unwrap();
+            let output = invoke(&stub, &extra);
+            assert_eq!(output.code, 65, "{} {}", output.stdout, output.stderr);
+            assert_eq!(
+                parse_envelope(&output.stdout)["error"]["code"],
+                "comment_redaction_protected"
+            );
+            assert!(calls(&stub).is_empty());
+        }
+    }
+}
+
+#[test]
+fn author_comparison_is_case_insensitive_and_accepts_enterprise_underscores() {
+    for (actual, expected) in [
+        ("RETIRED-BOT", "retired-bot"),
+        ("retired_bot", "retired_bot"),
+    ] {
+        let stub = fixture("normal").env("AUTHOR", actual);
+        let output = invoke_author(&stub, expected, &[]);
+        assert_eq!(output.code, 0, "{} {}", output.stdout, output.stderr);
+        assert_eq!(parse_envelope(&output.stdout)["data"]["author"], actual);
+        assert_eq!(calls(&stub).matches("PATCH").count(), 1);
+    }
+    let stub = fixture("normal");
+    let output = invoke_author(&stub, "invalid login", &[]);
+    assert_eq!(output.code, 65);
+    assert_eq!(
+        parse_envelope(&output.stdout)["error"]["code"],
+        "comment_author_invalid"
+    );
     assert!(calls(&stub).is_empty());
 }
