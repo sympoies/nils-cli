@@ -1,6 +1,8 @@
 //! Host-local admission at the initial durable session creation boundary.
 use super::*;
 
+const OCCUPANCY_LIVENESS_BUDGET: std::time::Duration = std::time::Duration::from_millis(1_500);
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Settings {
@@ -72,6 +74,7 @@ fn occupancy(
     let tmux = tmux_bin
         .map(Path::to_path_buf)
         .unwrap_or_else(|| resolve_tmux_bin(None));
+    let liveness_started = std::time::Instant::now();
     let mut active = 0;
     for entry in entries {
         let entry = entry.map_err(|_| state_error())?;
@@ -137,8 +140,21 @@ fn occupancy(
         }
         // Unknown liveness conservatively occupies a slot. Failed/cancelled
         // creates without a live runtime need no expiry timer or daemon repair.
-        if !runtime_is_proven_never_launched(&record)
-            && session_status(context, &tmux, &record) != "stopped"
+        if runtime_is_proven_never_launched(&record) || recorded_runtime_is_from_prior_boot(&record)
+        {
+            continue;
+        }
+        // Occupancy holds the admission lock, so all liveness probes share a
+        // budget shorter than the coordination lock wait. A probe skipped or
+        // cut short by that budget is unknown and therefore still occupies a
+        // slot, preserving conservative admission behavior.
+        let remaining = OCCUPANCY_LIVENESS_BUDGET.saturating_sub(liveness_started.elapsed());
+        if remaining.is_zero()
+            || live_status_with_timeout(
+                &tmux,
+                &record.tmux_session,
+                remaining.min(PANE_INPUT_COMMAND_TIMEOUT),
+            ) != "stopped"
         {
             active += 1;
         }

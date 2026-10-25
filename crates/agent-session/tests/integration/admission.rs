@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use std::{
     fs,
     net::{TcpListener, TcpStream},
+    os::unix::fs::PermissionsExt,
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{Arc, Barrier},
@@ -124,6 +125,36 @@ impl Fixture {
             .filter(|args| args.first().is_some_and(|a| a == "new-session"))
             .count()
     }
+    fn install_slow_liveness_probes(&self) -> PathBuf {
+        let real_tmux = self.dir.path().join("tmux-real");
+        fs::rename(&self.tmux, &real_tmux).unwrap();
+        let counter = self.dir.path().join("slow-probe-counts");
+        fs::create_dir(&counter).unwrap();
+        let started = self.dir.path().join("slow-probe-started");
+        let script = format!(
+            "#!/bin/sh\n\
+             counter={}\n\
+             started={}\n\
+             real_tmux={}\n\
+             if [ \"$1\" = has-session ]; then\n\
+               if mkdir \"$counter/one\" 2>/dev/null; then\n\
+                 : > \"$started\"\n\
+                 sleep 1.3\n\
+               elif mkdir \"$counter/two\" 2>/dev/null; then\n\
+                 sleep 1.3\n\
+               fi\n\
+             fi\n\
+             exec \"$real_tmux\" \"$@\"\n",
+            shell_words::quote(counter.to_str().unwrap()),
+            shell_words::quote(started.to_str().unwrap()),
+            shell_words::quote(real_tmux.to_str().unwrap()),
+        );
+        fs::write(&self.tmux, script).unwrap();
+        let mut permissions = fs::metadata(&self.tmux).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&self.tmux, permissions).unwrap();
+        started
+    }
     fn capacity(&self) -> Value {
         let output = self
             .command()
@@ -208,6 +239,35 @@ fn admission_simultaneous_cli_creates_are_atomic() {
     assert!(!f.dir.path().join("state/sessions").join(id).exists());
     assert_eq!(f.starts(), 1);
 }
+
+#[test]
+fn admission_competing_create_survives_aggregate_slow_liveness_probes() {
+    let f = Fixture::new(Some(4));
+    for id in ["first", "second"] {
+        let output = f.start(id).output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+
+    let probe_started = f.install_slow_liveness_probes();
+    let mut first = f.start("third");
+    first.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let first = first.spawn().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !probe_started.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "slow liveness probe did not start"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let competing = f.start("fourth").output().unwrap();
+    let first = first.wait_with_output().unwrap();
+    assert!(first.status.success(), "{first:?}");
+    assert!(competing.status.success(), "{competing:?}");
+    assert_eq!(f.starts(), 4);
+}
+
 #[test]
 fn admission_cli_and_http_share_capacity_across_daemon_restart() {
     let f = Arc::new(Fixture::new(Some(1)));
