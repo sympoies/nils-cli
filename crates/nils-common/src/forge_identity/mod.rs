@@ -510,6 +510,12 @@ fn actor_probe_error(
     }))
 }
 
+/// `gh` failed without an HTTP response, so nothing proves the credential or
+/// configuration wrong; a transport failure is the retryable case.
+fn no_response_failure() -> Error {
+    actor_probe_error("process_exit", "nonzero_exit", None, None, true)
+}
+
 fn parse_actor_probe_response(output: &Output) -> Result<serde_json::Value> {
     let (status, retry_after, request_id, body) = parse_included_http_response(&output.stdout);
     if let Some(status) = status {
@@ -540,13 +546,7 @@ fn parse_actor_probe_response(output: &Output) -> Result<serde_json::Value> {
         });
     }
     if !output.status.success() {
-        return Err(actor_probe_error(
-            "process_exit",
-            "nonzero_exit",
-            None,
-            None,
-            false,
-        ));
+        return Err(no_response_failure());
     }
     serde_json::from_slice(&output.stdout)
         .map_err(|_| actor_probe_error("response_decode", "invalid_json", None, None, false))
@@ -564,17 +564,11 @@ fn parse_paginated_actor_probe_response(output: &Output) -> Result<serde_json::V
         }
         let (status, retry_after, request_id, body) = parse_included_http_response(remaining);
         let Some(status) = status else {
-            return Err(actor_probe_error(
-                "process_exit",
-                if output.status.success() {
-                    "invalid_response"
-                } else {
-                    "nonzero_exit"
-                },
-                None,
-                None,
-                false,
-            ));
+            return Err(if output.status.success() {
+                actor_probe_error("process_exit", "invalid_response", None, None, false)
+            } else {
+                no_response_failure()
+            });
         };
         if !(200..300).contains(&status) {
             let transient = status == 429 || (500..600).contains(&status);
@@ -618,13 +612,7 @@ fn parse_paginated_actor_probe_response(output: &Output) -> Result<serde_json::V
         remaining = &remaining[header_len + consumed..];
     }
     if !output.status.success() {
-        return Err(actor_probe_error(
-            "process_exit",
-            "nonzero_exit",
-            None,
-            None,
-            false,
-        ));
+        return Err(no_response_failure());
     }
     Ok(serde_json::Value::Array(pages))
 }
@@ -813,6 +801,38 @@ mod actor_probe_tests {
             malformed.details.unwrap()["cause"]["classification"],
             "invalid_json"
         );
+    }
+
+    #[test]
+    fn actor_probe_failure_without_an_http_response_is_retryable_but_a_malformed_success_is_not() {
+        let single = parse_actor_probe_response(&output(1, b"")).unwrap_err();
+        let paginated = parse_paginated_actor_probe_response(&output(1, b"")).unwrap_err();
+        let late_failure = parse_paginated_actor_probe_response(&output(
+            1,
+            b"HTTP/2 200 OK\r\n\r\n{\"repositories\":[]}",
+        ))
+        .unwrap_err();
+        for error in [single, paginated, late_failure] {
+            let details = error.details.unwrap();
+            assert_eq!(details["cause"]["classification"], "nonzero_exit");
+            assert_eq!(details["retryable"], true);
+            assert_eq!(details["next_action"], "retry_request");
+            assert_eq!(details["recovery"]["automatic"], true);
+        }
+
+        let invalid = parse_paginated_actor_probe_response(&output(0, b"not-http")).unwrap_err();
+        let details = invalid.details.unwrap();
+        assert_eq!(details["cause"]["classification"], "invalid_response");
+        assert_eq!(details["retryable"], false);
+
+        let mut calls = 0;
+        let error = actor_probe_with_retry(|| {
+            calls += 1;
+            parse_actor_probe_response(&output(1, b""))
+        })
+        .unwrap_err();
+        assert_eq!(calls, 3);
+        assert_eq!(error.details.unwrap()["cause"]["attempt"], 3);
     }
 
     #[test]

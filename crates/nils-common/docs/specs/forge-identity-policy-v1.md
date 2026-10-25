@@ -300,9 +300,11 @@ An `identity_actor_unavailable` JSON error retains bounded
 `details.cause` containing the lookup operation, stage, classification, attempt,
 and (when available) HTTP status, numeric `Retry-After` of at most 30 seconds,
 and a validated GitHub request ID. Tokens, response bodies, stderr and command
-arguments are never included. Actor probes retry only HTTP 429 and 5xx failures,
-at most three attempts within the existing shared probe deadline; 401/403,
-actor mismatch, invalid JSON and unknown process failures are not retried.
+arguments are never included. Actor probes retry HTTP 429 and 5xx failures and a
+`gh` process failure that returned no HTTP response (`nonzero_exit`), at most
+three attempts within the existing shared probe deadline; each reports
+`retryable=true`. 401/403, actor mismatch, invalid JSON and a probe that cannot
+be started are not retried.
 Git runner callers retain their
 existing error envelopes/exit mapping and receive stable codes in diagnostics.
 TOML source diagnostics and credential-probe output are suppressed. Protected

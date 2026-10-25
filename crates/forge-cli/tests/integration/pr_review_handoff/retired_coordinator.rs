@@ -128,7 +128,7 @@ fn run_with_supervisor_config_on_remote(
             .unwrap()
             .success()
     );
-    let base = String::from_utf8(
+    let mut base = String::from_utf8(
         Command::new("git")
             .args(["rev-parse", "HEAD"])
             .current_dir(&repo)
@@ -160,7 +160,7 @@ fn run_with_supervisor_config_on_remote(
             .unwrap()
             .success()
     );
-    if remote == "stale" {
+    if remote == "stale" || remote == "behind" {
         assert!(
             Command::new("git")
                 .args([
@@ -179,14 +179,40 @@ fn run_with_supervisor_config_on_remote(
                 .success()
         );
     }
-    assert!(
-        Command::new("git")
-            .args(["update-ref", &format!("refs/remotes/{remote}/main"), "HEAD"])
-            .current_dir(&repo)
-            .status()
-            .unwrap()
-            .success()
-    );
+    // `stale` caches a branch tip newer than the provider base; `behind` makes the
+    // provider base newer than the cached tip; `uncached` never fetched the base.
+    let cached = if remote == "behind" {
+        base.clone()
+    } else {
+        "HEAD".to_string()
+    };
+    if remote == "behind" {
+        base = String::from_utf8(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&repo)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string();
+    }
+    if remote != "uncached" {
+        assert!(
+            Command::new("git")
+                .args([
+                    "update-ref",
+                    &format!("refs/remotes/{remote}/main"),
+                    &cached
+                ])
+                .current_dir(&repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
     let args: Vec<String> = args
         .iter()
         .map(|arg| {
@@ -953,3 +979,6 @@ fn retired_coordinator_takeover_binds_the_selected_lifecycle_source() {
         }
     }
 }
+
+#[path = "retired_coordinator/diagnostics.rs"]
+mod diagnostics;

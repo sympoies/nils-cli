@@ -321,7 +321,8 @@ impl ForgeError {
         let envelope_error = if matches!(
             self.kind(),
             "review_coordinator_live" | "review_coordinator_unproven"
-        ) {
+        ) && self.structured_details().is_none()
+        {
             envelope_error.with_details(serde_json::json!({
                 "retryable": self.kind() == "review_coordinator_unproven",
                 "next_action": if self.kind() == "review_coordinator_live" { "return_to_coordinator" } else { "refresh_session_evidence" },
