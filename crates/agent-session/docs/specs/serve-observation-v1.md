@@ -53,7 +53,7 @@ recorded in `sympoies/nils-cli#1409`.
 
   Sessions report `running`, `stopped`, or `unknown` live status plus a boolean `resumable` field and
   best-effort `repo_name` derived from the recorded `cwd`. New interactive records also expose optional
-  `runtime_started_at`, `turn_state`, `last_prompt`, `last_prompt_state`, `last_prompt_continuity`, and
+  `runtime_started_at`, `turn_state`, `last_prompt`, `last_message`, `last_prompt_state`, `last_prompt_continuity`, and
   `startup`; a profiled session also exposes its safe `agent_profile` id. When a known profile drift
   would make a stopped session fail resume, the daemon sets `resumable: false` plus one bounded
   `resume_blocked_reason` code. Old records and daemons omit the additive fields.
@@ -66,6 +66,20 @@ recorded in `sympoies/nils-cli#1409`.
   instruction. Goal observation is preview-only and never emits `prompt_submitted` or acknowledges a
   broker input delivery.
 
+  Accepted Claude `queue-operation` enqueue records and human `queued_command` attachments update
+  both cold and incremental previews immediately, including input accepted during a running turn.
+  Stale `last-prompt` markers cannot replace a newer human prompt.
+
+  `data.capabilities.last_message: true` advertises an optional `last_message` object:
+  `{ role: "user" | "assistant", text, submitted_at?, truncated }`. It contains the newest eligible
+  user or assistant text in transcript order, from the same incremental tracker and cold window.
+  Thinking, tool payloads, internal context, and foreign/sidechain Claude messages are excluded.
+  Both previews use the 16 KiB UTF-8 text cap, remove unsupported control characters (retaining
+  newline and tab), and apply the same image-wrapper hygiene. Timestamps are included only when
+  valid. Goal metadata updates `last_prompt` only. There is no separate `last_message_state`;
+  it is omitted during pending/unavailable projections or without eligible text. Consumers can
+  fall back to `last_prompt` when it is absent. Neither preview appears on the shared session board.
+
   Inline string-valued `image_url` content is elided before the 256 KiB line-buffer bound, preserving
   surrounding user text without retaining image payloads in that buffer. For Codex records containing an
   actual image, paired image name/path wrapper lines are removed from the list preview so they cannot
@@ -76,7 +90,7 @@ recorded in `sympoies/nils-cli#1409`.
 
   The 64 KiB per-read and 16-read catch-up budgets remain in force; oversized non-image records still
   fail closed. On first discovery the daemon opens an append tail and queues one at-most-64-MiB cold
-  recovery outside the list-response path. Cold recovery and append catch-up are single-flight per
+  recovery outside the list-response path. Cold recovery and remaining append catch-up are single-flight per
   session and share a daemon-wide concurrency bound. Eligible running Codex/Claude sessions add
   `last_prompt_state` with one of `current`, `pending`, or `unavailable`. `current` may include
   `last_prompt`; `current` without it authoritatively means the caught-up transcript has no eligible user
@@ -91,8 +105,8 @@ recorded in `sympoies/nils-cli#1409`.
   continuity is lost, including across daemon restarts.
 
   Consumers may retain a pending preview only when this token and the runtime identity both match.
-  Sessions without enough runtime/provider identity to be eligible omit both fields. Later list polls use
-  a bounded metadata/continuity check, retain the newest caught-up preview in process memory, and avoid
+  Sessions without enough runtime/provider identity to be eligible omit both fields. Later list polls validate
+  metadata/continuity and consume warm appends within the existing 16-read budget, retain the newest caught-up preview in process memory, and avoid
   recurring cold scans when the stable registry is at capacity. Rotation, truncation, or identity drift
   invalidates that memory and forces exact rediscovery. The text is returned in the response only and is
   never logged or persisted by the daemon; the daemon never guesses a transcript match.

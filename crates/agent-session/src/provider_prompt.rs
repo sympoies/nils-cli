@@ -16,6 +16,12 @@ use crate::{
 };
 
 mod claude_source;
+mod preview;
+use preview::PreviewMessages;
+pub(crate) use preview::{LastMessage, SessionPreviews};
+
+#[cfg(test)]
+mod preview_regressions;
 
 pub(crate) const PROVIDER_PROMPT_CAPABILITY: &str = "provider-prompt.v1";
 pub const MAX_PROVIDER_PROMPT_BYTES: usize = 16 * 1024;
@@ -279,6 +285,7 @@ pub struct ProviderPromptTail {
     image_elision: ImageUrlElision,
     goal: GoalPreviewState,
     preview: Option<LastPrompt>,
+    messages: PreviewMessages,
     discarding_oversized_line: bool,
     pending_claude: VecDeque<PendingClaudePrompt>,
     /// Claude input enqueued behind a running turn during the current poll.
@@ -348,6 +355,7 @@ impl ProviderPromptTail {
             image_elision: ImageUrlElision::default(),
             goal: GoalPreviewState::default(),
             preview: None,
+            messages: PreviewMessages::default(),
             discarding_oversized_line: false,
             pending_claude: VecDeque::new(),
             claude_enqueued: Vec::new(),
@@ -450,11 +458,6 @@ impl ProviderPromptTail {
 
         if self.source.provider == ProviderKind::Claude {
             self.drain_ready_claude(&mut events);
-            self.preview = events.last().map(|event| LastPrompt {
-                text: event.prompt.clone(),
-                submitted_at: Some(event.submitted_at.clone()),
-                truncated: event.truncated,
-            });
         }
         Ok(ProviderPromptPoll {
             preview: self.preview.take(),
@@ -480,6 +483,7 @@ impl ProviderPromptTail {
             ..Default::default()
         };
         self.preview = None;
+        self.messages = PreviewMessages::default();
         self.discarding_oversized_line = false;
         self.pending_claude.clear();
         self.claude_enqueued.clear();
@@ -518,12 +522,15 @@ impl ProviderPromptTail {
     }
 
     fn consume_line(&mut self, line: String, events: &mut Vec<ProviderPromptEvent>) {
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            return;
+        };
+        let projected =
+            self.messages
+                .observe(&value, self.source.provider, &self.source.session_id);
         match self.source.provider {
             ProviderKind::Codex => {
-                let Ok(value) = serde_json::from_str::<Value>(&line) else {
-                    return;
-                };
-                if let Some(prompt) = parse_codex_prompt_value(&value) {
+                if let Some(prompt) = projected {
                     self.preview = Some(LastPrompt::from(prompt.clone()));
                     events.push(provider_event(prompt));
                 } else if let Some(prompt) = self.goal.observe(&value, &self.source.session_id) {
@@ -531,6 +538,9 @@ impl ProviderPromptTail {
                 }
             }
             ProviderKind::Claude => {
+                if let Some(prompt) = projected {
+                    self.preview = Some(LastPrompt::from(prompt));
+                }
                 if let Some(prompt) = parse_claude_enqueued_prompt(&line, &self.source.session_id) {
                     self.claude_enqueued.push(prompt.prompt);
                     return;
@@ -600,8 +610,9 @@ impl ProviderLastPromptTracker {
             validate_source_identity,
         )
         .ok()?;
-        let (last_prompt, goal) = read_preview(&source, MAX_LAST_PROMPT_RECOVERY_BYTES);
+        let (last_prompt, goal, messages) = read_preview(&source, MAX_LAST_PROMPT_RECOVERY_BYTES);
         tail.goal = goal;
+        tail.messages = messages;
         if validate_source_identity
             && (!source_still_matches(&source)
                 || !opened_file_still_current(&source.path, tail.identity))
@@ -653,10 +664,13 @@ impl ProviderLastPromptTracker {
         }
     }
 
-    /// Return the cached prompt only when a bounded metadata/continuity check
-    /// proves that the append tail is still at the current end of the same
-    /// transcript. Expensive recovery and parsing stay outside request paths.
-    pub(crate) fn cached_refresh(&self) -> ProviderLastPromptRefresh {
+    pub(crate) fn last_message(&self) -> Option<LastMessage> {
+        self.tail.messages.last_message.clone()
+    }
+
+    /// Validate continuity and consume at most the existing incremental budget
+    /// of warm appends. Cold recovery and remaining backlogs stay asynchronous.
+    pub(crate) fn cached_refresh(&mut self) -> ProviderLastPromptRefresh {
         if self.tail.disabled {
             return ProviderLastPromptRefresh::Invalidated;
         }
@@ -672,7 +686,7 @@ impl ProviderLastPromptTracker {
             return ProviderLastPromptRefresh::Invalidated;
         }
         if metadata.len() > self.tail.offset {
-            return ProviderLastPromptRefresh::Pending;
+            return self.refresh();
         }
         ProviderLastPromptRefresh::Current(self.last_prompt.clone())
     }
@@ -1059,13 +1073,13 @@ fn extract_preview(
     provider: ProviderKind,
     session_id: &str,
     starts_at_beginning: bool,
-) -> (Option<ParsedPrompt>, GoalPreviewState) {
+) -> (Option<ParsedPrompt>, GoalPreviewState, PreviewMessages) {
     let mut goal = GoalPreviewState {
         unknown_baseline: !starts_at_beginning,
         ..Default::default()
     };
-    let mut human: Option<ParsedPrompt> = None;
     let mut fallback: Option<ParsedPrompt> = None;
+    let mut messages = PreviewMessages::default();
     for raw_line in buffer.split(|&byte| byte == b'\n') {
         let raw_line = match raw_line.last() {
             Some(b'\r') => &raw_line[..raw_line.len() - 1],
@@ -1080,35 +1094,19 @@ fn extract_preview(
         if line.is_empty() {
             continue;
         }
-        match provider {
-            ProviderKind::Codex => {
-                let Ok(value) = serde_json::from_str::<Value>(line) else {
-                    continue;
-                };
-                if let Some(prompt) =
-                    parse_codex_prompt_value(&value).or_else(|| goal.observe(&value, session_id))
-                {
-                    fallback = Some(prompt);
-                }
-            }
-            ProviderKind::Claude => {
-                let Ok(value) = serde_json::from_str::<Value>(line) else {
-                    continue;
-                };
-                let Some(prompt) = parse_claude_last_prompt_value(&value, session_id)
-                    .or_else(|| parse_claude_user_prompt_value(&value, session_id))
-                else {
-                    continue;
-                };
-                if claude_prompt_is_human_submitted(&value) {
-                    human = Some(prompt);
-                } else {
-                    fallback = Some(prompt);
-                }
-            }
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let prompt = messages.observe(&value, provider, session_id);
+        if let Some(prompt) = prompt.or_else(|| {
+            (provider == ProviderKind::Codex)
+                .then(|| goal.observe(&value, session_id))
+                .flatten()
+        }) {
+            fallback = Some(prompt);
         }
     }
-    (human.or(fallback), goal)
+    (fallback, goal, messages)
 }
 
 /// Read up to `max_bytes` from the tail of a regular transcript file.
@@ -1242,7 +1240,7 @@ pub(crate) fn read_last_prompt(
 fn read_preview(
     source: &ProviderPromptSource,
     max_bytes: usize,
-) -> (Option<LastPrompt>, GoalPreviewState) {
+) -> (Option<LastPrompt>, GoalPreviewState, PreviewMessages) {
     let Ok((buffer, start)) = read_tail_window_with_start(&source.path, max_bytes) else {
         return (
             None,
@@ -1250,10 +1248,12 @@ fn read_preview(
                 unknown_baseline: true,
                 ..Default::default()
             },
+            PreviewMessages::default(),
         );
     };
-    let (parsed, goal) = extract_preview(&buffer, source.provider, &source.session_id, start == 0);
-    (parsed.map(LastPrompt::from), goal)
+    let (parsed, goal, messages) =
+        extract_preview(&buffer, source.provider, &source.session_id, start == 0);
+    (parsed.map(LastPrompt::from), goal, messages)
 }
 
 /// Codex surrounds an actual image with separate header/closing text items.
@@ -1284,11 +1284,11 @@ pub(crate) fn image_preview_text(prompt: &str) -> String {
 impl From<ParsedPrompt> for LastPrompt {
     fn from(parsed: ParsedPrompt) -> Self {
         Self {
-            text: if parsed.has_images {
+            text: preview::clean_text(if parsed.has_images {
                 image_preview_text(&parsed.prompt)
             } else {
                 parsed.prompt
-            },
+            }),
             submitted_at: parsed.submitted_at,
             truncated: parsed.truncated,
         }
@@ -1821,7 +1821,7 @@ mod tests {
         );
         fs::write(&path, format!("{first}{}{suffix}", " \n".repeat(1_000))).unwrap();
         let source = ProviderPromptSource::test_path(ProviderKind::Codex, "codex-id", path);
-        let (preview, mut goal) = read_preview(&source, suffix.len() + 10);
+        let (preview, mut goal, _) = read_preview(&source, suffix.len() + 10);
         assert_eq!(preview.unwrap().text, "new user instruction");
         let unchanged: Value = serde_json::from_str(&goal_line("Old goal", "active", 1)).unwrap();
         assert!(goal.observe(&unchanged, "codex-id").is_none());

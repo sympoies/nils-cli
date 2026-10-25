@@ -79,8 +79,15 @@ regular transcript can be validated. On first discovery the daemon establishes
 an append offset, queues an at-most-64-MiB cold recovery outside the list-response
 path, then retains only the latest bounded preview in process memory. Recovery is
 single-flight per session and daemon-wide concurrency-bounded. Later list
-requests perform only a bounded freshness check; appended chunks are consumed in
-the background instead of repeating the cold scan.
+requests validate continuity and consume up to sixteen 64-KiB warm append chunks.
+Remaining backlog is consumed in the background without repeating the cold scan.
+
+The daemon also advertises `capabilities.last_message: true`. Its optional
+`last_message` is `{ role: "user" | "assistant", text, submitted_at?, truncated }`,
+using the same tracker, text caps, control-character filtering, and image-wrapper
+hygiene as `last_prompt`. It reports the latest eligible user or assistant text;
+Claude input queued during a running turn updates both previews immediately.
+There is no separate message state. When absent, clients can use `last_prompt`.
 
 The preview cache is not daemon state: it is never written to the session
 record, logs, or diagnostics, and a daemon restart reconstructs it from the

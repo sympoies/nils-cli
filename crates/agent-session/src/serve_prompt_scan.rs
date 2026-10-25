@@ -3,6 +3,9 @@
 //! take seconds on a large history; failed scans retry with a capped backoff.
 use super::*;
 
+#[path = "serve_prompt_projection.rs"]
+mod projection;
+
 /// Why no transcript source is available yet.
 enum NoSource {
     Scanning,
@@ -26,7 +29,7 @@ impl ProviderPromptDiscoveryRegistry {
         &self,
         record: &SessionRecord,
         key: &ProviderPromptDiscoveryKey,
-    ) -> Result<ProviderPromptSource, LastPromptProjection> {
+    ) -> Result<ProviderPromptSource, Box<LastPromptProjection>> {
         let scanning = match self.resolve(record, false).await {
             Ok(source) => return Ok(source),
             Err(NoSource::Scanning) => true,
@@ -41,7 +44,7 @@ impl ProviderPromptDiscoveryRegistry {
             }
             None => (true, None),
         };
-        Err(LastPromptProjection {
+        Err(Box::new(LastPromptProjection {
             state: if scanning && !invalidated {
                 LastPromptState::Pending
             } else {
@@ -49,7 +52,8 @@ impl ProviderPromptDiscoveryRegistry {
             },
             continuity,
             prompt: None,
-        })
+            message: None,
+        }))
     }
 
     async fn resolve(
