@@ -18,6 +18,7 @@ pub(super) struct NotificationInspection {
     updated_at_epoch: Option<i64>,
     next_attempt_at_epoch: Option<i64>,
     last_reason: Option<String>,
+    attempt_history: Vec<notification::NotificationAttempt>,
     live_unread_count: usize,
     resolved: bool,
     controller_available: Option<bool>,
@@ -191,6 +192,7 @@ fn inspect(
             .last_reason
             .as_deref()
             .map(notification::safe_reason),
+        attempt_history: receipt.attempt_history.clone(),
         live_unread_count,
         resolved: !eligible_unread || receipt.generation <= receipt.notified_generation,
         controller_available: None,

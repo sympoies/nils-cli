@@ -341,6 +341,15 @@ requires a binary that understands v3; there is no automatic downgrade.
 Suppression means stored without a wake; it is neither rejection nor loss, read,
 acknowledgement, acceptance, or elevated authority.
 
+The first persisted notification-history event upgrades the registry to
+`agent-session.coordination-registry.v5`. This fences v1-v4 writers that would
+deserialize the receipt and then erase its unknown history field on save. The
+v5 fence remains after history entries are cleared. Upgrade registry writers
+and projection readers before this event; older projection readers report
+version drift, and older writers refuse the registry rather than rewrite it.
+Rollback requires a writer and reader that understand v5; there is no automatic
+downgrade.
+
 A digest consumer uses authenticated `message inbox --state unread --category
 progress --category report --format json` and the normal pagination cursor.
 Inbox/show/wait and local send metadata expose the category, exact
@@ -380,6 +389,7 @@ it contains only this fixed set of metadata fields:
 | `attempted_queued_at_epoch` | Queue time retained for the attempted prompt, independent of newer mail or transcript compaction. |
 | `attempted_at_epoch`, `updated_at_epoch`, `next_attempt_at_epoch` | Attempt, receipt update, and scheduled retry times from the normalized snapshot. Existing normalization may recover a missing update time or requeue a newer generation at observation time. |
 | `last_reason` | Existing stable reason allowlist; unrecognized text becomes `notification-state-invalid`. An absent reason is `null`. |
+| `attempt_history` | The most recent eight persisted wake outcomes for this incarnation. Each item contains the receipt generation, recorded-at epoch seconds, and a reason from the same stable allowlist. The history contains no message or credential content. |
 | `live_unread_count` | Nonexpired canonical unread messages for the exact recipient incarnation. Remote senders and suppressed messages count; read, acknowledged, expired, and other-incarnation messages do not. |
 | `resolved` | No notification-eligible live unread mail, or `generation <= notified_generation`. Delivery discovery and both delivery boundaries retire drained generations with reason `mailbox-drained`, preserving submission counters and timestamps, without changing mailbox records. Active `attempting` receipts retain their fence until an outcome is recorded. Resolution alone proves neither submission nor acknowledgement. |
 | `controller_available` | `null`: status performs no controller probe, so availability is unknown. |

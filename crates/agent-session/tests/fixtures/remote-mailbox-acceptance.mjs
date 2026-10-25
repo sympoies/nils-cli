@@ -120,7 +120,7 @@ try {
   await stop(alpha);await start(alpha);await delivered(alpha,initial.message_id);
   const replay=await send(alpha,beta,'response-loss');assert.equal(replay.message_id,initial.message_id);
   const registry=JSON.parse(readFileSync(join(beta.root,'coordination','registry.json'),'utf8'));
-  assert.equal(registry.messages.length,1);assert.equal(registry.schema_version,'agent-session.coordination-registry.v2','federation must preserve old registry compatibility');
+  assert.equal(registry.messages.length,1);assert.equal(registry.schema_version,'agent-session.coordination-registry.v5','notification history fences older registry writers');
   checks.push('response-loss-source-restart-dedup');
 const previousIndex=process.argv.indexOf('--previous-agent-session-bin');
 const policyPreviousIndex=process.argv.indexOf('--previous-policy-agent-session-bin');
@@ -128,27 +128,36 @@ if(previousIndex>=0){
   const oldBinary=process.argv[previousIndex+1];
   const runOld=args=>spawnSync(oldBinary,['--state-dir',beta.root,...args,'--capability-file',beta.capabilityFile,'--format','json'],{encoding:'utf8',timeout:10000});
   const path=join(beta.root,'coordination','registry.json');
-  const before=JSON.parse(readFileSync(path,'utf8'));const sender=before.messages[0].sender_session_id;
-  assert(sender.startsWith('remote:'),'authoritative opaque sender is incompatible with local ID grammar');
-  const shown=runOld(['message','show','--session',beta.session,'--message',initial.message_id]);
-  assert.equal(shown.status,0,'old facade can show and persist remote inbox');
-  const after=JSON.parse(readFileSync(path,'utf8'));
-  assert.equal(after.messages[0].sender_session_id,sender,'oldwriter preserves authoritative sender');
-  assert.equal(after.messages[0].sender_incarnation,alpha.incarnation);
-  assert.deepEqual(after.receipts,before.receipts,'oldwriter preserves remote dedup receipt and expiry');
-  const broker=runOld(['broker','status','--session',beta.session,'--authenticated']);
-  assert.equal(broker.status,0,'old broker operations remain available');
-  const guard=runOld(['work-context','check','--session',beta.session,'--allow-incomplete']);
-  assert.equal(guard.status,65,'empty fixture has no active claim');
-  assert.equal(JSON.parse(guard.stdout).error?.code,'claim-not-active','old hook guard reaches normal semantic result');
-  const replied=runOld(['message','reply','--session',beta.session,'--message',initial.message_id,'--if-revision',String(after.messages[0].revision),'--body-file',bodyFile('old-reply','old reply'),'--idempotency-key','old-reply-key']);
-  assert.notEqual(replied.status,0,'old facade cannot launder remote origin into local sender');
-  assert.equal(JSON.parse(readFileSync(path,'utf8')).messages.length,1);
-  const journalPath=join(alpha.root,'coordination','federation-journal.json');const journalBefore=readFileSync(journalPath);
-  const oldLocal=spawnSync(oldBinary,['--state-dir',alpha.root,'message','send','--from',alpha.session,'--to',alpha.session,'--body-file',bodyFile('old-local','old local'),'--idempotency-key','old-local-key','--capability-file',alpha.capabilityFile,'--format','json'],{encoding:'utf8',timeout:10000});
-  assert.equal(oldLocal.status,0,'old local writer works alongside pending journal');
-  assert.deepEqual(readFileSync(journalPath),journalBefore,'old local writer never rewrites source federation journal');
-  checks.push('oldwriter-roundtrip-origin-receipt-broker-compatible');
+  const beforeBytes=readFileSync(path);const before=JSON.parse(beforeBytes.toString('utf8'));
+  if(before.schema_version==='agent-session.coordination-registry.v5'){
+    const refused=runOld(['message','show','--session',beta.session,'--message',initial.message_id]);
+    assert.notEqual(refused.status,0,'v1-v4 writer must refuse the notification-history fence');
+    assert.equal(JSON.parse(refused.stdout).error?.code,'coordination-store-corrupt');
+    assert.deepEqual(readFileSync(path),beforeBytes,'refused old writer leaves notification history intact');
+    checks.push('oldwriter-refuses-notification-history-fence');
+  }else{
+    const sender=before.messages[0].sender_session_id;
+    assert(sender.startsWith('remote:'),'authoritative opaque sender is incompatible with local ID grammar');
+    const shown=runOld(['message','show','--session',beta.session,'--message',initial.message_id]);
+    assert.equal(shown.status,0,'old facade can show and persist remote inbox');
+    const after=JSON.parse(readFileSync(path,'utf8'));
+    assert.equal(after.messages[0].sender_session_id,sender,'oldwriter preserves authoritative sender');
+    assert.equal(after.messages[0].sender_incarnation,alpha.incarnation);
+    assert.deepEqual(after.receipts,before.receipts,'oldwriter preserves remote dedup receipt and expiry');
+    const broker=runOld(['broker','status','--session',beta.session,'--authenticated']);
+    assert.equal(broker.status,0,'old broker operations remain available');
+    const guard=runOld(['work-context','check','--session',beta.session,'--allow-incomplete']);
+    assert.equal(guard.status,65,'empty fixture has no active claim');
+    assert.equal(JSON.parse(guard.stdout).error?.code,'claim-not-active','old hook guard reaches normal semantic result');
+    const replied=runOld(['message','reply','--session',beta.session,'--message',initial.message_id,'--if-revision',String(after.messages[0].revision),'--body-file',bodyFile('old-reply','old reply'),'--idempotency-key','old-reply-key']);
+    assert.notEqual(replied.status,0,'old facade cannot launder remote origin into local sender');
+    assert.equal(JSON.parse(readFileSync(path,'utf8')).messages.length,1);
+    const journalPath=join(alpha.root,'coordination','federation-journal.json');const journalBefore=readFileSync(journalPath);
+    const oldLocal=spawnSync(oldBinary,['--state-dir',alpha.root,'message','send','--from',alpha.session,'--to',alpha.session,'--body-file',bodyFile('old-local','old local'),'--idempotency-key','old-local-key','--capability-file',alpha.capabilityFile,'--format','json'],{encoding:'utf8',timeout:10000});
+    assert.equal(oldLocal.status,0,'old local writer works alongside pending journal');
+    assert.deepEqual(readFileSync(journalPath),journalBefore,'old local writer never rewrites source federation journal');
+    checks.push('oldwriter-roundtrip-origin-receipt-broker-compatible');
+  }
 }
 await stop(beta);await start(beta);assert.equal(JSON.parse(readFileSync(join(beta.root,'coordination','registry.json'),'utf8')).messages.length,1);checks.push('destination-restart-retains-inbox');
 const spoofed=await fetch(alpha.url+`/sessions/${alpha.session}/messages/remote/v1`,{method:'POST',headers:{Authorization:`Bearer ${beta.capability}`,'Content-Type':'application/json'},body:JSON.stringify({to_machine:beta.machine,to_session:beta.session,body:'spoof fixture',idempotency_key:'spoof-key-0001',reply_to:null,expires_in:null,reply_revision:null})});assert.equal(spoofed.status,401);checks.push('local-sender-capability-required');
@@ -234,17 +243,30 @@ checks.push('bidirectional-reply-show-status');
   if(policyPreviousIndex>=0){
     await stop(beta);
     const before=readFileSync(quietJournalPath);
-    // Delivery inspection is daemon-owned: exercise the old journal reader,
-    // rather than merely checking an old facade with no reachable daemon.
-    await start(beta,true,process.argv[policyPreviousIndex+1]);
-    const oldDelivery=spawnSync(process.argv[policyPreviousIndex+1],['--state-dir',beta.root,'message','delivery','--session',beta.session,'--message',categoryForward.message_id,'--capability-file',beta.capabilityFile,'--format','json'],{encoding:'utf8',timeout:10000});
-    assert.notEqual(oldDelivery.status,0,'old journal reader must refuse the suppression receipt fence');
-    assert.equal(JSON.parse(oldDelivery.stdout).error?.code,'federation-journal-invalid');
-    await stop(beta);
-    assert.deepEqual(readFileSync(quietJournalPath),before,'refused old reader leaves retained receipt intact');
-    await start(beta);
-    assert.equal((await status(beta,categoryForward.message_id)).receipt.notification_suppressed,true);
-    checks.push('suppression-new-old-new-journal-fence');
+    const betaRegistryPath=join(beta.root,'coordination','registry.json');
+    const betaRegistryBefore=readFileSync(betaRegistryPath);
+    const betaRegistry=JSON.parse(betaRegistryBefore.toString('utf8'));
+    if(betaRegistry.schema_version==='agent-session.coordination-registry.v5'){
+      const oldReader=spawnSync(process.argv[policyPreviousIndex+1],['--state-dir',beta.root,'message','show','--session',beta.session,'--message',categoryForward.message_id,'--capability-file',beta.capabilityFile,'--format','json'],{encoding:'utf8',timeout:10000});
+      assert.notEqual(oldReader.status,0,'v1-v4 writer must refuse the notification-history fence');
+      assert.equal(JSON.parse(oldReader.stdout).error?.code,'coordination-store-corrupt');
+      assert.deepEqual(readFileSync(betaRegistryPath),betaRegistryBefore,'refused old writer leaves notification history intact');
+      assert.deepEqual(readFileSync(quietJournalPath),before,'registry refusal leaves the retained journal intact');
+      await start(beta);
+      checks.push('old-policy-writer-refuses-notification-history-fence');
+    }else{
+      // Delivery inspection is daemon-owned: exercise the old journal reader,
+      // rather than merely checking an old facade with no reachable daemon.
+      await start(beta,true,process.argv[policyPreviousIndex+1]);
+      const oldDelivery=spawnSync(process.argv[policyPreviousIndex+1],['--state-dir',beta.root,'message','delivery','--session',beta.session,'--message',categoryForward.message_id,'--capability-file',beta.capabilityFile,'--format','json'],{encoding:'utf8',timeout:10000});
+      assert.notEqual(oldDelivery.status,0,'old journal reader must refuse the suppression receipt fence');
+      assert.equal(JSON.parse(oldDelivery.stdout).error?.code,'federation-journal-invalid');
+      await stop(beta);
+      assert.deepEqual(readFileSync(quietJournalPath),before,'refused old reader leaves retained receipt intact');
+      await start(beta);
+      assert.equal((await status(beta,categoryForward.message_id)).receipt.notification_suppressed,true);
+      checks.push('suppression-new-old-new-journal-fence');
+    }
   }
   checks.push('destination-policy-http-forward-digest-ack-receipt');
   const categoryReplay=await cli(beta,forwardArgs);assert.equal(categoryReplay.message_id,categoryForward.message_id);
