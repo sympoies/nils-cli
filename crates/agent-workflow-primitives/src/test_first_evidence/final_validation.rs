@@ -137,16 +137,30 @@ pub(super) fn valid_resolution_history(record: &EvidenceRecord, failed: &FinalVa
 }
 
 fn valid_resolution(record: &EvidenceRecord, failed: &FinalValidation) -> bool {
-    let Some(resolution) = &failed.resolution else {
-        return false;
-    };
-    valid_resolution_history(record, failed)
-        && effective_final_validations(record)
-            .get(&(
-                Some(resolution.passing_scope),
-                resolution.passing_command.trim(),
-            ))
-            .is_some_and(|passing| passing.status == ValidationStatus::Pass)
+    let latest = effective_final_validations(record);
+    let mut current = failed;
+    let mut visited = BTreeSet::new();
+    loop {
+        let Some(resolution) = &current.resolution else {
+            return false;
+        };
+        if !visited.insert((current.scope, current.command.trim(), current.attempt))
+            || !valid_resolution_history(record, current)
+        {
+            return false;
+        }
+        let Some(next) = latest.get(&(
+            Some(resolution.passing_scope),
+            resolution.passing_command.trim(),
+        )) else {
+            return false;
+        };
+        if next.status == ValidationStatus::Pass {
+            return true;
+        }
+        // A newer failure must have its own valid path to a current pass.
+        current = next;
+    }
 }
 
 pub(super) fn unresolved_failure(record: &EvidenceRecord, item: &FinalValidation) -> bool {
@@ -349,7 +363,7 @@ mod tests {
     use super::*;
     use pretty_assertions::{assert_eq, assert_ne};
 
-    fn fixture(dir: &Path) {
+    pub(super) fn fixture(dir: &Path) {
         fs::write(dir.join(RECORD_FILE_NAME), serde_json::to_vec(&json!({
             "schema_version": RECORD_SCHEMA_VERSION,
             "change_classification": "bug-fix",
@@ -364,7 +378,13 @@ mod tests {
         })).unwrap()).unwrap();
     }
 
-    fn resolve(dir: &Path, passing: &str, attempt: &str, reason: &str, investigation: &str) -> i32 {
+    pub(super) fn resolve(
+        dir: &Path,
+        passing: &str,
+        attempt: &str,
+        reason: &str,
+        investigation: &str,
+    ) -> i32 {
         run_with_args([
             "test-first-evidence",
             "resolve-final",
@@ -598,3 +618,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "final_validation_chain_tests.rs"]
+mod chain_tests;

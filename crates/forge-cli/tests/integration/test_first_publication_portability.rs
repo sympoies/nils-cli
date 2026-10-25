@@ -320,3 +320,50 @@ fn create_and_deliver_publish_portable_command_display_without_rewriting_evidenc
     assert!(retained.contains(passing));
     assert_eq!(git(&fixture.repo, &["status", "--porcelain"]), "");
 }
+
+#[test]
+fn draft_preview_admits_a_resolved_validation_chain_without_rewriting_history() {
+    let fixture = fixture_with_references(&["synthetic investigation"]);
+    for (command, status) in [("synthetic full", "fail"), ("synthetic final", "pass")] {
+        evidence(
+            &fixture.evidence,
+            "record-final",
+            &["--command", command, "--scope", "full", "--status", status],
+        );
+    }
+    evidence(
+        &fixture.evidence,
+        "resolve-final",
+        &[
+            "--command",
+            "synthetic full",
+            "--scope",
+            "full",
+            "--attempt",
+            "2",
+            "--passing-command",
+            "synthetic final",
+            "--passing-scope",
+            "full",
+            "--passing-attempt",
+            "1",
+            "--reason",
+            "same source and covered target",
+            "--investigation",
+            "later failure investigated",
+        ],
+    );
+    let path = fixture.evidence.join("test-first-evidence.json");
+    let before = fs::read(&path).unwrap();
+    let stub = StubEnv::new().gh_stub("#!/bin/sh\nexit 99\n");
+    let mut args = create_args("create", fixture.evidence.to_str().unwrap());
+    args.insert(0, "--dry-run");
+    let result = run_forge_cli_in(&stub, &args, Some(&fixture.repo));
+    assert_eq!(result.code, 0, "{}\n{}", result.stdout, result.stderr);
+    assert_eq!(
+        fs::read(path).unwrap(),
+        before,
+        "draft preview preserves all evidence"
+    );
+    assert_eq!(git(&fixture.repo, &["status", "--porcelain"]), "");
+}
