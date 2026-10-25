@@ -1390,9 +1390,9 @@ async fn provider_prompt_discovery_recovers_and_tracks_long_codex_turns() {
         .write_all(prompt_line("appended prompt").as_bytes())
         .expect("append prompt");
     assert_eq!(
-        registry.last_prompt(&record).await,
-        None,
-        "a changed transcript must omit the cached prompt while refreshing"
+        registry.last_prompt(&record).await.map(|prompt| prompt.text),
+        Some("appended prompt".to_string()),
+        "a bounded warm append must return the newest prompt immediately"
     );
     let appended_prompt = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
