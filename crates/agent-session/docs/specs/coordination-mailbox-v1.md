@@ -131,6 +131,47 @@ capability refuses. No session ID or capability path is interpolated into the
 reminder. The unchanged default inbox page is 50 metadata rows; `message show`
 reads a selected message body.
 
+### Local authority refusals
+
+Inbox, show and `broker identity` use the same recipient authority checks.
+An earlier successful inbox read does not grant authority to a later show:
+the broker or runtime may have changed between commands. A refusal never marks
+the selected unread message read or acknowledges it.
+
+Local `coordination-unauthorized` errors retain their existing code and exit
+status. The following additive `error.details.reason_code` values distinguish
+the failed check without returning credentials, paths, incarnation identifiers
+or mailbox contents. The text hint also names the reason code.
+
+| Reason code | Meaning |
+| --- | --- |
+| `capability-file-missing` | No explicit or runtime-supplied capability file was selected. |
+| `capability-file-invalid` | The selected file is unavailable, untrusted, unreadable, or contains an invalid token. |
+| `capability-mismatch` | The supplied token does not match the selected broker. Stale and foreign tokens are equally refused. |
+| `broker-identity-unavailable` | The selected session has no retained broker record. |
+| `runtime-incarnation-mismatch` | The matching broker capability belongs to a different runtime incarnation from the session record. |
+| `broker-not-ready` | The matching broker is not ready. |
+| `broker-capability-unavailable` | The matching broker's canonical private capability file no longer verifies. |
+| `broker-heartbeat-stale` | Authority expired during the locked mailbox recheck. Initial stale-heartbeat checks retain `coordination-broker-lost`. |
+
+Broker/runtime mismatch details are returned only after matching the supplied
+token to the retained broker digest. These errors set `retryable: false`:
+repeating an unchanged request cannot repair authority. `next_action` and
+`recovery.action` are `verify-session-capability-file` for missing, invalid or
+mismatched supplied credentials, otherwise
+`preserve-session-and-request-replacement`. Recovery also specifies
+`preserve_session: true` and `preserve_mailbox: true`.
+
+Use the runtime-supplied capability file with `broker identity` to verify the
+current binding. If it still refuses, preserve the pane, session state, signed
+work and mailbox; ask the coordinator for a replacement session and the sender
+to resend the continuation. A different session cannot read the original
+session's mailbox. The refusal retains its unread payload under the original
+incarnation until its existing expiry; it does not extend retention. Do not
+edit capability or incarnation files, restart a live pane, or assume a daemon
+restart repairs a session-local mismatch. A later verified same-session resume
+uses the existing [continuity contract](#same-session-resume-continuity).
+
 Both JSON and text inbox output include an additive `guidance` header:
 
 ```text

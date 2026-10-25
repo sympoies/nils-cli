@@ -26,6 +26,8 @@ mod doctor;
 mod lineage;
 #[path = "integration/mailbox_any_unread.rs"]
 mod mailbox_any_unread;
+#[path = "integration/mailbox_authority.rs"]
+mod mailbox_authority;
 #[path = "integration/mailbox_burst.rs"]
 mod mailbox_burst;
 #[path = "integration/mailbox_expiry.rs"]
