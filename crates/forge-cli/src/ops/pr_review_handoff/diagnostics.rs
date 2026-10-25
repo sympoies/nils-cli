@@ -143,8 +143,9 @@ pub(super) fn remote_repository_mismatch(remote: &str) -> ForgeError {
         false,
         "select_matching_remote",
         format!(
-            "git remote {remote} does not point at this pull request's repository and host; pass \
-             --remote naming the matching remote"
+            "git remote {remote} of the current checkout does not point at this pull request's \
+             repository and host; run from a checkout of this repository or pass --remote naming \
+             its remote"
         ),
     )
 }

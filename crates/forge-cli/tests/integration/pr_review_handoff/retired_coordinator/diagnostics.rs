@@ -34,14 +34,14 @@ fn policy_refusals_name_the_missing_base_or_config_prerequisite() {
             "remote_repository_mismatch",
             false,
             "select_matching_remote",
-            "--remote",
+            "checkout of this repository",
         ),
         (
             "host",
             "remote_repository_mismatch",
             false,
             "select_matching_remote",
-            "--remote",
+            "checkout of this repository",
         ),
         (
             "uncached",
