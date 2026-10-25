@@ -73,6 +73,16 @@ pub(super) fn coordinator_source_ambiguous() -> ForgeError {
     )
 }
 
+pub(super) fn coordinator_source_selector_mismatch() -> ForgeError {
+    unproven(
+        "coordinator_source_selector_mismatch",
+        false,
+        "correct_coordinator_selector",
+        "the session board has exactly one source machine for the recorded coordinator, and the \
+         explicit @machine selector does not name it; correct the selector or omit it",
+    )
+}
+
 pub(super) fn lifecycle_source_unavailable() -> ForgeError {
     unproven(
         "lifecycle_source_unavailable",
@@ -87,9 +97,11 @@ pub(super) fn coordinator_not_terminal() -> ForgeError {
     unproven(
         "coordinator_not_terminal",
         false,
-        "return_to_coordinator",
-        "the recorded coordinator is neither stopped nor closed as deleted or archived; only a \
-         retired coordinator can be taken over",
+        "request_lifecycle_evidence",
+        "the recorded coordinator's board row is neither a proven stop (stopped with runtime_status \
+         stopped) nor closed as deleted or archived, so its retirement cannot be proven; \
+         authoritative lifecycle evidence for that row is required, and a closed coordinator \
+         cannot receive a return",
     )
 }
 

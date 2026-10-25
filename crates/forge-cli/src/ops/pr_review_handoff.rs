@@ -629,7 +629,7 @@ fn prove_coordinator_retired(
     }
     let source_digest = review_state::sha256_digest(sources.iter().next().unwrap().as_bytes());
     if expected_source.is_some_and(|source| source != source_digest) {
-        return Err(diagnostics::coordinator_source_ambiguous());
+        return Err(diagnostics::coordinator_source_selector_mismatch());
     }
     let mut evidence = None;
     for row in matching {

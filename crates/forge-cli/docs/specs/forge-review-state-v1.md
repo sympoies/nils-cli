@@ -333,7 +333,8 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   is a `review_writer_conflict` that names the missing `[review_handoff].supervisors`.
 - Lifecycle prerequisites: `session_board_unavailable`, `session_board_incomplete`,
   `coordinator_not_on_board`, `coordinator_source_ambiguous`,
-  `lifecycle_source_unavailable`, `coordinator_not_terminal`,
+  `coordinator_source_selector_mismatch` (correct or omit the `@machine`
+  selector), `lifecycle_source_unavailable`, `coordinator_not_terminal`,
   `terminal_activity_missing` and `coordinator_not_stale`. A retained row
   without `last_terminal_activity_at` is never repaired from other timestamps or
   caller input; only the session-board operator can supply that evidence.

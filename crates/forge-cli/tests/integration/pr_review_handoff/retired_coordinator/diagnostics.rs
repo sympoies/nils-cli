@@ -205,6 +205,13 @@ fn lifecycle_refusals_name_the_missing_evidence_and_who_can_supply_it() {
         assert_eq!(error["details"]["retryable"], retryable, "{context}");
         assert!(error["details"]["next_action"].is_string(), "{context}");
         assert!(error["details"]["recovery"].is_object(), "{context}");
+        if prerequisite == "coordinator_not_terminal" {
+            // A closed or unverified coordinator cannot receive a return; evidence is the gap.
+            assert_eq!(
+                error["details"]["next_action"], "request_lifecycle_evidence",
+                "{context}"
+            );
+        }
         if matches!(
             prerequisite,
             "coordinator_not_on_board" | "terminal_activity_missing"
@@ -213,4 +220,30 @@ fn lifecycle_refusals_name_the_missing_evidence_and_who_can_supply_it() {
             assert!(message.contains("agent-session board"), "{context}");
         }
     }
+}
+
+#[test]
+fn a_selector_naming_another_machine_asks_the_caller_to_correct_it() {
+    let seeded = records(retired_coordinator_handoff(), None);
+    let tip = &seeded.last().unwrap().record_digest;
+    let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "stopped", "");
+    stub.write_stub(
+        "agent-session",
+        &format!("#!/bin/sh\ncat <<'JSON'\n{}\nJSON\n", board(|_| ())),
+    );
+    let selector = format!("{COORDINATOR_UUID}@elsewhere");
+    let out = takeover(&stub, HEAD, OLD, tip, &selector, true);
+    assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
+    let error = parse_envelope(&out.stdout)["error"].clone();
+    let details = &error["details"];
+    assert_eq!(error["code"], "review_coordinator_unproven", "{error}");
+    assert_eq!(
+        details["prerequisite"], "coordinator_source_selector_mismatch",
+        "{error}"
+    );
+    assert_eq!(
+        details["next_action"], "correct_coordinator_selector",
+        "{error}"
+    );
+    assert_eq!(details["retryable"], false, "{error}");
 }
