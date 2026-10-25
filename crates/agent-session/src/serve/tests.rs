@@ -1389,9 +1389,9 @@ async fn provider_prompt_discovery_recovers_and_tracks_long_codex_turns() {
         .expect("append transcript")
         .write_all(prompt_line("appended prompt").as_bytes())
         .expect("append prompt");
+    let current = registry.last_prompt(&record).await.expect("current prompt");
     assert_eq!(
-        registry.last_prompt(&record).await.map(|prompt| prompt.text),
-        Some("appended prompt".to_string()),
+        current.text, "appended prompt",
         "a bounded warm append must return the newest prompt immediately"
     );
     let appended_prompt = tokio::time::timeout(Duration::from_secs(5), async {
