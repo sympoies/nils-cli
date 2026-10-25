@@ -404,9 +404,11 @@ reruns, current PR-head fencing, single-write semantics, and attempt/job receipt
 
 See [publication and administration](forge-publication-admin-v1.md#workflow-dispatch) for this contract.
 
-### `comment edit` / `comment delete`
+### `comment edit` / `comment delete` / `comment redact`
 
 See [publication and administration](forge-publication-admin-v1.md#comment-edit--comment-delete) for this contract.
+
+See [maintainer redaction](forge-publication-admin-v1.md#comment-redact) for the explicit author/digest guarded timeline-comment replacement and edit-history limits.
 
 ### `pr create`
 

@@ -1,3 +1,5 @@
+#[path = "integration/admission.rs"]
+mod admission;
 #[path = "integration/board.rs"]
 mod board;
 #[path = "integration/broker_retirement.rs"]
@@ -24,6 +26,8 @@ mod doctor;
 mod lineage;
 #[path = "integration/mailbox_any_unread.rs"]
 mod mailbox_any_unread;
+#[path = "integration/mailbox_authority.rs"]
+mod mailbox_authority;
 #[path = "integration/mailbox_burst.rs"]
 mod mailbox_burst;
 #[path = "integration/mailbox_expiry.rs"]

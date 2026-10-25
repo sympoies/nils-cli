@@ -10,9 +10,22 @@ case "$GH_TOKEN" in
  fixture-b) actor=account-b;;
 esac
 if test "$1:$2" = api:user; then printf '{"login":"%s"}' "$actor"; exit 0; fi
+if test "$1:$2" = api:repos/example/widget; then
+ printf '{"full_name":"example/widget","permissions":{"push":true}}'; exit 0
+fi
 case "$1:$2:$*" in
  api:repos/*/comments/*:*PATCH*|api:repos/*/comments/*:*DELETE*) :;;
- api:repos/*/comments/*:*) printf '{"id":17,"user":{"login":"%s"},"updated_at":"2026-01-01T00:00:00Z"}' "$actor"; exit 0;;
+ api:repos/*/comments/*:*)
+ case "$*" in
+ *--jq*) python3 - "$PAYLOAD_LOG" <<'SNAPSHOT_PY'
+import base64, json, os, sys
+body = json.load(open(sys.argv[1]))["body"] if os.path.exists(sys.argv[1]) else "Original comment"
+print(json.dumps({"id":17,"user":{"login":"retired-bot"},"issue_url":"https://api.github.com/repos/example/widget/issues/1","body_base64":base64.b64encode(body.encode()).decode()}))
+SNAPSHOT_PY
+ ;;
+ *) printf '{"id":17,"user":{"login":"%s"},"updated_at":"2026-01-01T00:00:00Z"}' "$actor";;
+ esac
+ exit 0;;
 esac
 printf '%s\n' "$actor" >> "$CALL_LOG"
 printf '%s\n' "$@" >> "$ARGV_LOG"
@@ -99,6 +112,20 @@ fn cases() -> Vec<(&'static str, Vec<&'static str>)> {
             vec!["comment", "edit", "17", "--body-file", "body.md"],
         ),
         ("comment.delete", vec!["comment", "delete", "17"]),
+        (
+            "comment.redact",
+            vec![
+                "comment",
+                "redact",
+                "17",
+                "--expected-author",
+                "retired-bot",
+                "--expected-body-sha256",
+                "0bf50f6a29dcf904d18adbe3cc775c511f63ff2df2cc9043e62303ea4c854626",
+                "--body-file",
+                "body.md",
+            ],
+        ),
     ]
 }
 fn invoke(stub: &StubEnv, args: &[&str]) -> super::support::CmdOutput {
@@ -129,6 +156,16 @@ fn provider_mutations_emit_typed_success_and_explicit_repository_plans() {
         if op == "comment.edit" {
             assert!(argv.contains("repos/example/widget/issues/comments/17\n--method\nPATCH"));
             assert_eq!(envelope["data"]["body"], "Updated comment");
+        }
+        if op == "comment.redact" {
+            assert!(argv.contains("repos/example/widget/issues/comments/17\n--method\nPATCH"));
+            let payload: serde_json::Value = serde_json::from_slice(
+                &fs::read(stub.tempdir.path().join("payload.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(payload, serde_json::json!({"body":"Updated comment"}));
+            assert_eq!(envelope["data"]["status"], "verified");
+            assert!(envelope["data"].get("body").is_none());
         }
         if op == "comment.delete" {
             assert!(argv.contains("repos/example/widget/issues/comments/17\n--method\nDELETE"));
@@ -375,7 +412,13 @@ fn provider_mutations_surface_backend_failures_and_missing_identity_credentials(
     for (op, args) in cases() {
         let stub = fixture().gh_stub("#!/bin/sh\necho rejected >&2\nexit 1\n");
         let result = invoke(&stub, &args);
-        assert_eq!(result.code, 1, "{op}: {} {}", result.stdout, result.stderr);
+        assert_eq!(
+            result.code,
+            if op == "comment.redact" { 69 } else { 1 },
+            "{op}: {} {}",
+            result.stdout,
+            result.stderr
+        );
         assert_eq!(parse_envelope(&result.stdout)["ok"], false);
         let stub = identity_fixture(
             "writer-a",

@@ -369,6 +369,42 @@ operations:
       Without --expected-updated-at only the timestamp comparison is skipped; ownership is still checked.
       Offline --dry-run emits the PATCH plan without GETs or ownership/freshness verification.
 
+  - id: comment.redact
+    schema_version: cli.forge-cli.comment.redact.v1
+    summary: Explicit maintainer replacement of one GitHub timeline comment without body output.
+    inputs:
+      - { name: --repo, type: repository, required: true }
+      - { name: id, type: positive-integer, required: true }
+      - { name: --inspect, type: bool, optional: true }
+      - { name: --expected-author, type: string, optional: true }
+      - { name: --expected-body-sha256, type: sha256-lowercase-hex, optional: true }
+      - { name: --body-file, type: path, optional: true }
+    validations: [no_local_path, no_agent_attribution]
+    backends:
+      github:
+        - { program: gh, argv: [api, user] }
+        - { program: gh, argv: [api, "repos/<repo>"] }
+        - { program: gh, argv: [api, "repos/<repo>/issues/comments/<id>", --jq, <private-snapshot-projection>] }
+        - { program: gh, argv: [api, "repos/<repo>/issues/comments/<id>", --method, PATCH, --input, <payload-file>] }
+        - { program: gh, argv: [api, "repos/<repo>/issues/comments/<id>", --jq, <private-snapshot-projection>] }
+    output:
+      data: { provider: github, repository: string, id: integer, author: string, body_sha256: string, status: "enum<inspected|already_replaced|verified|planned>", history_redacted: false, plan: "optional<array<string>>" }
+    notes: >-
+      Exact repository is explicit, not inferred from a remote. Inspect conflicts with all write inputs;
+      otherwise expected author, exact current body SHA-256 and replacement file are all required.
+      Checks authenticated actor, repository identity/write permission, comment id/issue URL and author.
+      Refuses replacement review markers before provider reads, and protects existing ledger/handoff records.
+      Identity-preparation errors retain their original typed code and exit status; backend diagnostics stay private.
+      Normal own-comment edit and review flows stay unchanged.
+      Read-then-write guard is not atomic CAS. Never returns body or backend diagnostics.
+      Already-replaced bodies succeed without PATCH; otherwise a single PATCH is followed by a protected GET
+      even on backend failure. Unverified readback yields comment_redaction_unresolved (69), retryable false;
+      no blind replay or deletion. Every backend call has a 30-second deadline.
+      Replacing the current body leaves edit history intact; separate provider revision redaction is required.
+      Offline dry-run returns planned and a body-free plan array without provider calls.
+      Author and body_sha256 are omitted for planned results; plan appears only for dry-run.
+      See forge-publication-admin-v1.md.
+
   - id: comment.delete
     schema_version: cli.forge-cli.comment.delete.v1
     summary: Delete a GitHub native timeline or review comment by database id.

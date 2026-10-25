@@ -7,6 +7,63 @@ rules that apply throughout. The HTTP routes that share these code paths are
 specified in [Serve API v1](../specs/serve-api-v1.md); turn phases and provider
 hooks are specified in the [turn-state contract](../turn-state-contract.md).
 
+## Active-session admission
+
+To limit concurrent sessions sharing a local state root, put `admission.json`
+in the directory selected by `--state-dir` or `AGENT_SESSION_STATE_DIR`:
+
+```json
+{"max_active_sessions": 1}
+```
+
+The optional value is a non-negative integer: `0` refuses all new admissions;
+missing file, omitted key, or `null` keeps the default unlimited behavior.
+The setting is read on each admission, so CLI and daemon callers using the same
+state root share the effective policy without restarting the daemon. Capacity
+admission is independent of advisory work-context claims and applies across
+coordination modes. Keep the
+state root operator-owned and replace the settings file atomically when editing
+it. Lowering the limit never evicts an existing session.
+
+Admission is serialized with initial session-record persistence before tmux or
+provider launch. It covers interactive `start`, one-shot `run`, HTTP/Console
+creates, history imports creating a new session, and stopped-record reactivation
+through resume/restart. Resuming an already-running session uses its existing
+slot. Existing owner, incarnation, lifecycle, and idempotency fences still apply.
+
+A starting session's existing lifecycle lock and persisted record reserve a slot
+until creation finishes. Running sessions continue to occupy capacity across
+CLI exits and daemon restarts. Stopped/deleted sessions and failed or cancelled
+creates without a live runtime release capacity. An uncertain runtime remains
+counted until it is verified stopped; admission never kills another session.
+
+Read the effective policy and current occupancy with:
+
+```sh
+agent-session diagnose --format json
+```
+
+The additive `data.admission` object contains only `max_active_sessions`
+(integer or `null`) and `active_sessions` (non-negative integer). Text diagnostics
+show the same values. This read-only snapshot does not create a state root,
+normalize registry state, change session records, or launch a provider; it may
+probe tmux liveness. Occupancy can change immediately after the snapshot.
+
+At capacity, CLI commands exit `1` with `error.code` set to
+`session-capacity-exceeded`. The refusal's `error.details` contains
+`max_active_sessions`, `active_sessions`, `retryable: true`,
+`next_action: "wait-for-capacity"`, and bounded `recovery` metadata with
+`safe_to_retry: true`; the human message tells the operator
+to stop or delete an active session. No refused create leaves a session directory
+or starts tmux/provider work. HTTP callers receive the same code and details with
+HTTP `409`; see [session creation v1](../specs/serve-session-create-v1.md).
+An unreadable or invalid settings document refuses admission with
+`session-admission-config-invalid` instead of silently disabling the limit.
+
+Occupancy read or validation failures refuse admission with the path-free
+`session-admission-state-unavailable` error. They never treat unavailable state
+as empty capacity or expose a local record path.
+
 ## Start origin and workspace
 
 `agent-session start --agent codex --workspace example-workspace` selects a

@@ -2012,6 +2012,25 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ':id:_default' \
 && ret=0
 ;;
+(redact)
+_arguments "${_arguments_options[@]}" : \
+'--expected-author=[Expected original author login, verified before writing]:EXPECTED_AUTHOR:_default' \
+'--expected-body-sha256=[SHA-256 of the exact UTF-8 current body (64 lowercase hex digits)]:EXPECTED_BODY_SHA256:_default' \
+'--body-file=[Replacement Markdown file (stdin is not accepted)]:BODY_FILE:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'(--expected-author --expected-body-sha256 --body-file)--inspect[Inspect author and SHA-256 without returning the comment body or writing]' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id:_default' \
+&& ret=0
+;;
 (delete)
 _arguments "${_arguments_options[@]}" : \
 '--kind=[]:KIND:((issue\:"Issue and PR timeline comments"
@@ -2042,6 +2061,10 @@ _arguments "${_arguments_options[@]}" : \
         curcontext="${curcontext%:*:*}:forge-cli-comment-help-command-$line[1]:"
         case $line[1] in
             (edit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(redact)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3698,6 +3721,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(redact)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (delete)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -4137,6 +4164,7 @@ _forge-cli__subcmd__auth__subcmd__status_commands() {
 _forge-cli__subcmd__comment_commands() {
     local commands; commands=(
 'edit:Replace the body of an issue/PR timeline or review comment' \
+'redact:Replace one exact timeline comment as a repository maintainer' \
 'delete:Delete an issue/PR timeline or review comment' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -4156,6 +4184,7 @@ _forge-cli__subcmd__comment__subcmd__edit_commands() {
 _forge-cli__subcmd__comment__subcmd__help_commands() {
     local commands; commands=(
 'edit:Replace the body of an issue/PR timeline or review comment' \
+'redact:Replace one exact timeline comment as a repository maintainer' \
 'delete:Delete an issue/PR timeline or review comment' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -4175,6 +4204,16 @@ _forge-cli__subcmd__comment__subcmd__help__subcmd__edit_commands() {
 _forge-cli__subcmd__comment__subcmd__help__subcmd__help_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli comment help help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__comment__subcmd__help__subcmd__redact_commands] )) ||
+_forge-cli__subcmd__comment__subcmd__help__subcmd__redact_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli comment help redact commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__comment__subcmd__redact_commands] )) ||
+_forge-cli__subcmd__comment__subcmd__redact_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli comment redact commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__completion_commands] )) ||
 _forge-cli__subcmd__completion_commands() {
@@ -4251,6 +4290,7 @@ _forge-cli__subcmd__help__subcmd__auth__subcmd__status_commands() {
 _forge-cli__subcmd__help__subcmd__comment_commands() {
     local commands; commands=(
 'edit:Replace the body of an issue/PR timeline or review comment' \
+'redact:Replace one exact timeline comment as a repository maintainer' \
 'delete:Delete an issue/PR timeline or review comment' \
     )
     _describe -t commands 'forge-cli help comment commands' commands "$@"
@@ -4264,6 +4304,11 @@ _forge-cli__subcmd__help__subcmd__comment__subcmd__delete_commands() {
 _forge-cli__subcmd__help__subcmd__comment__subcmd__edit_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help comment edit commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__comment__subcmd__redact_commands] )) ||
+_forge-cli__subcmd__help__subcmd__comment__subcmd__redact_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help comment redact commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__completion_commands] )) ||
 _forge-cli__subcmd__help__subcmd__completion_commands() {

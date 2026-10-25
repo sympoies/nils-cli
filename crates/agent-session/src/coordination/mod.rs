@@ -831,9 +831,11 @@ pub(crate) fn capability_token_from_file(
     let path = capability_file
         .map(PathBuf::from)
         .or_else(|| std::env::var_os(CAPABILITY_ENV).map(PathBuf::from))
-        .ok_or_else(unauthorized)?;
-    let token = read_private_file(&path, 512).map_err(|_| unauthorized())?;
-    let token = String::from_utf8(token).map_err(|_| unauthorized())?;
+        .ok_or_else(|| capability::refusal("capability-file-missing"))?;
+    let token = read_private_file(&path, 512)
+        .map_err(|_| capability::refusal("capability-file-invalid"))?;
+    let token =
+        String::from_utf8(token).map_err(|_| capability::refusal("capability-file-invalid"))?;
     Ok(token.trim().to_string())
 }
 
@@ -900,7 +902,7 @@ pub(crate) fn authenticate_token_observational(
     token: &str,
 ) -> Result<(SessionRecord, String), CliError> {
     if token.len() < 32 || token.len() > 256 || !token.is_ascii() {
-        return Err(unauthorized());
+        return Err(capability::refusal("capability-file-invalid"));
     }
     let record = load_session_record(context, session_id).map_err(|_| unauthorized())?;
     let incarnation = incarnation(&record)?;
@@ -934,18 +936,22 @@ fn verify_capability_token(
     incarnation: &str,
     token: &str,
 ) -> Result<(), CliError> {
-    let broker = registry.brokers.get(&record.id).ok_or_else(unauthorized)?;
-    if broker.state != "ready"
-        || broker.incarnation != incarnation
-        || !digest_eq(&broker.capability_digest, &digest_bytes(token.as_bytes()))
-        || !broker::capability_available(
-            context,
-            &record.id,
-            incarnation,
-            &broker.capability_digest,
-        )
-    {
-        return Err(unauthorized());
+    let broker = registry
+        .brokers
+        .get(&record.id)
+        .ok_or_else(|| capability::refusal("broker-identity-unavailable"))?;
+    // Verify the supplied secret before distinguishing broker/runtime fences.
+    if !digest_eq(&broker.capability_digest, &digest_bytes(token.as_bytes())) {
+        return Err(capability::refusal("capability-mismatch"));
+    }
+    if broker.incarnation != incarnation {
+        return Err(capability::refusal("runtime-incarnation-mismatch"));
+    }
+    if broker.state != "ready" {
+        return Err(capability::refusal("broker-not-ready"));
+    }
+    if !broker::capability_available(context, &record.id, incarnation, &broker.capability_digest) {
+        return Err(capability::refusal("broker-capability-unavailable"));
     }
     if !broker::heartbeat_fresh(context, &record.id, incarnation, broker.heartbeat_epoch) {
         return Err(CliError::runtime(
@@ -1039,36 +1045,21 @@ pub(crate) fn revalidate_capability_file(
     expected_incarnation: &str,
     capability_file: &Path,
 ) -> Result<(), CliError> {
+    let token = capability_token_from_file(Some(capability_file))?;
+    verify_capability_token(context, registry, record, expected_incarnation, &token).map_err(
+        |error| {
+            if error.code() == "coordination-broker-lost" {
+                // Preserve the existing revalidation error code and exit status.
+                capability::refusal("broker-heartbeat-stale")
+            } else {
+                error
+            }
+        },
+    )?;
+    // A reply can reload a changed record; verify the current token first.
     if incarnation(record)? != expected_incarnation {
-        return Err(unauthorized());
+        return Err(capability::refusal("runtime-incarnation-mismatch"));
     }
-    let token = read_private_file(capability_file, 512).map_err(|_| unauthorized())?;
-    let token = String::from_utf8(token).map_err(|_| unauthorized())?;
-    let broker = registry
-        .brokers
-        .get(&record.id)
-        .filter(|broker| {
-            broker.incarnation == expected_incarnation
-                && broker.state == "ready"
-                && digest_eq(
-                    &broker.capability_digest,
-                    &digest_bytes(token.trim().as_bytes()),
-                )
-                && broker::capability_available(
-                    context,
-                    &record.id,
-                    expected_incarnation,
-                    &broker.capability_digest,
-                )
-                && broker::heartbeat_fresh(
-                    context,
-                    &record.id,
-                    expected_incarnation,
-                    broker.heartbeat_epoch,
-                )
-        })
-        .ok_or_else(unauthorized)?;
-    let _ = broker;
     Ok(())
 }
 
