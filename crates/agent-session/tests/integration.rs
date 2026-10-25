@@ -1,3 +1,5 @@
+#[path = "integration/admission.rs"]
+mod admission;
 #[path = "integration/board.rs"]
 mod board;
 #[path = "integration/broker_retirement.rs"]
