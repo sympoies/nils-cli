@@ -50,3 +50,7 @@ pub(crate) fn authenticate_token(
     verify_capability_token(context, &locked.registry, &record, &incarnation, token)?;
     Ok((record, incarnation))
 }
+
+#[cfg(test)]
+#[path = "capability_revalidation_tests.rs"]
+mod tests;

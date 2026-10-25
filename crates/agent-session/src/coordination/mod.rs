@@ -1045,9 +1045,6 @@ pub(crate) fn revalidate_capability_file(
     expected_incarnation: &str,
     capability_file: &Path,
 ) -> Result<(), CliError> {
-    if incarnation(record)? != expected_incarnation {
-        return Err(capability::refusal("runtime-incarnation-mismatch"));
-    }
     let token = capability_token_from_file(Some(capability_file))?;
     verify_capability_token(context, registry, record, expected_incarnation, &token).map_err(
         |error| {
@@ -1058,7 +1055,12 @@ pub(crate) fn revalidate_capability_file(
                 error
             }
         },
-    )
+    )?;
+    // A reply can reload a changed record; verify the current token first.
+    if incarnation(record)? != expected_incarnation {
+        return Err(capability::refusal("runtime-incarnation-mismatch"));
+    }
+    Ok(())
 }
 
 pub fn incarnation(record: &SessionRecord) -> Result<String, CliError> {
