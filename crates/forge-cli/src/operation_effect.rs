@@ -72,10 +72,19 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
             ProviderEffect::NetworkWrite,
             Vec::new(),
         ),
+        Some(Command::Comment(crate::cli::CommentArgs {
+            command: CommentCommand::Redact(args),
+        })) if args.inspect => (
+            "comment.redact",
+            read,
+            network,
+            vec!["provider", "identity_policy"],
+        ),
         Some(Command::Comment(args)) => (
             match args.command {
                 CommentCommand::Edit(_) => "comment.edit",
                 CommentCommand::Delete(_) => "comment.delete",
+                CommentCommand::Redact(_) => "comment.redact",
             },
             mutation,
             ProviderEffect::NetworkWrite,
