@@ -74,7 +74,7 @@ impl PreviewMessages {
                         None
                     }
                 } else if !self.claude_human_seen {
-                    // Legacy transcripts without human-source tags retain the
+                    // Older transcripts without human-source tags retain the
                     // canonical last-prompt fallback, but it is not a message.
                     if let Some(prompt) = parse_claude_last_prompt_value(value, session) {
                         return Some(prompt);
