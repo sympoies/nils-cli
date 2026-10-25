@@ -644,3 +644,63 @@ fn delegation_registry_fences_older_writers_and_preserves_its_version() {
         "agent-session.coordination-registry.v4"
     );
 }
+
+#[test]
+fn notification_history_registry_fences_older_writers_and_preserves_its_version() {
+    let fixture = Fixture::new("codex");
+    let mut registry = super::super::lock_registry(&fixture.context).unwrap();
+    let receipt = super::super::notification::NotificationReceipt {
+        schema_version: "agent-session.notification-generation.v1".into(),
+        target_session_id: "recipient".into(),
+        target_incarnation: "current".into(),
+        generation: 1,
+        attempt_history: vec![super::super::notification::NotificationAttempt {
+            generation: 1,
+            recorded_at_epoch: super::super::now_epoch(),
+            reason: "recipient-attached".into(),
+        }],
+        ..super::super::notification::NotificationReceipt::default()
+    };
+    registry
+        .registry
+        .notifications
+        .insert("synthetic-notification".into(), receipt);
+    registry.save().unwrap();
+
+    let path = fixture.context.state_dir.join("coordination/registry.json");
+    let bytes = fs::read(&path).unwrap();
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    let version = value["schema_version"].as_str().unwrap();
+    assert_eq!(version, "agent-session.coordination-registry.v5");
+    let older_writer_admits = matches!(
+        version,
+        "agent-session.coordination-registry.v1"
+            | "agent-session.coordination-registry.v2"
+            | "agent-session.coordination-registry.v3"
+            | "agent-session.coordination-registry.v4"
+    );
+    assert!(
+        !older_writer_admits,
+        "a v1-v4 writer must refuse before dropping notification history"
+    );
+    assert!(nils_common::coordination_projection::load(&fixture.context.state_dir).is_ok());
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+
+    registry
+        .registry
+        .notifications
+        .values_mut()
+        .next()
+        .unwrap()
+        .attempt_history
+        .clear();
+    registry.save().unwrap();
+    drop(registry);
+    assert_eq!(
+        super::super::lock_registry(&fixture.context)
+            .unwrap()
+            .registry
+            .schema_version,
+        "agent-session.coordination-registry.v5"
+    );
+}

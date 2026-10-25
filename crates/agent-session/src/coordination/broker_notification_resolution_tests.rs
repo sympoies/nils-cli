@@ -196,6 +196,85 @@ fn inspection_distinguishes_queued_submitted_and_resolved_delivery() {
 }
 
 #[test]
+fn inspection_retains_wake_deferral_after_a_later_generation_is_submitted() {
+    let (_dir, context, _capability) = authenticated_fixture();
+    let first = coordination::pending_notifications(&context)
+        .unwrap()
+        .pop()
+        .unwrap();
+    let reasons = [
+        "recipient-attached",
+        "recipient-composer-not-empty",
+        "recipient-composer-unobservable",
+        "recipient-attached",
+        "recipient-composer-not-empty",
+        "recipient-composer-unobservable",
+        "recipient-attached",
+        "recipient-composer-not-empty",
+        "recipient-composer-unobservable",
+        "recipient-attached",
+    ];
+    for reason in reasons {
+        assert!(coordination::defer_notification(&context, &first, reason, 0).unwrap());
+    }
+
+    let mut next_message = message("current", "unread", i64::MAX);
+    next_message["message_id"] = json!("synthetic-message-next");
+    let mut locked = coordination::lock_registry(&context).unwrap();
+    locked
+        .registry
+        .messages
+        .push(serde_json::from_value(next_message).unwrap());
+    notification::schedule(&mut locked.registry, "session", "current", now_epoch());
+    locked.save().unwrap();
+    drop(locked);
+
+    let second = coordination::pending_notifications(&context)
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(second.generation, first.generation + 1);
+    let mut guard = coordination::lock_session_quiescence(&context, "session", "current").unwrap();
+    assert!(guard.begin_notification_attempt(&second).unwrap());
+    drop(guard);
+    assert!(coordination::mark_notification_submitted(&context, &second).unwrap());
+
+    let notification = &inspect(&context)["notification"];
+    assert_eq!(notification["state"], "prompt_submitted");
+    assert_eq!(notification["last_reason"], "prompt-accepted");
+    assert_eq!(notification["attempt_history"].as_array().unwrap().len(), 8);
+    assert_eq!(
+        notification["attempt_history"][0]["generation"],
+        first.generation
+    );
+    assert_eq!(notification["attempt_history"][0]["reason"], reasons[3]);
+    assert_eq!(notification["attempt_history"][6]["reason"], reasons[9]);
+    assert!(
+        notification["attempt_history"][0]["recorded_at_epoch"]
+            .as_i64()
+            .is_some_and(|timestamp| timestamp > 0)
+    );
+    assert_eq!(
+        notification["attempt_history"][7]["generation"],
+        second.generation
+    );
+    assert_eq!(
+        notification["attempt_history"][7]["reason"],
+        "prompt-accepted"
+    );
+    assert!(
+        notification["attempt_history"][7]["recorded_at_epoch"]
+            .as_i64()
+            .is_some_and(|timestamp| timestamp > 0)
+    );
+    assert!(
+        !notification
+            .to_string()
+            .contains("synthetic-private-content")
+    );
+}
+
+#[test]
 fn drained_discovery_preserves_the_active_submission_fence_until_outcome() {
     let (_dir, context, capability) = authenticated_fixture();
     let candidate = coordination::pending_notifications(&context)

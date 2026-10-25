@@ -23,6 +23,7 @@ const REASON_PENDING: &str = "notification-pending";
 const REASON_ATTEMPTING: &str = "notification-attempting";
 const REASON_MIGRATED_UNKNOWN: &str = "migrated-attempt-outcome-unknown";
 const REASON_INVALID_STATE: &str = "notification-state-invalid";
+const MAX_ATTEMPT_HISTORY: usize = 8;
 /// serve has no prompt route to the recipient; its policy hook claims the
 /// reminder at the runtime's own safe boundary instead.
 pub(crate) const REASON_HOOK_DELIVERED: &str = "hook-delivered";
@@ -58,6 +59,29 @@ pub(crate) struct NotificationReceipt {
     pub next_attempt_at_epoch: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attempt_history: Vec<NotificationAttempt>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct NotificationAttempt {
+    pub generation: u64,
+    pub recorded_at_epoch: i64,
+    pub reason: String,
+}
+
+impl NotificationReceipt {
+    fn record_attempt(&mut self, generation: u64, reason: &str, now: i64) {
+        self.attempt_history.push(NotificationAttempt {
+            generation,
+            recorded_at_epoch: now,
+            reason: safe_reason(reason),
+        });
+        if self.attempt_history.len() > MAX_ATTEMPT_HISTORY {
+            let excess = self.attempt_history.len() - MAX_ATTEMPT_HISTORY;
+            self.attempt_history.drain(..excess);
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -221,6 +245,8 @@ pub(crate) fn claim_hook_reminder(
     receipt.attempted_prompt_format = Some(observation::PROMPT_FORMAT.to_string());
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some("prompt-accepted".to_string());
+    let generation = receipt.generation;
+    receipt.record_attempt(generation, "prompt-accepted", now);
     Some(NotificationCandidate {
         target_session_id: target_session_id.to_string(),
         target_incarnation: target_incarnation.to_string(),
@@ -588,6 +614,7 @@ fn transition_submitted(
         }
         .to_string(),
     );
+    receipt.record_attempt(candidate.generation, "prompt-accepted", now);
     true
 }
 
@@ -605,6 +632,7 @@ fn transition_known_failure(
     receipt.next_attempt_at_epoch = retry_at_epoch.max(now);
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some(safe_reason(reason));
+    receipt.record_attempt(candidate.generation, reason, now);
     true
 }
 
@@ -620,6 +648,7 @@ fn transition_unknown(
     receipt.state = "attempt_unknown".to_string();
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some(safe_reason(reason));
+    receipt.record_attempt(candidate.generation, reason, now);
     true
 }
 
@@ -640,6 +669,8 @@ fn transition_undeliverable(
     receipt.state = "undeliverable".to_string();
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some(safe_reason(reason));
+    let generation = receipt.generation;
+    receipt.record_attempt(generation, reason, now);
     true
 }
 
@@ -739,6 +770,7 @@ pub(crate) fn defer(
         receipt.updated_at_epoch = now;
         receipt.next_attempt_at_epoch = now.saturating_add(retry_after_seconds.max(0));
         receipt.last_reason = Some(safe_reason(reason));
+        receipt.record_attempt(candidate.generation, reason, now);
         true
     })
 }
@@ -840,6 +872,19 @@ fn normalize_current(receipt: &mut NotificationReceipt, now: i64) {
         receipt.updated_at_epoch = now;
     }
     receipt.last_reason = receipt.last_reason.as_deref().map(safe_reason);
+    receipt.attempt_history.retain(|attempt| {
+        attempt.generation > 0
+            && attempt.generation <= receipt.generation
+            && attempt.recorded_at_epoch > 0
+            && jiff::Timestamp::from_second(attempt.recorded_at_epoch).is_ok()
+    });
+    if receipt.attempt_history.len() > MAX_ATTEMPT_HISTORY {
+        let excess = receipt.attempt_history.len() - MAX_ATTEMPT_HISTORY;
+        receipt.attempt_history.drain(..excess);
+    }
+    for attempt in &mut receipt.attempt_history {
+        attempt.reason = safe_reason(&attempt.reason);
+    }
 }
 
 pub(super) fn safe_reason(reason: &str) -> String {
