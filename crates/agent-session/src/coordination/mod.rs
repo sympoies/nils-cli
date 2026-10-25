@@ -9,6 +9,7 @@ pub mod claims;
 pub(crate) mod console_start;
 pub mod context;
 pub(crate) mod delegation;
+pub(crate) mod delete;
 mod forwarding;
 mod heartbeat_state;
 pub mod mailbox;

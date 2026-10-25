@@ -1,4 +1,6 @@
 use crate::cli::{fake_agent, run, write_resumable_session_record_with_agent_bin};
+#[path = "delete_unread.rs"]
+mod unread;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::{

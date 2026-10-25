@@ -1648,7 +1648,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__delete)
-            opts="-h --if-stopped --expected-incarnation --leave-processes --orphan-children --tmux-bin --format --state-dir --host --help"
+            opts="-h --if-stopped --expected-incarnation --if-unread-empty --leave-processes --orphan-children --tmux-bin --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

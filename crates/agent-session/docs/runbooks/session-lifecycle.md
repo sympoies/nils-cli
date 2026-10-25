@@ -398,6 +398,28 @@ processes, and `session-status-unknown` if stopped state cannot be proved. If
 termination still owns recovery (including any thaw obligation); retry with
 ordinary `delete` to complete that recovery before removing the record.
 
+To also preserve pending unread mail, add the opt-in predicate:
+
+```bash
+agent-session delete <id> --if-stopped --expected-incarnation <incarnation> --if-unread-empty --format json
+```
+
+The unread predicate is checked against the locked message store while the
+recipient lifecycle lock remains held through removal. Local and remote message
+admission use the same lifecycle fence, so a message delivered after an earlier
+list snapshot either prevents deletion or is refused after removal. A second
+list read is unnecessary. The predicate counts stored unread messages for the
+session across incarnations; read or acknowledged messages do not block it.
+A missing registry represents an empty store. An unread message returns
+`session-mailbox-not-empty` with `details.predicate: "unread-empty"` and
+`details.unread_message_count`. An unread state that cannot be verified (such as
+an unreadable, corrupt, or locked store) returns `session-mailbox-unknown` with
+the same predicate. Refusals also expose typed `retryable`, `next_action`, and
+`recovery` fields without message content or private paths. Both refusals retain
+the session and unread mail. Existing
+runtime, incarnation, and child guards still apply. Omitting this flag preserves
+ordinary delete and stopped-only behavior.
+
 ### Leave processes running explicitly
 
 A daemon can escape the pane tree or move out of its Linux cgroup while retaining

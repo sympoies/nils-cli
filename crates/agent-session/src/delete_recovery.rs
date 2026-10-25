@@ -382,6 +382,9 @@ fn delete_if_stopped(
         return Err(conditional_state_mismatch(&record, "working"));
     }
 
+    if args.if_unread_empty {
+        coordination::delete::ensure_unread_empty(context, &record.id)?;
+    }
     let registry_fence = SessionRegistryFence::from_record(&record);
     let mut deleted = finish_session_delete(
         context,

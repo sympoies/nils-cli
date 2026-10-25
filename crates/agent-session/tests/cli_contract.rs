@@ -13,6 +13,9 @@ fn delete_help_documents_the_stopped_only_contract() {
     assert!(output.status.success(), "{help}");
     for phrase in [
         "--if-stopped",
+        "--if-unread-empty",
+        "checked atomically",
+        "unread or unknown mailbox state",
         "--expected-incarnation",
         "running, working, or unknown",
         "never stops the runtime",
@@ -398,4 +401,21 @@ fn delete_zsh_completion_excludes_conflicting_modes_in_both_directions() {
             "missing reciprocal conflict: {line}"
         );
     }
+}
+
+#[test]
+fn unread_empty_delete_requires_stopped_and_incarnation_predicates() {
+    let output = Command::new(bin::resolve("agent-session"))
+        .args([
+            "delete",
+            "guarded-delete",
+            "--if-unread-empty",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(64));
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["error"]["code"], "parse-error");
 }

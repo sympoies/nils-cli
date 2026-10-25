@@ -1751,6 +1751,11 @@ pub struct DeleteArgs {
     #[arg(long, requires = "if_stopped")]
     pub expected_incarnation: Option<String>,
 
+    /// Also require zero unread messages, checked atomically with deletion.
+    /// Refuses unread or unknown mailbox state. Requires --if-stopped.
+    #[arg(long, requires = "if_stopped")]
+    pub if_unread_empty: bool,
+
     /// Stop only the verified tmux target and delete state, leaving processes running.
     #[arg(long, conflicts_with = "if_stopped")]
     pub leave_processes: bool,
