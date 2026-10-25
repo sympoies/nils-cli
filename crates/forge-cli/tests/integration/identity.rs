@@ -1223,6 +1223,27 @@ printf '{"iid":1,"web_url":"https://gitlab.example.invalid/example/project/-/iss
     }
 
     #[test]
+    fn actor_probe_process_failure_without_http_response_reports_retryable() {
+        let f = Fixture::new(POLICY);
+        let script = fs::read_to_string(&f.gh).unwrap().replace(
+            "api:user) printf '{\"login\":\"%s\"}' \"${FIXTURE_ACTOR:-account-a}\"; exit 0;;",
+            "api:user) echo FIXTURE_PRIVATE_STDERR >&2; exit 1;;",
+        );
+        fs::write(&f.gh, script).unwrap();
+        let out = f.command().args(["issue", "view", "1"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(65));
+        let envelope: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let details = &envelope["error"]["details"];
+        assert_eq!(envelope["error"]["code"], "identity_actor_unavailable");
+        assert_eq!(details["retryable"], true);
+        assert_eq!(details["next_action"], "retry_request");
+        assert_eq!(details["cause"]["classification"], "nonzero_exit");
+        assert_eq!(details["cause"]["attempt"], 3);
+        assert!(!String::from_utf8_lossy(&out.stdout).contains("FIXTURE_PRIVATE_STDERR"));
+        assert!(!f.home.path().join("calls").exists());
+    }
+
+    #[test]
     fn identity_api_stdout_stderr_and_audit_never_contain_token_canary() {
         let f = Fixture::new(POLICY);
         let out = f

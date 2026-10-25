@@ -323,6 +323,20 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   The opaque source digest binds the final proof read without publishing its
   machine name. Source configuration remains owned by `agent-session`;
   `FORGE_CLI_AGENT_SESSION_BIN` selects its executable (including test adapters).
+- A `review_coordinator_unproven` refusal carries `details.prerequisite`,
+  `details.retryable` and `details.next_action`; its message states the remedy.
+  Policy prerequisites: `checkout_unavailable`, `remote_unavailable`,
+  `remote_repository_mismatch` (pass `--remote`), `base_ref_missing` and
+  `base_ref_stale` (`git fetch <remote> <base>`), `provider_base_behind_cache`
+  (the provider base predates the cached branch tip; update the pull request
+  branch onto the base), and `policy_config_invalid`. An empty supervisor list
+  is a `review_writer_conflict` that names the missing `[review_handoff].supervisors`.
+- Lifecycle prerequisites: `session_board_unavailable`, `session_board_incomplete`,
+  `coordinator_not_on_board`, `coordinator_source_ambiguous`,
+  `lifecycle_source_unavailable`, `coordinator_not_terminal`,
+  `terminal_activity_missing` and `coordinator_not_stale`. A retained row
+  without `last_terminal_activity_at` is never repaired from other timestamps or
+  caller input; only the session-board operator can supply that evidence.
 - Takeover appends a handoff recovery with `coordinator_transfer` containing
   `old_coordinator_digest`, `new_coordinator_digest`, `lifecycle_source_digest`,
   `reason` (`coordinator-retired`), `supervisor_digest`, and

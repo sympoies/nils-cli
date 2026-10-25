@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use crate::backend::{BackendCall, BackendProgram, BackendRunner};
 use crate::cli::{BINARY, GlobalFlags, PrReviewHandoffArgs, PrReviewHandoffCommand};
-use crate::config::ForgeConfig;
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
 use crate::ops::review_sync_carry_over::{self, SyncCarryOver};
@@ -17,10 +16,13 @@ use crate::provider::{Provider, ProviderContext, detect, git_remote_url};
 use crate::rate_limit::default_runner;
 
 mod approval;
+mod diagnostics;
+mod policy;
 mod surrender;
 mod test_integrity;
 use crate::cli::ApprovalPolicy;
 use approval::{Admission, PublishedApproval};
+use policy::{require_supervisor, trusted_supervisor_policy};
 
 const SCHEMA: &str = "pr.review-handoff";
 const PUBLICATION_BINDING_PREFIX: &str = "<!-- forge-cli:review-handoff:v1 ";
@@ -552,64 +554,6 @@ pub(crate) fn valid_coordinator_transfer(old: &ReviewHandoff, next: &ReviewHando
     })
 }
 
-fn trusted_supervisor_policy(
-    repository: &str,
-    provider: Provider,
-    provider_host: &str,
-    provider_base_sha: &str,
-    base_ref: &str,
-    remote: &str,
-) -> Result<(Vec<String>, Duration), ForgeError> {
-    let policy_error = || {
-        fail(
-            "review_coordinator_unproven",
-            "repository handoff policy is unavailable for the current provider base",
-        )
-    };
-    let workdir = std::env::current_dir().map_err(|_| policy_error())?;
-    let toplevel = crate::ops::pr_create::find_git_toplevel(&workdir).ok_or_else(policy_error)?;
-    let remote_url = crate::provider::git_remote_url(remote).ok_or_else(policy_error)?;
-    let remote_repository = crate::provider::parse_slug(&remote_url).ok_or_else(policy_error)?;
-    let repository_matches = match provider {
-        Provider::GitHub => remote_repository.eq_ignore_ascii_case(repository),
-        _ => remote_repository == repository,
-    };
-    if !repository_matches
-        || !crate::provider::authorities_equal(
-            provider,
-            provider_host,
-            &crate::provider::parse_host(&remote_url).ok_or_else(policy_error)?,
-        )
-    {
-        return Err(policy_error());
-    }
-    let git_ref = format!("refs/remotes/{remote}/{base_ref}");
-    let resolved = Command::new("git")
-        .args(["rev-parse", "--verify", &format!("{git_ref}^{{commit}}")])
-        .current_dir(&toplevel)
-        .output()
-        .map_err(|_| policy_error())?;
-    if !resolved.status.success()
-        || String::from_utf8_lossy(&resolved.stdout).trim() != provider_base_sha
-    {
-        return Err(policy_error());
-    }
-    let config = ForgeConfig::load_from_git_ref(&workdir, &toplevel, &git_ref);
-    if config
-        .warnings
-        .iter()
-        .any(|warning| warning.starts_with("invalid-config-value:review_handoff.stale_after"))
-    {
-        return Err(policy_error());
-    }
-    Ok((
-        config.review_handoff_supervisors.unwrap_or_default(),
-        config
-            .review_handoff_stale_after
-            .unwrap_or_else(|| Duration::from_secs(2 * 60 * 60)),
-    ))
-}
-
 /// Read the existing session-board authority, never caller-supplied evidence.
 /// Absence, stopped/unknown runtimes, cached or unavailable sources prove nothing.
 fn prove_coordinator_retired(
@@ -617,14 +561,6 @@ fn prove_coordinator_retired(
     expected_source: Option<&str>,
     stale_after: Duration,
 ) -> Result<CoordinatorRetirementEvidence, ForgeError> {
-    let unproven = || {
-        ForgeError::validation(
-            schema(),
-            "review_coordinator_unproven",
-            "fresh terminal status and stale activity evidence are required",
-            Some("recovery=configure a repository handoff supervisor, then retry `forge-cli pr review-handoff recover` with the current --expected-head, --expected-state, and --base-sha".into()),
-        )
-    };
     let executable = std::env::var_os("FORGE_CLI_AGENT_SESSION_BIN")
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "agent-session".into());
@@ -633,12 +569,12 @@ fn prove_coordinator_retired(
         Some(Duration::from_secs(15)),
         2 * 1024 * 1024,
     )
-    .map_err(|_| unproven())?;
+    .map_err(|_| diagnostics::board_unavailable())?;
     if !output.status.success() {
-        return Err(unproven());
+        return Err(diagnostics::board_unavailable());
     }
     let value: serde_json::Value =
-        serde_json::from_slice(&output.stdout).map_err(|_| unproven())?;
+        serde_json::from_slice(&output.stdout).map_err(|_| diagnostics::board_unavailable())?;
     let board = &value["data"]["board"];
     let fresh = |v: &serde_json::Value| {
         v.as_str()
@@ -648,15 +584,18 @@ fn prove_coordinator_retired(
                 (0..=60).contains(&age)
             })
     };
-    if value["ok"] != true
-        || board["schema_version"] != "agent-session.board-view.v1"
-        || board["truncated"] != false
-        || !fresh(&board["generated_at"])
-    {
-        return Err(unproven());
+    if value["ok"] != true || board["schema_version"] != "agent-session.board-view.v1" {
+        return Err(diagnostics::board_unavailable());
     }
-    let machines = board["machines"].as_array().ok_or_else(unproven)?;
-    let records = board["records"].as_array().ok_or_else(unproven)?;
+    if board["truncated"] != false || !fresh(&board["generated_at"]) {
+        return Err(diagnostics::board_incomplete());
+    }
+    let machines = board["machines"]
+        .as_array()
+        .ok_or_else(diagnostics::board_unavailable)?;
+    let records = board["records"]
+        .as_array()
+        .ok_or_else(diagnostics::board_unavailable)?;
     let matching: Vec<_> = records
         .iter()
         .filter(|row| {
@@ -678,41 +617,49 @@ fn prove_coordinator_retired(
             "the recorded coordinator is still live",
         ));
     }
+    if matching.is_empty() {
+        return Err(diagnostics::coordinator_not_on_board());
+    }
     let sources: std::collections::BTreeSet<_> = matching
         .iter()
         .filter_map(|row| row["machine"].as_str())
         .collect();
     if sources.len() != 1 {
-        return Err(unproven());
+        return Err(diagnostics::coordinator_source_ambiguous());
     }
     let source_digest = review_state::sha256_digest(sources.iter().next().unwrap().as_bytes());
     if expected_source.is_some_and(|source| source != source_digest) {
-        return Err(unproven());
+        return Err(diagnostics::coordinator_source_ambiguous());
     }
     let mut evidence = None;
     for row in matching {
-        let machine = row["machine"].as_str().ok_or_else(unproven)?;
+        let machine = row["machine"]
+            .as_str()
+            .ok_or_else(diagnostics::coordinator_source_ambiguous)?;
         let sources: Vec<_> = machines
             .iter()
             .filter(|m| m["machine"].as_str() == Some(machine))
             .collect();
-        let activity = row["last_terminal_activity_at"]
-            .as_str()
-            .and_then(|value| value.parse::<jiff::Timestamp>().ok())
-            .ok_or_else(unproven)?;
-        let activity_age = jiff::Timestamp::now().as_second() - activity.as_second();
+        if sources.len() != 1
+            || sources[0]["available"] != true
+            || !fresh(&sources[0]["last_seen_at"])
+        {
+            return Err(diagnostics::lifecycle_source_unavailable());
+        }
         let deleted = row["state"] == "closed"
             && row["runtime_status"].is_null()
             && matches!(row["close_reason"].as_str(), Some("deleted" | "archived"));
         let stopped = row["state"] == "stopped" && row["runtime_status"] == "stopped";
-        if sources.len() != 1
-            || sources[0]["available"] != true
-            || !fresh(&sources[0]["last_seen_at"])
-            || (!deleted && !stopped)
-            || activity_age < 0
-            || u64::try_from(activity_age).unwrap_or(0) < stale_after.as_secs()
-        {
-            return Err(unproven());
+        if !deleted && !stopped {
+            return Err(diagnostics::coordinator_not_terminal());
+        }
+        let activity = row["last_terminal_activity_at"]
+            .as_str()
+            .and_then(|value| value.parse::<jiff::Timestamp>().ok())
+            .ok_or_else(diagnostics::terminal_activity_missing)?;
+        let activity_age = jiff::Timestamp::now().as_second() - activity.as_second();
+        if activity_age < 0 || u64::try_from(activity_age).unwrap_or(0) < stale_after.as_secs() {
+            return Err(diagnostics::coordinator_not_stale(stale_after.as_secs()));
         }
         evidence = Some(CoordinatorRetirementEvidence {
             machine_digest: source_digest.clone(),
@@ -721,7 +668,7 @@ fn prove_coordinator_retired(
             stale_after_seconds: stale_after.as_secs(),
         });
     }
-    evidence.ok_or_else(unproven)
+    evidence.ok_or_else(diagnostics::coordinator_not_on_board)
 }
 
 pub(crate) fn ensure_delivery_ready<R: BackendRunner>(
@@ -1394,12 +1341,7 @@ pub fn run(
                     &view.base,
                     &global.remote,
                 )?;
-                if !supervisors.contains(&actor) {
-                    return Err(fail(
-                        "review_writer_conflict",
-                        "only a repository-configured handoff supervisor may take over",
-                    ));
-                }
+                require_supervisor(&supervisors, &actor)?;
                 if let Some(coordinator_selector) = a.coordinator_session.as_deref() {
                     require_canonical_session_uuid(coordinator_selector)?;
                     if session_digest(coordinator_selector)? != h.coordinator_digest {
