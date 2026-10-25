@@ -618,6 +618,7 @@ mod tests {
             "coordination_available": true,
             "orchestration": {"group": "g"}
         });
+        view["last_message"] = json!({"role": "assistant", "text": "synthetic response"});
         view["turn_state"] = json!({
             "schema_version": "agent-session.turn-state.v1",
             "phase": "working",

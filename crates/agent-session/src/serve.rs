@@ -5186,6 +5186,7 @@ async fn list_handler(State(state): State<Arc<ServeState>>) -> Response {
                     "managed_resume_command": false,
                     "resume_blocked_reason": true,
                     "last_prompt": true,
+                    "last_message": true,
                     "history": true,
                     "archive": true,
                     "group_archive": true,
@@ -5711,9 +5712,12 @@ async fn enrich_last_prompts(state: &Arc<ServeState>, sessions: &mut [SessionVie
             .last_prompt_projection(&record)
             .await
         {
-            session.last_prompt_state = Some(projection.state);
-            session.last_prompt_continuity = projection.continuity;
-            session.last_prompt = projection.prompt;
+            session.previews = crate::provider_prompt::SessionPreviews {
+                last_prompt_state: Some(projection.state),
+                last_prompt_continuity: projection.continuity,
+                last_prompt: projection.prompt,
+                last_message: projection.message,
+            };
         }
     }
 }
@@ -9571,6 +9575,7 @@ struct LastPromptProjection {
     state: LastPromptState,
     continuity: Option<String>,
     prompt: Option<LastPrompt>,
+    message: Option<crate::provider_prompt::LastMessage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -9738,175 +9743,6 @@ impl ProviderPromptDiscoveryRegistry {
                 PROVIDER_PROMPT_RECOVERY_MAX_CONCURRENT_SCANS,
             )),
         }
-    }
-
-    async fn last_prompt_projection(
-        &self,
-        record: &crate::SessionRecord,
-    ) -> Option<LastPromptProjection> {
-        let key = ProviderPromptDiscoveryKey::from_record(record)?;
-        let source = match self.cached_source_or_start_scan(record, &key).await {
-            Ok(source) => source,
-            Err(projection) => return Some(projection),
-        };
-        let Some(slot) = self.entries.lock().await.get(&key).cloned() else {
-            return Some(LastPromptProjection {
-                state: LastPromptState::Unavailable,
-                continuity: None,
-                prompt: None,
-            });
-        };
-        let (tracker_cell, unavailable_until_current, continuity) = {
-            let mut state = slot.lock().await;
-            if state.last_prompt_in_flight {
-                return Some(LastPromptProjection {
-                    state: if state.last_prompt_invalidated {
-                        LastPromptState::Unavailable
-                    } else {
-                        LastPromptState::Pending
-                    },
-                    continuity: Some(state.last_prompt_continuity.clone()),
-                    prompt: None,
-                });
-            }
-            state.last_prompt_in_flight = true;
-            (
-                state.last_prompt_tracker.clone(),
-                state.last_prompt_invalidated,
-                state.last_prompt_continuity.clone(),
-            )
-        };
-        let task_cell = tracker_cell.clone();
-        let cached = tokio::task::spawn_blocking(move || {
-            let Ok(tracker) = task_cell.lock() else {
-                return ProviderLastPromptRefresh::Invalidated;
-            };
-            tracker
-                .as_ref()
-                .map_or(ProviderLastPromptRefresh::Pending, |tracker| {
-                    tracker.cached_refresh()
-                })
-        })
-        .await
-        .unwrap_or(ProviderLastPromptRefresh::Invalidated);
-        match cached {
-            ProviderLastPromptRefresh::Current(prompt) => {
-                let mut state = slot.lock().await;
-                if Arc::ptr_eq(&state.last_prompt_tracker, &tracker_cell) {
-                    state.last_prompt_in_flight = false;
-                    state.last_prompt_invalidated = false;
-                    Some(LastPromptProjection {
-                        state: LastPromptState::Current,
-                        continuity: Some(state.last_prompt_continuity.clone()),
-                        prompt,
-                    })
-                } else {
-                    Some(LastPromptProjection {
-                        state: LastPromptState::Unavailable,
-                        continuity: Some(state.last_prompt_continuity.clone()),
-                        prompt: None,
-                    })
-                }
-            }
-            ProviderLastPromptRefresh::Pending => {
-                self.spawn_last_prompt_refresh(slot, tracker_cell, source);
-                Some(LastPromptProjection {
-                    state: if unavailable_until_current {
-                        LastPromptState::Unavailable
-                    } else {
-                        LastPromptState::Pending
-                    },
-                    continuity: Some(continuity),
-                    prompt: None,
-                })
-            }
-            ProviderLastPromptRefresh::Invalidated => {
-                let mut state = slot.lock().await;
-                if Arc::ptr_eq(&state.last_prompt_tracker, &tracker_cell) {
-                    state.last_prompt_in_flight = false;
-                }
-                drop(state);
-                self.invalidate_source(record).await;
-                Some(LastPromptProjection {
-                    state: LastPromptState::Unavailable,
-                    continuity: self.continuity_for_key(&key).await,
-                    prompt: None,
-                })
-            }
-        }
-    }
-
-    #[cfg(test)]
-    async fn last_prompt(&self, record: &crate::SessionRecord) -> Option<LastPrompt> {
-        self.last_prompt_projection(record)
-            .await
-            .and_then(|projection| projection.prompt)
-    }
-
-    fn spawn_last_prompt_refresh(
-        &self,
-        slot: Arc<tokio::sync::Mutex<ProviderPromptDiscoverySlot>>,
-        tracker_cell: Arc<StdMutex<Option<ProviderLastPromptTracker>>>,
-        source: ProviderPromptSource,
-    ) {
-        let tracker_opener = self.tracker_opener.clone();
-        let recovery_permits = self.recovery_permits.clone();
-        tokio::spawn(async move {
-            loop {
-                let Ok(_permit) = recovery_permits.clone().acquire_owned().await else {
-                    let mut state = slot.lock().await;
-                    if Arc::ptr_eq(&state.last_prompt_tracker, &tracker_cell) {
-                        state.last_prompt_in_flight = false;
-                        state.last_prompt_invalidated = true;
-                        state.last_prompt_continuity = uuid::Uuid::new_v4().simple().to_string();
-                    }
-                    return;
-                };
-                let task_cell = tracker_cell.clone();
-                let task_source = source.clone();
-                let task_opener = tracker_opener.clone();
-                let refresh = tokio::task::spawn_blocking(move || {
-                    let Ok(mut tracker) = task_cell.lock() else {
-                        return ProviderLastPromptRefresh::Invalidated;
-                    };
-                    if tracker.is_none() {
-                        *tracker = task_opener(task_source);
-                    }
-                    let Some(tracker) = tracker.as_mut() else {
-                        return ProviderLastPromptRefresh::Invalidated;
-                    };
-                    tracker.refresh()
-                })
-                .await
-                .unwrap_or(ProviderLastPromptRefresh::Invalidated);
-                drop(_permit);
-
-                let mut state = slot.lock().await;
-                if !Arc::ptr_eq(&state.last_prompt_tracker, &tracker_cell) {
-                    return;
-                }
-                match refresh {
-                    ProviderLastPromptRefresh::Current(_) => {
-                        state.last_prompt_in_flight = false;
-                        return;
-                    }
-                    ProviderLastPromptRefresh::Pending => {
-                        drop(state);
-                        tokio::task::yield_now().await;
-                    }
-                    ProviderLastPromptRefresh::Invalidated => {
-                        state.source = None;
-                        state.last_prompt_tracker = Arc::new(StdMutex::new(None));
-                        state.last_prompt_in_flight = false;
-                        state.last_prompt_invalidated = true;
-                        state.last_prompt_continuity = uuid::Uuid::new_v4().simple().to_string();
-                        state.next_scan_at = None;
-                        state.backoff = PROVIDER_PROMPT_PENDING_POLL_INTERVAL;
-                        return;
-                    }
-                }
-            }
-        });
     }
 
     async fn invalidate_source(&self, record: &crate::SessionRecord) {
