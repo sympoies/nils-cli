@@ -106,7 +106,8 @@ recorded in `sympoies/nils-cli#1409`.
 
   Consumers may retain a pending preview only when this token and the runtime identity both match.
   Sessions without enough runtime/provider identity to be eligible omit both fields. Later list polls validate
-  metadata/continuity and consume warm appends within the existing 16-read budget, retain the newest caught-up preview in process memory, and avoid
+  metadata/continuity and consume warm appends within the existing 16-read budget. They retain the
+  newest caught-up preview in process memory and avoid
   recurring cold scans when the stable registry is at capacity. Rotation, truncation, or identity drift
   invalidates that memory and forces exact rediscovery. The text is returned in the response only and is
   never logged or persisted by the daemon; the daemon never guesses a transcript match.
