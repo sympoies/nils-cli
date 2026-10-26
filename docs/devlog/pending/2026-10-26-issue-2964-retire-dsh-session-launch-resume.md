@@ -27,5 +27,5 @@
 
 ### Follow-ups
 
-- Full local gate was not run because ROOT withheld GO; required PR CI remains
-  the merge gate.
+- The full local gate was outside this task's authorized local validation;
+  required PR CI remains the merge gate.
