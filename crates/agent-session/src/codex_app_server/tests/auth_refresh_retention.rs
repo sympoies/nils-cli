@@ -17,11 +17,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
     );
     let (context, mut record) = recovery_fixture(&tmp);
     bind_thread(&record, "fixture-thread").unwrap();
-    let socket_dir = tempfile::Builder::new()
-        .prefix("cx-")
-        .tempdir_in("/tmp")
-        .unwrap();
-    let socket_file = socket_dir.path().join("server.sock");
+    let (_socket_dir, socket_file) = nils_test_support::short_socket_path("server.sock");
     record
         .runtime
         .as_mut()

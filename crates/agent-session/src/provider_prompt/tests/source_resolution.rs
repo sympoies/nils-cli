@@ -98,7 +98,7 @@ fn resolver_ignores_symlinks_and_non_regular_transcripts() {
     use std::os::unix::net::UnixListener;
 
     let tmp = tempfile::TempDir::new().expect("tempdir");
-    let codex_root = tmp.path().join("codex");
+    let (_socket_dir, codex_root) = nils_test_support::short_socket_path("codex");
     let outside = tmp.path().join("outside.jsonl");
     fs::create_dir_all(&codex_root).expect("root");
     fs::write(&outside, codex_meta("codex-id", "/repo")).expect("outside transcript");
@@ -248,7 +248,7 @@ fn known_claude_source_rejects_symlinks_and_non_regular_files() {
     use std::os::unix::fs::symlink;
     use std::os::unix::net::UnixListener;
     let tmp = tempfile::TempDir::new().expect("tempdir");
-    let root = tmp.path().join("projects");
+    let (_socket_dir, root) = nils_test_support::short_socket_path("projects");
     fs::create_dir_all(root.join("project")).expect("project");
     let outside = tmp.path().join("outside.jsonl");
     fs::write(&outside, claude_metadata("claude-id")).expect("outside");

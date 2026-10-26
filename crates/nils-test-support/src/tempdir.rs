@@ -81,6 +81,22 @@ impl ScopedTempDir {
     }
 }
 
+/// Allocate a cleanup-checked short path for a Unix-domain socket fixture,
+/// independent of the process temporary root's length.
+#[cfg(unix)]
+pub fn short_socket_path(file_name: impl AsRef<Path>) -> (ScopedTempDir, PathBuf) {
+    let dir = ScopedTempDir {
+        inner: Some(
+            tempfile::Builder::new()
+                .prefix("cx-")
+                .tempdir_in("/tmp")
+                .expect("create short Unix socket tempdir"),
+        ),
+    };
+    let path = dir.path().join(file_name);
+    (dir, path)
+}
+
 fn tempdir_outside_git_ancestry(
     prefix: &str,
     candidates: impl IntoIterator<Item = PathBuf>,

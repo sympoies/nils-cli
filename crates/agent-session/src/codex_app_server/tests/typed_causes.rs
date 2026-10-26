@@ -82,7 +82,7 @@ async fn start_prompt_control(
     tokio::task::JoinHandle<()>,
 ) {
     let tmp = tempfile::TempDir::new().unwrap();
-    let socket_path = tmp.path().join(format!("{id}.sock"));
+    let (_socket_dir, socket_path) = nils_test_support::short_socket_path(format!("{id}.sock"));
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -114,7 +114,7 @@ async fn prompt_readiness_refusal_is_marked_as_not_dispatched() {
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::TempDir::new().unwrap();
-    let socket_path = tmp.path().join("prompt-readiness.sock");
+    let (_socket_dir, socket_path) = nils_test_support::short_socket_path("prompt-readiness.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -237,7 +237,7 @@ async fn websocket_lost_acknowledgement_is_unknown() {
 #[tokio::test]
 async fn fresh_thread_start_waits_for_initial_binding_application() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("initial-binding.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("initial-binding.sock");
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -289,7 +289,8 @@ async fn fresh_thread_start_waits_for_initial_binding_application() {
 #[tokio::test]
 async fn fresh_thread_start_refuses_unresolved_binding_while_create_owns_record_lock() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("locked-initial-binding.sock");
+    let (_socket_dir, upstream) =
+        nils_test_support::short_socket_path("locked-initial-binding.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -435,7 +436,7 @@ async fn busy_manual_cancellation_rejects_only_the_turn_and_keeps_proxy_alive() 
     let env_lock = GlobalStateLock::new();
     let _without_broker = EnvGuard::remove(&env_lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("busy.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("busy.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),

@@ -98,6 +98,7 @@ async fn fixture(
     outcome: PeerOutcome,
 ) -> (
     tempfile::TempDir,
+    nils_test_support::tempdir::ScopedTempDir,
     Arc<ServeState>,
     String,
     tokio::task::JoinHandle<Result<(), String>>,
@@ -105,13 +106,22 @@ async fn fixture(
 ) {
     let tmp = tempfile::TempDir::new().unwrap();
     let launch = seed_codex_app_server_session(tmp.path(), id);
-    let socket_path = tmp.path().join(format!("{id}.sock"));
+    let (socket_dir, socket_path) = nils_test_support::short_socket_path(format!("{id}.sock"));
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
         state_dir: tmp.path().to_path_buf(),
         host: None,
     };
     let mut record = load_session_record(&context, id).unwrap();
+    let runtime_extra = &mut record.runtime.as_mut().unwrap().extra;
+    runtime_extra.insert(
+        codex_app_server::SOCKET_KEY.to_string(),
+        json!(crate::display_path(&socket_path)),
+    );
+    runtime_extra.insert(
+        codex_app_server::PROXY_KEY.to_string(),
+        json!(crate::display_path(&socket_path.with_extension("proxy"))),
+    );
     record.extra.insert(
         "delete_tmux_identity".into(),
         json!({ "launch_id": launch, "session_id": "$96", "pane_id": "%96", "pane_pid": 96 }),
@@ -147,7 +157,7 @@ async fn fixture(
             handle,
         },
     );
-    (tmp, st, launch, control, peer)
+    (tmp, socket_dir, st, launch, control, peer)
 }
 
 async fn submit(st: Arc<ServeState>, id: &str, launch: &str) -> (StatusCode, Value) {
@@ -168,7 +178,7 @@ async fn submit(st: Arc<ServeState>, id: &str, launch: &str) -> (StatusCode, Val
 
 #[tokio::test]
 async fn provider_rejection_with_stopped_runtime_remains_unknown() {
-    let (tmp, st, launch, control, peer) =
+    let (tmp, _socket_dir, st, launch, control, peer) =
         fixture("provider-rejected-exit", PeerOutcome::RejectPrompt).await;
     let (status, body) = submit(st, "provider-rejected-exit", &launch).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
@@ -182,7 +192,7 @@ async fn provider_rejection_with_stopped_runtime_remains_unknown() {
 
 #[tokio::test]
 async fn lost_acknowledgement_with_stopped_runtime_is_submitted() {
-    let (tmp, st, launch, control, peer) =
+    let (tmp, _socket_dir, st, launch, control, peer) =
         fixture("lost-ack-exit", PeerOutcome::DropAcknowledgement).await;
     let (status, body) = submit(st, "lost-ack-exit", &launch).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -195,7 +205,7 @@ async fn lost_acknowledgement_with_stopped_runtime_is_submitted() {
 
 #[tokio::test]
 async fn closed_websocket_with_stopped_runtime_remains_unknown() {
-    let (tmp, st, launch, control, peer) =
+    let (tmp, _socket_dir, st, launch, control, peer) =
         fixture("closed-websocket-exit", PeerOutcome::CloseBeforePrompt).await;
     peer.await.unwrap();
     let (status, body) = submit(st, "closed-websocket-exit", &launch).await;

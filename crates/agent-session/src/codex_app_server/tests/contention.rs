@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 async fn thread_start_contention_is_retried_before_forwarding_exactly_once() {
     for exhaust in [false, true] {
         let tmp = tempfile::TempDir::new().unwrap();
-        let upstream = tmp.path().join("app.sock");
+        let (_socket_dir, upstream) = nils_test_support::short_socket_path("app.sock");
         let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
         let context = CliContext {
             state_dir: tmp.path().join("state"),

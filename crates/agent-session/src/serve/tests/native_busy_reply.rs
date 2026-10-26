@@ -80,7 +80,7 @@ where
 async fn keyed_codex_reply_reaches_native_protocol_while_turn_is_working() {
     for acknowledgement in ["accepted", "unproven", "closed"] {
         let acknowledge = acknowledgement == "accepted";
-        let tmp = tempfile::TempDir::new().unwrap();
+        let tmp = tempfile::tempdir_in("/tmp").unwrap();
         let launch = seed_codex_app_server_session(tmp.path(), ID);
         let tmux = guard_tmux(tmp.path(), ID);
         let script = fs::read_to_string(&tmux).unwrap().replace(
