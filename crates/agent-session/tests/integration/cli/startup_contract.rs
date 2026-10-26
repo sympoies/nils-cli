@@ -27,6 +27,7 @@ pub(super) fn start_creates_session_state_without_printing_prompt() {
     let cwd_arg = cwd.to_string_lossy().to_string();
     let tmux_arg = tmux_bin.to_string_lossy().to_string();
     let codex_arg = codex_bin.to_string_lossy().to_string();
+    let daemon_roster = "fixture-account-a fixture-account-b";
     let prompt = "sent from telegram with sk-proj-secret";
     let output = run(
         tmp.path(),
@@ -55,10 +56,13 @@ pub(super) fn start_creates_session_state_without_printing_prompt() {
             "--format",
             "json",
         ],
-        &[(
-            "AGENT_SESSION_FAKE_TMUX_LOG",
-            tmux_log.to_string_lossy().as_ref(),
-        )],
+        &[
+            (
+                "AGENT_SESSION_FAKE_TMUX_LOG",
+                tmux_log.to_string_lossy().as_ref(),
+            ),
+            ("CODEX_AUTH_PROFILE_NAMES", daemon_roster),
+        ],
     );
 
     assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
@@ -171,6 +175,8 @@ pub(super) fn start_creates_session_state_without_printing_prompt() {
             "AGENT_SESSION_ATTENTION_AUTHORITY=hook".to_string(),
             "-e".to_string(),
             format!("PATH={inherited_path}"),
+            "-e".to_string(),
+            format!("CODEX_AUTH_PROFILE_NAMES={daemon_roster}"),
             "-e".to_string(),
             format!("AGENT_SESSION_BIN={agent_session_bin}"),
             "--".to_string(),
