@@ -15,7 +15,8 @@ Check the synthetic task status.
 
 The header must be message line one, column zero, without a BOM or indentation.
 It is one ASCII line of at most 512 bytes, excluding the line terminator.
-The exact prefix is `<!-- agent-notice:v1 ` and the suffix is ` -->`.
+The exact prefix is `<!-- agent-notice:v1` followed by one ASCII space;
+the suffix is one ASCII space followed by `-->`.
 Fields have exactly one ASCII space between them, in this order:
 
 | Field | Required | Grammar | Maximum bytes |
