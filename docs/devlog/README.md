@@ -69,7 +69,7 @@ from current `origin/main` in a managed worktree:
 ```bash
 git-cli worktree add devlog-fold-YYYY-MM-DD --kind chore --from origin/main
 # In the new worktree:
-bash .agents/scripts/fold-devlog.sh
+bash scripts/ci/fold-devlog.sh
 ```
 
 The script requires a clean `chore/devlog-fold-<date>` branch, sets the writer
