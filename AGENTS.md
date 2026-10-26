@@ -31,7 +31,7 @@ Open only the references relevant to the requested change:
 - Ordinary PRs never edit month files, fold entries, or refresh the shared
   index. Merged fragments are immutable; corrections are new entries.
 - After each release, the maintainer prepares a dedicated fold PR with
-  `.agents/scripts/fold-devlog.sh`; it does not commit or push.
+  `scripts/ci/fold-devlog.sh`; it does not commit or push.
 - Only canonical `chore/devlog-fold-<date>` maintenance PRs may fold.
 - See `docs/devlog/README.md` for authoring and release-fold validation.
 

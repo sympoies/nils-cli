@@ -30,7 +30,7 @@ class DevlogPolicy(unittest.TestCase):
                      'scripts/ci/devlog-check.py', 'scripts/ci/nils-cli-local-fast.sh',
                      'scripts/ci/lib/doc_classify.py', 'scripts/ci/lib/sibling_bins.py',
                      'scripts/dev-env.sh',
-                     '.agents/scripts/fold-devlog.sh'):
+                     'scripts/ci/fold-devlog.sh'):
             if (ROOT / path).exists():
                 self.write(path, (ROOT / path).read_text())
         for name in ('docs-placement-audit.sh', 'docs-hygiene-audit.sh',
@@ -219,7 +219,7 @@ class DevlogPolicy(unittest.TestCase):
         self.commit('Accepted fragments')
         self.git('switch', '-q', '-c', 'chore/devlog-fold-2026-10-20')
         before = self.git('rev-parse', 'HEAD')
-        self.run_cmd('bash', '.agents/scripts/fold-devlog.sh')
+        self.run_cmd('bash', 'scripts/ci/fold-devlog.sh')
         self.assertEqual(self.git('rev-parse', 'HEAD'), before)
         self.assertFalse((self.repo / 'docs/devlog/pending/2020-01-02-accepted.md').exists())
         self.assertTrue((self.repo / 'docs/devlog/pending/2099-01-01-future.md').exists())
@@ -228,7 +228,7 @@ class DevlogPolicy(unittest.TestCase):
         self.commit('chore(devlog): fold accepted fragments')
         result = self.gate()
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.run_cmd('bash', '.agents/scripts/fold-devlog.sh')
+        self.run_cmd('bash', 'scripts/ci/fold-devlog.sh')
         self.assertEqual(self.git('status', '--porcelain'), '')
 
     def test_fold_cutoff_is_utc_independent_of_caller_timezone(self):
@@ -242,7 +242,7 @@ class DevlogPolicy(unittest.TestCase):
         self.git('switch', '-q', '-c', 'chore/devlog-fold-cutoff')
         # Choose a caller day different from UTC at any time of day.
         self.env['TZ'] = 'Etc/GMT-14' if now.hour >= 10 else 'Etc/GMT+12'
-        self.run_cmd('bash', '.agents/scripts/fold-devlog.sh')
+        self.run_cmd('bash', 'scripts/ci/fold-devlog.sh')
         self.assertFalse((self.repo / f'docs/devlog/pending/{yesterday}-utc-yesterday.md').exists())
         self.assertTrue((self.repo / f'docs/devlog/pending/{today}-utc-today.md').exists())
         self.commit('chore(devlog): fold accepted fragments')
