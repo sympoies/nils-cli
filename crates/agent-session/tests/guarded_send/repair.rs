@@ -3,6 +3,8 @@
 mod appserver;
 #[path = "native.rs"]
 mod native;
+#[path = "notice.rs"]
+mod notice;
 use std::fs;
 use std::os::fd::AsRawFd;
 

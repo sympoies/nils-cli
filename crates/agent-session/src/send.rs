@@ -584,3 +584,16 @@ fn prepare_guarded_input(
     }
     Ok(())
 }
+
+pub(crate) fn run(context: &CliContext, args: cli::SendArgs) -> i32 {
+    let format = args.format;
+    match send_to_session(context, args) {
+        Ok(result) => crate::render_single_success(
+            crate::SEND_COMMAND,
+            format,
+            &result,
+            crate::render_send_text,
+        ),
+        Err(error) => crate::render_error(crate::SEND_COMMAND, format, error),
+    }
+}

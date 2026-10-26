@@ -25,6 +25,8 @@ or integrating a specific subsystem.
 - [Claude auth recovery v1](specs/claude-auth-recovery-v1.md): prompt quarantine,
   published-generation prerequisites, bounded same-account stop/resume and
   unknown-effect receipts.
+- [Session notices v1](specs/session-notices-v1.md): display-only envelope,
+  fixture corpus, guarded notice delivery and writer rollout gate.
 - [Send v1](specs/send-v1.md): submission-time continuation guards, observation
   limits, durable idempotency claims, and refusal codes.
 - [Session context usage v1](specs/session-context-usage-v1.md): optional raw

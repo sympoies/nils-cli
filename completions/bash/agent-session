@@ -73,6 +73,9 @@ _agent__session() {
             agent__session,metadata)
                 cmd="agent__session__metadata"
                 ;;
+            agent__session,notice)
+                cmd="agent__session__notice"
+                ;;
             agent__session,readiness)
                 cmd="agent__session__readiness"
                 ;;
@@ -266,7 +269,7 @@ _agent__session() {
 
     case "${cmd}" in
         agent__session)
-            opts="-h -V --state-dir --host --help --version start run auto-resume list board command attach logs diagnose send glance resume restart clear rebind account activity work-context broker readiness delegation message metadata workspace lineage work serve codex-app-server-proxy delete tmp completion"
+            opts="-h -V --state-dir --host --help --version start run auto-resume list board command attach logs diagnose send notice glance resume restart clear rebind account activity work-context broker readiness delegation message metadata workspace lineage work serve codex-app-server-proxy delete tmp completion"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2831,6 +2834,89 @@ _agent__session() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        agent__session__notice)
+            opts="-h --kind --source --id --body-file --text-stdin --expect-runtime --expect-provider-session --require-idle --require-empty-composer --idempotency-key --tmux-bin --format --state-dir --host --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --kind)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --source)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --id)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --body-file)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --expect-runtime)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-provider-session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --tmux-bin)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         agent__session__readiness)
             opts="-h --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
@@ -3260,7 +3346,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__start)
-            opts="-h --workspace --agent --cwd --title --id --prompt --prompt-file --prompt-stdin --tmux-bin --agent-bin --agent-arg --env --coordination-mode --paste-delay-ms --via-console --operation-id --reconcile --machine --account --agent-profile --no-parent --role --title-mode --forge-initiator --program --issue --no-inherit-work --format --state-dir --host --help"
+            opts="-h --workspace --agent --cwd --title --id --prompt --prompt-file --prompt-stdin --notice-kind --notice-source --notice-id --tmux-bin --agent-bin --agent-arg --env --coordination-mode --paste-delay-ms --via-console --operation-id --reconcile --machine --account --agent-profile --no-parent --role --title-mode --forge-initiator --program --issue --no-inherit-work --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3306,6 +3392,18 @@ _agent__session() {
                     if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
                         compopt -o filenames
                     fi
+                    return 0
+                    ;;
+                --notice-kind)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --notice-source)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --notice-id)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 --tmux-bin)
