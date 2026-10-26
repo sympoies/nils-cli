@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  project-bump-version-tag-release --version X.Y.Z [options]
+  scripts/ci/prepare-release-version.sh --version X.Y.Z [options]
 
 Prepares the release version bump as one local commit. It never tags, pushes,
 publishes, or touches a remote; the sympoies-infra release broker owns that.
@@ -433,7 +433,7 @@ fi
 # Re-run artifact generation after checks in case lockfile changed during the check flow.
 refresh_third_party_artifacts_if_present
 
-# Stage only the files this skill is expected to produce. Using `git add -A`
+# Stage only the files this helper is expected to produce. Using `git add -A`
 # would sweep in unrelated runtime state (e.g. `.claude/` session locks).
 stage_paths=()
 while IFS= read -r release_path; do

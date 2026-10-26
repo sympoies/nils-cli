@@ -721,10 +721,6 @@ fn schema() -> String {
 /// REST and GraphQL throttling, e.g. `API rate limit exceeded`,
 /// `You have exceeded a secondary rate limit`, and
 /// `GraphQL: API rate limit exceeded`.
-///
-/// The release skill re-implements the same intent as a shell `grep` in
-/// `.agents/skills/project-bump-version-tag-release/scripts/project-bump-version-tag-release.sh`
-/// (`assert_release_assets_available`); keep the two phrasing sets in sync.
 pub fn is_rate_limit_stderr(stderr: &str) -> bool {
     let s = stderr.to_ascii_lowercase();
     s.contains("api rate limit exceeded")
