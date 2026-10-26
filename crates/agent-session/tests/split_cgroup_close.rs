@@ -16,7 +16,7 @@ impl Drop for Runtime {
 }
 
 #[test]
-fn legacy_split_cgroup_close_names_failed_check_without_signaling() {
+fn split_cgroup_close_names_failed_check_without_signaling() {
     split_cgroup_close(false);
 }
 
