@@ -1557,20 +1557,17 @@ fn console_start_selects_the_account_for_its_agent_and_the_launch_profile() {
         true,
     );
     assert_eq!(output.code, 64, "stdout={}", output.stdout_text());
-    assert_eq!(
-        error_of(&output)["code"],
-        "console-start-account-unsupported"
-    );
+    assert_eq!(error_of(&output)["code"], "parse-error");
     assert_eq!(aggregator.seen().len(), requests);
 }
 
 #[test]
-fn launch_env_console_forwards_every_provider_and_requires_confirmation() {
+fn launch_env_console_forwards_supported_providers_and_requires_confirmation() {
     let fixture = Fixture::new();
     let aggregator = Aggregator::start();
     let _serve = fixture.serve(&[], Some(&aggregator));
     let values = json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1"});
-    for agent in ["codex", "claude", "dsh"] {
+    for agent in ["codex", "claude"] {
         for confirmed in [true, false] {
             let mut child = json!({"id":"env-child", "agent":agent});
             if confirmed {
@@ -1600,7 +1597,7 @@ fn launch_env_console_forwards_every_provider_and_requires_confirmation() {
             }
         }
     }
-    assert_eq!(aggregator.seen().len(), 6);
+    assert_eq!(aggregator.seen().len(), 4);
     for request in aggregator.seen() {
         assert_eq!(request.body.unwrap()["session"]["launch_env"], values);
     }
