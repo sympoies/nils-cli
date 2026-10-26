@@ -347,6 +347,42 @@ fn start_rejects_the_retired_dsh_agent_value() {
 }
 
 #[test]
+fn retained_activity_hook_and_notify_accept_dsh_without_advertising_it() {
+    use agent_session::cli::{ActivityCommand, AgentKind, Cli, Command as SessionCommand};
+    use clap::{CommandFactory, Parser};
+
+    let hook = Cli::try_parse_from(["agent-session", "activity", "hook", "--agent", "dsh"])
+        .expect("retained DSH activity hook");
+    let SessionCommand::Activity(activity) = hook.command else {
+        panic!("activity command");
+    };
+    let ActivityCommand::Hook(args) = activity.command else {
+        panic!("activity hook command");
+    };
+    assert_eq!(args.agent, AgentKind::Dsh);
+
+    let notify = Cli::try_parse_from([
+        "agent-session",
+        "activity",
+        "notify",
+        "--agent",
+        "dsh",
+        "{}",
+    ])
+    .expect("retained DSH activity notification");
+    let SessionCommand::Activity(activity) = notify.command else {
+        panic!("activity command");
+    };
+    let ActivityCommand::Notify(args) = activity.command else {
+        panic!("activity notify command");
+    };
+    assert_eq!(args.agent, AgentKind::Dsh);
+
+    let help = Cli::command().render_help().to_string();
+    assert!(!help.contains("dsh"));
+}
+
+#[test]
 fn guarded_send_clap_contract_accepts_independent_opt_ins() {
     use agent_session::cli::{Cli, Command as SessionCommand};
     use clap::{CommandFactory, Parser};

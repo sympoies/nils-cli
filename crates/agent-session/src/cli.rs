@@ -1584,7 +1584,7 @@ pub struct ActivityStatusArgs {
 #[derive(Debug, Args)]
 pub struct ActivityHookArgs {
     /// Provider whose hook payload is on stdin.
-    #[arg(long, value_enum)]
+    #[arg(long, value_parser = parse_activity_provider)]
     pub agent: AgentKind,
 
     /// Provider event name when the raw payload does not carry one.
@@ -1606,7 +1606,7 @@ pub enum ActivityHookVia {
 #[derive(Debug, Args)]
 pub struct ActivityNotifyArgs {
     /// Provider whose notification payload is supplied as the final argument.
-    #[arg(long, value_enum)]
+    #[arg(long, value_parser = parse_activity_provider)]
     pub agent: AgentKind,
 
     /// JSON argv for an existing singular notifier composed by activity setup.
@@ -1810,6 +1810,10 @@ impl AgentKind {
             _ => None,
         }
     }
+}
+
+fn parse_activity_provider(value: &str) -> Result<AgentKind, String> {
+    AgentKind::from_name(value).ok_or_else(|| format!("unknown activity provider '{value}'"))
 }
 
 /// Named terminal keys and CLI-only printable characters.
