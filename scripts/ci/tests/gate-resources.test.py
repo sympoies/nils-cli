@@ -499,9 +499,7 @@ class GateIntegration(unittest.TestCase):
             shutil.copy(ROOT / 'scripts/ci' / name, ci / name)
         for name in ('doc_classify.py', 'sibling_bins.py', 'cargo-target-dir.sh', 'target_guard.py'):
             shutil.copy(ROOT / 'scripts/ci/lib' / name, ci / 'lib' / name)
-        verify = root / '.agents/skills/project-verify-required-checks/scripts'
-        verify.mkdir(parents=True)
-        (verify / 'project-verify-required-checks.sh').write_text('touch "$DOCS_CALLED"\n')
+        (ci / 'nils-cli-verification.sh').write_text('touch "$DOCS_CALLED"\n')
         (ci / 'devlog-check.py').write_text('# Devlog policy is tested separately.\n')
         (ci / 'gate-resources.py').write_text(
             'import os, sys; from pathlib import Path; '
@@ -569,12 +567,11 @@ class GateIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'scripts/ci').mkdir(parents=True)
-            (root / '.agents/skills/project-verify-required-checks/scripts').mkdir(parents=True)
             for name in ('nils-cli-checks-entrypoint.sh', 'test-env.sh', 'gate-resources.py'):
                 source = ROOT / 'scripts/ci' / name
                 if source.exists():
                     shutil.copy(source, root / 'scripts/ci' / name)
-            (root / '.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh').write_text(
+            (root / 'scripts/ci/nils-cli-verification.sh').write_text(
                 'touch "$STARTED/$LABEL"\n'
                 'if [[ "$LABEL" == "first" ]]; then\n'
                 '  while [[ ! -f "$STARTED/release" ]]; do sleep .02; done\n'

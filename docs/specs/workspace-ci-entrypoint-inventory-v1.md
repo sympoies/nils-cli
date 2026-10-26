@@ -84,7 +84,7 @@ out of scope for this governance inventory; flag it as a follow-up.
 
 ## Required-Checks Script Ownership
 
-`./.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh` is canonical for full CI verification ordering:
+`./scripts/ci/nils-cli-verification.sh` is canonical for full CI verification ordering:
 
 1. docs/stale/third-party/completion audits (`scripts/ci/*`)
 2. completion registration/parity checks
@@ -104,31 +104,31 @@ records the keep/delete decision plus the active caller evidence.
 | Path | Decision | Active caller evidence |
 | --- | --- | --- |
 | `scripts/ci/cargo-deny-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` supply-chain audit section + `.github/workflows/ci.yml` `cargo-deny` job |
-| `scripts/ci/cli-output-contract-lint.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` docs-only/full checks list + `project-verify-required-checks.sh` docs-only and full passes |
-| `scripts/ci/completion-asset-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` step |
-| `scripts/ci/completion-freshness-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` step |
-| `scripts/ci/completion-flag-parity-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` step |
+| `scripts/ci/cli-output-contract-lint.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` docs-only/full checks list + `nils-cli-verification.sh` docs-only and full passes |
+| `scripts/ci/completion-asset-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step |
+| `scripts/ci/completion-freshness-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step |
+| `scripts/ci/completion-flag-parity-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step |
 | `scripts/ci/coverage-badge.sh` | keep | `.github/workflows/ci.yml` `coverage_badge` job |
 | `scripts/ci/coverage-summary.sh` | keep | `.github/workflows/ci.yml` `coverage` job + `docs/runbooks/workspace-maintenance-reference.md` coverage flow |
-| `scripts/ci/crate-naming-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` step |
+| `scripts/ci/crate-naming-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step |
 | `scripts/ci/detect-docs-only.sh` | keep | `.github/workflows/ci.yml` `changes` job + `scripts/ci/tests/detect-docs-only.test.sh` |
 | `scripts/ci/detect-release-only.sh` | keep | exact-base policy loaded by `.github/workflows/ci.yml` + `scripts/ci/release-only-checks.sh` + `scripts/ci/tests/detect-release-only.test.sh` |
-| `scripts/ci/docs-hygiene-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` docs-only and full passes + `scripts/ci/tests/docs-hygiene-audit.test.sh` |
-| `scripts/ci/docs-placement-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` docs-only and full passes |
-| `scripts/ci/forge-cli-fixture-lint.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` step |
-| `scripts/ci/markdownlint-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` docs-only and full passes |
+| `scripts/ci/docs-hygiene-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` docs-only and full passes + `scripts/ci/tests/docs-hygiene-audit.test.sh` |
+| `scripts/ci/docs-placement-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` docs-only and full passes |
+| `scripts/ci/forge-cli-fixture-lint.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step |
+| `scripts/ci/markdownlint-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` docs-only and full passes |
 | `scripts/ci/nils-cli-checks-entrypoint.sh` | keep | `.github/workflows/ci.yml` Linux `test` job and shared full-validation jobs + `docs/runbooks/workspace-maintenance-reference.md` local-fast and CI/full commands |
 | `scripts/ci/nils-cli-local-fast.sh` | keep | `scripts/ci/nils-cli-checks-entrypoint.sh --local-fast` delegates changed-scope planning/execution here |
-| `scripts/ci/publish-order-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` step + `scripts/ci/tests/publish-order-audit.test.sh` |
+| `scripts/ci/publish-order-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step + `scripts/ci/tests/publish-order-audit.test.sh` |
 | `scripts/ci/release-tarball-third-party-audit.sh` | keep | `.github/workflows/release.yml` `build` job |
 | `scripts/ci/release-only-checks.sh` | keep | exact-base reduced PR lane in `.github/workflows/ci.yml` Linux `test` job + `scripts/ci/tests/release-workflow-contract.test.sh` |
-| `scripts/ci/skill-shell-suites.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` step (runs every `.agents/skills/*/tests/test_*.sh` suite) |
+| `scripts/ci/skill-shell-suites.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step (runs every `.agents/skills/*/tests/test_*.sh` suite) |
 | `scripts/ci/tempdir-leak-audit.sh` | keep | `scripts/ci/nils-cli-local-fast.sh` unconditional static leak gate + `docs/specs/test-temp-directory-policy.md` |
 | `scripts/ci/tempdir-leak-probe.sh` | keep | `scripts/ci/nils-cli-local-fast.sh` workspace-test isolation + `docs/specs/test-temp-directory-policy.md` |
-| `scripts/ci/test-stale-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` step |
-| `scripts/ci/third-party-artifacts-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` step + dependabot bump skill |
+| `scripts/ci/test-stale-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step |
+| `scripts/ci/third-party-artifacts-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step + dependabot bump skill |
 | `scripts/ci/verify-signed-commits.sh` | keep | `lefthook.yml` pre-push hook |
-| `scripts/ci/workspace-version-lockstep.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` step |
+| `scripts/ci/workspace-version-lockstep.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step |
 
 ## Auxiliary Wrapper / Tooling Decisions
 
@@ -145,9 +145,9 @@ records the keep/delete decision plus the active caller evidence.
 ```bash
 test -f docs/specs/workspace-ci-entrypoint-inventory-v1.md
 ls scripts/ci/*.sh
-rg -n 'scripts/ci/|project-verify-required-checks' \
+rg -n 'scripts/ci/|nils-cli-verification' \
   .github/workflows/ci.yml .github/workflows/release.yml .github/workflows/publish-crates.yml \
   DEVELOPMENT.md docs/runbooks/workspace-maintenance-reference.md \
-  .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh
+  scripts/ci/nils-cli-verification.sh
 rg -n 'canonical|delete|delete-candidate|keep|workflow' docs/specs/workspace-ci-entrypoint-inventory-v1.md
 ```

@@ -4,12 +4,12 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/ci/nils-cli-checks-entrypoint.sh [--xvfb] [--local-fast] [--with-coverage] [verify-script args...]
+  scripts/ci/nils-cli-checks-entrypoint.sh [--xvfb] [--local-fast] [--with-coverage] [verification args...]
 
 Description:
   Canonical cross-platform entrypoint for local-fast and CI verification jobs.
   - By default, runs the full CI parity stack through
-    ./.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh
+    scripts/ci/nils-cli-verification.sh
   - Reuses the current Bash interpreter so nested audit scripts run with the same shell version.
   - Optionally wraps execution with xvfb-run for Linux runners.
   - Runs the local fast changed-scope gate with --local-fast; this is the
@@ -137,7 +137,7 @@ cd "$repo_root"
 
 source "$repo_root/scripts/ci/test-env.sh"
 
-verify_script="./.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh"
+verify_script="./scripts/ci/nils-cli-verification.sh"
 if [[ ! -f "$verify_script" ]]; then
   echo "error: missing required checks script: $verify_script" >&2
   exit 2
@@ -229,7 +229,7 @@ fi
 
 # Keep this floor aligned with CI: NILS_CLI_COVERAGE_FAIL_UNDER_LINES on the
 # `test_macos` "Nils CLI checks" step in .github/workflows/ci.yml, and the
-# llvm-cov runner default in project-verify-required-checks.sh.
+# llvm-cov runner default in nils-cli-verification.sh.
 coverage_fail_under="${NILS_CLI_COVERAGE_FAIL_UNDER_LINES:-85}"
 
 run mkdir -p target/coverage

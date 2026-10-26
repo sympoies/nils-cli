@@ -644,8 +644,7 @@ else:
         for path in ('scripts/ci/nils-cli-checks-entrypoint.sh',
                      'scripts/ci/nils-cli-merge-plan-checks.py'):
             (self.repo / path).write_bytes((ROOT / path).read_bytes())
-        verify = self.repo / '.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh'
-        verify.parent.mkdir(parents=True)
+        verify = self.repo / 'scripts/ci/nils-cli-verification.sh'
         verify.write_text('#!/usr/bin/env bash\nprintf \'{"kind":"full"}\\n\' >> "$FAKE_CARGO_LOG"\n')
         # Admission is a fixture, not a local gate: no compiler or live slot is
         # launched. The owning matrix itself runs in the caller's 6 GiB scope.

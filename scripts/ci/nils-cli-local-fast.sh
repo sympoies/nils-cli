@@ -474,7 +474,7 @@ if [[ -z "$bash_bin" || ! -x "$bash_bin" ]]; then
   exit 2
 fi
 
-verify_script="./.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh"
+verify_script="./scripts/ci/nils-cli-verification.sh"
 if [[ ! -f "$verify_script" ]]; then
   echo "error: missing required checks script: $verify_script" >&2
   exit 2
