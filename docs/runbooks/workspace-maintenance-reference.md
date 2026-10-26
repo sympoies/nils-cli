@@ -724,8 +724,23 @@ The applying workflow requires two repository secrets, `BOT_APP_ID` and
 `Actions: read`. The App token is mandatory rather than a convenience: a commit
 made with the default `GITHUB_TOKEN` does not start a new workflow run, so the
 refreshed commit would carry no CI results and could never be shown green.
-Without the secrets the applying workflow fails fast with that instruction, and
-`.agents/skills/project-deliver-dependabot-bump-pr` remains the manual path.
+Without the secrets the applying workflow fails fast. For manual recovery,
+check out the Dependabot branch in a managed worktree, regenerate and verify
+the artifacts, then deliver the artifact-only change through the normal PR
+workflow:
+
+```bash
+bash scripts/generate-third-party-artifacts.sh --write
+bash scripts/generate-third-party-artifacts.sh --check
+git diff --check
+git diff -- THIRD_PARTY_LICENSES.md THIRD_PARTY_NOTICES.md
+```
+
+Stage only `THIRD_PARTY_LICENSES.md` and `THIRD_PARTY_NOTICES.md`, commit the
+refresh with `semantic-commit`, and update the existing Dependabot PR through
+the normal delivery workflow. CI must pass on the refreshed head before it is
+merged. Do not use this recovery path to merge a major-version or security bump
+without its required review.
 
 ## 7. Test conventions
 
@@ -804,15 +819,20 @@ scripts/publish-crates.sh --crates "nils-term nils-common" --dry-run
 ```
 
 GitHub workflow dispatch is available through `.github/workflows/publish-crates.yml`.
-In `publish` mode the workflow requires the repository secret
-`CARGO_REGISTRY_TOKEN`.
-
-Use the repo-owned dispatch helper when you want workflow dispatch with run
-reporting and post-run crates.io status snapshots:
+Dispatch it with `forge-cli`; in `publish` mode the workflow requires the
+repository secret `CARGO_REGISTRY_TOKEN`:
 
 ```bash
-.agents/skills/project-dispatch-crates-io-publish/scripts/publish-crates-io.sh --all --wait
+forge-cli workflow dispatch publish-crates.yml --ref main \
+  -f 'crates=nils-term nils-common' \
+  -f mode=dry-run
 ```
+
+Select the intended crate list and use `-f mode=publish` only for an authorized
+publication. Follow the dispatched run in the repository's Actions interface.
+After a successful publish, verify the published versions with
+`scripts/crates-io-status.sh --crates "nils-term nils-common" --fail-on-missing`,
+using the crate list selected for the workflow dispatch.
 
 To query crates.io publish status locally, use:
 

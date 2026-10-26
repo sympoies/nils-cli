@@ -576,6 +576,7 @@ run bash scripts/ci/tests/node-scope.test.sh
 run bash scripts/ci/tests/tempdir-leak-audit.test.sh
 run bash scripts/ci/tests/tempdir-leak-probe.test.sh
 run bash scripts/ci/tests/test-env-isolation-guard.test.sh
+run bash scripts/ci/tests/crates-io-status.test.sh
 
 # file-size-audit ratchets Rust source sizes against a committed baseline. It
 # needs no build, so it runs for every code change set, as CI does.
