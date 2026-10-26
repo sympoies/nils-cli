@@ -42,6 +42,7 @@ pub mod lineage;
 mod maintenance;
 #[doc(hidden)]
 pub mod metadata;
+pub mod notice;
 mod prompt_delivery;
 mod provider_history;
 #[doc(hidden)]
@@ -310,7 +311,8 @@ fn dispatch(cli: Cli) -> i32 {
         Command::Attach(args) => run_attach(&context, args),
         Command::Logs(args) => run_logs(&context, args),
         Command::Diagnose(args) => diagnose::run_diagnose(&context, args),
-        Command::Send(args) => run_send(&context, args),
+        Command::Send(args) => send::run(&context, args),
+        Command::Notice(args) => notice::run(&context, args),
         Command::Glance(args) => run_glance(&context, args),
         Command::Resume(args) => run_resume(&context, args),
         Command::Restart(args) => restart::run(&context, args),
@@ -394,6 +396,9 @@ pub fn render_clap_message(err: &clap::Error) -> String {
 
 fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
     let format = args.format;
+    if let Err(error) = notice::prepare_start(&mut args) {
+        return render_error(START_COMMAND, format, error);
+    }
     if let Err(error) = launch_env::from_flags(&args.launch_env) {
         return render_error(START_COMMAND, format, error);
     }
@@ -557,14 +562,6 @@ fn run_logs(context: &CliContext, args: cli::LogsArgs) -> i32 {
     }) {
         Ok(result) => render_single_success(LOGS_COMMAND, args.format, &result, render_logs_text),
         Err(err) => render_error(LOGS_COMMAND, args.format, err),
-    }
-}
-
-fn run_send(context: &CliContext, args: cli::SendArgs) -> i32 {
-    let format = args.format;
-    match send_to_session(context, args) {
-        Ok(result) => render_single_success(SEND_COMMAND, format, &result, render_send_text),
-        Err(err) => render_error(SEND_COMMAND, format, err),
     }
 }
 

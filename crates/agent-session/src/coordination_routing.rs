@@ -9,6 +9,7 @@ use crate::cli::{self, Command};
 pub(crate) fn command_name(command: &Command) -> Option<&'static str> {
     match command {
         Command::AutoResume(_) => Some("auto-resume"),
+        Command::Notice(_) => Some("notice"),
         Command::Workspace(_) => Some("workspace-set"),
         Command::Readiness(_) => Some("readiness"),
         Command::Delegation(args) => Some(crate::coordination::delegation::name(args)),
@@ -74,6 +75,7 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             }
             arg if arg.starts_with(b"--state-dir=") || arg.starts_with(b"--host=") => {}
             b"auto-resume" => return Some("auto-resume"),
+            b"notice" => return Some("notice"),
             b"readiness" => return Some("readiness"),
             _ => break,
         }
@@ -139,6 +141,7 @@ pub(crate) fn command_format(command: &Command) -> OutputFormat {
         Command::Logs(args) => args.format,
         Command::Diagnose(args) => args.format,
         Command::Send(args) => args.format,
+        Command::Notice(args) => args.format,
         Command::Glance(args) => args.format,
         Command::Resume(args) => args.format,
         Command::Restart(args) => args.format,

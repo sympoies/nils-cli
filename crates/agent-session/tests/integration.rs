@@ -79,3 +79,6 @@ mod delete_escaped;
 
 #[path = "integration/broker_proof.rs"]
 mod broker_proof;
+
+#[path = "integration/notice_start.rs"]
+mod notice_start;
