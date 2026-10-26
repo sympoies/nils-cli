@@ -254,6 +254,35 @@ fn stopped_only_delete_fences_incarnation_and_refuses_unproven_state() {
 }
 
 #[test]
+fn stopped_only_delete_accepts_failed_launch_without_runtime_identity() {
+    let mut fixture = Fixture::new();
+    let incarnation = fixture.record["runtime"]["launch_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut record = fixture.record.clone();
+    record["tmux_runtime_never_launched"] = json!(incarnation);
+    fs::write(
+        fixture.session.join("session.json"),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+    fixture.pane.0.kill().unwrap();
+    fixture.pane.0.wait().unwrap();
+    fs::write(&fixture.name_status, "stopped").unwrap();
+
+    let output = fixture.delete_if_stopped(&incarnation);
+
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(output.stdout_json()["data"]["deleted"], true);
+    assert!(
+        !fixture.killed.exists(),
+        "conditional delete must not signal"
+    );
+    assert!(!fixture.session.exists());
+}
+
+#[test]
 fn stopped_only_delete_serializes_a_concurrent_resume_through_removal() {
     let mut fixture = Fixture::new();
     let incarnation = fixture.mark_runtime_stopped();

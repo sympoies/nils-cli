@@ -354,25 +354,28 @@ fn delete_if_stopped(
             Some(json!({"id": record.id, "action": "retry-delete", "retryable": true})),
         ));
     }
-    let identity = persisted_tmux_runtime_identity(&record)
-        .map_err(|_| conditional_status_unknown(&record))?
-        .ok_or_else(|| conditional_status_unknown(&record))?;
     let prior = persisted_prior_tmux_runtime_identities(&record)
         .map_err(|_| conditional_status_unknown(&record))?;
-    match verify_stopped_tmux_runtime(
-        &resolve_tmux_bin(args.tmux_bin.as_deref()),
-        &record.tmux_session,
-        &identity,
-        DELETE_TERMINATION_VERIFY_TIMEOUT,
-    ) {
-        Ok(()) => {}
-        Err(SessionTerminationFailure::StillRunning) => {
-            return Err(conditional_state_mismatch(&record, "running"));
-        }
-        Err(SessionTerminationFailure::ProcessStillRunning) => {
-            return Err(conditional_state_mismatch(&record, "working"));
-        }
-        Err(_) => return Err(conditional_status_unknown(&record)),
+    match persisted_tmux_runtime_identity(&record)
+        .map_err(|_| conditional_status_unknown(&record))?
+    {
+        Some(identity) => match verify_stopped_tmux_runtime(
+            &resolve_tmux_bin(args.tmux_bin.as_deref()),
+            &record.tmux_session,
+            &identity,
+            DELETE_TERMINATION_VERIFY_TIMEOUT,
+        ) {
+            Ok(()) => {}
+            Err(SessionTerminationFailure::StillRunning) => {
+                return Err(conditional_state_mismatch(&record, "running"));
+            }
+            Err(SessionTerminationFailure::ProcessStillRunning) => {
+                return Err(conditional_state_mismatch(&record, "working"));
+            }
+            Err(_) => return Err(conditional_status_unknown(&record)),
+        },
+        None if runtime_is_proven_never_launched(&record) && prior.is_empty() => {}
+        None => return Err(conditional_status_unknown(&record)),
     }
     if verify_stopped_process_runtimes(&prior, DELETE_TERMINATION_VERIFY_TIMEOUT).is_err() {
         return Err(conditional_status_unknown(&record));
