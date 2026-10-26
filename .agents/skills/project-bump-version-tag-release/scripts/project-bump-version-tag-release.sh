@@ -11,7 +11,7 @@ publishes, or touches a remote; the sympoies-infra release broker owns that.
 
 Options:
   --version X.Y.Z   Required. Accepts vX.Y.Z and normalizes to X.Y.Z.
-  --full-checks     Run the full local audit stack (project-verify-required-checks.sh)
+  --full-checks     Run the full local audit stack (scripts/ci/nils-cli-verification.sh)
                     before commit; opt-in (slow). Default runs only the locked cargo check.
   --skip-checks     Deprecated alias of the default (locked cargo check only).
   --skip-readme     Do not update README release tag examples.
@@ -407,7 +407,7 @@ PY
   fi
 fi
 
-checks_script="$repo_root/.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh"
+checks_script="$repo_root/scripts/ci/nils-cli-verification.sh"
 refresh_lockfile
 # Keep third-party artifacts aligned with the new lockfile; CI re-audits drift on the bump commit.
 refresh_third_party_artifacts_if_present

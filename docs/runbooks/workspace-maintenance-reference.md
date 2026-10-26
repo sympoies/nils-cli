@@ -187,7 +187,7 @@ The canonical CI/full-check entrypoint remains:
 bash scripts/ci/nils-cli-checks-entrypoint.sh
 ```
 
-This delegates to `./.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh`.
+This delegates to `scripts/ci/nils-cli-verification.sh`.
 It is what the shared release/nightly full-validation workflow uses for its
 `test` and `test_macos` jobs; it is not the default local development loop.
 See the [delivery and release flow](delivery-and-releases.md) for lane ownership,
@@ -223,7 +223,7 @@ batch. Required hosted checks and branch protections continue to apply.
    local gate from a clean managed worktree at that head:
 
    ```bash
-   NILS_CLI_TEST_RUNNER=nextest bash .agents/scripts/pre-pr.sh --full
+   NILS_CLI_TEST_RUNNER=nextest bash scripts/ci/nils-cli-checks-entrypoint.sh
    ```
 
    Use the shared gate semaphore described below and the host's configured limits.
@@ -272,9 +272,8 @@ queued tickets in admission order with their age in seconds and priority.
 
 After each `NILS_CLI_GATE_TIMEOUT_SECONDS` interval, admission reports "still
 queued" and keeps the same ticket and queue position until admitted or cancelled.
-This interval is a progress reminder, not a gate admission deadline; no
-`pre-pr.sh` timeout override or requeue is needed. Cancellation removes the
-ticket, so a later invocation gets a new position.
+This interval is a progress reminder, not a gate admission deadline. Cancellation
+removes the ticket, so a later invocation gets a new position.
 Help, plan-only inspection, and the explicit docs-only lane do not take a slot.
 
 | Knob | Default | Purpose |
@@ -298,7 +297,7 @@ dedicated host.
 
 For an explicitly prioritized invocation, set `NILS_CLI_GATE_PRIORITY=urgent`
 on the gate command (for example, `NILS_CLI_GATE_PRIORITY=urgent bash
-.agents/scripts/pre-pr.sh`). Tickets and admitted slot metadata record the
+scripts/ci/nils-cli-checks-entrypoint.sh`). Tickets and admitted slot metadata record the
 priority, and holder diagnostics and admission notices display it. Urgent ticket
 filenames also sort first for already-running helpers that use lexical queue
 ordering, preserving priority across older checkouts. Running

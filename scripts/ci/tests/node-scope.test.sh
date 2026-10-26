@@ -87,7 +87,7 @@ grep -q 'node scope' "$tmp/fail-closed.err" || fail "missing fail-closed diagnos
 # 6. Every Node.js entry point of the check chain goes through the helper.
 grep -q 'node_scoped npx --yes rumdl@' "$repo_root/scripts/ci/markdownlint-audit.sh" ||
   fail "markdownlint-audit.sh does not run npx through node_scoped"
-verify="$repo_root/.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh"
+verify="$repo_root/scripts/ci/nils-cli-verification.sh"
 for test_file in release-ci-gate.test.cjs peekaboo-release-check.test.cjs; do
   grep -q "^run node_scoped node scripts/ci/tests/$test_file" "$verify" ||
     fail "required checks do not run $test_file through node_scoped"

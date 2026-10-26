@@ -228,7 +228,7 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn('trackNightly', report)
         self.assertIn("'nightly-main'", ci)
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", ci)
-        self.assertIn('node scripts/ci/tests/nightly-tracker.test.cjs', (ROOT / '.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh').read_text())
+        self.assertIn('node scripts/ci/tests/nightly-tracker.test.cjs', (ROOT / 'scripts/ci/nils-cli-verification.sh').read_text())
 
 
 if __name__ == '__main__':

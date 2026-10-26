@@ -214,7 +214,7 @@ if '--fail-under-lines' in args and 100 * hit / found < float(args[args.index('-
 
     def test_full_workspace_absolute_floor_is_retained(self):
         for relative in ['scripts/ci/nils-cli-checks-entrypoint.sh',
-                         '.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh']:
+                         'scripts/ci/nils-cli-verification.sh']:
             text = (ROOT / relative).read_text()
             self.assertIn('--fail-under-lines', text)
             self.assertIn(':-85', text)

@@ -30,7 +30,7 @@ if [[ ! -f "$script" ]]; then
   exit 2
 fi
 
-verify_script="$repo_root/.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh"
+verify_script="$repo_root/scripts/ci/nils-cli-verification.sh"
 if [[ ! -f "$verify_script" ]]; then
   echo "error: missing required checks script: $verify_script" >&2
   exit 2

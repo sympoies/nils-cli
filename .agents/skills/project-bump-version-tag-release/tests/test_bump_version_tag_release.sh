@@ -41,7 +41,7 @@ create_temp_repo() {
   mkdir -p \
     "${repo_dir}/crates/codex-cli" \
     "${repo_dir}/scripts" \
-    "${repo_dir}/.agents/skills/project-verify-required-checks/scripts"
+    "${repo_dir}/scripts/ci"
 
   cat > "${repo_dir}/Cargo.toml" <<'EOF'
 [workspace]
@@ -85,7 +85,7 @@ echo "PASS: regenerated THIRD_PARTY_LICENSES.md THIRD_PARTY_NOTICES.md"
 EOF
   chmod +x "${repo_dir}/scripts/generate-third-party-artifacts.sh"
 
-  cat > "${repo_dir}/.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh" <<'EOF'
+  cat > "${repo_dir}/scripts/ci/nils-cli-verification.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -101,7 +101,7 @@ echo "checks:start" >> "$log_file"
 }
 echo "checks:ok" >> "$log_file"
 EOF
-  chmod +x "${repo_dir}/.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh"
+  chmod +x "${repo_dir}/scripts/ci/nils-cli-verification.sh"
 
   git -C "$repo_dir" add .
   git -C "$repo_dir" commit -m "init" >/dev/null

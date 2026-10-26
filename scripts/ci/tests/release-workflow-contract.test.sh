@@ -184,10 +184,10 @@ assert_contains .github/workflows/full-validation.yml 'NILS_CLI_SKIP_DOCTESTS: "
   "macOS delegates doctests to full Linux"
 assert_contains .config/nextest.toml 'terminate-after = ' \
   "nextest terminates hung tests"
-assert_contains .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh \
+assert_contains scripts/ci/nils-cli-verification.sh \
   '--fail-under-lines "${NILS_CLI_COVERAGE_FAIL_UNDER_LINES:-85}"' \
   "the llvm-cov executor enforces the workspace floor"
-assert_contains .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh \
+assert_contains scripts/ci/nils-cli-verification.sh \
   "node scripts/ci/tests/release-ci-gate.test.cjs" \
   "release gate unit tests are in the required suite"
 assert_contains docs/runbooks/workspace-maintenance-reference.md \

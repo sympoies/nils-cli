@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  project-verify-required-checks.sh [--docs-only] [--help]
+  scripts/ci/nils-cli-verification.sh [--docs-only] [--help]
 
 Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/docs-placement-audit.sh --strict
@@ -153,7 +153,7 @@ fi
 cd "$repo_root"
 
 if [[ "$docs_only" -eq 0 && "${NILS_CLI_GATE_ACTIVE:-0}" != "1" ]]; then
-  exec python3 "$repo_root/scripts/ci/gate-resources.py" -- "${BASH:-bash}" "$repo_root/.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh" "${original_args[@]}"
+  exec python3 "$repo_root/scripts/ci/gate-resources.py" -- "${BASH:-bash}" "$repo_root/scripts/ci/nils-cli-verification.sh" "${original_args[@]}"
 fi
 
 source "$repo_root/scripts/ci/test-env.sh"

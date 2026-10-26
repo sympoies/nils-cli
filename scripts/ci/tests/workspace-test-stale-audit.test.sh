@@ -39,7 +39,7 @@ if ! rg -q $'demo\tcrates/demo/tests/contracts.rs\tline:3\tdeprecated_path_marke
 fi
 
 if ! rg -qF 'run bash scripts/ci/tests/workspace-test-stale-audit.test.sh' \
-  "$repo_root/.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh"; then
+  "$repo_root/scripts/ci/nils-cli-verification.sh"; then
   echo "error: required checks do not invoke the stale-audit self-test" >&2
   exit 1
 fi

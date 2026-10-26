@@ -27,8 +27,7 @@ class AuditTests(unittest.TestCase):
     def test_check_chains_run_audit(self):
         for script in ('scripts/ci/nils-cli-local-fast.sh',
                        'scripts/ci/nils-cli-scoped-checks.sh',
-                       '.agents/skills/project-verify-required-checks/scripts/'
-                       'project-verify-required-checks.sh'):
+                       'scripts/ci/nils-cli-verification.sh'):
             with self.subTest(script=script):
                 source = (ROOT / script).read_text()
                 call = 'run python3 scripts/ci/assert-import-audit.py'

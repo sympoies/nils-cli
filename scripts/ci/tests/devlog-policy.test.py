@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
-VERIFY = '.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh'
+VERIFY = 'scripts/ci/nils-cli-verification.sh'
 
 
 class DevlogPolicy(unittest.TestCase):
