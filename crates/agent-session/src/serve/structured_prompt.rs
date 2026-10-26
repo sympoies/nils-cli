@@ -109,10 +109,16 @@ pub(super) async fn submit_structured_prompt_locked(
         Ok(Err(err)) => return Err(envelope_err(err)),
         Err(_) => return Err(join_err()),
     };
+    let history_session_id = record
+        .provider_resume
+        .as_ref()
+        .filter(|resume| resume.provider == "codex")
+        .map(|resume| resume.session_id.clone());
     let response = match handle.submit_prompt(text).await {
         Ok(history_turn_id) => Ok(StructuredPromptAcceptance {
             session_incarnation,
             history_turn_id: Some(history_turn_id),
+            history_session_id,
         }),
         Err(error) => {
             let exited = matches!(error, crate::codex_app_server::prompt_submit::PromptSubmissionFailure::AcknowledgementUnknown)
@@ -121,6 +127,7 @@ pub(super) async fn submit_structured_prompt_locked(
                 Ok(StructuredPromptAcceptance {
                     session_incarnation,
                     history_turn_id: None,
+                    history_session_id: None,
                 })
             } else {
                 Err(status_json(
@@ -139,6 +146,7 @@ pub(super) async fn submit_structured_prompt_locked(
 pub(super) struct StructuredPromptAcceptance {
     pub(super) session_incarnation: String,
     pub(super) history_turn_id: Option<String>,
+    pub(super) history_session_id: Option<String>,
 }
 
 /// Submit one structured prompt to a Claude session and report `submitted` only
@@ -400,12 +408,8 @@ pub(super) async fn submit_structured_prompt_handler_with_fence(
             });
             if include_history_turn_id && let Some(history_turn_id) = accepted.history_turn_id {
                 data["history_turn_id"] = json!(history_turn_id);
-                if let Some(resume) = record
-                    .provider_resume
-                    .as_ref()
-                    .filter(|resume| resume.provider == "codex")
-                {
-                    data["history_session_id"] = json!(resume.session_id);
+                if let Some(history_session_id) = accepted.history_session_id {
+                    data["history_session_id"] = json!(history_session_id);
                 }
             }
             envelope_ok(data)

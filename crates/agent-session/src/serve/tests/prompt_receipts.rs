@@ -11,6 +11,9 @@ mod direct_prompt;
 #[path = "native_busy_reply.rs"]
 mod native_busy_reply;
 
+#[path = "prompt_receipts/rebind_history.rs"]
+mod rebind_history;
+
 #[path = "claude_prompt_ack.rs"]
 mod claude_prompt_ack;
 #[path = "claude_stopped_runtime.rs"]
