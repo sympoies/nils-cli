@@ -394,6 +394,7 @@ pub(super) fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
     let tmux_arg = tmux_bin.to_string_lossy().to_string();
     let tmux_log_arg = tmux_log.to_string_lossy().to_string();
     let codex_arg = codex_bin.to_string_lossy().to_string();
+    let daemon_roster = "fixture-account-a fixture-account-b";
     let output = run(
         tmp.path(),
         &[
@@ -410,6 +411,7 @@ pub(super) fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
             ("AGENT_SESSION_FAKE_TMUX_LOG", &tmux_log_arg),
             ("AGENT_SESSION_FAKE_TMUX_HAS_SESSION", "0"),
             ("NILS_TEST_PANE_LIFETIME_MS", "500"),
+            ("CODEX_AUTH_PROFILE_NAMES", daemon_roster),
         ],
     );
 
@@ -492,6 +494,8 @@ pub(super) fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
             "AGENT_SESSION_ATTENTION_AUTHORITY=hook".to_string(),
             "-e".to_string(),
             format!("PATH={inherited_path}"),
+            "-e".to_string(),
+            format!("CODEX_AUTH_PROFILE_NAMES={daemon_roster}"),
             "-e".to_string(),
             format!("AGENT_SESSION_BIN={agent_session_bin}"),
             "--".to_string(),
