@@ -192,10 +192,14 @@ JSON output snapshot:
 }
 ```
 
-## Notes for project-dispatch-crates-io-publish Skill Integration
+## After workflow publication
 
-`./.agents/skills/project-dispatch-crates-io-publish/scripts/publish-crates-io.sh` already supports post-run snapshot by calling this script.
+After a successful dispatch of `.github/workflows/publish-crates.yml`, verify
+that the selected versions are available with:
 
-- Default: generate `${report_file%.md}.status.json` and `${report_file%.md}.status.md`
-- Disable snapshot: `--skip-status-check`
-- Override script/output paths: `--status-script`, `--status-json-file`, `--status-text-file`
+```bash
+scripts/crates-io-status.sh --crates "nils-term nils-common" --fail-on-missing
+```
+
+Replace the example crate list with the list selected for the workflow. Use
+`--version` to check an explicit published version.
