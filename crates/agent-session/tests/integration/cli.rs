@@ -10325,13 +10325,12 @@ fn resume_refuses_non_resumable_or_invalid_identity_without_starting_tmux() {
 }
 
 #[test]
-fn resume_refuses_a_retained_hermes_dsh_profile_record_without_side_effects() {
+fn resume_refuses_a_retained_hermes_dsh_profile_record_with_actionable_error() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");
     let cwd = tmp.path().join("repo");
     let history_root = tmp.path().join("dsh-sessions");
     fs::create_dir_all(&cwd).expect("repo dir");
-    fs::create_dir_all(&history_root).expect("history root");
     let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
     let launcher = fake_agent(tmp.path(), "run-agent-console-dsh");
     let session = write_resumable_session_record_with_agent_bin(
@@ -10375,14 +10374,15 @@ fn resume_refuses_a_retained_hermes_dsh_profile_record_without_side_effects() {
             ("AGENT_SESSION_FAKE_TMUX_HAS_SESSION", "0"),
         ],
     );
-    // The retained profile context is refused before the retired agent name is
-    // even resolved, so no generation, activity, or lease is touched.
     assert_eq!(resumed.code, 1, "stdout={}", resumed.stdout_text());
     let refusal = resumed.stdout_json();
     assert_eq!(refusal["ok"], false);
-    assert_eq!(
-        refusal["error"]["code"],
-        "agent-profile-metadata-unavailable"
+    assert_eq!(refusal["error"]["code"], "unsupported-agent-profile");
+    assert!(
+        refusal["error"]["message"]
+            .as_str()
+            .expect("error message")
+            .contains("retired DSH launch profile")
     );
     assert_eq!(
         fs::read(&record_path).expect("record after resume"),

@@ -1,10 +1,11 @@
 # agent-session
 
-`agent-session` starts and manages tmux-backed Codex, Claude Code, and DSH
+`agent-session` starts and manages tmux-backed Codex and Claude Code
 sessions for mobile handoff workflows. It is designed for personal automation
-such as the agent-console mobile control plane: a service can create the
+such as a mobile control plane: a service can create the
 session with a full prompt, then return a short tmux attach command for the
-user to continue from Termius, glance at the pane, or steer it with keystrokes.
+user to continue from a mobile terminal, glance at the pane, or steer it with
+keystrokes.
 
 ## Package vs binary name
 
@@ -92,7 +93,7 @@ agent-session delete <id>
 
 [Session lifecycle operations](docs/runbooks/session-lifecycle.md) covers
 prompt submission outcomes, blocked input, clear and rebind, resume, restart,
-verified deletion, startup logs, DSH launch, account switching, model
+verified deletion, startup logs, legacy session records, account switching, model
 settings, and secret safety. [Send v1](docs/specs/send-v1.md) defines guarded
 continuation admission and its observation limits.
 

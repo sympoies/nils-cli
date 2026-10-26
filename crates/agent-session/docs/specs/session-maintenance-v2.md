@@ -123,8 +123,9 @@ destructive action; confirmed destructive requests return the existing
 `session_metadata_retained: true`. Direct deletion and archive also reject
 before capability revocation or logical deletion with
 `session-termination-failed`. Record, sidecar, broker, and capability state
-remain retained for owner disposition. Ordinary native DSH launch-profile
-records use the supported runtime paths and retain their existing behavior.
+remain retained for owner disposition. Retained native DSH records continue to
+use their stored managed runtime identity for maintenance; this does not enable
+new launches or resumes from DSH profiles.
 
 ### Consumer obligations
 

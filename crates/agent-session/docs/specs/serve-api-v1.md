@@ -195,15 +195,9 @@ does not gain automatic continuation support.
 The retired base agent `hermes` is refused: serve does not start with a
 profile that names it.
 
-A profile with base agent `dsh` may add
-`"dsh_history":{"command":"/absolute/dsh-runtime-kit-history","root":"/absolute/dsh-sessions","compression":"zstd"}`.
-`command` and `root` must be absolute and `compression` is `zstd` (the default)
-or `none`. This optional read adapter is not a launch readiness prerequisite:
-if it is unavailable, ordinary DSH launch and readiness keep their existing
-behavior and the history endpoints return only the remaining valid catalog data.
-A managed exact-id fresh launch requires the configured root.
-Adding `"resume":"exact-id"` to that object explicitly enables daemon-owned
-history resume for the ready profile. Omitting it preserves read-only behavior.
+DSH launch profiles are retired. Serve configuration that names `agent = "dsh"`
+is rejected with an actionable error; remove the legacy profile before starting
+the daemon. DSH sessions cannot be created through the serve API.
 
 ## Trust model
 

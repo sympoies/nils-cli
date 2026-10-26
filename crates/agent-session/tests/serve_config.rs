@@ -46,17 +46,17 @@ timeout_ms = 20000
 max_chars = 12000
 
 [[launch_profiles]]
-id = "dsh-alt"
-label = "DSH Alt"
-agent = "dsh"
-agent_bin = "/opt/example/dsh"
+id = "codex-workbench"
+label = "Codex Workbench"
+agent = "codex"
+agent_bin = "/opt/example/codex"
 readiness_args = ["--version"]
 
 [[launch_profiles]]
-id = "dsh-workbench"
-label = "DSH"
-agent = "dsh"
-agent_bin = "/opt/example/workbench"
+id = "claude-workbench"
+label = "Claude Workbench"
+agent = "claude"
+agent_bin = "/opt/example/claude"
 "#;
 
 struct Fixture {
@@ -163,7 +163,7 @@ fn check_accepts_a_versioned_toml_document() {
     assert_eq!(data["launch_profiles"]["source"], "file");
     assert_eq!(
         data["launch_profiles"]["ids"],
-        serde_json::json!(["dsh-alt", "dsh-workbench"])
+        serde_json::json!(["codex-workbench", "claude-workbench"])
     );
     assert_eq!(data["retitle"]["source"], "file");
     assert_eq!(data["codex_account_broker"]["source"], "file");
@@ -196,7 +196,7 @@ fn check_accepts_the_same_document_as_json() {
             }
           },
           "launch_profiles": [
-            {"id": "dsh-workbench", "label": "DSH", "agent": "dsh", "agent_bin": "/opt/example/dsh"}
+            {"id": "claude-workbench", "label": "Claude Workbench", "agent": "claude", "agent_bin": "/opt/example/claude"}
           ]
         }"#,
     );
@@ -209,7 +209,34 @@ fn check_accepts_the_same_document_as_json() {
     assert_eq!(data["retitle"]["source"], "file");
     assert_eq!(
         data["launch_profiles"]["ids"],
-        serde_json::json!(["dsh-workbench"])
+        serde_json::json!(["claude-workbench"])
+    );
+}
+
+#[test]
+fn check_rejects_a_retired_dsh_launch_profile_with_actionable_error() {
+    let fixture = Fixture::new();
+    let config = fixture.write(
+        "serve.toml",
+        r#"
+schema_version = "agent-session.serve-config.v1"
+
+[[launch_profiles]]
+id = "dsh-workbench"
+label = "DSH"
+agent = "dsh"
+agent_bin = "/opt/example/dsh"
+"#,
+    );
+
+    let error = failure(&fixture, &fixture.check(&config, &[]));
+
+    assert_eq!(error["code"], "serve-config-invalid-value");
+    assert!(
+        error["message"]
+            .as_str()
+            .expect("error message")
+            .contains("DSH launch profiles are retired")
     );
 }
 
@@ -475,7 +502,7 @@ fn environment_launch_profiles_merge_ahead_of_file_profiles() {
     let config = fixture.write("serve.toml", VALID_TOML);
     let env_profiles = r#"[
       {"id":"codex-alt","label":"Codex Alt","agent":"codex","agent_bin":"/opt/env/codex"},
-      {"id":"dsh-alt","label":"DSH (env)","agent":"dsh","agent_bin":"/opt/env/dsh"}
+      {"id":"claude-workbench","label":"Claude Workbench (env)","agent":"claude","agent_bin":"/opt/env/claude"}
     ]"#;
 
     let output = fixture.check(&config, &[("AGENT_SESSION_LAUNCH_PROFILES", env_profiles)]);
@@ -485,13 +512,13 @@ fn environment_launch_profiles_merge_ahead_of_file_profiles() {
     assert_eq!(value["data"]["launch_profiles"]["source"], "merged");
     assert_eq!(
         value["data"]["launch_profiles"]["ids"],
-        serde_json::json!(["codex-alt", "dsh-alt", "dsh-workbench"])
+        serde_json::json!(["codex-alt", "claude-workbench", "codex-workbench",])
     );
     let warnings = warnings(&value);
     assert!(
         warnings
             .iter()
-            .any(|w| w.contains("launch_profiles[0]") && w.contains("dsh-alt")),
+            .any(|w| w.contains("launch_profiles[1]") && w.contains("claude-workbench")),
         "{warnings:?}"
     );
 }

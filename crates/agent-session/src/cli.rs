@@ -43,8 +43,8 @@ impl CoordinationMode {
     name = "agent-session",
     version,
     long_version = nils_build_info::long_version(env!("CARGO_PKG_VERSION")),
-    about = "Start and manage tmux-backed Codex, Claude Code, and DSH sessions.",
-    long_about = "Start and manage tmux-backed Codex, Claude Code, and DSH sessions for mobile handoff workflows.",
+    about = "Start and manage tmux-backed Codex and Claude Code sessions.",
+    long_about = "Start and manage tmux-backed Codex and Claude Code sessions for mobile handoff workflows.",
     disable_help_subcommand = true,
     after_help = "EXAMPLES:\n  agent-session start --agent codex --cwd ~/Project/app --prompt-file prompt.md\n  agent-session list\n  agent-session glance <id> --tail 40\n  agent-session send <id> --text yes --key enter\n  agent-session send <id> --key c-c\n  agent-session resume <id>\n  agent-session restart <id> --format json\n  agent-session metadata attach <id> --request-file metadata.json --if-revision 0 --idempotency-key attach-001 --format json\n  agent-session metadata show <id> --label acceptance.synthetic --format json\n  agent-session command <id>\n  agent-session attach <id>\n  agent-session delete <id>\n\nENVIRONMENT:\n  AGENT_SESSION_HOST       Hostname used in generated ssh attach commands.\n  AGENT_SESSION_STATE_DIR  Default state directory override.\n  AGENT_SESSION_TMUX_BIN   tmux binary override.\n  AGENT_SESSION_CODEX_BIN  codex binary override.\n  AGENT_SESSION_CLAUDE_BIN claude binary override.\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error"
 )]
@@ -196,10 +196,6 @@ pub struct StartArgs {
     /// Internal: server-owned launch profile id selected by the serve daemon.
     #[arg(skip)]
     pub initial_agent_profile: Option<String>,
-
-    /// Internal: DSH history root from the server-owned launch profile.
-    #[arg(skip)]
-    pub initial_dsh_history_root: Option<PathBuf>,
 
     /// Internal: provider config root owned by the selected launch profile.
     #[arg(skip)]
@@ -1790,10 +1786,8 @@ pub struct CompletionArgs {
 pub enum AgentKind {
     Codex,
     Claude,
-    /// DeepSeek Harness, launched through a launch profile or an external runtime
-    // A tmux pane started through a server-owned launch profile, or an
-    // external-runtime worker owned by the dsh-runtime-kit bundle
-    // A plain profile-less start is refused.
+    /// Retained for reading legacy session records; no new launch accepts it.
+    #[value(skip)]
     Dsh,
 }
 
