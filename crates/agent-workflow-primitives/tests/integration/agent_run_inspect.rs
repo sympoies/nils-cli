@@ -153,7 +153,7 @@ fn inspect_denies_host_network_even_when_a_listener_exists() {
 
 #[test]
 fn inspect_denies_host_unix_stream_and_datagram_sockets() {
-    let temp = tempfile::TempDir::new().expect("tempdir");
+    let temp = tempfile::tempdir_in("/tmp").expect("short socket fixture path");
     let cwd = temp.path().join("repo");
     fs::create_dir(&cwd).expect("repo");
     let stream_path = temp.path().join("host-stream.sock");
@@ -207,6 +207,7 @@ print("denied", end="")
     drop(datagram);
     assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
     assert_eq!(output.stdout_text(), "denied");
+    temp.close().expect("remove socket fixture tempdir");
 }
 
 #[test]
