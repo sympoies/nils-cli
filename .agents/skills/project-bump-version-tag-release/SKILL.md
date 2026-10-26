@@ -38,8 +38,10 @@ staging, and commit; it is the contract mode used by tests. The script has no
 tag, push, tap, or install path and rejects any such flag.
 
 A canonical version-only release PR may use the reduced release-only CI lane
-only when protected base policy recognizes it and the exact base `main` SHA has
-a trusted successful full CI run; otherwise it falls back to full PR CI.
+only when the exact-base detector, which loads policy from the base SHA, proves
+the diff is the canonical version bump; no full base-CI receipt is required.
+Otherwise it falls back to full PR CI, the ordinary planner lane. The release
+queue group still runs the shared full validation before required `test` passes.
 
 ## What belongs to the broker
 

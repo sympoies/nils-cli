@@ -9,9 +9,11 @@ release-only lanes retain their audits and provenance checks. The queue always
 invokes the planner on the combined candidate, with full Linux fallback.
 
 After the maintainer's ruleset migration, required names are `test`,
-`test_containment`, `macos_clippy`, and `cargo-deny (advisories + bans)`. Every
-merge group compiles/lints macOS all-target/all-feature code; PRs skip that
-check successfully. Full macOS tests and coverage remain deferred. There is
+`test_containment`, and `cargo-deny (advisories + bans)`. Every merge group
+runs `macos_clippy` to compile/lint macOS all-target/all-feature code; PRs skip
+that job successfully, and required `test` fails closed unless the queue result
+is `success`, so no separate `macos_clippy` ruleset context is needed
+(`docs/runbooks/delivery-and-releases.md`, maintainer decision in #2809). Full macOS tests and coverage remain deferred. There is
 no deferred-full labeler. The required Linux test
 job runs a failure guard even when change detection fails, preventing skipped
 needs from admitting a candidate. It also requires macOS Clippy success on
@@ -120,8 +122,10 @@ step's output with its authoritative scalar scope after success, or empties it
 after failure. Executor-written multiline framing cannot change that scope.
 
 Full-validation markers in the Linux affected lane require actual FULL
-execution. They do not authorize releases. Releases execute the separate shared
-full workflow on their tagged SHA rather than reusing PR or queue receipts.
+execution. They do not authorize releases. Releases execute the shared full
+workflow on their tagged SHA unless `.github/scripts/release-validation-reuse.cjs`
+verifies complete successful full-validation jobs from a merge-group run at the
+same commit or an identical tree; PR or scoped queue receipts never qualify.
 
 ## Validation and measurement
 
