@@ -380,6 +380,30 @@ fn retained_activity_hook_and_notify_accept_dsh_without_advertising_it() {
 
     let help = Cli::command().render_help().to_string();
     assert!(!help.contains("dsh"));
+
+    let completion = Command::new(bin::resolve("agent-session"))
+        .args(["completion", "zsh"])
+        .output()
+        .expect("agent-session zsh completion");
+    assert!(completion.status.success());
+    let completion = String::from_utf8(completion.stdout).unwrap();
+    for description in [
+        "Provider whose hook payload is on stdin",
+        "Provider whose notification payload is supplied as the final argument",
+    ] {
+        let agent_suggestion = completion
+            .lines()
+            .find(|line| line.contains(description))
+            .unwrap_or_else(|| panic!("missing completion entry for {description}"));
+        assert!(
+            agent_suggestion.contains(":AGENT:(codex claude)"),
+            "supported-provider completions should be preserved: {agent_suggestion}"
+        );
+        assert!(
+            !agent_suggestion.contains("dsh"),
+            "retired DSH must stay hidden from completion: {agent_suggestion}"
+        );
+    }
 }
 
 #[test]

@@ -5,7 +5,10 @@ use std::path::PathBuf;
 
 use crate::SessionTitleState;
 
-use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
+use clap::{
+    Args, Parser, Subcommand, ValueEnum, ValueHint,
+    builder::{PossibleValue, PossibleValuesParser, TypedValueParser},
+};
 use nils_common::cli_contract::OutputFormat;
 use serde::{Deserialize, Serialize};
 
@@ -1584,7 +1587,7 @@ pub struct ActivityStatusArgs {
 #[derive(Debug, Args)]
 pub struct ActivityHookArgs {
     /// Provider whose hook payload is on stdin.
-    #[arg(long, value_parser = parse_activity_provider)]
+    #[arg(long, value_parser = activity_provider_value_parser())]
     pub agent: AgentKind,
 
     /// Provider event name when the raw payload does not carry one.
@@ -1606,7 +1609,7 @@ pub enum ActivityHookVia {
 #[derive(Debug, Args)]
 pub struct ActivityNotifyArgs {
     /// Provider whose notification payload is supplied as the final argument.
-    #[arg(long, value_parser = parse_activity_provider)]
+    #[arg(long, value_parser = activity_provider_value_parser())]
     pub agent: AgentKind,
 
     /// JSON argv for an existing singular notifier composed by activity setup.
@@ -1812,8 +1815,15 @@ impl AgentKind {
     }
 }
 
-fn parse_activity_provider(value: &str) -> Result<AgentKind, String> {
-    AgentKind::from_name(value).ok_or_else(|| format!("unknown activity provider '{value}'"))
+fn activity_provider_value_parser() -> impl TypedValueParser<Value = AgentKind> {
+    PossibleValuesParser::new([
+        PossibleValue::new("codex"),
+        PossibleValue::new("claude"),
+        PossibleValue::new("dsh").hide(true),
+    ])
+    .map(|value: String| {
+        AgentKind::from_name(&value).expect("activity provider parser validates provider values")
+    })
 }
 
 /// Named terminal keys and CLI-only printable characters.
