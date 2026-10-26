@@ -1,6 +1,9 @@
 use crate::*;
 
 #[cfg(target_os = "linux")]
+pub(crate) mod cgroup_membership;
+
+#[cfg(target_os = "linux")]
 pub(super) const CGROUP_MEMBERSHIP_OBSERVATION_DURATION: Duration = Duration::from_millis(100);
 
 pub(super) fn retire_confirmed_broker(

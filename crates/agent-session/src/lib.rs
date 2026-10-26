@@ -54,6 +54,10 @@ mod runtime_environment;
 mod runtime_teardown;
 mod stable_executable;
 mod startup;
+#[cfg(target_os = "linux")]
+use runtime_teardown::cgroup_membership::{
+    freeze_and_revalidate_linux_control_group, open_verified_linux_control_group,
+};
 use runtime_teardown::tmux_kill_identity_with_timeout;
 use stable_executable::resolve_agent_session_executable;
 use startup::start_interactive_tmux;
@@ -7711,6 +7715,7 @@ enum SessionTerminationFailure {
     RuntimeIdentityMismatch,
     RuntimeIdentityUnavailable,
     ProcessIdentityUnavailable,
+    ProcessSessionMemberCgroupMismatch,
     VerificationFailed,
     TmuxStatusUnavailable,
     ProcessStatusUnavailable,
@@ -7776,7 +7781,9 @@ impl SessionTerminationFailure {
             Self::StillRunning => "session-still-running",
             Self::ProcessStillRunning => "process-still-running",
             Self::RuntimeIdentityChanged => "runtime-identity-changed",
-            Self::RuntimeIdentityMismatch => "runtime-identity-mismatch",
+            Self::RuntimeIdentityMismatch | Self::ProcessSessionMemberCgroupMismatch => {
+                "runtime-identity-mismatch"
+            }
             Self::RuntimeIdentityUnavailable | Self::ProcessIdentityUnavailable => {
                 "runtime-identity-unavailable"
             }
@@ -7807,6 +7814,9 @@ impl SessionTerminationFailure {
             Self::RuntimeIdentityUnavailable => {
                 "the recorded tmux runtime identity could not be established"
             }
+            Self::ProcessSessionMemberCgroupMismatch => {
+                "process-session member is outside the pane's recorded cgroup; termination was refused before signaling"
+            }
             Self::VerificationFailed => "tmux session termination could not be verified",
             Self::TmuxStatusUnavailable => {
                 "tmux has-session probe for the exact managed session name was unavailable"
@@ -7823,11 +7833,15 @@ impl SessionTerminationFailure {
             Self::RuntimeIdentityMismatch
                 | Self::RuntimeIdentityUnavailable
                 | Self::ProcessIdentityUnavailable
+                | Self::ProcessSessionMemberCgroupMismatch
         )
     }
 
     fn action(self, operation: SessionTerminationOperation) -> &'static str {
         match self {
+            Self::ProcessSessionMemberCgroupMismatch => {
+                "inspect-processes-or-delete-with-leave-processes"
+            }
             Self::RuntimeIdentityMismatch => "resolve-runtime-identity-mismatch",
             Self::RuntimeIdentityUnavailable | Self::ProcessIdentityUnavailable => {
                 "manual-runtime-verification-required"
@@ -10209,52 +10223,6 @@ fn linux_control_group_runtime_status_at_root(
         Some("1") => ProcessGroupStatus::Running,
         _ => ProcessGroupStatus::Unknown,
     }
-}
-
-#[cfg(target_os = "linux")]
-fn open_verified_linux_control_group(
-    control_group: &TmuxControlGroupIdentity,
-    pane_pid: libc::pid_t,
-    captured_members: &[TmuxProcessIdentity],
-) -> Result<PinnedLinuxControlGroup, SessionTerminationFailure> {
-    let path = Path::new(&control_group.path);
-    if !valid_tmux_spawn_control_group_path(path) {
-        return Err(SessionTerminationFailure::RuntimeIdentityUnavailable);
-    }
-    if linux_process_control_group_path(unsafe { libc::getpid() })?.as_deref() == Some(path) {
-        return Err(SessionTerminationFailure::RuntimeIdentityUnavailable);
-    }
-    if linux_process_control_group(pane_pid)?.as_ref() != Some(control_group) {
-        return Err(SessionTerminationFailure::VerificationFailed);
-    }
-    for member in captured_members {
-        if linux_process_control_group(member.pid)?.as_ref() != Some(control_group) {
-            return Err(SessionTerminationFailure::VerificationFailed);
-        }
-    }
-
-    let full_path = linux_control_group_full_path(path)?;
-    open_pinned_linux_control_group(control_group, &full_path)
-}
-
-#[cfg(target_os = "linux")]
-fn freeze_and_revalidate_linux_control_group(
-    pinned: &mut PinnedLinuxControlGroup,
-    control_group: &TmuxControlGroupIdentity,
-    pane_pid: libc::pid_t,
-    captured_members: &[TmuxProcessIdentity],
-) -> Result<(), SessionTerminationFailure> {
-    freeze_pinned_control_group(pinned, DELETE_TERMINATION_VERIFY_TIMEOUT)?;
-    if linux_process_control_group(pane_pid)?.as_ref() != Some(control_group) {
-        return Err(SessionTerminationFailure::VerificationFailed);
-    }
-    for member in captured_members {
-        if linux_process_control_group(member.pid)?.as_ref() != Some(control_group) {
-            return Err(SessionTerminationFailure::VerificationFailed);
-        }
-    }
-    ensure_linux_control_group_is_leaf(&pinned.directory_fd)?;
-    Ok(())
 }
 
 #[cfg(target_os = "linux")]

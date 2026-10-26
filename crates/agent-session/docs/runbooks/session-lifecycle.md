@@ -381,6 +381,15 @@ Cleanup and retry rules:
   retained and returns `runtime-identity-unavailable`, `retryable: false`, and
   `action: manual-runtime-verification-required`; an operator must verify its
   runtime manually before removing that state.
+- A live process-session member outside the pane's recorded cgroup returns
+  `runtime-identity-mismatch`, `check: process-session-member-cgroup`, and
+  `retryable: false`. This can occur with a pre-upgrade launcher whose helpers
+  share the pane's process session but occupy another cgroup. Termination is
+  refused before signaling; metadata remains available for owner inspection.
+  Inspect the process tree and cgroup membership, then deliberately stop or
+  relocate those processes, or use the explicit `delete --leave-processes`
+  recovery below to remove only the verified tmux session and retain processes.
+  Repeating ordinary close alone does not resolve the mismatched boundary.
 - Kill failures, ambiguous tmux errors, ownership mismatches, and surviving
   processes retain all session state.
 - When tmux returns a successful but blank identity probe for a stale session,

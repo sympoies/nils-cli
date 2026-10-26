@@ -623,6 +623,9 @@ fn termination_error_with_scan(
         "reason": reason.reason(), "retryable": reason.retryable(),
         "action": reason.action(operation),
     });
+    if reason == SessionTerminationFailure::ProcessSessionMemberCgroupMismatch {
+        details["check"] = json!("process-session-member-cgroup");
+    }
     if operation == SessionTerminationOperation::Delete
         && (!scan.processes.is_empty() || !scan.shared_daemons.is_empty() || !scan.complete)
     {
@@ -649,14 +652,27 @@ fn termination_error_with_scan(
         format!("{}; session metadata was retained", reason.message()),
         Some(details),
     );
+    let recovery_hint = if reason == SessionTerminationFailure::ProcessSessionMemberCgroupMismatch {
+        "Inspect the runtime process tree and cgroup membership. The owner may stop or relocate the out-of-boundary processes, or explicitly use delete --leave-processes to remove only the verified tmux session while retaining those processes."
+    } else {
+        ""
+    };
     if operation != SessionTerminationOperation::Delete {
-        return error;
+        return if recovery_hint.is_empty() {
+            error
+        } else {
+            error.with_hint(recovery_hint)
+        };
     }
     let mut hint = scan
         .processes
         .iter()
         .map(|process| format!("blocking process: {} {}\n", process.pid, process.command))
         .collect::<String>();
+    if !recovery_hint.is_empty() {
+        hint.push_str(recovery_hint);
+        hint.push('\n');
+    }
     hint.push_str(&shared_daemons::render_retained(&scan.inventory()));
     hint.push_str(&inventory_warning(&scan.inventory()));
     if !scan.processes.is_empty() {
