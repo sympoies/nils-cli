@@ -24,7 +24,7 @@ Use these as the source of truth to avoid policy drift:
 - Publishing workflow and order:
   - `scripts/publish-crates.sh`
   - `release/crates-io-publish-order.txt`
-  - `scripts/ci/prepare-release-version.sh`
+  - `scripts/ci/prepare-release-bump.sh`
 - JSON contract details:
   - `docs/specs/cli-output-contract-v1.md`
 

@@ -222,7 +222,7 @@ assert_contains docs/runbooks/workspace-maintenance-reference.md \
 # publishing, the tap, and fleet convergence, so the helper may not carry
 # a path that can reach a remote or a release.
 for prepare_only_file in \
-  scripts/ci/prepare-release-version.sh; do
+  scripts/ci/prepare-release-bump.sh; do
   # README tag-example patterns legitimately mention `git tag -a v` and
   # `git push origin v`, so match the mutating invocations, not the words.
   for forbidden in 'tag -a "$tag"' 'git push -u' 'git push origin HEAD' 'push origin "$tag"' 'forge-cli' 'homebrew' 'brew ' 'gh run' 'gh api' \

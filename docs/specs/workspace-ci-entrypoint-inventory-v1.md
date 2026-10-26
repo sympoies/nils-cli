@@ -122,7 +122,7 @@ records the keep/delete decision plus the active caller evidence.
 | `scripts/ci/publish-order-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step + `scripts/ci/tests/publish-order-audit.test.sh` |
 | `scripts/ci/release-tarball-third-party-audit.sh` | keep | `.github/workflows/release.yml` `build` job |
 | `scripts/ci/release-only-checks.sh` | keep | exact-base reduced PR lane in `.github/workflows/ci.yml` Linux `test` job + `scripts/ci/tests/release-workflow-contract.test.sh` |
-| `scripts/ci/prepare-release-version.sh` | keep | `.github/workflows/prepare-private-release.yml` canonical release transform + `scripts/ci/tests/prepare-release-version.test.sh` |
+| `scripts/ci/prepare-release-bump.sh` | keep | `.github/workflows/prepare-private-release.yml` canonical release transform + `scripts/ci/tests/prepare-release-bump.test.sh` |
 | `scripts/ci/tempdir-leak-audit.sh` | keep | `scripts/ci/nils-cli-local-fast.sh` unconditional static leak gate + `docs/specs/test-temp-directory-policy.md` |
 | `scripts/ci/tempdir-leak-probe.sh` | keep | `scripts/ci/nils-cli-local-fast.sh` workspace-test isolation + `docs/specs/test-temp-directory-policy.md` |
 | `scripts/ci/test-stale-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step |

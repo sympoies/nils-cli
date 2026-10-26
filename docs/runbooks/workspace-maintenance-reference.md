@@ -568,7 +568,7 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/tests/file-size-audit.test.sh`
 - `bash scripts/ci/tests/docs-prose-audit.test.sh`
 - `bash scripts/ci/tests/prepare-private-release-workflow.test.sh`
-- `bash scripts/ci/tests/prepare-release-version.test.sh`
+- `bash scripts/ci/tests/prepare-release-bump.test.sh`
 - `bash scripts/ci/test-stale-audit.sh --strict`
 - `python3 scripts/ci/assert-import-audit.py`
 - `bash scripts/ci/file-size-audit.sh --strict` (see the file-size ratchet below)
@@ -793,12 +793,12 @@ Releases run through the private sympoies-infra release broker: tagging, the
 GitHub Release, the tap update, and fleet convergence are not done by hand from
 this repository. Use the `project-release-nils-cli` skill in
 `serenvia/sympoies-infra` to release. The repo-owned
-`scripts/ci/prepare-release-version.sh` implements the canonical version-bump
+`scripts/ci/prepare-release-bump.sh` implements the canonical version-bump
 transform the broker consumes.
 
 `.github/workflows/prepare-private-release.yml` is a narrower preparation-only
 entrypoint for the private infrastructure orchestrator. It directly calls
-`scripts/ci/prepare-release-version.sh` for canonical version preparation and a
+`scripts/ci/prepare-release-bump.sh` for canonical version preparation and a
 locked workspace check on a GitHub-hosted runner, and uploads only a patch plus
 a checksum-bound manifest. It has read-only repository permissions, accepts no credentials, and
 does not create a branch, PR, tag, or release. The private orchestrator must
@@ -827,7 +827,7 @@ falls back to full PR CI. Release queue groups retain full validation.
 When changing preparation, run the retained helper suite and release contracts:
 
 ```bash
-bash scripts/ci/tests/prepare-release-version.test.sh
+bash scripts/ci/tests/prepare-release-bump.test.sh
 bash scripts/ci/tests/prepare-private-release-workflow.test.sh
 bash scripts/ci/tests/release-workflow-contract.test.sh
 bash scripts/ci/tests/detect-release-only.test.sh

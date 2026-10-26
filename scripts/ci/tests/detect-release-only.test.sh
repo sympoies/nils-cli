@@ -21,7 +21,7 @@ fi
 /bin/bash -n "$script"
 echo "ok: release-only detector parses with /bin/bash"
 
-producer_script="$repo_root/scripts/ci/prepare-release-version.sh"
+producer_script="$repo_root/scripts/ci/prepare-release-bump.sh"
 if [[ ! -f "$producer_script" ]]; then
   echo "FAIL: missing canonical release producer: $producer_script" >&2
   exit 1
@@ -381,9 +381,9 @@ chmod +x "$producer_repo/scripts/generate-third-party-artifacts.sh"
 # Local validation runs before this change is committed, so copy the current
 # producer into the clone and make it part of the immutable fixture baseline.
 cp "$producer_script" \
-  "$producer_repo/scripts/ci/prepare-release-version.sh"
+  "$producer_repo/scripts/ci/prepare-release-bump.sh"
 git -C "$producer_repo" add \
-  scripts/ci/prepare-release-version.sh \
+  scripts/ci/prepare-release-bump.sh \
   scripts/generate-third-party-artifacts.sh
 if ! git -C "$producer_repo" diff --cached --quiet; then
   git -C "$producer_repo" commit -q --amend --no-edit
@@ -409,7 +409,7 @@ PY
     CARGO_HOME="$tmp_root/empty-cargo-home" \
     CARGO_NET_OFFLINE=true \
     bash \
-    scripts/ci/prepare-release-version.sh \
+    scripts/ci/prepare-release-bump.sh \
     --version "$producer_version" \
     --prepare-only
 )

@@ -3,7 +3,7 @@
 
 ### Result
 
-- Hosted release preparation invokes scripts/ci/prepare-release-version.sh
+- Hosted release preparation invokes scripts/ci/prepare-release-bump.sh
   directly, and the retained helper tests run from scripts/ci/tests without
   skill discovery.
 

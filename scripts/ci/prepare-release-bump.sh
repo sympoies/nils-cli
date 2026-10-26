@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/ci/prepare-release-version.sh --version X.Y.Z [options]
+  scripts/ci/prepare-release-bump.sh --version X.Y.Z [options]
 
 Prepares the release version bump as one local commit. It never tags, pushes,
 publishes, or touches a remote; the sympoies-infra release broker owns that.

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-entrypoint="${script_dir}/../prepare-release-version.sh"
+entrypoint="${script_dir}/../prepare-release-bump.sh"
 
 fail() {
   echo "error: $*" >&2
