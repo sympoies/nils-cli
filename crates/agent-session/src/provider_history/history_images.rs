@@ -2,6 +2,9 @@ use super::*;
 use crate::provider_prompt::claude_queued_prompt_blocks;
 use std::borrow::Cow;
 
+#[path = "messages.rs"]
+pub(crate) mod messages;
+
 #[path = "history_parts.rs"]
 mod history_parts;
 
@@ -11,6 +14,10 @@ mod upload_references;
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct HistoryMessage {
     pub(crate) id: String,
+    #[serde(skip)]
+    pub(crate) history_turn_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) prompt_request: Option<super::PromptRequestBinding>,
     pub(crate) role: String,
     pub(crate) text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -182,6 +189,8 @@ pub(super) fn read_messages(
         }
         messages.push(HistoryMessage {
             id: format!("{}-{line_offset}", session.id),
+            history_turn_id: projected_history_turn_id(&session.provider, &value, &role),
+            prompt_request: None,
             role,
             text: truncate_chars(text.trim(), MAX_MESSAGE_CHARS),
             timestamp,
@@ -286,6 +295,8 @@ pub(super) fn push_incremental_message(
     };
     messages.push(HistoryMessage {
         id,
+        history_turn_id: projected_history_turn_id(&session.provider, &value, &role),
+        prompt_request: None,
         role,
         text: truncate_chars(text.trim(), MAX_MESSAGE_CHARS),
         timestamp,
@@ -349,6 +360,8 @@ pub(super) fn push_reverse_message(
     }
     messages.push(HistoryMessage {
         id: format!("{}-{line_offset}", session.id),
+        history_turn_id: projected_history_turn_id(&session.provider, &value, &role),
+        prompt_request: None,
         role,
         text: truncate_chars(text.trim(), MAX_MESSAGE_CHARS),
         timestamp,
@@ -356,6 +369,31 @@ pub(super) fn push_reverse_message(
         images,
         parts: include_parts.then_some(parts),
     });
+}
+
+fn projected_history_turn_id(provider: &str, value: &Value, role: &str) -> Option<String> {
+    if provider != "codex" || role != "user" {
+        return None;
+    }
+    let kinds = value
+        .pointer("/payload/internal_chat_message_metadata_passthrough/content_item_kinds")?
+        .as_array()?;
+    if !kinds
+        .iter()
+        .any(|kind| matches!(kind.as_str(), Some("user.text" | "user.image")))
+    {
+        return None;
+    }
+    value
+        .pointer("/payload/internal_chat_message_metadata_passthrough/turn_id")
+        .and_then(Value::as_str)
+        .filter(|id| {
+            !id.trim().is_empty()
+                && id.len() <= 256
+                && !id.contains(['/', '\\'])
+                && !id.contains("://")
+        })
+        .map(str::to_string)
 }
 
 pub(super) fn normalize_message(
@@ -1182,6 +1220,8 @@ mod image_tests {
     fn parts_query_serializes_empty_array_while_legacy_shape_omits_field() {
         let message = HistoryMessage {
             id: "message".to_string(),
+            history_turn_id: None,
+            prompt_request: None,
             role: "user".to_string(),
             text: "text".to_string(),
             timestamp: None,

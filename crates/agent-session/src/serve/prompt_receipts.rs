@@ -1,10 +1,17 @@
 //! At-most-once prompt attempts. An unfinished durable claim is never replayed.
 use super::*;
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 mod reconcile;
 mod store;
 mod terminal;
+
+pub(crate) fn history_bindings(
+    state_dir: &std::path::Path,
+) -> HashMap<String, HashMap<String, crate::provider_history::PromptRequestBinding>> {
+    store::history_bindings(state_dir)
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,6 +77,11 @@ struct ResultRecord {
     status: u16,
     #[serde(default)]
     queued: bool,
+    // Private provider evidence used to join the accepted request to history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    history_turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    history_session_id: Option<String>,
     // Private storage only: this record is never returned as an API envelope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     native_confirmation: Option<reconcile::NativeProof>,
@@ -81,6 +93,8 @@ impl ResultRecord {
             receipt,
             status: 500,
             queued: false,
+            history_turn_id: None,
+            history_session_id: None,
             native_confirmation: None,
         }
     }
@@ -170,9 +184,12 @@ pub(super) async fn submit(
     .await;
     let claim = match claimed {
         Ok(Ok(store::ClaimResult::Existing(result))) => {
-            return reconcile::attempt(&state.context, result)
-                .await
-                .response(&state.machine);
+            let was_bound = result.history_turn_id.is_some();
+            let result = reconcile::attempt(&state.context, result).await;
+            if !was_bound && result.history_turn_id.is_some() {
+                state.history_catalog.invalidate();
+            }
+            return result.response(&state.machine);
         }
         Ok(Ok(store::ClaimResult::New(claim))) => claim,
         Ok(Err(error)) if error.code() == "request-id-conflict" => {
@@ -204,7 +221,12 @@ pub(super) async fn submit(
     }
     let persisted = result.clone();
     match tokio::task::spawn_blocking(move || store::finish(claim, &persisted)).await {
-        Ok(Ok(())) => result.response(&state.machine),
+        Ok(Ok(())) => {
+            if result.history_turn_id.is_some() {
+                state.history_catalog.invalidate();
+            }
+            result.response(&state.machine)
+        }
         // The claim stays consumed even when publishing a result fails. Never
         // acknowledge a terminal result that lookup cannot durably recover.
         _ => ResultRecord::unknown(Receipt {
@@ -249,7 +271,11 @@ pub(super) async fn lookup(
     .await
     {
         Ok(Ok(Some(result))) => {
+            let was_bound = result.history_turn_id.is_some();
             let result = reconcile::attempt(&state.context, result).await;
+            if !was_bound && result.history_turn_id.is_some() {
+                state.history_catalog.invalidate();
+            }
             envelope_ok(json!({"machine":state.machine,"receipt":result.receipt}))
         }
         Ok(Ok(None)) => status_json(
@@ -273,7 +299,7 @@ async fn dispatch_observing(
     proof: Option<Arc<Mutex<Option<reconcile::NativeProof>>>>,
 ) -> Response {
     if !body.require_idle {
-        return submit_structured_prompt_handler(
+        return structured_prompt::submit_structured_prompt_handler_for_receipt(
             state,
             id,
             body.text,
@@ -324,6 +350,11 @@ async fn dispatch_observing(
         );
     }
     let fingerprint = store::fingerprint(&body.text, true);
+    let history_session_id = record
+        .provider_resume
+        .as_ref()
+        .filter(|resume| resume.provider == "codex")
+        .map(|resume| resume.session_id.clone());
     let mut args = crate::send::unguarded_args(
         record.id,
         Some(body.text),
@@ -338,9 +369,10 @@ async fn dispatch_observing(
         ..Default::default()
     };
     let context = state.context.clone();
+    let observed_proof = proof.clone();
     match tokio::task::spawn_blocking(move || {
         crate::send::send_to_session_observing(&context, args, &mut |record, turn| {
-            if let Some(proof) = &proof
+            if let Some(proof) = &observed_proof
                 && let Ok(mut proof) = proof.lock()
             {
                 *proof = reconcile::NativeProof::new(record, turn, &fingerprint);
@@ -360,6 +392,16 @@ async fn dispatch_observing(
         {
             let mut data = json!({"machine":state.machine,"submitted":true,
                 "session_incarnation":body.expected_session_incarnation});
+            if let Some(history_turn_id) = proof
+                .as_ref()
+                .and_then(|proof| proof.lock().ok())
+                .and_then(|proof| proof.as_ref().map(|proof| proof.turn_id.clone()))
+            {
+                data["history_turn_id"] = json!(history_turn_id);
+                if let Some(history_session_id) = history_session_id {
+                    data["history_session_id"] = json!(history_session_id);
+                }
+            }
             if sent
                 .submission
                 .is_some_and(|s| s.outcome == crate::send_submit::SubmitOutcome::Queued)
@@ -412,10 +454,31 @@ async fn classify(response: Response, mut receipt: Receipt) -> ResultRecord {
         receipt.outcome = Outcome::Submitted;
         receipt.code = None;
         receipt.confirmation_diagnostic = None;
+        let history_turn_id = body["data"]["history_turn_id"]
+            .as_str()
+            .filter(|id| !id.trim().is_empty() && id.len() <= 256)
+            .map(str::to_string);
+        let history_session_id = body["data"]["history_session_id"]
+            .as_str()
+            .filter(|id| {
+                !id.trim().is_empty()
+                    && id.len() <= 256
+                    && !id.contains(['/', '\\'])
+                    && !id.contains("://")
+            })
+            .map(str::to_string);
+        let (history_turn_id, history_session_id) =
+            if history_turn_id.is_some() && history_session_id.is_some() {
+                (history_turn_id, history_session_id)
+            } else {
+                (None, None)
+            };
         return ResultRecord {
             receipt,
             status: status.as_u16(),
             queued: body["data"]["queued"] == true,
+            history_turn_id,
+            history_session_id,
             native_confirmation: None,
         };
     }
@@ -445,6 +508,8 @@ async fn classify(response: Response, mut receipt: Receipt) -> ResultRecord {
             receipt,
             status: status.as_u16(),
             queued: false,
+            history_turn_id: None,
+            history_session_id: None,
             native_confirmation: None,
         }
     } else {

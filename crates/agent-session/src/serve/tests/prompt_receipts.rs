@@ -98,6 +98,9 @@ async fn keyed_submission_replays_without_dispatch_and_survives_restart() {
     .await;
     assert_eq!(status, StatusCode::OK, "{first}");
     assert_eq!(first["data"]["receipt"]["outcome"], "submitted");
+    assert_eq!(first["data"]["receipt"]["request_id"], "attempt-1");
+    assert!(!first.to_string().contains("turn-keyed"));
+    assert!(!first.to_string().contains("hs-codex-keyed"));
     let mut commands = responder.await.unwrap();
     let (status, repeat) = call(router(st), post_json(uri, Some(TOKEN), keyed_body(&launch))).await;
     assert_eq!(status, StatusCode::OK, "{repeat}");

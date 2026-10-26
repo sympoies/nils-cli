@@ -104,6 +104,14 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   HTTP 500 with `error.code: structured-prompt-outcome-unknown`, except for
   guarded dispatch failures described below, which return HTTP 409.
 
+  For a Codex request, history may include a `prompt_request` object on the
+  matching user message. Its `request_id`, `session_id` and
+  `session_incarnation` equal the keyed receipt fields. The daemon joins these
+  values using the provider's accepted turn identifier; the provider identifier
+  itself is not exposed. The association remains stable across receipt lookup
+  and history windows. Messages without supported evidence omit the field;
+  Claude requests remain unbound pending provider evidence.
+
   HTTP status alone does not establish non-delivery: clients MUST read `receipt.outcome`
   for keyed attempts and `error.code` for unkeyed attempts. Repeated POSTs
   return the retained status and outcome; an unfinished claim may later resolve

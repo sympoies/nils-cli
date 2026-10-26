@@ -7,6 +7,8 @@ pub(super) struct NativeProof {
     identity: String,
     pub(super) turn_id: String,
     pub(super) fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) history_session_id: Option<String>,
 }
 
 fn identity(record: &SessionRecord) -> Option<String> {
@@ -46,6 +48,11 @@ impl NativeProof {
             identity: identity(record)?,
             turn_id: turn_id.into(),
             fingerprint: fingerprint.into(),
+            history_session_id: record
+                .provider_resume
+                .as_ref()
+                .filter(|resume| resume.provider == "codex")
+                .map(|resume| resume.session_id.clone()),
         })
     }
 
