@@ -188,6 +188,7 @@ mod tests {
     fn launch_env_is_present_in_each_provider_process() {
         let lock = GlobalStateLock::new();
         let _policy = EnvGuard::remove(&lock, ALLOWLIST_ENV);
+        let _roster = EnvGuard::set(&lock, "CODEX_AUTH_PROFILE_NAMES", "current-a current-b");
         let agent_home = tempfile::TempDir::new().unwrap();
         let _home = EnvGuard::set(&lock, "AGENT_HOME", agent_home.path().to_str().unwrap());
         use std::{
@@ -219,6 +220,25 @@ mod tests {
                 tmux: tmux.clone(),
                 socket: tmp.path().join("tmux.sock"),
             };
+            let keepalive = Command::new(&server.tmux)
+                .args(["-f", "/dev/null", "-S"])
+                .arg(&server.socket)
+                .args(["new-session", "-d", "-s", "keepalive", "sleep", "10"])
+                .output()
+                .unwrap();
+            assert!(keepalive.status.success());
+            let stale_global = Command::new(&server.tmux)
+                .arg("-S")
+                .arg(&server.socket)
+                .args([
+                    "set-environment",
+                    "-g",
+                    "CODEX_AUTH_PROFILE_NAMES",
+                    "old retired",
+                ])
+                .output()
+                .unwrap();
+            assert!(stale_global.status.success());
             let record: SessionRecord = serde_json::from_value(json!({
                 "schema_version":crate::SESSION_DOCUMENT_VERSION, "id":"env-fixture", "agent":agent,
                 "mode":"interactive", "title":null, "cwd":tmp.path(), "tmux_session":"env-fixture",
@@ -231,13 +251,14 @@ mod tests {
                 .args(["-f", "/dev/null", "-S"])
                 .arg(&server.socket)
                 .args(["new-session", "-d", "-s", "env-fixture"])
-                .env("AGENT_RUNTIME_SUPPRESS_MEMORY", "0");
+                .env("AGENT_RUNTIME_SUPPRESS_MEMORY", "0")
+                .env("CODEX_AUTH_PROFILE_NAMES", "current-a current-b");
             crate::add_runtime_tmux_environment(&mut command, tmp.path(), &record).unwrap();
             let launched = command
                 .args([
                     "sh",
                     "-c",
-                    "printf '%s' \"$AGENT_RUNTIME_SUPPRESS_MEMORY\" > \"$1\"; exec sleep 10",
+                    "printf '%s|%s' \"$AGENT_RUNTIME_SUPPRESS_MEMORY\" \"$CODEX_AUTH_PROFILE_NAMES\" > \"$1\"; exec sleep 10",
                     "provider-fixture",
                 ])
                 .arg(&output)
@@ -249,12 +270,16 @@ mod tests {
                 String::from_utf8_lossy(&launched.stderr)
             );
             let deadline = Instant::now() + Duration::from_secs(5);
-            while std::fs::read_to_string(&output).ok().as_deref() != Some("1")
+            while std::fs::read_to_string(&output).ok().as_deref() != Some("1|current-a current-b")
                 && Instant::now() < deadline
             {
                 std::thread::sleep(Duration::from_millis(10));
             }
-            assert_eq!(std::fs::read_to_string(&output).unwrap(), "1", "{agent}");
+            assert_eq!(
+                std::fs::read_to_string(&output).unwrap(),
+                "1|current-a current-b",
+                "{agent}"
+            );
         }
     }
 
