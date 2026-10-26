@@ -102,7 +102,7 @@ Each crate is either a standalone CLI binary, a multi-binary crate, or a shared 
   `init-persona`, `doctor`, `completion`).
 - [crates/agent-out](crates/agent-out): Canonical `$AGENT_HOME/out/` path generator and layout auditor for agent workflow artifacts.
 - [crates/agent-session](crates/agent-session): tmux-backed Codex and Claude
-  Code and DSH session launcher (`agent-session`) with ordinary session lifecycle,
+  Code session launcher (`agent-session`) with ordinary session lifecycle,
   authenticated coordination, mailbox, and lineage.
 - [crates/agent-hook](crates/agent-hook): shared, versioned Codex/Claude hook policy dispatcher and setup owner.
 - [crates/agent-scope-lock](crates/agent-scope-lock): Deterministic edit-scope lock CLI for agent workflows (`create`, `read`,

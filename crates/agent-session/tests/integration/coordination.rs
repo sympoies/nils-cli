@@ -5007,13 +5007,9 @@ fn dsh_tmux_owned_entrypoints_refuse_before_provider_side_effects() {
     let state_arg = state_dir.to_string_lossy().into_owned();
     let checkout_arg = checkout.to_string_lossy().into_owned();
 
-    for (verb, extra, expected_code) in [
-        ("start", Vec::<&str>::new(), "unsupported-start-agent"),
-        (
-            "run",
-            vec!["--prompt", "do not launch"],
-            "unsupported-run-agent",
-        ),
+    for (verb, extra) in [
+        ("start", Vec::<&str>::new()),
+        ("run", vec!["--prompt", "do not launch"]),
     ] {
         let mut args = vec![
             "--state-dir",
@@ -5028,7 +5024,7 @@ fn dsh_tmux_owned_entrypoints_refuse_before_provider_side_effects() {
         args.extend(["--format", "json"]);
         let refused = run(&checkout, &args);
         assert_eq!(refused.code, 64, "outcome={}", refused.stdout_text());
-        assert_eq!(refused.stdout_json()["error"]["code"], expected_code);
+        assert_eq!(refused.stdout_json()["error"]["code"], "parse-error");
     }
     assert!(
         !state_dir.join("sessions").exists()
@@ -5073,10 +5069,7 @@ fn dsh_tmux_owned_entrypoints_refuse_before_provider_side_effects() {
         "outcome={}",
         refused_setup.stdout_text()
     );
-    assert_eq!(
-        refused_setup.stdout_json()["error"]["code"],
-        "unsupported-activity-agent"
-    );
+    assert_eq!(refused_setup.stdout_json()["error"]["code"], "parse-error");
     assert!(
         !provider_marker.exists(),
         "the unsupported DSH activity setup must refuse before invoking a provider binary"

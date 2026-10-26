@@ -145,6 +145,14 @@ pub(super) fn add_runtime_tmux_environment(
         assignment.push(path);
         command.arg("-e").arg(assignment);
     }
+    // The daemon owns the managed account roster. Pin it into each new pane
+    // alongside PATH so a long-lived tmux server cannot override it. An empty
+    // assignment also clears a stale server value when the daemon has no roster.
+    let mut roster = OsString::from("CODEX_AUTH_PROFILE_NAMES=");
+    if let Some(value) = env::var_os("CODEX_AUTH_PROFILE_NAMES") {
+        roster.push(value);
+    }
+    command.arg("-e").arg(roster);
     // Pinning PATH alone is not enough: AGENT_SESSION_BIN outranks PATH when
     // agent-hook resolves the activity helper, so a value cached by the tmux
     // server survives the PATH pin and fail-closes every UserPromptSubmit and

@@ -14,6 +14,37 @@ pub(crate) struct ModelSettings {
 
 pub(crate) use agent_hook::session_metadata::{effort_label, model_label};
 
+pub(crate) fn is_retired_dsh_session(record: &SessionRecord) -> bool {
+    record.agent == "dsh"
+        || record.provider_resume.as_ref().is_some_and(|resume| {
+            resume.provider == "dsh"
+                || resume.capture_method.starts_with("dsh-")
+                || resume.extra.contains_key("dsh_history_root")
+        })
+        || record
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.kind == "dsh_external")
+}
+
+pub(crate) fn retired_dsh_session_error(record: &SessionRecord) -> CliError {
+    let profile_id = crate::session_agent_profile(record);
+    let message = if profile_id.is_some() {
+        "this session uses a retired DSH launch profile and cannot be resumed; create a new session with a supported agent"
+    } else {
+        "this session uses a retired DSH identity and cannot be resumed; create a new session with a supported agent"
+    };
+    CliError::runtime(
+        "unsupported-agent-profile",
+        message,
+        Some(json!({
+            "id": record.id,
+            "agent_profile": profile_id,
+            "agent": record.agent,
+        })),
+    )
+}
+
 impl ModelSettings {
     pub(crate) fn from_launch(agent: &str, args: &[String]) -> Self {
         if !matches!(agent, "codex" | "claude" | "dsh") {
@@ -328,6 +359,33 @@ fn observe_inner(
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn supported_provider_with_dsh_prefixed_profile_is_not_retired() {
+        let record: SessionRecord = serde_json::from_value(json!({
+            "schema_version": "agent-session.session.v1",
+            "id": "supported-profile",
+            "agent": "codex",
+            "mode": "interactive",
+            "title": null,
+            "cwd": "/work/example",
+            "tmux_session": "supported-profile",
+            "prompt_file": null,
+            "log_file": null,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "runtime": {
+                "kind": "tmux",
+                "tmux_session": "supported-profile",
+                "generation": 1,
+                "started_at": "2026-01-01T00:00:00Z",
+                "agent_profile": "dsh-migration"
+            }
+        }))
+        .unwrap();
+
+        assert!(!is_retired_dsh_session(&record));
+    }
 
     #[test]
     fn launch_parsing_obeys_provider_flags_and_unknowns() {

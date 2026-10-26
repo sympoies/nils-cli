@@ -1598,24 +1598,6 @@ pub(crate) struct ProviderResumeImportArgs {
     pub(crate) format: OutputFormat,
 }
 
-pub(crate) struct DshHistoryResumeArgs {
-    pub(crate) title_mode: display_metadata::TitleMode,
-    pub(crate) provider_resume_id: String,
-    pub(crate) cwd: PathBuf,
-    pub(crate) history_root: PathBuf,
-    pub(crate) title: Option<String>,
-    pub(crate) title_state: Option<SessionTitleState>,
-    pub(crate) id: Option<String>,
-    pub(crate) coordination_mode: cli::CoordinationMode,
-    pub(crate) tmux_bin: Option<PathBuf>,
-    pub(crate) agent_bin: PathBuf,
-    pub(crate) agent_profile: String,
-    pub(crate) profile_auto_resume_supported: bool,
-    pub(crate) profile_graceful_shutdown: Option<String>,
-    pub(crate) codex_usage_account: Option<String>,
-    pub(crate) initial_lineage: InitialLineage,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct SessionRegistryFence {
     pub(crate) session_id: String,
@@ -1882,34 +1864,18 @@ fn start_session_inner_unjournaled(
     let initial_lineage =
         origin::for_start(context, args.initial_lineage, args.workspace.as_deref())?;
     let launch_env = launch_env::from_flags(&args.launch_env)?;
-    if args.agent == AgentKind::Dsh && args.initial_agent_profile.is_none() {
-        // Refused before any durable side effect: a dsh pane is launched only
-        // through a server-owned launch profile.
+    if args.agent == AgentKind::Dsh {
         return Err(CliError::usage(
             "unsupported-start-agent",
-            "dsh sessions start through a server-owned launch profile",
+            "DSH sessions are no longer supported; create a session with a supported agent",
             None,
         ));
     }
     validate_agent_args(args.agent, &args.agent_args)?;
-    if args.agent == AgentKind::Dsh
-        && args.initial_dsh_history_root.is_some()
-        && !args.agent_args.is_empty()
-    {
-        return Err(CliError::usage(
-            "reserved-agent-arg",
-            "fresh managed DSH profile arguments are owned by agent-session",
-            None,
-        ));
-    }
     let cwd = resolve_cwd(args.cwd.as_deref())?;
     let _worktree_lifecycle = acquire_worktree_lifecycle(context, &cwd)?;
     let prompt = read_prompt(&args.prompt, args.prompt_file.as_deref(), args.prompt_stdin)?;
-    let provider_plan = initial_provider_resume_plan(
-        args.agent,
-        args.initial_agent_profile.as_deref(),
-        args.initial_dsh_history_root.as_deref(),
-    )?;
+    let provider_plan = initial_provider_resume_plan(args.agent)?;
     let launch_started_at = SystemTime::now();
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let agent_bin = resolve_agent_bin(args.agent, args.agent_bin.as_deref());
@@ -2396,76 +2362,6 @@ pub(crate) fn start_provider_resume_session_unjournaled(
     start_resolved_provider_resume_session(context, args, cwd, provider_resume)
 }
 
-pub(crate) fn start_dsh_history_resume_session(
-    context: &CliContext,
-    args: DshHistoryResumeArgs,
-) -> Result<StartView, CliError> {
-    let journal_id = lifecycle::start_id(
-        context,
-        args.id.as_deref(),
-        AgentKind::Dsh,
-        args.title.as_deref(),
-    )?;
-    crate::lifecycle::attempt_created(context, &journal_id, "import", || {
-        start_dsh_history_resume_session_unjournaled(context, args)
-    })
-}
-
-pub(crate) fn start_dsh_history_resume_session_unjournaled(
-    context: &CliContext,
-    args: DshHistoryResumeArgs,
-) -> Result<StartView, CliError> {
-    let provider_resume_id = normalize_provider_resume_id(&args.provider_resume_id)?;
-    let cwd = resolve_cwd(Some(&args.cwd))?;
-    let history_root = fs::canonicalize(&args.history_root).map_err(|_| {
-        CliError::unavailable(
-            "dsh-history-unavailable",
-            "the configured DSH history root is unavailable",
-            None,
-        )
-    })?;
-    if !history_root.is_dir() {
-        return Err(CliError::unavailable(
-            "dsh-history-unavailable",
-            "the configured DSH history root is unavailable",
-            None,
-        ));
-    }
-    let resume_args = canonical_dsh_provider_resume_args(&provider_resume_id);
-    let provider_resume = ProviderResume {
-        provider: AgentKind::Dsh.as_str().to_string(),
-        session_id: provider_resume_id.clone(),
-        captured_at: Zoned::now().timestamp().to_string(),
-        capture_method: "dsh-history-exact-id".to_string(),
-        resume_args,
-        extra: BTreeMap::from([(
-            DSH_HISTORY_ROOT_PROVIDER_RESUME_KEY.to_string(),
-            json!(display_path(&history_root)),
-        )]),
-    };
-    let start_args = ProviderResumeImportArgs {
-        launch_env: launch_env::LaunchEnv::new(),
-        agent: AgentKind::Dsh,
-        title_mode: args.title_mode,
-        provider_resume_id,
-        title: args.title,
-        title_state: args.title_state,
-        id: args.id,
-        coordination_mode: args.coordination_mode,
-        tmux_bin: args.tmux_bin,
-        agent_bin: Some(args.agent_bin),
-        agent_profile: Some(args.agent_profile),
-        provider_config_dir: None,
-        profile_auto_resume_supported: Some(args.profile_auto_resume_supported),
-        profile_graceful_shutdown: args.profile_graceful_shutdown,
-        codex_usage_account: args.codex_usage_account,
-        agent_args: Vec::new(),
-        initial_lineage: args.initial_lineage,
-        format: OutputFormat::Json,
-    };
-    start_resolved_provider_resume_session(context, start_args, cwd, provider_resume)
-}
-
 fn start_resolved_provider_resume_session(
     context: &CliContext,
     args: ProviderResumeImportArgs,
@@ -2937,11 +2833,7 @@ struct InitialProviderPlan {
     launch_args: Vec<String>,
 }
 
-fn initial_provider_resume_plan(
-    agent: AgentKind,
-    profile: Option<&str>,
-    dsh_history_root: Option<&Path>,
-) -> Result<InitialProviderPlan, CliError> {
+fn initial_provider_resume_plan(agent: AgentKind) -> Result<InitialProviderPlan, CliError> {
     let plan = match agent {
         AgentKind::Claude => {
             let session_id = uuid::Uuid::new_v4().to_string();
@@ -2957,46 +2849,7 @@ fn initial_provider_resume_plan(
                 launch_args: vec!["--session-id".to_string(), session_id],
             }
         }
-        AgentKind::Codex => InitialProviderPlan::default(),
-        AgentKind::Dsh if profile.is_some() && dsh_history_root.is_some() => {
-            let root = dsh_history_root.ok_or_else(|| {
-                CliError::unavailable(
-                    "dsh-history-unavailable",
-                    "managed DSH profile requires an exact-id history root",
-                    None,
-                )
-            })?;
-            let root = fs::canonicalize(root).map_err(|_| {
-                CliError::unavailable(
-                    "dsh-history-unavailable",
-                    "managed DSH history root is unavailable",
-                    None,
-                )
-            })?;
-            if !root.is_dir() {
-                return Err(CliError::unavailable(
-                    "dsh-history-unavailable",
-                    "managed DSH history root is unavailable",
-                    None,
-                ));
-            }
-            let session_id = uuid::Uuid::new_v4().to_string();
-            InitialProviderPlan {
-                provider_resume: Some(ProviderResume {
-                    provider: AgentKind::Dsh.as_str().to_string(),
-                    session_id: session_id.clone(),
-                    captured_at: Zoned::now().timestamp().to_string(),
-                    capture_method: "dsh-history-exact-id".to_string(),
-                    resume_args: canonical_dsh_provider_resume_args(&session_id),
-                    extra: BTreeMap::from([(
-                        DSH_HISTORY_ROOT_PROVIDER_RESUME_KEY.to_string(),
-                        json!(display_path(&root)),
-                    )]),
-                }),
-                launch_args: vec!["--agent-session-seed".to_string(), session_id],
-            }
-        }
-        AgentKind::Dsh => InitialProviderPlan::default(),
+        AgentKind::Codex | AgentKind::Dsh => InitialProviderPlan::default(),
     };
     Ok(plan)
 }
@@ -4883,6 +4736,9 @@ fn resume_session_locked(
     mut record: SessionRecord,
     tmux_bin: &Path,
 ) -> Result<ResumeSessionOutcome, CliError> {
+    if session_model::is_retired_dsh_session(&record) {
+        return Err(session_model::retired_dsh_session_error(&record));
+    }
     ensure_session_lifecycle_mutation_allowed(context, &record)?;
     let _worktree_lifecycle = acquire_worktree_lifecycle(context, Path::new(&record.cwd))?;
     match restart::resume_status(tmux_bin, &record) {
@@ -7160,7 +7016,7 @@ fn durable_profile_resume_context(
         return Err(profile_metadata_unavailable(profile_id));
     };
     if agent == AgentKind::Dsh {
-        return Err(profile_metadata_unavailable(profile_id));
+        return Err(session_model::retired_dsh_session_error(record));
     }
     let Some(agent_bin) = record
         .agent_bin
@@ -12901,44 +12757,6 @@ mod tests {
         tmux_launch_may_have_created_runtime, try_acquire_session_record_lock,
         write_session_record,
     };
-
-    #[test]
-    fn managed_dsh_profile_assigns_provider_identity_before_launch() {
-        let temp = tempfile::TempDir::new().expect("history root");
-        let plan = super::initial_provider_resume_plan(
-            AgentKind::Dsh,
-            Some("dsh-workbench"),
-            Some(temp.path()),
-        )
-        .expect("managed DSH plan");
-        let resume = plan.provider_resume.expect("provider resume");
-        assert_eq!(resume.provider, "dsh");
-        assert_eq!(resume.capture_method, "dsh-history-exact-id");
-        assert_eq!(
-            plan.launch_args,
-            vec!["--agent-session-seed", resume.session_id.as_str()]
-        );
-        assert_eq!(
-            resume.resume_args,
-            vec!["--resume", resume.session_id.as_str()]
-        );
-        assert_eq!(
-            resume.extra[super::DSH_HISTORY_ROOT_PROVIDER_RESUME_KEY],
-            serde_json::json!(temp.path().canonicalize().expect("canonical root")),
-        );
-        assert!(
-            super::initial_provider_resume_plan(AgentKind::Dsh, None, None)
-                .expect("ordinary DSH plan")
-                .provider_resume
-                .is_none()
-        );
-        assert!(
-            super::initial_provider_resume_plan(AgentKind::Dsh, Some("dsh-workbench"), None)
-                .expect("read-only DSH profile plan")
-                .provider_resume
-                .is_none()
-        );
-    }
 
     #[test]
     fn pane_readiness_treats_an_unanswerable_tmux_reply_as_unobservable() {

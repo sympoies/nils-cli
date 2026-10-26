@@ -5,7 +5,10 @@ use std::path::PathBuf;
 
 use crate::SessionTitleState;
 
-use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
+use clap::{
+    Args, Parser, Subcommand, ValueEnum, ValueHint,
+    builder::{PossibleValue, PossibleValuesParser, TypedValueParser},
+};
 use nils_common::cli_contract::OutputFormat;
 use serde::{Deserialize, Serialize};
 
@@ -43,8 +46,8 @@ impl CoordinationMode {
     name = "agent-session",
     version,
     long_version = nils_build_info::long_version(env!("CARGO_PKG_VERSION")),
-    about = "Start and manage tmux-backed Codex, Claude Code, and DSH sessions.",
-    long_about = "Start and manage tmux-backed Codex, Claude Code, and DSH sessions for mobile handoff workflows.",
+    about = "Start and manage tmux-backed Codex and Claude Code sessions.",
+    long_about = "Start and manage tmux-backed Codex and Claude Code sessions for mobile handoff workflows.",
     disable_help_subcommand = true,
     after_help = "EXAMPLES:\n  agent-session start --agent codex --cwd ~/Project/app --prompt-file prompt.md\n  agent-session list\n  agent-session glance <id> --tail 40\n  agent-session send <id> --text yes --key enter\n  agent-session send <id> --key c-c\n  agent-session resume <id>\n  agent-session restart <id> --format json\n  agent-session metadata attach <id> --request-file metadata.json --if-revision 0 --idempotency-key attach-001 --format json\n  agent-session metadata show <id> --label acceptance.synthetic --format json\n  agent-session command <id>\n  agent-session attach <id>\n  agent-session delete <id>\n\nENVIRONMENT:\n  AGENT_SESSION_HOST       Hostname used in generated ssh attach commands.\n  AGENT_SESSION_STATE_DIR  Default state directory override.\n  AGENT_SESSION_TMUX_BIN   tmux binary override.\n  AGENT_SESSION_CODEX_BIN  codex binary override.\n  AGENT_SESSION_CLAUDE_BIN claude binary override.\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error"
 )]
@@ -196,10 +199,6 @@ pub struct StartArgs {
     /// Internal: server-owned launch profile id selected by the serve daemon.
     #[arg(skip)]
     pub initial_agent_profile: Option<String>,
-
-    /// Internal: DSH history root from the server-owned launch profile.
-    #[arg(skip)]
-    pub initial_dsh_history_root: Option<PathBuf>,
 
     /// Internal: provider config root owned by the selected launch profile.
     #[arg(skip)]
@@ -1588,7 +1587,7 @@ pub struct ActivityStatusArgs {
 #[derive(Debug, Args)]
 pub struct ActivityHookArgs {
     /// Provider whose hook payload is on stdin.
-    #[arg(long, value_enum)]
+    #[arg(long, value_parser = activity_provider_value_parser())]
     pub agent: AgentKind,
 
     /// Provider event name when the raw payload does not carry one.
@@ -1610,7 +1609,7 @@ pub enum ActivityHookVia {
 #[derive(Debug, Args)]
 pub struct ActivityNotifyArgs {
     /// Provider whose notification payload is supplied as the final argument.
-    #[arg(long, value_enum)]
+    #[arg(long, value_parser = activity_provider_value_parser())]
     pub agent: AgentKind,
 
     /// JSON argv for an existing singular notifier composed by activity setup.
@@ -1790,10 +1789,8 @@ pub struct CompletionArgs {
 pub enum AgentKind {
     Codex,
     Claude,
-    /// DeepSeek Harness, launched through a launch profile or an external runtime
-    // A tmux pane started through a server-owned launch profile, or an
-    // external-runtime worker owned by the dsh-runtime-kit bundle
-    // A plain profile-less start is refused.
+    /// Retained for reading existing session records; no new launch accepts it.
+    #[value(skip)]
     Dsh,
 }
 
@@ -1816,6 +1813,17 @@ impl AgentKind {
             _ => None,
         }
     }
+}
+
+fn activity_provider_value_parser() -> impl TypedValueParser<Value = AgentKind> {
+    PossibleValuesParser::new([
+        PossibleValue::new("codex"),
+        PossibleValue::new("claude"),
+        PossibleValue::new("dsh").hide(true),
+    ])
+    .map(|value: String| {
+        AgentKind::from_name(&value).expect("activity provider parser validates provider values")
+    })
 }
 
 /// Named terminal keys and CLI-only printable characters.

@@ -423,14 +423,10 @@ fail-closed.
   `capabilities.codex_account_switch` / `capabilities.claude_account_switch`.
 - `AGENT_SESSION_LAUNCH_PROFILES`: JSON array of server-owned launch profiles.
   Only profiles whose executable, optional provider root, and readiness probe
-  pass are advertised. A profile with base agent `dsh` launches its
-  `agent_bin` in tmux with no implicit subcommand, waits 5 s before pasting an
-  initial prompt, and may add an absolute `dsh_history.command`, absolute `dsh_history.root`, and `zstd` or `none`
-  compression. Adapter availability affects history reads only, never profile
-  readiness. Base agent `hermes` is retired: serve refuses to start with a
-  profile that names it, so host launchers must emit `dsh`. Retained hermes
-  panes receive no activity or coordination notifications, and resume refuses
-  them.
+  pass are advertised. Only Codex and Claude profiles are supported. Retired
+  DSH profiles are rejected with an actionable configuration error and must be
+  removed before starting the daemon. Retained DSH session records can be read,
+  but resume refuses them with an unsupported-profile error.
 - `AGENT_SESSION_CODEX_RUNTIME=raw|app-server`: force the Codex runtime choice.
   The default probes the installed CLI and degrades to raw TUI when the audited
   app-server capability or a private runtime directory is unavailable. See
@@ -503,10 +499,10 @@ api_key_env = "EXAMPLE_API_KEY"
 max_chars = 12000
 
 [[launch_profiles]]
-id = "dsh-workbench"
-label = "DSH"
-agent = "dsh"
-agent_bin = "/absolute/path/to/dsh"
+id = "claude-workbench"
+label = "Claude"
+agent = "claude"
+agent_bin = "/absolute/path/to/claude"
 ```
 
 Each table uses the fields and bounds of the value it replaces:

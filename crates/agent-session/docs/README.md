@@ -8,7 +8,7 @@ or integrating a specific subsystem.
 
 - [Session lifecycle operations](runbooks/session-lifecycle.md): sending input
   and prompt submission outcomes, active-session admission, clear and rebind,
-  resume, restart, verified deletion, startup logs, DSH launch, account switching,
+  resume, restart, verified deletion, startup logs, retained session records, account switching,
   model settings, and secret safety.
 - [Lifecycle incident evidence](runbooks/lifecycle-journal.md): bounded per-session
   lifecycle records, refusal proof steps, retention, and runtime exit observations.
