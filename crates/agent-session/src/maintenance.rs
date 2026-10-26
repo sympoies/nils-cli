@@ -1007,7 +1007,10 @@ fn maintenance_failure_error(
         | SessionTerminationFailure::StillRunning => "session_still_running",
         SessionTerminationFailure::ProcessStillRunning => "process_boundary_live",
         SessionTerminationFailure::RuntimeIdentityChanged
-        | SessionTerminationFailure::RuntimeIdentityMismatch => "runtime_identity_changed",
+        | SessionTerminationFailure::RuntimeIdentityMismatch
+        | SessionTerminationFailure::ProcessSessionMemberCgroupMismatch => {
+            "runtime_identity_changed"
+        }
         SessionTerminationFailure::RuntimeIdentityUnavailable
         | SessionTerminationFailure::ProcessIdentityUnavailable => "runtime_identity_unavailable",
         SessionTerminationFailure::KillFailed
