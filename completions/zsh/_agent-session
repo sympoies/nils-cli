@@ -1536,7 +1536,7 @@ _agent-session__subcmd__message_commands() {
     local commands; commands=(
 'audit:Audit owner mailbox metadata across inbox incarnations and source deliveries' \
 'peers:Discover authorized remote mailbox recipients through the local daemon' \
-'delivery:Inspect durable remote delivery; delivered means saved, not read or accepted' \
+'delivery:Inspect the delivery state of a local or federated message' \
 'send:Send one bounded private message and schedule an eventual fixed notification' \
 'forward:Forward one received message without reading or acknowledging its source' \
 'service-send:Submit a body-file through the owning daemon as an explicitly admitted local service' \

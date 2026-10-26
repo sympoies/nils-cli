@@ -825,7 +825,7 @@ pub enum MessageCommand {
     Audit(MessageAuditArgs),
     /// Discover authorized remote mailbox recipients through the local daemon.
     Peers(MessagePeersArgs),
-    /// Inspect durable remote delivery; delivered means saved, not read or accepted.
+    /// Inspect the delivery state of a local or federated message.
     Delivery(MessageDeliveryArgs),
     /// Send one bounded private message and schedule an eventual fixed notification.
     ///

@@ -12,6 +12,9 @@ use crate::{CliContext, CliError};
 #[path = "remote_delivery_notice.rs"]
 mod delivery_notice;
 pub(crate) use delivery_notice::State as NoticeState;
+#[path = "remote_delivery_lookup.rs"]
+mod delivery_lookup;
+pub(crate) use delivery_lookup::delivery;
 
 const JOURNAL_VERSION: &str = "agent-session.federation-journal.v2";
 const EXTENDED_JOURNAL_VERSION: &str = "agent-session.federation-journal.v3";
@@ -1244,24 +1247,6 @@ pub(crate) fn auth_incident_receipt(
     }
 }
 
-pub(crate) fn delivery(
-    context: &CliContext,
-    session: &str,
-    token: &str,
-    id: &str,
-) -> Result<Value, CliError> {
-    let (_, current) = authenticate_token(context, session, token)?;
-    let locked = lock_journal(context)?;
-    let item = locked
-        .registry
-        .find(|i| {
-            i.message_id == id
-                && i.sender.principal() == session
-                && i.sender.generation() == current
-        })
-        .ok_or_else(|| CliError::data("message-not-found", "delivery does not exist", None))?;
-    Ok(projection(&item))
-}
 #[cfg(test)]
 pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>, CliError> {
     drain_with_notice_state(context, config, &mut NoticeState::default())
@@ -2149,24 +2134,19 @@ mod tests {
             let (config, server) = discovery_server(
                 json!({"schema_version":"agent-session.remote-peers.v1", "peers":peers}),
             );
-            let result = submit(
-                &context,
-                &config,
-                "recipient",
-                TOKEN,
-                Submit {
-                    to_machine: "host-b".into(),
-                    to_session: "target".into(),
-                    body: "fixture body".into(),
-                    idempotency_key: "duplicate-peer-key".into(),
-                    reply_to: None,
-                    expires_in: None,
-                    reply_revision: None,
-                    expected_recipient_incarnation: Some("supported-incarnation".into()),
-                    category: None,
-                    forward: None,
-                },
-            );
+            let args = Submit {
+                to_machine: "host-b".into(),
+                to_session: "target".into(),
+                body: "fixture body".into(),
+                idempotency_key: "duplicate-peer-key".into(),
+                reply_to: None,
+                expires_in: None,
+                reply_revision: None,
+                expected_recipient_incarnation: Some("supported-incarnation".into()),
+                category: None,
+                forward: None,
+            };
+            let result = submit(&context, &config, "recipient", TOKEN, args.clone());
             server.join().unwrap();
             let result = result.expect("supported exact peer must be selected");
             assert_eq!(result["state"], "queued");
@@ -2183,6 +2163,17 @@ mod tests {
                     .session_incarnation,
                 "supported-incarnation"
             );
+            drop(locked);
+            let lookup = delivery(
+                &context,
+                "recipient",
+                TOKEN,
+                result["message_id"].as_str().expect("message ID"),
+            )
+            .expect("accepted message delivery lookup");
+            let retry = submit(&context, &config, "recipient", TOKEN, args)
+                .expect("same-key retry returns the accepted message");
+            assert_eq!(lookup, retry);
         }
     }
     #[test]
@@ -3052,6 +3043,17 @@ mod tests {
             replay["recipient"]["session_incarnation"],
             "original-target"
         );
+        assert_eq!(
+            delivery(
+                &context,
+                "recipient",
+                TOKEN,
+                replay["message_id"].as_str().expect("id")
+            )
+            .expect("accepted send is inspectable"),
+            replay,
+            "same-key replay and delivery lookup must report the same state"
+        );
         let spoof = delivery(
             &context,
             "recipient",
@@ -3062,6 +3064,61 @@ mod tests {
             spoof.expect_err("spoof rejected").code(),
             "coordination-unauthorized"
         );
+    }
+
+    #[test]
+    fn delivery_lookup_finds_an_accepted_local_mailbox_message() {
+        let (_temp, context) = fixture();
+        let id = "local-message-0001";
+        let mut registry = lock_registry(&context).expect("registry");
+        registry.registry.messages.push(
+            serde_json::from_value(json!({
+                "schema_version": "agent-session.message.v1",
+                "message_id": id,
+                "sender_session_id": "recipient",
+                "sender_incarnation": "recipient-incarnation",
+                "recipient_session_id": "recipient",
+                "recipient_incarnation": "recipient-incarnation",
+                "state": "unread",
+                "revision": 1,
+                "reply_to": null,
+                "reply_depth": 0,
+                "created_at": "2030-01-01T00:00:00Z",
+                "created_at_epoch": 1_893_456_000_i64,
+                "remote_created_at_epoch": null,
+                "created_at_epoch_millis": 1_893_456_000_000_i64,
+                "expires_at": "2030-01-02T00:00:00Z",
+                "expires_at_epoch": 1_893_542_400_i64,
+                "terminal_at_epoch": null,
+                "forwarded_from_incarnation": null,
+                "forwarded_at_epoch": null,
+                "category": null,
+                "notification_suppressed": false,
+                "forwarding": null,
+                "resume_carry": null,
+                "body_bytes": 7,
+                "body": "message"
+            }))
+            .expect("stored mailbox message"),
+        );
+        registry.save().expect("persist accepted mailbox message");
+        drop(registry);
+
+        let status = delivery(&context, "recipient", TOKEN, id)
+            .expect("accepted local message must be inspectable");
+        assert_eq!(status["message_id"], id);
+        assert_eq!(status["state"], "unread");
+        let mut registry = lock_registry(&context).expect("registry");
+        registry.registry.messages[0].state = "read".into();
+        registry.save().expect("persist read state");
+        drop(registry);
+        assert_eq!(
+            delivery(&context, "recipient", TOKEN, id).expect("updated delivery state")["state"],
+            "read"
+        );
+        let missing = delivery(&context, "recipient", TOKEN, "unknown-message-0001")
+            .expect_err("unknown message remains a not-found error");
+        assert!(missing.message().contains("same idempotency key"));
     }
     #[test]
     fn pending_expired_outbox_records_unknown_and_keeps_private_body_out_of_status() {

@@ -6,6 +6,9 @@ Part of [Session Coordination V1](session-coordination-v1.md). Its scope and sha
 
 Federation adds `message send --to-machine MACHINE`, `message peers --session ID`,
 `message delivery --session ID --message ID`, and automatic remote `message reply`.
+Delivery lookup checks the sender's federation outbox first, then resolves a
+same-machine message from the local mailbox registry. Local results expose the
+mailbox state, such as `unread`, `read`, or `acknowledged`.
 `--host` continues to control attach-command generation. Omitted `--to-machine`
 retains the local mailbox, and a `--to-machine` naming the sender's own machine
 is delivered through the local mailbox without a federation journal entry. Bodies are cooperating-peer data that cannot grant new
@@ -167,9 +170,11 @@ Rollback after that write requires a reader/writer that understands v6; a prior 
 successor schema rather than reading the new retained shape under an old version. A dedicated private
 `coordination/federation-journal.lock` serializes journal reads/writes with the same bounded,
 owner-checked file locking rules as the registry. Authorization uses session then registry then journal
-lock order. Journal-only delivery and retry operations never load or maintain the local registry. The
-journal is saved atomically and no lock spans HTTP. Unsupported or corrupt journal versions fail closed
-without rewriting state.
+lock order. Federation delivery and retry operations read the journal first; an
+unmatched delivery ID is checked against the local mailbox registry so accepted
+same-machine messages remain inspectable. The journal is saved atomically and no
+lock spans HTTP. Unsupported or corrupt journal versions fail closed without
+rewriting state.
 
 Remote and local ingress share the existing mailbox admission rules, including
 30 messages per pair per minute, a burst of 10 per second, the recipient mailbox
