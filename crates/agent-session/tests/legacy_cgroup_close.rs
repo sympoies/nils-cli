@@ -17,6 +17,15 @@ impl Drop for Runtime {
 
 #[test]
 fn legacy_split_cgroup_close_names_failed_check_without_signaling() {
+    split_cgroup_close(false);
+}
+
+#[test]
+fn exited_captured_helper_keeps_verification_retryable() {
+    split_cgroup_close(true);
+}
+
+fn split_cgroup_close(helper_exits: bool) {
     let tmp = tempfile::tempdir().unwrap();
     let child_file = tmp.path().join("child");
     let scope = format!("tmux-spawn-{}", uuid::Uuid::new_v4());
@@ -62,25 +71,48 @@ fn legacy_split_cgroup_close_names_failed_check_without_signaling() {
     );
 
     let state = tmp.path().join("state");
-    let session = state.join("sessions/legacy-runtime");
+    let session = state.join("sessions/split-runtime");
     fs::create_dir_all(&session).unwrap();
     fs::write(session.join("session.json"), serde_json::to_vec(&serde_json::json!({
-        "schema_version": "agent-session.session.v1", "id": "legacy-runtime", "agent": "codex",
-        "mode": "interactive", "tmux_session": "hs-codex-legacy-runtime", "cwd": tmp.path(),
+        "schema_version": "agent-session.session.v1", "id": "split-runtime", "agent": "codex",
+        "mode": "interactive", "tmux_session": "hs-codex-split-runtime", "cwd": tmp.path(),
         "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
-        "runtime": {"kind": "tmux", "tmux_session": "hs-codex-legacy-runtime", "launch_id": "fixture-launch", "generation": 1, "started_at": "2026-01-01T00:00:00Z"}
+        "runtime": {"kind": "tmux", "tmux_session": "hs-codex-split-runtime", "launch_id": "fixture-launch", "generation": 1, "started_at": "2026-01-01T00:00:00Z"}
     })).unwrap()).unwrap();
     let calls = tmp.path().join("calls");
     let tmux = tmp.path().join("tmux");
+    let capture_seen = tmp.path().join("capture-seen");
+    let helper_exit = if helper_exits {
+        // The second identity probe runs after process-session capture. End
+        // only the fixture helper there, before membership verification.
+        format!(
+            r#"if [ -f {seen} ]; then
+  kill -KILL {child}
+  attempts=0
+  while [ -r /proc/{child}/stat ] && [ "$attempts" -lt 100 ]; do
+    read -r ignored_pid ignored_name state ignored_rest < /proc/{child}/stat || break
+    [ "$state" = Z ] && break
+    attempts=$((attempts + 1))
+    sleep 0.001
+  done
+else
+  : > {seen}
+fi
+"#,
+            seen = shell_words::quote(capture_seen.to_str().unwrap())
+        )
+    } else {
+        String::new()
+    };
     fs::write(
         &tmux,
         format!(
             r#"#!/bin/sh
 printf '%s\n' "$1" >> {calls}
 case "$1" in
- display-message) printf '$91 %%91 {pid}\n' ;;
+ display-message) {helper_exit}printf '$91 %%91 {pid}\n' ;;
  show-environment) case "$4" in
- AGENT_SESSION_ID) echo 'AGENT_SESSION_ID=legacy-runtime' ;;
+ AGENT_SESSION_ID) echo 'AGENT_SESSION_ID=split-runtime' ;;
  AGENT_SESSION_STATE_DIR) printf 'AGENT_SESSION_STATE_DIR=%s\n' {state} ;;
  AGENT_SESSION_RUNTIME_ID) echo 'AGENT_SESSION_RUNTIME_ID=fixture-launch' ;;
  esac ;;
@@ -100,16 +132,36 @@ esac
         .args(["--state-dir"])
         .arg(&state)
         .env("AGENT_SESSION_TMUX_BIN", &tmux)
-        .args(["delete", "legacy-runtime", "--format", "json"])
+        .args(["delete", "split-runtime", "--format", "json"])
         .output()
         .unwrap();
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(!output.status.success(), "{value}");
     assert_eq!(unsafe { libc::kill(pid as i32, 0) }, 0);
-    assert_eq!(unsafe { libc::kill(child, 0) }, 0);
+    if helper_exits {
+        let helper_stopped = fs::read_to_string(format!("/proc/{child}/stat"))
+            .map(|stat| {
+                stat.rsplit_once(')')
+                    .unwrap()
+                    .1
+                    .trim_start()
+                    .starts_with('Z')
+            })
+            .unwrap_or(true);
+        assert!(helper_stopped, "fixture helper must exit after capture");
+    } else {
+        assert_eq!(unsafe { libc::kill(child, 0) }, 0);
+    }
     assert!(!fs::read_to_string(calls).unwrap().contains("if-shell"));
     assert!(session.join("session.json").is_file());
     assert_eq!(value["error"]["code"], "session-termination-failed");
+    if helper_exits {
+        assert_eq!(value["error"]["details"]["reason"], "verification-failed");
+        assert_eq!(value["error"]["details"]["retryable"], true);
+        assert_eq!(value["error"]["details"]["action"], "retry-delete");
+        assert!(value["error"]["details"]["check"].is_null());
+        return;
+    }
     assert_eq!(
         value["error"]["details"]["reason"],
         "runtime-identity-mismatch"
