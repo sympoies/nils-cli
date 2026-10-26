@@ -2,7 +2,9 @@
 use history_images::normalize_message;
 pub(crate) mod history_images;
 pub(crate) use history_images::HistoryMessage;
-use history_images::{push_incremental_message, read_compacted_image_line, read_messages};
+#[cfg(test)]
+use history_images::read_messages;
+use history_images::{push_incremental_message, read_compacted_image_line};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -52,6 +54,7 @@ const INCREMENTAL_INTEGRITY_BLOCK_BYTES: usize = 64 * 1024;
 const DSH_ADAPTER_OUTPUT_MAX_BYTES: u64 = 16 * 1024 * 1024;
 const DSH_ADAPTER_LIST_TIMEOUT: Duration = Duration::from_secs(10);
 const DSH_ADAPTER_READ_TIMEOUT: Duration = Duration::from_secs(10);
+const PROMPT_BINDINGS_CACHE_TTL: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HistorySource {
@@ -140,6 +143,13 @@ pub(crate) struct HistorySession {
     transcript_path: PathBuf,
     #[serde(skip)]
     incremental_catalog_stamp: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct PromptRequestBinding {
+    pub(crate) request_id: String,
+    pub(crate) session_id: String,
+    pub(crate) session_incarnation: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -296,6 +306,12 @@ struct CatalogCache {
     latest_prompt_previews: HashMap<PathBuf, LatestPromptCacheEntry>,
 }
 
+#[derive(Debug, Default)]
+struct PromptBindingsCache {
+    refreshed_at: Option<Instant>,
+    bindings: HashMap<String, HashMap<String, PromptRequestBinding>>,
+}
+
 #[derive(Clone, Debug)]
 struct LatestPromptCacheEntry {
     len: u64,
@@ -308,9 +324,11 @@ struct LatestPromptCacheEntry {
 pub(crate) struct HistoryCatalog {
     sources: Vec<HistorySource>,
     dsh_sources: Vec<DshHistorySource>,
+    session_state_dir: Option<PathBuf>,
     archives_root: PathBuf,
     stars_root: PathBuf,
     cache: Mutex<CatalogCache>,
+    prompt_bindings: Mutex<PromptBindingsCache>,
     #[cfg(test)]
     snapshot_accesses: AtomicUsize,
 }
@@ -324,9 +342,11 @@ impl HistoryCatalog {
         Self {
             sources,
             dsh_sources: Vec::new(),
+            session_state_dir: None,
             archives_root,
             stars_root,
             cache: Mutex::new(CatalogCache::default()),
+            prompt_bindings: Mutex::new(PromptBindingsCache::default()),
             #[cfg(test)]
             snapshot_accesses: AtomicUsize::new(0),
         }
@@ -337,12 +357,46 @@ impl HistoryCatalog {
         self
     }
 
+    pub(crate) fn with_session_state_dir(mut self, path: PathBuf) -> Self {
+        self.session_state_dir = Some(path);
+        self
+    }
+
     pub(crate) fn invalidate(&self) {
         let mut cache = self
             .cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         cache.refreshed_at = None;
+        self.prompt_bindings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .refreshed_at = None;
+    }
+
+    fn prompt_request_bindings(
+        &self,
+        provider_session_id: &str,
+    ) -> HashMap<String, PromptRequestBinding> {
+        let Some(state_dir) = &self.session_state_dir else {
+            return HashMap::new();
+        };
+        let mut cache = self
+            .prompt_bindings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if cache
+            .refreshed_at
+            .is_none_or(|at| at.elapsed() >= PROMPT_BINDINGS_CACHE_TTL)
+        {
+            cache.bindings = crate::serve::prompt_receipts::history_bindings(state_dir);
+            cache.refreshed_at = Some(Instant::now());
+        }
+        cache
+            .bindings
+            .get(provider_session_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Resolve a resume selector from a new provider scan rather than the
@@ -499,74 +553,6 @@ impl HistoryCatalog {
         };
         self.invalidate();
         stored
-    }
-
-    pub(crate) fn messages(
-        &self,
-        history_id: &str,
-        cursor: Option<&str>,
-        limit: usize,
-        direction: HistoryMessageDirection,
-    ) -> Result<HistoryMessagesPage, HistoryError> {
-        self.messages_with_parts(history_id, cursor, limit, direction, false)
-    }
-
-    pub(crate) fn messages_with_parts(
-        &self,
-        history_id: &str,
-        cursor: Option<&str>,
-        limit: usize,
-        direction: HistoryMessageDirection,
-        include_parts: bool,
-    ) -> Result<HistoryMessagesPage, HistoryError> {
-        let snapshot = self.snapshot();
-        let session = snapshot
-            .sessions
-            .iter()
-            .find(|session| session.id == history_id)
-            .ok_or(HistoryError::NotFound)?;
-        if session.provider == "dsh" {
-            let source = self
-                .dsh_sources
-                .iter()
-                .find(|source| session.agent_profile.as_deref() == Some(&source.agent_profile))
-                .ok_or(HistoryError::NotFound)?;
-            return read_dsh_messages(
-                source,
-                &session.provider_session_id,
-                cursor,
-                limit,
-                direction,
-                include_parts,
-            );
-        }
-        let mut page = match direction {
-            HistoryMessageDirection::Forward => read_messages(
-                session,
-                parse_message_cursor(cursor)?,
-                limit.clamp(1, 100),
-                include_parts,
-            ),
-            HistoryMessageDirection::Latest => {
-                if cursor.is_some() {
-                    return Err(HistoryError::InvalidCursor);
-                }
-                history_images::read_messages_reverse(
-                    session,
-                    None,
-                    limit.clamp(1, 100),
-                    include_parts,
-                )
-            }
-            HistoryMessageDirection::Older => history_images::read_messages_reverse(
-                session,
-                Some(parse_required_message_cursor(cursor)?),
-                limit.clamp(1, 100),
-                include_parts,
-            ),
-        }?;
-        self.project_upload_references(session, &mut page.messages, include_parts);
-        Ok(page)
     }
 
     #[cfg(test)]
@@ -2728,6 +2714,9 @@ fn truncate_chars(value: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[path = "prompt_binding_tests.rs"]
+    mod prompt_binding_tests;
     use std::io::{Cursor, Read, Seek};
 
     #[test]
@@ -3540,6 +3529,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
         .unwrap();
         assert_eq!(page.next_offset, full_len);
         assert_eq!(page.messages[0].text, "pivot");
+        assert_eq!(page.messages[0].history_turn_id.as_deref(), Some("two"));
     }
 
     #[test]

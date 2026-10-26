@@ -18,7 +18,9 @@ pub(crate) use error_response::envelope_err;
 mod history_images;
 #[path = "serve/structured_prompt.rs"]
 mod structured_prompt;
-use structured_prompt::{submit_claude_structured_prompt, submit_structured_prompt_locked};
+#[cfg(test)]
+use structured_prompt::submit_claude_structured_prompt;
+use structured_prompt::submit_structured_prompt_locked;
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 #[path = "serve/codex_quiet.rs"]
@@ -1132,6 +1134,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
                 provider_history::archive_root(&context.state_dir),
                 provider_history::star_root(&context.state_dir),
             )
+            .with_session_state_dir(context.state_dir.clone())
             .with_dsh_sources(launch_profiles.dsh_history_sources()),
         );
         let state = Arc::new(ServeState {
@@ -7289,149 +7292,16 @@ async fn structured_prompt_handler(
     if let Some(resp) = deny_unauthorized(&state, &headers) {
         return resp;
     }
-    submit_structured_prompt_handler(state, id, body.text, body.expected_session_incarnation).await
-}
-
-mod prompt_receipts;
-
-async fn submit_structured_prompt_handler(
-    state: Arc<ServeState>,
-    id: String,
-    text: String,
-    expected_session_incarnation: Option<String>,
-) -> Response {
-    submit_structured_prompt_handler_with_fence(state, id, text, expected_session_incarnation, None)
-        .await
-}
-
-async fn submit_structured_prompt_handler_with_fence(
-    state: Arc<ServeState>,
-    id: String,
-    text: String,
-    expected_session_incarnation: Option<String>,
-    notification_fence: Option<CoordinationNotificationFence>,
-) -> Response {
-    if text.trim().is_empty() {
-        return status_json(
-            StatusCode::BAD_REQUEST,
-            "empty-prompt",
-            "structured prompt text must not be blank",
-        );
-    }
-    if text.len() > MAX_PROVIDER_PROMPT_BYTES {
-        return status_json(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "prompt-too-large",
-            "structured prompt exceeds the maximum supported size",
-        );
-    }
-    if structured_prompt_has_unsafe_control(&text) {
-        return status_json(
-            StatusCode::BAD_REQUEST,
-            "unsafe-prompt-control",
-            "structured prompt contains an unsupported control character",
-        );
-    }
-    let expected_session_incarnation = match expected_session_incarnation.as_deref() {
-        Some(value) if value.trim().is_empty() || value.len() > 128 => {
-            return status_json(
-                StatusCode::BAD_REQUEST,
-                "invalid-session-incarnation",
-                "expected_session_incarnation must be a nonblank identifier of at most 128 bytes",
-            );
-        }
-        value => value,
-    };
-
-    let record =
-        match load_structured_prompt_record_locked(&state, &id, expected_session_incarnation).await
-        {
-            Ok(record) => record,
-            Err(response) => return response,
-        };
-    let Some(launch_id) = record
-        .runtime
-        .as_ref()
-        .map(|runtime| runtime.launch_id.clone())
-    else {
-        return status_json(
-            StatusCode::CONFLICT,
-            "structured-prompt-unsupported",
-            "this session does not provide structured prompt submission",
-        );
-    };
-    // Coordination notifications are fenced against the Codex app-server's own
-    // turn state, so a fenced request stays Codex-only until that fence has a
-    // Claude equivalent.
-    if notification_fence.is_none() && crate::claude_structured_prompt_supported(&record) {
-        // Only this branch pastes the prompt into the pane, so only this branch
-        // carries the blocked-input hazard. The Codex branch below submits over
-        // the app-server control channel and never touches the terminal, which
-        // is why it is not refused here — the daemon's own in-turn coordination
-        // checkpoint deliberately delivers to a `NeedsInput` Codex session over
-        // that same channel. This is an early reject only; the authoritative
-        // check lives inside `deliver_claude_structured_prompt_locked`, under
-        // the record lock that also fences the write.
-        if let Err(err) = crate::activity::refuse_if_blocked(
-            &state.context,
-            &record,
-            "answer the dialog with send --key, then resubmit the prompt",
-        ) {
-            return envelope_err(err);
-        }
-        return submit_claude_structured_prompt(
-            &state,
-            &record,
-            &launch_id,
-            expected_session_incarnation,
-            &text,
-            CLAUDE_STRUCTURED_PROMPT_ACK_WAIT,
-        )
-        .await;
-    }
-    if !codex_app_server::runtime_is_supported(&record) {
-        return status_json(
-            StatusCode::CONFLICT,
-            "structured-prompt-unsupported",
-            "this session does not provide structured prompt submission",
-        );
-    }
-
-    let handle = match wait_for_structured_prompt_control(
-        &state,
-        &id,
-        &launch_id,
-        expected_session_incarnation,
-        STRUCTURED_PROMPT_CONTROL_WAIT,
+    structured_prompt::submit_structured_prompt_handler(
+        state,
+        id,
+        body.text,
+        body.expected_session_incarnation,
     )
     .await
-    {
-        Ok(handle) => handle,
-        Err(response) => return response,
-    };
-
-    match submit_structured_prompt_locked(
-        &state,
-        &record.id,
-        &launch_id,
-        StructuredPromptGuards {
-            expected_session_incarnation,
-            notification: notification_fence,
-            ..Default::default()
-        },
-        &handle,
-        &text,
-    )
-    .await
-    {
-        Ok(session_incarnation) => envelope_ok(json!({
-            "machine": state.machine,
-            "submitted": true,
-            "session_incarnation": session_incarnation,
-        })),
-        Err(response) => response,
-    }
 }
+
+pub(crate) mod prompt_receipts;
 
 fn structured_prompt_has_unsafe_control(text: &str) -> bool {
     text.chars().any(|character| {
@@ -7858,7 +7728,7 @@ async fn dispatch_coordination_notification(
     }
 
     let prompt = crate::coordination::notification_prompt(&candidate);
-    let response = submit_structured_prompt_handler_with_fence(
+    let response = structured_prompt::submit_structured_prompt_handler_with_fence(
         state.clone(),
         candidate.target_session_id.clone(),
         prompt,
@@ -7866,6 +7736,7 @@ async fn dispatch_coordination_notification(
         Some(CoordinationNotificationFence {
             candidate: candidate.clone(),
         }),
+        false,
     )
     .await;
     let context = state.context.clone();

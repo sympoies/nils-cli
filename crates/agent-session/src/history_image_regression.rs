@@ -136,3 +136,90 @@ fn image_text_incremental_ids_match_pre_attachment_applied_memory() {
         "Previously applied text-bearing images must remain deduplicated after upgrade/recovery"
     );
 }
+
+#[test]
+fn codex_history_links_the_caller_request_before_receipt_lookup() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let history_root = temp.path().join("history");
+    let state_dir = temp.path().join("state");
+    fs::create_dir_all(&history_root).unwrap();
+    fs::create_dir_all(state_dir.join("sessions/managed-session")).unwrap();
+    fs::create_dir_all(state_dir.join("sessions/other-managed-session")).unwrap();
+    let meta = serde_json::json!({"type":"session_meta","payload":{"id":"binding-thread","cwd":temp.path(),"timestamp":"2026-10-16T00:00:00Z","source":"cli"}});
+    let row = serde_json::json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}],"internal_chat_message_metadata_passthrough":{"turn_id":"native-turn-1","content_item_kinds":["user.text"]}}});
+    fs::write(
+        history_root.join("rollout.jsonl"),
+        format!("{meta}\n{row}\n"),
+    )
+    .unwrap();
+    let stored_result = serde_json::json!({
+        "receipt": {
+            "request_id": "attempt-1",
+            "session_id": "managed-session",
+            "session_incarnation": "launch-a",
+            "outcome": "submitted",
+            "code": null
+        },
+        "status": 200,
+        "queued": false,
+        "history_turn_id": "native-turn-1",
+        "history_session_id": "binding-thread"
+    });
+    fs::write(
+        state_dir.join("sessions/managed-session/prompt-receipt-key.result"),
+        serde_json::to_vec(&stored_result).unwrap(),
+    )
+    .unwrap();
+    let other_thread_result = serde_json::json!({
+        "receipt": {
+            "request_id": "other-attempt",
+            "session_id": "other-managed-session",
+            "session_incarnation": "launch-other",
+            "outcome": "submitted",
+            "code": null
+        },
+        "status": 200,
+        "queued": false,
+        "history_turn_id": "native-turn-1",
+        "history_session_id": "other-thread"
+    });
+    fs::write(
+        state_dir.join("sessions/other-managed-session/prompt-receipt-key.result"),
+        serde_json::to_vec(&other_thread_result).unwrap(),
+    )
+    .unwrap();
+    let catalog = HistoryCatalog::new(
+        vec![HistorySource {
+            provider: "codex".into(),
+            agent_profile: None,
+            root: history_root,
+        }],
+        archive_root(temp.path()),
+        star_root(temp.path()),
+    )
+    .with_session_state_dir(state_dir);
+    let history_id = stable_history_id("codex", None, "binding-thread");
+
+    for direction in [
+        HistoryMessageDirection::Forward,
+        HistoryMessageDirection::Latest,
+    ] {
+        let page = catalog.messages(&history_id, None, 10, direction).unwrap();
+        let json = serde_json::to_value(page).unwrap();
+        assert_eq!(json["messages"][0]["text"], "continue");
+        assert_eq!(
+            json["messages"][0]["prompt_request"]["request_id"],
+            "attempt-1"
+        );
+        assert_eq!(
+            json["messages"][0]["prompt_request"]["session_id"],
+            "managed-session"
+        );
+        assert_eq!(
+            json["messages"][0]["prompt_request"]["session_incarnation"],
+            "launch-a"
+        );
+        assert!(!json.to_string().contains("native-turn-1"));
+        assert!(!json.to_string().contains("binding-thread"));
+    }
+}

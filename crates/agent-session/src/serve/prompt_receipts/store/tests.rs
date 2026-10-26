@@ -65,6 +65,8 @@ fn results_are_private_durable_scoped_and_contain_no_prompt_text() {
             receipt: submitted.clone(),
             status: 200,
             queued: true,
+            history_turn_id: Some("native-turn-one".into()),
+            history_session_id: Some("binding-thread".into()),
             native_confirmation: None,
         },
     )
@@ -73,9 +75,47 @@ fn results_are_private_durable_scoped_and_contain_no_prompt_text() {
         lookup(&context, &receipt).unwrap().unwrap().receipt,
         submitted
     );
+    assert_eq!(
+        history_bindings(context.state_dir.as_path())
+            .get("binding-thread")
+            .and_then(|turns| turns.get("native-turn-one")),
+        Some(&crate::provider_history::PromptRequestBinding {
+            request_id: "attempt-one".into(),
+            session_id: "receipt-session".into(),
+            session_incarnation: "launch-one".into(),
+        })
+    );
     let mut other = receipt.clone();
     other.session_incarnation = "launch-two".into();
     assert!(lookup(&context, &other).unwrap().is_none());
+    let other_fingerprint = super::fingerprint("second incarnation prompt", false);
+    let ClaimResult::New(owner) = claim(&context, other.clone(), &other_fingerprint).unwrap()
+    else {
+        panic!("new incarnation must get a separate receipt key")
+    };
+    let mut second_incarnation = other;
+    second_incarnation.outcome = Outcome::Submitted;
+    second_incarnation.code = None;
+    second_incarnation.confirmation_diagnostic = None;
+    finish(
+        owner,
+        &ResultRecord {
+            receipt: second_incarnation,
+            status: 200,
+            queued: false,
+            history_turn_id: Some("native-turn-two".into()),
+            history_session_id: Some("binding-thread".into()),
+            native_confirmation: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        history_bindings(context.state_dir.as_path())
+            .get("binding-thread")
+            .and_then(|turns| turns.get("native-turn-two"))
+            .map(|binding| binding.session_incarnation.as_str()),
+        Some("launch-two")
+    );
     other = receipt.clone();
     other.request_id = "attempt-two".into();
     assert!(lookup(&context, &other).unwrap().is_none());

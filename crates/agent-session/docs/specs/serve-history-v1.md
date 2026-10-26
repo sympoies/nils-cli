@@ -46,6 +46,12 @@ messages, auto-continuations, meta or machine-markup prompts, and agent-session 
 excluded. A slash command that Claude Code records as command markup is shown as typed (`/name args`),
 once; local-command output and interrupt markers recorded as `user` rows are excluded.
 
+Codex user messages may include an optional `prompt_request` object with `request_id`, `session_id`, and
+`session_incarnation` when the daemon can join the provider's accepted turn identifier to a keyed
+receipt. These values match the receipt API; the provider identifier itself is not exposed. Claude
+messages omit this object until a provider-native association is established. Clients must treat absence
+as unbound and must not infer a match from adjacent or identical text.
+
 Queue bookkeeping (`queue-operation`) never adds a message, so a queued prompt appears once. The retained
 default `direction=forward` uses `next_cursor` as before. `direction=latest` accepts no cursor, reads one
 at-most-16-MiB window from the selected transcript tail, and returns the latest page in chronological

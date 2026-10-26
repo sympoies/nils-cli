@@ -1,4 +1,5 @@
 //! Immutable, durable pre-dispatch claim plus atomic terminal result.
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -10,6 +11,10 @@ use sha2::{Digest, Sha256};
 
 use super::{Receipt, ResultRecord};
 use crate::{CliContext, CliError, session_dir};
+
+const MAX_BINDING_SESSIONS: usize = 4096;
+const MAX_BINDING_RESULTS: usize = 20_000;
+const PROMPT_BINDING_SCAN_BUDGET: std::time::Duration = std::time::Duration::from_millis(250);
 
 #[derive(Serialize, Deserialize)]
 struct ClaimRecord {
@@ -29,6 +34,117 @@ pub(super) enum ClaimResult {
 
 pub(super) fn fingerprint(text: &str, require_idle: bool) -> String {
     digest(&(text, require_idle))
+}
+
+pub(super) fn history_bindings(
+    state_dir: &Path,
+) -> HashMap<String, HashMap<String, crate::provider_history::PromptRequestBinding>> {
+    let mut bindings = HashMap::new();
+    let mut ambiguous = HashSet::new();
+    let Ok(sessions) = fs::read_dir(state_dir.join("sessions")) else {
+        return bindings;
+    };
+    let mut scanned_sessions = 0usize;
+    let mut scanned_results = 0usize;
+    let deadline = std::time::Instant::now() + PROMPT_BINDING_SCAN_BUDGET;
+    for session in sessions.flatten() {
+        scanned_sessions += 1;
+        if scanned_sessions > MAX_BINDING_SESSIONS || std::time::Instant::now() >= deadline {
+            return HashMap::new();
+        }
+        let Ok(kind) = session.file_type() else {
+            continue;
+        };
+        if !kind.is_dir() {
+            continue;
+        }
+        let Ok(directory_session_id) = session.file_name().into_string() else {
+            continue;
+        };
+        if !valid_binding_session_id(&directory_session_id) {
+            continue;
+        }
+        let Ok(results) = fs::read_dir(session.path()) else {
+            continue;
+        };
+        for result in results.flatten() {
+            if scanned_results >= MAX_BINDING_RESULTS || std::time::Instant::now() >= deadline {
+                return HashMap::new();
+            }
+            let name = result.file_name();
+            let name = name.to_string_lossy();
+            if !name.starts_with("prompt-receipt-") || !name.ends_with(".result") {
+                continue;
+            }
+            scanned_results += 1;
+            if !result.file_type().is_ok_and(|kind| kind.is_file()) {
+                continue;
+            }
+            let Ok(bytes) = read(&result.path()) else {
+                continue;
+            };
+            let Ok(record) = serde_json::from_slice::<ResultRecord>(&bytes) else {
+                continue;
+            };
+            let Some(turn_id) = record
+                .history_turn_id
+                .filter(|id| valid_history_turn_id(id))
+            else {
+                continue;
+            };
+            let Some(provider_session_id) = record
+                .history_session_id
+                .filter(|id| valid_provider_session_id(id))
+            else {
+                continue;
+            };
+            if record.receipt.outcome != super::Outcome::Submitted
+                || !super::valid_request_id(&record.receipt.request_id)
+                || !super::valid_incarnation(&record.receipt.session_incarnation)
+                || !valid_binding_session_id(&record.receipt.session_id)
+                || record.receipt.session_id != directory_session_id
+            {
+                continue;
+            }
+            let ambiguity_key = (provider_session_id.clone(), turn_id.clone());
+            if ambiguous.contains(&ambiguity_key) {
+                continue;
+            }
+            let binding = crate::provider_history::PromptRequestBinding {
+                request_id: record.receipt.request_id,
+                session_id: record.receipt.session_id,
+                session_incarnation: record.receipt.session_incarnation,
+            };
+            let session_bindings = bindings.entry(provider_session_id.clone()).or_default();
+            if session_bindings.insert(turn_id.clone(), binding).is_some() {
+                session_bindings.remove(&turn_id);
+                ambiguous.insert(ambiguity_key);
+            }
+        }
+    }
+    bindings
+}
+
+fn valid_history_turn_id(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= 256
+        && !value.contains(['/', '\\'])
+        && !value.contains("://")
+}
+
+fn valid_provider_session_id(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= 256
+        && !value.contains(['/', '\\'])
+        && !value.contains("://")
+}
+
+fn valid_binding_session_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 pub(super) fn digest(value: &impl Serialize) -> String {
@@ -191,6 +307,14 @@ pub(super) fn publish_confirmed(
     confirmed.receipt.confirmation_diagnostic = None;
     confirmed.status = 200;
     confirmed.queued = false;
+    confirmed.history_turn_id = confirmed
+        .native_confirmation
+        .as_ref()
+        .map(|proof| proof.turn_id.clone());
+    confirmed.history_session_id = confirmed
+        .native_confirmation
+        .as_ref()
+        .and_then(|proof| proof.history_session_id.clone());
     confirmed.native_confirmation = None;
     finish(
         Claim {
