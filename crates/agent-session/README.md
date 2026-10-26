@@ -93,7 +93,7 @@ agent-session delete <id>
 
 [Session lifecycle operations](docs/runbooks/session-lifecycle.md) covers
 prompt submission outcomes, blocked input, clear and rebind, resume, restart,
-verified deletion, startup logs, legacy session records, account switching, model
+verified deletion, startup logs, retained session records, account switching, model
 settings, and secret safety. [Send v1](docs/specs/send-v1.md) defines guarded
 continuation admission and its observation limits.
 

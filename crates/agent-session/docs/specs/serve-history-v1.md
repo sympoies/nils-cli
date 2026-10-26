@@ -36,7 +36,7 @@ transcript path, size, and modification time. It never adds a full-catalog
 transcript-body scan.
 
 Retained DSH provider history is not listed or resumed by the serve API. Remove
-legacy DSH launch profiles from the daemon configuration.
+retired DSH launch profiles from the daemon configuration.
 
 `GET /history/sessions/{history_id}/messages` resolves the opaque history id inside the daemon and
 returns normalized `user`/`assistant` text messages and Codex `goal` creation objectives in bounded

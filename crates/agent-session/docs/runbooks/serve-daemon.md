@@ -423,7 +423,7 @@ fail-closed.
   `capabilities.codex_account_switch` / `capabilities.claude_account_switch`.
 - `AGENT_SESSION_LAUNCH_PROFILES`: JSON array of server-owned launch profiles.
   Only profiles whose executable, optional provider root, and readiness probe
-  pass are advertised. Only Codex and Claude profiles are supported. Legacy
+  pass are advertised. Only Codex and Claude profiles are supported. Retired
   DSH profiles are rejected with an actionable configuration error and must be
   removed before starting the daemon. Retained DSH session records can be read,
   but resume refuses them with an unsupported-profile error.

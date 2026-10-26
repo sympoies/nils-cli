@@ -1786,7 +1786,7 @@ pub struct CompletionArgs {
 pub enum AgentKind {
     Codex,
     Claude,
-    /// Retained for reading legacy session records; no new launch accepts it.
+    /// Retained for reading existing session records; no new launch accepts it.
     #[value(skip)]
     Dsh,
 }

@@ -196,7 +196,7 @@ The retired base agent `hermes` is refused: serve does not start with a
 profile that names it.
 
 DSH launch profiles are retired. Serve configuration that names `agent = "dsh"`
-is rejected with an actionable error; remove the legacy profile before starting
+is rejected with an actionable error; remove the DSH profile before starting
 the daemon. DSH sessions cannot be created through the serve API.
 
 ## Trust model
