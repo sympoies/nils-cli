@@ -1270,26 +1270,22 @@ mod tests {
     }
 
     /// The key lists only name keys for diagnostics; the startup validators
-    /// decide. Every listed key must appear in a document those validators
-    /// accept, so a list entry cannot outlive the struct field it mirrors.
+    /// decide. Every supported key must appear in a document those validators
+    /// accept. The DSH-only history key is excluded because DSH profiles are
+    /// retired and cannot be accepted by the authoritative validator.
     #[test]
     fn every_listed_key_is_accepted_by_the_authoritative_validators() {
         const PROFILE: &str = r#"
 [[launch_profiles]]
-id = "dsh"
-label = "DSH"
-agent = "dsh"
-agent_bin = "/opt/dsh"
-provider_config_dir = "/opt/dsh-home"
+id = "codex-main"
+label = "Codex"
+agent = "codex"
+agent_bin = "/opt/codex"
+provider_config_dir = "/opt/codex-home"
 readiness_args = ["--version"]
 auto_resume_supported = true
 graceful_shutdown = "double-ctrl-c"
 codex_usage_account = "main"
-[launch_profiles.dsh_history]
-command = "/opt/dsh-history"
-root = "/opt/dsh-root"
-compression = "zstd"
-resume = "exact-id"
 "#;
         const OPENAI_WITH_FALLBACK: &str = r#"
 [retitle]
@@ -1333,7 +1329,7 @@ timeout_ms = 20000
         let all = bodies.join("\n");
         for key in LAUNCH_PROFILE_KEYS
             .iter()
-            .chain(DSH_HISTORY_KEYS)
+            .filter(|key| **key != "dsh_history")
             .chain(RETITLE_KEYS)
             .chain(RETITLE_CONTEXT_KEYS)
         {

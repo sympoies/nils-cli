@@ -78,15 +78,14 @@ use crate::provider_prompt::{
     ProviderPromptSource, ProviderPromptTail,
 };
 use crate::{
-    BINARY, CliContext, CliError, DshHistoryResumeArgs, ProviderResumeImportArgs, SessionRecord,
-    SessionRegistryFence, SessionTitleState, SessionTitleStateInput, SessionView,
-    StartFailureDisposition, WorkdirSearchOptions, archive_session_with_expected_incarnation,
+    BINARY, CliContext, CliError, ProviderResumeImportArgs, SessionRecord, SessionRegistryFence,
+    SessionTitleState, SessionTitleStateInput, SessionView, StartFailureDisposition,
+    WorkdirSearchOptions, archive_session_with_expected_incarnation,
     canonicalize_structured_title_pair, cleanup_session_delete_tombstones, glance_session,
     load_session_record, non_empty_env, prepare_session_attachment, profile_unavailable,
     repo_remote_url_from_cwd, resolve_tmux_bin, resume_session_by_id, search_workdirs,
     send_auto_resume_input, send_input_serialized, session_clipboard_buffer, session_dir,
-    session_status, start_dsh_history_resume_session, start_provider_resume_session,
-    update_session_title_if_revision,
+    session_status, start_provider_resume_session, update_session_title_if_revision,
 };
 use activity_stream::activity_notify_event_relevant;
 
@@ -147,19 +146,6 @@ const PROVIDER_PROMPT_DISCOVERY_MAX_CONCURRENT_SCANS: usize = 4;
 const PROVIDER_PROMPT_RECOVERY_MAX_CONCURRENT_SCANS: usize = 2;
 const MAX_CONCURRENT_AUTO_RESUME_TICKS: usize = 4;
 pub(crate) const MAX_AGENT_LAUNCH_PROFILES: usize = 16;
-// The DSH TUI draws its composer before it accepts pasted input. The ordinary
-// 1.2-second launch delay can submit the prompt during that interval and leave
-// an apparently ready session with no first turn. Every dsh launch profile
-// runs that TUI.
-const DSH_TUI_INITIAL_PROMPT_DELAY_MS: u64 = 5_000;
-
-fn initial_prompt_paste_delay_ms(agent: AgentKind) -> u64 {
-    if agent == AgentKind::Dsh {
-        DSH_TUI_INITIAL_PROMPT_DELAY_MS
-    } else {
-        cli::DEFAULT_PASTE_DELAY_MS
-    }
-}
 
 /// Upper bound on the `keys` list a single `send` request may carry.
 ///
@@ -438,7 +424,9 @@ impl AgentLaunchProfiles {
         let Some(raw) = non_empty_env("AGENT_SESSION_LAUNCH_PROFILES") else {
             return Ok(Self::default());
         };
-        Self::from_json(&raw)
+        let profiles = Self::from_json(&raw)?;
+        reject_retired_dsh_launch_profiles(&profiles)?;
+        Ok(profiles)
     }
 
     fn from_json(raw: &str) -> Result<Self, CliError> {
@@ -757,13 +745,26 @@ fn run_agent_profile_readiness(mut command: ProcessCommand, timeout: Duration) -
 /// Validate a launch-profile array exactly as `AGENT_SESSION_LAUNCH_PROFILES`
 /// is parsed at startup, returning the accepted ids in order.
 pub(crate) fn validate_launch_profiles_json(raw: &str) -> Result<Vec<String>, CliError> {
-    AgentLaunchProfiles::from_json(raw).map(|profiles| {
-        profiles
-            .entries
-            .into_iter()
-            .map(|profile| profile.id)
-            .collect()
-    })
+    let profiles = AgentLaunchProfiles::from_json(raw)?;
+    reject_retired_dsh_launch_profiles(&profiles)?;
+    Ok(profiles
+        .entries
+        .into_iter()
+        .map(|profile| profile.id)
+        .collect())
+}
+
+fn reject_retired_dsh_launch_profiles(profiles: &AgentLaunchProfiles) -> Result<(), CliError> {
+    if profiles
+        .entries
+        .iter()
+        .any(|profile| profile.agent == AgentKind::Dsh)
+    {
+        return Err(invalid_agent_launch_profiles(
+            "DSH launch profiles are retired; remove the profile and configure a supported agent",
+        ));
+    }
+    Ok(())
 }
 
 fn valid_agent_profile_id(id: &str) -> bool {
@@ -5309,44 +5310,9 @@ async fn history_resume_handler_inner(
         }
         let restored = history_resume_identity(&context, &history)?;
         match history.provider.as_str() {
-            "dsh" => {
-                let profile_id = history.agent_profile.as_deref().ok_or_else(|| {
-                    history_resume_not_supported("DSH history has no owning launch profile")
-                })?;
-                let profile = profiles
-                    .get(profile_id)
-                    .ok_or_else(|| history_resume_profile_unavailable(profile_id))?;
-                let dsh_history = profile.dsh_history.as_ref().filter(|history| {
-                    history.resume == Some(DshHistoryResumeCapability::ExactId)
-                }).ok_or_else(|| {
-                    history_resume_not_supported("the DSH launch profile does not advertise exact-ID history resume")
-                })?;
-                if !profile.is_ready() {
-                    return Err(history_resume_profile_unavailable(profile_id));
-                }
-                start_dsh_history_resume_session(
-                    &context,
-                    DshHistoryResumeArgs {
-                        title_mode: restored.title_mode,
-                        provider_resume_id: history.provider_session_id,
-                        cwd: PathBuf::from(history.cwd),
-                        history_root: dsh_history.root.clone(),
-                        title: history.title,
-                        title_state: restored.title_state,
-                        id: restored.id,
-                        coordination_mode: cli::CoordinationMode::Advisory,
-                        tmux_bin: Some(tmux_bin),
-                        agent_bin: profile.agent_bin.clone(),
-                        agent_profile: profile.id.clone(),
-                        profile_auto_resume_supported: profile.auto_resume_supported,
-                        profile_graceful_shutdown: profile
-                            .graceful_shutdown
-                            .map(|mode| mode.as_str().to_string()),
-                        codex_usage_account: profile.codex_usage_account.clone(),
-                        initial_lineage: create_body_lineage(&machine, None, None, None)?,
-                    },
-                )
-            }
+            "dsh" => Err(history_resume_not_supported(
+                "DSH history resume is no longer supported",
+            )),
             "codex" | "claude" => {
                 let agent = AgentKind::from_name(&history.provider).expect("matched provider");
                 let profile = history
@@ -6469,6 +6435,13 @@ async fn create_handler_inner(
             None,
         ));
     };
+    if agent == AgentKind::Dsh {
+        return envelope_err(CliError::usage(
+            "unsupported-agent",
+            "DSH sessions are no longer supported; create a session with a supported agent",
+            Some(json!({ "agent": body.agent })),
+        ));
+    }
     let launch_profile = match body.agent_profile.as_deref() {
         Some(id) => {
             let Some(profile) = state.launch_profiles.get(id) else {
@@ -6660,11 +6633,6 @@ async fn create_handler_inner(
         initial_codex_account_source: selection_source,
         initial_title_state: title_state,
         initial_agent_profile: launch_profile.as_ref().map(|profile| profile.id.clone()),
-        initial_dsh_history_root: launch_profile
-            .as_ref()
-            .and_then(|profile| profile.dsh_history.as_ref())
-            .filter(|history| history.resume == Some(DshHistoryResumeCapability::ExactId))
-            .map(|history| history.root.clone()),
         initial_provider_config_dir: launch_profile
             .as_ref()
             .and_then(|profile| profile.provider_config_dir.clone()),
@@ -6701,7 +6669,7 @@ async fn create_handler_inner(
             .into_iter()
             .map(|(key, value)| format!("{key}={value}"))
             .collect(),
-        paste_delay_ms: initial_prompt_paste_delay_ms(agent),
+        paste_delay_ms: cli::DEFAULT_PASTE_DELAY_MS,
         via_console: false,
         console_operation: Default::default(),
         machine: None,

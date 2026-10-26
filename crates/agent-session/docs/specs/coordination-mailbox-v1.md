@@ -319,8 +319,8 @@ the same transcript-based reconciliation used by idle submission. Replaced incar
 coordination-off sessions, retained `hermes` records, unmanaged sessions, and other unsupported
 providers are explicitly undeliverable.
 
-DeepSeek Harness (DSH) recipients, meaning an external `dsh` lane or a pane
-started from a `dsh` launch profile, have no serve prompt route. serve
+DeepSeek Harness (DSH) recipients, meaning an external `dsh` lane or a retained
+DSH session record, have no serve prompt route. serve
 marks their generation `undeliverable` with reason `hook-delivered`. The DSH
 runtime instead calls `agent-hook dispatch --product dsh` at every model step,
 and its prompt-time rule runs the authenticated

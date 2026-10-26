@@ -46,7 +46,7 @@ fn delete_rejects_combining_stopped_only_and_leave_processes_modes() {
 
 #[test]
 fn launch_env_rejects_unapproved_keys_before_creating_a_session() {
-    for agent in ["codex", "claude", "dsh"] {
+    for agent in ["codex", "claude"] {
         let tmp = tempfile::TempDir::new().unwrap();
         let state = tmp.path().join("state");
         let mut command = Command::new(bin::resolve("agent-session"));
@@ -289,11 +289,6 @@ fn conversation_clear_and_rebind_are_discoverable() {
 fn launch_env_allowlist_is_configurable_and_refuses_credentials() {
     for (allowlist, assignment, code) in [
         (
-            r#"["AGENT_RUNTIME_FEATURE"]"#,
-            "AGENT_RUNTIME_FEATURE=enabled",
-            "unsupported-start-agent",
-        ),
-        (
             r#"[]"#,
             "AGENT_RUNTIME_SUPPRESS_MEMORY=1",
             "launch-env-key-refused",
@@ -321,7 +316,7 @@ fn launch_env_allowlist_is_configurable_and_refuses_credentials() {
             .arg("--state-dir")
             .arg(tmp.path().join("state"))
             .args([
-                "start", "--agent", "dsh", "--env", assignment, "--format", "json",
+                "start", "--agent", "codex", "--env", assignment, "--format", "json",
             ])
             .env("AGENT_SESSION_LAUNCH_ENV_ALLOWLIST", allowlist)
             .output()
@@ -330,6 +325,84 @@ fn launch_env_allowlist_is_configurable_and_refuses_credentials() {
         assert_eq!(body["error"]["code"], code);
         assert!(!String::from_utf8_lossy(&output.stdout).contains("private-fixture-value"));
         assert!(!tmp.path().join("state/sessions").exists());
+    }
+}
+
+#[test]
+fn start_rejects_the_retired_dsh_agent_value() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut command = Command::new(bin::resolve("agent-session"));
+    nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
+    let output = command
+        .arg("--state-dir")
+        .arg(tmp.path().join("state"))
+        .args(["start", "--agent", "dsh", "--format", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(64));
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["error"]["code"], "parse-error");
+    assert!(!tmp.path().join("state/sessions").exists());
+}
+
+#[test]
+fn retained_activity_hook_and_notify_accept_dsh_without_advertising_it() {
+    use agent_session::cli::{ActivityCommand, AgentKind, Cli, Command as SessionCommand};
+    use clap::{CommandFactory, Parser};
+
+    let hook = Cli::try_parse_from(["agent-session", "activity", "hook", "--agent", "dsh"])
+        .expect("retained DSH activity hook");
+    let SessionCommand::Activity(activity) = hook.command else {
+        panic!("activity command");
+    };
+    let ActivityCommand::Hook(args) = activity.command else {
+        panic!("activity hook command");
+    };
+    assert_eq!(args.agent, AgentKind::Dsh);
+
+    let notify = Cli::try_parse_from([
+        "agent-session",
+        "activity",
+        "notify",
+        "--agent",
+        "dsh",
+        "{}",
+    ])
+    .expect("retained DSH activity notification");
+    let SessionCommand::Activity(activity) = notify.command else {
+        panic!("activity command");
+    };
+    let ActivityCommand::Notify(args) = activity.command else {
+        panic!("activity notify command");
+    };
+    assert_eq!(args.agent, AgentKind::Dsh);
+
+    let help = Cli::command().render_help().to_string();
+    assert!(!help.contains("dsh"));
+
+    let completion = Command::new(bin::resolve("agent-session"))
+        .args(["completion", "zsh"])
+        .output()
+        .expect("agent-session zsh completion");
+    assert!(completion.status.success());
+    let completion = String::from_utf8(completion.stdout).unwrap();
+    for description in [
+        "Provider whose hook payload is on stdin",
+        "Provider whose notification payload is supplied as the final argument",
+    ] {
+        let agent_suggestion = completion
+            .lines()
+            .find(|line| line.contains(description))
+            .unwrap_or_else(|| panic!("missing completion entry for {description}"));
+        assert!(
+            agent_suggestion.contains(":AGENT:(codex claude)"),
+            "supported-provider completions should be preserved: {agent_suggestion}"
+        );
+        assert!(
+            !agent_suggestion.contains("dsh"),
+            "retired DSH must stay hidden from completion: {agent_suggestion}"
+        );
     }
 }
 

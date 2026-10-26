@@ -149,15 +149,15 @@ fn launch_profiles_advertise_only_ready_safe_summaries() {
 fn launch_profiles_accept_a_bounded_double_ctrl_c_graceful_shutdown_contract() {
     let tmp = tempfile::TempDir::new().unwrap();
     let launcher = executable(
-        &tmp.path().join("dsh-workbench-launcher"),
+        &tmp.path().join("claude-workbench-launcher"),
         "#!/usr/bin/env sh\nexit 0\n",
     );
 
     let profiles = AgentLaunchProfiles::from_json(
         &json!([{
-            "id": "dsh-workbench",
-            "label": "DSH",
-            "agent": "dsh",
+            "id": "claude-workbench",
+            "label": "Claude",
+            "agent": "claude",
             "agent_bin": launcher,
             "graceful_shutdown": "double-ctrl-c",
         }])
@@ -169,19 +169,6 @@ fn launch_profiles_accept_a_bounded_double_ctrl_c_graceful_shutdown_contract() {
 }
 
 #[test]
-fn dsh_start_waits_for_its_interactive_composer_before_initial_prompt() {
-    assert_eq!(initial_prompt_paste_delay_ms(AgentKind::Dsh), 5_000);
-    assert_eq!(
-        initial_prompt_paste_delay_ms(AgentKind::Codex),
-        cli::DEFAULT_PASTE_DELAY_MS
-    );
-    assert_eq!(
-        initial_prompt_paste_delay_ms(AgentKind::Claude),
-        cli::DEFAULT_PASTE_DELAY_MS
-    );
-}
-
-#[test]
 fn launch_profiles_reject_the_retired_hermes_base_agent() {
     let tmp = tempfile::TempDir::new().unwrap();
     let launcher = executable(&tmp.path().join("launcher"), "#!/bin/sh\nexit 0\n");
@@ -190,6 +177,26 @@ fn launch_profiles_reject_the_retired_hermes_base_agent() {
     let error = AgentLaunchProfiles::from_json(&raw).expect_err("hermes is no longer an alias");
     assert_eq!(error.code(), "invalid-agent-launch-profiles");
     assert!(validate_launch_profiles_json(&raw).is_err());
+}
+
+#[test]
+fn environment_launch_profiles_reject_retired_dsh_profiles() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let profiles = json!([{
+        "id": "dsh-workbench",
+        "label": "DSH",
+        "agent": "dsh",
+        "agent_bin": tmp.path().join("dsh-launcher")
+    }])
+    .to_string();
+    let lock = GlobalStateLock::new();
+    let _profiles = EnvGuard::set(&lock, "AGENT_SESSION_LAUNCH_PROFILES", &profiles);
+
+    let error = AgentLaunchProfiles::from_environment()
+        .expect_err("the live environment must not re-enable retired DSH launches");
+
+    assert_eq!(error.code(), "invalid-agent-launch-profiles");
+    assert!(error.message().contains("DSH launch profiles are retired"));
 }
 
 #[test]
@@ -291,15 +298,15 @@ fn unavailable_dsh_history_does_not_block_the_launch_profile() {
 fn launch_profiles_reject_unknown_graceful_shutdown_contracts() {
     let tmp = tempfile::TempDir::new().unwrap();
     let launcher = executable(
-        &tmp.path().join("dsh-workbench-launcher"),
+        &tmp.path().join("claude-workbench-launcher"),
         "#!/usr/bin/env sh\nexit 0\n",
     );
 
     let error = AgentLaunchProfiles::from_json(
         &json!([{
-            "id": "dsh-workbench",
-            "label": "DSH",
-            "agent": "dsh",
+            "id": "claude-workbench",
+            "label": "Claude",
+            "agent": "claude",
             "agent_bin": launcher,
             "graceful_shutdown": "force-kill",
         }])
@@ -6015,7 +6022,7 @@ async fn history_resume_refuses_a_conversation_a_live_session_already_owns() {
 }
 
 #[tokio::test]
-async fn history_resume_re_resolves_dsh_and_launches_canonical_exact_id() {
+async fn history_resume_refuses_retired_dsh_history() {
     let tmp = tempfile::TempDir::new().unwrap();
     let cwd = tmp.path().join("repo");
     let history_root = tmp.path().join("dsh-sessions");
@@ -6050,20 +6057,6 @@ esac
         .to_string(),
     )
     .unwrap();
-    let read_only_profiles = AgentLaunchProfiles::from_json(
-        &json!([{
-            "id":"dsh-workbench",
-            "label":"DSH",
-            "agent":"dsh",
-            "agent_bin":launcher,
-            "dsh_history":{
-                "command":adapter,
-                "root":history_root
-            }
-        }])
-        .to_string(),
-    )
-    .unwrap();
     let log = tmp.path().join("tmux.log");
     let tmux = resume_tmux(tmp.path(), &log);
     let mut st = state(tmp.path(), Some(TOKEN), tmux);
@@ -6075,7 +6068,7 @@ esac
         )
         .with_dsh_sources(profiles.dsh_history_sources()),
     );
-    Arc::get_mut(&mut st).unwrap().launch_profiles = read_only_profiles;
+    Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
     let id = provider_history::stable_history_id("dsh", Some("dsh-workbench"), "dsh-one");
 
     let (status, body) = call(
@@ -6087,253 +6080,33 @@ esac
     assert!(!log.exists(), "unauthorized history resume must not launch");
 
     let (status, body) = call(
-        router(st.clone()),
+        router(st),
         post_json(
             &format!("/history/sessions/{id}/resume"),
             Some(TOKEN),
-            json!({ "cwd": "/browser/controlled", "argv": ["--unsafe"] }),
+            json!({}),
         ),
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "body={body}");
     assert_eq!(body["error"]["code"], "history-resume-not-supported");
-    assert!(!log.exists(), "unsupported history resume must not launch");
-
-    Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
-
-    let missing_id = provider_history::stable_history_id("dsh", Some("dsh-workbench"), "missing");
-    let (status, body) = call(
-        router(st.clone()),
-        post_json(
-            &format!("/history/sessions/{missing_id}/resume"),
-            Some(TOKEN),
-            json!({}),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "body={body}");
-    assert_eq!(body["error"]["code"], "history-session-not-found");
-    assert!(!log.exists(), "missing history resume must not launch");
-
-    // The conversation was archived from a managed session: resume restores
-    // its session id, title, and structured title state.
-    let title_state: crate::SessionTitleState = serde_json::from_value(json!({
-        "topic": "Kept topic",
-        "topic_source": "auto",
-        "references": [],
-        "activity": "Kept activity"
-    }))
-    .unwrap();
-    provider_history::write_archive(
-        &provider_history::archive_root(tmp.path()),
-        &provider_history::ArchivedSession {
-            title_mode: crate::display_metadata::TitleMode::Pinned,
-            schema_version: "agent-session.history-archive.v1".to_string(),
-            history_id: id.clone(),
-            provider: "dsh".to_string(),
-            provider_session_id: "dsh-one".to_string(),
-            agent_profile: Some("dsh-workbench".to_string()),
-            session_id: Some("kept-dsh".to_string()),
-            title: Some("Kept topic - Kept activity".to_string()),
-            title_state: Some(title_state),
-            cwd: cwd.display().to_string(),
-            created_at: "2026-09-12T01:00:00.000Z".to_string(),
-            updated_at: "2026-09-12T02:00:00.000Z".to_string(),
-            archived_at: "2026-09-12T03:00:00.000Z".to_string(),
-        },
-    )
-    .unwrap()
-    .commit();
-
-    let (status, body) = call(
-        router(st),
-        post_json(
-            &format!("/history/sessions/{id}/resume"),
-            Some(TOKEN),
-            json!({}),
-        ),
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::OK, "body={body}");
-    let managed_id = body["data"]["session"]["id"].as_str().unwrap();
-    assert_eq!(managed_id, "kept-dsh");
-    assert_serve_lifecycle(tmp.path(), managed_id, &[("history-resume", 1)]);
-    assert_eq!(body["data"]["session"]["title_mode"], "pinned");
-    assert_eq!(
-        body["data"]["session"]["title"],
-        "Kept topic - Kept activity"
-    );
-    assert_eq!(
-        body["data"]["session"]["title_state"]["topic"],
-        "Kept topic"
-    );
-    assert_eq!(body["data"]["session"]["agent"], "dsh");
-    assert_eq!(body["data"]["session"]["agent_profile"], "dsh-workbench");
-    let record: Value = serde_json::from_slice(
-        &fs::read(
-            tmp.path()
-                .join("sessions")
-                .join(managed_id)
-                .join("session.json"),
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(record["title_mode"], "pinned");
-    assert_eq!(record["provider_resume"]["provider"], "dsh");
-    assert_eq!(record["provider_resume"]["session_id"], "dsh-one");
-    assert_eq!(
-        record["provider_resume"]["resume_args"],
-        json!(["--resume", "dsh-one"])
-    );
-    assert_eq!(
-        record["provider_resume"]["dsh_history_root"],
-        history_root
-            .canonicalize()
+    assert!(
+        body["error"]["message"]
+            .as_str()
             .unwrap()
-            .to_string_lossy()
-            .as_ref()
+            .contains("no longer supported")
     );
-    let activity: Value = serde_json::from_slice(
-        &fs::read(
-            tmp.path()
-                .join("sessions")
-                .join(managed_id)
-                .join("activity.json"),
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    assert!(activity["provider_session_id"].is_string());
-    let mismatched: crate::activity::TurnEvent = serde_json::from_value(json!({
-        "schema_version": crate::activity::TURN_EVENT_VERSION,
-        "event_id": "dsh-mismatch",
-        "runtime_id": body["data"]["session"]["session_incarnation"],
-        "provider": "dsh",
-        "provider_session_id": "different-dsh-session",
-        "kind": "progress",
-        "confidence": "observed"
-    }))
-    .unwrap();
-    let context = CliContext {
-        state_dir: tmp.path().to_path_buf(),
-        host: None,
-    };
-    let restored_record = crate::load_session_record(&context, managed_id).unwrap();
-    assert_eq!(
-        crate::display_metadata::require_auto(&restored_record)
-            .unwrap_err()
-            .code(),
-        "title-mode-pinned"
-    );
-    let error = crate::activity::ingest_event(&context, managed_id, mismatched)
-        .expect_err("a resumed DSH runtime must reject another provider identity");
-    assert_eq!(error.code(), "provider-session-id-mismatch");
-    let calls = fs::read_to_string(log).unwrap();
-    assert!(calls.contains("--resume dsh-one"), "calls={calls}");
-    assert!(
-        calls.contains(cwd.to_string_lossy().as_ref()),
-        "calls={calls}"
-    );
+    assert!(!log.exists(), "retired history must not launch");
 }
 
 #[tokio::test]
-async fn fresh_dsh_profile_launch_passes_its_preassigned_provider_id() {
+async fn fresh_dsh_create_is_rejected_without_side_effects() {
     let tmp = tempfile::TempDir::new().unwrap();
     let cwd = tmp.path().join("repo");
-    let history_root = tmp.path().join("dsh-sessions");
     fs::create_dir(&cwd).unwrap();
-    fs::create_dir(&history_root).unwrap();
-    let launcher = executable(&tmp.path().join("dsh-launcher"), "#!/bin/sh\nexit 0\n");
-    let adapter = executable(&tmp.path().join("dsh-history"), "#!/bin/sh\nexit 0\n");
-    let profiles = AgentLaunchProfiles::from_json(
-        &json!([{
-            "id":"dsh-workbench", "label":"DSH", "agent":"dsh",
-            "agent_bin": launcher,
-            "dsh_history": { "command": adapter, "root": history_root, "resume":"exact-id" }
-        }])
-        .to_string(),
-    )
-    .unwrap();
     let log = tmp.path().join("tmux.log");
     let tmux = startup_fixtures::live_resume_tmux(tmp.path(), &log);
-    let mut st = state(tmp.path(), Some(TOKEN), tmux);
-    Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
-
-    let (status, denied) = call(
-        router(st.clone()),
-        post_json(
-            "/sessions",
-            Some(TOKEN),
-            json!({
-                "agent":"dsh", "agent_profile":"dsh-workbench", "id":"bad-dsh", "cwd":cwd,
-                "agent_args":["--continue"]
-            }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "body={denied}");
-    assert_eq!(denied["error"]["code"], "reserved-agent-arg");
-    assert!(!log.exists(), "a conflicting TUI argument must not launch");
-
-    let prompt_started = Instant::now();
-    let (status, body) = call(
-        router(st),
-        post_json(
-            "/sessions",
-            Some(TOKEN),
-            json!({
-                "agent":"dsh", "agent_profile":"dsh-workbench", "id":"fresh-dsh", "cwd":cwd,
-                "prompt":"initial DSH prompt"
-            }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "body={body}");
-    assert!(
-        prompt_started.elapsed() >= Duration::from_millis(4_500),
-        "DSH initial prompt must wait for the interactive composer"
-    );
-    let provider_id = body["data"]["session"]["provider_resume"]["session_id"]
-        .as_str()
-        .expect("assigned provider id");
-    assert_eq!(
-        body["data"]["session"]["provider_resume"]["provider"],
-        "dsh"
-    );
-    let calls = fs::read_to_string(&log).unwrap();
-    assert!(calls.contains(&format!("--agent-session-seed {provider_id}")));
-    assert!(calls.contains("paste-buffer"), "prompt not pasted: {calls}");
-    let record: Value = serde_json::from_slice(
-        &fs::read(tmp.path().join("sessions/fresh-dsh/session.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(record["provider_resume"]["session_id"], provider_id);
-}
-
-#[tokio::test]
-async fn read_only_dsh_profile_launches_its_bin_without_a_chat_subcommand() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let cwd = tmp.path().join("repo");
-    let history_root = tmp.path().join("dsh-sessions");
-    fs::create_dir(&cwd).unwrap();
-    fs::create_dir(&history_root).unwrap();
-    let launcher = executable(&tmp.path().join("dsh-launcher"), "#!/bin/sh\nexit 0\n");
-    let adapter = executable(&tmp.path().join("dsh-history"), "#!/bin/sh\nexit 0\n");
-    let profiles = AgentLaunchProfiles::from_json(
-        &json!([{
-            "id":"dsh-workbench", "label":"DSH", "agent":"dsh",
-            "agent_bin": launcher,
-            "dsh_history": { "command": adapter, "root": history_root }
-        }])
-        .to_string(),
-    )
-    .unwrap();
-    let log = tmp.path().join("tmux.log");
-    let tmux = startup_fixtures::live_resume_tmux(tmp.path(), &log);
-    let mut st = state(tmp.path(), Some(TOKEN), tmux);
-    Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
+    let st = state(tmp.path(), Some(TOKEN), tmux);
 
     let (status, body) = call(
         router(st),
@@ -6341,19 +6114,21 @@ async fn read_only_dsh_profile_launches_its_bin_without_a_chat_subcommand() {
             "/sessions",
             Some(TOKEN),
             json!({
-                "agent":"dsh", "agent_profile":"dsh-workbench", "id":"read-only-dsh", "cwd":cwd,
-                "agent_args":["--verbose"]
+                "agent":"dsh", "id":"fresh-dsh", "cwd":cwd,
             }),
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "body={body}");
-    assert!(body["data"]["session"]["provider_resume"].is_null());
-    let calls = fs::read_to_string(log).unwrap();
-    assert_eq!(body["data"]["session"]["agent"], "dsh");
-    assert!(calls.contains("--verbose"), "calls={calls}");
-    assert!(!calls.contains(" chat"), "calls={calls}");
-    assert!(!calls.contains("--agent-session-seed"), "calls={calls}");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body={body}");
+    assert_eq!(body["error"]["code"], "unsupported-agent");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no longer supported")
+    );
+    assert!(!log.exists(), "a retired agent must not launch tmux");
+    assert!(!tmp.path().join("sessions/fresh-dsh/session.json").exists());
 }
 
 #[tokio::test]
@@ -9432,7 +9207,7 @@ async fn create_imports_claude_session_after_oversized_transcript_line() {
 }
 
 #[tokio::test]
-async fn create_provider_resume_id_rejects_unsupported_agent() {
+async fn create_provider_resume_id_rejects_retired_dsh_agent() {
     let tmp = tempfile::TempDir::new().unwrap();
     let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
 
@@ -9462,7 +9237,7 @@ async fn create_provider_resume_id_rejects_unsupported_agent() {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(body["error"]["code"], "unsupported-provider-resume-agent");
+        assert_eq!(body["error"]["code"], "unsupported-agent");
     }
 }
 

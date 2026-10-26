@@ -429,7 +429,7 @@ _agent__session() {
             fi
             case "${prev}" in
                 --agent)
-                    COMPREPLY=($(compgen -W "codex claude dsh" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "codex claude" -- "${cur}"))
                     return 0
                     ;;
                 --format)
@@ -491,7 +491,7 @@ _agent__session() {
             fi
             case "${prev}" in
                 --agent)
-                    COMPREPLY=($(compgen -W "codex claude dsh" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "codex claude" -- "${cur}"))
                     return 0
                     ;;
                 --event)
@@ -528,7 +528,7 @@ _agent__session() {
             fi
             case "${prev}" in
                 --agent)
-                    COMPREPLY=($(compgen -W "codex claude dsh" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "codex claude" -- "${cur}"))
                     return 0
                     ;;
                 --forward-notify-argv-json)
@@ -561,7 +561,7 @@ _agent__session() {
             fi
             case "${prev}" in
                 --agent)
-                    COMPREPLY=($(compgen -W "codex claude dsh" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "codex claude" -- "${cur}"))
                     return 0
                     ;;
                 --expected-preview-digest)
@@ -3012,7 +3012,7 @@ _agent__session() {
             fi
             case "${prev}" in
                 --agent)
-                    COMPREPLY=($(compgen -W "codex claude dsh" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "codex claude" -- "${cur}"))
                     return 0
                     ;;
                 --cwd)
@@ -3271,7 +3271,7 @@ _agent__session() {
                     return 0
                     ;;
                 --agent)
-                    COMPREPLY=($(compgen -W "codex claude dsh" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "codex claude" -- "${cur}"))
                     return 0
                     ;;
                 --cwd)

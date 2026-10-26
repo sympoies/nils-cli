@@ -15,7 +15,7 @@ async fn launch_env_create_matches_cli_for_all_provider_profiles() {
     );
     let _codex_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
     let _claude_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER");
-    for agent in ["codex", "claude", "dsh"] {
+    for agent in ["codex", "claude"] {
         let tmp = tempfile::TempDir::new().unwrap();
         let launcher = fake_agent(tmp.path(), "provider-fixture");
         let provider_root = tmp.path().join("profile-config");

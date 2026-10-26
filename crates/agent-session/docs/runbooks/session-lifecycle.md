@@ -578,13 +578,12 @@ falls back to the private, tail-capped startup diagnostic. Codex sessions retain
 that diagnostic after a startup failure or non-zero provider-client exit; a
 clean exit after readiness discards it.
 
-## Start DSH sessions
+## Retained DSH session records
 
-DSH panes start only through a server-owned `serve` launch profile with base
-agent `dsh`, which launches the profile's `agent_bin` with no implicit
-subcommand. A profile-less `start --agent dsh` is refused, and one-shot `run`
-mode is codex/claude only. Launch profiles are specified in
-[Serve API v1](../specs/serve-api-v1.md#launch-profiles).
+`agent-session` no longer starts DSH sessions. Existing session records remain
+readable, but resume returns an actionable unsupported-profile error without
+changing the record or starting a tmux session. Remove DSH launch profiles from
+the serve configuration before starting the daemon.
 
 ## Switch provider accounts
 
