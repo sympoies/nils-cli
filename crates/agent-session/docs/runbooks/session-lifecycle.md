@@ -692,8 +692,11 @@ after creation; inspect the created session before retrying. Configure the
 same allowlist on the caller and target daemon for custom switches. Resume,
 account switching, clear/rebind, and runtime recreation retain the saved map;
 a recreated provider receives the same overrides. Recreation revalidates the
-current allowlist and refuses a saved key that is no longer approved. With no
-overrides, existing launch environment inheritance is unchanged.
+current allowlist and refuses a saved key that is no longer approved. The
+daemon pins its managed Codex account roster into each new or resumed pane so a
+long-lived tmux server cannot supply a stale value. An already-running pane
+keeps the environment it inherited when it was created; stop and resume that
+managed session (or create a new one) to refresh it.
 
 ## Keep secrets out of commands
 
