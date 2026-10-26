@@ -202,6 +202,7 @@ mod tests {
         struct Server {
             tmux: PathBuf,
             socket: PathBuf,
+            _socket_dir: nils_test_support::tempdir::ScopedTempDir,
         }
         impl Drop for Server {
             fn drop(&mut self) {
@@ -215,9 +216,11 @@ mod tests {
         for agent in ["codex", "claude", "dsh"] {
             let tmp = tempfile::TempDir::new().unwrap();
             let output = tmp.path().join("provider-env");
+            let (socket_dir, socket) = nils_test_support::short_socket_path("tmux.sock");
             let server = Server {
                 tmux: tmux.clone(),
-                socket: tmp.path().join("tmux.sock"),
+                socket,
+                _socket_dir: socket_dir,
             };
             let record: SessionRecord = serde_json::from_value(json!({
                 "schema_version":crate::SESSION_DOCUMENT_VERSION, "id":"env-fixture", "agent":agent,

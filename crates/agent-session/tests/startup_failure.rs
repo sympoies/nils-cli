@@ -15,7 +15,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(body: &str) -> Self {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = tempfile::tempdir_in("/tmp").unwrap();
         for name in ["repo", "home"] {
             fs::create_dir(dir.path().join(name)).unwrap();
         }

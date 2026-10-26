@@ -15,6 +15,8 @@ pub mod http;
 pub mod node;
 pub mod stubs;
 pub mod tempdir;
+#[cfg(unix)]
+pub use tempdir::short_socket_path;
 
 static GLOBAL_STATE_LOCK: Mutex<()> = Mutex::new(());
 

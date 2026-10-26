@@ -7464,7 +7464,7 @@ async fn missing_codex_control_cannot_checkpoint_a_same_id_replacement() {
     };
     seed_session(&context.state_dir, "replacement", "codex", "hs-replacement");
     let mut record = load_session_record(&context, "replacement").unwrap();
-    let socket = tmp.path().join("replacement.sock");
+    let (_socket_dir, socket) = nils_test_support::short_socket_path("replacement.sock");
     record.runtime = Some(crate::RuntimeInfo {
         kind: codex_app_server::RUNTIME_KIND.to_string(),
         tmux_session: record.tmux_session.clone(),
@@ -7544,7 +7544,7 @@ fn codex_control_discovery_uses_one_bulk_tmux_snapshot() {
     for (id, tmux_session) in [("first", "hs-first"), ("second", "hs-second")] {
         seed_session(&context.state_dir, id, "codex", tmux_session);
         let mut record = load_session_record(&context, id).unwrap();
-        let socket = tmp.path().join(format!("{id}.sock"));
+        let (_socket_dir, socket) = nils_test_support::short_socket_path(format!("{id}.sock"));
         record.runtime = Some(crate::RuntimeInfo {
             kind: codex_app_server::RUNTIME_KIND.to_string(),
             tmux_session: tmux_session.to_string(),
@@ -10360,7 +10360,7 @@ async fn structured_prompt_control_wait_rechecks_runtime_replacement() {
 #[tokio::test]
 async fn structured_prompt_waits_for_control_startup_before_record_lock() {
     use tokio_tungstenite::tungstenite::Message;
-    let tmp = tempfile::TempDir::new().unwrap();
+    let tmp = tempfile::tempdir_in("/tmp").unwrap();
     let id = "startup-prompt";
     let launch_id = seed_codex_app_server_session(tmp.path(), id);
     let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
@@ -16922,7 +16922,7 @@ async fn incompatible_proxy_input_is_reported_before_auto_resume_mutation() {
         host: None,
     };
     let mut record = test_record("old-proxy", "hs-codex-old-proxy");
-    let socket = tmp.path().join("old-proxy.sock");
+    let (_socket_dir, socket) = nils_test_support::short_socket_path("old-proxy.sock");
     record.runtime = Some(crate::RuntimeInfo {
         kind: codex_app_server::RUNTIME_KIND.to_string(),
         tmux_session: record.tmux_session.clone(),

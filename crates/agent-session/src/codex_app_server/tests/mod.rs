@@ -884,7 +884,8 @@ printf '%s\n' "$@" > "$FAKE_TUI_ARGS"
         let state = tmp.path().join(format!("state-{index}"));
         let id = "configured-session";
         fs::create_dir_all(state.join("sessions").join(id)).unwrap();
-        let socket = tmp.path().join(format!("server-{index}.sock"));
+        let (_socket_dir, socket) =
+            nils_test_support::short_socket_path(format!("server-{index}.sock"));
         let proxy = socket.with_extension("proxy");
         let server_args = state.join("server.args");
         let tui_args = state.join("tui.args");
@@ -1073,8 +1074,8 @@ exit "$FAKE_PROVIDER_EXIT"
     let run_case = |id: &str, status: i32, stderr: &str, descendant: bool, interrupt: bool| {
         let session_dir = state_dir.join("sessions").join(id);
         fs::create_dir_all(&session_dir).unwrap();
-        let socket = tmp.path().join(format!("{id}-app.sock"));
-        let proxy = tmp.path().join(format!("{id}-proxy.sock"));
+        let (_socket_dir, socket) = nils_test_support::short_socket_path(format!("{id}-app.sock"));
+        let (_proxy_dir, proxy) = nils_test_support::short_socket_path(format!("{id}-proxy.sock"));
         let handoff = tmp.path().join(format!("{id}-thread"));
         let attached = tmp.path().join(format!("{id}-attached"));
         let stage = session_dir.join(".startup-stage");
@@ -3001,7 +3002,7 @@ async fn proxy_acknowledges_system_ephemeral_thread_before_forwarding_its_respon
 
 #[tokio::test]
 async fn fresh_thread_binding_precedes_first_turn_authorization() {
-    let tmp = tempfile::TempDir::new().unwrap();
+    let tmp = tempfile::tempdir_in("/tmp").unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -3440,7 +3441,7 @@ async fn worker_failure_finish_waits_for_durable_fail_close() {
 #[tokio::test]
 async fn critical_binding_failure_closes_listener_before_fail_close_retry() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("critical-listener.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("critical-listener.sock");
     let upstream_listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -3875,8 +3876,7 @@ async fn projection_fail_close_stops_after_permanent_state_error() {
 
 #[test]
 fn attached_thread_binding_rejects_a_different_reconnect_thread() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let socket = tmp.path().join("codex.sock");
+    let (_socket_dir, socket) = nils_test_support::short_socket_path("codex.sock");
     let record = record_with_runtime("thread-binding", &socket);
 
     bind_thread(&record, "raw-thread-a").unwrap();
@@ -3897,7 +3897,7 @@ async fn app_server_thread_binding_persists_provider_resume_identity() {
         state_dir: tmp.path().join("state"),
         host: None,
     };
-    let socket = tmp.path().join("codex.sock");
+    let (_socket_dir, socket) = nils_test_support::short_socket_path("codex.sock");
     let record = record_with_runtime("thread-resume-identity", &socket);
     fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
     crate::write_session_record(&context, &record).unwrap();
@@ -3941,7 +3941,7 @@ fn app_server_thread_binding_preserves_matching_resume_provenance() {
         state_dir: tmp.path().join("state"),
         host: None,
     };
-    let socket = tmp.path().join("codex.sock");
+    let (_socket_dir, socket) = nils_test_support::short_socket_path("codex.sock");
     let expected = record_with_runtime("thread-resume-preserved", &socket);
     let mut current = expected.clone();
     current.provider_resume = Some(ProviderResume {
@@ -3976,7 +3976,7 @@ fn app_server_thread_binding_rejects_conflicting_resume_without_marker() {
         state_dir: tmp.path().join("state"),
         host: None,
     };
-    let socket = tmp.path().join("codex.sock");
+    let (_socket_dir, socket) = nils_test_support::short_socket_path("codex.sock");
     let expected = record_with_runtime("thread-resume-conflict", &socket);
     let mut current = expected.clone();
     current.provider_resume = Some(ProviderResume {
@@ -4017,7 +4017,7 @@ fn stale_app_server_runtime_cannot_bind_thread_identity() {
         state_dir: tmp.path().join("state"),
         host: None,
     };
-    let socket = tmp.path().join("codex.sock");
+    let (_socket_dir, socket) = nils_test_support::short_socket_path("codex.sock");
     let expected = record_with_runtime("thread-resume-stale", &socket);
     let mut replacement = expected.clone();
     replacement.runtime.as_mut().expect("runtime").launch_id = "replacement-runtime".to_string();
@@ -4149,7 +4149,7 @@ fn exact_runtime_failure_never_arms_a_sibling_session() {
 #[tokio::test]
 async fn resumed_proxy_binds_exact_identity_before_first_tui_request() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let path = tmp.path().join("resume-bind.sock");
+    let (_socket_dir, path) = nils_test_support::short_socket_path("resume-bind.sock");
     let listener = tokio::net::UnixListener::bind(&path).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -4311,7 +4311,7 @@ fn legacy_proxy_capability_cannot_authorize_conversation_mutation() {
 #[tokio::test]
 async fn rejected_live_thread_and_failed_codex_commit_recover_through_rebind() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let path = tmp.path().join("recovery.sock");
+    let (_socket_dir, path) = nils_test_support::short_socket_path("recovery.sock");
     let listener = tokio::net::UnixListener::bind(&path).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -4428,7 +4428,7 @@ async fn conversation_recovery_probes_only_unambiguous_idle_provider_threads() {
         ),
     ] {
         let tmp = tempfile::TempDir::new().unwrap();
-        let path = tmp.path().join("probe.sock");
+        let (_socket_dir, path) = nils_test_support::short_socket_path("probe.sock");
         let listener = tokio::net::UnixListener::bind(&path).unwrap();
         let context = CliContext {
             state_dir: tmp.path().join("state"),
@@ -4474,7 +4474,7 @@ async fn conversation_recovery_probes_only_unambiguous_idle_provider_threads() {
 #[tokio::test]
 async fn conversation_recovery_refuses_paginated_thread_list() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let path = tmp.path().join("probe-pagination.sock");
+    let (_socket_dir, path) = nils_test_support::short_socket_path("probe-pagination.sock");
     let listener = tokio::net::UnixListener::bind(&path).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -4521,7 +4521,7 @@ async fn conversation_recovery_refuses_paginated_thread_list() {
 #[tokio::test]
 async fn control_reconnect_resumes_the_bound_loaded_thread() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let socket = tmp.path().join("reconnect.sock");
+    let (_socket_dir, socket) = nils_test_support::short_socket_path("reconnect.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -4612,7 +4612,7 @@ async fn control_reconnect_applies_external_auth_before_thread_discovery() {
         "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
         &serde_json::to_string(&vec![broker.to_string_lossy().into_owned()]).unwrap(),
     );
-    let socket_path = tmp.path().join("auth-reconnect.sock");
+    let (_socket_dir, socket_path) = nils_test_support::short_socket_path("auth-reconnect.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -4710,7 +4710,7 @@ async fn proxy_holds_queued_account_turn_until_apply_then_forwards_once() {
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("queued-turn.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("queued-turn.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -4830,7 +4830,7 @@ async fn proxy_holds_account_queue_until_in_flight_turn_start_is_acknowledged() 
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("in-flight-turn.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("in-flight-turn.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -4986,7 +4986,7 @@ async fn proxy_times_out_unanswered_turn_and_releases_account_gate() {
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("unanswered-turn.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("unanswered-turn.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -5063,7 +5063,7 @@ async fn proxy_rejects_failed_account_apply_without_upstream_forwarding() {
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("failed-turn.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("failed-turn.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -5143,7 +5143,7 @@ async fn proxy_rejects_runtime_replacement_while_account_apply_is_pending() {
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("replaced-turn.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("replaced-turn.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -5265,7 +5265,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         ])
         .unwrap(),
     );
-    let socket_path = tmp.path().join("apply-next.sock");
+    let (_socket_dir, socket_path) = nils_test_support::short_socket_path("apply-next.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -5568,7 +5568,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
 #[tokio::test]
 async fn submit_prompt_rejects_response_without_acknowledged_turn_id() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let socket_path = tmp.path().join("missing-turn-id.sock");
+    let (_socket_dir, socket_path) = nils_test_support::short_socket_path("missing-turn-id.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -5645,7 +5645,7 @@ async fn failed_reconnect_waits_for_explicit_rebind_before_thread_discovery() {
         "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
         &serde_json::to_string(&vec![broker.to_string_lossy().into_owned()]).unwrap(),
     );
-    let socket_path = tmp.path().join("failed-reconnect.sock");
+    let (_socket_dir, socket_path) = nils_test_support::short_socket_path("failed-reconnect.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -5739,7 +5739,7 @@ async fn tui_proxy_accepts_the_observed_codex_0_145_frame_size() {
     const OBSERVED_CODEX_0_145_FRAME_BYTES: usize = 4_260_254;
 
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("large-frame.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("large-frame.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -5795,7 +5795,7 @@ async fn tui_proxy_accepts_the_observed_codex_0_145_frame_size() {
 #[tokio::test]
 async fn tui_proxy_projects_exact_failure_from_the_tui_connection_without_content() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("upstream.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("upstream.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -5907,7 +5907,7 @@ async fn tui_proxy_projects_exact_failure_from_the_tui_connection_without_conten
 #[tokio::test]
 async fn tui_turn_start_cancels_a_scheduled_resume_before_forwarding() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("manual.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("manual.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -6002,7 +6002,7 @@ async fn managed_account_proxy_authorizes_tui_turn_without_broker_environment() 
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("managed-manual.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("managed-manual.sock");
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -6093,7 +6093,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         ])
         .unwrap(),
     );
-    let socket_path = tmp.path().join("automatic-failover.sock");
+    let (_dir, socket_path) = nils_test_support::short_socket_path("automatic-failover.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -6224,7 +6224,7 @@ async fn managed_account_proxy_authorizes_raw_tui_turn_without_broker_environmen
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("managed-raw.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("managed-raw.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -6302,7 +6302,7 @@ async fn managed_account_proxy_thread_start_does_not_persist_turn_fence() {
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("managed-thread-only.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("managed-thread-only.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -6405,7 +6405,7 @@ async fn managed_account_proxy_thread_start_does_not_persist_turn_fence() {
 #[tokio::test]
 async fn transient_busy_manual_cancellation_waits_and_forwards_turn() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("transient-busy.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("transient-busy.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -6491,7 +6491,7 @@ async fn manual_input_section_bypasses_reentrant_lock_until_sender_cleanup() {
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("owned-input.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("owned-input.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -6625,7 +6625,7 @@ async fn manual_input_section_bypasses_reentrant_lock_until_sender_cleanup() {
 
 #[test]
 fn local_input_ownership_rejects_expiry_and_runtime_replacement() {
-    let tmp = tempfile::TempDir::new().unwrap();
+    let tmp = tempfile::tempdir_in("/tmp").unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -6729,7 +6729,7 @@ fn manual_input_submission_detection_excludes_ordinary_text_and_keys() {
 
 #[test]
 fn manual_input_section_requires_live_proxy_capability_and_cleans_up() {
-    let tmp = tempfile::TempDir::new().unwrap();
+    let tmp = tempfile::tempdir_in("/tmp").unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -6755,7 +6755,7 @@ fn manual_input_section_requires_live_proxy_capability_and_cleans_up() {
 
 #[test]
 fn manual_input_gate_finishes_before_lifecycle_unlock_and_marker_cleanup() {
-    let tmp = tempfile::TempDir::new().unwrap();
+    let tmp = tempfile::tempdir_in("/tmp").unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -6801,7 +6801,7 @@ fn manual_input_gate_finishes_before_lifecycle_unlock_and_marker_cleanup() {
 
 #[test]
 fn manual_input_gate_timeout_releases_lifecycle_and_invalidates_marker() {
-    let tmp = tempfile::TempDir::new().unwrap();
+    let tmp = tempfile::tempdir_in("/tmp").unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -6836,7 +6836,7 @@ fn manual_input_gate_timeout_releases_lifecycle_and_invalidates_marker() {
 
 #[test]
 fn delayed_proxy_claim_acknowledges_before_sender_retires_section() {
-    let tmp = tempfile::TempDir::new().unwrap();
+    let tmp = tempfile::tempdir_in("/tmp").unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -6875,7 +6875,7 @@ fn delayed_proxy_claim_acknowledges_before_sender_retires_section() {
 
 #[test]
 fn stale_manual_marker_without_owner_lease_cannot_authorize_busy() {
-    let tmp = tempfile::TempDir::new().unwrap();
+    let tmp = tempfile::tempdir_in("/tmp").unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -6917,7 +6917,7 @@ async fn managed_account_fresh_proxy_authorizes_first_turn_without_broker_enviro
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("fresh-start.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("fresh-start.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -7271,7 +7271,7 @@ fn fresh_bootstrap_rejects_pre_armed_auto_resume() {
 #[test]
 fn fresh_bootstrap_first_turn_must_match_the_successful_thread_start() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let socket = tmp.path().join("fresh-bound.sock");
+    let (_socket_dir, socket) = nils_test_support::short_socket_path("fresh-bound.sock");
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -7321,7 +7321,7 @@ fn closed_fresh_bootstrap_skips_live_filesystem_validation() {
 #[tokio::test]
 async fn marker_live_lock_free_turn_attempts_normal_cancellation_before_bypass() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let socket = tmp.path().join("teardown-window.sock");
+    let (_socket_dir, socket) = nils_test_support::short_socket_path("teardown-window.sock");
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -7445,7 +7445,7 @@ async fn broker_bound_tui_rejects_account_auth_mutations() {
         "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
         r#"["/configured/broker"]"#,
     );
-    let socket = tmp.path().join("broker-bound-auth.sock");
+    let (_socket_dir, socket) = nils_test_support::short_socket_path("broker-bound-auth.sock");
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -7476,7 +7476,7 @@ async fn broker_bound_tui_rejects_account_auth_mutations() {
 #[tokio::test]
 async fn replacement_lock_cannot_reuse_marker_during_gated_teardown() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let socket = tmp.path().join("gated-teardown.sock");
+    let (_socket_dir, socket) = nils_test_support::short_socket_path("gated-teardown.sock");
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -7591,7 +7591,7 @@ async fn stalled_upstream_write_times_out_and_releases_bootstrap_gate() {
 #[tokio::test]
 async fn fresh_tui_first_turn_does_not_bypass_after_create_marker_is_removed() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("fresh-expired.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("fresh-expired.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -7674,7 +7674,7 @@ async fn fresh_tui_first_turn_does_not_bypass_after_create_marker_is_removed() {
 #[tokio::test]
 async fn fresh_tui_does_not_bypass_when_auto_resume_state_is_unavailable() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("fresh-unavailable.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("fresh-unavailable.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -7734,7 +7734,7 @@ async fn fresh_tui_does_not_bypass_when_auto_resume_state_is_unavailable() {
 #[tokio::test]
 async fn fresh_tui_first_turn_requires_a_successful_bound_thread_start() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("fresh-correlation.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("fresh-correlation.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -7818,7 +7818,7 @@ async fn fresh_tui_first_turn_requires_a_successful_bound_thread_start() {
 #[tokio::test]
 async fn proxy_observer_failure_does_not_interrupt_later_tui_frames() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("observer.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("observer.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -7912,7 +7912,7 @@ async fn proxy_observer_failure_does_not_interrupt_later_tui_frames() {
 #[tokio::test]
 async fn proxy_transport_loss_durably_fails_closed() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("transport-loss.sock");
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("transport-loss.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -7963,7 +7963,7 @@ async fn proxy_transport_loss_durably_fails_closed() {
 #[tokio::test]
 async fn unix_control_recovers_raw_active_turn_after_reconnect_before_steering() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let socket = tmp.path().join("reconnect.sock");
+    let (_socket_dir, socket) = nils_test_support::short_socket_path("reconnect.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),
@@ -8068,7 +8068,7 @@ async fn unix_control_projects_live_failure_and_acknowledges_exact_turn_without_
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::TempDir::new().unwrap();
-    let socket = tmp.path().join("codex.sock");
+    let (_socket_dir, socket) = nils_test_support::short_socket_path("codex.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let context = CliContext {
         state_dir: tmp.path().join("state"),

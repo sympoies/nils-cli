@@ -180,6 +180,7 @@ fn runtime_facts_match_claude_environment_in_existing_tmux_server() {
     struct Server {
         tmux: std::path::PathBuf,
         socket: std::path::PathBuf,
+        _socket_dir: nils_test_support::tempdir::ScopedTempDir,
     }
     impl Drop for Server {
         fn drop(&mut self) {
@@ -190,9 +191,11 @@ fn runtime_facts_match_claude_environment_in_existing_tmux_server() {
                 .output();
         }
     }
+    let (socket_dir, socket) = nils_test_support::short_socket_path("tmux.sock");
     let server = Server {
         tmux: tmux.clone(),
-        socket: tmp.path().join("tmux.sock"),
+        socket,
+        _socket_dir: socket_dir,
     };
     assert!(
         Command::new(&tmux)

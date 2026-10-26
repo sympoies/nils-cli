@@ -110,7 +110,7 @@ mod tests {
             })
             .unwrap();
             created.release_lifecycle_lock();
-            let socket = tmp.path().join("socket");
+            let (_socket_dir, socket) = nils_test_support::short_socket_path("quiet-probe.sock");
             let runtime = created.record.runtime.as_mut().unwrap();
             runtime.kind = codex_app_server::RUNTIME_KIND.into();
             runtime.extra.insert(

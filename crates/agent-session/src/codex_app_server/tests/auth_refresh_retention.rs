@@ -15,11 +15,18 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
         &serde_json::to_string(&vec![broker]).unwrap(),
     );
-    let (context, record) = recovery_fixture(&tmp);
+    let (context, mut record) = recovery_fixture(&tmp);
     bind_thread(&record, "fixture-thread").unwrap();
+    let (_socket_dir, socket_file) = nils_test_support::short_socket_path("server.sock");
+    record
+        .runtime
+        .as_mut()
+        .unwrap()
+        .extra
+        .insert(SOCKET_KEY.to_string(), json!(display_path(&socket_file)));
+    crate::write_session_record(&context, &record).unwrap();
     let path = crate::session_dir(&context, &record.id).join("codex-auth-recovery.json");
-    let socket_path = socket_path(&record).unwrap();
-    let listener = tokio::net::UnixListener::bind(socket_path).unwrap();
+    let listener = tokio::net::UnixListener::bind(socket_path(&record).unwrap()).unwrap();
     for number in 1..=65 {
         // Advance receipt ages without sleeping; each refresh is outside the
         // retry window, as it would be in a long-lived runtime.

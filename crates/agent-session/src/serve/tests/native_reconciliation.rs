@@ -12,10 +12,11 @@ struct Provider {
     history_kind: Arc<AtomicUsize>,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
+    _socket_dir: nils_test_support::tempdir::ScopedTempDir,
 }
 
 impl Provider {
-    fn start(path: &Path) -> Self {
+    fn start(path: &Path, socket_dir: nils_test_support::tempdir::ScopedTempDir) -> Self {
         let listener = std::os::unix::net::UnixListener::bind(path).unwrap();
         listener.set_nonblocking(true).unwrap();
         let busy = Arc::new(AtomicBool::new(true));
@@ -79,6 +80,7 @@ impl Provider {
             history_kind,
             stop: Some(stop),
             thread: Some(thread),
+            _socket_dir: socket_dir,
         }
     }
 }
@@ -109,6 +111,16 @@ fn native_fixture(root: &Path) -> (Arc<ServeState>, String, fs::File, Provider) 
         host: None,
     };
     let mut record = load_session_record(&context, "native-receipt").unwrap();
+    let (socket_dir, socket_path) = nils_test_support::short_socket_path("native-receipt.sock");
+    let runtime_extra = &mut record.runtime.as_mut().unwrap().extra;
+    runtime_extra.insert(
+        codex_app_server::SOCKET_KEY.to_string(),
+        json!(crate::display_path(&socket_path)),
+    );
+    runtime_extra.insert(
+        codex_app_server::PROXY_KEY.to_string(),
+        json!(crate::display_path(&socket_path.with_extension("proxy"))),
+    );
     record.provider_resume = Some(
         serde_json::from_value(json!({
             "provider":"codex", "session_id":"receipt-thread",
@@ -145,7 +157,7 @@ fn native_fixture(root: &Path) -> (Arc<ServeState>, String, fs::File, Provider) 
     let lease = fs::File::open(capability).unwrap();
     // SAFETY: the fixture owns this descriptor throughout the modeled proxy lifetime.
     assert_eq!(unsafe { libc::flock(lease.as_raw_fd(), libc::LOCK_SH) }, 0);
-    let provider = Provider::start(&root.join("native-receipt.sock"));
+    let provider = Provider::start(&socket_path, socket_dir);
     let tmux = guard_tmux(root, "native-receipt");
     let script = fs::read_to_string(&tmux).unwrap().replacen(
         "print('────────────────────────────\\n❯ ' + text + '\\n────────────────────────────')",

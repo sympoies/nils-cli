@@ -219,6 +219,8 @@ mod codex_idle_notification_tests {
             let tmp = tempfile::TempDir::new().expect("tempdir");
             let id = format!("quiet-native-{probe_result}");
             let launch_id = seed_codex_app_server_session(tmp.path(), &id);
+            let (_socket_dir, socket_path) =
+                nils_test_support::short_socket_path(format!("{id}.sock"));
             let mut record = load_session_record(
                 &CliContext {
                     state_dir: tmp.path().to_path_buf(),
@@ -228,6 +230,15 @@ mod codex_idle_notification_tests {
             )
             .expect("seeded Codex session");
             let provider_id = format!("provider-{probe_result}");
+            let runtime_extra = &mut record.runtime.as_mut().unwrap().extra;
+            runtime_extra.insert(
+                crate::codex_app_server::SOCKET_KEY.to_string(),
+                json!(crate::display_path(&socket_path)),
+            );
+            runtime_extra.insert(
+                crate::codex_app_server::PROXY_KEY.to_string(),
+                json!(crate::display_path(&socket_path.with_extension("proxy"))),
+            );
             record.provider_resume = Some(crate::ProviderResume {
                 provider: "codex".into(),
                 session_id: provider_id.clone(),
@@ -288,7 +299,6 @@ mod codex_idle_notification_tests {
             )
             .expect("arm auto-resume");
 
-            let socket_path = tmp.path().join(format!("{id}.sock"));
             let listener = tokio::net::UnixListener::bind(&socket_path).expect("probe socket");
             let unavailable = probe_result == "unavailable";
             let probe = tokio::spawn(async move {
