@@ -568,8 +568,7 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/tests/file-size-audit.test.sh`
 - `bash scripts/ci/tests/docs-prose-audit.test.sh`
 - `bash scripts/ci/tests/prepare-private-release-workflow.test.sh`
-- `bash scripts/ci/skill-shell-suites.sh` (runs every
-  `.agents/skills/*/tests/test_*.sh` smoke suite)
+- `bash scripts/ci/tests/prepare-release-bump.test.sh`
 - `bash scripts/ci/test-stale-audit.sh --strict`
 - `python3 scripts/ci/assert-import-audit.py`
 - `bash scripts/ci/file-size-audit.sh --strict` (see the file-size ratchet below)
@@ -794,17 +793,45 @@ Releases run through the private sympoies-infra release broker: tagging, the
 GitHub Release, the tap update, and fleet convergence are not done by hand from
 this repository. Use the `project-release-nils-cli` skill in
 `serenvia/sympoies-infra` to release. The repo-owned
-`.agents/skills/project-bump-version-tag-release` skill documents only the
-version-bump transform the broker consumes.
+`scripts/ci/prepare-release-bump.sh` implements the canonical version-bump
+transform the broker consumes.
 
 `.github/workflows/prepare-private-release.yml` is a narrower preparation-only
-entrypoint for the private infrastructure orchestrator. It runs the same
-canonical version preparation and locked workspace check on a GitHub-hosted
-runner, and uploads only a patch plus a checksum-bound
-manifest. It has read-only repository permissions, accepts no credentials, and
+entrypoint for the private infrastructure orchestrator. It directly calls
+`scripts/ci/prepare-release-bump.sh` for canonical version preparation and a
+locked workspace check on a GitHub-hosted runner, and uploads only a patch plus
+a checksum-bound manifest. It has read-only repository permissions, accepts no credentials, and
 does not create a branch, PR, tag, or release. The private orchestrator must
 bind the artifact to the workflow run's immutable `headSha`, independently
 validate the patch semantics, and own all delivery mutations.
+
+The preparation helper bumps workspace and crate manifest versions and internal
+path dependency pins, updates README release tag examples, refreshes
+`Cargo.lock` with `cargo update --workspace` (preserving registry dependency
+pins), and regenerates the third-party artifacts. By default it runs
+`cargo check --workspace --locked`, stages only release-managed files, and
+creates one local commit, `chore(release): bump cli versions to X.Y.Z`.
+It never tags, pushes, publishes, or installs.
+
+`--version X.Y.Z` is required and also accepts a leading `v`. `--full-checks`
+opts into the full audit stack; `--skip-checks` is a deprecated alias for the
+default locked check. `--skip-readme` omits the README update. `--allow-dirty`
+permits changes only to release-managed paths. `--prepare-only` applies the
+same transform and exits before validation, staging, and commit, so contract
+tests can inspect the resulting release tree.
+
+A canonical version-only release PR can take the reduced release lane only
+when the exact-base detector proves the canonical transform; otherwise it
+falls back to full PR CI. Release queue groups retain full validation.
+
+When changing preparation, run the retained helper suite and release contracts:
+
+```bash
+bash scripts/ci/tests/prepare-release-bump.test.sh
+bash scripts/ci/tests/prepare-private-release-workflow.test.sh
+bash scripts/ci/tests/release-workflow-contract.test.sh
+bash scripts/ci/tests/detect-release-only.test.sh
+```
 
 ### 9.3 crates.io publishing
 

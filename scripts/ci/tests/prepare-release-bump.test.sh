@@ -2,8 +2,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-skill_root="$(cd "${script_dir}/.." && pwd)"
-entrypoint="${skill_root}/scripts/project-bump-version-tag-release.sh"
+entrypoint="${script_dir}/../prepare-release-bump.sh"
 
 fail() {
   echo "error: $*" >&2
@@ -400,9 +399,6 @@ test_usage_documents_preparation_only() {
 }
 
 run_all() {
-  if [[ ! -f "${skill_root}/SKILL.md" ]]; then
-    fail "missing SKILL.md"
-  fi
   if [[ ! -f "$entrypoint" ]]; then
     fail "missing entrypoint script"
   fi
@@ -447,7 +443,7 @@ run_all() {
   if [[ "$failed" -ne 0 ]]; then
     exit 1
   fi
-  echo "ok: project skill smoke checks passed"
+  echo "ok: release preparation checks passed"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

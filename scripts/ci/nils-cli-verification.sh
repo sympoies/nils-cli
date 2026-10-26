@@ -34,7 +34,7 @@ Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/tests/file-size-audit.test.sh
   - bash scripts/ci/tests/docs-prose-audit.test.sh
   - bash scripts/ci/tests/prepare-private-release-workflow.test.sh
-  - bash scripts/ci/skill-shell-suites.sh
+  - bash scripts/ci/tests/prepare-release-bump.test.sh
   - bash scripts/ci/test-stale-audit.sh --strict
   - bash scripts/ci/file-size-audit.sh --strict
   - bash scripts/ci/docs-prose-audit.sh --strict
@@ -234,7 +234,7 @@ run bash scripts/ci/tests/file-size-audit.test.sh
 run bash scripts/ci/tests/docs-prose-audit.test.sh
 run bash scripts/ci/tests/prepare-private-release-workflow.test.sh
 run python3 scripts/ci/tests/devlog-policy.test.py
-run bash scripts/ci/skill-shell-suites.sh
+run bash scripts/ci/tests/prepare-release-bump.test.sh
 run_os_independent_audit bash scripts/ci/test-stale-audit.sh --strict
 run_os_independent_audit bash scripts/ci/file-size-audit.sh --strict
 run_os_independent_audit bash scripts/ci/docs-prose-audit.sh --strict

@@ -208,22 +208,21 @@ assert_contains docs/specs/workspace-ci-entrypoint-inventory-v1.md \
 assert_contains docs/specs/workspace-ci-entrypoint-inventory-v1.md \
   "scripts/ci/release-only-checks.sh" \
   "CI inventory owns the reduced release checker"
-assert_contains .agents/skills/project-bump-version-tag-release/SKILL.md \
+assert_contains docs/runbooks/workspace-maintenance-reference.md \
   "--prepare-only" \
-  "release skill documents the internal producer contract mode"
-assert_contains .agents/skills/project-bump-version-tag-release/SKILL.md \
+  "release runbook documents the internal producer contract mode"
+assert_contains docs/runbooks/workspace-maintenance-reference.md \
   "falls back to full PR CI" \
-  "release skill documents the fail-closed full-CI fallback"
-assert_contains .agents/skills/project-bump-version-tag-release/SKILL.md \
+  "release runbook documents the fail-closed full-CI fallback"
+assert_contains docs/runbooks/workspace-maintenance-reference.md \
   "cargo update --workspace" \
-  "release skill documents the implemented lockfile refresh command"
+  "release runbook documents the implemented lockfile refresh command"
 
-# The bump script and its /release wrapper are preparation-only: the release
-# broker owns tagging, publishing, the tap, and fleet convergence, so neither
-# file may carry a path that can reach a remote or a release.
+# The bump helper is preparation-only: the release broker owns tagging,
+# publishing, the tap, and fleet convergence, so the helper may not carry
+# a path that can reach a remote or a release.
 for prepare_only_file in \
-  .agents/skills/project-bump-version-tag-release/scripts/project-bump-version-tag-release.sh \
-  .agents/scripts/release.sh; do
+  scripts/ci/prepare-release-bump.sh; do
   # README tag-example patterns legitimately mention `git tag -a v` and
   # `git push origin v`, so match the mutating invocations, not the words.
   for forbidden in 'tag -a "$tag"' 'git push -u' 'git push origin HEAD' 'push origin "$tag"' 'forge-cli' 'homebrew' 'brew ' 'gh run' 'gh api' \
