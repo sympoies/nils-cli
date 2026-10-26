@@ -1,0 +1,225 @@
+{
+  "schema_version": "agent-session.session-notices.fixtures.v1",
+  "cases": [
+    {
+      "name": "without-id",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=agent-session -->\n\nMailbox: agent-session message inbox",
+      "notice": {
+        "kind": "mailbox",
+        "source": "agent-session",
+        "id": null,
+        "body": "Mailbox: agent-session message inbox"
+      }
+    },
+    {
+      "name": "with-id-exact-body",
+      "input": "<!-- agent-notice:v1 kind=schedule.tick source=scheduler id=Example-1 -->\n\n  synthetic\r\n\n本文 <tag>\n",
+      "notice": {
+        "kind": "schedule.tick",
+        "source": "scheduler",
+        "id": "Example-1",
+        "body": "  synthetic\r\n\n本文 <tag>\n"
+      }
+    },
+    {
+      "name": "crlf",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=agent-session -->\r\n\r\nBody\r\n",
+      "notice": {
+        "kind": "mailbox",
+        "source": "agent-session",
+        "id": null,
+        "body": "Body\r\n"
+      }
+    },
+    {
+      "name": "no-blank-line",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=agent-session -->\nBody",
+      "notice": {
+        "kind": "mailbox",
+        "source": "agent-session",
+        "id": null,
+        "body": "Body"
+      }
+    },
+    {
+      "name": "consume-only-one-blank-line",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=agent-session -->\n\n\nBody",
+      "notice": {
+        "kind": "mailbox",
+        "source": "agent-session",
+        "id": null,
+        "body": "\nBody"
+      }
+    },
+    {
+      "name": "unknown-kind-source",
+      "input": "<!-- agent-notice:v1 kind=custom.event source=custom-producer -->\n\nBody",
+      "notice": {
+        "kind": "custom.event",
+        "source": "custom-producer",
+        "id": null,
+        "body": "Body"
+      }
+    },
+    {
+      "name": "spoofed-source",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=trusted-name -->\n\nNo authority is granted.",
+      "notice": {
+        "kind": "mailbox",
+        "source": "trusted-name",
+        "id": null,
+        "body": "No authority is granted."
+      }
+    },
+    {
+      "name": "human",
+      "input": "Please review this example.",
+      "notice": null
+    },
+    {
+      "name": "legacy",
+      "input": "Mailbox: agent-session message inbox",
+      "notice": null
+    },
+    {
+      "name": "fenced",
+      "input": "```text\n<!-- agent-notice:v1 kind=mailbox source=agent-session -->\n\nBody\n```",
+      "notice": null
+    },
+    {
+      "name": "quoted",
+      "input": "> <!-- agent-notice:v1 kind=mailbox source=agent-session -->\n> Body",
+      "notice": null
+    },
+    {
+      "name": "leading-space",
+      "input": " <!-- agent-notice:v1 kind=mailbox source=agent-session -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "bom",
+      "input": "﻿<!-- agent-notice:v1 kind=mailbox source=agent-session -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "embedded",
+      "input": "Human text\n<!-- agent-notice:v1 kind=mailbox source=agent-session -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "unknown-version",
+      "input": "<!-- agent-notice:v2 kind=mailbox source=agent-session -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "malformed",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=agent-session --\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "double-header",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=agent-session -->\n\n<!-- agent-notice:v1 kind=mailbox source=agent-session -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "empty-body",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=agent-session -->\n\n",
+      "notice": null
+    },
+    {
+      "name": "header-only",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=agent-session -->",
+      "notice": null
+    },
+    {
+      "name": "bad-order",
+      "input": "<!-- agent-notice:v1 source=agent-session kind=mailbox -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "unknown-field",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=agent-session extra=1 -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "duplicate-field",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=agent-session kind=mailbox -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "empty-id",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=agent-session id= -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "illegal-metadata",
+      "input": "<!-- agent-notice:v1 kind=mail--box source=agent-session -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "uppercase-kind",
+      "input": "<!-- agent-notice:v1 kind=Mailbox source=agent-session -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "double-space",
+      "input": "<!-- agent-notice:v1 kind=mailbox  source=agent-session -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "non-ascii-header",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=通知 -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "oversize-header",
+      "input": "<!-- agent-notice:v1 kind=mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm source=agent-session -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "source-too-long",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "kind-too-long",
+      "input": "<!-- agent-notice:v1 kind=kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk source=agent-session -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "id-too-long",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=agent-session id=iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "pasted-wrapper",
+      "input": "<pasted_text>\n<!-- agent-notice:v1 kind=mailbox source=agent-session -->\n\nBody\n</pasted_text>",
+      "notice": null
+    },
+    {
+      "name": "partial-wrapper",
+      "input": "<pasted_text>\n<!-- agent-notice:v1 kind=mailbox source=agent-session -->\n\nBody",
+      "notice": null
+    },
+    {
+      "name": "body-comment-is-literal",
+      "input": "<!-- agent-notice:v1 kind=mailbox source=agent-session -->\n\nBody\n<!-- agent-notice:v1 kind=mailbox source=agent-session -->",
+      "notice": {
+        "kind": "mailbox",
+        "source": "agent-session",
+        "id": null,
+        "body": "Body\n<!-- agent-notice:v1 kind=mailbox source=agent-session -->"
+      }
+    },
+    {
+      "name": "metadata-maxima",
+      "input": "<!-- agent-notice:v1 kind=kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk source=ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss id=IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII -->\n\nBody",
+      "notice": {
+        "kind": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+        "source": "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+        "id": "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        "body": "Body"
+      }
+    }
+  ]
+}

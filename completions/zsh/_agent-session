@@ -39,6 +39,9 @@ _arguments "${_arguments_options[@]}" : \
 '--id=[Short explicit session id. Usually auto-generated]:ID:_default' \
 '--prompt=[Prompt text. Prefer --prompt-file or --prompt-stdin for long prompts]:TEXT:_default' \
 '--prompt-file=[Prompt file path, or '\''-'\'' to read stdin]:PATH:_files' \
+'--notice-kind=[Mark this initial prompt as a notice (requires the notice writer rollout gate)]:NOTICE_KIND:_default' \
+'--notice-source=[]:NOTICE_SOURCE:_default' \
+'--notice-id=[]:NOTICE_ID:_default' \
 '--tmux-bin=[tmux binary override]:PATH:_files' \
 '--agent-bin=[Agent binary override]:PATH:_files' \
 '*--agent-arg=[Extra argument passed to the underlying agent command]:ARG:_default' \
@@ -196,6 +199,28 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ':id -- Session id:_default' \
+&& ret=0
+;;
+(notice)
+_arguments "${_arguments_options[@]}" : \
+'--kind=[Generic event kind, for example schedule.tick]:KIND:_default' \
+'--source=[Self-asserted producer label; never a verified identity]:SOURCE:_default' \
+'--id=[Display identifier; independent of the transport idempotency key]:ID:_default' \
+'(--text-stdin)--body-file=[UTF-8 body file; bytes are retained exactly]:BODY_FILE:_files' \
+'--expect-runtime=[Require the active runtime launch id to match before delivery]:INCARNATION:_default' \
+'--expect-provider-session=[Require the persisted provider session id to match before delivery]:SESSION:_default' \
+'--idempotency-key=[Persist an at-most-once delivery claim, retained on uncertain outcomes]:KEY:_default' \
+'--tmux-bin=[]:TMUX_BIN:_files' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'--text-stdin[]' \
+'--require-idle[Require provider-reported idle activity and no pending provider event]' \
+'--require-empty-composer[Refuse unless the provider composer is observably empty]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':session -- Session id or unambiguous prefix:_default' \
 && ret=0
 ;;
 (glance)
@@ -1285,6 +1310,7 @@ _agent-session_commands() {
 'logs:Print captured tmux pane output or a one-shot run log' \
 'diagnose:Print the redacted control-plane diagnostic bundle' \
 'send:Send input (literal text and/or special keys) to a live session' \
+'notice:Submit a display-only notice through guarded native delivery' \
 'glance:Capture the recent pane tail plus live status as a dashboard glance' \
 'resume:Recreate a missing tmux runtime from exact provider resume metadata' \
 'restart:Relaunch a running session in place on the installed provider binary' \
@@ -1614,6 +1640,11 @@ _agent-session__subcmd__metadata__subcmd__attach_commands() {
 _agent-session__subcmd__metadata__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session metadata show commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__notice_commands] )) ||
+_agent-session__subcmd__notice_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session notice commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__readiness_commands] )) ||
 _agent-session__subcmd__readiness_commands() {

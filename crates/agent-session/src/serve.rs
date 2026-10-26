@@ -6619,11 +6619,7 @@ async fn create_handler_inner(
         None
     };
     let prompt = body.prompt;
-    let deferred_prompt = if selected_account.is_some() {
-        prompt.clone()
-    } else {
-        None
-    };
+    let deferred_prompt = selected_account.as_ref().and_then(|_| prompt.clone());
     let args = cli::StartArgs {
         workspace: None,
         title_mode: match body.title_mode {
@@ -6661,6 +6657,7 @@ async fn create_handler_inner(
         },
         prompt_file: None,
         prompt_stdin: false,
+        notice: Default::default(),
         tmux_bin: Some(state.tmux_bin.clone()),
         agent_bin: launch_profile
             .as_ref()

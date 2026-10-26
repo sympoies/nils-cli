@@ -88,6 +88,8 @@ pub enum Command {
     Diagnose(DiagnoseArgs),
     /// Send input (literal text and/or special keys) to a live session.
     Send(SendArgs),
+    /// Submit a display-only notice through guarded native delivery.
+    Notice(crate::notice::NoticeArgs),
     /// Capture the recent pane tail plus live status as a dashboard glance.
     Glance(GlanceArgs),
     /// Recreate a missing tmux runtime from exact provider resume metadata.
@@ -257,6 +259,9 @@ pub struct StartArgs {
     /// Read prompt from stdin.
     #[arg(long)]
     pub prompt_stdin: bool,
+
+    #[command(flatten)]
+    pub notice: crate::notice::StartNoticeArgs,
 
     /// tmux binary override.
     #[arg(long = "tmux-bin", value_name = "PATH", value_hint = ValueHint::FilePath)]
