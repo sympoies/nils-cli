@@ -151,32 +151,27 @@ impl Admission<'_> {
         pasted_text: Option<&str>,
         stage: &str,
     ) -> Result<Option<String>, CliError> {
-        let retry_until = if stage == "submit" && pasted_text.is_some() {
-            (Instant::now() + POST_PASTE_OBSERVATION_RETRY_WINDOW).min(self.deadline)
-        } else {
-            Instant::now()
-        };
-        let mut first_observation = true;
+        let retryable = stage == "submit" && pasted_text.is_some();
+        let mut retry_until = None;
         loop {
-            if !first_observation {
+            if retry_until.is_some() {
                 self.identity(stage)?;
             }
             let timeout = self.timeout(stage)?;
-            let timeout = if pasted_text.is_some() && stage == "submit" {
-                timeout.min(retry_until.saturating_duration_since(Instant::now()))
-            } else {
-                timeout
-            };
+            let timeout = retry_until.map_or(timeout, |until: Instant| {
+                timeout.min(until.saturating_duration_since(Instant::now()))
+            });
             let input = capture_styled(self.tmux_bin, target, timeout)
                 .and_then(|pane| self.pasted_composer_input(&pane, pasted_text, stage));
-            if input.is_some()
-                || pasted_text.is_none()
-                || stage != "submit"
-                || Instant::now() >= retry_until
-            {
+            if input.is_some() || !retryable {
                 return Ok(input);
             }
-            first_observation = false;
+            let retry_until = *retry_until.get_or_insert_with(|| {
+                (Instant::now() + POST_PASTE_OBSERVATION_RETRY_WINDOW).min(self.deadline)
+            });
+            if Instant::now() >= retry_until {
+                return Ok(None);
+            }
             thread::sleep(
                 POST_PASTE_OBSERVATION_RETRY_INTERVAL
                     .min(retry_until.saturating_duration_since(Instant::now())),
