@@ -108,8 +108,10 @@ record, runtime, prompt or lifecycle/Console operation, read prompt files or
 materialize credentials. It checks exact conversation history under the
 original broker account's config root, the requested cwd, every matching managed
 source's account and stopped runtime, ownership, pending effects and auth
-quarantine. An omitted account resolves from the unique original binding;
-`--account` cannot rebind a conversation to another account. Missing or ambiguous
+quarantine.
+
+An omitted account resolves from the unique original binding; `--account`
+cannot rebind a conversation to another account. Missing or ambiguous
 account/ownership evidence refuses; the host login is never a fallback. Deleted
 sources with only standalone history currently refuse even with an explicit
 account; [#3012](https://github.com/sympoies/nils-cli/issues/3012) tracks the
