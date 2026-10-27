@@ -1,5 +1,5 @@
 //! A known paste may wrap visually without changing its logical input.
-use super::{Fixture, composer, details, guarded_text, live, submissions};
+use super::{Fixture, composer, details, details_any, guarded_text, live, submissions};
 use pretty_assertions::assert_eq;
 
 fn wrapped_fixture(width: usize, draft: &str) -> (Fixture, String) {
@@ -72,7 +72,14 @@ fn wrapped_draft_collision_never_submits_at_narrow_widths() {
         let output = guarded_text(&fixture, &text);
         assert_eq!(output.code, 1, "width {width}: {}", output.stdout_text());
         assert_eq!(
-            details(&output, "send-composer-unobservable")["submitted"],
+            details_any(
+                &output,
+                &[
+                    "send-composer-mismatch",
+                    "send-composer-unobservable",
+                    "send-guard-observation-timeout",
+                ],
+            )["submitted"],
             false
         );
         assert!(submissions(&fixture).is_empty());
@@ -111,6 +118,86 @@ fn wrapped_paste_with_unproven_logical_start_never_submits() {
 }
 
 #[test]
+fn slow_wrapped_composer_proof_stops_at_retry_deadline() {
+    let (fixture, text) = wrapped_fixture(44, "");
+    std::fs::write(fixture.root().join("fail-post-paste-capture-once"), "3").unwrap();
+    std::fs::write(fixture.root().join("slow-right-observation-ms"), "300").unwrap();
+
+    let output = guarded_text(&fixture, &text);
+    assert_eq!(output.code, 1, "{}", output.stdout_text());
+    let receipt = output.stdout_json();
+    assert!(
+        matches!(
+            receipt["error"]["code"].as_str(),
+            Some("send-composer-unobservable" | "send-guard-observation-timeout")
+        ),
+        "{receipt}"
+    );
+    assert_eq!(receipt["error"]["details"]["stage"], "submit");
+    assert_eq!(receipt["error"]["details"]["pasted"], true);
+    assert_eq!(receipt["error"]["details"]["submitted"], false);
+    assert_eq!(receipt["error"]["details"]["cleared"], true, "{receipt}");
+    assert_eq!(receipt["error"]["details"]["remaining_input"], "empty");
+    assert_eq!(composer(&fixture), "");
+    assert!(submissions(&fixture).is_empty());
+    assert!(
+        fixture
+            .calls()
+            .iter()
+            .all(|call| call.last().is_none_or(|key| key != "Enter"))
+    );
+    let retry = fixture.send(&["--idempotency-key", "live-text"]);
+    details(&retry, "send-idempotency-key-used");
+    assert!(submissions(&fixture).is_empty());
+}
+
+#[test]
+fn readable_draft_mismatch_never_retries_into_submit() {
+    let (fixture, text) = wrapped_fixture(80, "");
+    let (drafted, _) = wrapped_fixture(80, " user draft");
+    let mismatch: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(drafted.root().join("captured-layout")).unwrap())
+            .unwrap();
+    let exact: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixture.root().join("captured-layout")).unwrap())
+            .unwrap();
+    std::fs::write(
+        fixture.root().join("mismatch-layout"),
+        serde_json::to_vec(&mismatch).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.root().join("exact-layout"),
+        serde_json::to_vec(&exact).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        fixture
+            .root()
+            .join("composer-mismatch-disappears-before-retry"),
+        "",
+    )
+    .unwrap();
+
+    let output = guarded_text(&fixture, &text);
+    let receipt = details(&output, "send-composer-mismatch");
+    assert_eq!(receipt["submitted"], false);
+    assert_eq!(receipt["cleared"], true);
+    assert_eq!(composer(&fixture), "");
+    assert!(submissions(&fixture).is_empty());
+    assert!(
+        fixture
+            .calls()
+            .iter()
+            .all(|call| call.last().is_none_or(|key| key != "Enter"))
+    );
+
+    let retry = fixture.send(&["--idempotency-key", "live-text"]);
+    details(&retry, "send-idempotency-key-used");
+    assert!(submissions(&fixture).is_empty());
+}
+
+#[test]
 fn draft_appearing_during_cursor_proof_never_submits() {
     let (fixture, text) = wrapped_fixture(32, "");
     let (drafted, _) = wrapped_fixture(32, " user draft");
@@ -133,7 +220,7 @@ fn draft_appearing_during_cursor_proof_never_submits() {
     std::fs::write(fixture.root().join("draft-text"), " user draft").unwrap();
     live(&fixture, &["draft-on-right"]);
     let output = guarded_text(&fixture, &text);
-    let details = details(&output, "send-composer-unobservable");
+    let details = details(&output, "send-composer-mismatch");
     assert_eq!(details["submitted"], false);
     assert_eq!(details["cleared"], true);
     assert_eq!(composer(&fixture), " user draft");
@@ -185,7 +272,13 @@ fn runtime_replacement_stops_cursor_proof_before_more_keys() {
 fn wrapped_text_without_empty_composer_admission_never_submits() {
     let (fixture, text) = wrapped_fixture(44, "");
     let output = fixture.send_text(Some(&text), &["--require-idle"]);
-    details(&output, "send-composer-unobservable");
+    details_any(
+        &output,
+        &[
+            "send-composer-unobservable",
+            "send-guard-observation-timeout",
+        ],
+    );
     assert!(submissions(&fixture).is_empty());
     assert!(
         fixture
@@ -224,7 +317,13 @@ fn uncertain_wrapped_rendering_never_submits() {
         .into();
         std::fs::write(path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
         let output = guarded_text(&fixture, &text);
-        details(&output, "send-composer-unobservable");
+        details_any(
+            &output,
+            &[
+                "send-composer-unobservable",
+                "send-guard-observation-timeout",
+            ],
+        );
         assert!(submissions(&fixture).is_empty(), "{variant}");
         assert!(
             fixture

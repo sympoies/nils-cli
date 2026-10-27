@@ -154,15 +154,20 @@ impl Admission<'_> {
         let retryable = stage == "submit" && pasted_text.is_some();
         let mut retry_until = None;
         loop {
+            let observation = Admission {
+                context: self.context,
+                record: self.record,
+                args: self.args,
+                tmux_bin: self.tmux_bin,
+                verify_composer: self.verify_composer,
+                deadline: retry_until.unwrap_or(self.deadline),
+            };
             if retry_until.is_some() {
-                self.identity(stage)?;
+                observation.identity(stage)?;
             }
-            let timeout = self.timeout(stage)?;
-            let timeout = retry_until.map_or(timeout, |until: Instant| {
-                timeout.min(until.saturating_duration_since(Instant::now()))
-            });
+            let timeout = observation.timeout(stage)?;
             let input = capture_styled(self.tmux_bin, target, timeout)
-                .and_then(|pane| self.pasted_composer_input(&pane, pasted_text, stage));
+                .and_then(|pane| observation.pasted_composer_input(&pane, pasted_text, stage));
             if input.is_some() || !retryable {
                 return Ok(input);
             }

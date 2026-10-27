@@ -48,7 +48,7 @@ impl Fixture {
         fs::write(temp.path().join("composer"), "").unwrap();
         fs::write(temp.path().join("calls"), "").unwrap();
         let script = r#"#!/usr/bin/env python3
-import atexit, json, pathlib, re, sys, textwrap
+import atexit, json, pathlib, re, sys, textwrap, time
 root = pathlib.Path(__file__).parent
 args = sys.argv[1:]
 with (root / 'calls').open('a') as out: out.write(json.dumps(args) + '\n')
@@ -78,6 +78,11 @@ def print_cursor():
         if count < 3: x, y = 3, 1
     if (root / 'cursor-not-at-start').exists(): x, y = 3, 1
     if (root / 'wrong-prefix-end').exists() and (root / 'right-sent').exists(): x += 1
+    if (root / 'slow-right-observation-ms').exists() and (root / 'slow-right-count').exists():
+        right_count = int((root / 'slow-right-count').read_text())
+        started = float((root / f'slow-right-start-{right_count}').read_text())
+        delay = int((root / 'slow-right-observation-ms').read_text()) / 1000
+        if time.monotonic() - started < delay: x, y = 3, 1
     print(x, y)
 
 if command == 'capture-pane' and 'display-message' in args: atexit.register(print_cursor)
@@ -146,6 +151,11 @@ elif command == 'send-keys' and args[-1] == 'Right':
     count = int(args[args.index('-N') + 1])
     (root / 'cursor').write_text(str(min(len((root / 'composer').read_text()), cursor + count)))
     (root / 'right-sent').touch()
+    if (root / 'slow-right-observation-ms').exists():
+        count_path = root / 'slow-right-count'
+        slow_count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+        count_path.write_text(str(slow_count))
+        (root / f'slow-right-start-{slow_count}').write_text(str(time.monotonic()))
     if (root / 'replace-after-right').exists():
         path = root / 'right-count'
         count = int(path.read_text()) + 1 if path.exists() else 1
@@ -200,12 +210,20 @@ elif command == 'capture-pane':
     count_path = root / 'capture-count'
     count = int(count_path.read_text()) + 1 if count_path.exists() else 1
     count_path.write_text(str(count))
-    if (root / 'fail-post-paste-capture-once').exists() and (root / 'paste-completed').exists():
+    mismatch_race = (root / 'composer-mismatch-disappears-before-retry').exists()
+    fail_capture = (root / 'fail-post-paste-capture-once').exists()
+    if (fail_capture or mismatch_race) and (root / 'paste-completed').exists():
         post_paste_count_path = root / 'post-paste-capture-count'
         post_paste_count = int(post_paste_count_path.read_text()) + 1 if post_paste_count_path.exists() else 1
         post_paste_count_path.write_text(str(post_paste_count))
-        fail_at = int((root / 'fail-post-paste-capture-once').read_text())
-        if post_paste_count == fail_at: sys.exit(1)
+        if fail_capture:
+            fail_at = int((root / 'fail-post-paste-capture-once').read_text())
+            if post_paste_count == fail_at: sys.exit(1)
+        if mismatch_race and post_paste_count in (3, 4):
+            snapshot_name = 'mismatch-layout' if post_paste_count == 3 else 'exact-layout'
+            snapshot = json.loads((root / snapshot_name).read_text())
+            (root / 'composer').write_text(snapshot['input'])
+            (root / 'captured-layout').write_text(json.dumps(snapshot))
     if (root / 'fail-second-capture').exists() and count == 2: sys.exit(1)
     if (root / 'capture-fails').exists(): sys.exit(1)
     if (root / 'capture-oversize').exists():

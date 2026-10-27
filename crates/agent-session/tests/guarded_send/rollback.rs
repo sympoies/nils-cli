@@ -38,12 +38,7 @@ fn paste_then_draft_refusal_restores_only_the_user_draft() {
             &["bare-composer", "wrap-80", "word-wrap", "inject-draft"],
         );
         let output = guarded_text(&fixture, &text);
-        let code = if text.len() > 78 {
-            "send-composer-unobservable"
-        } else {
-            "send-composer-mismatch"
-        };
-        let receipt = details(&output, code);
+        let receipt = details(&output, "send-composer-mismatch");
         assert_eq!(receipt["pasted"], true);
         assert_eq!(receipt["submitted"], false);
         assert_eq!(composer(&fixture), " user addition", "{receipt}");
@@ -151,7 +146,7 @@ fn captured_word_wrap_refusals_restore_empty_or_draft_only() {
             assert_eq!(composer(&fixture), "");
             continue;
         }
-        let receipt = details(&output, "send-composer-unobservable");
+        let receipt = details(&output, "send-composer-mismatch");
         assert_eq!(receipt["cleared"], true, "case {index}: {receipt}");
         assert_eq!(composer(&fixture), draft);
         assert!(submissions(&fixture).is_empty());

@@ -26,7 +26,11 @@ impl Admission<'_> {
         let end = send_submit::cleanup_prefix_end(pane, text)?;
         let input = send_submit::cleanup_composer_input("claude", pane, Some(text))?;
         if input != text {
-            return None;
+            // The wrapped composer is readable, but does not contain only our
+            // paste. Preserve the mismatch as an immediate refusal instead of
+            // treating it as a transient observation and retrying into a later
+            // composer state that may no longer show the owner draft.
+            return Some(input);
         }
         let target = format!("{}:0.0", self.record.tmux_session);
         // A visual layout may omit or pad spaces. Check the logical length:
