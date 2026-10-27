@@ -6,7 +6,7 @@ use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
 use nils_test_support::http::{HttpResponse, LoopbackServer};
 use sha2::Digest;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -128,6 +128,28 @@ fn tiny_wav() -> Vec<u8> {
         bytes.extend_from_slice(&sample.to_le_bytes());
     }
     bytes
+}
+
+fn start_stalled_body_server() -> (String, Arc<AtomicUsize>, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let requests = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&requests);
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut request = [0u8; 8192];
+        let _ = stream.read(&mut request);
+        seen.fetch_add(1, Ordering::SeqCst);
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        thread::sleep(Duration::from_millis(1300));
+        let _ = stream.write_all(b"body");
+    });
+    (base, requests, server)
 }
 
 #[test]
@@ -695,6 +717,57 @@ fn generation_cache_hits_identical_requests_and_misses_changed_settings() {
 }
 
 #[test]
+fn generation_batches_identical_requests_once() {
+    let temp = TempDir::new().unwrap();
+    let catalog = reviewed_catalog(&temp, "sample.wav");
+    configure_tts(
+        &catalog,
+        serde_json::json!({"speed":1.2,"voice_settings":{"stability":0.5}}),
+    );
+    fs::write(temp.path().join("second.wav"), tiny_wav()).unwrap();
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&fs::read(&catalog).unwrap()).unwrap();
+    let mut second = value["fixtures"][0].clone();
+    second["id"] = serde_json::json!("second-tone");
+    second["file"] = serde_json::json!("second.wav");
+    value["fixtures"].as_array_mut().unwrap().push(second);
+    fs::write(&catalog, serde_json::to_vec(&value).unwrap()).unwrap();
+
+    let server = LoopbackServer::new().unwrap();
+    server.add_route(
+        "POST",
+        "/v1/text-to-speech/voice-fixture",
+        HttpResponse::new(200, "one-audio-payload"),
+    );
+    let base = server.url();
+    let output = run(
+        &[
+            "--format",
+            "json",
+            "generate",
+            "--catalog",
+            catalog.to_str().unwrap(),
+        ],
+        &CmdOptions::default()
+            .with_env("ELEVENLABS_API_KEY", "stub-secret")
+            .with_env("SPEECH_TEST_ELEVENLABS_BASE_URL", &base),
+    );
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    let requests = server.take_requests();
+    assert_eq!(requests.len(), 1, "one TTS call per request fingerprint");
+    assert_eq!(
+        requests[0].header_value("xi-api-key").as_deref(),
+        Some("stub-secret")
+    );
+    let updated: serde_json::Value = serde_json::from_slice(&fs::read(&catalog).unwrap()).unwrap();
+    let fixtures = updated["fixtures"].as_array().unwrap();
+    assert_eq!(fixtures.len(), 2);
+    let first = fs::read(temp.path().join(fixtures[0]["file"].as_str().unwrap())).unwrap();
+    let second = fs::read(temp.path().join(fixtures[1]["file"].as_str().unwrap())).unwrap();
+    assert_eq!(first, second);
+}
+
+#[test]
 fn tts_request_payload_matches_catalog_settings_and_redirects_do_not_forward_keys() {
     let temp = TempDir::new().unwrap();
     let catalog = reviewed_catalog(&temp, "sample.wav");
@@ -713,7 +786,13 @@ fn tts_request_payload_matches_catalog_settings_and_redirects_do_not_forward_key
     );
     let base = server.url();
     let output = run(
-        &["generate", "--catalog", catalog.to_str().unwrap()],
+        &[
+            "--format",
+            "json",
+            "generate",
+            "--catalog",
+            catalog.to_str().unwrap(),
+        ],
         &CmdOptions::default()
             .with_env("ELEVENLABS_API_KEY", "stub-secret")
             .with_env("SPEECH_TEST_ELEVENLABS_BASE_URL", &base),
@@ -939,6 +1018,48 @@ fn generation_rejects_symlinked_cache_before_provider_request() {
     );
     assert!(server.take_requests().is_empty());
 }
+
+#[cfg(unix)]
+#[test]
+fn generation_rejects_symlinked_catalog_before_provider_request() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new().unwrap();
+    let catalog = reviewed_catalog(&temp, "sample.wav");
+    configure_tts(&catalog, serde_json::json!({}));
+    let target_catalog = temp.path().join("catalog-target.json");
+    fs::rename(&catalog, &target_catalog).unwrap();
+    symlink(&target_catalog, &catalog).unwrap();
+    let before = fs::read(&target_catalog).unwrap();
+
+    let server = LoopbackServer::new().unwrap();
+    server.add_route(
+        "POST",
+        "/v1/text-to-speech/voice-fixture",
+        HttpResponse::new(200, "synthetic-audio"),
+    );
+    let base = server.url();
+    let output = run(
+        &[
+            "--format",
+            "json",
+            "generate",
+            "--catalog",
+            catalog.to_str().unwrap(),
+        ],
+        &CmdOptions::default()
+            .with_env("ELEVENLABS_API_KEY", "stub-secret")
+            .with_env("SPEECH_TEST_ELEVENLABS_BASE_URL", &base),
+    );
+    assert_eq!(output.code, 65);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&output.stdout_text()).unwrap()["error"]["code"],
+        "catalog-invalid"
+    );
+    assert!(server.take_requests().is_empty());
+    assert_eq!(fs::read(&target_catalog).unwrap(), before);
+}
+
 #[test]
 fn replay_checks_run_output_writability_before_asr_requests() {
     let temp = TempDir::new().unwrap();
@@ -1010,6 +1131,67 @@ fn tts_timeout_warns_possibly_charged_and_is_never_retried() {
             .as_str()
             .unwrap()
             .contains("may have charged")
+    );
+    server.join().unwrap();
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn tts_body_timeout_is_possibly_charged_and_not_retried() {
+    let temp = TempDir::new().unwrap();
+    let catalog = reviewed_catalog(&temp, "sample.wav");
+    configure_tts(&catalog, serde_json::json!({}));
+    let (base, requests, server) = start_stalled_body_server();
+    let output = run(
+        &[
+            "--format",
+            "json",
+            "generate",
+            "--catalog",
+            catalog.to_str().unwrap(),
+            "--request-deadline-seconds",
+            "1",
+        ],
+        &CmdOptions::default()
+            .with_env("ELEVENLABS_API_KEY", "stub-secret")
+            .with_env("SPEECH_TEST_ELEVENLABS_BASE_URL", &base),
+    );
+    assert_eq!(output.code, 69);
+    let value: serde_json::Value = serde_json::from_str(&output.stdout_text()).unwrap();
+    assert_eq!(value["error"]["code"], "tts-timeout-possibly-charged");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("may have charged")
+    );
+    server.join().unwrap();
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn asr_body_timeout_keeps_timeout_classification_and_is_not_retried() {
+    let temp = TempDir::new().unwrap();
+    let catalog = reviewed_catalog(&temp, "sample.wav");
+    let (base, requests, server) = start_stalled_body_server();
+    let output = run(
+        &[
+            "--format",
+            "json",
+            "replay",
+            "--catalog",
+            catalog.to_str().unwrap(),
+            "--endpoint",
+            &format!("{base}/asr"),
+            "--deadline-seconds",
+            "1",
+        ],
+        &CmdOptions::default(),
+    );
+    assert_eq!(output.code, 69);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&output.stdout_text()).unwrap()["error"]["code"],
+        "asr-timeout"
     );
     server.join().unwrap();
     assert_eq!(requests.load(Ordering::SeqCst), 1);

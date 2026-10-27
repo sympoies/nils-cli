@@ -4,10 +4,11 @@ use nils_common::cli_contract::{
     Envelope, EnvelopeError, OutputFormat, emit_parse_error, exit, schema_version_for,
 };
 use nils_speech_test_cli::{
-    FixtureScore, SpeechError, TtsRequest, canonical_fingerprint, check_writable_directory,
-    correctness_checks, edit_counts, percentile, read_bounded, read_catalog, resolve_catalog_file,
-    sha256, sha256_file, validate_credential_url, validate_directory_path, verified_audio_path,
-    write_atomic, write_catalog,
+    FixtureScore, ResponseService, SpeechError, TtsRequest, canonical_fingerprint,
+    check_writable_directory, correctness_checks, edit_counts, percentile, read_bounded,
+    read_catalog, resolve_catalog_file, sha256, sha256_file, validate_catalog_update_target,
+    validate_credential_url, validate_directory_path, verified_audio_path, write_atomic,
+    write_catalog,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -369,6 +370,7 @@ fn generate(
     format: OutputFormat,
 ) -> i32 {
     let result = (|| {
+        validate_catalog_update_target(catalog_path)?;
         let mut catalog = read_catalog(catalog_path)?;
         let mut requests = Vec::new();
         for fixture in &catalog.fixtures {
@@ -520,7 +522,11 @@ fn generate(
                     .clone();
                 (hash, length, path)
             } else {
-                let audio = match &item.cached {
+                let cached = item
+                    .cached
+                    .take()
+                    .or_else(|| cached_audio_info(&cache_dir, &item.fingerprint));
+                let audio = match cached.as_ref() {
                     Some(cache) => read_cached_audio(cache)?,
                     None => {
                         if key.is_none() {
@@ -584,7 +590,11 @@ fn generate(
                         {
                             return Err(SpeechError::TtsResponseTooLarge);
                         }
-                        let audio = match read_bounded(response, MAX_TTS_AUDIO_BYTES, "TTS audio") {
+                        let audio = match read_bounded(
+                            response,
+                            MAX_TTS_AUDIO_BYTES,
+                            ResponseService::TtsAudio,
+                        ) {
                             Err(SpeechError::ResponseTooLarge(_)) => {
                                 return Err(SpeechError::TtsResponseTooLarge);
                             }
@@ -841,7 +851,8 @@ fn replay(catalog_path: &Path, options: ReplayOptions<'_>, format: OutputFormat)
             {
                 return Err(SpeechError::ResponseTooLarge("ASR JSON"));
             }
-            let response_bytes = read_bounded(response, MAX_ASR_JSON_BYTES, "ASR JSON")?;
+            let response_bytes =
+                read_bounded(response, MAX_ASR_JSON_BYTES, ResponseService::AsrJson)?;
             let value: serde_json::Value =
                 serde_json::from_slice(&response_bytes).map_err(|_| SpeechError::MalformedJson)?;
             let hypothesis = value

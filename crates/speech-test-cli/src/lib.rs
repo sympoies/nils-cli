@@ -156,6 +156,28 @@ pub enum SpeechError {
     ScoreInputTooLarge,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum ResponseService {
+    TtsAudio,
+    AsrJson,
+}
+
+impl ResponseService {
+    fn label(self) -> &'static str {
+        match self {
+            Self::TtsAudio => "TTS audio",
+            Self::AsrJson => "ASR JSON",
+        }
+    }
+
+    fn timeout_error(self) -> SpeechError {
+        match self {
+            Self::TtsAudio => SpeechError::TtsTimeout,
+            Self::AsrJson => SpeechError::AsrTimeout,
+        }
+    }
+}
+
 pub fn read_catalog(path: &Path) -> Result<Catalog, SpeechError> {
     let bytes = std::fs::read(path).map_err(|e| SpeechError::CatalogRead(e.to_string()))?;
     let text =
@@ -189,17 +211,22 @@ pub fn read_catalog(path: &Path) -> Result<Catalog, SpeechError> {
 }
 
 pub fn write_catalog(path: &Path, catalog: &Catalog) -> Result<(), SpeechError> {
-    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-        return Err(SpeechError::CatalogInvalid(
-            "catalog file must not be a symlink when updating it".into(),
-        ));
-    }
+    validate_catalog_update_target(path)?;
     let encoded = if path.extension().is_some_and(|e| e == "toml") {
         toml::to_string_pretty(catalog).map_err(|e| SpeechError::Other(e.to_string()))?
     } else {
         serde_json::to_string_pretty(catalog).map_err(|e| SpeechError::Other(e.to_string()))?
     };
     write_atomic(path, encoded.as_bytes())
+}
+
+pub fn validate_catalog_update_target(path: &Path) -> Result<(), SpeechError> {
+    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err(SpeechError::CatalogInvalid(
+            "catalog file must not be a symlink when updating it".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), SpeechError> {
@@ -342,15 +369,26 @@ pub fn sha256_file(path: &Path) -> Result<String, SpeechError> {
 pub fn read_bounded<R: Read>(
     reader: R,
     maximum: usize,
-    service: &'static str,
+    service: ResponseService,
 ) -> Result<Vec<u8>, SpeechError> {
     let mut bytes = Vec::with_capacity(maximum.min(64 * 1024));
     reader
         .take(maximum as u64 + 1)
         .read_to_end(&mut bytes)
-        .map_err(|e| SpeechError::Http(e.to_string()))?;
+        .map_err(|error| {
+            let is_timeout = error.kind() == std::io::ErrorKind::TimedOut
+                || error
+                    .get_ref()
+                    .and_then(|source| source.downcast_ref::<reqwest::Error>())
+                    .is_some_and(reqwest::Error::is_timeout);
+            if is_timeout {
+                service.timeout_error()
+            } else {
+                SpeechError::Http(error.to_string())
+            }
+        })?;
     if bytes.len() > maximum {
-        return Err(SpeechError::ResponseTooLarge(service));
+        return Err(SpeechError::ResponseTooLarge(service.label()));
     }
     Ok(bytes)
 }
@@ -675,8 +713,8 @@ mod tests {
     #[test]
     fn bounds_http_response_reads_and_rejects_plaintext_credentials() {
         assert!(matches!(
-            read_bounded(std::io::Cursor::new(b"1234"), 3, "test"),
-            Err(SpeechError::ResponseTooLarge("test"))
+            read_bounded(std::io::Cursor::new(b"1234"), 3, ResponseService::AsrJson,),
+            Err(SpeechError::ResponseTooLarge("ASR JSON"))
         ));
         assert!(validate_credential_url("http://example.invalid").is_err());
         assert!(validate_credential_url("http://127.0.0.1:8080").is_ok());
