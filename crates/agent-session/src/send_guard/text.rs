@@ -14,8 +14,10 @@ impl Admission<'_> {
             && crate::notice::parse_notice(text).is_some_and(|notice| {
                 notice
                     .body
-                    .split('\n')
-                    .any(|row| row.strip_suffix('\r').unwrap_or(row).ends_with(' '))
+                    .as_bytes()
+                    .windows(2)
+                    .any(|pair| pair[0] == b' ' && matches!(pair[1], b'\r' | b'\n'))
+                    || notice.body.ends_with(' ')
             })
         {
             return Err(self.refusal(

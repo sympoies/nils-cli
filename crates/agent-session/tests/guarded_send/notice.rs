@@ -256,6 +256,15 @@ fn claude_terminal_notice_final_row_spaces_refuse_before_claim() {
 }
 
 #[test]
+fn claude_terminal_notice_lone_cr_row_ending_spaces_refuse_before_claim() {
+    let fixture = Fixture::new("claude");
+    fs::write(fixture.root().join("notice-body"), "A \rB").unwrap();
+    let value = fixture.refused(&fixture.notice(&[]), "send-notice-trailing-spaces");
+    assert_eq!(value["error"]["details"]["stage"], "admission");
+    fixture.no_delivery();
+}
+
+#[test]
 fn claude_terminal_notice_extra_trailing_space_is_not_renderer_padding() {
     let fixture = Fixture::new("claude");
     fs::write(fixture.root().join("notice-body"), "A B").unwrap();

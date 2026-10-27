@@ -10,16 +10,16 @@
 
 - Joined logical rows and cursor-position checks distinguish terminal soft
   wraps from hard edits. Claude terminal refuses ASCII spaces at row endings
-  before key claim or paste, including LF, CRLF, and the final row at EOF; the
-  codec and native Codex delivery keep exact body bytes.
+  before key claim or paste, including LF, CRLF, lone CR, and the final row at
+  EOF; the codec and native Codex delivery keep exact body bytes.
 
 ### Evidence
 
-- The focused Claude notice cases passed (6/6), the complete guarded-send suite
-  passed (116/116, single-threaded), and docs-only checks, formatting, diff
-  checks, and strict file-size audit passed. A two-thread full-suite run had
-  one mixed-draft observation timeout; the isolated test and single-thread full
-  suite passed.
+- The focused Claude notice cases passed (7/7), Clippy passed with warnings
+  denied, and formatting, diff, and strict file-size checks passed. The latest
+  117-test guarded-send run had two existing live-composer observation
+  failures; both tests passed individually. Earlier, the 116-test suite passed
+  single-threaded before the lone-CR regression was added.
 
 ### Links
 
