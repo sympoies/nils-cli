@@ -2232,8 +2232,9 @@ fn start_run_session_unjournaled(
 
 pub(crate) fn start_provider_resume_session(
     context: &CliContext,
-    args: ProviderResumeImportArgs,
+    mut args: ProviderResumeImportArgs,
 ) -> Result<StartView, CliError> {
+    args.provider_resume_id = normalize_provider_resume_id(&args.provider_resume_id)?;
     if args.ordinary_start.is_some() {
         return start_provider_resume_session_unjournaled(context, args);
     }
@@ -2265,10 +2266,9 @@ pub(crate) fn start_provider_resume_session_unjournaled(
         validate_provider_resume_import_agent_args(args.agent, &args.agent_args)?;
     }
     validate_agent_args(args.agent, &args.agent_args)?;
-    let provider_resume_id = normalize_provider_resume_id(&args.provider_resume_id)?;
     let source = resolve_provider_resume_source(
         args.agent,
-        &provider_resume_id,
+        &args.provider_resume_id,
         args.provider_config_dir.as_deref(),
         args.agent_profile.as_deref(),
     )
@@ -2286,20 +2286,21 @@ pub(crate) fn start_provider_resume_session_unjournaled(
         return Err(start_resume::refusal("resume-unsupported"));
     }
     let cwd_string = display_path(&cwd);
-    let resume_args = canonical_provider_resume_args(args.agent, &cwd_string, &provider_resume_id)
-        .ok_or_else(|| {
-            CliError::usage(
-                "unsupported-provider-resume-agent",
-                format!(
-                    "{} sessions cannot be imported by provider resume id",
-                    args.agent.as_str()
-                ),
-                Some(json!({ "agent": args.agent.as_str() })),
-            )
-        })?;
+    let resume_args =
+        canonical_provider_resume_args(args.agent, &cwd_string, &args.provider_resume_id)
+            .ok_or_else(|| {
+                CliError::usage(
+                    "unsupported-provider-resume-agent",
+                    format!(
+                        "{} sessions cannot be imported by provider resume id",
+                        args.agent.as_str()
+                    ),
+                    Some(json!({ "agent": args.agent.as_str() })),
+                )
+            })?;
     let provider_resume = ProviderResume {
         provider: args.agent.as_str().to_string(),
-        session_id: provider_resume_id,
+        session_id: args.provider_resume_id.clone(),
         captured_at: Zoned::now().timestamp().to_string(),
         capture_method: source.capture_method,
         resume_args,

@@ -416,3 +416,36 @@ fn auth_quarantine_is_not_an_alternate_resume_api() {
         "a valid settled incident is readable"
     );
 }
+
+#[test]
+fn held_conversation_lock_is_a_terminal_precreate_refusal() {
+    use sha2::{Digest, Sha256};
+    use std::os::fd::AsRawFd;
+    let f = Fixture::new();
+    let root = f.state.join("coordination");
+    fs::create_dir(&root).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    let digest = Sha256::digest(format!("claude:{CONVERSATION}").as_bytes());
+    let digest = digest
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let lock = fs::File::create(root.join(format!("provider-resume-{digest}.lock"))).unwrap();
+    assert_eq!(
+        unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+        0
+    );
+    let before = fs::read(f.record_path("source")).unwrap();
+    let out = f.run(&["--id", "blocked-by-lock"]);
+    assert_eq!(
+        out.stdout_json(),
+        json!({
+            "schema_version":"cli.agent-session.start.v1", "ok":false,
+            "error":{"code":"resume-source-live", "message":"a managed source conversation still has a live or busy writer",
+                "details":{"session_created":false,"safe_to_retry":false}}
+        })
+    );
+    assert!(!f.record_path("blocked-by-lock").exists());
+    assert_eq!(fs::read_dir(f.state.join("sessions")).unwrap().count(), 1);
+    assert_eq!(fs::read(f.record_path("source")).unwrap(), before);
+}

@@ -393,7 +393,14 @@ pub(super) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
     // It is not authorization: the second pass holds every source lock until
     // ordinary start has persisted/launched the new managed record.
     drop(admit(context, &args)?);
-    let _conversation = conversation_lock(context, args.agent, args.resume.as_deref().unwrap())?;
+    let _conversation = conversation_lock(context, args.agent, args.resume.as_deref().unwrap())
+        .map_err(|error| {
+            refusal(if error.code() == "coordination-lock-timeout" {
+                "resume-source-live"
+            } else {
+                "resume-source-unknown"
+            })
+        })?;
     let admitted = admit(context, &args)?;
     args.account = Some(admitted.account.clone());
     args.cwd = Some(admitted.cwd.clone());
