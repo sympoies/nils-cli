@@ -219,8 +219,9 @@ elif command == 'capture-pane':
         if fail_capture:
             fail_at = int((root / 'fail-post-paste-capture-once').read_text())
             if post_paste_count == fail_at: sys.exit(1)
-        if mismatch_race and post_paste_count in (3, 4):
-            snapshot_name = 'mismatch-layout' if post_paste_count == 3 else 'exact-layout'
+        mismatch_at = int((root / 'mismatch-on-capture').read_text()) if (root / 'mismatch-on-capture').exists() else 3
+        if mismatch_race and post_paste_count in (mismatch_at, mismatch_at + 1):
+            snapshot_name = 'mismatch-layout' if post_paste_count == mismatch_at else 'exact-layout'
             snapshot = json.loads((root / snapshot_name).read_text())
             (root / 'composer').write_text(snapshot['input'])
             (root / 'captured-layout').write_text(json.dumps(snapshot))

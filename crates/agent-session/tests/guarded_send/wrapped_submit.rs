@@ -199,31 +199,57 @@ fn readable_draft_mismatch_never_retries_into_submit() {
 
 #[test]
 fn draft_appearing_during_cursor_proof_never_submits() {
-    let (fixture, text) = wrapped_fixture(32, "");
-    let (drafted, _) = wrapped_fixture(32, " user draft");
+    let (fixture, text) = wrapped_fixture(80, "");
+    let (drafted, _) = wrapped_fixture(80, " user draft");
     let original: serde_json::Value =
         serde_json::from_slice(&std::fs::read(fixture.root().join("captured-layout")).unwrap())
             .unwrap();
     let mut changed: serde_json::Value =
         serde_json::from_slice(&std::fs::read(drafted.root().join("captured-layout")).unwrap())
             .unwrap();
+    let exact = original.clone();
     // Appending a draft keeps the paste's existing cursor positions valid.
     // The fresh input observation must catch the collision on the first Right.
     changed["cursor_positions"] = serde_json::json!({});
     changed["cursor_positions"][(text.len() - 1).to_string()] = original["before_end"].clone();
     changed["cursor_positions"][text.len().to_string()] = original["prefix_end"].clone();
+    let mismatch = changed.clone();
     std::fs::write(
         fixture.root().join("right-layout"),
         serde_json::to_vec(&changed).unwrap(),
     )
     .unwrap();
+    std::fs::write(
+        fixture.root().join("mismatch-layout"),
+        serde_json::to_vec(&mismatch).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.root().join("exact-layout"),
+        serde_json::to_vec(&exact).unwrap(),
+    )
+    .unwrap();
     std::fs::write(fixture.root().join("draft-text"), " user draft").unwrap();
+    std::fs::write(
+        fixture
+            .root()
+            .join("composer-mismatch-disappears-before-retry"),
+        "",
+    )
+    .unwrap();
+    // Start the bounded retry before cursor proof. The next proof read sees
+    // the draft after Right; its following retry capture restores an exact
+    // composer, exposing any retry of that readable mismatch.
+    std::fs::write(fixture.root().join("fail-post-paste-capture-once"), "2").unwrap();
+    std::fs::write(fixture.root().join("mismatch-on-capture"), "5").unwrap();
     live(&fixture, &["draft-on-right"]);
     let output = guarded_text(&fixture, &text);
-    let details = details(&output, "send-composer-mismatch");
-    assert_eq!(details["submitted"], false);
-    assert_eq!(details["cleared"], true);
-    assert_eq!(composer(&fixture), " user draft");
+    let receipt = details(&output, "send-composer-mismatch");
+    assert_eq!(receipt["submitted"], false);
+    assert_eq!(receipt["cleared"], true);
+    // The fixture removes the draft before retry; cleanup removes only the
+    // owned paste and leaves the now-empty composer intact.
+    assert_eq!(composer(&fixture), "");
     assert!(submissions(&fixture).is_empty());
     assert!(
         fixture
@@ -231,6 +257,9 @@ fn draft_appearing_during_cursor_proof_never_submits() {
             .iter()
             .all(|call| call.last().is_none_or(|key| key != "Enter"))
     );
+    let retry = fixture.send(&["--idempotency-key", "live-text"]);
+    details(&retry, "send-idempotency-key-used");
+    assert!(submissions(&fixture).is_empty());
 }
 
 #[test]
