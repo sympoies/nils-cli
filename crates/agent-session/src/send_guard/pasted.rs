@@ -7,6 +7,21 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[derive(Debug, PartialEq, Eq)]
+enum WrappedProofObservation {
+    Exact(String),
+    Mismatch(String),
+    Unobservable,
+}
+
+fn classify_wrapped_proof(expected: &str, observed: Option<String>) -> WrappedProofObservation {
+    match observed {
+        Some(input) if input == expected => WrappedProofObservation::Exact(input),
+        Some(input) => WrappedProofObservation::Mismatch(input),
+        _ => WrappedProofObservation::Unobservable,
+    }
+}
+
 impl Admission<'_> {
     pub(super) fn pasted_composer_input(
         &self,
@@ -26,7 +41,11 @@ impl Admission<'_> {
         let end = send_submit::cleanup_prefix_end(pane, text)?;
         let input = send_submit::cleanup_composer_input("claude", pane, Some(text))?;
         if input != text {
-            return None;
+            // The wrapped composer is readable, but does not contain only our
+            // paste. Preserve the mismatch as an immediate refusal instead of
+            // treating it as a transient observation and retrying into a later
+            // composer state that may no longer show the owner draft.
+            return Some(input);
         }
         let target = format!("{}:0.0", self.record.tmux_session);
         // A visual layout may omit or pad spaces. Check the logical length:
@@ -54,8 +73,13 @@ impl Admission<'_> {
                     &target,
                     self.timeout(stage).ok()?,
                 )?;
-                if send_submit::cleanup_composer_input("claude", &current, Some(text))? != input {
-                    return None;
+                match classify_wrapped_proof(
+                    &input,
+                    send_submit::cleanup_composer_input("claude", &current, Some(text)),
+                ) {
+                    WrappedProofObservation::Exact(_) => {}
+                    WrappedProofObservation::Mismatch(input) => return Some(input),
+                    WrappedProofObservation::Unobservable => return None,
                 }
                 let reached = endpoint.map_or_else(
                     || send_submit::cleanup_cursor_at_start(&current, cursor.0, cursor.1),
@@ -72,5 +96,18 @@ impl Admission<'_> {
         }
         self.identity(stage).ok()?;
         Some(input)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WrappedProofObservation, classify_wrapped_proof};
+
+    #[test]
+    fn readable_wrapped_mismatch_is_not_an_unobservable_retry() {
+        assert_eq!(
+            classify_wrapped_proof("owned paste", Some("owned paste user draft".to_string())),
+            WrappedProofObservation::Mismatch("owned paste user draft".to_string())
+        );
     }
 }

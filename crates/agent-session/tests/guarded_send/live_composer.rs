@@ -58,6 +58,16 @@ fn details(output: &super::CmdOutput, code: &str) -> Value {
     value["error"]["details"].clone()
 }
 
+fn details_any(output: &super::CmdOutput, codes: &[&str]) -> Value {
+    assert_eq!(output.code, 1, "{}", output.stderr_text());
+    let value = output.stdout_json();
+    assert!(
+        codes.contains(&value["error"]["code"].as_str().unwrap_or_default()),
+        "{value}"
+    );
+    value["error"]["details"].clone()
+}
+
 #[test]
 fn padded_empty_composer_admits_and_submits() {
     let fixture = Fixture::new("claude");
@@ -175,7 +185,13 @@ fn refusal_after_paste_leaves_an_unobservable_composer_alone() {
     let fixture = Fixture::new("claude");
     live(&fixture, &["bare-composer", "fail-capture-after-paste"]);
     let output = guarded(&fixture);
-    let details = details(&output, "send-composer-unobservable");
+    let details = details_any(
+        &output,
+        &[
+            "send-composer-unobservable",
+            "send-guard-observation-timeout",
+        ],
+    );
     assert_eq!(details["pasted"], true);
     assert_eq!(details["cleared"], false);
     assert_eq!(details["remaining_input"], "unobservable");
@@ -283,7 +299,13 @@ fn codex_wrapped_single_line_refusal_clears_only_the_pasted_text() {
             .unwrap();
         }
         let output = guarded_text(&fixture, &text);
-        let details = details(&output, "send-composer-unobservable");
+        let details = details_any(
+            &output,
+            &[
+                "send-composer-unobservable",
+                "send-guard-observation-timeout",
+            ],
+        );
         assert_eq!(details["stage"], "submit");
         assert_eq!(details["pasted"], true);
         assert_eq!(details["submitted"], false);
@@ -318,9 +340,15 @@ fn wrapped_refusal_preserves_and_classifies_a_mixed_draft() {
         let fixture = Fixture::new(provider);
         live(&fixture, &["bare-composer", "wrap-80", "inject-draft"]);
         let output = guarded_text(&fixture, &text);
-        let details = details(&output, "send-composer-unobservable");
+        let details = details_any(
+            &output,
+            &["send-composer-mismatch", "send-guard-observation-timeout"],
+        );
+        // Claude's readable wrapped mismatch proves enough ownership to remove
+        // the paste. Codex lacks that proof and must leave both inputs intact.
         let restored = provider == "claude";
         assert_eq!(details["cleared"], restored);
+        assert_eq!(details["pasted_text_present"], !restored);
         assert_eq!(details["remaining_input"], "different_text");
         assert_eq!(
             composer(&fixture),

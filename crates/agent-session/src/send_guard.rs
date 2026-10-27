@@ -1,5 +1,6 @@
 //! Fail-closed observations for guarded terminal sends. These are not a native CAS.
 use std::path::Path;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use clap::Args;
@@ -11,6 +12,9 @@ use crate::{
     SessionRecord, activity, load_session_record, run_output_with_timeout_and_strict_cap,
     send_submit, tmux_environment_value,
 };
+
+const POST_PASTE_OBSERVATION_RETRY_WINDOW: Duration = Duration::from_millis(500);
+const POST_PASTE_OBSERVATION_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 
 mod clear;
 mod composer;
@@ -104,8 +108,8 @@ impl Admission<'_> {
         self.idle(stage)?;
         if self.args.require_empty_composer || self.verify_composer || pasted_text.is_some() {
             let target = format!("{}:0.0", self.record.tmux_session);
-            let input = capture_styled(self.tmux_bin, &target, self.timeout(stage)?)
-                .and_then(|pane| self.pasted_composer_input(&pane, pasted_text, stage))
+            let input = self
+                .observe_composer(&target, pasted_text, stage)?
                 .ok_or_else(|| {
                     self.refusal(
                         "send-composer-unobservable",
@@ -136,6 +140,48 @@ impl Admission<'_> {
         self.idle(stage)?;
         self.timeout(stage)?;
         Ok(())
+    }
+
+    /// A provider redraw can briefly make a post-paste pane capture unusable.
+    /// Retry only that observation, within the existing send deadline; never
+    /// repeat the paste or submit key, and never retry a readable mismatch.
+    fn observe_composer(
+        &self,
+        target: &str,
+        pasted_text: Option<&str>,
+        stage: &str,
+    ) -> Result<Option<String>, CliError> {
+        let retryable = stage == "submit" && pasted_text.is_some();
+        let mut retry_until = None;
+        loop {
+            let observation = Admission {
+                context: self.context,
+                record: self.record,
+                args: self.args,
+                tmux_bin: self.tmux_bin,
+                verify_composer: self.verify_composer,
+                deadline: retry_until.unwrap_or(self.deadline),
+            };
+            if retry_until.is_some() {
+                observation.identity(stage)?;
+            }
+            let timeout = observation.timeout(stage)?;
+            let input = capture_styled(self.tmux_bin, target, timeout)
+                .and_then(|pane| observation.pasted_composer_input(&pane, pasted_text, stage));
+            if input.is_some() || !retryable {
+                return Ok(input);
+            }
+            let retry_until = *retry_until.get_or_insert_with(|| {
+                (Instant::now() + POST_PASTE_OBSERVATION_RETRY_WINDOW).min(self.deadline)
+            });
+            if Instant::now() >= retry_until {
+                return Ok(None);
+            }
+            thread::sleep(
+                POST_PASTE_OBSERVATION_RETRY_INTERVAL
+                    .min(retry_until.saturating_duration_since(Instant::now())),
+            );
+        }
     }
 
     fn identity(&self, stage: &str) -> Result<(), CliError> {
