@@ -200,6 +200,12 @@ elif command == 'capture-pane':
     count_path = root / 'capture-count'
     count = int(count_path.read_text()) + 1 if count_path.exists() else 1
     count_path.write_text(str(count))
+    if (root / 'fail-post-paste-capture-once').exists() and (root / 'paste-completed').exists():
+        post_paste_count_path = root / 'post-paste-capture-count'
+        post_paste_count = int(post_paste_count_path.read_text()) + 1 if post_paste_count_path.exists() else 1
+        post_paste_count_path.write_text(str(post_paste_count))
+        fail_at = int((root / 'fail-post-paste-capture-once').read_text())
+        if post_paste_count == fail_at: sys.exit(1)
     if (root / 'fail-second-capture').exists() and count == 2: sys.exit(1)
     if (root / 'capture-fails').exists(): sys.exit(1)
     if (root / 'capture-oversize').exists():
@@ -405,6 +411,49 @@ fn guarded_send_identity_and_key_happy_path_submits_once() {
                 .lines()
                 .count(),
             1
+        );
+    }
+}
+
+#[test]
+fn transient_post_paste_composer_capture_retries_without_reposting() {
+    for (provider, failed_capture) in [("claude", 3), ("codex", 2)] {
+        let fixture = Fixture::new(provider);
+        fs::write(
+            fixture.root().join("fail-post-paste-capture-once"),
+            failed_capture.to_string(),
+        )
+        .unwrap();
+
+        let output = fixture.send_text(
+            Some("continue-fixture"),
+            &[
+                "--require-idle",
+                "--require-empty-composer",
+                "--idempotency-key",
+                "transient-observation",
+            ],
+        );
+
+        assert_eq!(output.code, 0, "{provider}: {}", output.stdout_text());
+        assert_eq!(
+            fixture
+                .calls()
+                .iter()
+                .filter(|call| call[0] == "paste-buffer")
+                .count(),
+            1,
+            "{provider} paste count"
+        );
+        let submissions = fs::read_to_string(fixture.root().join("submissions")).unwrap();
+        assert_eq!(
+            submissions.lines().count(),
+            1,
+            "{provider} submission count"
+        );
+        assert_eq!(
+            serde_json::from_str::<String>(submissions.trim()).unwrap(),
+            "continue-fixture"
         );
     }
 }

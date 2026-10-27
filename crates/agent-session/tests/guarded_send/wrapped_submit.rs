@@ -160,8 +160,9 @@ fn runtime_replacement_stops_cursor_proof_before_more_keys() {
             .unwrap();
         }
         let output = guarded_text(&fixture, &text);
-        // Identity failure inside the proof invalidates its composer observation.
-        let details = details(&output, "send-composer-unobservable");
+        // A transient observation retry must stop with the more specific
+        // identity refusal once the runtime replacement is visible.
+        let details = details(&output, "send-identity-mismatch");
         assert_eq!(details["submitted"], false);
         assert_eq!(details["cleared"], false);
         assert_eq!(composer(&fixture), text);
