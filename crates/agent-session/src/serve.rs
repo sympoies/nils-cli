@@ -104,7 +104,7 @@ mod create_body;
 mod prompt_scan;
 #[path = "serve_remote_outbox.rs"]
 mod remote_outbox;
-use create_body::{CreateBody, create_body_lineage};
+use create_body::{CreateBody, create_body_lineage, validate_create_accounts};
 #[path = "serve_shell.rs"]
 mod shell;
 
@@ -5339,6 +5339,7 @@ async fn history_resume_handler_inner(
                 start_provider_resume_session(
                     &context,
                     ProviderResumeImportArgs {
+                        ordinary_start: None,
                         launch_env: crate::launch_env::LaunchEnv::new(),
                         title_mode: restored.title_mode,
                         agent,
@@ -6542,6 +6543,7 @@ async fn create_handler_inner(
             ));
         }
         let args = ProviderResumeImportArgs {
+            ordinary_start: None,
             launch_env: body.launch_env,
             title_mode: body.title_mode,
             agent,
@@ -6621,6 +6623,8 @@ async fn create_handler_inner(
     let prompt = body.prompt;
     let deferred_prompt = selected_account.as_ref().and_then(|_| prompt.clone());
     let args = cli::StartArgs {
+        resume: None,
+        check_resume: false,
         workspace: None,
         title_mode: match body.title_mode {
             crate::display_metadata::TitleMode::Auto => "auto",
@@ -6759,69 +6763,6 @@ async fn create_handler_inner(
         Ok(Err(err)) => envelope_err(err),
         Err(_) => join_err(),
     }
-}
-
-/// Conflict rules for the per-provider account fields of a create body, in
-/// one place for both providers:
-///
-/// - `<provider>_account` is accepted only for that provider's sessions;
-/// - `provider_resume_id` imports run on the host login, so neither account
-///   field may accompany one;
-/// - Claude only, intentionally: a Claude `agent_profile` owns the provider
-///   config root (`CLAUDE_CONFIG_DIR`) that an account binding would replace,
-///   so `claude_account` cannot be combined with it. Codex credentials are
-///   injected over its app-server control plane instead and do not conflict.
-fn validate_create_accounts(
-    agent: AgentKind,
-    codex_account: bool,
-    claude_account: bool,
-    agent_profile: bool,
-    provider_resume: bool,
-) -> Result<(), CliError> {
-    let requested = [
-        (
-            AgentKind::Codex,
-            codex_account,
-            "codex",
-            "Codex",
-            "create the resumable Codex session first, then bind its account",
-        ),
-        (
-            AgentKind::Claude,
-            claude_account,
-            "claude",
-            "Claude",
-            "provider_resume_id imports run on the host Claude login; omit claude_account",
-        ),
-    ];
-    for (owner, requested, provider, display, _) in requested {
-        if requested && agent != owner {
-            return Err(CliError::usage(
-                format!("{provider}-account-agent-conflict"),
-                format!("{provider}_account is supported only for {display} sessions"),
-                None,
-            ));
-        }
-    }
-    if claude_account && agent_profile {
-        return Err(CliError::usage(
-            "claude-account-profile-conflict",
-            "claude_account cannot be combined with an agent_profile",
-            None,
-        ));
-    }
-    if provider_resume {
-        for (_, requested, provider, _, message) in requested {
-            if requested {
-                return Err(CliError::usage(
-                    format!("{provider}-account-provider-resume-conflict"),
-                    message,
-                    None,
-                ));
-            }
-        }
-    }
-    Ok(())
 }
 
 fn resolve_initial_codex_account(

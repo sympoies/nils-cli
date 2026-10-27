@@ -68,3 +68,60 @@ pub(super) fn quarantined(registry: &Path, id: &str, incarnation: &str) -> bool 
         _ => true,
     }
 }
+
+/// Observe existing ownership and effect state without normalizing the store,
+/// creating a lock file, expiring leases, or changing a source incarnation.
+pub(crate) fn resume_source_closed(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Result<(), CliError> {
+    let unknown = || crate::start_resume::refusal("resume-source-unknown");
+    if crate::runtime_is_proven_never_launched(record) {
+        let root = context.state_dir.join("coordination");
+        match fs::symlink_metadata(&root) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Ok(_) => {
+                let root =
+                    super::heartbeat_state::observational_root(context).map_err(|_| unknown())?;
+                if matches!(fs::symlink_metadata(root.join(super::REGISTRY_FILE)), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+                {
+                    return Ok(());
+                }
+            }
+            _ => return Err(unknown()),
+        }
+    }
+    let registry = super::read_registry_snapshot(context).map_err(|_| unknown())?;
+    let runtime = record.runtime.as_ref().ok_or_else(unknown)?;
+    let broker = match registry.brokers.get(&record.id) {
+        Some(broker) => broker,
+        None if crate::runtime_is_proven_never_launched(record) => {
+            if registry
+                .operations
+                .iter()
+                .any(|op| op.session_id == record.id)
+            {
+                return Err(unknown());
+            }
+            return Ok(());
+        }
+        None => return Err(unknown()),
+    };
+    if broker.incarnation != runtime.launch_id || broker.generation != runtime.generation {
+        return Err(unknown());
+    }
+    if broker.state != "stopped" {
+        return Err(crate::start_resume::refusal("resume-source-live"));
+    }
+    if registry.operations.iter().any(|op| {
+        op.session_id == record.id
+            && op.session_incarnation == runtime.launch_id
+            && (matches!(
+                op.state.as_str(),
+                "active" | "completing" | "reconcile_pending"
+            ) || op.state == "abandoned" && op.outcome.is_none())
+    }) {
+        return Err(unknown());
+    }
+    Ok(())
+}

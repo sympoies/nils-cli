@@ -108,3 +108,66 @@ pub(super) fn create_body_lineage(
         origin: crate::origin::Fields::default(),
     })
 }
+
+/// Conflict rules for the per-provider account fields of a create body, in
+/// one place for both providers:
+///
+/// - `<provider>_account` is accepted only for that provider's sessions;
+/// - `provider_resume_id` imports run on the host login, so neither account
+///   field may accompany one;
+/// - Claude only, intentionally: a Claude `agent_profile` owns the provider
+///   config root (`CLAUDE_CONFIG_DIR`) that an account binding would replace,
+///   so `claude_account` cannot be combined with it. Codex credentials are
+///   injected over its app-server control plane instead and do not conflict.
+pub(super) fn validate_create_accounts(
+    agent: cli::AgentKind,
+    codex_account: bool,
+    claude_account: bool,
+    agent_profile: bool,
+    provider_resume: bool,
+) -> Result<(), CliError> {
+    let requested = [
+        (
+            cli::AgentKind::Codex,
+            codex_account,
+            "codex",
+            "Codex",
+            "create the resumable Codex session first, then bind its account",
+        ),
+        (
+            cli::AgentKind::Claude,
+            claude_account,
+            "claude",
+            "Claude",
+            "provider_resume_id imports run on the host Claude login; omit claude_account",
+        ),
+    ];
+    for (owner, requested, provider, display, _) in requested {
+        if requested && agent != owner {
+            return Err(CliError::usage(
+                format!("{provider}-account-agent-conflict"),
+                format!("{provider}_account is supported only for {display} sessions"),
+                None,
+            ));
+        }
+    }
+    if claude_account && agent_profile {
+        return Err(CliError::usage(
+            "claude-account-profile-conflict",
+            "claude_account cannot be combined with an agent_profile",
+            None,
+        ));
+    }
+    if provider_resume {
+        for (_, requested, provider, _, message) in requested {
+            if requested {
+                return Err(CliError::usage(
+                    format!("{provider}-account-provider-resume-conflict"),
+                    message,
+                    None,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
