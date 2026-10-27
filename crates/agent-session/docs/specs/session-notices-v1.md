@@ -109,6 +109,19 @@ busy refusal, and delivers once it becomes idle. Other guard failures stop the
 request. The durable idempotency claim is made by the guarded send path when
 delivery proceeds. Queue mode requires `--idempotency-key` so a caller retry
 cannot submit the same queued notice again.
+
+Claude terminal delivery refuses, before claiming the idempotency key or
+pasting, when a notice body row ends with one or more ASCII spaces. Row end
+means immediately before a CR or LF line ending, or the end of the final body
+at EOF. This narrow transport restriction covers only ASCII spaces at those
+row boundaries. The codec continues to preserve every body byte, and native
+Codex acceptance is unchanged. The restriction remains until an exact
+logical-input ownership proof supports these rows
+([follow-up #3002](https://github.com/sympoies/nils-cli/issues/3002)). Internal
+mailbox-nudge and auto-resume notice producers must avoid generating
+line-trailing spaces at their own boundaries; their producer-side checks are
+tracked in [follow-up #3003](https://github.com/sympoies/nils-cli/issues/3003).
+
 Optional `--expect-runtime` and `--expect-provider-session` add caller bindings.
 There is no allow-blocked, arbitrary-key or terminal fallback mode.
 The JSON envelope is `cli.agent-session.notice.v1`, with the guarded send
