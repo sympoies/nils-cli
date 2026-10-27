@@ -25,16 +25,51 @@ fn exited_captured_helper_keeps_verification_retryable() {
     split_cgroup_close(true);
 }
 
+#[test]
+fn explicit_recovery_terminates_the_captured_split_scope_runtime() {
+    split_cgroup_recovery();
+}
+
+#[test]
+fn explicit_recovery_refuses_a_changed_captured_member_without_signaling() {
+    split_cgroup_fixture(true, true, false);
+}
+
+#[test]
+fn explicit_recovery_retains_state_when_a_split_member_forks_after_snapshot() {
+    split_cgroup_fixture(false, true, true);
+}
+
 fn split_cgroup_close(helper_exits: bool) {
+    split_cgroup_fixture(helper_exits, false, false);
+}
+
+fn split_cgroup_recovery() {
+    split_cgroup_fixture(false, true, false);
+}
+
+fn split_cgroup_fixture(helper_exits: bool, recover_split_cgroup: bool, add_late_member: bool) {
     let tmp = tempfile::tempdir().unwrap();
     let child_file = tmp.path().join("child");
+    let late_trigger = tmp.path().join("late-trigger");
+    let late_child_file = tmp.path().join("late-child");
     let scope = format!("tmux-spawn-{}", uuid::Uuid::new_v4());
     // Model an older launcher: a helper keeps the original cgroup while the
     // pane enters a dedicated scope. Both retain the same process session.
     let mut command = Command::new("sh");
-    command.args(["-c", "sleep 60 & echo $! > \"$1\"; exec systemd-run --user --scope --quiet --collect --unit=\"$2\" sleep 60", "fixture"])
-        .arg(&child_file).arg(&scope)
-        .stdout(Stdio::null()).stderr(Stdio::null());
+    let script = if add_late_member {
+        "sh -c 'while [ ! -f \"$1\" ]; do :; done; sleep 60 & echo $! > \"$2\"; wait' helper \"$2\" \"$3\" & echo $! > \"$1\"; exec systemd-run --user --scope --quiet --collect --unit=\"$4\" sleep 60"
+    } else {
+        "sleep 60 & echo $! > \"$1\"; exec systemd-run --user --scope --quiet --collect --unit=\"$4\" sleep 60"
+    };
+    command
+        .args(["-c", script, "fixture"])
+        .arg(&child_file)
+        .arg(&late_trigger)
+        .arg(&late_child_file)
+        .arg(&scope)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     unsafe {
         command.pre_exec(|| {
             if libc::setsid() < 0 {
@@ -104,38 +139,117 @@ fi
     } else {
         String::new()
     };
+    let late_member_probe = if add_late_member {
+        format!(
+            r#"if [ -f {seen} ]; then
+  : > {trigger}
+  attempts=0
+  while [ ! -s {late_child} ] && [ "$attempts" -lt 100 ]; do
+    attempts=$((attempts + 1))
+    sleep 0.01
+  done
+  [ -s {late_child} ] || exit 43
+else
+  : > {seen}
+fi
+"#,
+            seen = shell_words::quote(capture_seen.to_str().unwrap()),
+            trigger = shell_words::quote(late_trigger.to_str().unwrap()),
+            late_child = shell_words::quote(late_child_file.to_str().unwrap())
+        )
+    } else {
+        String::new()
+    };
     fs::write(
         &tmux,
         format!(
             r#"#!/bin/sh
 printf '%s\n' "$1" >> {calls}
 case "$1" in
- display-message) {helper_exit}printf '$91 %%91 {pid}\n' ;;
+ display-message) {helper_exit}{late_member_probe}printf '$91 %%91 {pid}\n' ;;
  show-environment) case "$4" in
  AGENT_SESSION_ID) echo 'AGENT_SESSION_ID=split-runtime' ;;
  AGENT_SESSION_STATE_DIR) printf 'AGENT_SESSION_STATE_DIR=%s\n' {state} ;;
  AGENT_SESSION_RUNTIME_ID) echo 'AGENT_SESSION_RUNTIME_ID=fixture-launch' ;;
  esac ;;
- has-session) exit 0 ;;
+ has-session) if [ -f {stopped} ]; then echo "can't find session:" >&2; exit 1; fi; exit 0 ;;
+ if-shell) : > {stopped}; exit 0 ;;
  *) exit 42 ;;
 esac
 "#,
             calls = shell_words::quote(calls.to_str().unwrap()),
-            state = shell_words::quote(state.to_str().unwrap())
+            state = shell_words::quote(state.to_str().unwrap()),
+            stopped = shell_words::quote(tmp.path().join("stopped").to_str().unwrap()),
+            late_member_probe = late_member_probe
         ),
     )
     .unwrap();
     fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_agent-session"));
     nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
-    let output = command
+    command
         .args(["--state-dir"])
         .arg(&state)
-        .env("AGENT_SESSION_TMUX_BIN", &tmux)
-        .args(["delete", "split-runtime", "--format", "json"])
-        .output()
-        .unwrap();
+        .env("AGENT_SESSION_TMUX_BIN", &tmux);
+    if recover_split_cgroup {
+        command.args([
+            "delete",
+            "split-runtime",
+            "--recover-split-cgroup",
+            "--format",
+            "json",
+        ]);
+    } else {
+        command.args(["delete", "split-runtime", "--format", "json"]);
+    }
+    let output = command.output().unwrap();
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    if recover_split_cgroup {
+        if helper_exits {
+            assert!(!output.status.success(), "{value}");
+            assert_eq!(unsafe { libc::kill(pid as i32, 0) }, 0);
+            assert!(session.join("session.json").is_file());
+            assert!(!fs::read_to_string(calls).unwrap().contains("if-shell"));
+            return;
+        }
+        if add_late_member {
+            assert!(!output.status.success(), "{value}");
+            assert!(session.join("session.json").is_file(), "{value}");
+            let late_pid: i32 = fs::read_to_string(&late_child_file)
+                .expect("late process was forked")
+                .trim()
+                .parse()
+                .unwrap();
+            assert_eq!(unsafe { libc::kill(late_pid, 0) }, 0);
+            assert_eq!(unsafe { libc::kill(pid as i32, 0) }, 0);
+            assert_eq!(unsafe { libc::kill(child, 0) }, 0);
+            assert!(!fs::read_to_string(calls).unwrap().contains("if-shell"));
+            return;
+        }
+        assert!(output.status.success(), "{value}");
+        assert!(!session.join("session.json").exists(), "{value}");
+        assert!(fs::read_to_string(calls).unwrap().contains("if-shell"));
+        for process in [pid as i32, child] {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let stopped = fs::read_to_string(format!("/proc/{process}/stat"))
+                    .map(|stat| {
+                        stat.rsplit_once(')')
+                            .unwrap()
+                            .1
+                            .trim_start()
+                            .starts_with('Z')
+                    })
+                    .unwrap_or(true);
+                if stopped {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "process {process} remained live");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        return;
+    }
     assert!(!output.status.success(), "{value}");
     assert_eq!(unsafe { libc::kill(pid as i32, 0) }, 0);
     if helper_exits {

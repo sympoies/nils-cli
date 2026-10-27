@@ -2,6 +2,7 @@ use crate::*;
 
 #[cfg(target_os = "linux")]
 pub(crate) mod cgroup_membership;
+pub(crate) mod split_scope;
 
 #[cfg(target_os = "linux")]
 pub(super) const CGROUP_MEMBERSHIP_OBSERVATION_DURATION: Duration = Duration::from_millis(100);
