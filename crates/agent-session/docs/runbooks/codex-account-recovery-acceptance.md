@@ -43,7 +43,7 @@ set -euo pipefail
 : "${TEST_STATE_DIR:?}" "${TEST_SESSION_ID:?}" "${TEST_TARGET_ACCOUNT:?}"
 as_test() { agent-session --state-dir "$TEST_STATE_DIR" "$@"; }
 runtime=$(as_test list --format json | jq -er --arg id "$TEST_SESSION_ID" \
-  '.data[] | select(.session_id == $id and .provider == "codex" and .runtime_status == "running") | .session_incarnation')
+  '.data[] | select(.id == $id and .agent == "codex" and .status == "running") | .session_incarnation')
 thread=$(as_test glance "$TEST_SESSION_ID" --tail 1 --format json | \
   jq -er '.data.provider_resume | select(.provider == "codex") | .session_id')
 as_test activity status "$TEST_SESSION_ID" --format json | \
