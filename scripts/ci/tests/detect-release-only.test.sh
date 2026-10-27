@@ -289,6 +289,11 @@ git -C "$producer_repo" config user.email "release-ci@example.test"
 git -C "$producer_repo" config maintenance.auto false
 git -C "$producer_repo" config gc.auto 0
 
+# Model a non-release PR that changes the lockfile without changing the
+# third-party inventory. Its recorded artifact digests still describe the
+# previous lockfile, even when this suite runs from a clean release checkout.
+printf '\n# Non-release lockfile change.\n' >>"$producer_repo/Cargo.lock"
+
 # This suite verifies release-only classification, not Cargo's registry
 # resolver. Keep the producer fixture deterministic under an empty Cargo home
 # by replacing its Cargo operations with the lockfile-only behavior that the
@@ -378,11 +383,20 @@ PY
 EOF
 chmod +x "$producer_repo/scripts/generate-third-party-artifacts.sh"
 
+# The detector permits only replacing the baseline lockfile's actual digest.
+# Normalize the fixture before capturing that baseline: a non-release checkout
+# can legitimately have stale artifact digests, whose repair is not bump-only.
+(
+  cd "$producer_repo"
+  bash scripts/generate-third-party-artifacts.sh --write
+)
+
 # Local validation runs before this change is committed, so copy the current
 # producer into the clone and make it part of the immutable fixture baseline.
 cp "$producer_script" \
   "$producer_repo/scripts/ci/prepare-release-bump.sh"
 git -C "$producer_repo" add \
+  Cargo.lock THIRD_PARTY_LICENSES.md THIRD_PARTY_NOTICES.md \
   scripts/ci/prepare-release-bump.sh \
   scripts/generate-third-party-artifacts.sh
 if ! git -C "$producer_repo" diff --cached --quiet; then
@@ -419,7 +433,7 @@ git -C "$producer_repo" add \
 git -C "$producer_repo" commit -q \
   -m "chore(release): bump cli versions to ${producer_version}"
 producer_head="$(git -C "$producer_repo" rev-parse HEAD)"
-assert_verdict "real producer output" true "$producer_repo" \
+assert_verdict "real producer output from non-release baseline" true "$producer_repo" \
   --base "$producer_base" \
   --head "$producer_head" \
   --branch "chore/release-${producer_version//./-}"
