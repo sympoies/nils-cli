@@ -21,14 +21,10 @@ fn known_multiline_notice_rows_are_verified_exactly() {
     );
     let claude_with_extra = claude.replace("\nBody\n", "\nBody\nextra\n");
     let codex_with_extra = codex.replace("\nBody\n", "\nBody\nextra\n");
-    assert_eq!(
-        known_multiline_input("claude", &claude_with_extra, expected),
-        None
-    );
-    assert_eq!(
-        known_multiline_input("codex", &codex_with_extra, expected),
-        None
-    );
+    let claude_extra = known_multiline_input("claude", &claude_with_extra, expected).unwrap();
+    let codex_extra = known_multiline_input("codex", &codex_with_extra, expected).unwrap();
+    assert!(!super::composer_holds("claude", &claude_extra, expected));
+    assert!(!super::composer_holds("codex", &codex_extra, expected));
     let probe = crate::send_submit::notice_probe(expected).unwrap();
     assert_eq!(
         crate::send_submit::classify("claude", claude, &probe),
@@ -51,10 +47,10 @@ fn known_multiline_notices_refuse_dialog_footers() {
 }
 
 #[test]
-fn known_multiline_notices_match_wrapped_rows_and_crlf_bodies() {
+fn known_multiline_notices_match_joined_wrapped_rows_and_crlf_bodies() {
     let expected = "<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA longer body line";
-    let claude = "────────────────────\n❯\u{a0}<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA longer\n  body line\n────────────────────\n  status";
-    let codex = "› <!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA longer\n  body line\n\n  status";
+    let claude = "────────────────────\n❯\u{a0}<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA longer body line\n────────────────────\n  status";
+    let codex = "› <!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA longer body line\n\n  status";
     assert_eq!(
         known_multiline_input("claude", claude, expected).as_deref(),
         Some(expected)
@@ -88,6 +84,17 @@ fn known_multiline_notices_match_wrapped_rows_and_crlf_bodies() {
         known_multiline_input("codex", codex_spaces, leading_spaces).as_deref(),
         Some(leading_spaces)
     );
+}
+
+#[test]
+fn known_multiline_notices_reject_hard_newlines_that_look_like_wraps() {
+    let expected = "<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA B";
+    let claude = "────────────────────\n❯\u{a0}<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA\n  B\n────────────────────\n  status";
+    let codex = "› <!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA\n  B\n\n  status";
+    let claude_input = known_multiline_input("claude", claude, expected).unwrap();
+    let codex_input = known_multiline_input("codex", codex, expected).unwrap();
+    assert!(!super::composer_holds("claude", &claude_input, expected));
+    assert!(!super::composer_holds("codex", &codex_input, expected));
 }
 
 fn codex(input: &str, rows: &str, footer: &str) -> String {

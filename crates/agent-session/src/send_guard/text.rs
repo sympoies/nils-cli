@@ -9,6 +9,22 @@ impl Admission<'_> {
     /// trailing line breaks (a submitted prompt ignores them) and refuses any
     /// other line break before pasting instead of after it.
     pub(crate) fn observable_text<'t>(&self, text: &'t str) -> Result<&'t str, CliError> {
+        if self.args.notice_envelope
+            && self.record.agent == "claude"
+            && crate::notice::parse_notice(text).is_some_and(|notice| {
+                notice
+                    .body
+                    .split('\n')
+                    .any(|row| row.strip_suffix('\r').unwrap_or(row).ends_with(' '))
+            })
+        {
+            return Err(self.refusal(
+                "send-notice-trailing-spaces",
+                "Claude terminal notices with body rows ending in ASCII spaces cannot be verified exactly; remove the trailing spaces before retrying",
+                "text",
+                "admission",
+            ));
+        }
         if !self.verify_composer {
             return Ok(text);
         }

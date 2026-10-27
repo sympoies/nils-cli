@@ -48,22 +48,34 @@ impl Fixture {
         fs::write(temp.path().join("composer"), "").unwrap();
         fs::write(temp.path().join("calls"), "").unwrap();
         let script = r#"#!/usr/bin/env python3
-import atexit, json, pathlib, re, sys, textwrap, time
+import atexit, json, pathlib, re, sys, textwrap, time, unicodedata
 root = pathlib.Path(__file__).parent
 args = sys.argv[1:]
 with (root / 'calls').open('a') as out: out.write(json.dumps(args) + '\n')
 command = args[0]
 provider = (root / 'provider').read_text()
+def cell_width(value):
+    return sum(0 if unicodedata.combining(ch) else 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1 for ch in value)
 def print_cursor():
     text = (root / 'composer').read_text()
     cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
-    x, y = 2 + cursor, 1
-    if (root / 'wrap-80').exists() and len(text) > 78:
-        chunks = [text[i:i + 78] for i in range(0, len(text), 78)]
-        if (root / 'word-wrap').exists(): chunks = textwrap.wrap(text, width=78, drop_whitespace=False)
-        for row, chunk in enumerate(chunks):
-            if cursor <= len(chunk): x, y = 2 + cursor, 1 + row; break
-            cursor -= len(chunk)
+    if (root / 'notice-mode').exists():
+        prefix = text[:cursor]
+        logical_rows = prefix.split('\n')
+        active_row = logical_rows[-1]
+        x, y = 2 + cell_width(active_row), len(logical_rows)
+        if (root / 'wrap-80').exists() and cell_width(active_row) > 78:
+            chunks = [active_row[i:i + 78] for i in range(0, len(active_row), 78)]
+            if (root / 'word-wrap').exists(): chunks = textwrap.wrap(active_row, width=78, drop_whitespace=False)
+            x, y = 2 + cell_width(chunks[-1]), len(logical_rows) + len(chunks) - 1
+    else:
+        x, y = 2 + cursor, 1
+        if (root / 'wrap-80').exists() and len(text) > 78:
+            chunks = [text[i:i + 78] for i in range(0, len(text), 78)]
+            if (root / 'word-wrap').exists(): chunks = textwrap.wrap(text, width=78, drop_whitespace=False)
+            for row, chunk in enumerate(chunks):
+                if cursor <= len(chunk): x, y = 2 + cursor, 1 + row; break
+                cursor -= len(chunk)
     if (root / 'captured-layout').exists():
         snapshot = json.loads((root / 'captured-layout').read_text())
         if text == snapshot['input']:
@@ -249,7 +261,7 @@ elif command == 'capture-pane':
     native = (root / 'native-layout').exists()
     rows = ''
     # An 80-column pane leaves 78 cells after the prompt/continuation prefix.
-    if (root / 'wrap-80').exists() and len(occupied) > 78:
+    if (root / 'wrap-80').exists() and len(occupied) > 78 and '-J' not in args and not ((root / 'notice-mode').exists() and provider == 'claude'):
         chunks = [occupied[i:i + 78] for i in range(0, len(occupied), 78)]
         if (root / 'word-wrap').exists():
             chunks = textwrap.wrap(occupied, width=78, drop_whitespace=False)
@@ -277,7 +289,23 @@ elif command == 'capture-pane':
         sys.exit(0)
     if provider == 'claude':
         shown = occupied + padding if text or (root / 'bare-composer').exists() else ('\x1b[2mTry "edit <filepath> to..."\x1b[22m' if '-e' in args else 'Try "edit <filepath> to..."')
-        print(top + '\n❯\u00a0' + pad(shown) + '\n' + rows + '────────────────────────────\n  ' + footer)
+        if (root / 'notice-mode').exists() and text and ('\n' in shown or ((root / 'wrap-80').exists() and '-J' not in args and len(shown) > 78)):
+            logical_rows = shown.split('\n')
+            physical_rows = []
+            for logical_index, logical in enumerate(logical_rows):
+                chunks = [logical]
+                if (root / 'wrap-80').exists() and '-J' not in args and len(logical) > 78:
+                    chunks = [logical[i:i + 78] for i in range(0, len(logical), 78)]
+                    if (root / 'word-wrap').exists(): chunks = textwrap.wrap(logical, width=78, drop_whitespace=False)
+                for chunk_index, chunk in enumerate(chunks):
+                    if logical_index == 0 and chunk_index == 0:
+                        physical_rows.append(chunk)
+                    else:
+                        physical_rows.append(('  ' + chunk) if chunk else '')
+            physical_rows[-1] = pad(physical_rows[-1])
+            print(top + '\n❯\u00a0' + physical_rows[0] + '\n' + '\n'.join(physical_rows[1:]) + '\n────────────────────────────\n  ' + footer)
+        else:
+            print(top + '\n❯\u00a0' + pad(shown) + '\n' + rows + '────────────────────────────\n  ' + footer)
     else:
         shown = occupied + padding if text else ('\x1b[2mAsk Codex to do anything\x1b[22m' if '-e' in args else 'Ask Codex to do anything')
         print('› ' + shown + '\n' + rows + '\n  ' + footer)

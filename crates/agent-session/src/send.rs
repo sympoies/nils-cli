@@ -18,8 +18,9 @@ use crate::{
     activity, auto_resume, capture_visible_pane_with_timeout, carries_literal_text, cli,
     codex_account, codex_app_server, delete_tmux_buffer, ensure_same_session_identity,
     exit_status_result, live_status, load_session_record, resolve_tmux_bin,
-    run_output_with_timeout, run_status_with_timeout, send_guard, send_input_unlocked, send_submit,
-    send_tmux_key, session_dir, write_private_file, write_session_record,
+    run_output_with_timeout, run_output_with_timeout_and_cap, run_status_with_timeout, send_guard,
+    send_input_unlocked, send_submit, send_tmux_key, session_dir, write_private_file,
+    write_session_record,
 };
 
 #[derive(Debug, Serialize)]
@@ -47,6 +48,22 @@ fn guarded_hold_budget(record: &SessionRecord) -> Duration {
     } else {
         Duration::from_secs(15)
     }
+}
+
+fn capture_notice_visible_pane_with_timeout(
+    tmux_bin: &Path,
+    target: &str,
+    timeout: Duration,
+) -> Option<String> {
+    let mut command = ProcessCommand::new(tmux_bin);
+    command.args(["capture-pane", "-J", "-p", "-e", "-t", target]);
+    let output =
+        run_output_with_timeout_and_cap(command, timeout, crate::PANE_OBSERVATION_MAX_OUTPUT_BYTES)
+            .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 pub(crate) fn send_to_session(
@@ -498,7 +515,13 @@ fn guarded(
                     &record.agent,
                     &probe,
                     admission.deadline,
-                    |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
+                    |timeout| {
+                        if args.guards.notice_envelope {
+                            capture_notice_visible_pane_with_timeout(tmux_bin, &target, timeout)
+                        } else {
+                            capture_visible_pane_with_timeout(tmux_bin, &target, timeout)
+                        }
+                    },
                     |timeout| recorded_tmux_runtime_stopped(tmux_bin, &record, timeout),
                     || true,
                     press_enter,

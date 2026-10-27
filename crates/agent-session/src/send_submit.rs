@@ -20,7 +20,8 @@ pub(crate) use composer::cleanup::{
     prefix_end as cleanup_prefix_end,
 };
 pub(crate) use composer::{
-    composer_holds, direct_composer_input, exact_composer_input, known_multiline_input,
+    composer_holds, direct_composer_input, exact_composer_input, known_multiline_cursor_holds,
+    known_multiline_input,
 };
 
 /// Leading non-whitespace characters used to find the text again. Short enough
@@ -152,12 +153,18 @@ fn compact(text: &str) -> String {
 }
 
 pub(crate) fn classify(agent: &str, pane: &str, probe: &Probe) -> Composer {
-    if probe
-        .notice
-        .as_deref()
-        .is_some_and(|text| composer::known_multiline_input(agent, pane, text).is_some())
-    {
-        return Composer::Pending;
+    if let Some(text) = probe.notice.as_deref() {
+        if composer::known_multiline_input(agent, pane, text)
+            .is_some_and(|input| composer::composer_holds(agent, &input, text))
+        {
+            return Composer::Pending;
+        }
+        return if composer::exact_composer_input(agent, pane).is_some_and(|input| input.is_empty())
+        {
+            Composer::Clear
+        } else {
+            Composer::Unrecognized
+        };
     }
     let lines: Vec<&str> = pane.lines().map(str::trim_end).collect();
     let located = match agent {
@@ -571,6 +578,24 @@ mod tests {
             classify("codex", CODEX_ECHO_ABOVE_APPROVAL, &probe),
             Composer::Unrecognized,
             "a transcript echo above a dialog must not read as a pending composer"
+        );
+    }
+
+    #[test]
+    fn notice_probe_distinguishes_exact_pending_from_clear_and_changed_inputs() {
+        let text = crate::notice::NoticeEnvelope::new("mailbox", "scheduler", None)
+            .unwrap()
+            .encode("A B")
+            .unwrap();
+        let probe = notice_probe(&text).unwrap();
+        let claude_empty = "────────────────────\n❯\u{a0}\u{1b}[2mTry \"edit <filepath> to...\"\u{1b}[22m\n────────────────────\n  status";
+        let codex_empty = "› \u{1b}[2mAsk Codex to do anything\u{1b}[22m\n\n  status";
+        let claude_changed = "────────────────────\n❯\u{a0}<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA\n  B\n────────────────────\n  status";
+        assert_eq!(classify("claude", claude_empty, &probe), Composer::Clear);
+        assert_eq!(classify("codex", codex_empty, &probe), Composer::Clear);
+        assert_eq!(
+            classify("claude", claude_changed, &probe),
+            Composer::Unrecognized
         );
     }
 
