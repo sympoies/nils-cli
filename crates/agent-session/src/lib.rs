@@ -395,94 +395,8 @@ pub fn render_clap_message(err: &clap::Error) -> String {
         .unwrap_or_else(|| "command-line parse failed".to_string())
 }
 
-fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
-    let format = args.format;
-    if let Err(error) = notice::prepare_start(&mut args) {
-        return render_error(START_COMMAND, format, error);
-    }
-    if let Err(error) = launch_env::from_flags(&args.launch_env) {
-        return render_error(START_COMMAND, format, error);
-    }
-    if args.forge_initiator.is_some() && non_empty_env("AGENT_SESSION_ID").is_some() {
-        return render_error(
-            START_COMMAND,
-            format,
-            CliError::data(
-                "forge-initiator-rebind-forbidden",
-                "managed sessions cannot replace their launch initiator",
-                None,
-            ),
-        );
-    }
-    if let Err(err) = lineage::role_from_request(args.role.as_deref()) {
-        return render_error(START_COMMAND, format, err);
-    }
-    let work = match lineage::WorkRequest::from_flags(
-        args.program.as_deref(),
-        &args.issues,
-        args.no_inherit_work,
-    ) {
-        Ok(work) => work,
-        Err(err) => {
-            let command = if args.via_console {
-                CONSOLE_START_COMMAND
-            } else {
-                START_COMMAND
-            };
-            return render_error(command, format, err);
-        }
-    };
-    if args.via_console {
-        if let Err(err) = lineage::require_root_for_role(args.role.as_deref(), !args.no_parent) {
-            return render_error(CONSOLE_START_COMMAND, format, err);
-        }
-        return match start_via_console(context, args, &work) {
-            Ok(result) => render_single_success(
-                CONSOLE_START_COMMAND,
-                format,
-                &result,
-                render_console_started_text,
-            ),
-            Err(err) => render_error(CONSOLE_START_COMMAND, format, err),
-        };
-    }
-    let (mut initial_lineage, warning) =
-        match lineage::resolve_cli_start(context, args.no_parent, args.role.as_deref(), &work) {
-            Ok(resolved) => resolved,
-            Err(err) => return render_error(START_COMMAND, format, err),
-        };
-    if let Some(warning) = warning {
-        eprintln!("warning: {warning}");
-    }
-    if let Err(err) =
-        lineage::require_root_for_role(args.role.as_deref(), initial_lineage.seed.has_parent())
-    {
-        return render_error(START_COMMAND, format, err);
-    }
-    if let Some(initiator) = &args.forge_initiator {
-        let context = nils_common::forge_identity::session::LaunchContext {
-            initiator: initiator.clone(),
-            role: args.role.clone(),
-        };
-        if let Err(err) = context.validate() {
-            return render_error(START_COMMAND, format, forge_identity::error(err));
-        }
-        initial_lineage.seed.set_forge_context(Some(context));
-    }
-    args.initial_lineage = Some(crate::InitialLineage {
-        role: args.role.clone(),
-        ..initial_lineage
-    });
-    match start_session(context, args, StartFailureDisposition::ReturnError) {
-        Ok(view) => render_single_success(
-            START_COMMAND,
-            view.format,
-            &view.result,
-            render_started_text,
-        ),
-        Err(err) => render_error(START_COMMAND, format, err),
-    }
-}
+mod start_resume;
+use start_resume::run_start;
 
 /// `start --via-console`: the create body Agent Console accepts, sent through
 /// the local daemon. The session id is assigned by Agent Console.
@@ -1576,6 +1490,7 @@ pub struct StartView {
 }
 
 pub(crate) struct ProviderResumeImportArgs {
+    pub(crate) ordinary_start: Option<Box<cli::StartArgs>>,
     pub(crate) launch_env: launch_env::LaunchEnv,
     pub(crate) agent: AgentKind,
     pub(crate) title_mode: display_metadata::TitleMode,
@@ -1842,6 +1757,9 @@ fn start_session_inner(
     failure_disposition: StartFailureDisposition,
     claude_account: Option<InitialClaudeAccount>,
 ) -> Result<StartView, CliError> {
+    if args.resume.is_some() {
+        return start_resume::start(context, args);
+    }
     let journal_id = lifecycle::start_id(
         context,
         args.id.as_deref(),
@@ -1849,7 +1767,7 @@ fn start_session_inner(
         args.title.as_deref(),
     )?;
     crate::lifecycle::attempt_created(context, &journal_id, "start", || {
-        start_session_inner_unjournaled(context, args, failure_disposition, claude_account)
+        start_session_inner_unjournaled(context, args, failure_disposition, claude_account, None)
     })
 }
 
@@ -1858,6 +1776,7 @@ fn start_session_inner_unjournaled(
     args: cli::StartArgs,
     failure_disposition: StartFailureDisposition,
     claude_account: Option<InitialClaudeAccount>,
+    provider_plan: Option<InitialProviderPlan>,
 ) -> Result<StartView, CliError> {
     let initial_lineage =
         origin::for_start(context, args.initial_lineage, args.workspace.as_deref())?;
@@ -1873,7 +1792,9 @@ fn start_session_inner_unjournaled(
     let cwd = resolve_cwd(args.cwd.as_deref())?;
     let _worktree_lifecycle = acquire_worktree_lifecycle(context, &cwd)?;
     let prompt = read_prompt(&args.prompt, args.prompt_file.as_deref(), args.prompt_stdin)?;
-    let provider_plan = initial_provider_resume_plan(args.agent)?;
+    let provider_plan = provider_plan
+        .map(Ok)
+        .unwrap_or_else(|| initial_provider_resume_plan(args.agent))?;
     let launch_started_at = SystemTime::now();
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let agent_bin = resolve_agent_bin(args.agent, args.agent_bin.as_deref());
@@ -1919,10 +1840,11 @@ fn start_session_inner_unjournaled(
         return Err(err);
     }
     if let Some(initial) = claude_account.as_ref()
-        && let Err(err) = claude_account::bind_initial(
+        && let Err(err) = start_resume::bind_claude(
             &mut created.record,
-            &initial.account,
-            initial.selection_source,
+            initial,
+            args.resume.is_some(),
+            args.initial_provider_config_dir.as_deref(),
         )
     {
         cleanup_created_record(context, &created);
@@ -2312,6 +2234,18 @@ pub(crate) fn start_provider_resume_session(
     context: &CliContext,
     args: ProviderResumeImportArgs,
 ) -> Result<StartView, CliError> {
+    if args.ordinary_start.is_some() {
+        return start_provider_resume_session_unjournaled(context, args);
+    }
+    let _conversation =
+        start_resume::conversation_lock(context, args.agent, &args.provider_resume_id)?;
+    let _sources = start_resume::guard_other_writers(
+        context,
+        args.agent,
+        &args.provider_resume_id,
+        None,
+        &resolve_tmux_bin(args.tmux_bin.as_deref()),
+    )?;
     let journal_id = lifecycle::start_id(
         context,
         args.id.as_deref(),
@@ -2327,7 +2261,9 @@ pub(crate) fn start_provider_resume_session_unjournaled(
     context: &CliContext,
     args: ProviderResumeImportArgs,
 ) -> Result<StartView, CliError> {
-    validate_provider_resume_import_agent_args(args.agent, &args.agent_args)?;
+    if args.ordinary_start.is_none() {
+        validate_provider_resume_import_agent_args(args.agent, &args.agent_args)?;
+    }
     validate_agent_args(args.agent, &args.agent_args)?;
     let provider_resume_id = normalize_provider_resume_id(&args.provider_resume_id)?;
     let source = resolve_provider_resume_source(
@@ -2335,8 +2271,20 @@ pub(crate) fn start_provider_resume_session_unjournaled(
         &provider_resume_id,
         args.provider_config_dir.as_deref(),
         args.agent_profile.as_deref(),
-    )?;
+    )
+    .map_err(|error| {
+        if args.ordinary_start.is_some() {
+            start_resume::history_error(error)
+        } else {
+            error
+        }
+    })?;
     let cwd = resolve_cwd(Some(&source.cwd))?;
+    if let Some(ordinary) = &args.ordinary_start
+        && ordinary.cwd.as_deref() != Some(cwd.as_path())
+    {
+        return Err(start_resume::refusal("resume-unsupported"));
+    }
     let cwd_string = display_path(&cwd);
     let resume_args = canonical_provider_resume_args(args.agent, &cwd_string, &provider_resume_id)
         .ok_or_else(|| {
@@ -2357,6 +2305,25 @@ pub(crate) fn start_provider_resume_session_unjournaled(
         resume_args,
         extra: BTreeMap::new(),
     };
+    if let Some(mut ordinary) = args.ordinary_start {
+        ordinary.initial_lineage = Some(args.initial_lineage);
+        ordinary.cwd = Some(cwd);
+        let account = ordinary.account.clone().expect("admitted resume account");
+        let claude = (ordinary.agent == AgentKind::Claude).then_some(InitialClaudeAccount {
+            account,
+            selection_source: "explicit",
+        });
+        return start_session_inner_unjournaled(
+            context,
+            *ordinary,
+            StartFailureDisposition::ReturnError,
+            claude,
+            Some(InitialProviderPlan {
+                launch_args: provider_resume.resume_args.clone(),
+                provider_resume: Some(provider_resume),
+            }),
+        );
+    }
     start_resolved_provider_resume_session(context, args, cwd, provider_resume)
 }
 
@@ -4776,6 +4743,7 @@ fn resume_session_locked(
     }
     let (provider_resume, agent) = validate_resume_metadata(&record)?;
     let resume_args = provider_resume.resume_args.clone();
+    let provider_session_id = provider_resume.session_id.clone();
     if recorded_runtime_is_from_prior_boot(&record) {
         record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
     }
@@ -4834,6 +4802,14 @@ fn resume_session_locked(
             SessionTerminationOperation::Resume,
         ));
     }
+    let _conversation = start_resume::conversation_lock(context, agent, &provider_session_id)?;
+    let _sources = start_resume::guard_other_writers(
+        context,
+        agent,
+        &provider_session_id,
+        Some(&record.id),
+        tmux_bin,
+    )?;
     record.extra.remove(DELETE_TMUX_PRIOR_IDENTITIES_KEY);
     runtime_teardown::retire_confirmed_broker(context, &record, tmux_bin, termination_state)?;
     record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);

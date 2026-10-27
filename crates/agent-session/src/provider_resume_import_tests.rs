@@ -41,6 +41,7 @@ fn worktree_lifecycle_blocks_provider_import_and_existing_resume() {
     )
     .unwrap();
     let args = ProviderResumeImportArgs {
+        ordinary_start: None,
         launch_env: launch_env::LaunchEnv::new(),
         agent: AgentKind::Codex,
         title_mode: display_metadata::TitleMode::Auto,

@@ -179,6 +179,12 @@ pub struct CodexAppServerProxyArgs {
 
 #[derive(Debug, Args)]
 pub struct StartArgs {
+    /// Resume this exact provider conversation in a new managed record.
+    #[arg(long, value_name = "PROVIDER_SESSION_ID")]
+    pub resume: Option<String>,
+    /// Check resume admission without creating a record, runtime, prompt or operation.
+    #[arg(long, requires = "resume", conflicts_with = "reconcile")]
+    pub check_resume: bool,
     /// Public workspace slug; inherits the managed parent workspace when omitted.
     #[arg(long, value_name = "SLUG")]
     pub workspace: Option<String>,
@@ -304,10 +310,9 @@ pub struct StartArgs {
     #[arg(long, value_name = "MACHINE", requires = "via_console")]
     pub machine: Option<String>,
 
-    /// Account for --via-console, as the target daemon's account broker names
-    /// it: a Codex account for --agent codex or a Claude account for --agent
-    /// claude.
-    #[arg(long, value_name = "NAME", requires = "via_console")]
+    /// Broker account for --via-console or direct --resume. Resume defaults
+    /// to the unique original account and cannot switch accounts.
+    #[arg(long, value_name = "NAME")]
     pub account: Option<String>,
 
     /// Launch profile for --via-console, as the target daemon advertises it.
