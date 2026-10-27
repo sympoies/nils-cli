@@ -22,6 +22,16 @@ pub(in crate::coordination) fn admit(
         message.category,
         Some(MessageCategory::Blocker | MessageCategory::Decision)
     ) || crate::coordination::service::is_service_sender(&message.sender_session_id);
+    if interval == 0 {
+        if let Some(receipt) = registry.notifications.get_mut(&receipt_key(
+            &message.recipient_session_id,
+            &message.recipient_incarnation,
+        )) {
+            receipt.routine_interval_seconds = 0;
+            receipt.prompt = None;
+        }
+        return;
+    }
     let mut counts = BTreeMap::<String, usize>::new();
     for item in registry
         .messages

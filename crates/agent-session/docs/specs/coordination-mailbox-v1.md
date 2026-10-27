@@ -384,3 +384,10 @@ acknowledge an older uncertain submission. `message audit` advertises
 recipient intervals under `routine_coalescing`. Consumers must deploy matching
 CLI and controller versions before enabling the policy. This capability does
 not disable idle, composer, incarnation or idempotency guards.
+
+Admitting a coalesced generation upgrades the coordination registry to v6.
+Older registry writers refuse this version rather than erasing interval or
+attempt-text state; updated metadata projection readers accept v6. This fence
+remains after the selected recipient drains its mailbox. Upgrade the complete
+CLI/controller/broker stack before enabling the policy; unconfigured registries
+retain their existing version behavior.
