@@ -35,6 +35,9 @@ pub struct NoticeArgs {
     pub body_file: Option<PathBuf>,
     #[arg(long, required_unless_present = "body_file")]
     pub text_stdin: bool,
+    /// Wait for a busy runtime to become idle before submitting the notice.
+    #[arg(long)]
+    pub queue: bool,
     #[command(flatten)]
     pub guards: send_guard::GuardArgs,
     #[arg(long, value_hint = ValueHint::FilePath)]
@@ -103,33 +106,40 @@ pub(crate) fn run(context: &CliContext, mut args: NoticeArgs) -> i32 {
         let metadata =
             NoticeEnvelope::new(&args.kind, &args.source, args.id.as_deref()).map_err(error)?;
         require_enabled()?;
+        if args.queue && args.guards.idempotency_key.is_none() {
+            return Err(CliError::usage(
+                "notice-queue-requires-idempotency-key",
+                "queued notices require --idempotency-key for at-most-once delivery",
+                None,
+            ));
+        }
         let body = crate::read_prompt(&None, args.body_file.as_deref(), args.text_stdin)?;
         let text = metadata
             .encode(body.as_deref().unwrap_or(""))
             .map_err(error)?;
-        let record = crate::load_session_record(context, &args.session)?;
-        if !crate::codex_app_server::runtime_is_supported(&record) {
-            return Err(CliError::runtime(
-                "notice-transport-unsupported",
-                "notice requires a supported Codex app-server runtime; terminal exact multiline verification is unavailable",
-                Some(serde_json::json!({"pasted":false,"submitted":false,"stage":"admission"})),
-            ));
-        }
         args.guards.require_idle = true;
         args.guards.require_empty_composer = true;
-        crate::send::send_to_session(
-            context,
-            cli::SendArgs {
-                id: args.session,
-                text: Some(text),
-                text_stdin: false,
-                keys: vec![cli::SpecialKey::Enter],
-                allow_blocked: false,
-                guards: args.guards,
-                tmux_bin: args.tmux_bin,
-                format,
-            },
-        )
+        args.guards.notice_envelope = true;
+        loop {
+            match crate::send::send_to_session(
+                context,
+                cli::SendArgs {
+                    id: args.session.clone(),
+                    text: Some(text.clone()),
+                    text_stdin: false,
+                    keys: vec![cli::SpecialKey::Enter],
+                    allow_blocked: false,
+                    guards: args.guards.clone(),
+                    tmux_bin: args.tmux_bin.clone(),
+                    format,
+                },
+            ) {
+                Err(error) if args.queue && error.code() == "send-session-not-idle" => {
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+                result => return result,
+            }
+        }
     })();
     match result {
         Ok(result) => {

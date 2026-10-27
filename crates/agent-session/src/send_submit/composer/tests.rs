@@ -1,9 +1,43 @@
 //! Qualified generic captures and separately labeled synthetic OSC-8 variants.
-use super::{direct_composer_input, exact_composer_input};
+use super::{direct_composer_input, exact_composer_input, known_multiline_input};
 use pretty_assertions::assert_eq;
 
 fn claude(input: &str, rows: &str, footer: &str) -> String {
     format!("────────────────────\n❯\u{a0}{input}\n{rows}────────────────────\n  {footer}")
+}
+
+#[test]
+fn known_multiline_notice_rows_are_verified_exactly() {
+    let expected = "<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nBody";
+    let claude = "────────────────────\n❯\u{a0}<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nBody\n────────────────────\n  status";
+    let codex = "› <!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nBody\n\n  status";
+    assert_eq!(
+        known_multiline_input("claude", claude, expected).as_deref(),
+        Some(expected)
+    );
+    assert_eq!(
+        known_multiline_input("codex", codex, expected).as_deref(),
+        Some(expected)
+    );
+    let claude_with_extra = claude.replace("\nBody\n", "\nBody\nextra\n");
+    let codex_with_extra = codex.replace("\nBody\n", "\nBody\nextra\n");
+    assert_eq!(
+        known_multiline_input("claude", &claude_with_extra, expected),
+        None
+    );
+    assert_eq!(
+        known_multiline_input("codex", &codex_with_extra, expected),
+        None
+    );
+    let probe = crate::send_submit::notice_probe(expected).unwrap();
+    assert_eq!(
+        crate::send_submit::classify("claude", claude, &probe),
+        crate::send_submit::Composer::Pending
+    );
+    assert_eq!(
+        crate::send_submit::classify("codex", codex, &probe),
+        crate::send_submit::Composer::Pending
+    );
 }
 
 fn codex(input: &str, rows: &str, footer: &str) -> String {

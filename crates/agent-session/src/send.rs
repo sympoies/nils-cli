@@ -180,6 +180,7 @@ pub(crate) fn send_to_session_observing(
             &tmux_bin,
             &mut manual_input,
             hold_started,
+            args.guards.notice_envelope,
         )?)
     } else {
         None
@@ -240,13 +241,19 @@ fn confirm_prompt_submission(
     tmux_bin: &Path,
     manual_input: &mut ManualInputSection,
     hold_started: Instant,
+    notice_envelope: bool,
 ) -> Result<send_submit::SubmitReport, CliError> {
     let target = format!("{}:0.0", record.tmux_session);
     let mut press_enter = || {
         manual_input.arm(context, record)?;
         send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
     };
-    let Some(probe) = send_submit::probe(text) else {
+    let probe = if notice_envelope {
+        send_submit::notice_probe(text)
+    } else {
+        send_submit::probe(text)
+    };
+    let Some(probe) = probe else {
         press_enter()?;
         return Ok(send_submit::SubmitReport {
             outcome: send_submit::SubmitOutcome::Unverified,
@@ -476,7 +483,11 @@ fn guarded(
         let submits_prompt = literal.is_some() && args.keys == [SpecialKey::Enter];
         if submits_prompt {
             let text = literal.expect("literal prompt");
-            let probe = send_submit::probe(text);
+            let probe = if args.guards.notice_envelope {
+                send_submit::notice_probe(text)
+            } else {
+                send_submit::probe(text)
+            };
             let mut press_enter = || {
                 manual_input.arm(context, &record)?;
                 admission.check(Some(text), "submit")?;

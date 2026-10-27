@@ -7,6 +7,68 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
     composer_input(agent, pane, false)
 }
 
+/// Match a known multiline notice only when its visible composer rows reproduce
+/// the exact submitted bytes. Unknown drafts continue through the single-row
+/// parser and are never inferred from a partial match.
+pub(crate) fn known_multiline_input(agent: &str, pane: &str, expected: &str) -> Option<String> {
+    crate::notice::parse_notice(expected)?;
+    let (plain, _) = styled_text(pane)?;
+    let lines: Vec<&str> = plain.lines().collect();
+    let (start, claude_region) = match agent {
+        "claude" => {
+            let (region, _) = claude_composer(&lines)?;
+            let start = lines
+                .iter()
+                .position(|line| std::ptr::eq(*line, region[0]))?;
+            (start, Some(region))
+        }
+        "codex" => (lines.iter().rposition(|line| line.starts_with('›'))?, None),
+        _ => return None,
+    };
+    let glyph = if agent == "claude" { '❯' } else { '›' };
+    let first = lines[start].trim_start().strip_prefix(glyph)?;
+    let first = first
+        .strip_prefix([' ', '\u{a0}', '\u{2007}', '\u{202f}'])
+        .unwrap_or(first);
+    let expected_rows: Vec<&str> = expected.split('\n').collect();
+    if agent == "claude" && expected_rows.iter().any(|row| row.ends_with(' ')) {
+        return None;
+    }
+    if claude_region.is_some_and(|region| region.len() != expected_rows.len()) {
+        return None;
+    }
+    if first.trim_end_matches(' ') != expected_rows.first().copied()? {
+        return None;
+    }
+    for (offset, expected_row) in expected_rows.iter().enumerate().skip(1) {
+        let row = lines.get(start + offset)?;
+        let row = row.strip_prefix("  ").unwrap_or(row);
+        let row = if agent == "claude" {
+            row.trim_end_matches(' ')
+        } else {
+            row
+        };
+        if row != *expected_row {
+            return None;
+        }
+    }
+    if agent == "codex" {
+        let footer_start = start + expected_rows.len();
+        let footer = lines.get(footer_start)?;
+        let footer_lines = lines.get(footer_start + 1..)?;
+        if !footer.trim().is_empty()
+            || footer_lines
+                .iter()
+                .filter(|line| !line.trim().is_empty())
+                .count()
+                > super::CODEX_MAX_FOOTER_LINES
+        {
+            return None;
+        }
+    }
+    Some(expected.to_owned())
+}
+
 /// Direct replies may follow a queued message when the sole input row is a
 /// native dim-styled queued hint. Literal or adjacent owner input stays a draft.
 pub(crate) fn direct_composer_input(agent: &str, pane: &str) -> Option<String> {

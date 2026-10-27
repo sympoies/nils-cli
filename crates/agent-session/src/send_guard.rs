@@ -25,8 +25,11 @@ mod ownership;
 mod pasted;
 mod text;
 
-#[derive(Debug, Default, Args)]
+#[derive(Clone, Debug, Default, Args)]
 pub struct GuardArgs {
+    /// Internal marker enabling the notice-only multiline composer verifier.
+    #[arg(skip)]
+    pub notice_envelope: bool,
     /// Require the active runtime launch id to match before delivery.
     #[arg(long, value_name = "INCARNATION")]
     pub expect_runtime: Option<String>,

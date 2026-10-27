@@ -183,6 +183,10 @@ elif command == 'send-keys' and args[-1] in ('BSpace', 'DC'):
         (root / 'composer').write_text(text)
         if (root / 'redraw-after-delete').exists(): (root / 'redraw-pending').touch()
 elif command == 'send-keys' and args[-1] == 'Enter':
+    if (root / 'start-turn-on-enter').exists():
+        p = root / 'state/sessions/guarded/activity.json'
+        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
+        p.write_text(json.dumps(d))
     if (root / 'exit-after-enter').exists():
         (root / 'entered').touch(); sys.exit(0)
     if (root / 'unverified-after-enter').exists():

@@ -91,8 +91,7 @@ fixtures and run them without Rust. Rust's `agent_session::notice` exports
 agent-session notice <session> --kind schedule.tick --source scheduler \
   --body-file notice.txt --idempotency-key delivery-1 --format json
 agent-session notice <session> --kind context.continue --source scheduler \
-  --text-stdin --expect-runtime <launch-id> \
-  --expect-provider-session <provider-id> --idempotency-key delivery-2
+  --body-file notice.txt --idempotency-key delivery-2 --queue
 ```
 
 Exactly one body source is required. `--id` is optional display metadata;
@@ -100,17 +99,26 @@ Exactly one body source is required. `--id` is optional display metadata;
 Every notice forces idle and empty-composer checks, submits exactly once via
 the existing guarded `send` path, and preserves its runtime/provider binding,
 authentication, blocked-state, durable key, receipt and unknown-outcome rules.
+
+### Terminal delivery and queue mode
+
+Terminal Claude and Codex sessions use the verified terminal composer path;
+the complete envelope must be observable before Enter, and refusal never leaves
+partial input. `--queue` waits while the target reports busy, retries only the
+busy refusal, and delivers once it becomes idle. Other guard failures stop the
+request. The durable idempotency claim is made by the guarded send path when
+delivery proceeds. Queue mode requires `--idempotency-key` so a caller retry
+cannot submit the same queued notice again.
 Optional `--expect-runtime` and `--expect-provider-session` add caller bindings.
 There is no allow-blocked, arbitrary-key or terminal fallback mode.
 The JSON envelope is `cli.agent-session.notice.v1`, with the guarded send
 receipt fields. `send` retains general input semantics and adds no marker.
 
-This first delivery supports Codex app-server native submission. Terminal
-runtimes return `notice-transport-unsupported` before input: their current
-exact composer check supports a single logical line and cannot verify an
-envelope. A refusal never downgrades to raw tmux or presses Enter. Terminal
-continuation support and live provider/compaction readback remain follow-up
-acceptance under [#2986](https://github.com/sympoies/nils-cli/issues/2986).
+Codex app-server runtimes use native submission. Terminal runtimes require
+exact composer verification of the known multiline envelope before submission.
+A refusal never downgrades to raw tmux or presses Enter. Live
+provider/compaction readback remains follow-up acceptance under
+[#2986](https://github.com/sympoies/nils-cli/issues/2986).
 A native unknown outcome retains its claim; inspect the existing receipt and
 provider history instead of retrying with a fresh key.
 

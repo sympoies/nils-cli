@@ -29,6 +29,12 @@ impl Admission<'_> {
         pasted: Option<&str>,
         stage: &str,
     ) -> Option<String> {
+        if self.args.notice_envelope
+            && let Some(input) = pasted
+                .and_then(|text| send_submit::known_multiline_input(&self.record.agent, pane, text))
+        {
+            return Some(input);
+        }
         if let Some(input) = send_submit::exact_composer_input(&self.record.agent, pane) {
             return Some(input);
         }

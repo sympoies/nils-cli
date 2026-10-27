@@ -9,7 +9,9 @@ impl Fixture {
         let body = self.root().join("notice-body");
         let state = self.root().join("state");
         let tmux = self.root().join("tmux");
-        fs::write(&body, "  synthetic\r\n\n本文 <tag>\n").unwrap();
+        if !body.exists() {
+            fs::write(&body, "  synthetic\r\n\n本文 <tag>\n").unwrap();
+        }
         let mut args = vec![
             "--state-dir",
             state.to_str().unwrap(),
@@ -109,10 +111,80 @@ fn notice_native_unknown_outcome_never_replays() {
 }
 
 #[test]
-fn notice_terminal_refuses_before_any_input() {
+fn notice_terminal_delivers_the_envelope_through_guarded_input() {
     for provider in ["claude", "codex"] {
         let fixture = Fixture::new(provider);
-        fixture.refused(&fixture.notice(&[]), "notice-transport-unsupported");
+        fs::write(fixture.root().join("notice-body"), "synthetic").unwrap();
+        fs::write(fixture.root().join("start-turn-on-enter"), "").unwrap();
+        let output = fixture.notice(&[]);
+        assert_eq!(output.code, 0, "{}", output.stdout_text());
+        assert_eq!(
+            output.stdout_json()["schema_version"],
+            "cli.agent-session.notice.v1"
+        );
+        let envelope = "<!-- agent-notice:v1 kind=schedule.tick source=scheduler id=Example-1 -->\n\nsynthetic";
+        let submissions: Vec<String> = fs::read_to_string(fixture.root().join("submissions"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(submissions, [envelope]);
+        let calls = fixture.calls();
+        assert!(calls.iter().any(|call| call[0] == "paste-buffer"));
+        assert!(calls.iter().any(|call| call[0] == "send-keys" && call.last().is_some_and(|key| key == "Enter")));
+    }
+}
+
+#[test]
+fn notice_terminal_refusal_leaves_existing_composer_untouched() {
+    for provider in ["claude", "codex"] {
+        let fixture = Fixture::new(provider);
+        fs::write(fixture.root().join("composer"), "existing draft").unwrap();
+        fixture.refused(&fixture.notice(&[]), "send-composer-not-empty");
+        assert_eq!(
+            fs::read_to_string(fixture.root().join("composer")).unwrap(),
+            "existing draft"
+        );
         fixture.no_delivery();
     }
+}
+
+#[test]
+fn queued_terminal_notice_waits_for_idle_and_submits_once() {
+    let fixture = Fixture::new("claude");
+    fs::write(fixture.root().join("notice-body"), "synthetic").unwrap();
+    fs::write(fixture.root().join("start-turn-on-enter"), "").unwrap();
+    let activity = fixture.root().join("state/sessions/guarded/activity.json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&activity).unwrap()).unwrap();
+    state["state"]["phase"] = Value::String("working".into());
+    fs::write(&activity, serde_json::to_vec(&state).unwrap()).unwrap();
+    let idle_activity = activity.clone();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        let mut state: Value = serde_json::from_slice(&fs::read(&idle_activity).unwrap()).unwrap();
+        state["state"]["phase"] = Value::String("waiting".into());
+        fs::write(&idle_activity, serde_json::to_vec(&state).unwrap()).unwrap();
+    });
+
+    let output = fixture.notice(&["--queue"]);
+    release.join().unwrap();
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    let submissions: Vec<String> = fs::read_to_string(fixture.root().join("submissions"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        submissions,
+        ["<!-- agent-notice:v1 kind=schedule.tick source=scheduler id=Example-1 -->\n\nsynthetic"]
+    );
+    fixture.idle();
+    fixture.refused(&fixture.notice(&["--queue"]), "send-idempotency-key-used");
+    assert_eq!(
+        fs::read_to_string(fixture.root().join("submissions"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
 }

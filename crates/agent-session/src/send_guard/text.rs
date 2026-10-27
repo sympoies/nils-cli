@@ -12,6 +12,9 @@ impl Admission<'_> {
         if !self.verify_composer {
             return Ok(text);
         }
+        if self.args.notice_envelope {
+            return Ok(text);
+        }
         // A bare `\n`, `\r` or `\r\n` is a key press and never reaches this check.
         let trimmed = text.trim_end_matches(['\n', '\r']);
         if trimmed.is_empty() || trimmed.contains(['\n', '\r']) {
