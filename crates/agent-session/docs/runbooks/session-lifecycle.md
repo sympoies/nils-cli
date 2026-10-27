@@ -390,6 +390,14 @@ Cleanup and retry rules:
   relocate those processes, or use the explicit `delete --leave-processes`
   recovery below to remove only the verified tmux session and retain processes.
   Repeating ordinary close alone does not resolve the mismatched boundary.
+- An owner who has decided to terminate the entire recorded runtime may use
+  `agent-session delete <id> --recover-split-cgroup`. This explicit Linux path
+  requires a complete, stable process-session snapshot, checks each captured
+  PID and start time, pins each target with a pidfd, and rechecks the captured
+  membership before signaling. It retains session state if any identity,
+  membership, tmux postcondition, or process-stop check is missing or changes.
+  Ordinary delete keeps the stricter pane-cgroup fence; this option does not
+  move processes or signal a process group.
 - Kill failures, ambiguous tmux errors, ownership mismatches, and surviving
   processes retain all session state.
 - When tmux returns a successful but blank identity probe for a stale session,
@@ -518,6 +526,27 @@ in errors) means permissions, process churn, the time budget, or the 128-entry
 limit prevented a complete inventory. Processes that removed their markers may
 remain unlisted. Inspect survivors before taking any further action.
 The same inventory counts and reasons accompany this explicit recovery result.
+
+### Terminate a verified split-scope runtime explicitly
+
+Use this only when the owner has selected termination of the complete recorded
+runtime after ordinary deletion refused the split cgroup boundary:
+
+```bash
+agent-session delete <id> --recover-split-cgroup --format json
+```
+
+This Linux-only path pins the pane's dedicated cgroup and every captured
+process-session member independently. It requires exact PID/start-time and
+session membership matches. It temporarily stops each external captured member
+by its pinned PID while it verifies that the complete process-session snapshot
+is unchanged. A refusal resumes only those exact members stopped by this
+attempt. With a stable snapshot, it terminates the pinned processes and verifies
+the tmux session, process session, and recorded cgroup are stopped before
+removing provider and session state. A changed or incomplete snapshot refuses
+before termination; a failed stop retains metadata for inspection or retry.
+This option does not relocate processes or signal a process group. It is
+mutually exclusive with `--if-stopped` and `--leave-processes`.
 Reason classes include `permission-denied`, `process-read-failed`,
 `argv-only-or-sip-redacted`, `process-changed`, `time-budget-exhausted`, and
 `entry-limit-reached`, and `process-list-output-limit`. Counts cover observed

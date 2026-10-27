@@ -1747,7 +1747,7 @@ pub struct DeleteArgs {
     #[arg(
         long,
         requires = "expected_incarnation",
-        conflicts_with = "leave_processes"
+        conflicts_with_all = ["leave_processes", "recover_split_cgroup"]
     )]
     pub if_stopped: bool,
 
@@ -1761,8 +1761,13 @@ pub struct DeleteArgs {
     pub if_unread_empty: bool,
 
     /// Stop only the verified tmux target and delete state, leaving processes running.
-    #[arg(long, conflicts_with = "if_stopped")]
+    #[arg(long, conflicts_with_all = ["if_stopped", "recover_split_cgroup"])]
     pub leave_processes: bool,
+
+    /// Explicitly recover a split Linux process-session/cgroup boundary using
+    /// captured PID/start-time identities and per-process identity checks.
+    #[arg(long, conflicts_with_all = ["if_stopped", "leave_processes"])]
+    pub recover_split_cgroup: bool,
 
     /// Session id.
     #[arg(value_name = "ID")]

@@ -5,6 +5,7 @@ pub(crate) fn open_verified_linux_control_group(
     control_group: &TmuxControlGroupIdentity,
     pane_pid: libc::pid_t,
     captured_members: &[TmuxProcessIdentity],
+    allow_split_scope: bool,
 ) -> Result<PinnedLinuxControlGroup, SessionTerminationFailure> {
     let path = Path::new(&control_group.path);
     if !valid_tmux_spawn_control_group_path(path) {
@@ -16,7 +17,9 @@ pub(crate) fn open_verified_linux_control_group(
     if linux_process_control_group(pane_pid)?.as_ref() != Some(control_group) {
         return Err(SessionTerminationFailure::VerificationFailed);
     }
-    verify_captured_members_cgroup(control_group, captured_members)?;
+    if !allow_split_scope {
+        verify_captured_members_cgroup(control_group, captured_members)?;
+    }
 
     let full_path = linux_control_group_full_path(path)?;
     open_pinned_linux_control_group(control_group, &full_path)
@@ -28,12 +31,15 @@ pub(crate) fn freeze_and_revalidate_linux_control_group(
     control_group: &TmuxControlGroupIdentity,
     pane_pid: libc::pid_t,
     captured_members: &[TmuxProcessIdentity],
+    allow_split_scope: bool,
 ) -> Result<(), SessionTerminationFailure> {
     freeze_pinned_control_group(pinned, DELETE_TERMINATION_VERIFY_TIMEOUT)?;
     if linux_process_control_group(pane_pid)?.as_ref() != Some(control_group) {
         return Err(SessionTerminationFailure::VerificationFailed);
     }
-    verify_captured_members_cgroup(control_group, captured_members)?;
+    if !allow_split_scope {
+        verify_captured_members_cgroup(control_group, captured_members)?;
+    }
     ensure_linux_control_group_is_leaf(&pinned.directory_fd)?;
     Ok(())
 }

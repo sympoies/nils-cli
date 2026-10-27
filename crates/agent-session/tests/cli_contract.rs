@@ -25,6 +25,18 @@ fn delete_help_documents_the_stopped_only_contract() {
 }
 
 #[test]
+fn delete_help_documents_explicit_split_scope_recovery() {
+    let output = Command::new(bin::resolve("agent-session"))
+        .args(["delete", "--help"])
+        .output()
+        .expect("agent-session delete help");
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{help}");
+    assert!(help.contains("--recover-split-cgroup"), "{help}");
+    assert!(help.contains("per-process identity checks"), "{help}");
+}
+
+#[test]
 fn delete_rejects_combining_stopped_only_and_leave_processes_modes() {
     let output = Command::new(bin::resolve("agent-session"))
         .args([
@@ -42,6 +54,29 @@ fn delete_rejects_combining_stopped_only_and_leave_processes_modes() {
     assert_eq!(output.status.code(), Some(64));
     let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(body["error"]["code"], "parse-error");
+}
+
+#[test]
+fn delete_rejects_split_recovery_with_other_explicit_modes() {
+    for mode_args in [
+        vec!["--recover-split-cgroup", "--leave-processes"],
+        vec![
+            "--recover-split-cgroup",
+            "--if-stopped",
+            "--expected-incarnation",
+            "fixture-incarnation",
+        ],
+    ] {
+        let output = Command::new(bin::resolve("agent-session"))
+            .args(["delete", "guarded-delete"])
+            .args(mode_args)
+            .args(["--format", "json"])
+            .output()
+            .expect("agent-session delete with conflicting recovery modes");
+        assert_eq!(output.status.code(), Some(64));
+        let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(body["error"]["code"], "parse-error");
+    }
 }
 
 #[test]

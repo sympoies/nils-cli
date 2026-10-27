@@ -30,7 +30,10 @@ pub(crate) fn running_identity(
     #[cfg(target_os = "macos")]
     let identity = {
         let mut identity = identity;
-        if let Ok(pinned) = super::prepare_process_runtime(&identity) {
+        if let Ok(pinned) = super::runtime_teardown::split_scope::prepare_process_runtime(
+            &identity,
+            false,
+        ) {
             identity.pane_start_time = Some(pinned.macos_pane.start_time);
         }
         identity

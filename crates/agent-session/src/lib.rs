@@ -55,10 +55,6 @@ mod runtime_environment;
 mod runtime_teardown;
 mod stable_executable;
 mod startup;
-#[cfg(target_os = "linux")]
-use runtime_teardown::cgroup_membership::{
-    freeze_and_revalidate_linux_control_group, open_verified_linux_control_group,
-};
 use runtime_teardown::tmux_kill_identity_with_timeout;
 use stable_executable::resolve_agent_session_executable;
 use startup::start_interactive_tmux;
@@ -7410,6 +7406,7 @@ where
         ),
         // Only archive routes through this incarnation-fenced helper.
         board::CloseReason::Archived,
+        false,
         prepare,
     )
 }
@@ -7531,6 +7528,29 @@ fn delete_session_locked_with_timeouts(
         tmux_bin,
         (kill_timeout, verify_timeout),
         board::CloseReason::Deleted,
+        false,
+        |_| Ok(()),
+    )
+    .map(|(_, deleted)| deleted)
+}
+
+pub(crate) fn delete_session_locked_with_split_scope_recovery(
+    context: &CliContext,
+    record: SessionRecord,
+    session_dir: PathBuf,
+    tmux_bin: &Path,
+) -> Result<DeleteResult, CliError> {
+    delete_session_locked_with_timeouts_and_prepare(
+        context,
+        record,
+        session_dir,
+        tmux_bin,
+        (
+            PANE_INPUT_COMMAND_TIMEOUT,
+            DELETE_TERMINATION_VERIFY_TIMEOUT,
+        ),
+        board::CloseReason::Deleted,
+        true,
         |_| Ok(()),
     )
     .map(|(_, deleted)| deleted)
@@ -7543,6 +7563,7 @@ fn delete_session_locked_with_timeouts_and_prepare<T, F>(
     tmux_bin: &Path,
     (kill_timeout, verify_timeout): (Duration, Duration),
     close_reason: board::CloseReason,
+    recover_split_cgroup: bool,
     prepare: F,
 ) -> Result<(T, DeleteResult), CliError>
 where
@@ -7557,16 +7578,28 @@ where
         .map_err(|reason| {
             session_termination_error(&record, reason, SessionTerminationOperation::Delete)
         })?;
-    terminate_tmux_session_with_timeouts(
-        context,
-        &mut record,
-        tmux_bin,
-        None,
-        kill_timeout,
-        verify_timeout,
-        true,
-    )
-    .map_err(|reason| {
+    let terminate = if recover_split_cgroup {
+        terminate_tmux_session_with_split_scope_recovery(
+            context,
+            &mut record,
+            tmux_bin,
+            None,
+            kill_timeout,
+            verify_timeout,
+            true,
+        )
+    } else {
+        terminate_tmux_session_with_timeouts(
+            context,
+            &mut record,
+            tmux_bin,
+            None,
+            kill_timeout,
+            verify_timeout,
+            true,
+        )
+    };
+    terminate.map_err(|reason| {
         session_termination_error(&record, reason, SessionTerminationOperation::Delete)
     })?;
     let prepared = prepare(&record)?;
@@ -8028,17 +8061,24 @@ fn terminate_verified_process_runtime_transaction(
     identity: &mut TmuxRuntimeIdentity,
     mode: VerifiedRuntimeTerminationMode<'_>,
     verify_timeout: Duration,
+    recover_split_cgroup: bool,
 ) -> Result<VerifiedRuntimeTerminationOutcome, SessionTerminationFailure> {
-    let mut pinned_runtime = prepare_process_runtime(identity)?;
+    let mut pinned_runtime =
+        runtime_teardown::split_scope::prepare_process_runtime(identity, recover_split_cgroup)?;
     refresh_process_runtime_freeze_ownership(&mut pinned_runtime)?;
     let mut thaw_on_recovery = process_runtime_thaw_on_recovery(&pinned_runtime);
-    set_tmux_termination_state(
+    set_tmux_termination_state_with_split_scope_mode(
         record,
         TmuxTerminationState::FreezePending { thaw_on_recovery },
+        recover_split_cgroup,
     )?;
     write_session_record(context, record)
         .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-    if let Err(reason) = freeze_and_pin_process_runtime(identity, &mut pinned_runtime) {
+    if let Err(reason) = runtime_teardown::split_scope::freeze_and_pin_process_runtime(
+        identity,
+        &mut pinned_runtime,
+        recover_split_cgroup,
+    ) {
         let _ = thaw_owned_process_runtime(&mut pinned_runtime);
         release_process_runtime(Some(pinned_runtime));
         record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
@@ -8053,6 +8093,26 @@ fn terminate_verified_process_runtime_transaction(
     write_session_record(context, record)
         .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
     verify_process_runtime_frozen(&pinned_runtime)?;
+    #[cfg(target_os = "linux")]
+    let _split_scope_stop_guard = if recover_split_cgroup {
+        match runtime_teardown::split_scope::stop_split_scope_members(
+            context,
+            record,
+            identity,
+            &pinned_runtime,
+        ) {
+            Ok(guard) => Some(guard),
+            Err(reason) => {
+                let _ = thaw_owned_process_runtime(&mut pinned_runtime);
+                release_process_runtime(Some(pinned_runtime));
+                record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
+                let _ = write_session_record(context, record);
+                return Err(reason);
+            }
+        }
+    } else {
+        None
+    };
 
     let kill_outcome = match mode {
         VerifiedRuntimeTerminationMode::LiveTmux {
@@ -8070,6 +8130,8 @@ fn terminate_verified_process_runtime_transaction(
         }
     };
     if kill_outcome == TmuxIdentityKillOutcome::IdentityChanged {
+        #[cfg(target_os = "linux")]
+        drop(_split_scope_stop_guard);
         thaw_owned_process_runtime(&mut pinned_runtime)?;
         release_process_runtime(Some(pinned_runtime));
         record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
@@ -8092,6 +8154,16 @@ fn terminate_verified_process_runtime_transaction(
     );
     release_process_runtime(Some(pinned_runtime));
     terminated?;
+    #[cfg(target_os = "linux")]
+    if recover_split_cgroup {
+        let process_session_id = identity
+            .process_session_id
+            .ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
+        runtime_teardown::split_scope::verify_process_session_stopped(
+            process_session_id,
+            verify_timeout,
+        )?;
+    }
     // See above: the verification probes rather than judging on the clock.
     let remaining = verify_timeout.saturating_sub(verification_started.elapsed());
     let tmux_bin = match mode {
@@ -8114,140 +8186,37 @@ fn terminate_tmux_session_with_timeouts(
     verify_timeout: Duration,
     terminate_process_group: bool,
 ) -> Result<(), SessionTerminationFailure> {
-    if recorded_runtime_is_from_prior_boot(record) {
-        record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
-        return Ok(());
-    }
-    recover_interrupted_tmux_termination_locked(context, record)?;
-    let mut identity_changes = 0;
-    let mut initial_identity = initial_identity;
-    loop {
-        let runtime_probe = match initial_identity.take() {
-            Some(identity) => TmuxRuntimeProbe::Running(Box::new(identity)),
-            None => capture_tmux_runtime_identity(
-                context,
-                record,
-                tmux_bin,
-                verify_timeout.min(DELETE_TERMINATION_PROBE_TIMEOUT),
-            )?,
-        };
-        let mut identity = match runtime_probe {
-            TmuxRuntimeProbe::Running(identity) => {
-                let mut identity = *identity;
-                let mut prior_identities = persisted_prior_tmux_runtime_identities(record)?;
-                if prior_identities
-                    .iter()
-                    .any(|prior| !prior.same_runtime_target(&identity))
-                {
-                    return Err(SessionTerminationFailure::RuntimeIdentityMismatch);
-                }
-                if let Some(persisted) = persisted_tmux_runtime_identity(record)? {
-                    if !persisted.same_runtime_target(&identity) {
-                        return Err(SessionTerminationFailure::RuntimeIdentityMismatch);
-                    }
-                    if persisted.same_process_identity(&identity) {
-                        identity.merge_process_evidence_from(&persisted);
-                    } else if !prior_identities
-                        .iter()
-                        .any(|prior| prior.same_process_identity(&persisted))
-                    {
-                        prior_identities.push(persisted);
-                    }
-                }
-                persist_tmux_runtime_identities(record, &identity, &prior_identities)?;
-                write_session_record(context, record)
-                    .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-                verify_stopped_process_runtimes(&prior_identities, verify_timeout)?;
-                if !prior_identities.is_empty() {
-                    persist_tmux_runtime_identities(record, &identity, &[])?;
-                    write_session_record(context, record)
-                        .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-                }
-                identity
-            }
-            TmuxRuntimeProbe::Stopped => {
-                if runtime_is_proven_never_launched(record) {
-                    return Ok(());
-                }
-                let identity = persisted_tmux_runtime_identity(record)?
-                    .ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-                let prior_identities = persisted_prior_tmux_runtime_identities(record)?;
-                if prior_identities
-                    .iter()
-                    .any(|prior| !prior.same_runtime_target(&identity))
-                {
-                    return Err(SessionTerminationFailure::RuntimeIdentityMismatch);
-                }
-                let verification_started = Instant::now();
-                verify_stopped_process_runtimes(&prior_identities, verify_timeout)?;
-                let remaining = verify_timeout.saturating_sub(verification_started.elapsed());
-                verify_stopped_tmux_runtime(tmux_bin, &record.tmux_session, &identity, remaining)?;
-                match persisted_tmux_termination_state(record)? {
-                    Some(TmuxTerminationState::FreezePending { .. }) => {
-                        return Err(SessionTerminationFailure::RuntimeIdentityUnavailable);
-                    }
-                    Some(TmuxTerminationState::Pending { .. })
-                    | Some(TmuxTerminationState::KillConfirmed { .. }) => {
-                        record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
-                        write_session_record(context, record)
-                            .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-                    }
-                    None => {}
-                }
-                return Ok(());
-            }
-        };
+    runtime_teardown::split_scope::terminate_tmux_session_inner(
+        context,
+        record,
+        tmux_bin,
+        initial_identity,
+        kill_timeout,
+        verify_timeout,
+        terminate_process_group,
+        false,
+    )
+}
 
-        if identity_changes >= DELETE_TERMINATION_IDENTITY_RETRY_LIMIT {
-            return Err(SessionTerminationFailure::RuntimeIdentityChanged);
-        }
-        if terminate_process_group {
-            match terminate_verified_process_runtime_transaction(
-                context,
-                record,
-                &mut identity,
-                VerifiedRuntimeTerminationMode::LiveTmux {
-                    tmux_bin,
-                    kill_timeout,
-                },
-                verify_timeout,
-            )? {
-                VerifiedRuntimeTerminationOutcome::Complete => return Ok(()),
-                VerifiedRuntimeTerminationOutcome::TmuxIdentityChanged => {
-                    identity_changes += 1;
-                    continue;
-                }
-            }
-        }
-
-        let thaw_on_recovery = false;
-        set_tmux_termination_state(record, TmuxTerminationState::Pending { thaw_on_recovery })?;
-        write_session_record(context, record)
-            .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-        match tmux_kill_identity_with_timeout(tmux_bin, &identity, kill_timeout)? {
-            TmuxIdentityKillOutcome::IdentityChanged => {
-                record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
-                write_session_record(context, record)
-                    .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-                identity_changes += 1;
-            }
-            TmuxIdentityKillOutcome::KillConfirmed => {
-                set_tmux_termination_state(
-                    record,
-                    TmuxTerminationState::KillConfirmed { thaw_on_recovery },
-                )?;
-                write_session_record(context, record)
-                    .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-                let verification_started = Instant::now();
-                let remaining = verify_timeout.saturating_sub(verification_started.elapsed());
-                verify_stopped_tmux_runtime(tmux_bin, &record.tmux_session, &identity, remaining)?;
-                record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
-                write_session_record(context, record)
-                    .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-                return Ok(());
-            }
-        }
-    }
+fn terminate_tmux_session_with_split_scope_recovery(
+    context: &CliContext,
+    record: &mut SessionRecord,
+    tmux_bin: &Path,
+    initial_identity: Option<TmuxRuntimeIdentity>,
+    kill_timeout: Duration,
+    verify_timeout: Duration,
+    terminate_process_group: bool,
+) -> Result<(), SessionTerminationFailure> {
+    runtime_teardown::split_scope::terminate_tmux_session_inner(
+        context,
+        record,
+        tmux_bin,
+        initial_identity,
+        kill_timeout,
+        verify_timeout,
+        terminate_process_group,
+        true,
+    )
 }
 
 fn gracefully_shutdown_profiled_tmux_session(
@@ -9095,59 +9064,21 @@ fn set_tmux_termination_state(
     record: &mut SessionRecord,
     state: TmuxTerminationState,
 ) -> Result<(), SessionTerminationFailure> {
-    let launch_id = record
-        .runtime
-        .as_ref()
-        .map(|runtime| runtime.launch_id.as_str())
-        .filter(|launch_id| !launch_id.is_empty());
-    record.extra.insert(
-        DELETE_TMUX_TERMINATION_STATE_KEY.to_string(),
-        json!({
-            "launch_id": launch_id,
-            "state": match state {
-                TmuxTerminationState::FreezePending { .. } => "freeze-pending",
-                TmuxTerminationState::Pending { .. } => "pending",
-                TmuxTerminationState::KillConfirmed { .. } => "kill-confirmed",
-            },
-            "thaw_on_recovery": state.thaw_on_recovery(),
-        }),
-    );
-    Ok(())
+    runtime_teardown::split_scope::set_termination_state(record, state, None)
+}
+
+fn set_tmux_termination_state_with_split_scope_mode(
+    record: &mut SessionRecord,
+    state: TmuxTerminationState,
+    recover_split_cgroup: bool,
+) -> Result<(), SessionTerminationFailure> {
+    runtime_teardown::split_scope::set_termination_state(record, state, Some(recover_split_cgroup))
 }
 
 fn persisted_tmux_termination_state(
     record: &SessionRecord,
 ) -> Result<Option<TmuxTerminationState>, SessionTerminationFailure> {
-    let Some(value) = record.extra.get(DELETE_TMUX_TERMINATION_STATE_KEY) else {
-        return Ok(None);
-    };
-    let launch_id = match value.get("launch_id") {
-        Some(Value::Null) => None,
-        Some(Value::String(launch_id)) if !launch_id.is_empty() => Some(launch_id.as_str()),
-        _ => return Err(SessionTerminationFailure::RuntimeIdentityUnavailable),
-    };
-    let current_launch_id = record
-        .runtime
-        .as_ref()
-        .map(|runtime| runtime.launch_id.as_str())
-        .filter(|launch_id| !launch_id.is_empty());
-    if launch_id != current_launch_id {
-        return Err(SessionTerminationFailure::RuntimeIdentityUnavailable);
-    }
-    let thaw_on_recovery = value
-        .get("thaw_on_recovery")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    match value.get("state").and_then(Value::as_str) {
-        Some("freeze-pending") => Ok(Some(TmuxTerminationState::FreezePending {
-            thaw_on_recovery,
-        })),
-        Some("pending") => Ok(Some(TmuxTerminationState::Pending { thaw_on_recovery })),
-        Some("kill-confirmed") => Ok(Some(TmuxTerminationState::KillConfirmed {
-            thaw_on_recovery,
-        })),
-        _ => Err(SessionTerminationFailure::RuntimeIdentityUnavailable),
-    }
+    runtime_teardown::split_scope::persisted_termination_state(record)
 }
 
 fn recover_interrupted_tmux_termination_locked(
@@ -9171,9 +9102,10 @@ fn recover_interrupted_tmux_termination_locked_at_cgroup_root(
     };
     #[cfg(target_os = "linux")]
     let different_boot = {
+        let recover_split_cgroup = runtime_teardown::split_scope::persisted_recovery_mode(record)?;
         let identity = persisted_tmux_runtime_identity(record)?
             .ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-        if let Some(control_group) = identity.control_group.as_ref() {
+        let different_boot = if let Some(control_group) = identity.control_group.as_ref() {
             matches!(
                 recover_persisted_linux_control_group_at_root(
                     control_group,
@@ -9187,7 +9119,22 @@ fn recover_interrupted_tmux_termination_locked_at_cgroup_root(
             return Err(SessionTerminationFailure::RuntimeIdentityUnavailable);
         } else {
             false
+        };
+        if recover_split_cgroup
+            && !different_boot
+            && matches!(
+                state,
+                TmuxTerminationState::Pending { .. } | TmuxTerminationState::KillConfirmed { .. }
+            )
+        {
+            runtime_teardown::split_scope::terminate_persisted_split_members(
+                context,
+                record,
+                &identity,
+                DELETE_TERMINATION_VERIFY_TIMEOUT,
+            )?;
         }
+        different_boot
     };
     #[cfg(not(target_os = "linux"))]
     let different_boot = {
@@ -9702,128 +9649,6 @@ impl Drop for PinnedLinuxControlGroup {
         if self.thaw_on_drop {
             thaw_pinned_control_group(self);
         }
-    }
-}
-
-fn prepare_process_runtime(
-    identity: &TmuxRuntimeIdentity,
-) -> Result<PinnedProcessRuntime, SessionTerminationFailure> {
-    #[cfg(target_os = "linux")]
-    {
-        identity
-            .process_session_id
-            .filter(|session_id| *session_id > 1 && *session_id != unsafe { libc::getsid(0) })
-            .ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-        let control_group_identity = identity
-            .control_group
-            .as_ref()
-            .ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-        let control_group = identity
-            .control_group
-            .as_ref()
-            .map(|control_group| {
-                open_verified_linux_control_group(
-                    control_group,
-                    identity.pane_pid,
-                    &identity.process_session_members,
-                )
-            })
-            .transpose()?
-            .ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-        let mut processes = pin_linux_control_group_processes(
-            &control_group,
-            control_group_identity,
-            identity.pane_pid,
-            &identity.process_session_members,
-            false,
-            DELETE_TERMINATION_VERIFY_TIMEOUT,
-        )?;
-        for captured in &identity.control_group_members {
-            if processes.iter().any(|process| {
-                process.identity.pid == captured.pid
-                    && process.identity.start_time == captured.start_time
-            }) {
-                continue;
-            }
-            if let Some(process) = pin_matching_linux_process(captured)? {
-                processes.push(process);
-            }
-        }
-        Ok(PinnedProcessRuntime {
-            processes,
-            control_group: Some(control_group),
-        })
-    }
-    #[cfg(target_os = "macos")]
-    {
-        runtime_teardown::prepare_macos_process_runtime(identity)
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        let _ = identity;
-        Ok(PinnedProcessRuntime {})
-    }
-}
-
-fn freeze_and_pin_process_runtime(
-    identity: &TmuxRuntimeIdentity,
-    pinned_runtime: &mut PinnedProcessRuntime,
-) -> Result<(), SessionTerminationFailure> {
-    #[cfg(target_os = "linux")]
-    {
-        let process_session_id = identity
-            .process_session_id
-            .filter(|session_id| *session_id > 1 && *session_id != unsafe { libc::getsid(0) })
-            .ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-        let control_group_identity = identity
-            .control_group
-            .as_ref()
-            .ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-        let control_group = pinned_runtime
-            .control_group
-            .as_mut()
-            .ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-        freeze_and_revalidate_linux_control_group(
-            control_group,
-            control_group_identity,
-            identity.pane_pid,
-            &identity.process_session_members,
-        )?;
-        if identity.process_session_members.is_empty() {
-            let pane = read_linux_process_identity(identity.pane_pid)?
-                .filter(|pane| !pane.zombie && pane.session_id == process_session_id)
-                .ok_or(SessionTerminationFailure::VerificationFailed)?;
-            if pane.pid != identity.pane_pid {
-                return Err(SessionTerminationFailure::VerificationFailed);
-            }
-        } else {
-            verify_captured_linux_process_session(
-                process_session_id,
-                &identity.process_session_members,
-            )?;
-        }
-        let frozen_processes = pin_linux_control_group_processes(
-            control_group,
-            control_group_identity,
-            identity.pane_pid,
-            &identity.process_session_members,
-            true,
-            DELETE_TERMINATION_VERIFY_TIMEOUT,
-        )?;
-        for process in frozen_processes {
-            if !pinned_runtime.processes.iter().any(|pinned| {
-                pinned.identity.pid == process.identity.pid
-                    && pinned.identity.start_time == process.identity.start_time
-            }) {
-                pinned_runtime.processes.push(process);
-            }
-        }
-        Ok(())
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (identity, pinned_runtime);
-        Ok(())
     }
 }
 
@@ -17362,7 +17187,7 @@ fi
                 None,
                 Duration::ZERO,
                 Duration::ZERO,
-                true
+                true,
             )
             .is_ok()
         );

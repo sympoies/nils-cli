@@ -254,6 +254,16 @@ pub(super) fn run_delete(context: &CliContext, args: cli::DeleteArgs) -> i32 {
             Err(error) => render_error(DELETE_COMMAND, args.format, error),
         };
     }
+    if args.recover_split_cgroup {
+        return match crate::lifecycle::attempt(context, &args.id, "delete", || {
+            delete_recovering_split_cgroup(context, &args)
+        }) {
+            Ok(result) => {
+                render_single_success(DELETE_COMMAND, args.format, &result, render_delete_text)
+            }
+            Err(error) => render_error(DELETE_COMMAND, args.format, error),
+        };
+    }
     if args.leave_processes {
         return match crate::lifecycle::attempt(context, &args.id, "delete", || {
             delete_leaving_processes(context, &args)
@@ -300,6 +310,43 @@ pub(super) fn run_delete(context: &CliContext, args: cli::DeleteArgs) -> i32 {
         }
         Err(err) => render_error(DELETE_COMMAND, args.format, err),
     }
+}
+
+fn delete_recovering_split_cgroup(
+    context: &CliContext,
+    args: &cli::DeleteArgs,
+) -> Result<DeleteResult, CliError> {
+    let children = lineage::guard_children(
+        context,
+        &board::machine_identity(None, context),
+        &args.id,
+        args.orphan_children,
+    )?;
+    let observed = load_session_record(context, &args.id)?;
+    let _lock = acquire_session_record_lock(context, &observed.id)?;
+    let resolved = resolve_session_record_path(context, &observed.id)?;
+    let record = read_session_record(&resolved.record_path)?;
+    ensure_same_session_identity(&observed, &record)?;
+    validate_record_id(&record, &resolved.expected_id, &resolved.record_path)?;
+    ensure_session_deletion_supported(&record)?;
+    ensure_session_lifecycle_mutation_allowed(context, &record)?;
+    if !cfg!(target_os = "linux") {
+        return Err(CliError::runtime(
+            "split-scope-recovery-unsupported",
+            "split-scope recovery is supported only on Linux",
+            Some(json!({"id": record.id, "retryable": false})),
+        ));
+    }
+    let result = delete_session_locked_with_split_scope_recovery(
+        context,
+        record,
+        resolved.session_dir,
+        &resolve_tmux_bin(args.tmux_bin.as_deref()),
+    )?;
+    Ok(DeleteResult {
+        children: Some(children),
+        ..result
+    })
 }
 
 fn delete_if_stopped(

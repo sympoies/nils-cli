@@ -568,7 +568,8 @@ fn assess_repairable_boundary(
 ) -> (&'static str, usize, Option<TmuxRuntimeIdentity>) {
     #[cfg(target_os = "linux")]
     if _identity.control_group.is_some()
-        && let Ok(pinned_runtime) = prepare_process_runtime(_identity)
+        && let Ok(pinned_runtime) =
+            runtime_teardown::split_scope::prepare_process_runtime(_identity, false)
     {
         let current_members = process_runtime_identities(&pinned_runtime);
         let count = current_members.len().max(1);
@@ -1141,6 +1142,7 @@ fn terminate_orphaned_runtime_locked(
         &mut identity,
         VerifiedRuntimeTerminationMode::AlreadyStopped { tmux_bin },
         DELETE_TERMINATION_VERIFY_TIMEOUT,
+        false,
     )
     .map_err(|reason| maintenance_failure_error(record, reason, operation))?
     {
