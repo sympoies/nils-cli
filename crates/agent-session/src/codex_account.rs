@@ -18,6 +18,9 @@ use crate::{
     write_session_record,
 };
 
+mod restart;
+pub(crate) use restart::prepare_resume_runtime;
+
 pub(crate) const BROKER_SCHEMA_VERSION: &str = "agent-session.codex-auth-broker.v1";
 pub(crate) const BINDING_SCHEMA_VERSION: &str = "agent-session.codex-account-binding.v1";
 pub(crate) const VIEW_SCHEMA_VERSION: &str = "agent-session.codex-account.v1";
@@ -539,7 +542,7 @@ pub(crate) fn prepare_control_reconnect(
         decode_next(&record),
         DecodedNext::Valid(DurableNextAccount { ref state, .. }) if state == "applying"
     ) {
-        recover_next_after_restart(&mut record)?;
+        recover_next_after_restart(context, &mut record)?;
         changed = true;
     }
     if changed {
@@ -1641,7 +1644,10 @@ pub fn finish_next_apply(
 /// intent is re-queued so the fresh runtime re-applies it before the next
 /// prompt. `queued` and `failed` intents are preserved; malformed state is left
 /// for explicit repair. The caller persists the record.
-pub(crate) fn recover_next_after_restart(record: &mut SessionRecord) -> Result<(), CliError> {
+pub(crate) fn recover_next_after_restart(
+    context: &CliContext,
+    record: &mut SessionRecord,
+) -> Result<(), CliError> {
     match decode_next(record) {
         DecodedNext::Valid(mut next) if next.state == "applying" => {
             next.state = "queued".to_string();
@@ -1655,12 +1661,15 @@ pub(crate) fn recover_next_after_restart(record: &mut SessionRecord) -> Result<(
                 && next.selection_source.as_deref() != Some("auto_failover")
                 && matches!(decode_binding(record), DecodedBinding::Valid(ref binding) if binding.state == "failed") =>
         {
+            let _account_gate =
+                crate::codex_app_server::acquire_account_mutation_gate(context, &record.id)?;
             let launch_id = record
                 .runtime
                 .as_ref()
                 .map(|runtime| runtime.launch_id.as_str())
                 .ok_or_else(|| invalid_binding_error(record))?;
             crate::session_account::codex_switch_precheck(record, launch_id, &next.account)?;
+            crate::auth_incident::failover::pre_apply_codex(context, record)?;
             let DecodedBinding::Valid(mut binding) = decode_binding(record) else {
                 unreachable!("failed binding checked above");
             };
@@ -2284,14 +2293,16 @@ mod tests {
         let lock = GlobalStateLock::new();
         let broker_dir = tempfile::TempDir::new().unwrap();
         let _broker = EnvGuard::set(&lock, BROKER_ENV, &listing_broker(&broker_dir, "acct2"));
-        let mut record = record_with_binding_value(json!({
+        let binding = json!({
             "schema_version": BINDING_SCHEMA_VERSION,
             "selected_account": "acct1",
             "revision": 3,
             "state": "failed",
             "failure_reason": "apply_failed",
             "updated_at": "2030-01-01T00:00:00Z"
-        }));
+        });
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, mut record) = persist_record(&tmp, binding);
         store_next(
             &mut record,
             &DurableNextAccount {
@@ -2308,7 +2319,7 @@ mod tests {
         )
         .unwrap();
 
-        recover_next_after_restart(&mut record).unwrap();
+        recover_next_after_restart(&context, &mut record).unwrap();
 
         let DecodedBinding::Valid(binding) = decode_binding(&record) else {
             panic!("recovered binding is valid");
@@ -2336,7 +2347,8 @@ mod tests {
             "failure_reason": "apply_failed",
             "updated_at": "2030-01-01T00:00:00Z"
         });
-        let mut record = record_with_binding_value(binding.clone());
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, mut record) = persist_record(&tmp, binding.clone());
         store_next(
             &mut record,
             &DurableNextAccount {
@@ -2353,7 +2365,7 @@ mod tests {
         )
         .unwrap();
 
-        let error = recover_next_after_restart(&mut record).unwrap_err();
+        let error = recover_next_after_restart(&context, &mut record).unwrap_err();
 
         assert_eq!(error.code(), "codex-account-unknown");
         assert_eq!(record.extra.get(BINDING_KEY), Some(&binding));
@@ -3282,7 +3294,7 @@ esac
         begin_next_apply(&context, &record.id, "runtime-binding-fixture").unwrap();
         let mut current = reload(&context, &record.id);
         assert_eq!(view_for_record(&current).next.unwrap().state, "applying");
-        recover_next_after_restart(&mut current).unwrap();
+        recover_next_after_restart(&context, &mut current).unwrap();
         assert_eq!(
             view_for_record(&current)
                 .next

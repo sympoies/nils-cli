@@ -4,7 +4,8 @@
 ### Result
 
 - Promote an explicitly queued Codex account over a failed binding during
-  restart, with a revision newer than both persisted records.
+  restart after configuring the replacement runtime, with a revision newer
+  than both persisted records.
 
 ### Why / context
 
@@ -13,10 +14,15 @@
 
 ### Evidence
 
-- The restart regressions cover promotion of a lower-revision queued account and
-  preservation of state when the broker no longer lists that account. The
-  existing direct queued-repair regression passed. Local-fast reported one
-  unrelated flaky startup redaction test that passed on retry and in isolation.
+- The preparation regression first failed because recovery checked account
+  support while the replacement runtime still had its tmux kind. The fixed
+  preparation tests cover app-server configuration before recovery and preserve
+  the failed binding and queue when the broker no longer lists the account.
+- All 50 Codex account tests and affected-package clippy passed after the fix.
+  The earlier local-fast run, before the final restart changes, failed twice on
+  an unrelated startup redaction test and stopped before nine tests ran. A later
+  isolated run on that earlier source failed once and passed on retry; this did
+  not make the local-fast run pass. Required CI remains the integration gate.
 
 ### Links
 
