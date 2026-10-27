@@ -37,6 +37,17 @@ impl Receipt {
             == record.runtime.as_ref().map(|r| r.launch_id.as_str())
             && self.new_runtime_generation == record.runtime.as_ref().map(|r| r.generation)
     }
+    /// Still fences input: neither a switch nor a healthy turn settled it.
+    pub(super) fn quarantines(&self) -> bool {
+        !matches!(
+            self.state.as_str(),
+            "account_switched" | "healthy" | "credentials_refreshed"
+        )
+    }
+    /// A controller-owned operation whose effects are not yet decided.
+    pub(super) fn in_flight(&self) -> bool {
+        unsettled(self)
+    }
     pub(super) fn mark_healthy(&mut self) {
         self.state = "healthy".into();
         self.reason = None;

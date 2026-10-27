@@ -150,6 +150,12 @@ pub(crate) fn claude_switch_locked(
         ));
     }
     crate::claude_account::queue_next(&mut record, account)?;
+    if !crate::claude_account::has_queued_next(&record) {
+        // The bound account was requested again, so nothing is switched. A
+        // quarantine left by an authentication failure is settled only after
+        // the credential preflight passes; a refusal writes nothing.
+        crate::auth_incident::recheck::settle(context, &record, account)?;
+    }
     let reason = claude_idle::blocking_reason(context, &record, tmux_bin, may_restart);
     let idle = crate::claude_account::has_queued_next(&record) && reason.is_none();
     if idle {
