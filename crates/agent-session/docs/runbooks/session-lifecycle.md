@@ -545,6 +545,7 @@ attempt. With a stable snapshot, it terminates the pinned processes and verifies
 the tmux session, process session, and recorded cgroup are stopped before
 removing provider and session state. A changed or incomplete snapshot refuses
 before termination; a failed stop retains metadata for inspection or retry.
+
 This option does not relocate processes or signal a process group. It is
 mutually exclusive with `--if-stopped` and `--leave-processes`.
 Reason classes include `permission-denied`, `process-read-failed`,
