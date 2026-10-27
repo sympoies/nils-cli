@@ -12,61 +12,144 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
 /// parser and are never inferred from a partial match.
 pub(crate) fn known_multiline_input(agent: &str, pane: &str, expected: &str) -> Option<String> {
     crate::notice::parse_notice(expected)?;
+    let visual = expected.replace("\r\n", "\n");
+    if visual.contains('\r') {
+        return None;
+    }
     let (plain, _) = styled_text(pane)?;
     let lines: Vec<&str> = plain.lines().collect();
-    let (start, claude_region) = match agent {
+    let (start, region, footer) = match agent {
         "claude" => {
-            let (region, _) = claude_composer(&lines)?;
+            let (region, footer) = claude_composer(&lines)?;
             let start = lines
                 .iter()
                 .position(|line| std::ptr::eq(*line, region[0]))?;
-            (start, Some(region))
+            (start, region, footer)
         }
-        "codex" => (lines.iter().rposition(|line| line.starts_with('›'))?, None),
+        "codex" => {
+            let start = lines.iter().rposition(|line| line.starts_with('›'))?;
+            let mut end = lines.len();
+            while end > start + 1 && lines[end - 1].trim().is_empty() {
+                end -= 1;
+            }
+            let below = &lines[start + 1..end];
+            let region_end = below
+                .iter()
+                .rposition(|line| line.trim().is_empty())
+                .map_or(end, |blank| start + 1 + blank);
+            (start, &lines[start..region_end], &lines[region_end..])
+        }
         _ => return None,
     };
+    if footer.iter().any(|line| {
+        let lower = line.to_lowercase();
+        DIALOG_HINTS.iter().any(|hint| lower.contains(hint))
+    }) {
+        return None;
+    }
+    if agent == "codex"
+        && footer.iter().filter(|line| !line.trim().is_empty()).count()
+            > super::CODEX_MAX_FOOTER_LINES
+    {
+        return None;
+    }
     let glyph = if agent == "claude" { '❯' } else { '›' };
     let first = lines[start].trim_start().strip_prefix(glyph)?;
     let first = first
         .strip_prefix([' ', '\u{a0}', '\u{2007}', '\u{202f}'])
         .unwrap_or(first);
-    let expected_rows: Vec<&str> = expected.split('\n').collect();
+    let mut observed_rows = Vec::with_capacity(region.len());
+    observed_rows.push(first);
+    observed_rows.extend(region.iter().skip(1).copied());
+    let expected_rows: Vec<&str> = visual.split('\n').collect();
     if agent == "claude" && expected_rows.iter().any(|row| row.ends_with(' ')) {
         return None;
     }
-    if claude_region.is_some_and(|region| region.len() != expected_rows.len()) {
-        return None;
+    let matches = match_notice_rows(&observed_rows, &expected_rows, 0, 0, agent == "claude");
+    (matches == 1).then(|| expected.to_owned())
+}
+
+fn match_notice_rows(
+    observed: &[&str],
+    expected: &[&str],
+    observed_at: usize,
+    expected_at: usize,
+    claude: bool,
+) -> usize {
+    if expected_at == expected.len() {
+        return usize::from(observed_at == observed.len());
     }
-    if first.trim_end_matches(' ') != expected_rows.first().copied()? {
-        return None;
+    let Some(first) = observed.get(observed_at) else {
+        return 0;
+    };
+    let wanted = expected[expected_at];
+    if wanted.is_empty() {
+        if first.is_empty() {
+            return match_notice_rows(observed, expected, observed_at + 1, expected_at + 1, claude);
+        }
+        return 0;
     }
-    for (offset, expected_row) in expected_rows.iter().enumerate().skip(1) {
-        let row = lines.get(start + offset)?;
-        let row = row.strip_prefix("  ").unwrap_or(row);
-        let row = if agent == "claude" {
+    consume_wrapped_line(observed, wanted, observed_at, 0, claude)
+        .into_iter()
+        .map(|next| match_notice_rows(observed, expected, next, expected_at + 1, claude))
+        .sum::<usize>()
+        .min(2)
+}
+
+fn consume_wrapped_line(
+    observed: &[&str],
+    expected: &str,
+    row_at: usize,
+    offset: usize,
+    claude: bool,
+) -> Vec<usize> {
+    let Some(row) = observed.get(row_at) else {
+        return Vec::new();
+    };
+    let remaining = &expected[offset..];
+    let mut rows = vec![*row];
+    if row_at > 0
+        && let Some(without_indent) = row.strip_prefix("  ")
+    {
+        rows.push(without_indent);
+    }
+    let mut ends = Vec::new();
+    for row in rows {
+        let row = if claude {
             row.trim_end_matches(' ')
         } else {
             row
         };
-        if row != *expected_row {
-            return None;
+        if row.is_empty() {
+            continue;
+        }
+        let spaces = if offset == 0 {
+            0
+        } else {
+            remaining.bytes().take_while(|byte| *byte == b' ').count()
+        };
+        for skipped_spaces in 0..=spaces {
+            if !remaining[skipped_spaces..].starts_with(row) {
+                continue;
+            }
+            let next_offset = offset + skipped_spaces + row.len();
+            if next_offset == expected.len() {
+                ends.push(row_at + 1);
+            } else if next_offset < expected.len() {
+                ends.extend(consume_wrapped_line(
+                    observed,
+                    expected,
+                    row_at + 1,
+                    next_offset,
+                    claude,
+                ));
+            }
+            if ends.len() >= 2 {
+                return ends;
+            }
         }
     }
-    if agent == "codex" {
-        let footer_start = start + expected_rows.len();
-        let footer = lines.get(footer_start)?;
-        let footer_lines = lines.get(footer_start + 1..)?;
-        if !footer.trim().is_empty()
-            || footer_lines
-                .iter()
-                .filter(|line| !line.trim().is_empty())
-                .count()
-                > super::CODEX_MAX_FOOTER_LINES
-        {
-            return None;
-        }
-    }
-    Some(expected.to_owned())
+    ends
 }
 
 /// Direct replies may follow a queued message when the sole input row is a

@@ -461,7 +461,7 @@ fn guarded(
             || {
                 admission.check(None, "admission")?;
                 admission.claim_key()?;
-                admission.check(None, "admission")?;
+                admission.check(None, "claimed")?;
                 prepare_guarded_input(context, &mut record, submits, &mut input_prepared)
             },
         );
@@ -469,7 +469,7 @@ fn guarded(
         delivered?;
     } else {
         admission.claim_key()?;
-        admission.check(None, "admission")?;
+        admission.check(None, "claimed")?;
     }
     // Mixed-prefix recovery needs an exact-paste observation before a conflict.
     let mut observed_paste = false;

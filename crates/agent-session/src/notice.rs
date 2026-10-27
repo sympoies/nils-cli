@@ -134,7 +134,7 @@ pub(crate) fn run(context: &CliContext, mut args: NoticeArgs) -> i32 {
                     format,
                 },
             ) {
-                Err(error) if args.queue && error.code() == "send-session-not-idle" => {
+                Err(error) if args.queue && queue_retryable(&error) => {
                     std::thread::sleep(std::time::Duration::from_millis(250));
                 }
                 result => return result,
@@ -147,6 +147,13 @@ pub(crate) fn run(context: &CliContext, mut args: NoticeArgs) -> i32 {
         }
         Err(error) => crate::render_error("notice", format, error),
     }
+}
+
+fn queue_retryable(error: &CliError) -> bool {
+    error.code() == "send-session-not-idle"
+        && error
+            .details()
+            .is_some_and(|details| details["stage"] == "admission")
 }
 
 #[cfg(test)]

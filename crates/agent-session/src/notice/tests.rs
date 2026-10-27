@@ -111,3 +111,18 @@ fn history_notice_bytes_survive_existing_provider_admission() {
         json!(["goal.internal_context"]);
     assert!(parse_history_user_prompt("codex", "synthetic", &internal.to_string()).is_none());
 }
+
+#[test]
+fn queue_retries_only_a_preclaim_busy_admission() {
+    let error = |stage: Option<&str>| {
+        CliError::runtime(
+            "send-session-not-idle",
+            "busy",
+            stage.map(|stage| serde_json::json!({"stage": stage})),
+        )
+    };
+    assert!(queue_retryable(&error(Some("admission"))));
+    assert!(!queue_retryable(&error(Some("claimed"))));
+    assert!(!queue_retryable(&error(Some("submit"))));
+    assert!(!queue_retryable(&error(None)));
+}
