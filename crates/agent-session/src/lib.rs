@@ -4872,9 +4872,9 @@ fn resume_session_locked(
         &starting_projection(&now.timestamp().to_string(), "record"),
     );
     if app_server_managed {
-        codex_account::mark_runtime_pending(&mut record)?;
-        codex_account::recover_next_after_restart(&mut record)?;
-        codex_app_server::configure_runtime(context, &agent_bin, &mut record, true)?;
+        // Establish the new app-server identity before validating a queued
+        // account against the runtime that will own the resumed session.
+        codex_account::prepare_resume_runtime(context, &agent_bin, &mut record, &previous_record)?;
     }
     if agent == AgentKind::Claude {
         claude_account::prepare_launch(&mut record)?;
