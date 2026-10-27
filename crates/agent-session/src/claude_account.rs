@@ -275,8 +275,21 @@ pub(crate) fn bind_initial(
     if record.agent != PROVIDER {
         return Err(agent_conflict_error());
     }
-    let launch_id = current_launch_id(record)?;
     let config_dir = materialize(account)?;
+    bind_prepared_initial(record, account, selection_source, &config_dir)
+}
+
+/// Bind the exact account root already materialized and checked at admission.
+pub(crate) fn bind_prepared_initial(
+    record: &mut SessionRecord,
+    account: &str,
+    selection_source: &str,
+    config_dir: &Path,
+) -> Result<(), CliError> {
+    validate_account(account)?;
+    validate_selection_source(Some(selection_source))?;
+    validate_config_dir(config_dir, current_euid())?;
+    let launch_id = current_launch_id(record)?;
     store_binding(
         record,
         &DurableBinding {

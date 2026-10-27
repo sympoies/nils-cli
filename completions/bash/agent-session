@@ -2835,7 +2835,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__notice)
-            opts="-h --kind --source --id --body-file --text-stdin --expect-runtime --expect-provider-session --require-idle --require-empty-composer --idempotency-key --tmux-bin --format --state-dir --host --help"
+            opts="-h --kind --source --id --body-file --text-stdin --queue --expect-runtime --expect-provider-session --require-idle --require-empty-composer --idempotency-key --tmux-bin --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3346,12 +3346,16 @@ _agent__session() {
             return 0
             ;;
         agent__session__start)
-            opts="-h --workspace --agent --cwd --title --id --prompt --prompt-file --prompt-stdin --notice-kind --notice-source --notice-id --tmux-bin --agent-bin --agent-arg --env --coordination-mode --paste-delay-ms --via-console --operation-id --reconcile --machine --account --agent-profile --no-parent --role --title-mode --forge-initiator --program --issue --no-inherit-work --format --state-dir --host --help"
+            opts="-h --resume --check-resume --workspace --agent --cwd --title --id --prompt --prompt-file --prompt-stdin --notice-kind --notice-source --notice-id --tmux-bin --agent-bin --agent-arg --env --coordination-mode --paste-delay-ms --via-console --operation-id --reconcile --machine --account --agent-profile --no-parent --role --title-mode --forge-initiator --program --issue --no-inherit-work --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --resume)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --workspace)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0

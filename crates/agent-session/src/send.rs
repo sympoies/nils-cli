@@ -18,8 +18,9 @@ use crate::{
     activity, auto_resume, capture_visible_pane_with_timeout, carries_literal_text, cli,
     codex_account, codex_app_server, delete_tmux_buffer, ensure_same_session_identity,
     exit_status_result, live_status, load_session_record, resolve_tmux_bin,
-    run_output_with_timeout, run_status_with_timeout, send_guard, send_input_unlocked, send_submit,
-    send_tmux_key, session_dir, write_private_file, write_session_record,
+    run_output_with_timeout, run_output_with_timeout_and_cap, run_status_with_timeout, send_guard,
+    send_input_unlocked, send_submit, send_tmux_key, session_dir, write_private_file,
+    write_session_record,
 };
 
 #[derive(Debug, Serialize)]
@@ -47,6 +48,22 @@ fn guarded_hold_budget(record: &SessionRecord) -> Duration {
     } else {
         Duration::from_secs(15)
     }
+}
+
+fn capture_notice_visible_pane_with_timeout(
+    tmux_bin: &Path,
+    target: &str,
+    timeout: Duration,
+) -> Option<String> {
+    let mut command = ProcessCommand::new(tmux_bin);
+    command.args(["capture-pane", "-J", "-p", "-e", "-t", target]);
+    let output =
+        run_output_with_timeout_and_cap(command, timeout, crate::PANE_OBSERVATION_MAX_OUTPUT_BYTES)
+            .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 pub(crate) fn send_to_session(
@@ -180,6 +197,7 @@ pub(crate) fn send_to_session_observing(
             &tmux_bin,
             &mut manual_input,
             hold_started,
+            args.guards.notice_envelope,
         )?)
     } else {
         None
@@ -240,13 +258,19 @@ fn confirm_prompt_submission(
     tmux_bin: &Path,
     manual_input: &mut ManualInputSection,
     hold_started: Instant,
+    notice_envelope: bool,
 ) -> Result<send_submit::SubmitReport, CliError> {
     let target = format!("{}:0.0", record.tmux_session);
     let mut press_enter = || {
         manual_input.arm(context, record)?;
         send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
     };
-    let Some(probe) = send_submit::probe(text) else {
+    let probe = if notice_envelope {
+        send_submit::notice_probe(text)
+    } else {
+        send_submit::probe(text)
+    };
+    let Some(probe) = probe else {
         press_enter()?;
         return Ok(send_submit::SubmitReport {
             outcome: send_submit::SubmitOutcome::Unverified,
@@ -454,7 +478,7 @@ fn guarded(
             || {
                 admission.check(None, "admission")?;
                 admission.claim_key()?;
-                admission.check(None, "admission")?;
+                admission.check(None, "claimed")?;
                 prepare_guarded_input(context, &mut record, submits, &mut input_prepared)
             },
         );
@@ -462,7 +486,7 @@ fn guarded(
         delivered?;
     } else {
         admission.claim_key()?;
-        admission.check(None, "admission")?;
+        admission.check(None, "claimed")?;
     }
     // Mixed-prefix recovery needs an exact-paste observation before a conflict.
     let mut observed_paste = false;
@@ -476,7 +500,11 @@ fn guarded(
         let submits_prompt = literal.is_some() && args.keys == [SpecialKey::Enter];
         if submits_prompt {
             let text = literal.expect("literal prompt");
-            let probe = send_submit::probe(text);
+            let probe = if args.guards.notice_envelope {
+                send_submit::notice_probe(text)
+            } else {
+                send_submit::probe(text)
+            };
             let mut press_enter = || {
                 manual_input.arm(context, &record)?;
                 admission.check(Some(text), "submit")?;
@@ -487,7 +515,13 @@ fn guarded(
                     &record.agent,
                     &probe,
                     admission.deadline,
-                    |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
+                    |timeout| {
+                        if args.guards.notice_envelope {
+                            capture_notice_visible_pane_with_timeout(tmux_bin, &target, timeout)
+                        } else {
+                            capture_visible_pane_with_timeout(tmux_bin, &target, timeout)
+                        }
+                    },
                     |timeout| recorded_tmux_runtime_stopped(tmux_bin, &record, timeout),
                     || true,
                     press_enter,

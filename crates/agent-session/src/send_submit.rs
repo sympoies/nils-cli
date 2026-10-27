@@ -19,7 +19,10 @@ pub(crate) use composer::cleanup::{
     cursor_at_start as cleanup_cursor_at_start, input as cleanup_composer_input,
     prefix_end as cleanup_prefix_end,
 };
-pub(crate) use composer::{composer_holds, direct_composer_input, exact_composer_input};
+pub(crate) use composer::{
+    composer_holds, direct_composer_input, exact_composer_input, known_multiline_cursor_holds,
+    known_multiline_input,
+};
 
 /// Leading non-whitespace characters used to find the text again. Short enough
 /// to stay ahead of any provider rewriting further into a long text, long enough
@@ -111,6 +114,7 @@ pub(crate) struct SubmitReport {
 pub(crate) struct Probe {
     /// Whitespace-free text to find at the start of the composer input.
     head: String,
+    notice: Option<String>,
     /// `head` is the whole text, so the input must be exactly `head`. A short
     /// reply such as `Ask` would otherwise match the "Ask Codex to do
     /// anything" placeholder of the composer it leaves empty.
@@ -121,6 +125,14 @@ pub(crate) struct Probe {
 /// to find again. Line breaks are dropped with the rest of the whitespace, so a
 /// probe spans lines exactly as the compacted composer region does.
 pub(crate) fn probe(text: &str) -> Option<Probe> {
+    probe_with_notice(text, false)
+}
+
+pub(crate) fn notice_probe(text: &str) -> Option<Probe> {
+    probe_with_notice(text, true)
+}
+
+fn probe_with_notice(text: &str, allow_notice: bool) -> Option<Probe> {
     let all = compact(text);
     if all.is_empty() {
         return None;
@@ -128,6 +140,9 @@ pub(crate) fn probe(text: &str) -> Option<Probe> {
     Some(Probe {
         whole: all.chars().count() <= PROBE_CHARS,
         head: all.chars().take(PROBE_CHARS).collect(),
+        notice: allow_notice
+            .then(|| crate::notice::parse_notice(text).map(|_| text.to_owned()))
+            .flatten(),
     })
 }
 
@@ -138,6 +153,19 @@ fn compact(text: &str) -> String {
 }
 
 pub(crate) fn classify(agent: &str, pane: &str, probe: &Probe) -> Composer {
+    if let Some(text) = probe.notice.as_deref() {
+        if composer::known_multiline_input(agent, pane, text)
+            .is_some_and(|input| composer::composer_holds(agent, &input, text))
+        {
+            return Composer::Pending;
+        }
+        return if composer::exact_composer_input(agent, pane).is_some_and(|input| input.is_empty())
+        {
+            Composer::Clear
+        } else {
+            Composer::Unrecognized
+        };
+    }
     let lines: Vec<&str> = pane.lines().map(str::trim_end).collect();
     let located = match agent {
         "claude" => claude_composer(&lines),
@@ -554,6 +582,24 @@ mod tests {
     }
 
     #[test]
+    fn notice_probe_distinguishes_exact_pending_from_clear_and_changed_inputs() {
+        let text = crate::notice::NoticeEnvelope::new("mailbox", "scheduler", None)
+            .unwrap()
+            .encode("A B")
+            .unwrap();
+        let probe = notice_probe(&text).unwrap();
+        let claude_empty = "────────────────────\n❯\u{a0}\u{1b}[2mTry \"edit <filepath> to...\"\u{1b}[22m\n────────────────────\n  status";
+        let codex_empty = "› \u{1b}[2mAsk Codex to do anything\u{1b}[22m\n\n  status";
+        let claude_changed = "────────────────────\n❯\u{a0}<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA\n  B\n────────────────────\n  status";
+        assert_eq!(classify("claude", claude_empty, &probe), Composer::Clear);
+        assert_eq!(classify("codex", codex_empty, &probe), Composer::Clear);
+        assert_eq!(
+            classify("claude", claude_changed, &probe),
+            Composer::Unrecognized
+        );
+    }
+
+    #[test]
     fn a_short_probe_is_not_found_inside_an_empty_composer_placeholder() {
         for text in ["y", "n", "do", "fix", "Ask", "A", "Try"] {
             assert_eq!(
@@ -607,14 +653,16 @@ mod tests {
             probe_of("  first line that is long enough to cut\nsecond"),
             Probe {
                 head: "firstlinethatislongenoughtocut"[..20].to_string(),
-                whole: false
+                whole: false,
+                notice: None,
             }
         );
         assert_eq!(
             probe_of("Ask\nfor the deploy status of every host"),
             Probe {
                 head: "Askforthedeploystatu".to_string(),
-                whole: false
+                whole: false,
+                notice: None,
             }
         );
     }
