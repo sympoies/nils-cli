@@ -1650,6 +1650,31 @@ pub(crate) fn recover_next_after_restart(record: &mut SessionRecord) -> Result<(
             next.updated_at = jiff::Timestamp::now().to_string();
             store_next(record, &next)
         }
+        DecodedNext::Valid(next)
+            if next.state == "queued"
+                && next.selection_source.as_deref() != Some("auto_failover")
+                && matches!(decode_binding(record), DecodedBinding::Valid(ref binding) if binding.state == "failed") =>
+        {
+            let launch_id = record
+                .runtime
+                .as_ref()
+                .map(|runtime| runtime.launch_id.as_str())
+                .ok_or_else(|| invalid_binding_error(record))?;
+            crate::session_account::codex_switch_precheck(record, launch_id, &next.account)?;
+            let DecodedBinding::Valid(mut binding) = decode_binding(record) else {
+                unreachable!("failed binding checked above");
+            };
+            binding.selected_account = next.account;
+            binding.selection_source = next.selection_source;
+            binding.revision = binding.revision.max(next.revision).saturating_add(1).max(1);
+            binding.state = "pending".to_string();
+            binding.applied_runtime_id = None;
+            binding.failure_reason = None;
+            binding.updated_at = jiff::Timestamp::now().to_string();
+            store_binding(record, &binding)?;
+            clear_next(record);
+            Ok(())
+        }
         DecodedNext::Valid(_) | DecodedNext::Absent | DecodedNext::Invalid => Ok(()),
     }
 }
@@ -2252,6 +2277,90 @@ mod tests {
 
         assert_eq!(view_for_record(&record).state, "failed");
         assert!(account_for_control_rebind(&record).unwrap().is_none());
+    }
+
+    #[test]
+    fn restart_promotes_newer_queued_account_over_failed_binding() {
+        let lock = GlobalStateLock::new();
+        let broker_dir = tempfile::TempDir::new().unwrap();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, &listing_broker(&broker_dir, "acct2"));
+        let mut record = record_with_binding_value(json!({
+            "schema_version": BINDING_SCHEMA_VERSION,
+            "selected_account": "acct1",
+            "revision": 3,
+            "state": "failed",
+            "failure_reason": "apply_failed",
+            "updated_at": "2030-01-01T00:00:00Z"
+        }));
+        store_next(
+            &mut record,
+            &DurableNextAccount {
+                schema_version: NEXT_SCHEMA_VERSION.to_string(),
+                account: "acct2".to_string(),
+                selection_source: Some("explicit".to_string()),
+                revision: 2,
+                intent_id: Some("queued-switch".to_string()),
+                state: "queued".to_string(),
+                applying_runtime_id: None,
+                failure_reason: None,
+                updated_at: "2030-01-01T00:00:00Z".to_string(),
+            },
+        )
+        .unwrap();
+
+        recover_next_after_restart(&mut record).unwrap();
+
+        let DecodedBinding::Valid(binding) = decode_binding(&record) else {
+            panic!("recovered binding is valid");
+        };
+        assert_eq!(binding.selected_account, "acct2");
+        assert_eq!(binding.revision, 4);
+        assert_eq!(binding.state, "pending");
+        assert!(next_account_identity(&record).unwrap().is_none());
+        assert_eq!(
+            account_for_control_rebind(&record).unwrap(),
+            Some(("acct2".into(), 4))
+        );
+    }
+
+    #[test]
+    fn restart_keeps_failed_binding_and_queue_when_broker_no_longer_lists_account() {
+        let lock = GlobalStateLock::new();
+        let broker_dir = tempfile::TempDir::new().unwrap();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, &listing_broker(&broker_dir, "acct1"));
+        let binding = json!({
+            "schema_version": BINDING_SCHEMA_VERSION,
+            "selected_account": "acct1",
+            "revision": 3,
+            "state": "failed",
+            "failure_reason": "apply_failed",
+            "updated_at": "2030-01-01T00:00:00Z"
+        });
+        let mut record = record_with_binding_value(binding.clone());
+        store_next(
+            &mut record,
+            &DurableNextAccount {
+                schema_version: NEXT_SCHEMA_VERSION.to_string(),
+                account: "acct2".to_string(),
+                selection_source: Some("explicit".to_string()),
+                revision: 2,
+                intent_id: Some("queued-switch".to_string()),
+                state: "queued".to_string(),
+                applying_runtime_id: None,
+                failure_reason: None,
+                updated_at: "2030-01-01T00:00:00Z".to_string(),
+            },
+        )
+        .unwrap();
+
+        let error = recover_next_after_restart(&mut record).unwrap_err();
+
+        assert_eq!(error.code(), "codex-account-unknown");
+        assert_eq!(record.extra.get(BINDING_KEY), Some(&binding));
+        assert_eq!(
+            next_account_identity(&record).unwrap().unwrap().account,
+            "acct2"
+        );
     }
 
     #[test]
