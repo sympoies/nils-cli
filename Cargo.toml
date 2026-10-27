@@ -36,6 +36,7 @@ members = [
   "crates/agent-workflow-primitives",
   "crates/forge-cli",
   "crates/github-app-cli",
+  "crates/speech-test-cli",
   "crates/zsh-kit",
 ]
 resolver = "2"

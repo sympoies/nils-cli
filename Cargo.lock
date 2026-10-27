@@ -2802,6 +2802,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "nils-speech-test-cli"
+version = "1.36.40"
+dependencies = [
+ "clap",
+ "clap_complete",
+ "jiff",
+ "nils-build-info",
+ "nils-common",
+ "nils-test-support",
+ "pretty_assertions",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
 name = "nils-term"
 version = "1.36.40"
 dependencies = [
