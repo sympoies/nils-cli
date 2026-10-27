@@ -25,8 +25,11 @@ mod ownership;
 mod pasted;
 mod text;
 
-#[derive(Debug, Default, Args)]
+#[derive(Clone, Debug, Default, Args)]
 pub struct GuardArgs {
+    /// Internal marker enabling the notice-only multiline composer verifier.
+    #[arg(skip)]
+    pub notice_envelope: bool,
     /// Require the active runtime launch id to match before delivery.
     #[arg(long, value_name = "INCARNATION")]
     pub expect_runtime: Option<String>,
@@ -166,8 +169,32 @@ impl Admission<'_> {
                 observation.identity(stage)?;
             }
             let timeout = observation.timeout(stage)?;
-            let input = capture_styled(self.tmux_bin, target, timeout)
-                .and_then(|pane| observation.pasted_composer_input(&pane, pasted_text, stage));
+            let join_wrapped = self.args.notice_envelope && pasted_text.is_some();
+            let input = if join_wrapped {
+                capture_notice_pane(self.tmux_bin, target, timeout).and_then(|(pane, cursor)| {
+                    let input = observation.pasted_composer_input(&pane, pasted_text, stage)?;
+                    if self.record.agent == "claude"
+                        && pasted_text.is_some_and(|expected| {
+                            send_submit::composer_holds("claude", &input, expected)
+                        })
+                    {
+                        let normal = capture_styled(self.tmux_bin, target, timeout)?;
+                        if !send_submit::known_multiline_cursor_holds(
+                            "claude",
+                            &normal,
+                            cursor,
+                            pasted_text?,
+                        ) {
+                            return None;
+                        }
+                        observation.identity(stage).ok()?;
+                    }
+                    Some(input)
+                })
+            } else {
+                capture_styled(self.tmux_bin, target, timeout)
+                    .and_then(|pane| observation.pasted_composer_input(&pane, pasted_text, stage))
+            };
             if input.is_some() || !retryable {
                 return Ok(input);
             }
@@ -405,4 +432,44 @@ fn capture_styled(tmux_bin: &Path, target: &str, timeout: Duration) -> Option<St
         return None;
     }
     String::from_utf8(output.stdout).ok()
+}
+
+fn capture_notice_pane(
+    tmux_bin: &Path,
+    target: &str,
+    timeout: Duration,
+) -> Option<(String, (usize, usize))> {
+    let mut command = std::process::Command::new(tmux_bin);
+    command.args([
+        "capture-pane",
+        "-p",
+        "-e",
+        "-N",
+        "-T",
+        "-J",
+        "-t",
+        target,
+        ";",
+        "display-message",
+        "-p",
+        "-t",
+        target,
+        "#{cursor_x} #{cursor_y}",
+    ]);
+    let output =
+        run_output_with_timeout_and_strict_cap(command, timeout, PANE_OBSERVATION_MAX_OUTPUT_BYTES)
+            .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    let text = text.trim_end_matches('\n');
+    let (pane, cursor) = text.rsplit_once('\n')?;
+    let mut coordinates = cursor.split_whitespace();
+    let x = coordinates.next()?.parse().ok()?;
+    let y = coordinates.next()?.parse().ok()?;
+    if coordinates.next().is_some() {
+        return None;
+    }
+    Some((pane.to_owned(), (x, y)))
 }

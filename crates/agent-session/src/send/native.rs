@@ -36,6 +36,7 @@ pub(super) fn deliver(
         return Err(refusal(
             &record,
             "send-native-command-unsupported",
+            "admission",
             false,
             false,
         ));
@@ -43,17 +44,17 @@ pub(super) fn deliver(
     let _account_gate = codex_app_server::acquire_account_mutation_gate(context, &record.id)?;
     codex_account::ensure_proxy_input_allowed(&record)?;
     let mut client = codex_app_server::guarded::Client::connect(&record, admission.deadline)
-        .map_err(|code| refusal(&record, code, false, false))?;
+        .map_err(|code| refusal(&record, code, "admission", false, false))?;
     admission.check_key()?;
     admission.check(None, "admission")?;
     client
         .idle()
-        .map_err(|code| refusal(&record, code, false, false))?;
+        .map_err(|code| refusal(&record, code, "admission", false, false))?;
     admission.claim_key()?;
-    admission.check(None, "admission")?;
+    admission.check(None, "claimed")?;
     client
         .idle()
-        .map_err(|code| refusal(&record, code, false, false))?;
+        .map_err(|code| refusal(&record, code, "claimed", false, false))?;
     let mut prepared = false;
     prepare_guarded_input(context, &mut record, true, &mut prepared)?;
     record.updated_at = Zoned::now().timestamp().to_string();
@@ -67,9 +68,17 @@ pub(super) fn deliver(
             // record writes after releasing the lock.
             drop(manual_input.record_lock.take());
         })
-        .map_err(|error| refusal(&record, "send-native-unconfirmed", true, error.acknowledged))?;
+        .map_err(|error| {
+            refusal(
+                &record,
+                "send-native-unconfirmed",
+                "submit",
+                true,
+                error.acknowledged,
+            )
+        })?;
     if manual_input.record_lock.is_none() {
-        let unconfirmed = |_| refusal(&record, "send-native-unconfirmed", true, true);
+        let unconfirmed = |_| refusal(&record, "send-native-unconfirmed", "submit", true, true);
         let lock = crate::acquire_session_record_lock_timed(
             context,
             &record.id,
@@ -87,7 +96,13 @@ pub(super) fn deliver(
                     .as_ref()
                     .map(|r| (&r.provider, &r.session_id))
         {
-            return Err(refusal(&record, "send-native-unconfirmed", true, true));
+            return Err(refusal(
+                &record,
+                "send-native-unconfirmed",
+                "submit",
+                true,
+                true,
+            ));
         }
         manual_input.record_lock = Some(lock);
     }
@@ -112,7 +127,13 @@ pub(super) fn deliver(
     })
 }
 
-fn refusal(record: &SessionRecord, code: &str, dispatched: bool, acknowledged: bool) -> CliError {
+fn refusal(
+    record: &SessionRecord,
+    code: &str,
+    stage: &str,
+    dispatched: bool,
+    acknowledged: bool,
+) -> CliError {
     let submitted = if !dispatched {
         Some(false)
     } else if acknowledged {
@@ -123,9 +144,7 @@ fn refusal(record: &SessionRecord, code: &str, dispatched: bool, acknowledged: b
     CliError::runtime(
         code,
         "native guarded input could not be verified; no terminal input was written",
-        Some(
-            json!({"id":record.id,"stage":if dispatched {"submit"} else {"admission"},
-            "atomic":false,"pasted":false,"submitted":submitted,"dispatched":dispatched,"acknowledged":acknowledged}),
-        ),
+        Some(json!({"id":record.id,"stage":stage,
+            "atomic":false,"pasted":false,"submitted":submitted,"dispatched":dispatched,"acknowledged":acknowledged})),
     )
 }

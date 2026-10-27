@@ -1,9 +1,100 @@
 //! Qualified generic captures and separately labeled synthetic OSC-8 variants.
-use super::{direct_composer_input, exact_composer_input};
+use super::{direct_composer_input, exact_composer_input, known_multiline_input};
 use pretty_assertions::assert_eq;
 
 fn claude(input: &str, rows: &str, footer: &str) -> String {
     format!("────────────────────\n❯\u{a0}{input}\n{rows}────────────────────\n  {footer}")
+}
+
+#[test]
+fn known_multiline_notice_rows_are_verified_exactly() {
+    let expected = "<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nBody";
+    let claude = "────────────────────\n❯\u{a0}<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nBody\n────────────────────\n  status";
+    let codex = "› <!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nBody\n\n  status";
+    assert_eq!(
+        known_multiline_input("claude", claude, expected).as_deref(),
+        Some(expected)
+    );
+    assert_eq!(
+        known_multiline_input("codex", codex, expected).as_deref(),
+        Some(expected)
+    );
+    let claude_with_extra = claude.replace("\nBody\n", "\nBody\nextra\n");
+    let codex_with_extra = codex.replace("\nBody\n", "\nBody\nextra\n");
+    let claude_extra = known_multiline_input("claude", &claude_with_extra, expected).unwrap();
+    let codex_extra = known_multiline_input("codex", &codex_with_extra, expected).unwrap();
+    assert!(!super::composer_holds("claude", &claude_extra, expected));
+    assert!(!super::composer_holds("codex", &codex_extra, expected));
+    let probe = crate::send_submit::notice_probe(expected).unwrap();
+    assert_eq!(
+        crate::send_submit::classify("claude", claude, &probe),
+        crate::send_submit::Composer::Pending
+    );
+    assert_eq!(
+        crate::send_submit::classify("codex", codex, &probe),
+        crate::send_submit::Composer::Pending
+    );
+}
+
+#[test]
+fn known_multiline_notices_refuse_dialog_footers() {
+    let expected = "<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nBody";
+    let claude = "────────────────────\n❯\u{a0}<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nBody\n────────────────────\n  Enter to confirm";
+    let codex =
+        "› <!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nBody\n\n  enter to confirm";
+    assert_eq!(known_multiline_input("claude", claude, expected), None);
+    assert_eq!(known_multiline_input("codex", codex, expected), None);
+}
+
+#[test]
+fn known_multiline_notices_match_joined_wrapped_rows_and_crlf_bodies() {
+    let expected = "<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA longer body line";
+    let claude = "────────────────────\n❯\u{a0}<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA longer body line\n────────────────────\n  status";
+    let codex = "› <!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA longer body line\n\n  status";
+    assert_eq!(
+        known_multiline_input("claude", claude, expected).as_deref(),
+        Some(expected)
+    );
+    assert_eq!(
+        known_multiline_input("codex", codex, expected).as_deref(),
+        Some(expected)
+    );
+
+    let crlf = "<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA longer body\r\nline";
+    let claude_crlf = "────────────────────\n❯\u{a0}<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA longer body\nline\n────────────────────\n  status";
+    let codex_crlf = "› <!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA longer body\nline\n\n  status";
+    assert_eq!(
+        known_multiline_input("claude", claude_crlf, crlf).as_deref(),
+        Some(crlf)
+    );
+    assert_eq!(
+        known_multiline_input("codex", codex_crlf, crlf).as_deref(),
+        Some(crlf)
+    );
+
+    let leading_spaces = "<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\n  Body";
+    let claude_spaces = "────────────────────\n❯\u{a0}<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\n    Body\n────────────────────\n  status";
+    let codex_spaces =
+        "› <!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\n    Body\n\n  status";
+    assert_eq!(
+        known_multiline_input("claude", claude_spaces, leading_spaces).as_deref(),
+        Some(leading_spaces)
+    );
+    assert_eq!(
+        known_multiline_input("codex", codex_spaces, leading_spaces).as_deref(),
+        Some(leading_spaces)
+    );
+}
+
+#[test]
+fn known_multiline_notices_reject_hard_newlines_that_look_like_wraps() {
+    let expected = "<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA B";
+    let claude = "────────────────────\n❯\u{a0}<!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA\n  B\n────────────────────\n  status";
+    let codex = "› <!-- agent-notice:v1 kind=mailbox source=scheduler -->\n\nA\n  B\n\n  status";
+    let claude_input = known_multiline_input("claude", claude, expected).unwrap();
+    let codex_input = known_multiline_input("codex", codex, expected).unwrap();
+    assert!(!super::composer_holds("claude", &claude_input, expected));
+    assert!(!super::composer_holds("codex", &codex_input, expected));
 }
 
 fn codex(input: &str, rows: &str, footer: &str) -> String {

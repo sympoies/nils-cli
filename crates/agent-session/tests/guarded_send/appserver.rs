@@ -70,7 +70,7 @@ fn appserver_draft_after_key_claim_refuses_native_dispatch_and_retains_key() {
     let recovery = fixture.arm_recovery();
     fs::write(fixture.root().join("draft-fourth-capture"), "").unwrap();
     let value = fixture.refused(&fixture.send(GUARDS), "send-composer-not-empty");
-    assert_eq!(value["error"]["details"]["stage"], "admission");
+    assert_eq!(value["error"]["details"]["stage"], "claimed");
     assert_eq!(value["error"]["details"]["pasted"], false);
     assert_eq!(
         fs::read_to_string(fixture.root().join("composer")).unwrap(),

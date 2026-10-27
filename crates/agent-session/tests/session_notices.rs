@@ -90,6 +90,40 @@ fn notice_writers_are_disabled_by_default() {
 }
 
 #[test]
+fn queued_notice_requires_a_durable_delivery_key_before_reading_body() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = temp.path().join("state");
+    let body = temp.path().join("missing-body");
+    let output = run_resolved(
+        "agent-session",
+        &[
+            "--state-dir",
+            state.to_str().unwrap(),
+            "notice",
+            "missing",
+            "--kind",
+            "mailbox",
+            "--source",
+            "scheduler",
+            "--body-file",
+            body.to_str().unwrap(),
+            "--queue",
+            "--format",
+            "json",
+        ],
+        &CmdOptions::new()
+            .with_env_remove_prefix("AGENT_SESSION_")
+            .with_env("AGENT_SESSION_NOTICE_WRITERS", "1"),
+    );
+    assert_eq!(output.code, 64);
+    assert_eq!(
+        output.stdout_json()["error"]["code"],
+        "notice-queue-requires-idempotency-key"
+    );
+    assert!(!state.exists());
+}
+
+#[test]
 fn shared_notice_corpus_matches_parser_and_encoder() {
     use agent_session::notice::{NoticeEnvelope, parse_notice};
     let corpus: serde_json::Value =

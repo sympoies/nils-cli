@@ -8,6 +8,10 @@ use std::{
 
 impl Admission<'_> {
     pub(crate) fn settle_paste(&self, text: &str) -> bool {
+        if self.args.notice_envelope {
+            thread::sleep(POST_PASTE_KEY_SETTLE_DELAY);
+            return false;
+        }
         let until = Instant::now() + POST_PASTE_KEY_SETTLE_DELAY;
         if self.record.agent != "claude" || !self.args.require_empty_composer {
             thread::sleep(POST_PASTE_KEY_SETTLE_DELAY);

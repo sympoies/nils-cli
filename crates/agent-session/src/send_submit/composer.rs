@@ -2,9 +2,198 @@
 use super::{
     CLAUDE_QUEUED_HINT, DIALOG_HINTS, PASTE_PLACEHOLDERS, claude_composer, codex_composer, compact,
 };
+use unicode_width::UnicodeWidthChar;
 
 pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
     composer_input(agent, pane, false)
+}
+
+/// Match a known multiline notice only in a logical capture where tmux has
+/// joined soft-wrapped rows. Unknown drafts are never inferred from a prefix.
+pub(crate) fn known_multiline_input(agent: &str, pane: &str, expected: &str) -> Option<String> {
+    crate::notice::parse_notice(expected)?;
+    let visual = expected.replace("\r\n", "\n");
+    if visual.contains('\r') {
+        return None;
+    }
+    let (plain, _) = styled_text(pane)?;
+    let lines: Vec<&str> = plain.lines().collect();
+    let (start, region, footer) = match agent {
+        "claude" => {
+            let (region, footer) = claude_composer(&lines)?;
+            let start = lines
+                .iter()
+                .position(|line| std::ptr::eq(*line, region[0]))?;
+            (start, region, footer)
+        }
+        "codex" => {
+            let start = lines.iter().rposition(|line| line.starts_with('›'))?;
+            let mut end = lines.len();
+            while end > start + 1 && lines[end - 1].trim().is_empty() {
+                end -= 1;
+            }
+            let below = &lines[start + 1..end];
+            let region_end = below
+                .iter()
+                .rposition(|line| line.trim().is_empty())
+                .map_or(end, |blank| start + 1 + blank);
+            (start, &lines[start..region_end], &lines[region_end..])
+        }
+        _ => return None,
+    };
+    if footer.iter().any(|line| {
+        let lower = line.to_lowercase();
+        DIALOG_HINTS.iter().any(|hint| lower.contains(hint))
+    }) {
+        return None;
+    }
+    if agent == "codex"
+        && footer.iter().filter(|line| !line.trim().is_empty()).count()
+            > super::CODEX_MAX_FOOTER_LINES
+    {
+        return None;
+    }
+    let glyph = if agent == "claude" { '❯' } else { '›' };
+    let first = lines[start].trim_start().strip_prefix(glyph)?;
+    let first = first
+        .strip_prefix([' ', '\u{a0}', '\u{2007}', '\u{202f}'])
+        .unwrap_or(first);
+    let mut observed_rows = Vec::with_capacity(region.len());
+    observed_rows.push(first);
+    observed_rows.extend(region.iter().skip(1).copied());
+    let expected_rows: Vec<&str> = visual.split('\n').collect();
+    if agent == "claude" && expected_rows.iter().any(|row| row.ends_with(' ')) {
+        return None;
+    }
+    let mut logical_rows = Vec::with_capacity(observed_rows.len());
+    for (index, observed) in observed_rows.iter().enumerate() {
+        let wanted = expected_rows.get(index).copied();
+        if index > 0 && observed.is_empty() {
+            logical_rows.push(String::new());
+            continue;
+        }
+        if index > 0 && observed.starts_with("  ") && wanted.is_some_and(str::is_empty) {
+            // Spaces on a logically empty row cannot be distinguished from
+            // prompt indentation, so do not infer an exact empty line.
+            return None;
+        }
+        let without_indent = (index > 0).then(|| observed.strip_prefix("  ")).flatten();
+        let raw_matches = wanted.is_some_and(|wanted| *observed == wanted);
+        let indented_matches = without_indent.is_some_and(|row| wanted == Some(row));
+        let row = match (raw_matches, indented_matches) {
+            (true, false) => *observed,
+            (false, true) => without_indent.unwrap_or(observed),
+            (false, false) if index > 0 && without_indent.is_some() => {
+                without_indent.unwrap_or(observed)
+            }
+            (false, false) => *observed,
+            (true, true) => return None,
+        };
+        logical_rows.push(row.to_owned());
+    }
+    let actual = logical_rows.join("\n");
+    if actual == visual {
+        return Some(expected.to_owned());
+    }
+    if agent == "claude"
+        && let Some(last) = logical_rows.last()
+        && let Some(expected_last) = expected_rows.last()
+        && logical_rows.len() == expected_rows.len()
+        && logical_rows[..logical_rows.len() - 1]
+            .iter()
+            .zip(&expected_rows[..expected_rows.len() - 1])
+            .all(|(actual, expected)| actual == expected)
+        && last
+            .strip_prefix(expected_last)
+            .is_some_and(|suffix| suffix.chars().all(|ch| ch == ' '))
+    {
+        // Claude pads the active row after the insertion point. The caller
+        // confirms that cursor position before admitting this candidate.
+        return Some(expected.to_owned());
+    }
+    Some(actual)
+}
+
+/// Confirm the current Claude insertion point ends at the matched final row.
+/// Pane padding after the cursor is rendering, while any additional owner text
+/// before the cursor changes the visible suffix and fails this check.
+pub(crate) fn known_multiline_cursor_holds(
+    agent: &str,
+    pane: &str,
+    cursor: (usize, usize),
+    expected: &str,
+) -> bool {
+    if agent != "claude" {
+        return true;
+    }
+    let visual = expected.replace("\r\n", "\n");
+    let Some(expected_last_row) = visual.rsplit('\n').next() else {
+        return false;
+    };
+    let Some((plain, _)) = styled_text(pane) else {
+        return false;
+    };
+    let lines: Vec<&str> = plain.lines().collect();
+    let Some((region, _)) = claude_composer(&lines) else {
+        return false;
+    };
+    let Some(last_row_index) = lines
+        .iter()
+        .position(|line| region.last().is_some_and(|last| std::ptr::eq(*line, *last)))
+    else {
+        return false;
+    };
+    if cursor.1 != last_row_index {
+        return false;
+    }
+    let Some(row) = lines.get(cursor.1) else {
+        return false;
+    };
+    let first_row_index = lines.iter().position(|line| std::ptr::eq(*line, region[0]));
+    let mut interpretations = Vec::new();
+    if first_row_index == Some(cursor.1) {
+        let Some(after_glyph) = row.trim_start().strip_prefix('❯') else {
+            return false;
+        };
+        let Some(content) = after_glyph.strip_prefix([' ', '\u{a0}', '\u{2007}', '\u{202f}'])
+        else {
+            return false;
+        };
+        interpretations.push((content, 2));
+    } else {
+        interpretations.push((*row, 2));
+        if let Some(content) = row.strip_prefix("  ") {
+            interpretations.push((content, 2));
+        }
+    }
+    let mut matches = 0;
+    for (content, start_column) in interpretations {
+        let Some(cell_count) = cursor.0.checked_sub(start_column) else {
+            continue;
+        };
+        if let Some(prefix) = prefix_at_cells(content, cell_count)
+            && expected_last_row.ends_with(prefix)
+        {
+            matches += 1;
+        }
+    }
+    matches == 1
+}
+
+fn prefix_at_cells(text: &str, cells: usize) -> Option<&str> {
+    if cells == 0 {
+        return Some("");
+    }
+    let mut width = 0;
+    let mut end = 0;
+    for (index, ch) in text.char_indices() {
+        width += UnicodeWidthChar::width(ch)?;
+        if width > cells {
+            return None;
+        }
+        end = index + ch.len_utf8();
+    }
+    (width == cells).then_some(&text[..end])
 }
 
 /// Direct replies may follow a queued message when the sole input row is a
