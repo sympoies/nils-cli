@@ -5,11 +5,13 @@ use crate::coordination::mailbox::StoredMessage;
 use std::collections::BTreeMap;
 
 pub(super) fn due(receipt: &NotificationReceipt, now: i64) -> bool {
+    let last = receipt
+        .routine_last_submitted_at_epoch
+        .max(receipt.attempted_at_epoch);
     receipt.routine_interval_seconds == 0
         || receipt.urgent_generation > receipt.notified_generation
-        || receipt.routine_last_submitted_at_epoch == 0
-        || now.saturating_sub(receipt.routine_last_submitted_at_epoch)
-            >= receipt.routine_interval_seconds
+        || last == 0
+        || now.saturating_sub(last) >= receipt.routine_interval_seconds
 }
 
 pub(in crate::coordination) fn admit(

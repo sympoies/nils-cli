@@ -19,3 +19,17 @@ fn coalescing_services_and_decisions_bypass_and_counts_fit_a_narrow_pane() {
         assert!(!is_mailbox_reminder_prompt(invalid), "{invalid}");
     }
 }
+
+#[test]
+fn routine_attempt_uncertainty_also_consumes_the_window() {
+    let receipt = NotificationReceipt {
+        routine_interval_seconds: 600,
+        attempted_at_epoch: 100,
+        state: "attempt_unknown".into(),
+        ..Default::default()
+    };
+    assert!(!coalescing::due(&receipt, 101));
+    assert!(coalescing::due(&receipt, 700));
+    let urgent = NotificationReceipt { urgent_generation: 2, notified_generation: 1, ..receipt };
+    assert!(coalescing::due(&urgent, 101));
+}

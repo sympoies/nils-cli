@@ -369,7 +369,8 @@ The destination operator can add `routine_interval_seconds: 600` to one
 recipient in `coordination/notification-policy.json`, alongside its existing
 `suppress_categories` array. The only accepted interval values are `0` (the
 default) and `600`. Routine generations remain durable but are eligible at most
-once per ten minutes after a submitted wake. New blocker, decision and
+once per ten minutes after a notification attempt, including an uncertain
+attempt. New blocker, decision and
 authenticated service-origin messages bypass this window. Other recipients keep
 the existing default behavior. Service-origin inputs cannot be silenced by a
 progress/report suppression rule.
