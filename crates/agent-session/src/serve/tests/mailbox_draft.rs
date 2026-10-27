@@ -591,6 +591,25 @@ async fn mailbox_wake_retry_clears_only_prior_unknown_notification_text() {
     // room for its cleanup, paste and Enter on a loaded host.
     let _budget = HoldBudgetGuard::widen(Duration::from_secs(30));
 
+    for id in ["alpha", "beta"] {
+        let record = load_session_record(&fixture.state.context, id).expect("fixture session");
+        let incarnation = record
+            .runtime
+            .as_ref()
+            .expect("fixture runtime")
+            .launch_id
+            .as_str();
+        let heartbeat = crate::coordination::heartbeat_path(
+            &fixture.state.context.state_dir,
+            &record.id,
+        );
+        fs::write(
+            heartbeat,
+            format!("{incarnation}:{}\n", crate::coordination::now_epoch()),
+        )
+        .expect("refresh fixture heartbeat");
+    }
+
     send_notification_fixture(
         &fixture.state,
         &fixture.capability,
