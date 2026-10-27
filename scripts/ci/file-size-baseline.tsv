@@ -18,7 +18,7 @@ crates/agent-session/src/retitle.rs	impl	3378
 crates/agent-session/src/retitle_v3.rs	impl	3634
 crates/agent-session/src/retitle_v3.rs	test	3647
 crates/agent-session/src/serve.rs	impl	11332
-crates/agent-session/src/serve/tests.rs	test	22584
+crates/agent-session/src/serve/tests.rs	test	22568
 crates/agent-session/tests/integration/cli.rs	test	11929
 crates/agent-session/tests/integration/coordination.rs	test	5320
 crates/agent-workflow-primitives/src/heuristic_inbox.rs	impl	4085

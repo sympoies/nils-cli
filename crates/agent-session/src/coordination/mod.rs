@@ -774,7 +774,9 @@ pub(crate) fn reconcile_notification_absent(
 pub(crate) const NOTIFICATION_REASON_HOOK_DELIVERED: &str = notification::REASON_HOOK_DELIVERED;
 
 pub(crate) fn notification_prompt(candidate: &NotificationCandidate) -> String {
-    notification::fixed_prompt(&candidate.target_session_id, candidate.queued_at_epoch)
+    candidate.prompt.clone().unwrap_or_else(|| {
+        notification::fixed_prompt(&candidate.target_session_id, candidate.queued_at_epoch)
+    })
 }
 
 pub(crate) fn coordination_dir(context: &CliContext, session_id: &str) -> PathBuf {

@@ -111,7 +111,7 @@ changes, so a direct CLI send made while the controller is absent catches up
 after restart.
 
 Multiple notification-eligible unread messages coalesce into one mailbox-level
-notification for the newest pending generation. The body-free wake is always
+notification for the newest pending generation. For unconfigured recipients, the body-free wake is always
 35 ASCII characters, fitting one exactly observable input row in a 51-column
 pane for Claude and Codex:
 
@@ -362,3 +362,25 @@ State and reason are allowlisted. The projection omits receipt keys,
 incarnations, provider turn IDs, capabilities, and message content. Direct CLI
 responses conservatively report `controller_available: false`; a response from
 the active HTTP controller reports `true`.
+
+### Routine coordinator wake windows
+
+The destination operator can add `routine_interval_seconds: 600` to one
+recipient in `coordination/notification-policy.json`, alongside its existing
+`suppress_categories` array. The only accepted interval values are `0` (the
+default) and `600`. Routine generations remain durable but are eligible at most
+once per ten minutes after a submitted wake. New blocker, decision and
+authenticated service-origin messages bypass this window. Other recipients keep
+the existing default behavior. Service-origin inputs cannot be silenced by a
+progress/report suppression rule.
+
+Configured recipients receive a bounded body-free prompt such as
+`Mailbox: b=1 h=2 p=3`. The aliases are blocker (`b`), decision (`d`), handoff
+(`h`), progress (`p`), report (`r`) and uncategorized (`u`); omitted categories
+have zero messages. Counts fit a 51-column pane at the mailbox quota. Exact
+attempt text is retained for reconciliation; a later generation does not
+acknowledge an older uncertain submission. `message audit` advertises
+`routine-coalescing-v1` under `notification_capabilities` and the configured
+recipient intervals under `routine_coalescing`. Consumers must deploy matching
+CLI and controller versions before enabling the policy. This capability does
+not disable idle, composer, incarnation or idempotency guards.

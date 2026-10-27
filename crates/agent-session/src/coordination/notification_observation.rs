@@ -39,8 +39,14 @@ pub(crate) fn observe_attempt(
         }
         receipt.attempted_prompt_format.clone()
     };
-    let current = fixed_prompt(&candidate.target_session_id, candidate.queued_at_epoch);
+    let current = candidate
+        .prompt
+        .clone()
+        .unwrap_or_else(|| fixed_prompt(&candidate.target_session_id, candidate.queued_at_epoch));
     match format.as_deref() {
+        Some("mailbox-counts.v1") if candidate.prompt.is_some() => {
+            prompt_observed_after(&source, &current, &attempted_at)
+        }
         Some(PROMPT_FORMAT) => prompt_observed_after(&source, &current, &attempted_at),
         Some("mailbox-short.v1") => prompt_observed_after(
             &source,

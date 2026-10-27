@@ -305,10 +305,7 @@ pub(crate) fn reminder(context: &CliContext, args: MessageReminderArgs) -> Resul
     Ok(json!({
         "session_id": record.id,
         "generation": claimed.as_ref().map(|candidate| candidate.generation),
-        "reminder": claimed.as_ref().map(|candidate| super::notification::fixed_prompt(
-            &candidate.target_session_id,
-            candidate.queued_at_epoch,
-        )),
+        "reminder": claimed.as_ref().map(super::notification_prompt),
     }))
 }
 
