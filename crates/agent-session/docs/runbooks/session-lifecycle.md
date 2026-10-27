@@ -327,6 +327,12 @@ agent-session restart <id> --force --stop-timeout 30 --ready-timeout 60
   `restart-post-launch-failed`, `restart-not-ready`).
 - A session cannot restart itself: the stop would end the command.
 
+For queued Codex account repair, native idle admission also supports a session
+whose activity phase is still `starting`. Only restart's sealed exit command
+may run before the queued account is bound to the replacement runtime. See
+[Codex account recovery acceptance](codex-account-recovery-acceptance.md) for
+startup recovery and a disposable idle fixture without a model turn.
+
 Retired orchestration registries and sidecars are ignored. Session records
 retain unknown metadata through ordinary rewrites without projecting it or
 restoring mode authority. Retirement does not migrate or delete durable state.
