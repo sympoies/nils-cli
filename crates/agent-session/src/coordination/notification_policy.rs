@@ -133,7 +133,7 @@ pub(super) fn coalescing_status(context: &CliContext) -> serde_json::Value {
     let mut out = serde_json::Map::new();
     if let Some(policy) = selected.filter(|policy| policy.schema_version == VERSION) {
         for recipient in policy.recipients {
-            if recipient.routine_interval_seconds == 600 {
+            if settings(context, &recipient.session_id).is_ok_and(|(_, interval)| interval == 600) {
                 out.insert(recipient.session_id, serde_json::json!(600));
             }
         }

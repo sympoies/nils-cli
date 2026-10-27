@@ -634,3 +634,27 @@ fn coalescing_window_survives_restart_and_hook_claim_until_ten_minutes() {
     .unwrap();
     assert!(super::super::notification_prompt(&next).contains("u=1"));
 }
+
+#[test]
+fn routine_coalescing_fences_older_registry_writers() {
+    let (_temp, context) = tests::fixture();
+    write_atomic(
+        &context
+            .state_dir
+            .join("coordination/notification-policy.json"),
+        &serde_json::to_vec(
+            &json!({"schema_version":"agent-session.notification-policy.v1", "recipients":[{
+                "session_id":"recipient", "suppress_categories":[], "routine_interval_seconds":600
+            }]}),
+        )
+        .unwrap(),
+        SECRET_FILE_MODE,
+    )
+    .unwrap();
+    ingress(&context, Some(MessageCategory::Progress));
+    let locked = lock_registry(&context).unwrap();
+    assert_eq!(
+        locked.registry.schema_version,
+        "agent-session.coordination-registry.v6"
+    );
+}
