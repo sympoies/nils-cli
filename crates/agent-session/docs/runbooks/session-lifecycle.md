@@ -88,6 +88,75 @@ and account handoff preserve both fields. See the
 [session record contract](../specs/session-lineage-work-v1.md#origin-and-workspace)
 for cross-host inheritance and nullable JSON details.
 
+## New managed record from a provider conversation
+
+For a local Claude conversation with a retained, account-bound managed source:
+
+```bash
+agent-session start --agent claude --resume PROVIDER_SESSION_ID --check-resume --format json
+agent-session start --agent claude --resume PROVIDER_SESSION_ID --account ACCOUNT --format json
+```
+
+`--resume` creates a new managed ID and retains the exact provider conversation
+ID. It uses the shared import resolver and canonical `--resume ID` arguments,
+without generating a conflicting `--session-id`. Ordinary workspace, parent,
+role, work refs, title mode, provider arguments and initial prompt behavior apply.
+Reserved raw resume/session arguments remain refused.
+
+`--check-resume` requires `--resume` and is read only. It does not create a
+record, runtime, prompt or lifecycle/Console operation, read prompt files or
+materialize credentials. It checks exact conversation history under the
+original broker account's config root, the requested cwd, every matching managed
+source's account and stopped runtime, ownership, pending effects and auth
+quarantine.
+
+An omitted account resolves from the unique original binding; `--account`
+cannot rebind a conversation to another account. Missing or ambiguous
+account/ownership evidence refuses; the host login is never a fallback. Deleted
+sources with only standalone history currently refuse even with an explicit
+account; [#3012](https://github.com/sympoies/nils-cli/issues/3012) tracks the
+read-only account-root authority needed for that case. Auth-quarantined sources
+continue through the existing recovery flow in
+[#3005](https://github.com/sympoies/nils-cli/issues/3005).
+
+A successful JSON check has exactly this envelope and these four data fields:
+
+```json
+{
+  "schema_version": "cli.agent-session.resume-preflight.v1",
+  "ok": true,
+  "data": {
+    "agent": "claude",
+    "provider_session_id": "00000000-0000-4000-8000-000000000007",
+    "machine": "example-machine",
+    "account": "original"
+  }
+}
+```
+
+The response contains no paths, credentials or history content. A supported
+refusal has `ok:false`, one of `resume-history-missing`,
+`resume-account-mismatch`, `resume-source-live`, `resume-source-unknown` or
+`resume-unsupported`, and `error.details` with `session_created:false` and
+`safe_to_retry:false`. Malformed conversation IDs and unsupported capability
+return `resume-unsupported`. An older CLI's parse/schema failure is distinct from
+this supported rejection.
+
+Start rechecks admission under conversation and source locks before creating its
+record. A prior successful check grants no admission lease. The source is never
+revived or rewritten. Resuming an old managed source or importing that same
+conversation also refuses while another managed writer exists. Auth quarantine
+continues to belong to the existing recovery flow. Start success uses
+`cli.agent-session.start.v1` with the new managed ID at `data.session.id`.
+
+This increment supports direct local Claude starts. Console/remote requests and
+Codex return `resume-unsupported`; their remaining acceptance is tracked in
+[#3010](https://github.com/sympoies/nils-cli/issues/3010) and
+[#3011](https://github.com/sympoies/nils-cli/issues/3011). Remote checks require a
+true read-only target hop rather than the operation-producing Console start
+relay. Disposable real-provider recall acceptance remains a separate gate under
+[#3007](https://github.com/sympoies/nils-cli/issues/3007).
+
 ## Send input and glance
 
 `send` pushes input to a live session: literal text (`--text` /
