@@ -86,16 +86,46 @@ pub(crate) fn persisted_termination_state(
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TmuxTerminationOptions {
+    timeouts: (Duration, Duration),
+    terminate_process_group: bool,
+    recover_split_cgroup: bool,
+}
+
+impl TmuxTerminationOptions {
+    pub(crate) fn regular(timeouts: (Duration, Duration), terminate_process_group: bool) -> Self {
+        Self {
+            timeouts,
+            terminate_process_group,
+            recover_split_cgroup: false,
+        }
+    }
+
+    pub(crate) fn split_scope(
+        timeouts: (Duration, Duration),
+        terminate_process_group: bool,
+    ) -> Self {
+        Self {
+            timeouts,
+            terminate_process_group,
+            recover_split_cgroup: true,
+        }
+    }
+}
+
 pub(crate) fn terminate_tmux_session_inner(
     context: &CliContext,
     record: &mut SessionRecord,
     tmux_bin: &Path,
     initial_identity: Option<TmuxRuntimeIdentity>,
-    kill_timeout: Duration,
-    verify_timeout: Duration,
-    terminate_process_group: bool,
-    recover_split_cgroup: bool,
+    options: TmuxTerminationOptions,
 ) -> Result<(), SessionTerminationFailure> {
+    let TmuxTerminationOptions {
+        timeouts: (kill_timeout, verify_timeout),
+        terminate_process_group,
+        recover_split_cgroup,
+    } = options;
     if crate::recorded_runtime_is_from_prior_boot(record) {
         record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
         return Ok(());
@@ -438,7 +468,13 @@ pub(crate) fn terminate_persisted_split_members(
     if captured.is_empty() {
         return Err(SessionTerminationFailure::RuntimeIdentityUnavailable);
     }
-    let current = crate::linux_process_session_members(process_session_id)?;
+    let current = match crate::linux_process_session_members(process_session_id) {
+        Ok(members) => members,
+        Err(reason) => {
+            resume_persisted_paused_members(context, record, identity)?;
+            return Err(reason);
+        }
+    };
     let mut pinned = Vec::with_capacity(current.len());
     for member in &current {
         let Some(captured_member) = captured.iter().find(|captured| {
@@ -455,7 +491,13 @@ pub(crate) fn terminate_persisted_split_members(
             }
         }
     }
-    let revalidated = crate::linux_process_session_members(process_session_id)?;
+    let revalidated = match crate::linux_process_session_members(process_session_id) {
+        Ok(members) => members,
+        Err(reason) => {
+            resume_persisted_paused_members(context, record, identity)?;
+            return Err(reason);
+        }
+    };
     if revalidated.len() != pinned.len()
         || revalidated.iter().any(|member| {
             !pinned.iter().any(|pinned| {
@@ -530,47 +572,56 @@ fn stop_pinned_session_members(
         .process_session_id
         .filter(|session_id| *session_id > 1 && *session_id != unsafe { libc::getsid(0) })
         .ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-    let control_group = identity
-        .control_group
-        .as_ref()
-        .ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
+    let control_group = identity.control_group.as_ref();
     let mut guard = SplitScopeStopGuard {
         stopped_members: Vec::new(),
     };
-    for captured in expected_members {
-        let Some(process) = pinned.iter().find(|process| {
-            process.identity.pid == captured.pid
-                && process.identity.start_time == captured.start_time
-        }) else {
-            return Err(SessionTerminationFailure::VerificationFailed);
+    let stop_result = (|| {
+        let control_group =
+            control_group.ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
+        for captured in expected_members {
+            let Some(process) = pinned.iter().find(|process| {
+                process.identity.pid == captured.pid
+                    && process.identity.start_time == captured.start_time
+            }) else {
+                return Err(SessionTerminationFailure::VerificationFailed);
+            };
+            let current_cgroup_path = crate::linux_process_control_group_path(captured.pid)?
+                .ok_or(SessionTerminationFailure::VerificationFailed)?;
+            if current_cgroup_path.as_path() == Path::new(&control_group.path) {
+                continue;
+            }
+            let _current = crate::read_linux_process_identity(captured.pid)?
+                .filter(|current| {
+                    current.pid == captured.pid
+                        && current.session_id == process_session_id
+                        && current.start_time == captured.start_time
+                        && !current.zombie
+                })
+                .ok_or(SessionTerminationFailure::VerificationFailed)?;
+            if linux_process_is_stopped(captured.pid)? {
+                continue;
+            }
+            let raw_fd =
+                unsafe { libc::fcntl(process.pidfd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
+            if raw_fd < 0 {
+                return Err(SessionTerminationFailure::VerificationFailed);
+            }
+            let pidfd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+            guard.stopped_members.push(pidfd);
+            persist_paused_split_scope_members(context, record, std::slice::from_ref(captured))?;
+            crate::pidfd_send_signal(guard.stopped_members.last().unwrap(), libc::SIGSTOP, false)?;
+            wait_for_process_stop(captured, process_session_id)?;
+        }
+        crate::verify_captured_linux_process_session(process_session_id, expected_members)
+    })();
+    if let Err(reason) = stop_result {
+        drop(guard);
+        return match resume_persisted_paused_members(context, record, identity) {
+            Ok(()) => Err(reason),
+            Err(cleanup_reason) => Err(cleanup_reason),
         };
-        let current_cgroup_path = crate::linux_process_control_group_path(captured.pid)?
-            .ok_or(SessionTerminationFailure::VerificationFailed)?;
-        if current_cgroup_path.as_path() == Path::new(&control_group.path) {
-            continue;
-        }
-        let _current = crate::read_linux_process_identity(captured.pid)?
-            .filter(|current| {
-                current.pid == captured.pid
-                    && current.session_id == process_session_id
-                    && current.start_time == captured.start_time
-                    && !current.zombie
-            })
-            .ok_or(SessionTerminationFailure::VerificationFailed)?;
-        if linux_process_is_stopped(captured.pid)? {
-            continue;
-        }
-        let raw_fd = unsafe { libc::fcntl(process.pidfd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
-        if raw_fd < 0 {
-            return Err(SessionTerminationFailure::VerificationFailed);
-        }
-        let pidfd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
-        guard.stopped_members.push(pidfd);
-        persist_paused_split_scope_members(context, record, std::slice::from_ref(captured))?;
-        crate::pidfd_send_signal(guard.stopped_members.last().unwrap(), libc::SIGSTOP, false)?;
-        wait_for_process_stop(captured, process_session_id)?;
     }
-    crate::verify_captured_linux_process_session(process_session_id, expected_members)?;
     Ok(guard)
 }
 
@@ -629,24 +680,56 @@ fn resume_persisted_paused_members(
     let process_session_id = identity
         .process_session_id
         .ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
+    let mut unresolved = Vec::new();
+    let mut first_failure = None;
     for paused_member in paused {
         if !identity.process_session_members.iter().any(|captured| {
             captured.pid == paused_member.pid && captured.start_time == paused_member.start_time
         }) {
-            return Err(SessionTerminationFailure::RuntimeIdentityUnavailable);
+            first_failure.get_or_insert(SessionTerminationFailure::RuntimeIdentityUnavailable);
+            unresolved.push(paused_member);
+            continue;
         }
-        let Some(current) = crate::read_linux_process_identity(paused_member.pid)? else {
+        let current = match crate::read_linux_process_identity(paused_member.pid) {
+            Ok(current) => current,
+            Err(reason) => {
+                first_failure.get_or_insert(reason);
+                unresolved.push(paused_member);
+                continue;
+            }
+        };
+        let Some(current) = current else {
             continue;
         };
         if current.start_time != paused_member.start_time
             || current.session_id != process_session_id
             || current.zombie
         {
-            return Err(SessionTerminationFailure::VerificationFailed);
+            first_failure.get_or_insert(SessionTerminationFailure::VerificationFailed);
+            unresolved.push(paused_member);
+            continue;
         }
-        if linux_process_is_stopped(paused_member.pid)? {
-            let process = pin_process_in_session(&paused_member, process_session_id)?;
-            crate::pidfd_send_signal(&process.pidfd, libc::SIGCONT, false)?;
+        let stopped = match linux_process_is_stopped(paused_member.pid) {
+            Ok(stopped) => stopped,
+            Err(reason) => {
+                first_failure.get_or_insert(reason);
+                unresolved.push(paused_member);
+                continue;
+            }
+        };
+        if stopped {
+            let process = match pin_process_in_session(&paused_member, process_session_id) {
+                Ok(process) => process,
+                Err(reason) => {
+                    first_failure.get_or_insert(reason);
+                    unresolved.push(paused_member);
+                    continue;
+                }
+            };
+            if let Err(reason) = crate::pidfd_send_signal(&process.pidfd, libc::SIGCONT, false) {
+                first_failure.get_or_insert(reason);
+                unresolved.push(paused_member);
+            }
         }
     }
     let Some(state) = record
@@ -656,9 +739,21 @@ fn resume_persisted_paused_members(
     else {
         return Err(SessionTerminationFailure::RuntimeIdentityUnavailable);
     };
-    state.remove("split_scope_paused_members");
+    if unresolved.is_empty() {
+        state.remove("split_scope_paused_members");
+    } else {
+        state.insert(
+            "split_scope_paused_members".to_owned(),
+            serde_json::to_value(unresolved)
+                .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?,
+        );
+    }
     crate::write_session_record(context, record)
-        .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)
+        .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
+    match first_failure {
+        Some(reason) => Err(reason),
+        None => Ok(()),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -921,6 +1016,85 @@ mod tests {
             );
             thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn persisted_resume_continues_after_earlier_stale_identity() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, mut record, _process_session, identity) = split_session_fixture(tmp.path());
+        let members = &identity.process_session_members;
+        assert!(members.len() >= 2);
+        let stale_actual = members[0].clone();
+        let exact = members[1].clone();
+        for member in [&stale_actual, &exact] {
+            let pinned = pin_process_in_session(member, identity.process_session_id.unwrap())
+                .expect("pin isolated fixture member");
+            crate::pidfd_send_signal(&pinned.pidfd, libc::SIGSTOP, false).unwrap();
+            wait_for_process_stop(member, identity.process_session_id.unwrap()).unwrap();
+        }
+
+        let mut stale = stale_actual.clone();
+        stale.start_time += 1;
+        persist_paused_split_scope_members(&context, &mut record, &[stale.clone(), exact.clone()])
+            .unwrap();
+
+        let result = resume_persisted_paused_members(&context, &mut record, &identity);
+
+        assert!(result.is_err());
+        assert_process_stop_state(stale_actual.pid, true);
+        assert_process_stop_state(exact.pid, false);
+        let unresolved: Vec<TmuxProcessIdentity> = serde_json::from_value(
+            record.extra[DELETE_TMUX_TERMINATION_STATE_KEY]["split_scope_paused_members"].clone(),
+        )
+        .unwrap();
+        assert_eq!(unresolved, vec![stale]);
+        let persisted: SessionRecord = serde_json::from_slice(
+            &fs::read(
+                context
+                    .state_dir
+                    .join("sessions/split-quiesce-fixture/session.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            persisted.extra[DELETE_TMUX_TERMINATION_STATE_KEY]["split_scope_paused_members"],
+            serde_json::to_value(&unresolved).unwrap()
+        );
+    }
+
+    #[test]
+    fn failed_stop_attempt_resumes_prior_persisted_members() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, mut record, _process_session, identity) = split_session_fixture(tmp.path());
+        let members = &identity.process_session_members;
+        assert!(members.len() >= 2);
+        let newly_paused = members[0].clone();
+        let previously_paused = members[1].clone();
+        let prior =
+            pin_process_in_session(&previously_paused, identity.process_session_id.unwrap())
+                .expect("pin prior isolated fixture member");
+        crate::pidfd_send_signal(&prior.pidfd, libc::SIGSTOP, false).unwrap();
+        wait_for_process_stop(&previously_paused, identity.process_session_id.unwrap()).unwrap();
+        persist_paused_split_scope_members(
+            &context,
+            &mut record,
+            std::slice::from_ref(&previously_paused),
+        )
+        .unwrap();
+        let pinned = pinned_session_members(&identity);
+
+        let result =
+            stop_pinned_session_members(&context, &mut record, &identity, &pinned[..1], members);
+
+        assert!(result.is_err());
+        assert_process_stop_state(newly_paused.pid, false);
+        assert_process_stop_state(previously_paused.pid, false);
+        assert!(
+            record.extra[DELETE_TMUX_TERMINATION_STATE_KEY]
+                .get("split_scope_paused_members")
+                .is_none()
+        );
     }
 
     #[test]

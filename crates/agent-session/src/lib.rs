@@ -55,6 +55,7 @@ mod runtime_environment;
 mod runtime_teardown;
 mod stable_executable;
 mod startup;
+use runtime_teardown::split_scope::TmuxTerminationOptions as TmuxOptions;
 use runtime_teardown::tmux_kill_identity_with_timeout;
 use stable_executable::resolve_agent_session_executable;
 use startup::start_interactive_tmux;
@@ -7400,13 +7401,12 @@ where
         record,
         resolved.session_dir,
         &tmux_bin,
-        (
+        delete_recovery::DeleteSessionOptions::regular(
             PANE_INPUT_COMMAND_TIMEOUT,
             DELETE_TERMINATION_VERIFY_TIMEOUT,
+            // Only archive routes through this incarnation-fenced helper.
+            board::CloseReason::Archived,
         ),
-        // Only archive routes through this incarnation-fenced helper.
-        board::CloseReason::Archived,
-        false,
         prepare,
     )
 }
@@ -7526,9 +7526,11 @@ fn delete_session_locked_with_timeouts(
         record,
         session_dir,
         tmux_bin,
-        (kill_timeout, verify_timeout),
-        board::CloseReason::Deleted,
-        false,
+        delete_recovery::DeleteSessionOptions::regular(
+            kill_timeout,
+            verify_timeout,
+            board::CloseReason::Deleted,
+        ),
         |_| Ok(()),
     )
     .map(|(_, deleted)| deleted)
@@ -7545,12 +7547,11 @@ pub(crate) fn delete_session_locked_with_split_scope_recovery(
         record,
         session_dir,
         tmux_bin,
-        (
+        delete_recovery::DeleteSessionOptions::recover_split_scope(
             PANE_INPUT_COMMAND_TIMEOUT,
             DELETE_TERMINATION_VERIFY_TIMEOUT,
+            board::CloseReason::Deleted,
         ),
-        board::CloseReason::Deleted,
-        true,
         |_| Ok(()),
     )
     .map(|(_, deleted)| deleted)
@@ -7561,14 +7562,16 @@ fn delete_session_locked_with_timeouts_and_prepare<T, F>(
     mut record: SessionRecord,
     session_dir: PathBuf,
     tmux_bin: &Path,
-    (kill_timeout, verify_timeout): (Duration, Duration),
-    close_reason: board::CloseReason,
-    recover_split_cgroup: bool,
+    options: delete_recovery::DeleteSessionOptions,
     prepare: F,
 ) -> Result<(T, DeleteResult), CliError>
 where
     F: FnOnce(&SessionRecord) -> Result<T, CliError>,
 {
+    let kill_timeout = options.kill_timeout;
+    let verify_timeout = options.verify_timeout;
+    let close_reason = options.close_reason;
+    let recover_split_cgroup = options.recover_split_cgroup;
     ensure_session_deletion_supported(&record)?;
     ensure_session_lifecycle_mutation_allowed(context, &record)
         .map_err(|error| contention::close_error(error, close_reason))?;
@@ -8186,15 +8189,13 @@ fn terminate_tmux_session_with_timeouts(
     verify_timeout: Duration,
     terminate_process_group: bool,
 ) -> Result<(), SessionTerminationFailure> {
+    let opts = TmuxOptions::regular((kill_timeout, verify_timeout), terminate_process_group);
     runtime_teardown::split_scope::terminate_tmux_session_inner(
         context,
         record,
         tmux_bin,
         initial_identity,
-        kill_timeout,
-        verify_timeout,
-        terminate_process_group,
-        false,
+        opts,
     )
 }
 
@@ -8207,15 +8208,14 @@ fn terminate_tmux_session_with_split_scope_recovery(
     verify_timeout: Duration,
     terminate_process_group: bool,
 ) -> Result<(), SessionTerminationFailure> {
+    let timeouts = (kill_timeout, verify_timeout);
+    let opts = TmuxOptions::split_scope(timeouts, terminate_process_group);
     runtime_teardown::split_scope::terminate_tmux_session_inner(
         context,
         record,
         tmux_bin,
         initial_identity,
-        kill_timeout,
-        verify_timeout,
-        terminate_process_group,
-        true,
+        opts,
     )
 }
 

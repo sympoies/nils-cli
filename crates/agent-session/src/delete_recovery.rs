@@ -2,6 +2,42 @@ use super::*;
 
 mod shared_daemons;
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct DeleteSessionOptions {
+    pub(super) kill_timeout: Duration,
+    pub(super) verify_timeout: Duration,
+    pub(super) close_reason: board::CloseReason,
+    pub(super) recover_split_cgroup: bool,
+}
+
+impl DeleteSessionOptions {
+    pub(super) fn regular(
+        kill_timeout: Duration,
+        verify_timeout: Duration,
+        close_reason: board::CloseReason,
+    ) -> Self {
+        Self {
+            kill_timeout,
+            verify_timeout,
+            close_reason,
+            recover_split_cgroup: false,
+        }
+    }
+
+    pub(super) fn recover_split_scope(
+        kill_timeout: Duration,
+        verify_timeout: Duration,
+        close_reason: board::CloseReason,
+    ) -> Self {
+        Self {
+            kill_timeout,
+            verify_timeout,
+            close_reason,
+            recover_split_cgroup: true,
+        }
+    }
+}
+
 pub(super) fn capture_tmux_runtime_identity(
     context: &CliContext,
     record: &SessionRecord,
