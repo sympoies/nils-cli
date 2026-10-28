@@ -14,17 +14,23 @@ pub(super) fn blocking_reason(
     if !may_restart {
         return Some("self_restart_deferred");
     }
-    match crate::activity::state_for_view(context, record).map(|state| state.phase) {
-        Some(crate::activity::TurnPhase::Waiting) => {}
-        Some(crate::activity::TurnPhase::Working) => return Some("turn_busy"),
-        Some(crate::activity::TurnPhase::NeedsInput) => return Some("turn_needs_input"),
-        Some(crate::activity::TurnPhase::Starting) => return Some("turn_starting"),
-        Some(crate::activity::TurnPhase::Unknown) | None => return Some("turn_state_unavailable"),
+    if let Some(reason) = turn_blocking_reason(context, record) {
+        return Some(reason);
     }
     match crate::session_status(context, tmux, record).as_str() {
         "running" => None,
         "stopped" => Some("session_stopped"),
         _ => Some("session_status_unknown"),
+    }
+}
+
+fn turn_blocking_reason(context: &CliContext, record: &SessionRecord) -> Option<&'static str> {
+    match crate::activity::state_for_view(context, record).map(|state| state.phase) {
+        Some(crate::activity::TurnPhase::Waiting) => None,
+        Some(crate::activity::TurnPhase::Working) => Some("turn_busy"),
+        Some(crate::activity::TurnPhase::NeedsInput) => Some("turn_needs_input"),
+        Some(crate::activity::TurnPhase::Starting) => Some("turn_starting"),
+        Some(crate::activity::TurnPhase::Unknown) | None => Some("turn_state_unavailable"),
     }
 }
 
@@ -90,6 +96,18 @@ pub(super) fn restart_locked(
     record: &mut SessionRecord,
     tmux: &Path,
 ) -> Result<(Option<String>, Option<ClaudeAccountView>), CliError> {
+    // Credential materialization can take long enough for a new provider
+    // turn to start. Never stop based only on the preflight's idle snapshot.
+    if let Some(reason) = turn_blocking_reason(context, record) {
+        store_reason(context, record, Some(reason))?;
+        return Ok((
+            record
+                .runtime
+                .as_ref()
+                .map(|runtime| runtime.launch_id.clone()),
+            crate::claude_account::view_for_record(record),
+        ));
+    }
     let now = jiff::Timestamp::now().to_string();
     let result = crate::validate_resume_metadata(record)
         .map(|_| ())
