@@ -41,6 +41,8 @@ use crate::validations::{
     no_local_path, title_length, worktree_clean,
 };
 
+mod supersede;
+
 const SCHEMA: &str = "pr.create";
 const SCHEMA_VERSION: u32 = 1;
 
@@ -726,17 +728,30 @@ pub fn run_with<R: BackendRunner>(
     let repository_id = gate_applies
         .then(|| evidence_repository_id(&ctx, remote_url.as_deref(), global.repo.as_deref()))
         .flatten();
-    let verified_subject = test_first_gate(
-        kind,
-        &env.test_first_policy,
-        args.test_first_evidence.as_deref(),
+    let (verified_subject, supersedes) = supersede::gate(
+        runner,
+        &ctx,
+        args.supersedes,
+        gate_applies,
         &env.workdir,
         &global.remote,
-        repository_id.as_deref(),
+        &base,
         resolved_head.local_branch,
+        |delivery_ref| {
+            test_first_gate(
+                kind,
+                &env.test_first_policy,
+                args.test_first_evidence.as_deref(),
+                &env.workdir,
+                &global.remote,
+                repository_id.as_deref(),
+                delivery_ref,
+            )
+        },
     )?;
 
     let body = append_validation_summary(body, verified_subject.as_ref())?;
+    let body = supersede::append_link(body, supersedes);
     let draft = !args.no_draft;
 
     // 4. Materialize body into a temp file for argv handoff. The temp file
@@ -875,17 +890,30 @@ fn compute_with_subject_inner<R: BackendRunner>(
     let repository_id = gate_applies
         .then(|| evidence_repository_id(&ctx, remote_url.as_deref(), global.repo.as_deref()))
         .flatten();
-    let verified_subject = test_first_gate(
-        kind,
-        &env.test_first_policy,
-        args.test_first_evidence.as_deref(),
+    let (verified_subject, supersedes) = supersede::gate(
+        runner,
+        &ctx,
+        args.supersedes,
+        gate_applies,
         &env.workdir,
         &global.remote,
-        repository_id.as_deref(),
+        &base,
         resolved_head.local_branch,
+        |delivery_ref| {
+            test_first_gate(
+                kind,
+                &env.test_first_policy,
+                args.test_first_evidence.as_deref(),
+                &env.workdir,
+                &global.remote,
+                repository_id.as_deref(),
+                delivery_ref,
+            )
+        },
     )?;
 
     let body = append_validation_summary(body, verified_subject.as_ref())?;
+    let body = supersede::append_link(body, supersedes);
     let draft = !args.no_draft;
     let body_tempfile = write_body_tempfile(&body)?;
     let body_path = body_tempfile.path().to_path_buf();
@@ -1463,6 +1491,7 @@ mod tests {
             label_catalog: None,
             strict_labels: false,
             test_first_evidence: None,
+            supersedes: None,
         }
     }
 
@@ -2311,5 +2340,227 @@ mod tests {
         )
         .expect_err("gate");
         assert_eq!(err.kind(), "test_first_evidence_required");
+    }
+
+    const OLD_PR: u64 = 77;
+
+    /// A record bound to `fix/old`, a default branch that advanced by one
+    /// commit, and `fix/new` checked out at the old head.
+    struct SupersedeFixture {
+        _tmp: tempfile::TempDir,
+        repo: PathBuf,
+        evidence: String,
+        old_head: String,
+    }
+
+    fn supersede_fixture() -> SupersedeFixture {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = subject_repo(tmp.path(), "repo", "git@github.com:o/r.git");
+        let evidence = tmp.path().join("evidence");
+        bind_evidence(&repo, &evidence);
+        let old_head = git(&repo, &["rev-parse", "HEAD"]);
+        git(&repo, &["branch", "fix/old"]);
+        git(&repo, &["checkout", "-q", "-b", "advance", "HEAD~1"]);
+        nils_test_support::git::commit_file(&repo, "base.txt", "base\n", "advance default");
+        git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(&repo, &["checkout", "-q", "-b", "fix/new", "fix/old"]);
+        SupersedeFixture {
+            _tmp: tmp,
+            repo,
+            evidence: evidence.to_str().unwrap().to_string(),
+            old_head,
+        }
+    }
+
+    fn merge_default_branch(repo: &Path) {
+        git(
+            repo,
+            &[
+                "merge",
+                "--no-ff",
+                "-q",
+                "-m",
+                "merge default",
+                "refs/remotes/origin/main",
+            ],
+        );
+    }
+
+    struct SupersedeRunner {
+        old_head: String,
+        new_head: String,
+        created_body: std::cell::RefCell<Option<String>>,
+    }
+
+    impl BackendRunner for SupersedeRunner {
+        fn run(&self, call: &BackendCall) -> Result<BackendSuccess, ForgeError> {
+            let argv: Vec<_> = call.argv.iter().map(|s| s.to_string_lossy()).collect();
+            let view = |number: u64, branch: &str, head: &str| {
+                serde_json::json!({
+                    "number": number,
+                    "url": format!("https://github.com/o/r/pull/{number}"),
+                    "state": "OPEN",
+                    "isDraft": true,
+                    "title": "fix: supersede",
+                    "headRefName": branch,
+                    "headRefOid": head,
+                    "baseRefName": "main",
+                    "mergeable": "UNKNOWN",
+                    "mergedAt": null,
+                    "labels": []
+                })
+                .to_string()
+            };
+            let stdout = match (argv[1].as_ref(), argv[2].as_ref()) {
+                ("view", "77") => view(OLD_PR, "fix/old", &self.old_head),
+                ("view", "78") => view(78, "fix/new", &self.new_head),
+                ("create", _) => {
+                    let index = argv.iter().position(|s| s == "--body-file").unwrap();
+                    *self.created_body.borrow_mut() =
+                        Some(std::fs::read_to_string(argv[index + 1].as_ref()).unwrap());
+                    "https://github.com/o/r/pull/78".to_string()
+                }
+                other => panic!("unexpected backend call {other:?}"),
+            };
+            Ok(BackendSuccess {
+                stdout,
+                stderr: String::new(),
+            })
+        }
+    }
+
+    /// Runs `pr create --kind bug --supersedes 77` from the fixture's `fix/new`;
+    /// returns the outcome and the body the backend received, if any.
+    fn run_supersede(
+        fixture: &SupersedeFixture,
+        reported_old_head: &str,
+    ) -> (Result<i32, ForgeError>, Option<String>) {
+        let runner = SupersedeRunner {
+            old_head: reported_old_head.to_string(),
+            new_head: git(&fixture.repo, &["rev-parse", "fix/new"]),
+            created_body: std::cell::RefCell::new(None),
+        };
+        let env = Environment {
+            test_first_policy: TestFirstPolicy {
+                require: true,
+                ..TestFirstPolicy::default()
+            },
+            workdir: fixture.repo.clone(),
+            ..passthrough_env()
+        };
+        let global = GlobalFlags {
+            format: Some(OutputFormat::Json),
+            remote: "origin".into(),
+            provider: Some(ProviderFlag::Local),
+            host: None,
+            repo: None,
+            store_root: None,
+            dry_run: false,
+        };
+        let body = "## Summary\n\nSupersede a lost review.\n\n## Test plan\n\nRecord reused.\n";
+        let mut create = args("fix: supersede", PrKindFlag::Bug, Some(body));
+        create.head = Some("fix/new".into());
+        create.test_first_evidence = Some(fixture.evidence.clone());
+        create.supersedes = Some(OLD_PR);
+        let outcome = run_with(&runner, &global, create, OutputFormat::Json, &env);
+        (outcome, runner.created_body.into_inner())
+    }
+
+    #[test]
+    fn supersede_admits_default_branch_merges_and_records_the_link() {
+        let fixture = supersede_fixture();
+        merge_default_branch(&fixture.repo);
+        let (outcome, body) = run_supersede(&fixture, &fixture.old_head);
+        assert_eq!(outcome.expect("merge-only supersede"), 0);
+        assert!(body.expect("created").contains("Supersedes #77"));
+    }
+
+    #[test]
+    fn supersede_refuses_when_the_source_changed() {
+        type Mutate = fn(&Path);
+        let cases: [(&str, Mutate); 3] = [
+            ("commit after the merge", |repo| {
+                merge_default_branch(repo);
+                nils_test_support::git::commit_file(repo, "extra.txt", "x\n", "more source");
+            }),
+            ("source smuggled into the merge", |repo| {
+                git(
+                    repo,
+                    &[
+                        "merge",
+                        "--no-ff",
+                        "--no-commit",
+                        "-q",
+                        "refs/remotes/origin/main",
+                    ],
+                );
+                std::fs::write(repo.join("sneak.txt"), "x\n").unwrap();
+                git(repo, &["add", "sneak.txt"]);
+                git(repo, &["commit", "-q", "-m", "merge default"]);
+            }),
+            (
+                "rebuilt branch that does not contain the old head",
+                |repo| {
+                    git(repo, &["checkout", "-q", "-B", "fix/new", "advance"]);
+                    nils_test_support::git::commit_file(
+                        repo,
+                        "delivery.txt",
+                        "delivery\n",
+                        "again",
+                    );
+                },
+            ),
+        ];
+        for (name, mutate) in cases {
+            let fixture = supersede_fixture();
+            mutate(&fixture.repo);
+            let (outcome, body) = run_supersede(&fixture, &fixture.old_head);
+            assert_eq!(
+                outcome.expect_err(name).kind(),
+                "supersede_source_changed",
+                "{name}"
+            );
+            assert_eq!(body, None, "{name}: nothing may be created");
+        }
+    }
+
+    #[test]
+    fn supersede_requires_the_record_to_match_the_old_pr_head() {
+        let fixture = supersede_fixture();
+        merge_default_branch(&fixture.repo);
+        let other_head = git(&fixture.repo, &["rev-parse", "fix/old~1"]);
+        let (outcome, body) = run_supersede(&fixture, &other_head);
+        assert_eq!(
+            outcome.expect_err("record bound to another head").kind(),
+            "test_first_evidence_subject_mismatch"
+        );
+        assert_eq!(body, None);
+    }
+
+    #[test]
+    fn supersede_is_refused_for_kinds_the_gate_does_not_cover() {
+        let runner = StubRunner;
+        let env = Environment {
+            test_first_policy: TestFirstPolicy {
+                require: true,
+                ..TestFirstPolicy::default()
+            },
+            ..passthrough_env()
+        };
+        let global = GlobalFlags {
+            format: None,
+            remote: "origin".into(),
+            provider: None,
+            host: None,
+            repo: None,
+            store_root: None,
+            dry_run: true,
+        };
+        let body = "## Summary\n\nyes.\n\n## Test plan\n\nverified.\n";
+        let mut create = args("docs: note", PrKindFlag::Docs, Some(body));
+        create.head = Some("docs/note".into());
+        create.supersedes = Some(OLD_PR);
+        let err = run_with(&runner, &global, create, OutputFormat::Json, &env).expect_err("gate");
+        assert_eq!(err.kind(), "supersedes_not_applicable");
     }
 }

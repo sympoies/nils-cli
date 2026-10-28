@@ -1283,6 +1283,17 @@ the record; create includes final attempt history and disposition in the PR body
 See [failed final validation resolution](../../../agent-workflow-primitives/docs/specs/failed-final-validation-resolution-v1.md)
 for reference validation and investigation requirements.
 
+`pr create --supersedes <old-pr>` (with `--test-first-evidence` pointing at that
+PR's record) replaces a fresh record when the new head differs from the old PR's
+head only by merges of the default branch. The record is verified against the
+old PR's provider head; the new head must contain it, add only merge commits or
+commits already on `refs/remotes/<remote>/<base>`, and keep the branch's patch
+against the default branch unchanged. The body gains `Supersedes #<old-pr>`.
+Refusals: `supersede_source_changed`, `supersede_old_pr_unusable` (merged or no
+head), `supersede_unverifiable` (git could not answer), and
+`supersedes_not_applicable` (kind not covered by the gate). Fetch the default
+branch first so the remote-tracking ref is current.
+
 ### `[review_convergence]` — observed native review gate
 
 `require` defaults to `false`, `quiet_period` to `2m`, and `timeout` to `20m`.

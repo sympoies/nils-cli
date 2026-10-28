@@ -175,6 +175,7 @@ _arguments "${_arguments_options[@]}" : \
 '*--label=[Add a label (repeatable)]:LABEL:_default' \
 '--label-catalog=[Validate labels against this catalog when \`--strict-labels\` is set]:PATH:_default' \
 '--test-first-evidence=[Directory holding a \`test-first-evidence\` record. Verified by the test-first gate when \`\[test_first\].require\` is true and \`require_kinds\` selects this kind (default\: feature/bug). Requires a complete v2 record with a testable classification, pre-fix evidence, scoped final validation, a residual-gap declaration, and a bound baseline/delivery subject matching the current checkout]:DIR:_default' \
+'--supersedes=[Number of an earlier PR / MR this one supersedes. With \`--test-first-evidence\` pointing at that PR'\''s record, the gate verifies the record against the old head and admits this head when it differs from the old head only by default-branch merges; the link is added to the body]:PR:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \

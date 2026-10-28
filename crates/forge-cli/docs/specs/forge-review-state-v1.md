@@ -338,6 +338,14 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   `terminal_activity_missing` and `coordinator_not_stale`. A retained row
   without `last_terminal_activity_at` is never repaired from other timestamps or
   caller input; only the session-board operator can supply that evidence.
+  A coordinator deleted or archived by `agent-session` is retained with its
+  close time as `last_terminal_activity_at`, so a configured supervisor can
+  take over once `stale_after` has elapsed; rows closed by an older release
+  may still lack it.
+- Safe coordinator rotation: hand over every review handoff (`recover` by the
+  original coordinator, or reassign) before deleting the old coordinator
+  session. Takeover by a supervisor is the fallback for a coordinator that was
+  retired first.
 - Takeover appends a handoff recovery with `coordinator_transfer` containing
   `old_coordinator_digest`, `new_coordinator_digest`, `lifecycle_source_digest`,
   `reason` (`coordinator-retired`), `supervisor_digest`, and
