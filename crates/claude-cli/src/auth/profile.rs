@@ -404,7 +404,7 @@ pub fn refresh(
         Ok(lock) => lock,
         Err(err) => return emit_error(command, output_json, err),
     };
-    let _accounts_lock = match accounts_dir
+    let accounts_lock = match accounts_dir
         .as_deref()
         .map(store::lock_accounts)
         .transpose()
@@ -442,10 +442,11 @@ pub fn refresh(
                 return Err(err);
             }
             if current.as_deref() == Some(name.as_str()) {
-                store::write_active_access_only(
+                store::write_active_access_only_with_accounts_lock(
                     &refreshed.oauth,
                     &refreshed.account,
                     keychain::Mode::Auto,
+                    accounts_dir.as_deref().zip(accounts_lock.as_ref()),
                 )?;
             }
             if let Some(dir) = accounts_dir.as_deref() {

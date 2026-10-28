@@ -45,3 +45,6 @@ mod usage_backoff;
 
 #[path = "integration/shared_usage.rs"]
 mod shared_usage;
+
+#[path = "integration/auth_writer_receipts.rs"]
+mod auth_writer_receipts;

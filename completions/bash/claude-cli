@@ -97,6 +97,9 @@ _claude__cli() {
             claude__cli__auth,logout)
                 cmd="claude__cli__auth__logout"
                 ;;
+            claude__cli__auth,publish)
+                cmd="claude__cli__auth__publish"
+                ;;
             claude__cli__auth,refresh)
                 cmd="claude__cli__auth__refresh"
                 ;;
@@ -132,6 +135,9 @@ _claude__cli() {
                 ;;
             claude__cli__auth__help,logout)
                 cmd="claude__cli__auth__help__logout"
+                ;;
+            claude__cli__auth__help,publish)
+                cmd="claude__cli__auth__help__publish"
                 ;;
             claude__cli__auth__help,refresh)
                 cmd="claude__cli__auth__help__refresh"
@@ -261,6 +267,9 @@ _claude__cli() {
                 ;;
             claude__cli__help__auth,logout)
                 cmd="claude__cli__help__auth__logout"
+                ;;
+            claude__cli__help__auth,publish)
+                cmd="claude__cli__help__auth__publish"
                 ;;
             claude__cli__help__auth,refresh)
                 cmd="claude__cli__help__auth__refresh"
@@ -608,7 +617,7 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__auth)
-            opts="-h --help login status logout save use remove current refresh auto-refresh remote reset-rate-limits help"
+            opts="-h --help publish login status logout save use remove current refresh auto-refresh remote reset-rate-limits help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -665,7 +674,7 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__auth__help)
-            opts="login status logout save use remove current refresh auto-refresh remote reset-rate-limits help"
+            opts="publish login status logout save use remove current refresh auto-refresh remote reset-rate-limits help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -735,6 +744,20 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__auth__help__logout)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__help__publish)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -899,6 +922,50 @@ _claude__cli() {
                 return 0
             fi
             case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__publish)
+            opts="-h --snapshot --into --keychain --format --json --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --snapshot)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --into)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --keychain)
+                    COMPREPLY=($(compgen -W "auto required off" -- "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
                 *)
                     COMPREPLY=()
                     ;;
@@ -1457,7 +1524,7 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__help__auth)
-            opts="login status logout save use remove current refresh auto-refresh remote reset-rate-limits"
+            opts="publish login status logout save use remove current refresh auto-refresh remote reset-rate-limits"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1513,6 +1580,20 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__help__auth__logout)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__help__auth__publish)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

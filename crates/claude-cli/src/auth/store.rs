@@ -9,6 +9,13 @@
 //! `<accounts dir>/<profile>/`, each with an access-only login and an
 //! ownership marker so only directories claude-cli created are ever pruned.
 
+mod account;
+mod active;
+pub use account::write_account_access_only;
+pub(crate) use account::write_account_publication;
+pub use active::write_active_access_only;
+pub(crate) use active::write_active_access_only_with_accounts_lock;
+
 use nils_common::cli_contract::exit;
 use nils_common::env as shared_env;
 use nils_common::fs;
@@ -480,38 +487,6 @@ pub struct ActiveWrite {
     pub keychain: &'static str,
 }
 
-/// Write an access-only copy of `oauth` and `account` as the active login.
-///
-/// Only `claudeAiOauth` is replaced in the credentials file, so other entries
-/// such as MCP server tokens are kept. `refreshToken` is set to `""`, which
-/// Claude Code treats as having no refresh token, so it never calls the token
-/// endpoint. The global config is rewritten only when `oauthAccount` changes.
-pub fn write_active_access_only(
-    oauth: &Map<String, Value>,
-    account: &Map<String, Value>,
-    keychain_mode: keychain::Mode,
-) -> AuthResult<ActiveWrite> {
-    let access = access_only_oauth(oauth);
-    let credentials_file = credentials_file()
-        .ok_or_else(|| AuthError::runtime("config-dir-unresolved", "cannot resolve ~/.claude"))?;
-    write_access_credentials(&credentials_file, &access)?;
-
-    let config_file = global_config_file().ok_or_else(|| {
-        AuthError::runtime("config-dir-unresolved", "cannot resolve ~/.claude.json")
-    })?;
-    let config_updated = write_config_account(&config_file, account, Map::new())?;
-
-    let keychain = keychain::project(&access, keychain_mode)?;
-    if let Some(token) = non_empty_str(access.get("accessToken")) {
-        crate::prompt_segment::bind_prompt_token(token);
-    }
-    Ok(ActiveWrite {
-        credentials_file,
-        config_updated,
-        keychain,
-    })
-}
-
 /// Replace only `claudeAiOauth` in a credentials file, keeping other entries.
 fn write_access_credentials(path: &Path, access: &Map<String, Value>) -> AuthResult<()> {
     let mut credentials = read_json_object(path, "active-credentials-invalid")?.unwrap_or_default();
@@ -566,85 +541,9 @@ pub fn is_account_dir_name(name: &str) -> bool {
 /// Result of projecting a login into its account config dir.
 #[derive(Debug)]
 pub struct AccountWrite {
+    pub(crate) receipt: Option<super::writer_receipt::Receipt>,
     pub config_dir: PathBuf,
     pub keychain: &'static str,
-}
-
-/// Write an access-only copy of a profile into `<accounts_dir>/<name>/`, a
-/// Claude Code config dir of its own.
-///
-/// The directory gets the ownership marker, a real `.credentials.json` with
-/// `refreshToken: ""`, and `oauthAccount` in its `.claude.json` (seeded with
-/// `hasCompletedOnboarding` when absent). With a Keychain the item named after
-/// that config dir is written as well. `accounts_dir` must be absolute, since
-/// the Keychain item name is derived from the path.
-pub fn write_account_access_only(
-    accounts_dir: &Path,
-    name: &str,
-    oauth: &Map<String, Value>,
-    account: &Map<String, Value>,
-    keychain_mode: keychain::Mode,
-) -> AuthResult<AccountWrite> {
-    if !is_account_dir_name(name) {
-        return Err(AuthError::data(
-            "account-dir-invalid",
-            format!("'{name}' cannot name an account directory"),
-        ));
-    }
-    let config_dir = accounts_dir.join(name);
-    create_private_dir(accounts_dir, "account-dir-write-failed")?;
-    match std::fs::symlink_metadata(&config_dir) {
-        Ok(meta) if !meta.is_dir() => {
-            return Err(AuthError::data(
-                "account-dir-invalid",
-                format!("{} is not a directory", config_dir.display()),
-            ));
-        }
-        Ok(_) => {
-            // Adopt only a directory claude-cli created, or an empty one.
-            let owned = std::fs::symlink_metadata(config_dir.join(ACCOUNT_MARKER))
-                .is_ok_and(|meta| meta.is_file());
-            let empty = std::fs::read_dir(&config_dir)
-                .map(|mut entries| entries.next().is_none())
-                .unwrap_or(false);
-            if !owned && !empty {
-                return Err(AuthError::data(
-                    "account-dir-not-owned",
-                    format!(
-                        "{} exists without the claude-cli ownership marker",
-                        config_dir.display()
-                    ),
-                ));
-            }
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            create_private_dir(&config_dir, "account-dir-write-failed")?;
-        }
-        Err(err) => {
-            return Err(AuthError::runtime(
-                "account-dir-write-failed",
-                format!("cannot inspect {}: {err}", config_dir.display()),
-            ));
-        }
-    }
-    fs::write_atomic(
-        &config_dir.join(ACCOUNT_MARKER),
-        format!("{name}\n").as_bytes(),
-        fs::SECRET_FILE_MODE,
-    )
-    .map_err(|err| AuthError::runtime("account-dir-write-failed", err.to_string()))?;
-
-    let access = access_only_oauth(oauth);
-    write_access_credentials(&config_dir.join(".credentials.json"), &access)?;
-    let mut seed = Map::new();
-    seed.insert("hasCompletedOnboarding".to_string(), Value::Bool(true));
-    write_config_account(&config_dir.join(".claude.json"), account, seed)?;
-    let keychain =
-        keychain::project_for_config_dir(&config_dir.to_string_lossy(), &access, keychain_mode)?;
-    Ok(AccountWrite {
-        config_dir,
-        keychain,
-    })
 }
 
 /// Remove the account config dirs under `accounts_dir` whose profile is not
@@ -678,6 +577,7 @@ pub fn prune_account_dirs(
         if !owned {
             continue;
         }
+        super::writer_receipt::invalidate(&dir)?;
         std::fs::remove_dir_all(&dir).map_err(|err| {
             AuthError::runtime(
                 "account-prune-failed",

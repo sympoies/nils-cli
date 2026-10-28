@@ -26,7 +26,7 @@ versioned envelope.
 | `usage` | `claude-cli.usage.v1` | `result` or `error` |
 | `prompt-segment status` | `claude-cli.prompt-segment.v1` | `result` |
 | `auth status` | `claude-cli.auth.v1` | `result` or `error` |
-| `auth save`, `auth use`, `auth remove`, `auth current`, `auth refresh`, `auth auto-refresh`, `auth remote pull` | `claude-cli.auth.v1` | `result` or `error` |
+| `auth save`, `auth use`, `auth remove`, `auth current`, `auth refresh`, `auth auto-refresh`, `auth remote pull`, `auth publish` | `claude-cli.auth.v1` | `result` or `error` |
 | `agent doctor` | `claude-cli.agent.doctor.v1` | `result` |
 | `diag rate-limits` | `claude-cli.diag.rate-limits.v1` | `result`, `results`, or `error` |
 | `auth reset-rate-limits` | `claude-cli.auth.reset-rate-limits.v1` | `result` or `error` |
@@ -375,3 +375,6 @@ false. Ready exits `0`; unavailable exits `1`.
   no provider bodies, terminal transcripts, credentials, or absolute paths.
 - Tests seed recognizable secret markers and assert that stdout and stderr omit
   them.
+
+Writer receipt production, local admitted-snapshot publication, invalidation,
+and recovery are specified in [writer receipts v1](claude-cli-writer-receipt-v1.md).

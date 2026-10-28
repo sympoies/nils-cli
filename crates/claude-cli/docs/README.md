@@ -12,3 +12,4 @@ This crate owns Claude-specific CLI helpers that have moved out of zsh-kit shell
   `agent-session` integration rules.
 - Workspace standards: `docs/runbooks/new-cli-crate-development-standard.md`
   and `docs/runbooks/cli-completion-development-standard.md`.
+- [Credential writer receipts v1](specs/claude-cli-writer-receipt-v1.md)
