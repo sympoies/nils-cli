@@ -8,6 +8,8 @@ use crate::error::ForgeError;
 use crate::ops::review_state;
 use crate::provider::ProviderContext;
 
+mod handoff_persistence;
+
 pub(crate) struct ReviewStateAppend<'a> {
     pub repository: &'a str,
     pub number: u64,
@@ -98,7 +100,9 @@ pub(crate) fn append_review_state_payload<R: BackendRunner>(
     let marker = record.marker()?;
     let body = review_state::render_state_comment_body(&record, visible_outcome)?;
     let append_result = runner.run(&build_issue_comment_call(ctx, number, &body));
-    let after = read_review_state_snapshot(runner, ctx, repository, number)?;
+    let after = read_review_state_snapshot(runner, ctx, repository, number).map_err(|error| {
+        handoff_persistence::verification_error(&record, append_result.is_ok(), error)
+    })?;
     if after
         .chain
         .records
@@ -133,7 +137,8 @@ pub(crate) fn append_review_state_payload<R: BackendRunner>(
             outcome_posted,
         });
     }
-    Err(match append_result {
+    let acknowledged = append_result.is_ok();
+    let error = match append_result {
         Ok(_) => ForgeError::validation(
             schema_err(),
             "review_state_conflict",
@@ -141,5 +146,10 @@ pub(crate) fn append_review_state_payload<R: BackendRunner>(
             Some(format!("record_digest={}", record.record_digest)),
         ),
         Err(error) => error,
-    })
+    };
+    Err(handoff_persistence::verification_error(
+        &record,
+        acknowledged,
+        error,
+    ))
 }
