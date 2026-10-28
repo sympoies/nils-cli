@@ -315,6 +315,9 @@ A missing file, an unlisted recipient, or an empty category list preserves the
 compatible notify-all default. Only `progress` and `report` may be selected;
 `blocker`, `decision`, `handoff`, and `uncategorized` always retain notifications.
 Selection uses the exact destination session ID, never a title, sender, or body.
+A recipient may also carry `routine_interval_seconds`, `0` (the default) or `600`;
+any other value is `notification-policy-invalid`. See
+[routine coordinator wake windows](coordination-mailbox-v1.md#routine-coordinator-wake-windows).
 Policy changes apply to new admissions, including forwarded copies, rather than
 retroactively reclassifying stored mail. A verified same-session resume retains
 the original per-message decision.

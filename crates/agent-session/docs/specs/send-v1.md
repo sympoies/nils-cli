@@ -302,8 +302,9 @@ included in refusal output. Use `--format json` to consume `error.code` and
 | `send-submit-stuck` | Text remains after at most two guarded Enter presses; the claim is retained. |
 | `send-submit-unconfirmed` | Pane observations cannot prove submission; the claim is retained. |
 
-Observation refusals include the failed `guard` and `stage` (`admission` or
-`submit`), `atomic: false`, and whether paste preceded the check. Existing
+Observation refusals include the failed `guard` and `stage` (`admission`,
+`claimed` for the recheck right after the idempotency claim, or `submit`),
+`atomic: false`, and whether paste preceded the check. Existing
 session/runtime and I/O failure reasons still apply. A nonzero exit after
 claiming must never be treated as permission to resend the same delivery.
 

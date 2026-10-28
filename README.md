@@ -37,7 +37,7 @@ Completion obligations for those binaries are tracked in
 | Development log | `devlog` | Record durable outcomes in a repository development log, check its structural integrity, and search past decisions. |
 | Provider lanes | `codex-cli`, `claude-cli` | Run provider-specific diagnostics, auth checks, and workflow adapters. |
 | Markdown rendering | `md-render` | Render `.md.tera` templates from JSON view data through the shared `nils-markdown` engine. |
-| Desktop, media, and local utilities | `docker-tools`, `macos-agent`, `screen-record`, `image-processing`, `fzf-cli`, `secrets`, `zsh-kit` | Operate containers, automate desktop tasks, capture or convert media, use interactive shell helpers, manage the encrypted environment store, or bootstrap an operator-supplied Zsh repository at runtime. |
+| Desktop, media, and local utilities | `docker-tools`, `macos-agent`, `screen-record`, `image-processing`, `speech-test-cli`, `fzf-cli`, `secrets`, `zsh-kit` | Operate containers, automate desktop tasks, capture or convert media, generate or replay speech fixtures, use interactive shell helpers, manage the encrypted environment store, or bootstrap an operator-supplied Zsh repository at runtime. |
 | Development-only/internal | `cli-template` | Validate packaging and new-crate patterns; excluded from user-facing completion obligations. |
 
 ## Workspace layout
@@ -91,6 +91,8 @@ Each crate is either a standalone CLI binary, a multi-binary crate, or a shared 
 - [crates/screen-record](crates/screen-record): macOS ScreenCaptureKit + Linux (X11) recorder for a single window or display with optional
   audio.
 - [crates/secrets](crates/secrets): Encrypted environment-store discovery and maintenance commands.
+- [crates/speech-test-cli](crates/speech-test-cli): Explicit paid TTS fixture generation, human review, and hash-verified replay
+  against a configured ASR endpoint.
 
 ### Agent policy and evidence tooling
 

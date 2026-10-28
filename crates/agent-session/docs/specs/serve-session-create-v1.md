@@ -57,7 +57,7 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   app-server --help` process groups. App-server transport requires Codex `>= 0.144.1` and advertised Unix
   `--listen` support.
 
-  Exact protocol-attention authority is audited only for Codex `0.144.1` and `0.144.3`; newer
+  Exact protocol-attention authority is audited only for Codex `0.144.1`, `0.144.3` and `0.162.1`; other
   transport-compatible versions fall back to hook authority. An eligible CLI is launched as a remote TUI
   over a private short socket below an owned, non-symlinked mode-`0700` runtime root: an absolute
   `XDG_RUNTIME_DIR` when set, otherwise a platform default created mode `0700` (the daemon state
