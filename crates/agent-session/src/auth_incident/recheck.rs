@@ -13,28 +13,16 @@ fn refused(record: &SessionRecord, reason: &str) -> CliError {
     )
 }
 
-/// Incidents that currently fence input for this runtime, by the same
-/// ownership rules `ensure_input_allowed` applies.
+/// Incidents that currently fence input for this runtime: each clause mirrors
+/// one input guard, so an incident the guard no longer enforces is not owned.
 fn quarantining(incident: &AuthIncident, record: &SessionRecord) -> bool {
-    let owned = same_runtime(incident, record)
+    let current = same_runtime(incident, record);
+    current && incident.status == "auth_failed"
         || incident
             .failover
             .as_ref()
-            .is_some_and(|r| r.replacement_matches(record))
-        || incident.same_account_recovery.as_ref().is_some_and(|r| {
-            r.new_runtime_incarnation.as_deref()
-                == record.runtime.as_ref().map(|v| v.launch_id.as_str())
-        });
-    owned
-        && (incident.status == "auth_failed"
-            || incident
-                .failover
-                .as_ref()
-                .is_some_and(failover::Receipt::quarantines)
-            || incident
-                .same_account_recovery
-                .as_ref()
-                .is_some_and(|r| !recovery::settled(r)))
+            .is_some_and(|r| r.fences(current, record))
+        || recovery::fences(incident, record)
 }
 
 /// Settle every incident quarantining `record` after `account`, the account

@@ -156,3 +156,32 @@ fn auth_recheck_does_not_hide_a_later_authentication_failure() {
     let current = load_session_record(&context, ID).unwrap();
     assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &current).is_err());
 }
+
+#[test]
+fn auth_recheck_leaves_a_session_healed_by_a_later_turn_untouched() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = quarantined(&context, tmp.path(), &tmux);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    crate::auth_incident::recover(
+        &context,
+        &record,
+        "healthy",
+        &jiff::Timestamp::now().to_string(),
+    )
+    .unwrap();
+    let store = incident_store(&context);
+    assert_eq!(store["incidents"][0]["status"], "recovered", "{store}");
+    assert_eq!(store["incidents"][0]["recovery_result"], "healthy");
+    // The recovery receipt stays blocked, but it no longer fences input, so a
+    // same-account switch has nothing to settle and must not rewrite the result.
+    let before = fs::read(crate::session_dir(&context, ID).join("auth-incidents.json")).unwrap();
+    recheck(&context, &record, &tmux).unwrap();
+    assert_eq!(
+        fs::read(crate::session_dir(&context, ID).join("auth-incidents.json")).unwrap(),
+        before
+    );
+}
