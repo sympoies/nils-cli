@@ -1,5 +1,5 @@
 //! A known paste may wrap visually without changing its logical input.
-use super::{Fixture, composer, details, details_any, guarded_text, live, submissions};
+use super::{Fixture, composer, deletions, details, details_any, guarded_text, live, submissions};
 use pretty_assertions::assert_eq;
 
 fn wrapped_fixture(width: usize, draft: &str) -> (Fixture, String) {
@@ -375,4 +375,120 @@ fn owned_character_wrapped_paste_submits_once() {
         submissions(&fixture),
         [serde_json::to_string(&text).unwrap()]
     );
+}
+
+fn wide_wrapped_fixture(draft: &str) -> (Fixture, String) {
+    use unicode_width::UnicodeWidthChar;
+    let phrase = "這是一段用來驗證寬字元換行的通用測試文字，內容不含任何環境資訊。";
+    let text = format!("/compact {}", phrase.repeat(5));
+    assert!(text.chars().count() > 120);
+    let fixture = Fixture::new("claude");
+    live(&fixture, &["bare-composer"]);
+    let input = format!("{text}{draft}");
+    // A wide character that does not fit wraps whole; the row is then padded.
+    let mut rows = vec![String::new()];
+    let mut cells = 0;
+    for ch in input.chars() {
+        let width = ch.width().unwrap();
+        if cells + width > 78 {
+            rows.push(String::new());
+            cells = 0;
+        }
+        rows.last_mut().unwrap().push(ch);
+        cells += width;
+    }
+    assert!(rows.len() >= 4, "{rows:?}");
+    let last = rows.last().unwrap();
+    let last_cells: usize = last.chars().map(|ch| ch.width().unwrap()).sum();
+    let last_char = last.chars().next_back().unwrap().width().unwrap();
+    let border = "─".repeat(80);
+    let mut pane = format!("{border}\n");
+    for (index, row) in rows.iter().enumerate() {
+        let used: usize = row.chars().map(|ch| ch.width().unwrap()).sum();
+        pane.push_str(if index == 0 { "❯ " } else { "  " });
+        pane.push_str(&format!("{row}{}\n", " ".repeat(78 - used)));
+    }
+    pane.push_str(&format!("{border}\n  status"));
+    std::fs::write(
+        fixture.root().join("captured-layout"),
+        serde_json::to_vec(&serde_json::json!({
+            "input": input, "pane": pane, "start": [2, 1],
+            "before_end": [2 + last_cells - last_char, rows.len()],
+            "prefix_end": [2 + last_cells, rows.len()]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    if !draft.is_empty() {
+        std::fs::write(fixture.root().join("draft-text"), draft).unwrap();
+        std::fs::write(fixture.root().join("inject-draft"), "").unwrap();
+    }
+    (fixture, text)
+}
+
+#[test]
+fn owned_wide_character_wrapped_paste_submits_once() {
+    let (fixture, text) = wide_wrapped_fixture("");
+    let output = guarded_text(&fixture, &text);
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    // The model escapes non-ASCII text; compare the decoded submissions.
+    let submitted: Vec<String> = submissions(&fixture)
+        .iter()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(submitted, [text]);
+    assert_eq!(composer(&fixture), "");
+    assert_eq!(
+        fixture
+            .calls()
+            .iter()
+            .filter(|call| call[0] == "send-keys" && call.last().unwrap() == "Enter")
+            .count(),
+        1
+    );
+    assert_eq!(
+        fixture
+            .calls()
+            .iter()
+            .filter(|call| call[0] == "paste-buffer")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn wide_character_wrapped_draft_collision_never_submits() {
+    let (fixture, text) = wide_wrapped_fixture("使用者草稿");
+    let output = guarded_text(&fixture, &text);
+    let details = details_any(
+        &output,
+        &[
+            "send-composer-mismatch",
+            "send-composer-unobservable",
+            "send-guard-observation-timeout",
+        ],
+    );
+    assert_eq!(details["submitted"], false);
+    assert!(submissions(&fixture).is_empty());
+    assert!(composer(&fixture).ends_with("使用者草稿"));
+    assert!(
+        fixture
+            .calls()
+            .iter()
+            .all(|call| call.last().is_none_or(|key| key != "Enter"))
+    );
+}
+
+#[test]
+fn wide_character_wrapped_refusal_clears_only_the_pasted_text() {
+    let (fixture, text) = wide_wrapped_fixture("");
+    std::fs::write(fixture.root().join("start-after-paste"), "").unwrap();
+    let output = guarded_text(&fixture, &text);
+    let details = details(&output, "send-session-not-idle");
+    assert_eq!(details["submitted"], false);
+    assert_eq!(details["cleared"], true, "{details}");
+    assert_eq!(composer(&fixture), "");
+    // Backspace counts characters, not bytes or terminal cells.
+    assert_eq!(deletions(&fixture), text.chars().count());
+    assert!(submissions(&fixture).is_empty());
 }

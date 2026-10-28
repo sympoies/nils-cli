@@ -1,5 +1,19 @@
 //! Wrapped-row matching for cleanup and cursor-verified submit admission.
 use super::{claude_composer, codex_composer, exact_composer_input, styled_text};
+use unicode_width::UnicodeWidthChar;
+
+/// Terminal cells of `text` when every character is one cursor step and one or
+/// two cells wide (ASCII and CJK alike). Anything else, such as combining or
+/// control characters, has no countable cursor path.
+pub(crate) fn cursor_cells(text: &str) -> Option<usize> {
+    if text.is_empty() {
+        return None;
+    }
+    text.chars().try_fold(0, |cells, ch| match ch.width() {
+        Some(width @ (1 | 2)) => Some(cells + width),
+        _ => None,
+    })
+}
 
 /// The known single-line paste can disambiguate written padding at a wrap.
 /// Matching alone is not submit admission or proof of unknown draft rows.
@@ -97,13 +111,11 @@ pub(crate) fn cursor_at_start(pane: &str, x: usize, y: usize) -> bool {
             .is_some_and(|line| std::ptr::eq(*line, region[0]))
 }
 
-/// Expected visual endpoint of the known ASCII prefix. Moving exactly this
-/// many characters and checking the cursor disambiguates invisible separators
+/// Expected visual endpoint of the known prefix. Moving exactly this many
+/// characters and checking the cursor disambiguates invisible separators
 /// before deleting: an extra/missing space must not consume a draft character.
 pub(crate) fn prefix_end(pane: &str, pasted: &str) -> Option<(usize, usize)> {
-    if pasted.is_empty() || !pasted.bytes().all(|b| (32..127).contains(&b)) {
-        return None;
-    }
+    let cells = cursor_cells(pasted)?;
     if exact_composer_input("claude", pane).is_some_and(|input| input.starts_with(pasted)) {
         let (plain, _) = styled_text(pane)?;
         let lines: Vec<&str> = plain.lines().collect();
@@ -111,7 +123,7 @@ pub(crate) fn prefix_end(pane: &str, pasted: &str) -> Option<(usize, usize)> {
         let row = lines
             .iter()
             .position(|line| std::ptr::eq(*line, region[0]))?;
-        return Some((2 + pasted.len(), row));
+        return Some((2 + cells, row));
     }
     matched_layout("claude", pane, pasted).map(|(_, end)| end)
 }
@@ -120,7 +132,7 @@ pub(crate) fn prefix_end(pane: &str, pasted: &str) -> Option<(usize, usize)> {
 /// spaces at row ends as padding or omitted word separators. Retain every offset; more
 /// than one reconstruction is uncertainty, not permission to delete.
 fn matched_layout(agent: &str, pane: &str, pasted: &str) -> Option<(String, (usize, usize))> {
-    if agent != "claude" || pasted.is_empty() || !pasted.bytes().all(|b| (32..127).contains(&b)) {
+    if agent != "claude" || cursor_cells(pasted).is_none() {
         return None;
     }
     let (plain, dim) = styled_text(pane)?;
@@ -161,7 +173,10 @@ fn matched_layout(agent: &str, pane: &str, pasted: &str) -> Option<(String, (usi
             if index + 1 == region.len() {
                 // Unknown draft content must fit entirely in this last row.
                 if let Some(suffix) = visible.strip_prefix(rest) {
-                    let candidate = (format!("{pasted}{suffix}"), (2 + rest.len(), start + index));
+                    let candidate = (
+                        format!("{pasted}{suffix}"),
+                        (2 + cursor_cells(rest)?, start + index),
+                    );
                     if result
                         .as_ref()
                         .is_some_and(|previous| previous != &candidate)
@@ -201,7 +216,7 @@ fn matched_layout(agent: &str, pane: &str, pasted: &str) -> Option<(String, (usi
 
 #[cfg(test)]
 mod tests {
-    use super::observed_input as input;
+    use super::{cursor_cells, observed_input as input};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -216,6 +231,14 @@ mod tests {
         }
         let dialog = "› pasted\n  text\n\n  enter to confirm";
         assert_eq!(input("codex", dialog), None);
+    }
+
+    #[test]
+    fn cursor_cells_count_wide_characters_and_refuse_uncountable_ones() {
+        assert_eq!(cursor_cells("ab 寬"), Some(5));
+        for uncountable in ["", "e\u{301}", "a\tb", "a\u{200d}b"] {
+            assert_eq!(cursor_cells(uncountable), None, "{uncountable:?}");
+        }
     }
 
     #[test]

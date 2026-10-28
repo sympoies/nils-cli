@@ -15,8 +15,8 @@ const CLEAR_SETTLE: Duration = Duration::from_millis(300);
 
 impl Admission<'_> {
     /// Report a failure that happened after the send pasted `text`. The text is
-    /// removed only when its ownership is observable: an exact match or an
-    /// ASCII prefix of a line admitted with an empty composer. An appended
+    /// removed only when its ownership is observable: an exact match or a
+    /// countable-cell prefix of a line admitted with an empty composer. An appended
     /// draft is preserved. Every outcome includes a fresh input observation.
     pub(crate) fn report_pasted_input(
         &self,
@@ -101,7 +101,7 @@ impl Admission<'_> {
             && self.record.agent == "claude"
             && self.args.require_empty_composer
             && suffix.is_some_and(|suffix| !suffix.is_empty())
-            && input.bytes().all(|byte| (32..127).contains(&byte));
+            && send_submit::cleanup_cursor_cells(&input).is_some();
         if !exact && !prefix {
             return Some((input, false));
         }
@@ -110,7 +110,7 @@ impl Admission<'_> {
         } else {
             String::new()
         };
-        // Claude ASCII cleanup removes a prefix from the logical line start,
+        // Claude cursor-counted cleanup removes a prefix from the logical line start,
         // including pasted-only input. Verify both the start and the endpoint
         // reached by walking exactly the known prefix length before deleting.
         // This also verifies spaces omitted by the word-wrapped rendering.
@@ -122,7 +122,7 @@ impl Admission<'_> {
                 });
         let forward = !single_row_exact
             && self.record.agent == "claude"
-            && input.bytes().all(|byte| (32..127).contains(&byte));
+            && send_submit::cleanup_cursor_cells(&input).is_some();
         if forward {
             let mut home = std::process::Command::new(self.tmux_bin);
             home.args(["send-keys", "-t", &target, "C-a"]);
@@ -163,7 +163,7 @@ impl Admission<'_> {
                         "-t",
                         &target,
                         "-N",
-                        &text.len().to_string(),
+                        &text.chars().count().to_string(),
                         "Right",
                     ]);
                     run_status_with_timeout(right, "tmux send-keys", self.timeout("cleanup").ok()?)

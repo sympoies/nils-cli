@@ -76,8 +76,8 @@ pane or unknown runtime status alone does not confirm submission. If a turn
 starts or the composer changes after paste, it refuses without Enter. It
 then attempts to remove only the text it pasted and verifies the result.
 
-An exact paste can be removed; with Claude, a provable ASCII paste prefix can
-also be removed when admission required an empty composer and an earlier
+An exact paste can be removed; with Claude, a provable countable-cell paste
+prefix can also be removed when admission required an empty composer and an earlier
 post-paste observation saw exactly the pasted text before the conflicting edit.
 Unreadable input is preserved. Stuck and unverified submissions use the same
 cleanup path as post-paste guard failures. Post-paste refusal is distinct from admission refusal: it carries
@@ -102,10 +102,12 @@ fail closed for these checks. Exact composer
 verification supports an unambiguous, single visible input line.
 
 With Claude,
-a known single-line ASCII paste may also wrap across visible rows after
+a known single-line paste may also wrap across visible rows after
 empty-composer admission. The entire region must uniquely match the paste;
 cursor observations must prove its logical start, character count, and end
-before Enter. Padding and omitted word separators alone are insufficient proof.
+before Enter. Every character must be one cursor step one or two cells wide,
+so wide (for example CJK) text counts steps in characters and endpoints in
+cells. Padding and omitted word separators alone are insufficient proof.
 Changed drafts, uncertain navigation, and styled wrapped suggestions refuse.
 Dialogs, unknown layouts, other wrapped/multiline input, opaque long-paste summaries, and
 unstyled placeholder text such as `Ask Codex to do anything` are unobservable.
@@ -329,18 +331,18 @@ row-end padding and separator spaces omitted by word wrapping. A unique match
 is required; arbitrary unknown rows are never reconstructed. Submission
 admission still requires one observable row. Exact single-row matches retain
 Backspace-only cleanup, including the existing trailing-space comparison.
-For printable ASCII Claude wrapped or proven-prefix input, cleanup moves to the logical line start, verifies that the cursor reached the
-first composer row, moves right by exactly the paste length, and verifies its
-visual endpoint against the capture. The endpoint check prevents a guessed
-wrap separator from consuming a draft character. Input and runtime identity
-are rechecked before a bounded repeated-Backspace command removes that prefix.
+For Claude wrapped or proven-prefix input of one- or two-cell characters,
+cleanup moves to the logical line start, verifies the first composer row,
+moves right by exactly the paste's character count, and verifies the visual
+endpoint, so a guessed wrap separator cannot consume a draft character. Input
+and runtime identity are rechecked before a bounded repeated-Backspace command removes that prefix.
 Navigation and deletion are allowed to settle within the cleanup budget;
 only a fresh post-deletion observation can establish restoration.
 
-Mixed input without proof of an empty admitted composer, non-ASCII mixed
-drafts, blank continuation rows, dialogs, paste placeholders, unexpected cursor
-positions and unreadable captures are preserved and reported. Cleanup batches
-only the three identity variables it needs and pairs each pane/cursor read in
+Mixed input without proof of an empty admitted composer, mixed drafts with
+zero-width or control characters, blank continuation rows, dialogs, paste
+placeholders, unexpected cursor positions and unreadable captures are
+preserved and reported. Cleanup batches only the three identity variables it needs and pairs each pane/cursor read in
 one tmux invocation, reducing subprocess round trips within the same budget.
 An exact match on the existing Codex or non-ASCII path retains its
 repeated-Backspace cleanup.
