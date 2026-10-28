@@ -17,6 +17,7 @@ use crate::rate_limit::default_runner;
 
 mod approval;
 mod diagnostics;
+mod inspection;
 mod policy;
 mod surrender;
 mod test_integrity;
@@ -1184,6 +1185,20 @@ pub fn run(
                 };
             }
             sync_carry_over = recorded_carry_over(&chain, head).cloned();
+            if status == "awaiting-designated-review" {
+                approval = inspection::published(
+                    &runner,
+                    &ctx,
+                    id,
+                    &view.url,
+                    head,
+                    &chain,
+                    state.handoff_created_at.as_deref(),
+                )?;
+                if approval.is_some() {
+                    status = "reviewed";
+                }
+            }
         }
         PrReviewHandoffCommand::Check(a) => {
             require_head(head, &a.expected_head)?;

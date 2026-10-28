@@ -301,6 +301,7 @@ fn stale_head_publication_does_not_pass() {
         vec![review(OLD, "pass")],
     );
     assert_refusal(&check(&stub, HEAD), 65, "awaiting_designated_review");
+    inspection::assert_pending(&stub);
 }
 
 #[test]
@@ -949,6 +950,7 @@ fn app_identity_distinct_or_ambiguous_authors_are_rejected() {
         }
         let stub = fixture_with_native(HEAD, &records(h, Some(HEAD)), vec![graphql], Some(rest));
         assert_refusal(&check(&stub, HEAD), 65, "awaiting_designated_review");
+        inspection::assert_pending(&stub);
     }
 }
 
@@ -1841,6 +1843,7 @@ fn same_reviewer_base_refresh_preserves_findings_and_requires_fresh_observation(
         1
     );
     assert_refusal(&check(&reviewer, HEAD), 65, "awaiting_designated_review");
+    inspection::assert_pending(&reviewer);
 }
 
 #[test]
@@ -2375,6 +2378,8 @@ fn qualified_reviewable_must_name_the_native_review_head() {
 }
 
 mod approval;
+#[path = "pr_review_handoff/inspection.rs"]
+mod inspection;
 #[path = "pr_review_handoff/retired_coordinator.rs"]
 mod retired_coordinator;
 

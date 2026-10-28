@@ -1078,6 +1078,8 @@ operations:
         status: string
         ignored_stale_records: array<string> # omitted when empty
         sync_carry_over: object<{review_url,reviewed_head,head,base_commit,merge_tree}> # check/inspect only; omitted when absent
+        approval_policy: enum<source-pass|final-approval>
+        approval: object<{state,review_id,review_url,review_author,native_state,reviewed_head}> # admitted check/inspect only; state is source-passed or finally-approved
         # test-changes instead returns number, head_sha, base_sha, findings,
         # digest, confirmation, and provenance_import (null without a declaration;
         # otherwise repository/commit/mappings/adaptations, file_count,
