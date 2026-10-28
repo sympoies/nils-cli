@@ -2,6 +2,23 @@ use std::path::Path;
 
 use crate::{CliContext, CliError, SessionRecord};
 
+/// Authorize only restart's sealed exit after native idle, identity, composer,
+/// and restart-fence admission. A failed binding must not deadlock an explicit
+/// queued repair, even before the first turn moves activity out of `starting`.
+/// The replacement runtime still validates and binds that account before input.
+pub(crate) fn authorize_restart_exit_locked(
+    context: &CliContext,
+    record: &mut SessionRecord,
+) -> Result<(), CliError> {
+    if crate::codex_app_server::runtime_is_supported(record)
+        && matches!(super::decode_binding(record), super::DecodedBinding::Valid(binding) if binding.state == "failed")
+        && super::queued_switch_repair(record).is_some()
+    {
+        return super::record_input_fence_locked(context, record);
+    }
+    super::authorize_terminal_input_locked(context, record)
+}
+
 /// Prepare the next Codex runtime and recover durable account intent before
 /// launch. The order is observable: account repair must see the runtime that
 /// will own the new app-server control connection.

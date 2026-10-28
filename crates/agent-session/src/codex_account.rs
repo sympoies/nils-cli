@@ -19,7 +19,7 @@ use crate::{
 };
 
 mod restart;
-pub(crate) use restart::prepare_resume_runtime;
+pub(crate) use restart::{authorize_restart_exit_locked, prepare_resume_runtime};
 
 pub(crate) const BROKER_SCHEMA_VERSION: &str = "agent-session.codex-auth-broker.v1";
 pub(crate) const BINDING_SCHEMA_VERSION: &str = "agent-session.codex-account-binding.v1";

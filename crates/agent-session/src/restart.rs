@@ -633,7 +633,7 @@ fn request_provider_exit(
         AgentKind::Codex if admitted => "/quit",
         _ => return Ok((false, fence)),
     };
-    crate::codex_account::authorize_terminal_input_locked(context, &mut current)?;
+    crate::codex_account::authorize_restart_exit_locked(context, &mut current)?;
     crate::auto_resume::cancel_for_manual_input_locked(context, &current.id, &now())?;
     crate::send::input::send_restart_exit_unlocked(
         context,
@@ -717,3 +717,6 @@ fn status_before(tmux: &Path, record: &SessionRecord, deadline: Instant) -> Stri
 #[cfg(all(test, target_os = "linux"))]
 #[path = "restart_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod codex_account_tests;
