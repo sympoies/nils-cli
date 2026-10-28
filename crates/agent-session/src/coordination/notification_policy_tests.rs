@@ -559,3 +559,102 @@ fn notification_policy_remote_refusal_is_terminal_without_erasing_uncertainty() 
         assert!(!projection(retained).to_string().contains("canary"));
     }
 }
+
+#[test]
+fn routine_coalescing_is_opt_in_and_urgent_mail_bypasses_the_window() {
+    let (_temp, context) = tests::fixture();
+    write_atomic(
+        &context.state_dir.join("coordination/notification-policy.json"),
+        &serde_json::to_vec(&json!({
+            "schema_version": "agent-session.notification-policy.v1",
+            "recipients": [{"session_id":"recipient", "suppress_categories":[], "routine_interval_seconds":600}]
+        })).unwrap(), SECRET_FILE_MODE,
+    ).unwrap();
+    ingress(&context, Some(MessageCategory::Progress));
+    let first = super::super::notification::pending(&context)
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(super::super::notification::begin_attempt(&context, &first).unwrap());
+    assert!(super::super::notification::mark_submitted(&context, &first).unwrap());
+    ingress(&context, Some(MessageCategory::Handoff));
+    assert!(
+        super::super::notification::pending(&context)
+            .unwrap()
+            .is_empty()
+    );
+    ingress(&context, Some(MessageCategory::Blocker));
+    let urgent = super::super::notification::pending(&context)
+        .unwrap()
+        .pop()
+        .unwrap();
+    let prompt = super::super::notification_prompt(&urgent);
+    assert!(prompt.contains("p=1") && prompt.contains("h=1") && prompt.contains("b=1"));
+    assert!(!prompt.contains("bounded fixture body"));
+}
+
+#[test]
+fn coalescing_window_survives_restart_and_hook_claim_until_ten_minutes() {
+    let (_temp, context) = tests::fixture();
+    write_atomic(&context.state_dir.join("coordination/notification-policy.json"), &serde_json::to_vec(&json!({
+        "schema_version":"agent-session.notification-policy.v1", "recipients":[{"session_id":"recipient", "suppress_categories":[], "routine_interval_seconds":600}]
+    })).unwrap(), SECRET_FILE_MODE).unwrap();
+    ingress(&context, Some(MessageCategory::Report));
+    let first = super::super::notification::pending(&context)
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(super::super::notification::begin_attempt(&context, &first).unwrap());
+    assert!(super::super::notification::mark_submitted(&context, &first).unwrap());
+    ingress(&context, None);
+    let mut locked = lock_registry(&context).unwrap();
+    for message in &mut locked.registry.messages {
+        message.expires_at_epoch += 3600;
+    }
+    locked.save().unwrap();
+    drop(locked);
+    let mut registry = lock_registry(&context).unwrap().registry.clone();
+    let receipt = registry.notifications.values().next().unwrap();
+    let at = receipt.routine_last_submitted_at_epoch;
+    assert!(
+        super::super::notification::claim_hook_reminder(
+            &mut registry,
+            "recipient",
+            "recipient-incarnation",
+            at + 599
+        )
+        .is_none()
+    );
+    let next = super::super::notification::claim_hook_reminder(
+        &mut registry,
+        "recipient",
+        "recipient-incarnation",
+        at + 600,
+    )
+    .unwrap();
+    assert!(super::super::notification_prompt(&next).contains("u=1"));
+}
+
+#[test]
+fn routine_coalescing_fences_older_registry_writers() {
+    let (_temp, context) = tests::fixture();
+    write_atomic(
+        &context
+            .state_dir
+            .join("coordination/notification-policy.json"),
+        &serde_json::to_vec(
+            &json!({"schema_version":"agent-session.notification-policy.v1", "recipients":[{
+                "session_id":"recipient", "suppress_categories":[], "routine_interval_seconds":600
+            }]}),
+        )
+        .unwrap(),
+        SECRET_FILE_MODE,
+    )
+    .unwrap();
+    ingress(&context, Some(MessageCategory::Progress));
+    let locked = lock_registry(&context).unwrap();
+    assert_eq!(
+        locked.registry.schema_version,
+        "agent-session.coordination-registry.v6"
+    );
+}

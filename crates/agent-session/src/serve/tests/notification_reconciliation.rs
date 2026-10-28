@@ -145,3 +145,23 @@ fn prior_prompt(queued_at: i64) -> String {
         format!("Coordination mailbox has unread messages (newest queued {date}); {action} If you already read the inbox after that time, nothing new is waiting. {GUIDANCE}")
     }
 }
+
+
+/// The exact prompt the fixture's current notification generation carries.
+pub(super) fn fixture_notification_prompt(state_dir: &Path) -> String {
+    let notification = notification_fixture(state_dir);
+    crate::coordination::notification_prompt(&crate::coordination::NotificationCandidate {
+        prompt: None, target_session_id: notification["target_session_id"]
+            .as_str()
+            .expect("target session")
+            .to_string(),
+        target_incarnation: notification["target_incarnation"]
+            .as_str()
+            .expect("target incarnation")
+            .to_string(),
+        generation: notification["generation"].as_u64().expect("generation"),
+        queued_at_epoch: notification["queued_at_epoch"].as_i64().expect("queued at"),
+        attempted_at_epoch: 0,
+        attempted_at: None,
+    })
+}

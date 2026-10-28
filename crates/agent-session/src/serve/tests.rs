@@ -10281,6 +10281,7 @@ async fn coordination_review_notification_final_lock_rejects_nonwaiting_activity
             expected_session_incarnation: Some(&launch_id),
             notification: Some(CoordinationNotificationFence {
                 candidate: crate::coordination::NotificationCandidate {
+                    prompt: None,
                     target_session_id: "notification-final-fence".to_string(),
                     target_incarnation: launch_id.clone(),
                     generation: 1,
@@ -22383,24 +22384,7 @@ fn set_notification_attempted_at(state_dir: &Path, attempted_at: &str) {
     .expect("registry");
 }
 
-/// The dated prompt the fixture's current notification generation carries.
-fn fixture_notification_prompt(state_dir: &Path) -> String {
-    let notification = notification_fixture(state_dir);
-    crate::coordination::notification_prompt(&crate::coordination::NotificationCandidate {
-        target_session_id: notification["target_session_id"]
-            .as_str()
-            .expect("target session")
-            .to_string(),
-        target_incarnation: notification["target_incarnation"]
-            .as_str()
-            .expect("target incarnation")
-            .to_string(),
-        generation: notification["generation"].as_u64().expect("generation"),
-        queued_at_epoch: notification["queued_at_epoch"].as_i64().expect("queued at"),
-        attempted_at_epoch: 0,
-        attempted_at: None,
-    })
-}
+use notification_reconciliation::fixture_notification_prompt;
 
 fn notification_fixture(state_dir: &Path) -> Value {
     let registry: Value = serde_json::from_slice(

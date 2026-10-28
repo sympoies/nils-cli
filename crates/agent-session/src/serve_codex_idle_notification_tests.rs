@@ -370,7 +370,7 @@ mod codex_idle_notification_tests {
                     expected_session_incarnation: Some(&launch_id),
                     notification: Some(CoordinationNotificationFence {
                         candidate: crate::coordination::NotificationCandidate {
-                            target_session_id: id.clone(),
+                            prompt: None, target_session_id: id.clone(),
                             target_incarnation: launch_id.clone(),
                             generation: 1,
                             queued_at_epoch: 0,

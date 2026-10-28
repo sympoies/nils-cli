@@ -14,6 +14,7 @@ pub const DELEGATION_REGISTRY_VERSION: &str = "agent-session.coordination-regist
 pub const SUPPRESSION_REGISTRY_VERSION: &str = "agent-session.coordination-registry.v3";
 pub const CLAIM_FENCE_REGISTRY_VERSION: &str = "agent-session.coordination-registry.v2";
 pub const NOTIFICATION_HISTORY_REGISTRY_VERSION: &str = "agent-session.coordination-registry.v5";
+pub const COALESCING_REGISTRY_VERSION: &str = "agent-session.coordination-registry.v6";
 pub const CLAIM_VERSION: &str = "agent-session.work-context.v1";
 /// Canonical whole-registry byte cap, shared by this projection reader and the
 /// agent-session coordination read/write path (which references this constant).
@@ -149,6 +150,7 @@ pub fn load(state_dir: &Path) -> Result<Option<RegistryProjection>, ReadError> {
             | SUPPRESSION_REGISTRY_VERSION
             | DELEGATION_REGISTRY_VERSION
             | NOTIFICATION_HISTORY_REGISTRY_VERSION
+            | COALESCING_REGISTRY_VERSION
     ) {
         // A well-formed body in this schema family that declares an unknown
         // version came from another release generation. Report drift so the
@@ -161,6 +163,7 @@ pub fn load(state_dir: &Path) -> Result<Option<RegistryProjection>, ReadError> {
                 SUPPRESSION_REGISTRY_VERSION,
                 DELEGATION_REGISTRY_VERSION,
                 NOTIFICATION_HISTORY_REGISTRY_VERSION,
+                COALESCING_REGISTRY_VERSION,
             ],
         ) {
             return Err(ReadError::Incompatible);
@@ -385,6 +388,7 @@ mod tests {
             SUPPRESSION_REGISTRY_VERSION,
             DELEGATION_REGISTRY_VERSION,
             NOTIFICATION_HISTORY_REGISTRY_VERSION,
+            COALESCING_REGISTRY_VERSION,
         ] {
             let temporary = tempfile::TempDir::new().expect("temporary state");
             let coordination = temporary.path().join("coordination");

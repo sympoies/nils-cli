@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+#[path = "notification_coalescing.rs"]
+pub(super) mod coalescing;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -61,6 +63,13 @@ pub(crate) struct NotificationReceipt {
     pub last_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attempt_history: Vec<NotificationAttempt>,
+    pub routine_interval_seconds: i64,
+    pub routine_last_submitted_at_epoch: i64,
+    pub urgent_generation: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempted_prompt: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -96,6 +105,7 @@ pub struct NotificationProjection {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NotificationCandidate {
+    pub prompt: Option<String>,
     pub target_session_id: String,
     pub target_incarnation: String,
     pub generation: u64,
@@ -159,9 +169,11 @@ impl NotificationCandidate {
             )) else {
                 return false;
             };
-            receipt
-                .composer_recovery_prompt
-                .get_or_insert_with(|| fixed_prompt(&self.target_session_id, self.queued_at_epoch));
+            receipt.composer_recovery_prompt.get_or_insert_with(|| {
+                self.prompt
+                    .clone()
+                    .unwrap_or_else(|| fixed_prompt(&self.target_session_id, self.queued_at_epoch))
+            });
             true
         })
     }
@@ -179,6 +191,7 @@ pub(crate) fn is_mailbox_reminder_prompt(prompt: &str) -> bool {
     let prompt = prompt.trim_start();
     prompt.starts_with(LEGACY_PROMPT_PREFIX)
         || prompt == PROMPT_TEMPLATE
+        || coalescing::is_count_prompt(prompt)
         || (prompt.len() <= 60
             && prompt
                 .strip_prefix(PROMPT_PREFIX)
@@ -232,22 +245,35 @@ pub(crate) fn claim_hook_reminder(
     let claimable = receipt.state == "queued"
         || (receipt.state == "undeliverable"
             && receipt.last_reason.as_deref() == Some(REASON_HOOK_DELIVERED));
-    if !claimable || receipt.generation <= receipt.notified_generation {
+    if !claimable
+        || receipt.generation <= receipt.notified_generation
+        || !coalescing::due(receipt, now)
+    {
         return None;
     }
     let attempted_at = jiff::Timestamp::from_second(now).ok()?;
+    receipt.routine_last_submitted_at_epoch = now;
+    receipt.attempted_prompt = receipt.prompt.clone();
     receipt.state = "prompt_submitted".to_string();
     receipt.attempted_generation = receipt.generation;
     receipt.notified_generation = receipt.generation;
     receipt.attempted_queued_at_epoch = receipt.queued_at_epoch;
     receipt.attempted_at_epoch = now;
     receipt.attempted_at = Some(attempted_at.to_string());
-    receipt.attempted_prompt_format = Some(observation::PROMPT_FORMAT.to_string());
+    receipt.attempted_prompt_format = Some(
+        if receipt.attempted_prompt.is_some() {
+            "mailbox-counts.v1"
+        } else {
+            observation::PROMPT_FORMAT
+        }
+        .to_string(),
+    );
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some("prompt-accepted".to_string());
     let generation = receipt.generation;
     receipt.record_attempt(generation, "prompt-accepted", now);
     Some(NotificationCandidate {
+        prompt: receipt.prompt.clone(),
         target_session_id: target_session_id.to_string(),
         target_incarnation: target_incarnation.to_string(),
         generation: receipt.generation,
@@ -440,8 +466,10 @@ pub(crate) fn pending_candidates(registry: &mut Registry, now: i64) -> Vec<Notif
                 && receipt.last_reason.as_deref() != Some("mailbox-drained")
                 && receipt.generation > receipt.notified_generation
                 && receipt.next_attempt_at_epoch <= now
+                && coalescing::due(receipt, now)
         })
         .map(|receipt| NotificationCandidate {
+            prompt: receipt.prompt.clone(),
             target_session_id: receipt.target_session_id.clone(),
             target_incarnation: receipt.target_incarnation.clone(),
             generation: receipt.generation,
@@ -487,6 +515,7 @@ pub(crate) fn unresolved_candidates(
                 && receipt.attempted_generation > receipt.notified_generation
         })
         .map(|receipt| NotificationCandidate {
+            prompt: receipt.attempted_prompt.clone(),
             target_session_id: receipt.target_session_id.clone(),
             target_incarnation: receipt.target_incarnation.clone(),
             generation: receipt.attempted_generation,
@@ -569,18 +598,28 @@ pub(super) fn transition_attempt_at(
         || receipt.generation != candidate.generation
         || receipt.generation <= receipt.notified_generation
         || receipt.next_attempt_at_epoch > now
+        || !coalescing::due(receipt, now)
     {
         return None;
     }
+    receipt.attempted_prompt = candidate.prompt.clone();
     receipt.state = "attempting".to_string();
     receipt.attempted_generation = receipt.generation;
     receipt.attempted_queued_at_epoch = receipt.queued_at_epoch;
     receipt.attempted_at_epoch = now;
     receipt.attempted_at = Some(attempted_at.to_string());
-    receipt.attempted_prompt_format = Some(observation::PROMPT_FORMAT.to_string());
+    receipt.attempted_prompt_format = Some(
+        if receipt.attempted_prompt.is_some() {
+            "mailbox-counts.v1"
+        } else {
+            observation::PROMPT_FORMAT
+        }
+        .to_string(),
+    );
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some(REASON_ATTEMPTING.to_string());
     Some(NotificationCandidate {
+        prompt: candidate.prompt.clone(),
         target_session_id: candidate.target_session_id.clone(),
         target_incarnation: candidate.target_incarnation.clone(),
         generation: receipt.attempted_generation,
@@ -598,6 +637,7 @@ fn transition_submitted(
     let Some(receipt) = matching_attempt_mut(registry, candidate) else {
         return false;
     };
+    receipt.routine_last_submitted_at_epoch = now;
     receipt.notified_generation = receipt.notified_generation.max(candidate.generation);
     receipt.composer_recovery_prompt = None;
     receipt.state = if receipt.generation > candidate.generation {
@@ -1141,6 +1181,7 @@ mod tests {
         assert_eq!(
             pending_candidates(&mut registry, 101),
             vec![NotificationCandidate {
+                prompt: None,
                 target_session_id: "target".to_string(),
                 target_incarnation: "incarnation".to_string(),
                 generation: 2,
@@ -1156,6 +1197,7 @@ mod tests {
         let mut registry = Registry::default();
         let scheduled = schedule(&mut registry, "target", "incarnation", 100);
         let queued = NotificationCandidate {
+            prompt: None,
             target_session_id: "target".to_string(),
             target_incarnation: "incarnation".to_string(),
             generation: scheduled.generation,
@@ -1195,6 +1237,7 @@ mod tests {
         let mut registry = Registry::default();
         let scheduled = schedule(&mut registry, "target", "incarnation", 100);
         let queued = NotificationCandidate {
+            prompt: None,
             target_session_id: "target".to_string(),
             target_incarnation: "incarnation".to_string(),
             generation: scheduled.generation,
@@ -1236,6 +1279,7 @@ mod tests {
         let mut registry = Registry::default();
         let scheduled = schedule(&mut registry, "target", "incarnation", 100);
         let queued = NotificationCandidate {
+            prompt: None,
             target_session_id: "target".to_string(),
             target_incarnation: "incarnation".to_string(),
             generation: scheduled.generation,
@@ -1327,6 +1371,7 @@ mod tests {
         schedule(&mut registry, "target", "incarnation", 100);
         let scheduled = schedule(&mut registry, "target", "incarnation", 101);
         let queued = NotificationCandidate {
+            prompt: None,
             target_session_id: "target".to_string(),
             target_incarnation: "incarnation".to_string(),
             generation: scheduled.generation,
@@ -1397,6 +1442,7 @@ mod tests {
         assert_eq!(
             pending_candidates(&mut rewritten_with_new_mail, 105),
             vec![NotificationCandidate {
+                prompt: None,
                 target_session_id: "target".to_string(),
                 target_incarnation: "incarnation".to_string(),
                 generation: 3,
@@ -1457,6 +1503,7 @@ mod tests {
             Some("recipient-incarnation-replaced")
         );
     }
+    include!("notification_coalescing_tests.rs");
 }
 
 #[cfg(test)]
