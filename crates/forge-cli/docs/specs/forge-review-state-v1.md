@@ -166,6 +166,14 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   reviewer-owned observation and publication; old-generation writes and old
   reports never satisfy the new interval. A different reviewer or author still
   requires surrender or explicit recovery, as does reassignment at the same base.
+  Validation and scope/tip checks run before persistence. A successful live
+  assignment returns its verified `handoff_digest` and `state_tip_digest`.
+  If the provider acknowledges a handoff write but read-back fails or does not
+  expose its record, DATA 65 `review_handoff_persisted_verification_failed`
+  explicitly reports `persisted: true`, the written tip in both digest fields,
+  and `retryable: false`. The text message also includes the written tip.
+  Inspect the current handoff before taking another action: verification is
+  incomplete and a concurrent writer may already have advanced the ledger.
 - Approval policy: `assign` accepts `--approval-policy <policy>` with values
   `source-pass` and `final-approval`. New assignments default to `source-pass`,
   preserving documented COMMENT-only source closure. Omission during handover
