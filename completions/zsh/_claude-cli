@@ -166,7 +166,18 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:claude-cli-auth-command-$line[1]:"
         case $line[1] in
-            (login)
+            (publish)
+_arguments "${_arguments_options[@]}" : \
+'--snapshot=[Immutable access-only profile payload with generation and publication attempt]:file:_files' \
+'--into=[Accounts directory in which to publish this profile]:dir:_files -/' \
+'--keychain=[macOS Keychain handling for the projected login]:KEYCHAIN:(auto required off)' \
+'--format=[Output format (\`text\` or \`json\`)]:format:(text json)' \
+'(--format)--json[Hidden alias for \`--format json\`]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(login)
 _arguments "${_arguments_options[@]}" : \
 '--email=[Pre-populate the login email address]:email:_default' \
 '(--claudeai)--console[Use Anthropic Console API billing]' \
@@ -346,7 +357,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:claude-cli-auth-help-command-$line[1]:"
         case $line[1] in
-            (login)
+            (publish)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(login)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -689,7 +704,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:claude-cli-help-auth-command-$line[1]:"
         case $line[1] in
-            (login)
+            (publish)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(login)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -954,6 +973,7 @@ _claude-cli__subcmd__agent__subcmd__resume_commands() {
 (( $+functions[_claude-cli__subcmd__auth_commands] )) ||
 _claude-cli__subcmd__auth_commands() {
     local commands; commands=(
+'publish:Publish one admitted access-only snapshot into its account stores' \
 'login:Sign in through the upstream Claude Code authentication flow' \
 'status:Show redacted authentication status' \
 'logout:Sign out through the upstream Claude Code authentication flow' \
@@ -982,6 +1002,7 @@ _claude-cli__subcmd__auth__subcmd__current_commands() {
 (( $+functions[_claude-cli__subcmd__auth__subcmd__help_commands] )) ||
 _claude-cli__subcmd__auth__subcmd__help_commands() {
     local commands; commands=(
+'publish:Publish one admitted access-only snapshot into its account stores' \
 'login:Sign in through the upstream Claude Code authentication flow' \
 'status:Show redacted authentication status' \
 'logout:Sign out through the upstream Claude Code authentication flow' \
@@ -1021,6 +1042,11 @@ _claude-cli__subcmd__auth__subcmd__help__subcmd__login_commands() {
 _claude-cli__subcmd__auth__subcmd__help__subcmd__logout_commands() {
     local commands; commands=()
     _describe -t commands 'claude-cli auth help logout commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__publish_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__help__subcmd__publish_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth help publish commands' commands "$@"
 }
 (( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__refresh_commands] )) ||
 _claude-cli__subcmd__auth__subcmd__help__subcmd__refresh_commands() {
@@ -1079,6 +1105,11 @@ _claude-cli__subcmd__auth__subcmd__login_commands() {
 _claude-cli__subcmd__auth__subcmd__logout_commands() {
     local commands; commands=()
     _describe -t commands 'claude-cli auth logout commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__publish_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__publish_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth publish commands' commands "$@"
 }
 (( $+functions[_claude-cli__subcmd__auth__subcmd__refresh_commands] )) ||
 _claude-cli__subcmd__auth__subcmd__refresh_commands() {
@@ -1291,6 +1322,7 @@ _claude-cli__subcmd__help__subcmd__agent__subcmd__resume_commands() {
 (( $+functions[_claude-cli__subcmd__help__subcmd__auth_commands] )) ||
 _claude-cli__subcmd__help__subcmd__auth_commands() {
     local commands; commands=(
+'publish:Publish one admitted access-only snapshot into its account stores' \
 'login:Sign in through the upstream Claude Code authentication flow' \
 'status:Show redacted authentication status' \
 'logout:Sign out through the upstream Claude Code authentication flow' \
@@ -1324,6 +1356,11 @@ _claude-cli__subcmd__help__subcmd__auth__subcmd__login_commands() {
 _claude-cli__subcmd__help__subcmd__auth__subcmd__logout_commands() {
     local commands; commands=()
     _describe -t commands 'claude-cli help auth logout commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__publish_commands] )) ||
+_claude-cli__subcmd__help__subcmd__auth__subcmd__publish_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli help auth publish commands' commands "$@"
 }
 (( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__refresh_commands] )) ||
 _claude-cli__subcmd__help__subcmd__auth__subcmd__refresh_commands() {

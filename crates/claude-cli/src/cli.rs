@@ -1,3 +1,5 @@
+mod publication;
+
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
@@ -185,6 +187,8 @@ pub struct AuthArgs {
 
 #[derive(Subcommand)]
 pub enum AuthCommand {
+    /// Publish one admitted access-only snapshot into its account stores
+    Publish(publication::PublishArgs),
     /// Sign in through the upstream Claude Code authentication flow
     Login {
         /// Use Anthropic Console API billing

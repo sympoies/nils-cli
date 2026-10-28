@@ -4,7 +4,7 @@ use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
 use std::os::unix::fs::PermissionsExt;
 
-fn annotation() -> Value {
+pub(super) fn annotation() -> Value {
     json!({
         "schema_version":"nils.auth-generation.v1", "provider":"claude", "account":"alpha",
         "version":{"authority_id":"11111111-1111-4111-8111-111111111111",
@@ -17,14 +17,14 @@ fn annotation() -> Value {
     })
 }
 
-fn profile(generation: Value) -> Value {
+pub(super) fn profile(generation: Value) -> Value {
     json!({"profile":"alpha", "credential_generation":generation,
         "claudeAiOauth":{"accessToken":"fixture-access", "refreshToken":"fixture-refresh",
             "expiresAt":4102444800000_i64},
         "oauthAccount":{"accountUuid":"fixture-account", "organizationUuid":"fixture-org"}})
 }
 
-fn pull(
+pub(super) fn pull(
     payload: Value,
     all: bool,
     name: &str,

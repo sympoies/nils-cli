@@ -1,7 +1,7 @@
 //! Access-only remote auth for Claude Code over the shared
 //! `nils_common::provider_runtime::remote` transport.
 
-mod generation;
+pub(super) mod generation;
 
 use nils_common::cli_contract::exit;
 use nils_common::diag_output;
@@ -117,6 +117,9 @@ fn sanitize(value: Value) -> Value {
         return Value::Object(Map::new());
     };
     let mut sanitized = Map::new();
+    if let Some(attempt) = object.remove("publication_attempt_id") {
+        sanitized.insert("publication_attempt_id".to_string(), attempt);
+    }
     if let Some(generation) = generation {
         sanitized.insert(
             "credential_generation".to_string(),
@@ -341,6 +344,8 @@ fn invalid_generation() -> AuthError {
 struct AccountResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     credential_generation: Option<generation::Generation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    writer_receipt: Option<super::writer_receipt::Receipt>,
     name: String,
     config_dir: String,
     written: bool,
@@ -414,6 +419,7 @@ fn pull_all(options: &PullOptions<'_>) -> i32 {
         for entry in exported {
             let credential_generation =
                 generation::context(&entry).map_err(|()| invalid_generation())?;
+            let receipt_context = super::writer_receipt::Context::from_payload(&entry)?;
             let Value::Object(mut entry) = entry else {
                 continue;
             };
@@ -432,12 +438,12 @@ fn pull_all(options: &PullOptions<'_>) -> i32 {
                     format!("remote export listed profile '{name}' twice"),
                 ));
             }
-            entries.push((name, entry, credential_generation));
+            entries.push((name, entry, credential_generation, receipt_context));
         }
 
         let _lock = store::lock_accounts(&into)?;
         let mut profiles = Vec::new();
-        for (name, mut entry, credential_generation) in entries {
+        for (name, mut entry, credential_generation, receipt_context) in entries {
             let oauth = store::take_object(&mut entry, "claudeAiOauth");
             let account = store::take_object(&mut entry, "oauthAccount");
             let written = if store::Identity::from_account(&account).is_none() {
@@ -446,12 +452,27 @@ fn pull_all(options: &PullOptions<'_>) -> i32 {
                     "remote export did not include the account",
                 ))
             } else {
-                store::write_account_access_only(&into, &name, &oauth, &account, options.keychain)
+                store::write_account_publication(
+                    &into,
+                    &name,
+                    &oauth,
+                    &account,
+                    options.keychain,
+                    receipt_context.as_ref(),
+                )
             };
-            let (keychain, error) = match written {
-                Ok(written) => (written.keychain, None),
+            let written = written.map_err(|error| {
+                if receipt_context.is_some() {
+                    super::writer_receipt::redact_error(error)
+                } else {
+                    error
+                }
+            });
+            let (keychain, writer_receipt, error) = match written {
+                Ok(written) => (written.keychain, written.receipt, None),
                 Err(err) => (
                     "skipped",
+                    None,
                     Some(AccountError {
                         code: err.code,
                         message: err.message,
@@ -460,6 +481,7 @@ fn pull_all(options: &PullOptions<'_>) -> i32 {
             };
             profiles.push(AccountResult {
                 credential_generation,
+                writer_receipt,
                 config_dir: into.join(&name).display().to_string(),
                 name,
                 written: error.is_none(),

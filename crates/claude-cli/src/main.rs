@@ -130,6 +130,16 @@ fn handle_auth(args: &cli::AuthArgs) -> i32 {
             sso: *sso,
         }),
         Some(cli::AuthCommand::Status { output }) => claude_cli::auth::status(output.is_json()),
+        Some(cli::AuthCommand::Publish(args)) => claude_cli::auth::publication::publish(
+            &args.snapshot,
+            &args.into,
+            match args.keychain {
+                cli::KeychainArg::Auto => claude_cli::auth::keychain::Mode::Auto,
+                cli::KeychainArg::Required => claude_cli::auth::keychain::Mode::Required,
+                cli::KeychainArg::Off => claude_cli::auth::keychain::Mode::Off,
+            },
+            args.output.is_json(),
+        ),
         Some(cli::AuthCommand::Logout) => claude_cli::auth::logout(),
         Some(cli::AuthCommand::Save { yes, name, output }) => {
             claude_cli::auth::profile::save(name, *yes, output.is_json())

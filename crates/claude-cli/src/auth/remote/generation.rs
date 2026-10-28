@@ -6,7 +6,7 @@ use serde_json::Value;
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Generation {
+pub(crate) struct Generation {
     schema_version: String,
     provider: String,
     account: String,
@@ -51,7 +51,7 @@ fn counter(value: &str) -> bool {
         .is_ok_and(|n| n > 0 && n.to_string() == value)
 }
 
-fn uuid(value: &str) -> bool {
+pub(crate) fn uuid(value: &str) -> bool {
     let b = value.as_bytes();
     b.len() == 36
         && b[14] == b'4'
@@ -76,9 +76,13 @@ fn time(value: &str) -> bool {
             .is_ok_and(|dt| dt.timestamp_subsec_nanos() < 1_000_000_000)
 }
 
-pub(super) fn context(payload: &Value) -> Result<Option<Generation>, ()> {
+pub(crate) fn context(payload: &Value) -> Result<Option<Generation>, ()> {
     let Some(value) = payload.get("credential_generation") else {
-        return Ok(None);
+        return if payload.get("publication_attempt_id").is_some() {
+            Err(())
+        } else {
+            Ok(None)
+        };
     };
     let generation: Generation = serde_json::from_value(value.clone()).map_err(|_| ())?;
     let g = &generation;
@@ -98,7 +102,10 @@ pub(super) fn context(payload: &Value) -> Result<Option<Generation>, ()> {
             )
             | ("unknown", "unvalidated" | "ambiguous_rotation", "unknown")
     );
-    if g.schema_version != "nils.auth-generation.v1"
+    if payload
+        .get("publication_attempt_id")
+        .is_some_and(|v| !v.as_str().is_some_and(uuid))
+        || g.schema_version != "nils.auth-generation.v1"
         || g.provider != "claude"
         || super::store::validate_profile_name(&g.account).is_err()
         || payload.get("profile").and_then(Value::as_str) != Some(g.account.as_str())
@@ -119,16 +126,15 @@ pub(super) fn context(payload: &Value) -> Result<Option<Generation>, ()> {
     Ok(Some(generation))
 }
 
-pub(super) fn validate(payload: &Value, selector: &RemoteSelector) -> bool {
+pub(crate) fn validate(payload: &Value, selector: &RemoteSelector) -> bool {
     match selector {
         RemoteSelector::All => {
-            !payload
-                .as_object()
-                .is_some_and(|p| p.contains_key("credential_generation"))
-                && payload
-                    .get("profiles")
-                    .and_then(Value::as_array)
-                    .is_none_or(|profiles| profiles.iter().all(|profile| context(profile).is_ok()))
+            !payload.as_object().is_some_and(|p| {
+                p.contains_key("credential_generation") || p.contains_key("publication_attempt_id")
+            }) && payload
+                .get("profiles")
+                .and_then(Value::as_array)
+                .is_none_or(|profiles| profiles.iter().all(|profile| context(profile).is_ok()))
         }
         RemoteSelector::Name(name) => {
             context(payload).is_ok_and(|g| g.is_none_or(|g| g.account == *name))

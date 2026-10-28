@@ -1,8 +1,10 @@
 pub mod keychain;
 pub mod profile;
+pub mod publication;
 pub mod remote;
 pub mod reset_rate_limits;
 pub mod store;
+pub(crate) mod writer_receipt;
 
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -181,6 +183,13 @@ fn public_string(value: &Value, key: &str) -> Option<String> {
 }
 
 fn run_inherited(args: &[String], operation: &str) -> i32 {
+    let _receipt_lock = match writer_receipt::fence_active(None) {
+        Ok(lock) => lock,
+        Err(err) => {
+            eprintln!("claude-cli auth {operation}: {}", err.message);
+            return err.exit_code;
+        }
+    };
     let binary = claude_binary();
     match Command::new(&binary)
         .args(args)
