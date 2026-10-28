@@ -53,6 +53,7 @@ mod tests {
     use std::{fs, os::unix::fs::PermissionsExt};
 
     use nils_test_support::{EnvGuard, GlobalStateLock};
+    use pretty_assertions::assert_eq;
     use serde_json::json;
 
     use super::*;
@@ -182,5 +183,50 @@ mod tests {
         assert_eq!(persisted.runtime.as_ref().unwrap().kind, "tmux");
         assert_eq!(persisted.extra[super::super::BINDING_KEY], original_binding);
         assert_eq!(persisted.extra[super::super::NEXT_KEY], original_next);
+    }
+
+    #[test]
+    fn failed_startup_without_conversation_reaches_fresh_launch_and_rolls_back_on_failure() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let broker_dir = tempfile::TempDir::new().unwrap();
+        let _broker = EnvGuard::set(
+            &lock,
+            super::super::BROKER_ENV,
+            &listed_account_broker(&broker_dir, "acct2"),
+        );
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let mut record = failed_binding_with_queued_account();
+        record.cwd = tmp.path().to_string_lossy().into_owned();
+        let agent = capable_codex_cli(&tmp);
+        record.agent_bin = Some(agent.to_string_lossy().into_owned());
+        crate::mark_tmux_runtime_never_launched(&mut record);
+        crate::codex_app_server::configure_runtime(&context, &agent, &mut record, true).unwrap();
+        assert!(record.provider_resume.is_none());
+        crate::activity::activate_runtime(&context, &record).unwrap();
+        let before = serde_json::to_value(&record).unwrap();
+        let tmux = tmp.path().join("tmux");
+        let launched = tmp.path().join("launched");
+        fs::write(&tmux, format!("#!/bin/sh\nif [ \"$1\" = new-session ]; then printf '%s\\n' \"$@\" > {}; fi\nprintf '%s\\n' \"can't find session: fixture\" >&2\nexit 1\n", shell_words::quote(&launched.to_string_lossy()))).unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        let error = crate::resume_session_locked(&context, record.clone(), &tmux)
+            .err()
+            .unwrap();
+        assert_eq!(
+            error.code(),
+            "command-failed",
+            "fresh recovery must reach the launch boundary: {error:?}"
+        );
+        let args = fs::read_to_string(launched).unwrap();
+        assert!(args.contains("--no-alt-screen"));
+        assert!(!args.lines().any(|arg| arg == "resume"));
+        assert_eq!(
+            serde_json::to_value(crate::load_session_record(&context, &record.id).unwrap())
+                .unwrap(),
+            before
+        );
     }
 }

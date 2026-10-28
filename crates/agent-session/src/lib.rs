@@ -4676,21 +4676,22 @@ fn resume_session_by_id_unjournaled(
     id: &str,
     tmux_bin: &Path,
 ) -> Result<SessionView, CliError> {
-    // Preserve not-found semantics before creating the private lock file, then
-    // serialize the entire resume transition (including launch and rollback)
-    // against title, hook, timestamp, and backfill writers.
+    // Serialize the entire launch and rollback against record writers.
     let observed = load_session_record(context, id)?;
     let canonical_id = observed.id.clone();
     let _record_lock = acquire_session_record_lock(context, &canonical_id)?;
     let record = load_session_record(context, &canonical_id)?;
     ensure_same_session_identity(&observed, &record)?;
-    resume_session_locked(context, record, tmux_bin).map(|outcome| outcome.session)
+    let outcome = resume_session_locked(context, record, tmux_bin)?;
+    restart::release_bootstrap(outcome.bootstrap, _record_lock);
+    Ok(outcome.session)
 }
 
 struct ResumeSessionOutcome {
     session: SessionView,
     session_incarnation: Option<String>,
     session_generation: Option<u64>,
+    bootstrap: Option<codex_app_server::CreateBootstrapGuard>,
 }
 
 fn resume_session_locked(
@@ -4718,6 +4719,7 @@ fn resume_session_locked(
                     .map(|runtime| runtime.launch_id.clone())
                     .filter(|launch_id| !launch_id.is_empty()),
                 session_generation: record.runtime.as_ref().map(|runtime| runtime.generation),
+                bootstrap: None,
             });
         }
         status @ restart::ResumeStatus::Unknown { .. } => {
@@ -4733,14 +4735,14 @@ fn resume_session_locked(
     StartupArtifactBackup::ensure_not_interrupted(context, &record)?;
     if record.provider_resume.is_none()
         && AgentKind::from_name(&record.agent) == Some(AgentKind::Codex)
+        && !restart::fresh_startup(context, &record)
         && let Some(provider_resume) = capture_codex_resume_from_history(&record)
     {
         record.provider_resume = Some(provider_resume);
         write_session_record(context, &record)?;
     }
-    let (provider_resume, agent) = validate_resume_metadata(&record)?;
-    let resume_args = provider_resume.resume_args.clone();
-    let provider_session_id = provider_resume.session_id.clone();
+    let plan = restart::launch_plan(context, &record)?;
+    let (agent, resume_args) = (plan.agent, plan.args.clone());
     if recorded_runtime_is_from_prior_boot(&record) {
         record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
     }
@@ -4799,19 +4801,12 @@ fn resume_session_locked(
             SessionTerminationOperation::Resume,
         ));
     }
-    let _conversation = start_resume::conversation_lock(context, agent, &provider_session_id)?;
-    let _sources = start_resume::guard_other_writers(
-        context,
-        agent,
-        &provider_session_id,
-        Some(&record.id),
-        tmux_bin,
-    )?;
+    let (_conversation, _sources) =
+        restart::conversation_guards(context, &record, &plan, tmux_bin)?;
     record.extra.remove(DELETE_TMUX_PRIOR_IDENTITIES_KEY);
     runtime_teardown::retire_confirmed_broker(context, &record, tmux_bin, termination_state)?;
     record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
     let previous_record = record.clone();
-    // Capture absence before new-session can reuse the old internal tmux ID.
     let previous_runtime =
         coordination::capture_stopped_runtime(context, &previous_record, tmux_bin)?;
     let app_server_managed = agent == AgentKind::Codex
@@ -4845,13 +4840,17 @@ fn resume_session_locked(
         &starting_projection(&now.timestamp().to_string(), "record"),
     );
     if app_server_managed {
-        // Establish the new app-server identity before validating a queued
-        // account against the runtime that will own the resumed session.
         codex_account::prepare_resume_runtime(context, &agent_bin, &mut record, &previous_record)?;
     }
     if agent == AgentKind::Claude {
         claude_account::prepare_launch(&mut record)?;
     }
+    let bootstrap = plan
+        .conversation
+        .is_none()
+        .then(|| codex_app_server::begin_create_bootstrap(&record))
+        .transpose()?
+        .flatten();
     record.updated_at = now.timestamp().to_string();
     runtime_environment::write_launch_record(context, &mut record)?;
     drop(admission);
@@ -5001,6 +5000,7 @@ fn resume_session_locked(
             .map(|runtime| runtime.launch_id.clone())
             .filter(|launch_id| !launch_id.is_empty()),
         session_generation: record.runtime.as_ref().map(|runtime| runtime.generation),
+        bootstrap,
     })
 }
 

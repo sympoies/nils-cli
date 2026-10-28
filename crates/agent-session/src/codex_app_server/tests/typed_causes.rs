@@ -1,5 +1,7 @@
 use super::*;
 use pretty_assertions::assert_eq;
+#[path = "bootstrap_account.rs"]
+mod bootstrap_account;
 
 #[derive(Clone, Copy)]
 enum PromptPeer {
