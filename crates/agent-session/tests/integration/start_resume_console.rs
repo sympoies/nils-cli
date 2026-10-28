@@ -91,6 +91,45 @@ fn preflight() -> Value {
         "agent":"claude","provider_session_id":CONVERSATION,"machine":"target","account":"original"}})
 }
 
+fn read_request(stream: &mut TcpStream) -> (String, Value) {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut bytes = Vec::new();
+    let (header_end, length) = loop {
+        let mut chunk = [0; 4096];
+        let n = stream.read(&mut chunk).unwrap();
+        assert!(n > 0);
+        bytes.extend_from_slice(&chunk[..n]);
+        if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+            let headers = String::from_utf8_lossy(&bytes[..end]).to_lowercase();
+            assert!(headers.contains(&format!("authorization: bearer {TOKEN}")));
+            let length = headers
+                .lines()
+                .find_map(|l| l.strip_prefix("content-length: "))
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
+            break (end + 4, length);
+        }
+    };
+    while bytes.len() < header_end + length {
+        let mut chunk = [0; 4096];
+        let n = stream.read(&mut chunk).unwrap();
+        assert!(n > 0);
+        bytes.extend_from_slice(&chunk[..n]);
+    }
+    let path = String::from_utf8_lossy(&bytes[..header_end])
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .to_owned();
+    (
+        path,
+        serde_json::from_slice(&bytes[header_end..header_end + length]).unwrap(),
+    )
+}
+
 fn stub(responses: Vec<(u16, Value)>) -> (String, thread::JoinHandle<Vec<(String, Value)>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -106,42 +145,7 @@ fn stub(responses: Vec<(u16, Value)>) -> (String, thread::JoinHandle<Vec<(String
                 assert!(Instant::now() < deadline, "expected CLI HTTP request");
                 thread::sleep(Duration::from_millis(10));
             };
-            stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            let mut bytes = Vec::new();
-            let (header_end, length) = loop {
-                let mut chunk = [0; 4096];
-                let n = stream.read(&mut chunk).unwrap();
-                assert!(n > 0);
-                bytes.extend_from_slice(&chunk[..n]);
-                if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
-                    let headers = String::from_utf8_lossy(&bytes[..end]).to_lowercase();
-                    assert!(headers.contains(&format!("authorization: bearer {TOKEN}")));
-                    let length = headers
-                        .lines()
-                        .find_map(|l| l.strip_prefix("content-length: "))
-                        .unwrap()
-                        .parse::<usize>()
-                        .unwrap();
-                    break (end + 4, length);
-                }
-            };
-            while bytes.len() < header_end + length {
-                let mut chunk = [0; 4096];
-                let n = stream.read(&mut chunk).unwrap();
-                assert!(n > 0);
-                bytes.extend_from_slice(&chunk[..n]);
-            }
-            let path = String::from_utf8_lossy(&bytes[..header_end])
-                .split_whitespace()
-                .nth(1)
-                .unwrap()
-                .to_owned();
-            requests.push((
-                path,
-                serde_json::from_slice(&bytes[header_end..header_end + length]).unwrap(),
-            ));
+            requests.push(read_request(&mut stream));
             let body = if status == 404 && body.is_null() {
                 String::new()
             } else {
@@ -215,9 +219,15 @@ fn cli_console_check_does_not_read_prompt_or_create_operation_and_rejects_old_or
 #[test]
 fn old_daemon_without_a_preflight_route_is_distinguishable_from_transport_failure() {
     let f = Fixture::new();
-    let (url, worker) = stub(vec![(404, Value::Null)]);
+    let (url, worker) = stub(vec![(404, Value::Null), (404, Value::Null)]);
     let capability = seed_caller(&f, &url);
     let out = run_console(&f, &capability, &["--check-resume"]);
+    let start = run_console(&f, &capability, &[]);
+    assert_eq!(start.stdout_json()["error"]["code"], "resume-unsupported");
+    assert_eq!(
+        start.stdout_json()["error"]["details"]["session_created"],
+        false
+    );
     worker.join().unwrap();
     assert_eq!(out.stdout_json()["error"]["code"], "resume-unsupported");
     assert_eq!(
@@ -239,15 +249,14 @@ fn cli_console_start_forwards_resume_account_and_ordinary_context_and_terminal_r
         } else {
             json!({"schema_version":"agent-session.console-start.v1","machine":"target","session":{"id":"new-child","title_mode":"pinned","display_revision":1}})
         };
-        let (url, worker) = stub(vec![
-            (200, preflight()),
-            (if code.is_some() { 422 } else { 201 }, result),
-        ]);
+        let (url, worker) = stub(vec![(if code.is_some() { 422 } else { 201 }, result)]);
         let capability = seed_caller(&f, &url);
         let out = run_console(
             &f,
             &capability,
             &[
+                "--account",
+                "original",
                 "--no-parent",
                 "--role",
                 "coordinator",
@@ -266,8 +275,8 @@ fn cli_console_start_forwards_resume_account_and_ordinary_context_and_terminal_r
             ],
         );
         let requests = worker.join().unwrap();
-        assert_eq!(requests[1].0, "/sessions/source/console-start/v1");
-        let request = &requests[1].1;
+        assert_eq!(requests[0].0, "/sessions/source/console-resume/v1");
+        let request = &requests[0].1;
         assert_eq!(request["session"]["resume"], CONVERSATION);
         assert_eq!(request["session"]["claude_account"], "original");
         assert_eq!(request["session"]["prompt"], "fixture bootstrap");
@@ -372,4 +381,109 @@ fn target_http_resume_creates_new_identity_and_preserves_account_context_and_pro
         "fixture bootstrap"
     );
     assert_eq!(fs::read(f.record_path("source")).unwrap(), before);
+}
+
+// This origin-daemon fixture retains an operation result. A later admission
+// request is deliberately refused; a replay must reach the receipt instead.
+fn operation_stub(outage: bool) -> (String, thread::JoinHandle<Vec<(String, Value)>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let worker = thread::spawn(move || {
+        let mut requests = Vec::new();
+        let mut created = false;
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            let mut stream = match listener.accept() {
+                Ok((stream, _)) => stream,
+                Err(_) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(_) => break,
+            };
+            let (path, request) = read_request(&mut stream);
+            let stop = path == "/stop";
+            let (status, body) = if stop {
+                (200, json!({}))
+            } else if path.ends_with("/resume-preflight/v1") {
+                if created {
+                    (
+                        if outage { 503 } else { 422 },
+                        json!({"schema_version":"cli.agent-session.resume-preflight.v1","ok":false,
+                        "error":{"code":if outage {"resume-preflight-unavailable"} else {"resume-source-live"},
+                            "details":{"session_created":false,"safe_to_retry":false}}}),
+                    )
+                } else {
+                    (200, preflight())
+                }
+            } else {
+                let mut result = json!({"schema_version":"agent-session.console-start.v1","machine":"target","session":{"id":"new-child"}});
+                if created {
+                    result["reconciliation"] = json!({"state":"created","safe_to_retry":false});
+                }
+                created = true;
+                (201, result)
+            };
+            let body = body.to_string();
+            write!(stream,"HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+            if stop {
+                break;
+            }
+            requests.push((path, request));
+        }
+        requests
+    });
+    (format!("http://{address}"), worker)
+}
+
+fn assert_console_replay(outage: bool) {
+    let f = Fixture::new();
+    let (url, worker) = operation_stub(outage);
+    let capability = seed_caller(&f, &url);
+    let operation = uuid::Uuid::now_v7().to_string();
+    let args = [
+        "--operation-id",
+        operation.as_str(),
+        "--prompt",
+        "fixture bootstrap",
+    ];
+    let first = run_console(&f, &capability, &args);
+    let second = run_console(&f, &capability, &args);
+    reqwest::blocking::Client::new()
+        .post(format!("{url}/stop"))
+        .bearer_auth(TOKEN)
+        .json(&json!({}))
+        .send()
+        .unwrap();
+    let requests = worker.join().unwrap();
+    assert_eq!(first.code, 0, "{}", first.stdout_text());
+    assert_eq!(
+        second.code,
+        0,
+        "replay must return the known child: {}",
+        second.stdout_text()
+    );
+    assert_eq!(first.stdout_json()["data"]["session"]["id"], "new-child");
+    assert_eq!(second.stdout_json()["data"]["session"]["id"], "new-child");
+    assert_eq!(
+        requests.len(),
+        2,
+        "CLI replay must not repeat provider admission"
+    );
+    for (path, request) in requests {
+        assert_eq!(path, "/sessions/source/console-resume/v1");
+        assert_eq!(request["operation_id"], operation);
+        assert_eq!(request["session"]["resume"], CONVERSATION);
+    }
+}
+
+#[test]
+fn console_replay_returns_created_child_when_the_conversation_is_now_live() {
+    assert_console_replay(false);
+}
+
+#[test]
+fn console_replay_returns_created_child_during_a_later_preflight_outage() {
+    assert_console_replay(true);
 }

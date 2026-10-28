@@ -554,6 +554,12 @@ fn cli_request(
         super::authenticate_token(context, &caller, &token)?;
         caller
     };
+    let resuming = session.get("resume").is_some();
+    let route = if resuming {
+        "console-resume"
+    } else {
+        "console-start"
+    };
     let mut url = remote::daemon_url(context).map_err(|_| {
         unavailable(
             "daemon_endpoint",
@@ -574,7 +580,7 @@ fn cli_request(
             )
         })?
         .pop_if_empty()
-        .extend(["sessions", caller.as_str(), "console-start", "v1"]);
+        .extend(["sessions", caller.as_str(), route, "v1"]);
     let requested_pinned = session["title_mode"] == "pinned";
     let requested_launch_env = crate::launch_env::from_json(session.get("launch_env"))?;
     let mut request = json!({ "session": session });
@@ -609,6 +615,9 @@ fn cli_request(
             )
         })?;
     let status = response.status();
+    if resuming && matches!(status.as_u16(), 404 | 405) {
+        return Err(crate::start_resume::refusal("resume-unsupported"));
+    }
     let body = read_json(response).ok_or_else(|| {
         unavailable(
             "daemon_response",

@@ -10,6 +10,9 @@
 
 - Resume checks must not produce operations or silently fall back to fresh
   conversations through older create parsers.
+- CLI replay reaches the retained operation receipt before provider admission;
+  a distinct origin resume route keeps older daemons from interpreting it as a
+  fresh start.
 
 ### Evidence
 

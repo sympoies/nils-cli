@@ -168,12 +168,20 @@ the session carries `agent`, `resume`, and optional `cwd`, `claude_account`,
 and target/conversation/account binding. No check creates an operation, writes
 an authentication audit, reads a prompt, or materializes credentials.
 
+Resumed CLI starts use `POST /sessions/{caller}/console-resume/v1` on the
+origin daemon. This distinct route refuses on older origins. It reaches the
+operation receipt before any provider preflight: replay returns the retained
+result even when the created conversation is now live or a later preflight is
+unavailable. First submissions still check the target through the read-only
+Console preflight before submitting a create, and target creation rechecks
+admission under the conversation and source guards.
+
 A Console start forwards `session.resume` and the resolved `claude_account`
 through ordinary owner, origin/workspace, lineage, work, role, title, provider
 arguments and prompt handling. The origin daemon retains its at-most-once
 operation receipt and checks the target before submission. Console must send
 resumed creates to **`POST /sessions/resume/v1`**, which performs final guarded
-admission through ordinary start. It must never send `resume` to legacy
+admission through ordinary start. It must never send `resume` to unversioned
 `POST /sessions`: an older daemon could ignore an unknown field. Unsupported
 origin, Console, or target capability refuses without a fresh-start fallback.
 Terminal admission refusals retain `session_created:false` and

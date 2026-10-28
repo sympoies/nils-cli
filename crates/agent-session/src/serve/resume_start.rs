@@ -7,6 +7,7 @@ pub(super) fn routes() -> Router<Arc<ServeState>> {
         .route("/resume-preflight/v1", post(target_check))
         .route("/sessions/{id}/resume-preflight/v1", post(relay_check))
         .route("/sessions/resume/v1", post(create))
+        .route("/sessions/{id}/console-resume/v1", post(console_create))
 }
 
 fn response(result: Result<Value, CliError>) -> Response {
@@ -120,4 +121,21 @@ async fn create(
     // start_resume owns the journal only after guarded final admission. In particular,
     // do not run the ordinary HTTP wrapper that records pre-engine create failures.
     super::create::create_handler_inner(State(state), headers, Json(body), origin).await
+}
+
+/// A capability-specific path lets a CLI replay reach the existing receipt
+/// before admission, without an older origin interpreting resume as fresh start.
+async fn console_create(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Response {
+    let Ok(Json(body)) = body else {
+        return envelope_err(refusal("resume-unsupported"));
+    };
+    if body["session"]["resume"].as_str().is_none() && body["reconcile"] != true {
+        return envelope_err(refusal("resume-unsupported"));
+    }
+    super::console_start_handler(State(state), headers, AxPath(id), Ok(Json(body))).await
 }

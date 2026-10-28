@@ -200,7 +200,7 @@ async fn console_resume_operation_replay_never_rechecks_or_resubmits_and_keeps_t
         for _ in 0..2 {
             let (_, result) = post(
                 router(st.clone()),
-                "/sessions/caller/console-start/v1",
+                "/sessions/caller/console-resume/v1",
                 Some(&token),
                 request.clone(),
             )
@@ -395,4 +395,21 @@ async fn console_preflight_binds_identity_and_target_without_operation_or_auth_w
         ]
     );
     assert_eq!(snapshot(temp.path()), before);
+}
+
+#[tokio::test]
+async fn console_resume_route_requires_a_resume_before_any_start_activity() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = temp.path().join("state");
+    let st = crate::serve::tests::state(&state, Some(TOKEN), PathBuf::from("/unavailable/tmux"));
+    let (_, result) = post(
+        router(st),
+        "/sessions/caller/console-resume/v1",
+        Some(TOKEN),
+        json!({"session":{"agent":"claude"}}),
+    )
+    .await;
+    assert_eq!(result["error"]["code"], "resume-unsupported");
+    assert_eq!(result["error"]["details"]["session_created"], false);
+    assert!(!state.exists());
 }

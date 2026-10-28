@@ -46,9 +46,7 @@ fn build_args(
     }
     let mut session = json!({ "agent": args.agent.as_str() });
     if args.resume.is_some() {
-        let data = crate::coordination::resume_preflight::check_args(context, &args)?;
         session["resume"] = json!(args.resume);
-        session["claude_account"] = data["account"].clone();
     }
     if args.resume.is_none() || args.cwd.is_some() {
         let cwd = crate::absolute_path(args.cwd.as_deref().unwrap_or(Path::new(".")))?;
