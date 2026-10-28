@@ -1,0 +1,15 @@
+{"sessionId":"compact-fixture","cwd":"/workspace/fixture","type":"user","uuid":"literal-1","version":"2.1.308","message":{"role":"user","content":"/compact keep focus"}}
+{"sessionId":"compact-fixture","type":"system","subtype":"compact_boundary","uuid":"boundary-1","version":"2.1.308"}
+{"sessionId":"compact-fixture","type":"user","uuid":"summary-1","version":"2.1.308","isCompactSummary":true,"isVisibleInTranscriptOnly":true,"message":{"role":"user","content":"Synthetic compact summary"}}
+{"sessionId":"compact-fixture","type":"user","uuid":"echo-1","version":"2.1.308","message":{"role":"user","content":"<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args>keep focus</command-args>"}}
+{"sessionId":"compact-fixture","type":"user","uuid":"stdout-1","version":"2.1.308","message":{"role":"user","content":"<local-command-stdout>Compacted</local-command-stdout>"}}
+{"sessionId":"compact-fixture","type":"user","uuid":"literal-2","version":"2.1.308","promptSource":"typed","message":{"role":"user","content":[{"type":"text","text":"/compact keep focus"}]}}
+{"sessionId":"compact-fixture","type":"system","subtype":"compact_boundary","uuid":"boundary-2","version":"2.1.308"}
+{"sessionId":"compact-fixture","type":"user","uuid":"summary-2","version":"2.1.308","isCompactSummary":true,"isVisibleInTranscriptOnly":true,"message":{"role":"user","content":"Synthetic second compact summary"}}
+{"sessionId":"compact-fixture","type":"user","uuid":"echo-2","version":"2.1.308","message":{"role":"user","content":"<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args>keep focus</command-args>"}}
+{"sessionId":"compact-fixture","type":"user","uuid":"stdout-2","version":"2.1.308","message":{"role":"user","content":"<local-command-stdout>Compacted</local-command-stdout>"}}
+{"sessionId":"compact-fixture","type":"user","uuid":"ordinary-1","version":"2.1.308","message":{"role":"user","content":"continue"}}
+{"sessionId":"compact-fixture","type":"user","uuid":"ordinary-2","version":"2.1.308","message":{"role":"user","content":"continue"}}
+{"sessionId":"compact-fixture","type":"user","uuid":"ordinary-3","version":"2.1.308","message":{"role":"user","content":"/compactness is an ordinary prompt"}}
+{"sessionId":"compact-fixture","type":"user","uuid":"other-literal","version":"2.1.308","message":{"role":"user","content":"/model"}}
+{"sessionId":"compact-fixture","type":"user","uuid":"other-echo","version":"2.1.308","message":{"role":"user","content":"<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args></command-args>"}}

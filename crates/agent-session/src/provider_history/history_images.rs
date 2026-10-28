@@ -8,6 +8,10 @@ pub(crate) mod messages;
 #[path = "history_parts.rs"]
 mod history_parts;
 
+#[cfg(test)]
+#[path = "compact_tests.rs"]
+mod compact_tests;
+
 #[path = "upload_references.rs"]
 mod upload_references;
 
@@ -492,6 +496,12 @@ pub(super) fn normalize_message(
             } else {
                 content_text(value.get("message")?.get("content")?)
             };
+            // Keep the command-markup echo for each compaction. Its literal
+            // input can carry arguments and promptSource, and is separated
+            // from the echo by the compact boundary and summary.
+            if role == "user" && text.split_whitespace().next() == Some("/compact") {
+                return None;
+            }
             let human_prompt = role == "user"
                 && parse_history_user_prompt(
                     provider,
