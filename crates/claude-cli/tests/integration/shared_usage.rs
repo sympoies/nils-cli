@@ -1,4 +1,6 @@
 use crate::support::*;
+#[path = "shared_usage/cached.rs"]
+mod cached;
 use nils_test_support::http::{HttpResponse, TestServer};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};

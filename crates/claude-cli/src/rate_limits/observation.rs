@@ -39,7 +39,7 @@ pub(super) fn failure_note(target: &Path, reason: Option<ProviderUsageReason>) -
 }
 
 pub(super) fn cached_one_line(target: &Path, name: &str) -> OneLineFetch {
-    let mut result = super::cached_one_line(name);
+    let mut result = super::cached_one_line(target, name);
     if read_target_login(target).is_ok_and(|login| client::backoff_active(&login.access_token)) {
         result.note = failure_note(target, Some(ProviderUsageReason::RateLimited));
         result.stale = true;
