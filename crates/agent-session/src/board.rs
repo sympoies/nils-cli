@@ -1071,7 +1071,10 @@ mod tests {
         let mut record = stored_session(&context, "retired");
         // Without a persisted tmux identity no exit is ever observed.
         record.extra.remove("delete_tmux_identity");
-        assert_eq!(crate::lifecycle::stopped_observed_at(&context, &record), None);
+        assert_eq!(
+            crate::lifecycle::stopped_observed_at(&context, &record),
+            None
+        );
         let before = jiff::Timestamp::now();
         let closed = closed_record(&context, &record, CloseReason::Deleted).expect("closed");
         let stamped: jiff::Timestamp = closed["last_terminal_activity_at"]
