@@ -161,16 +161,35 @@ fn body_digest(body: &str) -> String {
         .collect()
 }
 
-pub(crate) fn write_oauth_cache_file(path: &Path, body: &str, token: &str) -> Result<()> {
-    write_cache_file(path, body)?;
-    if let Some(epoch) =
-        super::client::fetched_at(token).and_then(|epoch| u64::try_from(epoch).ok())
-    {
-        std::fs::File::options().write(true).open(path)?.set_times(
-            std::fs::FileTimes::new()
-                .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(epoch)),
-        )?;
-    }
+pub(crate) fn write_oauth_cache_file(
+    path: &Path,
+    observation: &super::client::UsageObservation,
+    token: &str,
+) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let body = &observation.body;
+    let epoch =
+        u64::try_from(observation.fetched_at).context("invalid usage observation timestamp")?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let mut pending = tempfile::NamedTempFile::new_in(parent)?;
+    pending
+        .as_file()
+        .set_permissions(std::fs::Permissions::from_mode(shared_fs::SECRET_FILE_MODE))?;
+    pending.write_all(body.as_bytes())?;
+    pending.as_file().set_times(
+        std::fs::FileTimes::new().set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(epoch)),
+    )?;
+    pending.as_file().sync_all()?;
+    // Publish the body and its original age as one inode; another projection
+    // cannot replace the path between a body write and a later timestamp write.
+    pending.persist(path)?;
+    let _ = std::fs::File::open(parent).and_then(|dir| dir.sync_all());
     let owner = CacheOwner {
         token_key: backoff::token_key(token),
         body_digest: body_digest(body),
@@ -260,10 +279,79 @@ mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn repair_f2_projection_keeps_returned_body_age_after_reset_or_replacement() {
+        use super::super::{backoff, client};
+        use nils_test_support::{EnvGuard, GlobalStateLock};
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::tempdir().unwrap();
+        let _cache = EnvGuard::set(
+            &lock,
+            "CLAUDE_PROMPT_SEGMENT_CACHE_DIR",
+            tmp.path().to_str().unwrap(),
+        );
+        let _profiles = EnvGuard::set(&lock, "CLAUDE_SECRET_DIR", tmp.path().to_str().unwrap());
+        let _config = EnvGuard::set(&lock, "CLAUDE_CONFIG_DIR", tmp.path().to_str().unwrap());
+        let now = backoff::now_epoch();
+        let original_time = now - 30;
+        let path = tmp.path().join("usage.json");
+        let mut projected_times = Vec::new();
+        for replace in [false, true] {
+            let state = backoff::Backoff::acquire("fixture-alpha").unwrap();
+            state
+                .store_response(&client::UsageObservation {
+                    fetched_at: original_time as i64,
+                    body: "original body".to_string(),
+                })
+                .unwrap();
+            drop(state);
+            let returned = client::fetch_usage("fixture-alpha").unwrap();
+            // Deterministically complete a concurrent reset after the HTTP/cache
+            // read has returned, before the consumer projects that observation.
+            std::thread::spawn(move || {
+                client::invalidate_response("fixture-alpha");
+                if replace {
+                    let state = backoff::Backoff::acquire("fixture-alpha").unwrap();
+                    state
+                        .store_response(&client::UsageObservation {
+                            fetched_at: now as i64,
+                            body: "replacement body".to_string(),
+                        })
+                        .unwrap();
+                }
+            })
+            .join()
+            .unwrap();
+            super::write_oauth_cache_file(&path, &returned, "fixture-alpha").unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "original body");
+            let projected_time = std::fs::metadata(&path)
+                .unwrap()
+                .modified()
+                .unwrap()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            projected_times.push(projected_time);
+        }
+        assert_eq!(
+            projected_times,
+            vec![original_time, original_time],
+            "reset and replacement must preserve the original observation time"
+        );
+    }
+
+    #[test]
     fn oauth_cache_ownership_does_not_survive_payload_replacement() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("usage.json");
-        super::write_oauth_cache_file(&path, "first payload", "fixture-alpha").unwrap();
+        super::write_oauth_cache_file(
+            &path,
+            &super::super::client::UsageObservation {
+                fetched_at: 0,
+                body: "first payload".to_string(),
+            },
+            "fixture-alpha",
+        )
+        .unwrap();
         let alpha = super::backoff::token_key("fixture-alpha");
         assert!(super::matches_token_key(&path, "first payload", &alpha));
         assert!(!super::matches_token_key(

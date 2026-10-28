@@ -17,10 +17,10 @@ mod account;
 
 const FETCH_INTERVAL: u64 = 60;
 
-#[derive(Deserialize, Serialize)]
-struct Response {
-    fetched_at: u64,
-    body: String,
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct UsageObservation {
+    pub(crate) fetched_at: i64,
+    pub(crate) body: String,
 }
 
 const DEFAULT_DELAY: u64 = 300;
@@ -39,7 +39,9 @@ pub(crate) struct Backoff {
 
 impl Backoff {
     pub(crate) fn acquire(token: &str) -> std::io::Result<Self> {
-        let path = state_path(token).ok_or_else(|| std::io::Error::other("cache unavailable"))?;
+        let (account_key, aliases) = account::resolve(token);
+        let path = state_path_for_key(&account_key)
+            .ok_or_else(|| std::io::Error::other("cache unavailable"))?;
         let dir = path.parent().expect("state parent").to_path_buf();
         std::fs::create_dir_all(&dir)?;
         let lock = OpenOptions::new()
@@ -57,16 +59,20 @@ impl Backoff {
             return Err(std::io::Error::last_os_error());
         }
         let state = Self { _lock: lock, path };
-        let token_state_path = dir.join(format!("{}.json", token_key(token)));
-        if token_state_path != state.path
-            && let Ok(bytes) = std::fs::read(&token_state_path)
-            && let Ok(token_state) = serde_json::from_slice::<State>(&bytes)
-            && token_state.retry_at > now_epoch()
-            && token_state.retry_at > state.read().map(|state| state.retry_at).unwrap_or(0)
-        {
-            shared_fs::write_atomic(&state.path, &bytes, shared_fs::SECRET_FILE_MODE)
-                .map_err(|_| std::io::Error::other("backoff migration failed"))?;
-            let _ = std::fs::remove_file(token_state_path);
+        // Import all known aliases while the account lock is held, before the
+        // first reader of any alias can decide whether HTTP is eligible.
+        for token_key in aliases {
+            let token_state_path = dir.join(format!("{token_key}.json"));
+            if token_state_path != state.path
+                && let Ok(bytes) = std::fs::read(&token_state_path)
+                && let Ok(token_state) = serde_json::from_slice::<State>(&bytes)
+                && token_state.retry_at > now_epoch()
+                && token_state.retry_at > state.read().map(|state| state.retry_at).unwrap_or(0)
+            {
+                shared_fs::write_atomic(&state.path, &bytes, shared_fs::SECRET_FILE_MODE)
+                    .map_err(|_| std::io::Error::other("backoff migration failed"))?;
+                let _ = std::fs::remove_file(token_state_path);
+            }
         }
         Ok(state)
     }
@@ -94,20 +100,18 @@ impl Backoff {
         .map_err(|_| std::io::Error::other("backoff write failed"))
     }
 
-    pub(crate) fn cached_response(&self, now: u64) -> Option<String> {
+    pub(crate) fn cached_response(&self, now: u64) -> Option<UsageObservation> {
         let response = read_response(&self.path)?;
-        (response.fetched_at <= now && now - response.fetched_at < FETCH_INTERVAL)
-            .then_some(response.body)
+        let age = i64::try_from(now).ok()?.checked_sub(response.fetched_at)?;
+        (0..FETCH_INTERVAL as i64)
+            .contains(&age)
+            .then_some(response)
     }
 
-    pub(crate) fn store_response(&self, now: u64, body: &str) -> std::io::Result<()> {
-        let response = Response {
-            fetched_at: now,
-            body: body.to_string(),
-        };
+    pub(crate) fn store_response(&self, response: &UsageObservation) -> std::io::Result<()> {
         shared_fs::write_atomic(
             &self.path.with_extension("response"),
-            &serde_json::to_vec(&response)?,
+            &serde_json::to_vec(response)?,
             shared_fs::SECRET_FILE_MODE,
         )
         .map_err(|_| std::io::Error::other("usage cache write failed"))
@@ -129,27 +133,32 @@ pub(crate) fn token_key(token: &str) -> String {
 }
 
 fn state_path(token: &str) -> Option<PathBuf> {
+    state_path_for_key(&account::key(token))
+}
+
+fn state_path_for_key(key: &str) -> Option<PathBuf> {
     Some(
         cache::cache_dir()?
             .join("usage-backoff")
-            .join(format!("{}.json", account::key(token))),
+            .join(format!("{key}.json")),
     )
 }
 
-fn read_response(path: &std::path::Path) -> Option<Response> {
+fn read_response(path: &std::path::Path) -> Option<UsageObservation> {
     serde_json::from_slice(&std::fs::read(path.with_extension("response")).ok()?).ok()
 }
 
-pub(crate) fn cached_usage(token: &str) -> Option<(String, i64)> {
+pub(crate) fn cached_usage(token: &str) -> Option<UsageObservation> {
     let response = read_response(&state_path(token)?)?;
-    let fetched_at = i64::try_from(response.fetched_at).ok()?;
-    let age = i64::try_from(now_epoch()).ok()?.checked_sub(fetched_at)?;
+    let age = i64::try_from(now_epoch())
+        .ok()?
+        .checked_sub(response.fetched_at)?;
     nils_common::usage_cache_policy::classify_display_age_seconds(Some(age))
         .is_display_eligible()
-        .then_some((response.body, fetched_at))
+        .then_some(response)
 }
 
-pub(crate) fn fetched_at(token: &str) -> Option<u64> {
+pub(crate) fn fetched_at(token: &str) -> Option<i64> {
     read_response(&state_path(token)?).map(|response| response.fetched_at)
 }
 
@@ -277,10 +286,27 @@ mod tests {
         let state = Backoff::acquire("fixture-alpha").unwrap();
         assert!(state.active(retry_at - 1));
         assert!(!state.active(retry_at));
-        state.store_response(8200, "{}").unwrap();
-        assert_eq!(state.cached_response(8199), None);
-        assert_eq!(state.cached_response(8259).as_deref(), Some("{}"));
-        assert_eq!(state.cached_response(8260), None);
+        state
+            .store_response(&UsageObservation {
+                fetched_at: 8200,
+                body: "{}".to_string(),
+            })
+            .unwrap();
+        assert_eq!(
+            state.cached_response(8199).map(|response| response.body),
+            None
+        );
+        assert_eq!(
+            state
+                .cached_response(8259)
+                .map(|response| response.body)
+                .as_deref(),
+            Some("{}")
+        );
+        assert_eq!(
+            state.cached_response(8260).map(|response| response.body),
+            None
+        );
         state.clear().unwrap();
         drop(state);
         std::fs::write(&token_state, r#"{"retry_at":1,"delay_seconds":3600}"#).unwrap();

@@ -4,14 +4,14 @@ use crate::prompt_segment::client;
 
 pub(super) fn import_shared_cache(target: &Path, name: &str) {
     if let Ok(login) = read_target_login(target)
-        && let Some((body, fetched_at)) = client::cached_usage(&login.access_token)
-        && let Fetch::Windows { values, .. } = parse_usage_body(&body)
+        && let Some(body) = client::cached_usage(&login.access_token)
+        && let Fetch::Windows { values, .. } = parse_usage_body(&body.body)
     {
         write_cache(
             name,
             &values,
             Some(&crate::prompt_segment::token_key(&login.access_token)),
-            fetched_at,
+            body.fetched_at,
         );
     }
 }

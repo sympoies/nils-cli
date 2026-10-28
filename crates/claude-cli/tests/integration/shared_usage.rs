@@ -225,3 +225,66 @@ fn shared_usage_throttled_readers_reuse_one_snapshot_with_original_age() {
         assert_eq!(server.take_requests().len(), 2);
     }
 }
+
+#[test]
+fn repair_f1_alias_first_read_migrates_another_tokens_account_cooldown() {
+    use sha2::{Digest, Sha256};
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = profiles(tmp.path());
+    let state_dir = tmp.path().join("usage-backoff");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let token_key: String = Sha256::digest(b"fixture-alpha")
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let retry_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 7200;
+    std::fs::write(
+        state_dir.join(format!("{token_key}.json")),
+        json!({"retry_at": retry_at, "delay_seconds": 7200}).to_string(),
+    )
+    .unwrap();
+    let server = TestServer::new(|_| HttpResponse::new(200, BODY)).unwrap();
+    let options = base_options(tmp.path())
+        .with_env("CLAUDE_SECRET_DIR", &path_str(&dir))
+        .with_env("CLAUDE_AUTH_KEYCHAIN", "off")
+        .with_env("CLAUDE_RATE_LIMITS_CLAUDE_CODE_VERSION", "9.8.7")
+        .with_env("CLAUDE_PROMPT_SEGMENT_ACCESS_TOKEN", "fixture-alias")
+        .with_env(
+            "CLAUDE_PROMPT_SEGMENT_ENDPOINT",
+            &format!("{}/usage", server.url()),
+        );
+    let alias = run(&["diag", "rate-limits", "alias", "--json"], &options);
+    assert_eq!(alias.stdout_json()["result"]["reason_code"], "rate_limited");
+    assert!(
+        server.take_requests().is_empty(),
+        "alias must inherit alpha's existing server cooldown before its first HTTP read"
+    );
+    assert_exit(&run(&["usage", "--source", "oauth"], &options), 0);
+    assert_exit(&run(&["prompt-segment", "--refresh"], &options), 0);
+    assert!(server.take_requests().is_empty());
+    let states: Vec<Value> = std::fs::read_dir(&state_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .map(|path| serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap())
+        .collect();
+    assert!(
+        states.iter().any(|state| state["retry_at"] == retry_at),
+        "migration must not shorten the server deadline"
+    );
+    assert_exit(
+        &run(&["diag", "rate-limits", "beta", "--json"], &options),
+        0,
+    );
+    let unknown = options.with_env("CLAUDE_PROMPT_SEGMENT_ACCESS_TOKEN", "fixture-unknown");
+    assert_exit(&run(&["usage", "--source", "oauth"], &unknown), 0);
+    assert_eq!(
+        server.take_requests().len(),
+        2,
+        "another account and an unknown token remain independent"
+    );
+}

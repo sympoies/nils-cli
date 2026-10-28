@@ -217,7 +217,7 @@ fn redeem(options: &ResetOptions) -> Result<Option<ResetResult>, Failure> {
     let base_url = api_base_url()?;
     let body =
         status::request_status(&login.access_token).map_err(|failure| request_failure(&failure))?;
-    let value: Value = serde_json::from_str(&body).map_err(|_| invalid_response())?;
+    let value: Value = serde_json::from_str(&body.body).map_err(|_| invalid_response())?;
     if !value.is_object() {
         return Err(invalid_response());
     }

@@ -696,7 +696,7 @@ fn fetch(target: &Path) -> Fetch {
             };
         }
     };
-    let mut result = parse_usage_body(&body);
+    let mut result = parse_usage_body(&body.body);
     if let Fetch::Windows {
         owner_key,
         fetched_at,
@@ -704,8 +704,7 @@ fn fetch(target: &Path) -> Fetch {
     } = &mut result
     {
         *owner_key = Some(crate::prompt_segment::token_key(&login.access_token));
-        *fetched_at = crate::prompt_segment::client::fetched_at(&login.access_token)
-            .unwrap_or_else(now_epoch);
+        *fetched_at = body.fetched_at;
     }
     result
 }
