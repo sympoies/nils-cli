@@ -36,11 +36,11 @@ fn response(result: Result<Value, CliError>) -> Response {
 }
 
 async fn target_check(
-    State(state): State<Arc<ServeState>>,
+    state: State<Arc<ServeState>>,
     headers: HeaderMap,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Response {
-    if let Some(response) = deny_unauthorized(&state, &headers) {
+    if let Some(response) = deny_unauthorized(&state.0, &headers) {
         return response;
     }
     let request: Request = match body
@@ -50,8 +50,12 @@ async fn target_check(
         Some(request) => request,
         None => return response(Err(refusal("resume-unsupported"))),
     };
+    // Keep the State.0 projection outside closure capture for dataflow analysis.
+    let context = state.0.context.clone();
+    let tmux = state.0.tmux_bin.clone();
+    let machine = state.0.machine.clone();
     match tokio::task::spawn_blocking(move || {
-        crate::start_resume::preflight(&state.context, &request, &state.tmux_bin, &state.machine)
+        crate::start_resume::preflight(&context, &request, &tmux, &machine)
     })
     .await
     {
@@ -61,7 +65,7 @@ async fn target_check(
 }
 
 async fn relay_check(
-    State(state): State<Arc<ServeState>>,
+    state: State<Arc<ServeState>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
     body: Result<Json<Value>, JsonRejection>,
@@ -73,10 +77,12 @@ async fn relay_check(
     let Ok(Json(body)) = body else {
         return response(Err(refusal("resume-unsupported")));
     };
+    let context = state.0.context.clone();
+    let federation = state.0.federation.clone();
     match tokio::task::spawn_blocking(move || {
         crate::coordination::resume_preflight::relay_route(
-            &state.context,
-            state.federation.as_ref(),
+            &context,
+            federation.as_ref(),
             &id,
             &token,
             &body,

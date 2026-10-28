@@ -31,6 +31,8 @@
   reproducing an unintended launch when a switch was queued after preflight;
   omitted-account refusal preserves source state, while an explicit selection
   still launches once and replays its receipt without another upstream request.
+- Read daemon fields through `State.0` before closure capture to preserve the
+  static-analysis source boundary without changing HTTP admission behavior.
 - Real-provider recall and deployed Console role acceptance remain a separate
   gate after the matching Console relay is available.
 
