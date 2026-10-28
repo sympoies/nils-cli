@@ -9,7 +9,9 @@ without becoming human text evidence for retitling.
 
 Supported source forms are Codex `input_image` / `output_image` content blocks,
 Claude `image` blocks (base64, URL or file source), nested tool-result images,
-and Markdown image references in visible message text. Codex user `input_text`
+and Markdown image references in visible message text. Image-bearing Claude tool-result
+rows and Codex tool-output rows use the `assistant` role, including in incremental
+history; they are not human prompt evidence. Codex user `input_text`
 also recognizes single- or double-quoted absolute paths to raster images in the
 same managed session's upload directory. These upload references become ordered
 image parts, leaving the surrounding caption text visible. Other quoted paths
@@ -67,6 +69,11 @@ matching archive original session id is also deleted (404).
 Malformed ids, remote URLs, unsupported data, excessive size, forbidden paths,
 symlinks and unreadable/invalid images are unavailable. Infrastructure failures
 remain ordinary server errors; clients can show unavailable and allow retry.
+For a local file outside both allowed roots, the 422 envelope retains
+`history-image-unavailable` and adds `error.reason: "outside-allowed-roots"` with
+a message explaining the working-directory/owned-attachment boundary. It does not
+include the refused path. Consumers can display this reason with the image
+basename from the original Markdown instead of an unexplained placeholder.
 These states are observations at read time, not promises of permanent storage.
 
 ## File boundary and retention

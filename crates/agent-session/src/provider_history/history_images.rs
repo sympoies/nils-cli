@@ -444,6 +444,13 @@ pub(super) fn normalize_message(
                 return None;
             }
             let payload = value.get("payload")?;
+            if matches!(
+                payload.get("type").and_then(Value::as_str),
+                Some("function_call_output" | "custom_tool_call_output" | "mcp_tool_result")
+            ) && !image_sources(value).is_empty()
+            {
+                return Some(("assistant".to_string(), String::new(), timestamp, false));
+            }
             if payload.get("type").and_then(Value::as_str) != Some("message") {
                 return None;
             }
@@ -517,6 +524,23 @@ pub(super) fn normalize_message(
             } else {
                 text
             };
+            // Claude stores tool output in user envelopes. Keep real prompts
+            // on the user side, but attribute image-only tool output to the agent.
+            let role = if role == "user"
+                && !human_prompt
+                && value
+                    .pointer("/message/content")
+                    .and_then(Value::as_array)
+                    .is_some_and(|blocks| {
+                        !blocks.is_empty()
+                            && blocks.iter().all(|block| {
+                                block.get("type").and_then(Value::as_str) == Some("tool_result")
+                            })
+                    }) {
+                "assistant"
+            } else {
+                role
+            };
             Some((role.to_string(), text, timestamp, human_prompt))
         }
         _ => None,
@@ -561,6 +585,14 @@ fn image_sources(value: &Value) -> Vec<ImageSource<'_>> {
     let mut sources = Vec::new();
     let content = value
         .pointer("/payload/content")
+        .or_else(|| {
+            matches!(
+                value.pointer("/payload/type").and_then(Value::as_str),
+                Some("function_call_output" | "custom_tool_call_output" | "mcp_tool_result")
+            )
+            .then(|| value.pointer("/payload/output"))
+            .flatten()
+        })
         .or_else(|| value.pointer("/message/content"))
         .or_else(|| claude_queued_prompt_blocks(value));
     if let Some(content) = content {
@@ -713,6 +745,7 @@ fn read_image_line<R: BufRead>(
 pub(crate) enum ImageReadError {
     Deleted,
     Unavailable,
+    OutsideAllowedRoots,
 }
 pub(crate) struct ImageBytes {
     pub(crate) mime: &'static str,
@@ -839,7 +872,11 @@ impl HistoryCatalog {
         let (root, relative) = if let Ok(relative) = path.strip_prefix(cwd) {
             (cwd.to_path_buf(), relative.to_path_buf())
         } else {
-            self.attachment_root(session, &path)?
+            self.attachment_root(session, &path)
+                .map_err(|error| match error {
+                    ImageReadError::Unavailable => ImageReadError::OutsideAllowedRoots,
+                    error => error,
+                })?
         };
         let extension = path
             .extension()
