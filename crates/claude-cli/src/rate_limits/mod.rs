@@ -11,6 +11,7 @@
 //! and cache-fallback results omit it.
 
 mod cache;
+mod cached;
 mod observation;
 pub(crate) mod status;
 
@@ -313,7 +314,7 @@ impl RateLimitsProvider for ClaudeRateLimits {
     ) -> ResetEpochs {
         let name = target_name(target);
         let entry = if cached {
-            cache::read_for_cached_mode(&name, now_epoch()).ok()
+            cached::read(target, &name).ok()
         } else {
             cache::read_allow_stale_owned(&name, &active_owner_key(target), now_epoch())
                 .ok()
@@ -393,7 +394,7 @@ fn run_single(
     };
 
     if cached {
-        return match cache::read_for_cached_mode(&target_name(&target), now_epoch()) {
+        return match cached::read(&target, &target_name(&target)) {
             Ok(entry) => {
                 if let Some(line) =
                     shared_values::one_line_from_cache(&entry, format_local_datetime)
@@ -477,6 +478,7 @@ fn json_result(
     let identity = provider.identity(target);
     let name = identity.name.clone();
     if cached {
+        observation::import_shared_cache(target, &name);
         let mut result = from_cache(identity, "cache", &name, true);
         if read_target_login(target)
             .is_ok_and(|login| crate::prompt_segment::client::backoff_active(&login.access_token))
@@ -610,8 +612,8 @@ fn window_minutes(label: &str) -> Option<i64> {
     }
 }
 
-fn cached_one_line(name: &str) -> OneLineFetch {
-    match cache::read_for_cached_mode(name, now_epoch()) {
+fn cached_one_line(target: &Path, name: &str) -> OneLineFetch {
+    match cached::read(target, name) {
         Ok(entry) => OneLineFetch {
             line: shared_values::one_line_from_cache(&entry, format_local_datetime),
             ..Default::default()

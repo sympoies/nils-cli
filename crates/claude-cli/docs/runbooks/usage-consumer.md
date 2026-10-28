@@ -57,6 +57,12 @@ show the throttle deadline and cache age, including the age of a snapshot too
 old to display. With no recorded default, the table highlights the stored
 profile matching the active login's token.
 
+Explicit offline diagnostic reads (`diag rate-limits --cached`, including
+`--async --cached --format json`) can import an eligible shared observation
+for a stored account alias even before that alias has a diagnostic cache.
+The import makes no request and retains the original observation time, token
+ownership, cached-mode TTL, and display-age ceiling.
+
 ## Follow-up: cross-host authority
 
 Each host still fetches independently. A configured authority could publish
