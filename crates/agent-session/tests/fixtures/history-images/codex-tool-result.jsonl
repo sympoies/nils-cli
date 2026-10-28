@@ -1,0 +1,1 @@
+{"type":"response_item","timestamp":"2026-10-01T00:00:01Z","payload":{"type":"function_call_output","call_id":"read-image","output":[{"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgo="}]}}

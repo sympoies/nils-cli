@@ -77,6 +77,13 @@ async fn image_handler(
         Ok(Err(provider_history::history_images::ImageReadError::Unavailable)) => (
             StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"ok":false,"error":{"code":"history-image-unavailable","message":"Image unavailable"}}))
         ).into_response(),
+        Ok(Err(provider_history::history_images::ImageReadError::OutsideAllowedRoots)) => (
+            StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"ok":false,"error":{
+                "code":"history-image-unavailable",
+                "reason":"outside-allowed-roots",
+                "message":"Image is outside the recorded working directory and owned attachments"
+            }}))
+        ).into_response(),
         Err(_) => join_err(),
     };
     response
@@ -100,3 +107,7 @@ pub(super) enum HistoryPartsVersion {
 #[cfg(test)]
 #[path = "uploaded_image_tests.rs"]
 mod uploaded_image_tests;
+
+#[cfg(test)]
+#[path = "history_image_regression_tests.rs"]
+mod history_image_regression_tests;

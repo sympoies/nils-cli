@@ -1,0 +1,1 @@
+{"sessionId":"image-fixture","version":"2.1.308","type":"assistant","timestamp":"2026-10-01T00:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"![preview](preview.png)\n![artifact](__OUTSIDE_IMAGE__)"}]}}
