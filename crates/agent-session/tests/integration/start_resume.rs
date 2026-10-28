@@ -224,6 +224,39 @@ fn preflight_resolves_original_account_root_without_prompt_or_state_writes() {
 }
 
 #[test]
+fn pending_switch_preflight_requires_an_explicit_account_without_settling_it() {
+    let f = Fixture::new();
+    for state in ["queued", "failed"] {
+        let mut source: Value =
+            serde_json::from_slice(&fs::read(f.record_path("source")).unwrap()).unwrap();
+        source["claude_account_next"] = json!({
+            "schema_version":"agent-session.claude-account-next.v1",
+            "account":"other", "revision":2, "state":state,
+            "updated_at":"2026-01-01T00:00:00Z"
+        });
+        if state == "failed" {
+            source["claude_account_next"]["failure_reason"] = json!("launch-failed");
+        }
+        fs::write(f.record_path("source"), source.to_string()).unwrap();
+        let before = fs::read(f.record_path("source")).unwrap();
+        assert_eq!(
+            f.run(&["--check-resume"]).stdout_json()["error"]["code"],
+            "resume-account-transition-pending"
+        );
+        assert_eq!(
+            f.run(&["--check-resume", "--account", "other"])
+                .stdout_json()["error"]["code"],
+            "resume-account-mismatch"
+        );
+        let out = f.run(&["--check-resume", "--account", "original"]);
+        assert_eq!(out.code, 0, "{}", out.stdout_text());
+        assert_eq!(out.stdout_json()["data"]["account"], "original");
+        assert_eq!(fs::read(f.record_path("source")).unwrap(), before);
+        assert_eq!(fs::read_dir(f.state.join("sessions")).unwrap().count(), 1);
+    }
+}
+
+#[test]
 fn all_sources_account_cwd_history_and_liveness_are_admission_guards() {
     let f = Fixture::new();
     assert_eq!(
