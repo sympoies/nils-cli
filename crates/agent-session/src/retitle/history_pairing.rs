@@ -7,6 +7,7 @@ pub(super) fn pair_turns(messages: Vec<HistoryMessage>) -> Vec<TitleContextTurn>
         match message.role.as_str() {
             // Image-only tool results add no text evidence or turn boundary.
             "user" if !message.human_prompt && message.text.trim().is_empty() => {}
+            "assistant" if !message.images.is_empty() && message.text.trim().is_empty() => {}
             "user" if !message.human_prompt => assistant_allowed = false,
             "user" => {
                 let prompt = filter_text(&message.text);
