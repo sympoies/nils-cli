@@ -6,9 +6,6 @@ pub(super) fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
     if args.check_resume {
         return run_check(context, &args);
     }
-    if args.resume.is_some() && args.via_console {
-        return render_error(START_COMMAND, format, refusal("resume-unsupported"));
-    }
     if args.account.is_some() && args.resume.is_none() && !args.via_console {
         return render_error(START_COMMAND, format, refusal("resume-unsupported"));
     }
@@ -51,14 +48,16 @@ pub(super) fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
         if let Err(err) = lineage::require_root_for_role(args.role.as_deref(), !args.no_parent) {
             return render_error(CONSOLE_START_COMMAND, format, err);
         }
+        let command = if args.resume.is_some() {
+            START_COMMAND
+        } else {
+            CONSOLE_START_COMMAND
+        };
         return match start_via_console(context, args, &work) {
-            Ok(result) => render_single_success(
-                CONSOLE_START_COMMAND,
-                format,
-                &result,
-                render_console_started_text,
-            ),
-            Err(err) => render_error(CONSOLE_START_COMMAND, format, err),
+            Ok(result) => {
+                render_single_success(command, format, &result, render_console_started_text)
+            }
+            Err(err) => render_error(command, format, err),
         };
     }
     let (mut initial_lineage, warning) =
@@ -140,22 +139,53 @@ struct Admission {
     _sources: Vec<fs::File>,
 }
 
-fn validate_request(args: &cli::StartArgs) -> Result<&str, CliError> {
-    let id = args
-        .resume
-        .as_deref()
-        .ok_or_else(|| refusal("resume-unsupported"))?;
-    if args.via_console
-        || args.agent_profile.is_some()
-        || args.initial_agent_profile.is_some()
-        || args.agent != AgentKind::Claude
-        || uuid::Uuid::parse_str(id).is_err()
-        || uuid::Uuid::parse_str(id).is_ok_and(|v| v.to_string() != id)
-    {
-        return Err(refusal("resume-unsupported"));
+/// The deliberately small, prompt-free read-only transport contract.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Request {
+    pub agent: String,
+    pub resume: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "claude_account"
+    )]
+    pub account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_args: Vec<String>,
+}
+
+impl Request {
+    pub(crate) fn from_args(args: &cli::StartArgs) -> Self {
+        Self {
+            agent: args.agent.as_str().into(),
+            resume: args.resume.clone().unwrap_or_default(),
+            cwd: args.cwd.clone(),
+            account: args.account.clone(),
+            agent_profile: args
+                .agent_profile
+                .clone()
+                .or(args.initial_agent_profile.clone()),
+            agent_args: args.agent_args.clone(),
+        }
     }
-    validate_agent_args(args.agent, &args.agent_args).map_err(|_| refusal("resume-unsupported"))?;
-    Ok(id)
+    pub(crate) fn validate(&self) -> Result<AgentKind, CliError> {
+        let agent =
+            AgentKind::from_name(&self.agent).ok_or_else(|| refusal("resume-unsupported"))?;
+        if self.agent_profile.is_some()
+            || agent != AgentKind::Claude
+            || uuid::Uuid::parse_str(&self.resume).is_err()
+            || uuid::Uuid::parse_str(&self.resume).is_ok_and(|id| id.to_string() != self.resume)
+        {
+            return Err(refusal("resume-unsupported"));
+        }
+        validate_agent_args(agent, &self.agent_args).map_err(|_| refusal("resume-unsupported"))?;
+        Ok(agent)
+    }
 }
 
 fn lock_source(context: &CliContext, id: &str) -> Result<fs::File, CliError> {
@@ -316,12 +346,19 @@ pub(super) fn guard_other_writers(
     Ok(locks)
 }
 
-fn admit(context: &CliContext, args: &cli::StartArgs) -> Result<Admission, CliError> {
-    let id = validate_request(args)?;
-    let (matching, sources) = matching_sources(context, args.agent, id, None)?;
+fn admit(
+    context: &CliContext,
+    args: &Request,
+    tmux: &Path,
+    account_explicit: bool,
+) -> Result<Admission, CliError> {
+    let agent = args.validate()?;
+    let id = &args.resume;
+    let (matching, sources) = matching_sources(context, agent, id, None)?;
     let mut history_scope = None;
     let mut original = if matching.is_empty() {
-        match args.account.as_deref() {
+        // An execution-account pin is not original deleted-source authority.
+        match args.account.as_deref().filter(|_| account_explicit) {
             Some(account) => {
                 let resolved = claude_account::history::root(account)?;
                 history_scope = Some(resolved.history_scope);
@@ -349,8 +386,7 @@ fn admit(context: &CliContext, args: &cli::StartArgs) -> Result<Admission, CliEr
             }
             None => {
                 // Host-login history alone is never account authority.
-                resolve_provider_resume_source(args.agent, id, None, None)
-                    .map_err(history_error)?;
+                resolve_provider_resume_source(agent, id, None, None).map_err(history_error)?;
                 return Err(refusal("resume-source-unknown"));
             }
         }
@@ -358,7 +394,7 @@ fn admit(context: &CliContext, args: &cli::StartArgs) -> Result<Admission, CliEr
         None
     };
     for record in &matching {
-        let account = source_account(record, args.account.as_deref())?;
+        let account = source_account(record, args.account.as_deref().filter(|_| account_explicit))?;
         if args.account.as_ref().is_some_and(|a| a != &account.0) {
             return Err(refusal("resume-account-mismatch"));
         }
@@ -375,7 +411,7 @@ fn admit(context: &CliContext, args: &cli::StartArgs) -> Result<Admission, CliEr
     if account.is_empty() {
         return Err(refusal("resume-source-unknown"));
     }
-    let source = resolve_provider_resume_source(args.agent, id, Some(&config_dir), None)
+    let source = resolve_provider_resume_source(agent, id, Some(&config_dir), None)
         .map_err(history_error)?;
     let cwd = resolve_cwd(Some(&source.cwd)).map_err(|_| refusal("resume-unsupported"))?;
     if let Some(requested) = args.cwd.as_deref() {
@@ -395,9 +431,8 @@ fn admit(context: &CliContext, args: &cli::StartArgs) -> Result<Admission, CliEr
             return Err(refusal("resume-account-mismatch"));
         }
     }
-    let tmux = resolve_tmux_bin(args.tmux_bin.as_deref());
     for record in &matching {
-        prove_stopped(context, record, &tmux)?;
+        prove_stopped(context, record, tmux)?;
     }
     let history_scope = match history_scope {
         Some(scope) => scope,
@@ -429,24 +464,39 @@ pub(super) fn history_error(error: CliError) -> CliError {
     })
 }
 
-fn run_check(context: &CliContext, args: &cli::StartArgs) -> i32 {
+pub(crate) const PREFLIGHT_SCHEMA: &str = "cli.agent-session.resume-preflight.v1";
+
+pub(crate) fn preflight(
+    context: &CliContext,
+    request: &Request,
+    tmux: &Path,
+    machine: &str,
+) -> Result<Value, CliError> {
     account_broker::adopt_serve_brokers(&context.state_dir);
-    match admit(context, args) {
-        Ok(admitted) => render_single_success(
-            CHECK_COMMAND,
-            args.format,
-            &json!({
-                "agent":args.agent.as_str(), "provider_session_id":args.resume,
-                "machine":board::machine_identity(None, context), "account":admitted.account,
-                "history_scope":admitted.history_scope,
-            }),
-            |value| {
-                format!(
-                    "resume available for {} on {}\n",
-                    value["agent"], value["machine"]
-                )
-            },
-        ),
+    let admitted = admit(context, request, tmux, true)?;
+    Ok(
+        json!({"agent":request.agent,"provider_session_id":request.resume,"machine":machine,"account":admitted.account,"history_scope":admitted.history_scope}),
+    )
+}
+
+fn run_check(context: &CliContext, args: &cli::StartArgs) -> i32 {
+    let result = if args.via_console {
+        coordination::resume_preflight::check_args(context, args)
+    } else {
+        preflight(
+            context,
+            &Request::from_args(args),
+            &resolve_tmux_bin(args.tmux_bin.as_deref()),
+            &board::machine_identity(None, context),
+        )
+    };
+    match result {
+        Ok(data) => render_single_success(CHECK_COMMAND, args.format, &data, |value| {
+            format!(
+                "resume available for {} on {}\n",
+                value["agent"], value["machine"]
+            )
+        }),
         Err(error) => render_error(CHECK_COMMAND, args.format, error),
     }
 }
@@ -454,9 +504,12 @@ fn run_check(context: &CliContext, args: &cli::StartArgs) -> i32 {
 pub(super) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<StartView, CliError> {
     account_broker::adopt_serve_brokers(&context.state_dir);
     // An observational pass happens before any lock/store/operation creation.
-    // It is not authorization: the second pass holds every source lock until
-    // ordinary start has persisted/launched the new managed record.
-    drop(admit(context, &args)?);
+    // It is not authorization: guarded admission is repeated after preparation
+    // and holds every final source lock through ordinary persistence/launch.
+    let mut request = Request::from_args(&args);
+    let tmux = resolve_tmux_bin(args.tmux_bin.as_deref());
+    let account_explicit = args.initial_resume_account_explicit.unwrap_or(true);
+    drop(admit(context, &request, &tmux, account_explicit)?);
     let _conversation = conversation_lock(context, args.agent, args.resume.as_deref().unwrap())
         .map_err(|error| {
             refusal(if error.code() == "coordination-lock-timeout" {
@@ -465,9 +518,10 @@ pub(super) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
                 "resume-source-unknown"
             })
         })?;
-    let admitted = admit(context, &args)?;
+    let admitted = admit(context, &request, &tmux, account_explicit)?;
     let selected_account = admitted.account.clone();
     args.cwd = Some(admitted.cwd.clone());
+    request.cwd = args.cwd.clone();
     let prepared = claude_account::materialize(&selected_account)
         .map_err(|_| refusal("resume-account-mismatch"))?;
     if prepared != admitted.config_dir {
@@ -479,7 +533,7 @@ pub(super) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
     drop(admitted);
     // Keep the original account request here: a resolved account is not
     // explicit consent to cancel an intent that appeared during preparation.
-    let admitted = admit(context, &args)?;
+    let admitted = admit(context, &request, &tmux, account_explicit)?;
     if admitted.account != selected_account || prepared != admitted.config_dir {
         return Err(refusal("resume-account-mismatch"));
     }

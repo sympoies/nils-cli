@@ -491,5 +491,7 @@ fn held_conversation_lock_is_a_terminal_precreate_refusal() {
     assert_eq!(fs::read(f.record_path("source")).unwrap(), before);
 }
 
+#[path = "start_resume_console.rs"]
+mod console;
 #[path = "start_resume/deleted_source.rs"]
 mod deleted_source;

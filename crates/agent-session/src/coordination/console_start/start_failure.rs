@@ -13,6 +13,9 @@ fn identifier(value: &Value) -> Option<&str> {
 }
 
 pub(super) fn forward(error: &Value) -> Option<CliError> {
+    if let Some(error) = crate::coordination::resume_preflight::forward_refusal(error) {
+        return Some(error);
+    }
     if error["code"] == "session-capacity-exceeded" {
         return crate::admission::forward_refusal(error);
     }

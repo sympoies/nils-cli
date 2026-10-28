@@ -9,7 +9,7 @@ pub(super) fn resume_tmux(dir: &Path, log: &Path) -> PathBuf {
     )
 }
 
-pub(super) fn live_resume_tmux(dir: &Path, log: &Path) -> PathBuf {
+pub(in crate::serve) fn live_resume_tmux(dir: &Path, log: &Path) -> PathBuf {
     fixture_tmux(
         dir,
         log,
