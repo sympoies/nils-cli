@@ -326,6 +326,13 @@ pub(crate) fn prepare_launch(record: &mut SessionRecord) -> Result<(), CliError>
         Decoded::Valid(next) => Some(next),
         Decoded::Invalid => return Err(invalid_binding_error(record)),
     };
+    let prepared_next = if next.is_some() {
+        // Failed intents are still retryable, but an earlier pre-stop check
+        // is not authority to launch with credentials that have since changed.
+        prepare_next_credentials(record)?
+    } else {
+        None
+    };
     if broker_argv()?.is_none() {
         return Err(unsupported_error());
     }
@@ -344,7 +351,10 @@ pub(crate) fn prepare_launch(record: &mut SessionRecord) -> Result<(), CliError>
         ),
         (None, None) => return Ok(()),
     };
-    let config_dir = materialize(&account)?;
+    let config_dir = match prepared_next {
+        Some(config_dir) => config_dir,
+        None => materialize(&account)?,
+    };
     record.extra.remove(NEXT_KEY);
     store_binding(
         record,
@@ -524,21 +534,54 @@ pub(crate) fn queued_next_account(record: &SessionRecord) -> Option<String> {
     }
 }
 
+/// An explicit selection of the bound account abandons a pending transition.
+/// Callers must prove the source stopped and hold its record lock before
+/// persisting the result; observational preflight uses only a cloned record.
+pub(crate) fn abandon_next_for_resume(record: &mut SessionRecord) -> Result<bool, CliError> {
+    match decode_next(record) {
+        Decoded::Absent => return Ok(false),
+        Decoded::Invalid => return Err(invalid_binding_error(record)),
+        Decoded::Valid(_) => {}
+    }
+    if config_dir_for_runtime(record).is_none() {
+        return Err(invalid_binding_error(record));
+    }
+    record.extra.remove(NEXT_KEY);
+    Ok(true)
+}
+
 /// Materializes the queued next account before a running session is stopped
 /// for it, so a broker refusal or an unsafe directory never costs the user a
 /// running session. The refusal is typed and carries the broker's code.
 pub(crate) fn preflight_next(record: &SessionRecord) -> Result<(), CliError> {
+    prepare_next_credentials(record).map(|_| ())
+}
+
+/// Reuse this directory at launch rather than materializing credentials
+/// again after verifying their publication evidence.
+fn prepare_next_credentials(record: &SessionRecord) -> Result<Option<PathBuf>, CliError> {
     let Decoded::Valid(next) = decode_next(record) else {
-        return Ok(());
+        return Ok(None);
     };
-    materialize(&next.account).map(|_| ()).map_err(|error| {
+    let prepare = || {
+        let config_dir = materialize(&next.account)?;
+        if generation::published(&next.account)?.is_none() {
+            return Err(CliError::data(
+                "claude-account-credentials-unverified",
+                "the next Claude account has no verified credential publication",
+                None,
+            ));
+        }
+        Ok(Some(config_dir))
+    };
+    prepare().map_err(|error| {
         let mut details = json!({ "id": record.id, "cause": error.code() });
         if let Some(reason) = error.details().and_then(|value| value.get("reason")) {
             details["reason"] = reason.clone();
         }
         CliError::data(
             "claude-account-switch-refused",
-            "the next Claude account could not be prepared; the running session was left unchanged",
+            "the next Claude account could not be prepared; no replacement runtime was launched",
             Some(details),
         )
     })

@@ -1,6 +1,260 @@
 use super::*;
 use pretty_assertions::{assert_eq, assert_ne};
 
+pub(super) fn verified_broker(root: &Path, broker: &Path) -> String {
+    for account in ["alpha", "beta"] {
+        let mut value = crate::claude_account::generation::tests::envelope(1);
+        value["account"] = json!(account);
+        fs::write(
+            root.join(format!("{account}-publication.json")),
+            value.to_string(),
+        )
+        .unwrap();
+    }
+    let wrapper = executable(
+        &root.join("verified-broker"),
+        &format!(
+            r#"#!/bin/sh
+case "$1" in
+list) {broker} "$@" | sed 's/"accounts":/"capabilities":["credential_state_v1"],"accounts":/' ;;
+credential-state) cat {root}/"$5-publication.json" ;;
+materialize) if [ -f {root}/busy-snapshot.json ]; then cp {root}/busy-snapshot.json {root}/sessions/idle-switch/activity.json; fi; exec {broker} "$@" ;;
+*) exec {broker} "$@" ;;
+esac
+"#,
+            broker = shell_words::quote(&broker.to_string_lossy()),
+            root = shell_words::quote(&root.to_string_lossy())
+        ),
+    );
+    json!([wrapper]).to_string()
+}
+
+#[test]
+fn failed_claude_switch_then_new_resume_explicitly_abandons_pending_account() {
+    use clap::Parser;
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let broker = claude_broker_fixture(&lock, tmp.path());
+    let context = CliContext {
+        state_dir: tmp.path().into(),
+        host: None,
+    };
+    seed_bound_claude_session(tmp.path(), "switch-source", tmp.path(), "alpha");
+    let conversation = "00000000-0000-4000-8000-000000000007";
+    let mut record = load_session_record(&context, "switch-source").unwrap();
+    let provider = record.provider_resume.as_mut().unwrap();
+    provider.session_id = conversation.into();
+    provider.resume_args = vec!["--resume".into(), conversation.into()];
+    crate::claude_account::bind_initial(&mut record, "alpha", "explicit").unwrap();
+    crate::claude_account::queue_next(&mut record, "beta").unwrap();
+    crate::write_session_record(&context, &record).unwrap();
+    let history = broker.config_dir("alpha").join("projects/project");
+    fs::create_dir_all(&history).unwrap();
+    fs::write(
+        history.join(format!("{conversation}.jsonl")),
+        format!(
+            "{}\n",
+            json!({"sessionId":conversation,"cwd":tmp.path(),"type":"user"})
+        ),
+    )
+    .unwrap();
+    let failing_tmux = executable(
+        &tmp.path().join("failing-tmux"),
+        "#!/bin/sh\ncase \"$1\" in has-session) echo \"can't find session: fixture\" >&2; exit 1;; new-session) exit 1;; *) exit 0;; esac\n",
+    );
+    let source_lock = crate::acquire_session_record_lock(&context, &record.id).unwrap();
+    let error =
+        crate::session_account::resume_after_switch_stop(&context, &record.id, &failing_tmux)
+            .unwrap_err();
+    drop(source_lock);
+    assert_eq!(error.code(), "claude-account-switch-resume-failed");
+    let failed = load_session_record(&context, &record.id).unwrap();
+    assert_eq!(failed.extra["claude_account_next"]["state"], "failed");
+    let tmux = startup_fixtures::live_resume_tmux(tmp.path(), &tmp.path().join("retry.log"));
+    let args = crate::cli::Cli::parse_from([
+        "agent-session",
+        "start",
+        "--agent",
+        "claude",
+        "--resume",
+        conversation,
+        "--account",
+        "alpha",
+        "--id",
+        "replacement",
+        "--no-parent",
+        "--tmux-bin",
+        tmux.to_str().unwrap(),
+    ]);
+    let crate::cli::Command::Start(args) = args.command else {
+        unreachable!()
+    };
+    assert_eq!(crate::start_resume::run_start(&context, *args), 0);
+    let source = load_session_record(&context, &record.id).unwrap();
+    assert!(!source.extra.contains_key("claude_account_next"));
+    let replacement = load_session_record(&context, "replacement").unwrap();
+    assert_eq!(
+        replacement.provider_resume.as_ref().unwrap().session_id,
+        conversation
+    );
+    assert_eq!(
+        crate::claude_account::view_for_record(&replacement)
+            .unwrap()
+            .selected_account
+            .as_deref(),
+        Some("alpha")
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("retry.log"))
+            .unwrap()
+            .matches("new-session")
+            .count(),
+        1
+    );
+    let selective_tmux = executable(
+        &tmp.path().join("selective-tmux"),
+        "#!/bin/sh\ncase \"$*\" in *'=hs-claude-switch-source'*) echo \"can't find session: fixture\" >&2; exit 1;; *) exit 0;; esac\n",
+    );
+    assert_eq!(
+        crate::resume_session_by_id(&context, &record.id, &selective_tmux)
+            .unwrap_err()
+            .code(),
+        "resume-source-live"
+    );
+}
+
+#[test]
+fn claude_switch_refuses_unverified_credentials_before_stopping() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (st, _broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
+    let mut publication = crate::claude_account::generation::tests::envelope(1);
+    publication["account"] = json!("beta");
+    publication["state"]["publication"]["stores"][0]["status"] = json!("pending");
+    fs::write(
+        tmp.path().join("beta-publication.json"),
+        publication.to_string(),
+    )
+    .unwrap();
+    for (id, kind) in [("start", "turn_started"), ("done", "turn_completed")] {
+        crate::activity::ingest_event(
+            &st.context,
+            &record.id,
+            idle_account_event(&record, id, kind),
+        )
+        .unwrap();
+    }
+    let before =
+        fs::read(crate::session_dir(&st.context, &record.id).join("session.json")).unwrap();
+    let error = crate::session_account::switch(&st.context, &record.id, "beta", None, &st.tmux_bin)
+        .unwrap_err();
+    assert_eq!(error.code(), "claude-account-switch-refused");
+    assert_eq!(
+        fs::read(crate::session_dir(&st.context, &record.id).join("session.json")).unwrap(),
+        before
+    );
+    let log = fs::read_to_string(tmp.path().join("tmux.log")).unwrap_or_default();
+    assert!(
+        !log.contains("new-session") && !log.contains("if-shell") && !log.contains("kill-session")
+    );
+}
+
+#[test]
+fn claude_switch_rechecks_busy_turn_after_credential_preflight() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (st, _broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
+    crate::activity::ingest_event(
+        &st.context,
+        &record.id,
+        idle_account_event(&record, "start", "turn_started"),
+    )
+    .unwrap();
+    fs::copy(
+        crate::session_dir(&st.context, &record.id).join("activity.json"),
+        tmp.path().join("busy-snapshot.json"),
+    )
+    .unwrap();
+    crate::activity::ingest_event(
+        &st.context,
+        &record.id,
+        idle_account_event(&record, "done", "turn_completed"),
+    )
+    .unwrap();
+    let result =
+        crate::session_account::switch(&st.context, &record.id, "beta", None, &st.tmux_bin)
+            .unwrap();
+    let view = serde_json::to_value(result).unwrap();
+    assert_eq!(
+        view["claude_account"]["next"]["blocking_reason"],
+        "turn_busy"
+    );
+    assert_eq!(view["claude_account"]["selected_account"], "alpha");
+    let log = fs::read_to_string(tmp.path().join("tmux.log")).unwrap_or_default();
+    assert!(
+        !log.contains("new-session") && !log.contains("if-shell") && !log.contains("kill-session")
+    );
+}
+
+#[test]
+fn failed_claude_switch_retry_requires_current_credential_preflight() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let _broker = claude_broker_fixture(&lock, tmp.path());
+    let context = CliContext {
+        state_dir: tmp.path().into(),
+        host: None,
+    };
+    seed_bound_claude_session(tmp.path(), "retry-source", tmp.path(), "alpha");
+    let mut record = load_session_record(&context, "retry-source").unwrap();
+    crate::claude_account::queue_next(&mut record, "beta").unwrap();
+    let stopped = record.clone();
+    crate::claude_account::mark_next_resume_failed(&mut record, &stopped, "launch-failed").unwrap();
+    crate::write_session_record(&context, &record).unwrap();
+    let path = crate::session_dir(&context, &record.id).join("session.json");
+    let before = fs::read(&path).unwrap();
+    let mut publication = crate::claude_account::generation::tests::envelope(1);
+    publication["account"] = json!("beta");
+    publication["state"]["publication"]["status"] = json!("blocked");
+    fs::write(
+        tmp.path().join("beta-publication.json"),
+        publication.to_string(),
+    )
+    .unwrap();
+    let tmux = resume_tmux(tmp.path(), &tmp.path().join("retry.log"));
+    let error = crate::resume_session_by_id(&context, &record.id, &tmux).unwrap_err();
+    assert_eq!(error.code(), "claude-account-switch-refused");
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert!(
+        !fs::read_to_string(tmp.path().join("retry.log"))
+            .unwrap_or_default()
+            .contains("new-session")
+    );
+    publication["state"]["publication"]["status"] = json!("published");
+    fs::write(
+        tmp.path().join("beta-publication.json"),
+        publication.to_string(),
+    )
+    .unwrap();
+    crate::resume_session_by_id(&context, &record.id, &tmux).unwrap();
+    let resumed = load_session_record(&context, &record.id).unwrap();
+    assert_eq!(
+        crate::claude_account::view_for_record(&resumed)
+            .unwrap()
+            .selected_account
+            .as_deref(),
+        Some("beta")
+    );
+    assert!(!resumed.extra.contains_key("claude_account_next"));
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("retry.log"))
+            .unwrap()
+            .matches("new-session")
+            .count(),
+        1
+    );
+}
+
 #[test]
 fn claude_switch_preserves_unverified_replacement_cleanup_failure() {
     use crate::coordination::broker::test_support;

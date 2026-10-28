@@ -4,22 +4,29 @@
 ### Result
 
 - Direct Claude resume can create a new managed record from deleted-source
-  history when an explicit broker account resolves its exact existing history
-  root.
+  account-local or shared history through an explicit execution account and
+  read-only broker authority. Preflight v1 adds optional history_scope.
+- Account-switch recovery remains available through explicit bound-account
+  selection after final source/history admission, preserving both recovery
+  paths when integrated together.
 
 ### Why / context
 
-- A removed managed binding cannot authorize a guessed account directory. A
-  read-only broker verb supplies account authority; final admission runs again
-  after preparation so newly appearing writers cannot bypass it.
+- A removed binding cannot authorize guessed history. Final admission after
+  broker preparation rechecks account, history and stopped source writers.
+- Keep the original user selection through that recheck so an internally
+  resolved account cannot silently authorize cancellation. Settle source
+  intent only after all final guards succeed.
 
 ### Evidence
 
-- Three new CLI regressions failed before production edits; all eleven
-  start-resume CLI cases now pass, including duplicate files and
-  preparation-time history/account/source races. Real-provider recall remains a
-  separate scheduled gate.
+- Original deleted-source and scope contracts had meaningful red first.
+  Two additional composition regressions failed before integration edits;
+  combined start-resume cases now pass 14 tests and account-switch cases pass
+  17 tests. Original head verification remains distinct from integration
+  validation. Real-provider recall remains a separate scheduled gate.
 
 ### Links
 
 - <https://github.com/sympoies/nils-cli/issues/3012>
+- <https://github.com/sympoies/nils-cli/pull/3036>

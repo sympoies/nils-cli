@@ -134,6 +134,7 @@ struct Admission {
     config_dir: PathBuf,
     cwd: PathBuf,
     history_scope: claude_account::history::HistoryScope,
+    abandoned_sources: Vec<SessionRecord>,
     // Existing source locks are observational: opening/flocking never creates
     // or rewrites a source record. Keep them until the new launch is committed.
     _sources: Vec<fs::File>,
@@ -181,15 +182,28 @@ fn lock_source(context: &CliContext, id: &str) -> Result<fs::File, CliError> {
     Ok(file)
 }
 
-fn source_account(record: &SessionRecord) -> Result<(String, PathBuf), CliError> {
+fn source_account(
+    record: &SessionRecord,
+    requested: Option<&str>,
+) -> Result<(String, PathBuf), CliError> {
     let unknown = || refusal("resume-source-unknown");
-    let view = claude_account::view_for_record(record).ok_or_else(unknown)?;
-    if view.state != "bound" || record.extra.contains_key("claude_account_next") {
+    let mut bound = record.clone();
+    let pending = claude_account::abandon_next_for_resume(&mut bound).map_err(|_| unknown())?;
+    let view = claude_account::view_for_record(&bound).ok_or_else(unknown)?;
+    if view.state != "bound" {
         return Err(unknown());
     }
+    let account = view.selected_account.ok_or_else(unknown)?;
+    if pending && requested.is_none() {
+        return Err(CliError::data(
+            "resume-account-transition-pending",
+            "select the bound account explicitly to abandon the pending switch, or resume the existing session to apply it",
+            Some(json!({"session_created":false,"safe_to_retry":false})),
+        ).with_hint(format!("run `agent-session resume {}` to retry the queued account", record.id)));
+    }
     Ok((
-        view.selected_account.ok_or_else(unknown)?,
-        claude_account::config_dir_for_runtime(record).ok_or_else(unknown)?,
+        account,
+        claude_account::config_dir_for_runtime(&bound).ok_or_else(unknown)?,
     ))
 }
 
@@ -344,7 +358,7 @@ fn admit(context: &CliContext, args: &cli::StartArgs) -> Result<Admission, CliEr
         None
     };
     for record in &matching {
-        let account = source_account(record)?;
+        let account = source_account(record, args.account.as_deref())?;
         if args.account.as_ref().is_some_and(|a| a != &account.0) {
             return Err(refusal("resume-account-mismatch"));
         }
@@ -389,11 +403,20 @@ fn admit(context: &CliContext, args: &cli::StartArgs) -> Result<Admission, CliEr
         Some(scope) => scope,
         None => claude_account::history::observed_scope(&config_dir)?,
     };
+    let mut abandoned_sources = Vec::new();
+    for mut record in matching {
+        if claude_account::abandon_next_for_resume(&mut record)
+            .map_err(|_| refusal("resume-source-unknown"))?
+        {
+            abandoned_sources.push(record);
+        }
+    }
     Ok(Admission {
         account,
         config_dir,
         cwd,
         history_scope,
+        abandoned_sources,
         _sources: sources,
     })
 }
@@ -443,9 +466,9 @@ pub(super) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
             })
         })?;
     let admitted = admit(context, &args)?;
-    args.account = Some(admitted.account.clone());
+    let selected_account = admitted.account.clone();
     args.cwd = Some(admitted.cwd.clone());
-    let prepared = claude_account::materialize(&admitted.account)
+    let prepared = claude_account::materialize(&selected_account)
         .map_err(|_| refusal("resume-account-mismatch"))?;
     if prepared != admitted.config_dir {
         return Err(refusal("resume-account-mismatch"));
@@ -454,9 +477,19 @@ pub(super) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
     // then reacquire all source guards and recheck authority/history so a
     // source first observed during preparation cannot bypass final admission.
     drop(admitted);
+    // Keep the original account request here: a resolved account is not
+    // explicit consent to cancel an intent that appeared during preparation.
     let admitted = admit(context, &args)?;
-    if prepared != admitted.config_dir {
+    if admitted.account != selected_account || prepared != admitted.config_dir {
         return Err(refusal("resume-account-mismatch"));
+    }
+    args.account = Some(admitted.account.clone());
+    // Settle only the final admitted source snapshots while their writer
+    // guards and the conversation guard remain held. Failed final admission
+    // must leave any pending account transition untouched.
+    for mut source in admitted.abandoned_sources {
+        source.updated_at = jiff::Timestamp::now().to_string();
+        write_session_record(context, &source)?;
     }
     args.initial_provider_config_dir = Some(prepared);
     let initial_lineage = args

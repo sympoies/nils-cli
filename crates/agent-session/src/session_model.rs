@@ -4,6 +4,8 @@ use serde_json::{Value, json};
 
 use crate::{CliContext, CliError, SessionRecord};
 
+pub(crate) mod refresh;
+
 const KEY: &str = "model_settings";
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]

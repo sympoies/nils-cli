@@ -14305,7 +14305,7 @@ esac
             root = shell_words::quote(&accounts_root.to_string_lossy()),
         ),
     );
-    let argv = serde_json::to_string(&vec![broker.to_string_lossy().into_owned()]).unwrap();
+    let argv = account_switch::verified_broker(root, &broker);
     ClaudeBrokerFixture {
         _broker: EnvGuard::set(lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER", &argv),
         log,

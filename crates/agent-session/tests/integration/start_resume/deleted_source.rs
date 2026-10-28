@@ -368,3 +368,84 @@ fn deleted_source_rechecks_history_account_and_new_sources_after_materialize() {
         drop(busy);
     }
 }
+
+fn pending_source(f: &Fixture) -> String {
+    let mut source: Value =
+        serde_json::from_slice(&fs::read(f.record_path("source")).unwrap()).unwrap();
+    source["claude_account_next"] = json!({
+        "schema_version":"agent-session.claude-account-next.v1",
+        "account":"other", "revision":2, "state":"queued",
+        "updated_at":"2026-01-01T00:00:00Z"
+    });
+    source.to_string()
+}
+
+#[test]
+fn composition_late_pending_switch_does_not_turn_resolved_account_into_consent() {
+    let f = Fixture::new();
+    assert_eq!(f.run(&["--check-resume"]).code, 0);
+    let pending = pending_source(&f);
+    let prepared = f.tmp.path().join("pending-source.json");
+    fs::write(&prepared, &pending).unwrap();
+    let script = fs::read_to_string(&f.broker).unwrap().replace(
+        "materialize)",
+        &format!(
+            "materialize) cp {} {};",
+            shell_words::quote(prepared.to_str().unwrap()),
+            shell_words::quote(f.record_path("source").to_str().unwrap())
+        ),
+    );
+    executable(&f.broker, &script);
+    let out = f.run(&["--id", "must-not-cancel"]);
+    assert_eq!(
+        out.stdout_json()["error"]["code"],
+        "resume-account-transition-pending",
+        "{}",
+        out.stdout_text()
+    );
+    assert_eq!(
+        out.stdout_json()["error"]["details"],
+        json!({"session_created":false,"safe_to_retry":false})
+    );
+    assert_eq!(
+        fs::read_to_string(f.record_path("source")).unwrap(),
+        pending
+    );
+    assert!(!f.state.join("sessions/must-not-cancel").exists());
+    assert_eq!(fs::read_dir(f.state.join("sessions")).unwrap().count(), 1);
+}
+
+#[test]
+fn composition_history_race_does_not_settle_an_explicit_pending_switch() {
+    let f = Fixture::new();
+    let pending = pending_source(&f);
+    fs::write(f.record_path("source"), &pending).unwrap();
+    let history = f
+        .root
+        .join(format!("projects/project/{CONVERSATION}.jsonl"));
+    let script = fs::read_to_string(&f.broker).unwrap().replace(
+        "materialize)",
+        &format!(
+            "materialize) rm -- {};",
+            shell_words::quote(history.to_str().unwrap())
+        ),
+    );
+    executable(&f.broker, &script);
+    let out = f.run(&["--account", "original", "--id", "must-not-settle"]);
+    assert_eq!(
+        out.stdout_json()["error"]["code"],
+        "resume-history-missing",
+        "{}",
+        out.stdout_text()
+    );
+    assert_eq!(
+        out.stdout_json()["error"]["details"],
+        json!({"session_created":false,"safe_to_retry":false})
+    );
+    assert_eq!(
+        fs::read_to_string(f.record_path("source")).unwrap(),
+        pending
+    );
+    assert!(!f.state.join("sessions/must-not-settle").exists());
+    assert_eq!(fs::read_dir(f.state.join("sessions")).unwrap().count(), 1);
+}

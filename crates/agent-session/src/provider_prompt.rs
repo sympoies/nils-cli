@@ -1159,6 +1159,46 @@ fn latest_claude_model_from_tail(
         })
 }
 
+/// Read only the last bounded Codex rollout window for the latest `turn_context`
+/// model and effort. Returns `None` when the rollout is unavailable or holds no
+/// turn context in that window.
+pub(crate) fn latest_codex_turn_settings(
+    record: &SessionRecord,
+) -> Option<(Option<String>, Option<String>)> {
+    let source = resolve_provider_prompt_source(record)?;
+    if source.provider != ProviderKind::Codex || !source_still_matches(&source) {
+        return None;
+    }
+    let (buffer, start) =
+        read_tail_window_with_start(&source.path, MAX_PROVIDER_READ_BYTES).ok()?;
+    if !source_still_matches(&source) {
+        return None;
+    }
+    latest_codex_turn_settings_from_tail(&buffer, start != 0)
+}
+
+fn latest_codex_turn_settings_from_tail(
+    buffer: &[u8],
+    partial_first_line: bool,
+) -> Option<(Option<String>, Option<String>)> {
+    let complete = if partial_first_line {
+        &buffer[buffer.iter().position(|byte| *byte == b'\n')? + 1..]
+    } else {
+        buffer
+    };
+    complete
+        .rsplit(|byte| *byte == b'\n')
+        .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
+        .find(|row| row.get("type").and_then(Value::as_str) == Some("turn_context"))
+        .map(|row| {
+            let text = |pointer: &str| row.pointer(pointer).and_then(Value::as_str);
+            (
+                text("/payload/model").and_then(crate::session_model::model_label),
+                text("/payload/effort").and_then(crate::session_model::effort_label),
+            )
+        })
+}
+
 /// Scan the bounded provider-prompt history for an exact prompt submitted
 /// strictly after a durable notification attempt boundary.
 ///

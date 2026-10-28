@@ -114,7 +114,9 @@ quarantine.
 For retained sources, an omitted account resolves from the unique original
 binding; `--account` cannot rebind that source to another account. Missing or
 ambiguous account/ownership evidence refuses; the host login is never a
-fallback.
+fallback. A queued or failed switch requires an explicit selection of the
+bound account to cancel it; otherwise admission returns
+`resume-account-transition-pending`. Read-only checks never settle an intent.
 
 After a managed source is deleted, an explicit account selects the execution
 account. Recovery requires the broker's read-only `history-root`
@@ -150,8 +152,8 @@ scope:
 
 The response contains no paths, credentials or history content. A supported
 refusal has `ok:false`, one of `resume-history-missing`,
-`resume-account-mismatch`, `resume-source-live`, `resume-source-unknown` or
-`resume-unsupported`, and `error.details` with `session_created:false` and
+`resume-account-mismatch`, `resume-source-live`, `resume-source-unknown`,
+`resume-account-transition-pending` or `resume-unsupported`, and `error.details` with `session_created:false` and
 `safe_to_retry:false`. Malformed conversation IDs and unsupported capability
 return `resume-unsupported`. An older CLI's parse/schema failure is distinct from
 this supported rejection.
@@ -159,8 +161,11 @@ this supported rejection.
 Start rechecks admission under conversation and source locks before creating its
 record, including after credential preparation. It rechecks the resolved root,
 exact history and every remaining matching source, including sources that first
-appear during preparation. A prior successful check grants no admission lease. The source is never
-revived or rewritten. Resuming an old managed source or importing that same
+appear during preparation. A prior successful check grants no admission lease.
+The source runtime remains stopped. An explicitly selected bound account may
+settle a pending switch only after final admission succeeds, while its source
+and conversation guards remain held. Failed final admission leaves that intent
+unchanged. Resuming an old managed source or importing that same
 conversation also refuses while another managed writer exists. Auth quarantine
 continues to belong to the existing recovery flow. Start success uses
 `cli.agent-session.start.v1` with the new managed ID at `data.session.id`.

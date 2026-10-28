@@ -236,7 +236,9 @@ mismatched nickname is `claude-account-broker-invalid-response`.
   queued intent. A nickname the broker does not list is refused with `claude-account-unknown`. Claude
   Code has no live credential swap, so the switch is applied only by a relaunch: when the session is
   running and its turn is `waiting`, the daemon first materializes and validates the new account
-  directory.
+  directory and requires complete verified publication evidence through the broker's
+  `credential_state_v1` capability. Missing, partial, or invalid evidence refuses the switch before
+  stopping. The turn state is checked again after preflight; a newly busy turn keeps the intent queued.
 
   A refusal returns `claude-account-switch-refused` (HTTP 422, with the broker's `cause` code) before
   anything is stopped or written, so the running session, its binding, and any previously queued intent
@@ -266,6 +268,17 @@ mismatched nickname is `claude-account-broker-invalid-response`.
   `failure_reason` carrying the underlying error code. The account projection's state is `failed`, and
   the session's `startup` projection reports `claude-account-switch-resume-failed`, so later Console
   reads expose the failure. `recovery` names the `agent-session resume <id>` command that applies it.
+  In-place resume preflights the retained next account again, including a failed intent, and clears it
+  only when the account binding is applied. A refused preflight leaves the intent available for retry.
+
+  To abandon the transition instead, `start --agent claude --resume <provider-session-id> --account
+  <bound-account>` explicitly selects the original bound account, validates its history and stopped
+  writers, and clears the source's pending intent under its record lock before creating the new record.
+  Final admission after credential preparation retains the original user selection and rechecks history
+  and every source before settling an intent. A refused final admission leaves that intent unchanged.
+  Without that explicit account choice, new-record resume reports `resume-account-transition-pending`
+  and directs the caller to in-place resume. Resume preflight remains read-only. Conversation locks and
+  live-writer checks apply to both recovery choices.
 
   If replacement cleanup remains live or unverified, the response preserves the original termination or
   rollback error instead of claiming a stopped session. The account attempt is still marked failed with

@@ -40,6 +40,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `GET /workdirs` | Bearer | [Observation](serve-observation-v1.md) |
 | `GET /repos/remote-url` | Bearer | [Observation](serve-observation-v1.md) |
 | `GET /sessions/{id}/glance` | Open | [Observation](serve-observation-v1.md) |
+| `POST /sessions/{id}/refresh` | Bearer | [Session display metadata v1](session-display-metadata-v1.md#on-demand-refresh) |
 | `GET /sessions/{id}/work-context/v1` | Bearer | [Coordination HTTP coverage](coordination-interface-v1.md#http-coverage) |
 | `POST /sessions/{id}/work-context/check/v1` and `POST /coordination/work-context/check/v1` | Bearer; session capability optional where supported | [Coordination HTTP coverage](coordination-interface-v1.md#http-coverage) |
 | `POST /sessions/{id}/work-context/{claim,renew,release,admit,complete,reconcile}/v1` | Bearer + capability | [Coordination HTTP coverage](coordination-interface-v1.md#http-coverage) |
