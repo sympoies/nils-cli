@@ -112,7 +112,9 @@ cells. Padding and omitted word separators alone are insufficient proof.
 Codex captures may omit a final logical ASCII space as well as spaces at word
 wraps; its cursor endpoint must still include every pasted cell. Each proof
 uses the active provider's composer region, including when another provider's
-prompt appears in scrollback.
+prompt appears in scrollback. Codex additionally verifies the actual logical
+end: Right then Left must return to N-1, then Right must restore N. An invisible
+owner-appended blank cannot be admitted as part of the paste's expected prefix.
 Changed drafts, uncertain navigation, and styled wrapped suggestions refuse.
 Dialogs, unknown layouts, other wrapped/multiline input, opaque long-paste summaries, and
 unstyled placeholder text such as `Ask Codex to do anything` are unobservable.

@@ -71,12 +71,64 @@ fn submits_once(case: &str) {
         .filter(|call| call[0] == "send-keys")
         .map(|call| call.last().unwrap().as_str())
         .collect();
-    assert_eq!(keys, ["C-a", "Right", "Right", "Enter"]);
+    if case.starts_with("codex") {
+        assert_eq!(keys, ["C-a", "Right", "Right", "Left", "Right", "Enter"]);
+        assert!(
+            calls
+                .iter()
+                .any(|call| call.ends_with(&["Right".to_string(), "Left".to_string()]))
+        );
+    } else {
+        assert_eq!(keys, ["C-a", "Right", "Right", "Enter"]);
+    }
 }
 
 #[test]
 fn codex_captured_ascii_word_wrap_with_hidden_trailing_space_submits_once() {
     submits_once("codex ascii");
+}
+
+#[test]
+fn codex_captured_ascii_wrap_preserves_an_invisible_appended_space() {
+    let (fixture, text, mut snapshot) = captured("codex ascii");
+    let actual = format!("{text} ");
+    assert_eq!(actual.chars().count(), 191);
+    // The captured rows omit trailing logical blanks. Preserve the paste's
+    // N-1/N prefix coordinates while placing the actual end one cell later.
+    snapshot["input"] = actual.clone().into();
+    snapshot["before_end"] = json!([43, 3]);
+    snapshot["prefix_end"] = json!([44, 3]);
+    snapshot["cursor_positions"] = json!({
+        "189": [42, 3], "190": [43, 3], "191": [44, 3]
+    });
+    save(&fixture, &snapshot);
+    fs::write(fixture.root().join("inject-draft"), "").unwrap();
+    fs::write(fixture.root().join("draft-text"), " ").unwrap();
+
+    let output = guarded_text(&fixture, &text);
+    let receipt = details_any(
+        &output,
+        &[
+            "send-composer-unobservable",
+            "send-guard-observation-timeout",
+        ],
+    );
+    assert_eq!(receipt["submitted"], false);
+    assert_eq!(composer(&fixture), actual);
+    assert!(submissions(&fixture).is_empty());
+    let calls = fixture.calls();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call[0] == "paste-buffer")
+            .count(),
+        1
+    );
+    assert!(
+        calls
+            .iter()
+            .all(|call| call.last().is_none_or(|key| key != "Enter"))
+    );
 }
 
 #[test]

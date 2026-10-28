@@ -62,18 +62,30 @@ impl Admission<'_> {
         // and one more must reach it. This rejects both extra and missing separators.
         // A matched final row contains a nonempty paste remainder, so its
         // endpoint is past column 2 and the preceding cell is defined.
-        for (key, count, endpoint) in [
-            ("C-a", 1, None),
+        let mut navigation = vec![
+            (&["C-a"][..], 1, None),
             (
-                "Right",
+                &["Right"][..],
                 steps.checked_sub(1)?,
                 Some((end.0 - last_cells, end.1)),
             ),
-            ("Right", 1, Some(end)),
-        ] {
+            (&["Right"][..], 1, Some(end)),
+        ];
+        if agent == "codex" {
+            // A matched prefix can hide an owner-appended blank. Right then
+            // Left must return to N-1 only when N is the actual logical end.
+            // Observing that changed position also avoids accepting a stale
+            // unchanged cursor before the extra Right has been processed.
+            navigation.extend([
+                (&["Right", "Left"][..], 1, Some((end.0 - last_cells, end.1))),
+                (&["Right"][..], 1, Some(end)),
+            ]);
+        }
+        for (keys, count, endpoint) in navigation {
             self.identity(stage).ok()?;
             let mut command = Command::new(self.tmux_bin);
-            command.args(["send-keys", "-t", &target, "-N", &count.to_string(), key]);
+            command.args(["send-keys", "-t", &target, "-N", &count.to_string()]);
+            command.args(keys);
             run_status_with_timeout(command, "tmux send-keys", self.timeout(stage).ok()?).ok()?;
             let until = Instant::now() + crate::POST_PASTE_KEY_SETTLE_DELAY;
             loop {
