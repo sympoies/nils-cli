@@ -2,11 +2,15 @@
 //!
 //! A restart keeps the session id, provider conversation, tmux runtime name,
 //! mailbox and routing: it stops the provider at an idle safe point, retires
-//! the stopped coordination incarnation, and resumes from the exact provider
-//! resume metadata, so the relaunch picks up whatever binary is installed now.
+//! the stopped coordination incarnation, and resumes the exact conversation
+//! or starts a failed pre-conversation Codex startup fresh under queued intent.
 
 use std::path::{Path, PathBuf};
 pub(crate) mod auth_recovery;
+mod fresh_startup;
+pub(crate) use fresh_startup::{
+    conversation_guards, eligible as fresh_startup, launch_plan, release_bootstrap,
+};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -42,7 +46,7 @@ struct Receipt {
     id: String,
     agent: String,
     tmux_session: String,
-    provider_session_id: String,
+    provider_session_id: Option<String>,
     outcome: &'static str,
     stop_method: Option<&'static str>,
     old: Incarnation,
@@ -347,8 +351,10 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
     let started_at = now();
     let tmux = crate::resolve_tmux_bin(args.tmux_bin.as_deref());
     let expected = load_session_record(context, &args.id)?;
-    let (provider_resume, agent) = crate::validate_resume_metadata(&expected)?;
-    let provider_session_id = provider_resume.session_id.clone();
+    let plan = launch_plan(context, &expected)?;
+    let agent = plan.agent;
+    let provider_session_id = plan.conversation;
+    let fresh = provider_session_id.is_none();
     // Stopping the runtime that hosts this very process would kill the
     // restart between its stop and its relaunch.
     if std::env::var("AGENT_SESSION_ID").is_ok_and(|id| id == expected.id) {
@@ -417,7 +423,12 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
         crate::ensure_same_session_identity(&expected, &record)?;
         Ok(record)
     }) {
-        Ok(record) if launch_id(&record).as_deref() == Some(old_launch.as_str()) => record,
+        Ok(record)
+            if launch_id(&record).as_deref() == Some(old_launch.as_str())
+                && (!fresh || fresh_startup(context, &record)) =>
+        {
+            record
+        }
         result => {
             // Another operation replaced the runtime during the exit wait;
             // that replacement is left exactly as it is.
@@ -432,7 +443,7 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
         }
     };
     let exited = crate::session_status(context, &tmux, &record) == "stopped";
-    if !exited && !args.force {
+    if !exited && !args.force && !fresh {
         // Only --force may terminate a provider that did not leave on its own;
         // input admitted since the exit command must not be killed.
         return Err(failure(
@@ -507,11 +518,16 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
         }
     };
     receipt.new = incarnation(&relaunched);
-    drop(record_lock);
+    release_bootstrap(resumed.bootstrap, record_lock);
 
     let ready_deadline = Instant::now() + Duration::from_secs(args.ready_timeout);
     match await_ready(context, &relaunched, &new_launch, &tmux, ready_deadline) {
         Ok(()) => {
+            if fresh {
+                receipt.provider_session_id = load_session_record(context, &expected.id)?
+                    .provider_resume
+                    .map(|resume| resume.session_id);
+            }
             receipt.ready_at = Some(now());
             receipt.finished_at = now();
             Ok(receipt)
@@ -582,8 +598,11 @@ fn request_provider_exit(
     let _record_lock = crate::acquire_session_record_lock(context, &expected.id)?;
     let mut current = load_session_record(context, &expected.id)?;
     crate::ensure_same_session_identity(expected, &current)?;
+    let _activity_lock = crate::activity::acquire_coordination_activity_lock(context, &current.id)?;
+    let fresh = fresh_startup(context, &current);
+    let status = crate::session_status(context, tmux, &current);
     if launch_id(&current).as_deref() != Some(launch)
-        || crate::session_status(context, tmux, &current) != "running"
+        || (status != "running" && !(fresh && status == "stopped"))
     {
         return Err(refusal(
             "session-not-running",
@@ -591,10 +610,12 @@ fn request_provider_exit(
             &current,
         ));
     }
-    let _activity_lock = crate::activity::acquire_coordination_activity_lock(context, &current.id)?;
+    if fresh && status == "stopped" {
+        return Ok((false, RestartFence::acquire(context, &current, launch)?));
+    }
     let guards = GuardArgs {
         expect_runtime: Some(launch.to_string()),
-        require_idle: true,
+        require_idle: !fresh,
         require_empty_composer: true,
         ..GuardArgs::default()
     };
@@ -627,6 +648,26 @@ fn request_provider_exit(
         }
     };
     let fence = RestartFence::acquire(context, &current, launch)?;
+    if fresh {
+        if crate::activity::pending::event_pending(context, &current.id)? {
+            return Err(refusal(
+                "restart-session-not-idle",
+                "provider event ingestion is pending",
+                &current,
+            ));
+        }
+        crate::codex_app_server::verify_startup_quiescent(&current, admission.deadline).map_err(
+            |cause| {
+                CliError::runtime(
+                    "restart-session-not-idle",
+                    "failed startup is not verified quiescent",
+                    Some(json!({"id": current.id, "cause": cause})),
+                )
+            },
+        )?;
+        crate::codex_account::authorize_restart_exit_locked(context, &mut current)?;
+        return Ok((false, fence));
+    }
     // Admission already refuses every provider without an observable prompt.
     let command = match agent {
         AgentKind::Claude if admitted => "/exit",
@@ -683,15 +724,21 @@ fn await_ready(
         if status_before(tmux, record, deadline) == "stopped" {
             return Err("provider-exited".to_string());
         }
+        let current =
+            load_session_record(context, &record.id).map_err(|error| error.code().to_string())?;
+        crate::ensure_same_session_identity(record, &current)
+            .map_err(|error| error.code().to_string())?;
         let admission = Admission {
             context,
-            record,
+            record: &current,
             args: &guards,
             tmux_bin: tmux,
             verify_composer: false,
             deadline: deadline.min(Instant::now() + crate::send_submit::HOLD_BUDGET),
         };
-        match admission.check(None, "readiness") {
+        match crate::codex_account::ensure_input_allowed(&current)
+            .and_then(|()| admission.check(None, "readiness"))
+        {
             Ok(()) => return Ok(()),
             Err(refused) => cause = refused.code().to_string(),
         }

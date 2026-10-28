@@ -209,18 +209,26 @@ esac
 
 #[test]
 fn preflight_resolves_original_account_root_without_prompt_or_state_writes() {
-    let f = Fixture::new();
-    let before = fs::read(f.record_path("source")).unwrap();
-    let out = f.run(&["--check-resume", "--prompt-file", "/nonexistent/prompt"]);
-    assert_eq!(out.code, 0, "{} {}", out.stdout_text(), out.stderr_text());
-    assert_eq!(
-        out.stdout_json(),
-        json!({"schema_version":"cli.agent-session.resume-preflight.v1","ok":true,
-        "data":{"agent":"claude","provider_session_id":CONVERSATION,"machine":"test-machine","account":"original"}})
-    );
-    assert_eq!(fs::read(f.record_path("source")).unwrap(), before);
-    assert_eq!(fs::read_dir(f.state.join("sessions")).unwrap().count(), 1);
-    assert!(!f.state.join("coordination").exists());
+    for shared in [false, true] {
+        let f = Fixture::new();
+        let scope = if shared { "shared" } else { "account" };
+        if shared {
+            let projects = f.tmp.path().join("shared-projects");
+            fs::rename(f.root.join("projects"), &projects).unwrap();
+            std::os::unix::fs::symlink(projects, f.root.join("projects")).unwrap();
+        }
+        let before = fs::read(f.record_path("source")).unwrap();
+        let out = f.run(&["--check-resume", "--prompt-file", "/nonexistent/prompt"]);
+        assert_eq!(out.code, 0, "{} {}", out.stdout_text(), out.stderr_text());
+        assert_eq!(
+            out.stdout_json(),
+            json!({"schema_version":"cli.agent-session.resume-preflight.v1","ok":true,
+        "data":{"agent":"claude","provider_session_id":CONVERSATION,"machine":"test-machine","account":"original","history_scope":scope}})
+        );
+        assert_eq!(fs::read(f.record_path("source")).unwrap(), before);
+        assert_eq!(fs::read_dir(f.state.join("sessions")).unwrap().count(), 1);
+        assert!(!f.state.join("coordination").exists());
+    }
 }
 
 #[test]
@@ -485,3 +493,5 @@ fn held_conversation_lock_is_a_terminal_precreate_refusal() {
 
 #[path = "start_resume_console.rs"]
 mod console;
+#[path = "start_resume/deleted_source.rs"]
+mod deleted_source;

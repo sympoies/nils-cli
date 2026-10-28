@@ -41,12 +41,12 @@ impl Admission<'_> {
         }
         // Only a send admitted against an empty composer owns the known paste.
         // Cleanup's general joined-row fallback is not submit evidence.
-        if self.record.agent != "claude" || !self.args.require_empty_composer {
+        if !self.args.require_empty_composer {
             return None;
         }
         let text = pasted?;
-        let end = send_submit::cleanup_prefix_end(pane, text)?;
-        let input = send_submit::cleanup_composer_input("claude", pane, Some(text))?;
+        let agent = self.record.agent.as_str();
+        let (input, end) = send_submit::wrapped_composer_layout(agent, pane, text)?;
         if input != text {
             // The wrapped composer is readable, but does not contain only our
             // paste. Preserve the mismatch as an immediate refusal instead of
@@ -62,18 +62,30 @@ impl Admission<'_> {
         // and one more must reach it. This rejects both extra and missing separators.
         // A matched final row contains a nonempty paste remainder, so its
         // endpoint is past column 2 and the preceding cell is defined.
-        for (key, count, endpoint) in [
-            ("C-a", 1, None),
+        let mut navigation = vec![
+            (&["C-a"][..], 1, None),
             (
-                "Right",
+                &["Right"][..],
                 steps.checked_sub(1)?,
                 Some((end.0 - last_cells, end.1)),
             ),
-            ("Right", 1, Some(end)),
-        ] {
+            (&["Right"][..], 1, Some(end)),
+        ];
+        if agent == "codex" {
+            // A matched prefix can hide an owner-appended blank. Right then
+            // Left must return to N-1 only when N is the actual logical end.
+            // Observing that changed position also avoids accepting a stale
+            // unchanged cursor before the extra Right has been processed.
+            navigation.extend([
+                (&["Right", "Left"][..], 1, Some((end.0 - last_cells, end.1))),
+                (&["Right"][..], 1, Some(end)),
+            ]);
+        }
+        for (keys, count, endpoint) in navigation {
             self.identity(stage).ok()?;
             let mut command = Command::new(self.tmux_bin);
-            command.args(["send-keys", "-t", &target, "-N", &count.to_string(), key]);
+            command.args(["send-keys", "-t", &target, "-N", &count.to_string()]);
+            command.args(keys);
             run_status_with_timeout(command, "tmux send-keys", self.timeout(stage).ok()?).ok()?;
             let until = Instant::now() + crate::POST_PASTE_KEY_SETTLE_DELAY;
             loop {
@@ -84,14 +96,15 @@ impl Admission<'_> {
                 )?;
                 match classify_wrapped_proof(
                     &input,
-                    send_submit::cleanup_composer_input("claude", &current, Some(text)),
+                    send_submit::wrapped_composer_layout(agent, &current, text)
+                        .map(|(input, _)| input),
                 ) {
                     WrappedProofObservation::Exact(_) => {}
                     WrappedProofObservation::Mismatch(input) => return Some(input),
                     WrappedProofObservation::Unobservable => return None,
                 }
                 let reached = endpoint.map_or_else(
-                    || send_submit::cleanup_cursor_at_start(&current, cursor.0, cursor.1),
+                    || send_submit::cleanup_cursor_at_start(agent, &current, cursor.0, cursor.1),
                     |expected| cursor == expected,
                 );
                 if reached {

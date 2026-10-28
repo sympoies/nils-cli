@@ -272,14 +272,14 @@ fn text_made_only_of_line_breaks_is_refused_before_anything_is_pasted() {
 }
 
 #[test]
-fn codex_wrapped_single_line_refusal_clears_only_the_pasted_text() {
+fn codex_wrapped_proof_refuses_cursor_positions_outside_the_active_composer() {
     let text = "x".repeat(190);
     for claude_transcript in [false, true] {
         let fixture = Fixture::new("codex");
         live(&fixture, &["bare-composer", "wrap-80"]);
         if claude_transcript {
             // A Claude-shaped transcript above the active Codex composer must not
-            // authorize Claude's cursor proof for a Codex session.
+            // authorize a cursor proof for the active Codex composer.
             let rows = format!(
                 "{}\n  {}\n  {}",
                 "x".repeat(78),
@@ -298,6 +298,9 @@ fn codex_wrapped_single_line_refusal_clears_only_the_pasted_text() {
             )
             .unwrap();
         }
+        // The default model puts the Codex glyph on row 0 but reports home
+        // on row 1. The transcript variant reports home on Claude's row.
+        // Neither cursor position proves the active Codex logical start.
         let output = guarded_text(&fixture, &text);
         let details = details_any(
             &output,
@@ -309,8 +312,10 @@ fn codex_wrapped_single_line_refusal_clears_only_the_pasted_text() {
         assert_eq!(details["stage"], "submit");
         assert_eq!(details["pasted"], true);
         assert_eq!(details["submitted"], false);
-        assert_eq!(details["cleared"], true, "{details}");
-        assert_eq!(composer(&fixture), "");
+        // The new proof moves home before refusing. Backspace-only Codex
+        // cleanup cannot prove removal from there and must report retention.
+        assert_eq!(details["cleared"], false, "{details}");
+        assert_eq!(composer(&fixture), text);
         assert_eq!(deletions(&fixture), text.len());
         assert!(submissions(&fixture).is_empty());
     }
@@ -403,3 +408,6 @@ fn known_paste_disambiguates_claude_wrap_boundary_spaces() {
 mod rollback;
 #[path = "wrapped_submit.rs"]
 mod wrapped_submit;
+
+#[path = "codex_wrapped.rs"]
+mod codex_wrapped;

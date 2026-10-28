@@ -5,6 +5,8 @@ use pretty_assertions::assert_eq;
 use std::os::unix::fs::PermissionsExt;
 use tower::ServiceExt;
 
+#[path = "resume_composition_tests.rs"]
+mod composition;
 #[path = "resume_consent_tests.rs"]
 mod consent;
 
@@ -115,7 +117,7 @@ async fn target_resume_preflight_is_authenticated_exact_and_observational() {
     assert_eq!(
         result,
         json!({"schema_version":"cli.agent-session.resume-preflight.v1","ok":true,
-        "data":{"agent":"claude","provider_session_id":ID,"machine":"test-machine","account":"original"}})
+        "data":{"agent":"claude","provider_session_id":ID,"machine":"test-machine","account":"original","history_scope":"account"}})
     );
     assert_eq!(
         snapshot(temp.path()),

@@ -97,12 +97,16 @@ fn observed_input(agent: &str, pane: &str) -> Option<String> {
 
 /// C-a must land at the beginning of the first composer row. This guards
 /// against hidden hard newlines and unsupported/customized navigation keys.
-pub(crate) fn cursor_at_start(pane: &str, x: usize, y: usize) -> bool {
+pub(crate) fn cursor_at_start(agent: &str, pane: &str, x: usize, y: usize) -> bool {
     let Some((plain, _)) = styled_text(pane) else {
         return false;
     };
     let lines: Vec<&str> = plain.lines().collect();
-    let Some((region, _)) = claude_composer(&lines) else {
+    let Some((region, _)) = (match agent {
+        "claude" => claude_composer(&lines),
+        "codex" => codex_composer(&lines),
+        _ => None,
+    }) else {
         return false;
     };
     x == 2
@@ -131,13 +135,24 @@ pub(crate) fn prefix_end(pane: &str, pasted: &str) -> Option<(usize, usize)> {
 /// Match each visible row against the known paste, considering only ASCII
 /// spaces at row ends as padding or omitted word separators. Retain every offset; more
 /// than one reconstruction is uncertainty, not permission to delete.
-fn matched_layout(agent: &str, pane: &str, pasted: &str) -> Option<(String, (usize, usize))> {
-    if agent != "claude" || cursor_cells(pasted).is_none() {
-        return None;
-    }
+pub(crate) fn matched_layout(
+    agent: &str,
+    pane: &str,
+    pasted: &str,
+) -> Option<(String, (usize, usize))> {
+    cursor_cells(pasted)?;
+    let glyph = match agent {
+        "claude" => '❯',
+        "codex" => '›',
+        _ => return None,
+    };
     let (plain, dim) = styled_text(pane)?;
     let lines: Vec<&str> = plain.lines().collect();
-    let (region, _) = claude_composer(&lines)?;
+    let (region, _) = match agent {
+        "claude" => claude_composer(&lines),
+        "codex" => codex_composer(&lines),
+        _ => None,
+    }?;
     if region.len() < 2 {
         return None;
     }
@@ -153,7 +168,7 @@ fn matched_layout(agent: &str, pane: &str, pasted: &str) -> Option<(String, (usi
         return None;
     }
     let first = region[0]
-        .strip_prefix('❯')?
+        .strip_prefix(glyph)?
         .strip_prefix([' ', '\u{a0}', '\u{2007}', '\u{202f}'])?;
     let mut offsets = vec![0];
     let mut result = None;
@@ -172,7 +187,12 @@ fn matched_layout(agent: &str, pane: &str, pasted: &str) -> Option<(String, (usi
             let rest = &pasted[position..];
             if index + 1 == region.len() {
                 // Unknown draft content must fit entirely in this last row.
-                if let Some(suffix) = visible.strip_prefix(rest) {
+                if let Some(suffix) = visible.strip_prefix(rest).or_else(|| {
+                    // Captures can omit the final logical ASCII space as well
+                    // as wrap separators. Its cursor cell still counts; the
+                    // caller must prove the N-1 and N endpoints before Enter.
+                    (agent == "codex" && visible == rest.trim_end_matches(' ')).then_some("")
+                }) {
                     let candidate = (
                         format!("{pasted}{suffix}"),
                         (2 + cursor_cells(rest)?, start + index),
@@ -203,7 +223,7 @@ fn matched_layout(agent: &str, pane: &str, pasted: &str) -> Option<(String, (usi
     }
     let (input, end) = result?;
     let flattened = format!(
-        "{}\n❯ {}\n{}",
+        "{}\n{glyph} {}\n{}",
         lines[..start].join("\n"),
         input,
         lines[start + region.len()..].join("\n")

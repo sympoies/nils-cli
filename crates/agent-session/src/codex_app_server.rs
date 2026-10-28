@@ -42,7 +42,7 @@ use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 mod account_authority;
 use account_authority::{
     TuiMutationRejection, account_authority_rejection, manual_cancellation_busy, tui_busy_response,
-    wait_for_initial_thread_start_binding,
+    wait_for_bootstrap_binding,
 };
 
 use crate::{
@@ -3140,7 +3140,7 @@ pub(crate) fn replace_thread_binding(
     write_private_file(path, projected_thread_binding(thread_id).as_bytes())
 }
 
-pub(crate) use idle_probe::probe_idle_conversation;
+pub(crate) use idle_probe::{probe_idle_conversation, verify_startup_quiescent};
 
 async fn bind_thread_and_persist_resume(
     context: &CliContext,
@@ -4623,6 +4623,7 @@ async fn cancel_before_tui_mutation_detailed(
         bootstrap.close();
         return Err(TuiMutationRejection::AccountMutationForbidden);
     }
+    wait_for_bootstrap_binding(context, record, method, bootstrap).await?;
     if !matches!(method, Some("thread/start" | "turn/start")) {
         return Ok(MutationAuthorization {
             _bootstrap_gate: None,
@@ -4630,7 +4631,6 @@ async fn cancel_before_tui_mutation_detailed(
             _account_authority: None,
         });
     }
-    wait_for_initial_thread_start_binding(context, record, method, bootstrap).await?;
     if method == Some("turn/start") && !ensure_turn_start_account_ready(context, record).await {
         bootstrap.close();
         return Err(TuiMutationRejection::AccountNotReady);

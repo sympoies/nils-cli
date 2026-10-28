@@ -4,19 +4,26 @@ use super::{
     CONTROL_SUBMIT_TOTAL_TIMEOUT, CliContext, FreshBootstrap, Message, SessionRecord, Value, json,
 };
 
-pub(super) async fn wait_for_initial_thread_start_binding(
+pub(super) async fn wait_for_bootstrap_binding(
     context: &CliContext,
     record: &SessionRecord,
     method: Option<&str>,
     bootstrap: &mut FreshBootstrap,
 ) -> Result<(), TuiMutationRejection> {
-    if method != Some("thread/start")
-        || !matches!(bootstrap, FreshBootstrap::ThreadStart)
-        || !crate::codex_account::proxy_initial_binding_is_pending(record)
+    let account_read = method == Some("account/read")
+        && crate::codex_account::proxy_binding_diagnostic(record).0 == "pending";
+    if !account_read
+        && (method != Some("thread/start")
+            || !matches!(bootstrap, FreshBootstrap::ThreadStart)
+            || !crate::codex_account::proxy_initial_binding_is_pending(record))
     {
         return Ok(());
     }
     let deadline = Instant::now() + CONTROL_SUBMIT_TOTAL_TIMEOUT;
+    let expected_binding = (
+        crate::codex_account::selected_account(record),
+        crate::codex_account::proxy_binding_diagnostic(record).1,
+    );
     let expected_runtime_id = record
         .runtime
         .as_ref()
@@ -68,10 +75,32 @@ pub(super) async fn wait_for_initial_thread_start_binding(
             )
             .await);
         }
+        if account_read {
+            let binding = (
+                crate::codex_account::selected_account(&current),
+                crate::codex_account::proxy_binding_diagnostic(&current).1,
+            );
+            if binding != expected_binding {
+                return Err(initial_binding_rejection(
+                    bootstrap,
+                    context,
+                    record,
+                    "initial-binding-replaced",
+                )
+                .await);
+            }
+            if crate::codex_account::ensure_terminal_input_allowed(&current).is_ok() {
+                return Ok(());
+            }
+        }
         if crate::codex_account::proxy_initial_binding_is_bound(&current, expected_runtime_id) {
             return Ok(());
         }
-        if !crate::codex_account::proxy_initial_binding_is_pending(&current) {
+        if if account_read {
+            crate::codex_account::proxy_binding_diagnostic(&current).0 != "pending"
+        } else {
+            !crate::codex_account::proxy_initial_binding_is_pending(&current)
+        } {
             let code = match crate::codex_account::proxy_binding_diagnostic(&current) {
                 ("failed", _) => "initial-binding-failed",
                 ("unknown", _) => "initial-binding-invalid",

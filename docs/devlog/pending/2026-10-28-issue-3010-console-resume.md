@@ -33,6 +33,11 @@
   still launches once and replays its receipt without another upstream request.
 - Read daemon fields through `State.0` before closure capture to preserve the
   static-analysis source boundary without changing HTTP admission behavior.
+- Compose Console transport with broker-authorized deleted-source history and
+  account/shared scope. Preserve original consent through post-preparation
+  admission, pin the resolved cwd, and settle only the final guarded source
+  snapshots. Regression coverage includes source disappearance after preflight
+  and a pending switch introduced by credential preparation.
 - Real-provider recall and deployed Console role acceptance remain a separate
   gate after the matching Console relay is available.
 

@@ -17,7 +17,8 @@ use serde::Serialize;
 mod composer;
 pub(crate) use composer::cleanup::{
     cursor_at_start as cleanup_cursor_at_start, cursor_cells as cleanup_cursor_cells,
-    input as cleanup_composer_input, prefix_end as cleanup_prefix_end,
+    input as cleanup_composer_input, matched_layout as wrapped_composer_layout,
+    prefix_end as cleanup_prefix_end,
 };
 pub(crate) use composer::{
     composer_holds, direct_composer_input, exact_composer_input, known_multiline_cursor_holds,

@@ -90,7 +90,8 @@ for cross-host inheritance and nullable JSON details.
 
 ## New managed record from a provider conversation
 
-For a Claude conversation with a retained, account-bound managed source:
+For a Claude conversation with a retained, account-bound managed source,
+or a deleted source with an explicitly selected broker account:
 
 ```bash
 agent-session start --agent claude --resume PROVIDER_SESSION_ID --check-resume --format json
@@ -110,16 +111,30 @@ original broker account's config root, the requested cwd, every matching managed
 source's account and stopped runtime, ownership, pending effects and auth
 quarantine.
 
-An omitted account resolves from the unique original binding; `--account`
-cannot rebind a conversation to another account. Missing or ambiguous
-account/ownership evidence refuses; the host login is never a fallback. Deleted
-sources with only standalone history currently refuse even with an explicit
-account; [#3012](https://github.com/sympoies/nils-cli/issues/3012) tracks the
-read-only account-root authority needed for that case. Auth-quarantined sources
-continue through the existing recovery flow in
+For retained sources, an omitted account resolves from the unique original
+binding; `--account` cannot rebind that source to another account. Missing or
+ambiguous account/ownership evidence refuses; the host login is never a
+fallback. A queued or failed switch requires an explicit selection of the
+bound account to cancel it; otherwise admission returns
+`resume-account-transition-pending`. Read-only checks never settle an intent.
+
+After a managed source is deleted, an explicit account selects the execution
+account. Recovery requires the broker's read-only `history-root`
+verb to resolve its existing configuration root and declare the history scope
+as `account` or `shared`. Exactly one matching `PROVIDER_SESSION_ID.jsonl` file
+must exist under that root's projects history. Shared history may be reached
+through a broker-authorized symlink; it does not establish original account
+ownership. Missing or duplicate history refuses, and no alternate account root
+is searched. Older brokers without this verb or its scope field return
+`resume-unsupported`, with no materialization fallback during checks.
+Auth-quarantined sources continue through the existing recovery flow in
 [#3005](https://github.com/sympoies/nils-cli/issues/3005).
 
-A successful JSON check has this envelope and four required data fields:
+A successful JSON check retains the v1 envelope and its four required data
+fields. `history_scope` is an optional additive v1 field, emitted consistently
+by this implementation for retained and deleted sources. Consumers must accept
+it when present; its absence in an older response does not establish a history
+scope:
 
 ```json
 {
@@ -129,20 +144,19 @@ A successful JSON check has this envelope and four required data fields:
     "agent": "claude",
     "provider_session_id": "00000000-0000-4000-8000-000000000007",
     "machine": "example-machine",
-    "account": "original"
+    "account": "original",
+    "history_scope": "account"
   }
 }
 ```
 
-The response may also include the additive `history_scope` field (`account` or
-`shared`) under the same v1 schema, as specified in
-[#3012](https://github.com/sympoies/nils-cli/issues/3012). Relays preserve a valid
-target-reported value; an absent value is not authority to guess a history root.
+Relays preserve a valid target-reported `history_scope` (`account` or `shared`);
+an absent value is not authority to guess a history root.
 
 The response contains no paths, credentials or history content. A supported
 refusal has `ok:false`, one of `resume-history-missing`,
-`resume-account-mismatch`, `resume-account-transition-pending`,
-`resume-source-live`, `resume-source-unknown` or `resume-unsupported`, and `error.details` with `session_created:false` and
+`resume-account-mismatch`, `resume-source-live`, `resume-source-unknown`,
+`resume-account-transition-pending` or `resume-unsupported`, and `error.details` with `session_created:false` and
 `safe_to_retry:false`. Malformed conversation IDs and unsupported capability
 return `resume-unsupported`. An older CLI's parse/schema failure is distinct from
 this supported rejection. `resume-account-transition-pending` requires an
@@ -150,10 +164,13 @@ explicit bound-account selection or recovery of the existing account transition;
 Console preserves that code and its terminal pre-create details.
 
 Start rechecks admission under conversation and source locks before creating its
-record. A prior successful check grants no admission lease. The source runtime
-stays stopped. An explicit bound-account selection may settle its pending account
-intent under those locks before launch; a read-only check never settles it.
-Resuming an old managed source or importing that same
+record, including after credential preparation. It rechecks the resolved root,
+exact history and every remaining matching source, including sources that first
+appear during preparation. A prior successful check grants no admission lease.
+The source runtime remains stopped. An explicitly selected bound account may
+settle a pending switch only after final admission succeeds, while its source
+and conversation guards remain held. Failed final admission leaves that intent
+unchanged. Resuming an old managed source or importing that same
 conversation also refuses while another managed writer exists. Auth quarantine
 continues to belong to the existing recovery flow. Start success uses
 `cli.agent-session.start.v1` with the new managed ID at `data.session.id`.
@@ -192,8 +209,11 @@ a boolean derived from the original requested account before resolving that pin.
 An omitted account sets it to `false`: a pending switch queued after preflight
 must still refuse at final admission without changing the source intent.
 An explicit bound-account selection sets it to `true`, preserving deliberate
-cancellation. Both cases retain the resolved-account equality check. Relays
-preserve this boolean, including `false`; it is not a preflight field. A present
+cancellation. An inferred pin also cannot authorize deleted-source recovery if
+the retained source disappears after preflight. Both cases retain the
+resolved-account equality check.
+
+Relays preserve this boolean, including `false`; it is not a preflight field. A present
 nonboolean value or a flag without `resume` refuses. Direct target clients that
 omit the flag retain the explicit selection semantics of `claude_account`.
 
@@ -440,11 +460,22 @@ agent-session restart <id> --force --stop-timeout 30 --ready-timeout 60
 - The relaunch resumes the exact provider resume metadata, then waits up to
   `--ready-timeout` seconds, every observation included, for the provider to
   report an idle prompt.
+- A failed Codex startup without provider resume metadata can instead restart
+  fresh when an explicit replacement account is queued and activity remains
+  `starting` without a current turn or attached identity. A running startup
+  must prove runtime identity, an empty composer and an unambiguous quiescent
+  app-server before verified termination; a stopped startup still requires
+  verified teardown. No prompt is replayed. Existing conversations keep their
+  exact resume identity. See the [account recovery acceptance recipe](codex-account-recovery-acceptance.md).
 - Success returns an `agent-session.restart.v1` receipt with the old and new
   incarnation, generation, pane pid, and provider version, plus timestamps
   and `stop_method` (`provider-exit` or `terminated`). The provider version is
   probed from the installed binary; an old version is known only for a runtime
   that a previous restart launched.
+  `provider_session_id` is null while a fresh recovery has no identity and
+  contains the newly observed identity on readiness. Existing resume receipts
+  retain their original provider session id. Codex readiness also requires the
+  selected account bound to the replacement incarnation with no pending intent.
 - Every failure after the exit command returns the receipt and a `recovery`
   command in the error details: `agent-session resume <id>` when the session
   is stopped (`restart-relaunch-failed`, `restart-prior-incarnation-live`, or a

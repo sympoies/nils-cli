@@ -84,7 +84,14 @@ async fn idle_server(listener: tokio::net::UnixListener, status: &'static str) {
             let result = match request["method"].as_str().unwrap() {
                 "initialize" => json!({}),
                 "initialized" => continue,
-                "thread/loaded/list" => json!({"data":["fixture-thread"],"nextCursor":null}),
+                "thread/loaded/list" => match status {
+                    "empty" => json!({"data":[],"nextCursor":null}),
+                    "multiple" => {
+                        json!({"data":["fixture-thread","another-thread"],"nextCursor":null})
+                    }
+                    "paginated" => json!({"data":["fixture-thread"],"nextCursor":"more"}),
+                    _ => json!({"data":["fixture-thread"],"nextCursor":null}),
+                },
                 "thread/read" => json!({"thread":{"id":"fixture-thread","status":{"type":status}}}),
                 method => panic!("unexpected mutation: {method}"),
             };
@@ -229,6 +236,95 @@ async fn assert_restart_repairs(phase: crate::activity::TurnPhase) {
 #[tokio::test]
 async fn native_idle_starting_restart_honours_queued_account_repair() {
     assert_restart_repairs(crate::activity::TurnPhase::Starting).await;
+}
+
+#[tokio::test]
+async fn failed_startup_without_identity_stops_without_typing_or_resuming() {
+    let lock = GlobalStateLock::new();
+    let _broker = EnvGuard::set(
+        &lock,
+        "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+        r#"["/configured/broker"]"#,
+    );
+    for status in ["idle", "empty", "active", "multiple", "paginated"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (context, mut record, tmux) = fixture(tmp.path());
+        record.provider_resume = None;
+        fs::remove_file(crate::codex_app_server::thread_attached_path(&record).unwrap()).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        let result = request_exit(context.clone(), record.clone(), tmux, status).await;
+        if matches!(status, "idle" | "empty") {
+            assert!(!result.unwrap());
+        } else {
+            assert_eq!(
+                result.unwrap_err().code(),
+                "restart-session-not-idle",
+                "{status}"
+            );
+        }
+        assert!(!tmp.path().join("input").exists());
+        let current = load_session_record(&context, &record.id).unwrap();
+        assert!(current.provider_resume.is_none());
+        assert_eq!(
+            crate::codex_account::view_for_record(&current)
+                .next
+                .unwrap()
+                .account
+                .as_deref(),
+            Some("beta")
+        );
+    }
+}
+
+#[tokio::test]
+async fn fresh_restart_readiness_observes_new_identity_and_bound_account() {
+    let lock = GlobalStateLock::new();
+    let _broker = EnvGuard::set(
+        &lock,
+        "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+        r#"["/configured/broker"]"#,
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    let (context, mut record, tmux) = fixture(tmp.path());
+    let resume = record.provider_resume.take();
+    fs::remove_file(crate::codex_app_server::thread_attached_path(&record).unwrap()).unwrap();
+    crate::write_session_record(&context, &record).unwrap();
+    let server = tokio::spawn(idle_server(
+        tokio::net::UnixListener::bind(crate::codex_app_server::socket_path(&record).unwrap())
+            .unwrap(),
+        "idle",
+    ));
+    let waiting_context = context.clone();
+    let waiting_record = record.clone();
+    let waiting_tmux = tmux.clone();
+    let waiter = tokio::task::spawn_blocking(move || {
+        await_ready(
+            &waiting_context,
+            &waiting_record,
+            "runtime-binding-fixture",
+            &waiting_tmux,
+            Instant::now() + Duration::from_secs(3),
+        )
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    record.provider_resume = resume;
+    crate::codex_app_server::replace_thread_binding(&record, "fixture-thread").unwrap();
+    crate::write_session_record(&context, &record).unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !waiter.is_finished(),
+        "an attached thread does not prove account readiness"
+    );
+    crate::codex_account::seed_bound_binding_for_test(
+        &mut record,
+        "beta",
+        "runtime-binding-fixture",
+    );
+    record.extra.remove("codex_account_next");
+    crate::write_session_record(&context, &record).unwrap();
+    assert_eq!(waiter.await.unwrap(), Ok(()));
+    server.abort();
+    let _ = server.await;
 }
 
 #[tokio::test]
