@@ -90,7 +90,8 @@ for cross-host inheritance and nullable JSON details.
 
 ## New managed record from a provider conversation
 
-For a local Claude conversation with a retained, account-bound managed source:
+For a local Claude conversation with a retained, account-bound managed source,
+or a deleted source with an explicitly selected broker account:
 
 ```bash
 agent-session start --agent claude --resume PROVIDER_SESSION_ID --check-resume --format json
@@ -110,16 +111,30 @@ original broker account's config root, the requested cwd, every matching managed
 source's account and stopped runtime, ownership, pending effects and auth
 quarantine.
 
-An omitted account resolves from the unique original binding; `--account`
-cannot rebind a conversation to another account. Missing or ambiguous
-account/ownership evidence refuses; the host login is never a fallback. Deleted
-sources with only standalone history currently refuse even with an explicit
-account; [#3012](https://github.com/sympoies/nils-cli/issues/3012) tracks the
-read-only account-root authority needed for that case. Auth-quarantined sources
-continue through the existing recovery flow in
+For retained sources, an omitted account resolves from the unique original
+binding; `--account` cannot rebind that source to another account. Missing or
+ambiguous account/ownership evidence refuses; the host login is never a
+fallback. A queued or failed switch requires an explicit selection of the
+bound account to cancel it; otherwise admission returns
+`resume-account-transition-pending`. Read-only checks never settle an intent.
+
+After a managed source is deleted, an explicit account selects the execution
+account. Recovery requires the broker's read-only `history-root`
+verb to resolve its existing configuration root and declare the history scope
+as `account` or `shared`. Exactly one matching `PROVIDER_SESSION_ID.jsonl` file
+must exist under that root's projects history. Shared history may be reached
+through a broker-authorized symlink; it does not establish original account
+ownership. Missing or duplicate history refuses, and no alternate account root
+is searched. Older brokers without this verb or its scope field return
+`resume-unsupported`, with no materialization fallback during checks.
+Auth-quarantined sources continue through the existing recovery flow in
 [#3005](https://github.com/sympoies/nils-cli/issues/3005).
 
-A successful JSON check has exactly this envelope and these four data fields:
+A successful JSON check retains the v1 envelope and its four required data
+fields. `history_scope` is an optional additive v1 field, emitted consistently
+by this implementation for retained and deleted sources. Consumers must accept
+it when present; its absence in an older response does not establish a history
+scope:
 
 ```json
 {
@@ -129,22 +144,28 @@ A successful JSON check has exactly this envelope and these four data fields:
     "agent": "claude",
     "provider_session_id": "00000000-0000-4000-8000-000000000007",
     "machine": "example-machine",
-    "account": "original"
+    "account": "original",
+    "history_scope": "account"
   }
 }
 ```
 
 The response contains no paths, credentials or history content. A supported
 refusal has `ok:false`, one of `resume-history-missing`,
-`resume-account-mismatch`, `resume-source-live`, `resume-source-unknown` or
-`resume-unsupported`, and `error.details` with `session_created:false` and
+`resume-account-mismatch`, `resume-source-live`, `resume-source-unknown`,
+`resume-account-transition-pending` or `resume-unsupported`, and `error.details` with `session_created:false` and
 `safe_to_retry:false`. Malformed conversation IDs and unsupported capability
 return `resume-unsupported`. An older CLI's parse/schema failure is distinct from
 this supported rejection.
 
 Start rechecks admission under conversation and source locks before creating its
-record. A prior successful check grants no admission lease. The source is never
-revived or rewritten. Resuming an old managed source or importing that same
+record, including after credential preparation. It rechecks the resolved root,
+exact history and every remaining matching source, including sources that first
+appear during preparation. A prior successful check grants no admission lease.
+The source runtime remains stopped. An explicitly selected bound account may
+settle a pending switch only after final admission succeeds, while its source
+and conversation guards remain held. Failed final admission leaves that intent
+unchanged. Resuming an old managed source or importing that same
 conversation also refuses while another managed writer exists. Auth quarantine
 continues to belong to the existing recovery flow. Start success uses
 `cli.agent-session.start.v1` with the new managed ID at `data.session.id`.
