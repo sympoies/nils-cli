@@ -90,7 +90,7 @@ for cross-host inheritance and nullable JSON details.
 
 ## New managed record from a provider conversation
 
-For a local Claude conversation with a retained, account-bound managed source:
+For a Claude conversation with a retained, account-bound managed source:
 
 ```bash
 agent-session start --agent claude --resume PROVIDER_SESSION_ID --check-resume --format json
@@ -149,12 +149,42 @@ conversation also refuses while another managed writer exists. Auth quarantine
 continues to belong to the existing recovery flow. Start success uses
 `cli.agent-session.start.v1` with the new managed ID at `data.session.id`.
 
-This increment supports direct local Claude starts. Console/remote requests and
-Codex return `resume-unsupported`; their remaining acceptance is tracked in
-[#3010](https://github.com/sympoies/nils-cli/issues/3010) and
-[#3011](https://github.com/sympoies/nils-cli/issues/3011). Remote checks require a
-true read-only target hop rather than the operation-producing Console start
-relay. Disposable real-provider recall acceptance remains a separate gate under
+Console starts use the same admission contract on the selected target:
+
+```bash
+agent-session start --agent claude --via-console --machine TARGET --resume PROVIDER_SESSION_ID --check-resume --format json
+agent-session start --agent claude --via-console --machine TARGET --resume PROVIDER_SESSION_ID --account ACCOUNT --format json
+```
+
+The authenticated read-only path is separate from Console start: the CLI calls
+`POST /sessions/{caller}/resume-preflight/v1` on its local daemon, which binds
+its current caller incarnation and calls Console's
+`POST /api/coordination/resume-preflight/v1`. Console checks its owning principal
+and target grant before forwarding the prompt-free `session` request to the
+target daemon's authenticated `POST /resume-preflight/v1`. The relay request
+carries `source_session_id`, `source_incarnation`, `machine`, and `session`;
+the session carries `agent`, `resume`, and optional `cwd`, `claude_account`,
+`agent_profile`, and `agent_args`. Every hop checks the exact preflight schema
+and target/conversation/account binding. No check creates an operation, writes
+an authentication audit, reads a prompt, or materializes credentials.
+
+A Console start forwards `session.resume` and the resolved `claude_account`
+through ordinary owner, origin/workspace, lineage, work, role, title, provider
+arguments and prompt handling. The origin daemon retains its at-most-once
+operation receipt and checks the target before submission. Console must send
+resumed creates to **`POST /sessions/resume/v1`**, which performs final guarded
+admission through ordinary start. It must never send `resume` to legacy
+`POST /sessions`: an older daemon could ignore an unknown field. Unsupported
+origin, Console, or target capability refuses without a fresh-start fallback.
+Terminal admission refusals retain `session_created:false` and
+`safe_to_retry:false`, including when their operation is replayed.
+
+Console support requires both the daemon routes and the matching Console relay
+implementation; installing only one side does not enable the path. Codex and
+unsupported profiles continue to return `resume-unsupported`;
+[#3011](https://github.com/sympoies/nils-cli/issues/3011) tracks canonical Codex
+resume. Disposable real-provider recall and Console ownership/role acceptance
+remain a separate release acceptance gate under
 [#3007](https://github.com/sympoies/nils-cli/issues/3007).
 
 ## Send input and glance

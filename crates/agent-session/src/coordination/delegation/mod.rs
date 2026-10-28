@@ -263,6 +263,33 @@ pub(crate) fn authenticate_file(
     authenticate_token(context, Some(session), &token, usage, audit)
 }
 
+/// Snapshot authentication for read-only checks: no maintenance, lock creation or audit writes.
+pub(crate) fn authenticate_read_only(
+    context: &CliContext,
+    session: Option<&str>,
+    token: &str,
+    usage: Use<'_>,
+) -> Result<(SessionRecord, String), CliError> {
+    let registry = super::read_registry_snapshot(context)?;
+    if is_delegation(token) {
+        return verify(
+            context,
+            &registry,
+            record(&registry, token)?,
+            session,
+            usage,
+        );
+    }
+    if token.len() < 32 || token.len() > 256 || !token.is_ascii() {
+        return Err(super::unauthorized());
+    }
+    let session = session.ok_or_else(super::unauthorized)?;
+    let caller = crate::load_session_record(context, session).map_err(|_| super::unauthorized())?;
+    let incarnation = super::incarnation(&caller)?;
+    super::verify_capability_token(context, &registry, &caller, &incarnation, token)?;
+    Ok((caller, incarnation))
+}
+
 pub(crate) fn authenticate_token(
     context: &CliContext,
     session: Option<&str>,

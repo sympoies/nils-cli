@@ -5,6 +5,10 @@ use super::{CreateTitleInput, SessionTitleStateInput};
 use crate::CliError;
 use crate::cli;
 
+#[cfg(test)]
+#[path = "serve/resume_tests.rs"]
+mod resume_tests;
+
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateBody {
     // Decode new metadata in the handler so malformed shapes use its envelope.
@@ -28,6 +32,9 @@ pub(super) struct CreateBody {
     pub(super) prompt: Option<String>,
     #[serde(default, alias = "resume_id")]
     pub(super) provider_resume_id: Option<String>,
+    /// Account-bound new-record resume; accepted only by the versioned resume route.
+    #[serde(default)]
+    pub(super) resume: Option<String>,
     #[serde(default)]
     pub(super) agent_args: Vec<String>,
     #[serde(default)]

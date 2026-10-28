@@ -449,3 +449,6 @@ fn held_conversation_lock_is_a_terminal_precreate_refusal() {
     assert_eq!(fs::read_dir(f.state.join("sessions")).unwrap().count(), 1);
     assert_eq!(fs::read(f.record_path("source")).unwrap(), before);
 }
+
+#[path = "start_resume_console.rs"]
+mod console;

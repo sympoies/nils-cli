@@ -99,7 +99,7 @@ impl Default for ChildLineage {
     }
 }
 
-fn client() -> Result<reqwest::blocking::Client, CliError> {
+pub(super) fn client() -> Result<reqwest::blocking::Client, CliError> {
     reqwest::blocking::Client::builder()
         .timeout(REQUEST_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
@@ -133,7 +133,7 @@ fn is_code(code: &str) -> bool {
 }
 
 /// The JSON body of a response, read to at most `MAX_BODY_BYTES`.
-fn read_json(response: reqwest::blocking::Response) -> Option<Value> {
+pub(super) fn read_json(response: reqwest::blocking::Response) -> Option<Value> {
     let mut bytes = Vec::new();
     response
         .take(MAX_BODY_BYTES + 1)
@@ -347,7 +347,7 @@ fn relay_operation(
     }
     let (machine, lineage, child) = checked_request(body).ok_or_else(invalid)?;
     lineage::require_root_for_role(lineage.role.as_deref(), !lineage.no_parent)?;
-    let child = child_session(&config.machine, &caller, &lineage, child)?;
+    let mut child = child_session(&config.machine, &caller, &lineage, child)?;
     let (mut receipt, submit) = operation::Receipt::begin(
         context,
         session,
@@ -360,7 +360,21 @@ fn relay_operation(
     if !submit {
         return receipt.reconcile(config, session, &incarnation);
     }
-    let result = relay_create(config, session, &incarnation, machine, child, operation_id);
+    let result = (|| {
+        if child.contains_key("resume") {
+            let request =
+                super::resume_preflight::request_from_session(&Value::Object(child.clone()))?;
+            let data = super::resume_preflight::relay_authenticated(
+                config,
+                session,
+                &incarnation,
+                machine.unwrap_or(&config.machine),
+                &request,
+            )?;
+            child.insert("claude_account".into(), data["account"].clone());
+        }
+        relay_create(config, session, &incarnation, machine, child, operation_id)
+    })();
     if receipt.finish(context, &result).is_err() {
         let mut error = unavailable(
             "operation_receipt",

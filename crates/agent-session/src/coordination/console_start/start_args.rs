@@ -44,8 +44,16 @@ fn build_args(
             &args.console_operation,
         );
     }
-    let cwd = crate::absolute_path(args.cwd.as_deref().unwrap_or(Path::new(".")))?;
-    let mut session = json!({ "agent": args.agent.as_str(), "cwd": cwd.to_string_lossy() });
+    let mut session = json!({ "agent": args.agent.as_str() });
+    if args.resume.is_some() {
+        let data = crate::coordination::resume_preflight::check_args(context, &args)?;
+        session["resume"] = json!(args.resume);
+        session["claude_account"] = data["account"].clone();
+    }
+    if args.resume.is_none() || args.cwd.is_some() {
+        let cwd = crate::absolute_path(args.cwd.as_deref().unwrap_or(Path::new(".")))?;
+        session["cwd"] = json!(cwd.to_string_lossy());
+    }
     if let Some(workspace) = &args.workspace {
         crate::origin::validate_workspace(workspace)?;
         session["workspace"] = json!(workspace);

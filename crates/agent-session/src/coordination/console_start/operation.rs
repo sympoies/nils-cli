@@ -109,6 +109,16 @@ impl Receipt {
             return Ok(());
         }
         if let Err(error) = result
+            && let Some(failure) = super::super::resume_preflight::forward_refusal(
+                &json!({"code":error.code(),"details":error.details()}),
+            )
+        {
+            self.value["state"] = json!("not_created");
+            self.value["safe_to_retry"] = json!(false);
+            self.value["failure"] = json!({"code":failure.code(),"details":failure.details()});
+            return self.save(context);
+        }
+        if let Err(error) = result
             && let Some(failure) = super::start_failure::receipt(error)
         {
             self.value["state"] = json!("start_failed");
@@ -155,6 +165,10 @@ impl Receipt {
         caller: &str,
         incarnation: &str,
     ) -> Result<Value, CliError> {
+        if let Some(error) = super::super::resume_preflight::forward_refusal(&self.value["failure"])
+        {
+            return Err(error);
+        }
         let mut result = json!({"schema_version":RESULT_SCHEMA,"machine":self.value["machine"],
             "reconciliation":{"state":self.value["state"],"safe_to_retry":self.value["safe_to_retry"]}});
         if self.value["state"] == "start_failed" {

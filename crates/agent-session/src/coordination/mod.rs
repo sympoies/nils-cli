@@ -16,6 +16,7 @@ pub mod mailbox;
 mod mailbox_wait;
 mod notification;
 mod notification_policy;
+pub(crate) mod resume_preflight;
 pub use notification::NotificationProjection;
 pub mod readiness;
 mod receipt_retention;
