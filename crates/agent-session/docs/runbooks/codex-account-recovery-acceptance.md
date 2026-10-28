@@ -7,6 +7,16 @@ Native runtime readiness, activity phase, and account binding are separate facts
 
 ## Startup recovery
 
+For failed Codex startup with no managed provider resume identity, activity
+`starting`, and an explicitly queued replacement account, use the same switch
+and normal restart commands below. The replacement starts fresh without a
+`resume` command or replaying the original prompt. A running startup must prove
+its runtime identity, empty composer, and native quiescence: a complete empty
+loaded-thread list or exactly one idle thread. Busy, ambiguous, paginated, or
+unavailable native observations refuse before stopping. A stopped startup goes
+through the normal verified process teardown before relaunch. Existing attached
+conversations always retain exact resume semantics.
+
 For a session with a failed startup binding, an attached native idle thread, an
 empty composer, and activity phase `starting`:
 
@@ -20,6 +30,12 @@ Expect a ready restart receipt, a new incarnation, and the target account bound
 to that incarnation with no queued intent. Ordinary input remains blocked until
 binding completes. Busy native threads, pending attention, unknown identity, and
 concurrent notification submission still refuse normal restart.
+
+The replacement TUI's bootstrap `account/read` waits for its pending account
+binding before workspace routing discovery. This avoids the provider exiting
+with `account changed during workspace routing discovery`. Readiness requires
+both the native idle thread and the selected account bound to the replacement
+incarnation; selecting or resolving credentials alone is not a recovery pass.
 
 ## Idle fixture without a model turn
 

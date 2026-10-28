@@ -1,5 +1,8 @@
 //! Existing bounded identity recovery probe.
 use super::*;
+#[path = "startup_recovery.rs"]
+mod startup_recovery;
+pub(crate) use startup_recovery::verify_startup_quiescent;
 
 /// Resolve only an unambiguous loaded primary conversation and require the
 /// provider's own idle status. Never infer the active thread from history order.

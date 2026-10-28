@@ -383,11 +383,22 @@ agent-session restart <id> --force --stop-timeout 30 --ready-timeout 60
 - The relaunch resumes the exact provider resume metadata, then waits up to
   `--ready-timeout` seconds, every observation included, for the provider to
   report an idle prompt.
+- A failed Codex startup without provider resume metadata can instead restart
+  fresh when an explicit replacement account is queued and activity remains
+  `starting` without a current turn or attached identity. A running startup
+  must prove runtime identity, an empty composer and an unambiguous quiescent
+  app-server before verified termination; a stopped startup still requires
+  verified teardown. No prompt is replayed. Existing conversations keep their
+  exact resume identity. See the [account recovery acceptance recipe](codex-account-recovery-acceptance.md).
 - Success returns an `agent-session.restart.v1` receipt with the old and new
   incarnation, generation, pane pid, and provider version, plus timestamps
   and `stop_method` (`provider-exit` or `terminated`). The provider version is
   probed from the installed binary; an old version is known only for a runtime
   that a previous restart launched.
+  `provider_session_id` is null while a fresh recovery has no identity and
+  contains the newly observed identity on readiness. Existing resume receipts
+  retain their original provider session id. Codex readiness also requires the
+  selected account bound to the replacement incarnation with no pending intent.
 - Every failure after the exit command returns the receipt and a `recovery`
   command in the error details: `agent-session resume <id>` when the session
   is stopped (`restart-relaunch-failed`, `restart-prior-incarnation-live`, or a
