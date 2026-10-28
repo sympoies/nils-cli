@@ -5355,7 +5355,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__pr__create)
-            opts="-h --head --base --title --body --body-file --kind --no-draft --reviewer --label --label-catalog --strict-labels --test-first-evidence --format --remote --provider --host --repo --store-root --dry-run --help"
+            opts="-h --head --base --title --body --body-file --kind --no-draft --reviewer --label --label-catalog --strict-labels --test-first-evidence --supersedes --format --remote --provider --host --repo --store-root --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -5398,6 +5398,10 @@ _forge__cli() {
                     return 0
                     ;;
                 --test-first-evidence)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --supersedes)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

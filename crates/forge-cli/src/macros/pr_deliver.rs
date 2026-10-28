@@ -839,6 +839,7 @@ fn build_create_args(args: &PrDeliverArgs, default_branch: &str) -> PrCreateArgs
         label_catalog: args.label_catalog.clone(),
         strict_labels: args.strict_labels,
         test_first_evidence: args.test_first_evidence.clone(),
+        supersedes: None,
     }
 }
 

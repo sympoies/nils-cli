@@ -188,7 +188,7 @@ the extension. A session with lineage and work looks like this:
 | Lifecycle | `created_at` | string | `SessionView.created_at`. |
 | Lifecycle | `updated_at` | string | `SessionView.updated_at`; on a closed record, the last value before close. |
 | Lifecycle | `runtime_exit` | object or absent | Current stopped runtime exit reason and explicit Resume action; see [Unexpected provider exit](../runbooks/session-lifecycle.md#unexpected-provider-exit). Present when `runtime_exit.v1` is advertised and evidence exists. |
-| Lifecycle | `last_terminal_activity_at` | string or null | `SessionView.last_terminal_activity_at`; the latest observed terminal activity, or null when unavailable or absent from an older record. Present when `terminal_activity.v1` is advertised. |
+| Lifecycle | `last_terminal_activity_at` | string or null | `SessionView.last_terminal_activity_at`; the latest observed terminal activity, or null when unavailable or absent from an older record. A `deleted` or `archived` closed record always carries it: the observed exit time when one exists, otherwise the close time. Present when `terminal_activity.v1` is advertised. |
 | Lifecycle | `closed_at` | string or null | New. The ledger append time for `deleted` or `archived`; the aggregator's first confirmed absence for `vanished`. `null` unless `state` is `closed`. |
 | Lifecycle | `close_reason` | string or null | New. `deleted`, `archived`, `exited`, or `vanished`. See [Close reasons](#close-reasons). `null` unless `state` is `closed`. |
 | Role | `role` | string or null | `SessionView.role`: `coordinator`, or `null`. See [session-lineage-work-v1](session-lineage-work-v1.md#role). |

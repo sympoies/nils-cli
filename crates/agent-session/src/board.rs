@@ -169,7 +169,10 @@ pub(crate) fn closed_record(
     reason: CloseReason,
 ) -> Option<Value> {
     crate::lifecycle::observe_stopped(context, record);
-    let last_terminal_activity_at = crate::lifecycle::stopped_observed_at(context, record);
+    // A close without an observed exit still ends the session's terminal
+    // activity, so the retained row carries the close time as that proof.
+    let last_terminal_activity_at = crate::lifecycle::stopped_observed_at(context, record)
+        .or_else(|| Some(jiff::Timestamp::now().to_string()));
     let mut view = crate::session_view_from_parts(
         context,
         record,
@@ -1056,6 +1059,30 @@ mod tests {
         );
         assert_eq!(closed["cwd"], Value::Null);
         assert_eq!(closed["updated_at"], "2030-01-01T00:04:00Z");
+    }
+
+    #[test]
+    fn a_closed_record_without_an_observed_exit_is_stamped_with_the_close_time() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let mut record = stored_session(&context, "retired");
+        // Without a persisted tmux identity no exit is ever observed.
+        record.extra.remove("delete_tmux_identity");
+        assert_eq!(
+            crate::lifecycle::stopped_observed_at(&context, &record),
+            None
+        );
+        let before = jiff::Timestamp::now();
+        let closed = closed_record(&context, &record, CloseReason::Deleted).expect("closed");
+        let stamped: jiff::Timestamp = closed["last_terminal_activity_at"]
+            .as_str()
+            .expect("terminal activity timestamp")
+            .parse()
+            .expect("RFC 3339 timestamp");
+        assert!(stamped >= before && stamped <= jiff::Timestamp::now());
     }
 
     #[test]
