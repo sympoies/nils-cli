@@ -137,7 +137,7 @@ pub(crate) fn command_format(command: &Command) -> OutputFormat {
         Command::Run(args) => args.format,
         Command::List(args) => args.format,
         Command::Board(args) => args.format,
-        Command::Show(args) => args.format,
+        Command::Show(args) | Command::Refresh(args) => args.format,
         Command::Logs(args) => args.format,
         Command::Diagnose(args) => args.format,
         Command::Send(args) => args.format,

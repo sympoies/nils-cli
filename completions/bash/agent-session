@@ -82,6 +82,9 @@ _agent__session() {
             agent__session,rebind)
                 cmd="agent__session__rebind"
                 ;;
+            agent__session,refresh)
+                cmd="agent__session__refresh"
+                ;;
             agent__session,restart)
                 cmd="agent__session__restart"
                 ;;
@@ -269,7 +272,7 @@ _agent__session() {
 
     case "${cmd}" in
         agent__session)
-            opts="-h -V --state-dir --host --help --version start run auto-resume list board command attach logs diagnose send notice glance resume restart clear rebind account activity work-context broker readiness delegation message metadata workspace lineage work serve codex-app-server-proxy delete tmp completion"
+            opts="-h -V --state-dir --host --help --version start run auto-resume list board command attach logs diagnose send notice glance resume restart clear rebind account refresh activity work-context broker readiness delegation message metadata workspace lineage work serve codex-app-server-proxy delete tmp completion"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2972,6 +2975,35 @@ _agent__session() {
                     fi
                     return 0
                     ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agent__session__refresh)
+            opts="-h --format --state-dir --host --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
                 --format)
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0
