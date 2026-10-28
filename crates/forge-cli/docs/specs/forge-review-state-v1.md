@@ -382,15 +382,21 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   are reread. Surrender can retain a stale base so the reviewer can relinquish
   the old interval after integration.
 - Approval output: every handoff operation also emits effective
-  `approval_policy` (`source-pass` or `final-approval`). Successful `check`
-  retains `status: reviewed` for compatibility and adds `approval`: `state`
+  `approval_policy` (`source-pass` or `final-approval`). Successful `check` and
+  publication-admitted `inspect`
+  retain `status: reviewed` for compatibility and add `approval`: `state`
   is `source-passed` or `finally-approved`; `review_id`, `review_url`,
   `review_author`, `native_state`, and `reviewed_head` identify the selected
   native report. `finally-approved` requires `APPROVED` on the current head.
   Approval carried from an older head across a verified base sync remains
   source closure and cannot satisfy `final-approval`.
 
-  Other operations omit `approval` because they do not admit a publication.
+  Active unchanged-base `inspect` uses the same publication admission and
+  persisted policy as `check`, exposing `status: reviewed` and `approval` even
+  when the owned observation has no findings. Missing or inadmissible reports
+  and unmet policy retain `awaiting-designated-review` without `approval`;
+  provider and incomplete snapshot errors remain failures. Inspection never
+  appends a ledger record. Other operations omit `approval`.
   Consumers requiring final approval must select the strict policy or inspect
   `approval.state`; existing `status: reviewed` alone does not mean final
   delivery approval. Independent delivery checks still apply.

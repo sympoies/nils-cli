@@ -197,6 +197,7 @@ fn persisted_strict_policy_cannot_be_weakened_by_check_caller() {
         ],
     );
     assert_refusal(&out, 65, "designated_final_approval_required");
+    super::inspection::assert_pending(&stub);
 }
 
 #[test]
