@@ -38,7 +38,9 @@ pub(crate) const JUNIPER_TIDE: &str = "juniper_tide";
 pub(crate) const CEDAR_EMBER: &str = "cedar_ember";
 
 /// Reads the usage status with the Claude Code query and User-Agent.
-pub(crate) fn request_status(access_token: &str) -> Result<String, RequestFailure> {
+pub(crate) fn request_status(
+    access_token: &str,
+) -> Result<client::UsageObservation, RequestFailure> {
     client::request_usage_with(access_token, Some(STATUS_QUERY), &default_user_agent())
 }
 

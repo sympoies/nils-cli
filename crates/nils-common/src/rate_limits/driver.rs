@@ -85,6 +85,8 @@ pub enum CacheFallbackPolicy {
 /// One target's one-line observation for the accounts table.
 #[derive(Debug, Default)]
 pub struct OneLineFetch {
+    /// Bounded provider status displayed alongside the table row.
+    pub note: Option<String>,
     pub line: Option<String>,
     pub rc: i32,
     pub err: String,
@@ -756,6 +758,7 @@ fn collect_async_round<P: RateLimitsProvider>(
         let mut benign_no_window = false;
         if let Some(event) = events.remove(&target_name) {
             row.reset_credits_available = event.reset_credits_available;
+            row.note = event.note;
             if !event.err.is_empty() {
                 stderr_map.insert(target_name.clone(), event.err.clone());
             }
@@ -888,6 +891,10 @@ fn run_all_table_mode<P: RateLimitsProvider>(
         let mut row = Row::empty(target_name.trim_end_matches(".json").to_string());
         let one_line = provider.sequential_one_line(target, cached_mode, debug_mode);
         row.reset_credits_available = one_line.reset_credits_available;
+        row.note = one_line.note;
+        if one_line.stale {
+            row.state = RowState::Stale;
+        }
         let output = one_line.line.unwrap_or_default();
 
         if output.is_empty() {

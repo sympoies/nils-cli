@@ -11,6 +11,7 @@
 //! and cache-fallback results omit it.
 
 mod cache;
+mod observation;
 pub(crate) mod status;
 
 use anyhow::Result;
@@ -96,6 +97,7 @@ enum Fetch {
         windows: Vec<RateLimitWindow>,
         limit_resets: Value,
         owner_key: Option<String>,
+        fetched_at: i64,
     },
     NoWindow {
         limit_resets: Value,
@@ -199,62 +201,70 @@ impl RateLimitsProvider for ClaudeRateLimits {
     fn async_one_line(&self, target: &Path, cached: bool) -> OneLineFetch {
         let name = target_name(target);
         if cached {
-            return cached_one_line(&name);
+            return observation::cached_one_line(target, &name);
         }
         let mut errors = Vec::new();
         match fetch(target) {
             Fetch::Windows {
-                values, owner_key, ..
+                values,
+                owner_key,
+                fetched_at,
+                ..
             } => {
-                write_cache(&name, &values, owner_key.as_deref());
-                return OneLineFetch {
+                write_cache(&name, &values, owner_key.as_deref(), fetched_at);
+                OneLineFetch {
                     line: shared_values::one_line_from_values(&values, format_local_datetime)
                         .map(normalize_one_line),
                     ..Default::default()
-                };
+                }
             }
             Fetch::NoWindow { .. } => {
                 if let Some(fetch) = stale_one_line_for_target(target, &name, &mut errors) {
                     return fetch;
                 }
-                return OneLineFetch {
+                OneLineFetch {
                     rc: RC_NO_RATE_LIMIT_WINDOW,
                     no_window: true,
                     err: errors.join("\n"),
                     ..Default::default()
-                };
+                }
             }
-            Fetch::Failed { message, .. } => errors.push(message),
-        }
-        if let Some(mut fetch) = stale_one_line_for_target(target, &name, &mut errors) {
-            errors.push(format!("{TOOL}-async: falling back to cache"));
-            fetch.err = errors.join("\n");
-            return fetch;
-        }
-        OneLineFetch {
-            rc: 1,
-            err: errors.join("\n"),
-            ..Default::default()
+            Fetch::Failed {
+                message, reason, ..
+            } => {
+                errors.push(message);
+                if let Some(mut result) = stale_one_line_for_target(target, &name, &mut errors) {
+                    result.note = observation::failure_note(target, reason);
+                    result.stale = true;
+                    return result;
+                }
+                OneLineFetch {
+                    rc: 1,
+                    err: errors.join("\n"),
+                    note: observation::failure_note(target, reason),
+                    ..Default::default()
+                }
+            }
         }
     }
 
     fn sequential_one_line(&self, target: &Path, cached: bool, debug: bool) -> OneLineFetch {
         let name = target_name(target);
         if cached {
-            let fetch = cached_one_line(&name);
+            let fetch = observation::cached_one_line(target, &name);
             if debug && !fetch.err.is_empty() {
                 eprintln!("{}", fetch.err);
             }
-            return OneLineFetch {
-                line: fetch.line,
-                ..Default::default()
-            };
+            return fetch;
         }
         match fetch(target) {
             Fetch::Windows {
-                values, owner_key, ..
+                values,
+                owner_key,
+                fetched_at,
+                ..
             } => {
-                write_cache(&name, &values, owner_key.as_deref());
+                write_cache(&name, &values, owner_key.as_deref(), fetched_at);
                 OneLineFetch {
                     line: shared_values::one_line_from_values(&values, format_local_datetime),
                     ..Default::default()
@@ -280,13 +290,17 @@ impl RateLimitsProvider for ClaudeRateLimits {
                     if let Some(mut result) = stale_one_line_for_target(target, &name, &mut errors)
                     {
                         result.stale = true;
+                        result.note = observation::failure_note(target, reason);
                         return result;
                     }
                 }
                 if debug {
                     eprintln!("{message}");
                 }
-                OneLineFetch::default()
+                OneLineFetch {
+                    note: observation::failure_note(target, reason),
+                    ..Default::default()
+                }
             }
         }
     }
@@ -315,7 +329,19 @@ impl RateLimitsProvider for ClaudeRateLimits {
 
     /// The recorded current default `auth current` reports, when listed.
     fn current_name(&self, targets: &[PathBuf]) -> Option<String> {
-        let current = store::read_current().ok().flatten()?;
+        let current = match store::read_current().ok()? {
+            Some(current) => current,
+            None => {
+                let active = read_active_login().ok()?;
+                return targets
+                    .iter()
+                    .find(|target| {
+                        read_target_login(target)
+                            .is_ok_and(|login| login.access_token == active.access_token)
+                    })
+                    .map(|target| target_name(target));
+            }
+        };
         targets
             .iter()
             .map(|target| target_name(target))
@@ -466,8 +492,9 @@ fn json_result(
             windows,
             limit_resets,
             owner_key,
+            fetched_at,
         } => {
-            write_cache(&name, &values, owner_key.as_deref());
+            write_cache(&name, &values, owner_key.as_deref(), fetched_at);
             let summary = schema::summary_from_weekly_values(&values, format_local_with_offset);
             let mut result = sanitize(RateLimitResult::ok(identity, "network", summary, windows));
             result.limit_resets = Some(limit_resets);
@@ -529,6 +556,7 @@ fn from_cache(
 }
 
 fn from_owned_cache(target: &Path, identity: TargetIdentity, name: &str) -> RateLimitResult {
+    observation::import_shared_cache(target, name);
     let Some(owner_key) = read_target_login(target)
         .ok()
         .map(|login| crate::prompt_segment::token_key(&login.access_token))
@@ -608,6 +636,7 @@ fn stale_one_line_for_target(
     name: &str,
     errors: &mut Vec<String>,
 ) -> Option<OneLineFetch> {
+    observation::import_shared_cache(target, name);
     let owner_key = active_owner_key(target);
     match cache::read_allow_stale_owned(name, &owner_key, now_epoch()) {
         Ok(read) => {
@@ -626,11 +655,11 @@ fn stale_one_line_for_target(
     }
 }
 
-fn write_cache(name: &str, values: &WeeklyValues, owner_key: Option<&str>) {
+fn write_cache(name: &str, values: &WeeklyValues, owner_key: Option<&str>, fetched_at: i64) {
     if let Some(owner_key) = owner_key {
-        let _ = cache::write_owned(name, now_epoch(), values, owner_key);
+        let _ = cache::write_owned(name, fetched_at, values, owner_key);
     } else {
-        let _ = cache::write(name, now_epoch(), values);
+        let _ = cache::write(name, fetched_at, values);
     }
 }
 
@@ -667,9 +696,15 @@ fn fetch(target: &Path) -> Fetch {
             };
         }
     };
-    let mut result = parse_usage_body(&body);
-    if let Fetch::Windows { owner_key, .. } = &mut result {
+    let mut result = parse_usage_body(&body.body);
+    if let Fetch::Windows {
+        owner_key,
+        fetched_at,
+        ..
+    } = &mut result
+    {
         *owner_key = Some(crate::prompt_segment::token_key(&login.access_token));
+        *fetched_at = body.fetched_at;
     }
     result
 }
@@ -747,6 +782,7 @@ fn parse_usage_body(body: &str) -> Fetch {
         windows,
         limit_resets,
         owner_key: None,
+        fetched_at: now_epoch(),
     }
 }
 
@@ -882,7 +918,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn all_accounts_mark_the_recorded_current_default_like_auth_current() {
+    fn all_accounts_prefer_recorded_default_then_match_active_login() {
         use nils_test_support::{EnvGuard, GlobalStateLock};
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
@@ -911,7 +947,10 @@ mod tests {
         std::fs::write(secrets.join("current"), "gamma\n").unwrap();
         assert_eq!(ClaudeRateLimits.current_name(&targets), None);
         std::fs::remove_file(secrets.join("current")).unwrap();
-        assert_eq!(ClaudeRateLimits.current_name(&targets), None);
+        assert_eq!(
+            ClaudeRateLimits.current_name(&targets).as_deref(),
+            Some("alpha")
+        );
     }
 
     #[test]

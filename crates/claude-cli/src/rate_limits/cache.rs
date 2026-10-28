@@ -130,6 +130,20 @@ pub fn read_allow_stale_owned(
     Ok(StaleCacheRead { entry, stale })
 }
 
+/// Diagnostic age remains useful even when windows exceed the display ceiling.
+pub(super) fn owned_age(name: &str, token_key: &str, now_epoch: i64) -> Option<i64> {
+    let content = read_content(name).ok()?;
+    if content
+        .lines()
+        .find_map(|line| line.strip_prefix("owner_token_key="))
+        != Some(token_key)
+    {
+        return None;
+    }
+    let fetched_at = shared_values::parse_cache_entry(&content).fetched_at_epoch?;
+    Some(now_epoch.saturating_sub(fetched_at).max(0))
+}
+
 pub fn write(name: &str, fetched_at_epoch: i64, values: &WeeklyValues) -> Result<(), String> {
     let Some(data) = shared_values::render_cache_entry(fetched_at_epoch, values) else {
         return Ok(());

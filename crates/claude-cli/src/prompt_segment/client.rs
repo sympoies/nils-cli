@@ -4,6 +4,7 @@ use reqwest::blocking::Client;
 use std::fmt;
 use std::time::Duration;
 
+pub(crate) use super::backoff::UsageObservation;
 use super::backoff::{self, Backoff};
 
 const DEFAULT_ENDPOINT: &str = "https://api.anthropic.com/api/oauth/usage";
@@ -54,7 +55,7 @@ pub(crate) fn backoff_active(access_token: &str) -> bool {
     backoff::active_for(access_token)
 }
 
-pub fn fetch_usage(access_token: &str) -> Result<String, UsageFetchError> {
+pub(crate) fn fetch_usage(access_token: &str) -> Result<UsageObservation, UsageFetchError> {
     let result = request_usage(access_token).map_err(|failure| {
         UsageFetchError::new(match failure {
             RequestFailure::Backoff => ProviderUsageReason::RateLimited,
@@ -69,8 +70,12 @@ pub fn fetch_usage(access_token: &str) -> Result<String, UsageFetchError> {
 }
 
 /// Sends one `GET` to the OAuth usage endpoint with `access_token`.
-pub(crate) fn request_usage(access_token: &str) -> Result<String, RequestFailure> {
-    request_usage_with(access_token, None, DEFAULT_USER_AGENT)
+pub(crate) fn request_usage(access_token: &str) -> Result<UsageObservation, RequestFailure> {
+    request_usage_with(
+        access_token,
+        Some(crate::rate_limits::status::STATUS_QUERY),
+        DEFAULT_USER_AGENT,
+    )
 }
 
 /// Sends one `GET` to the OAuth usage endpoint with `query` appended and
@@ -79,7 +84,7 @@ pub(crate) fn request_usage_with(
     access_token: &str,
     query: Option<&str>,
     default_user_agent: &str,
-) -> Result<String, RequestFailure> {
+) -> Result<UsageObservation, RequestFailure> {
     let cooldown = Backoff::acquire(access_token).ok();
     if cooldown
         .as_ref()
@@ -87,6 +92,12 @@ pub(crate) fn request_usage_with(
         || (cooldown.is_none() && backoff::active_for(access_token))
     {
         return Err(RequestFailure::Backoff);
+    }
+    if let Some(body) = cooldown
+        .as_ref()
+        .and_then(|state| state.cached_response(backoff::now_epoch()))
+    {
+        return Ok(body);
     }
     let endpoint = with_query(&usage_endpoint(), query);
     let max_time_seconds = env_u64("CLAUDE_PROMPT_SEGMENT_MAX_TIME_SECONDS", 5);
@@ -126,10 +137,31 @@ pub(crate) fn request_usage_with(
         return Err(RequestFailure::Http { status, body });
     }
 
+    let observation = UsageObservation {
+        body,
+        fetched_at: chrono::Utc::now().timestamp(),
+    };
     if let Some(cooldown) = &cooldown {
         let _ = cooldown.clear();
+        let _ = cooldown.store_response(&observation);
     }
-    Ok(body)
+    Ok(observation)
+}
+
+pub(crate) fn cached_usage(access_token: &str) -> Option<UsageObservation> {
+    backoff::cached_usage(access_token)
+}
+
+pub(crate) fn fetched_at(access_token: &str) -> Option<i64> {
+    backoff::fetched_at(access_token)
+}
+
+pub(crate) fn retry_at(access_token: &str) -> Option<u64> {
+    backoff::retry_at(access_token)
+}
+
+pub(crate) fn invalidate_response(access_token: &str) {
+    backoff::invalidate_response(access_token);
 }
 
 fn retry_after_seconds(value: &str, now: u64) -> Option<u64> {

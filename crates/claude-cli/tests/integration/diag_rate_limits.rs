@@ -428,7 +428,7 @@ fn diag_rate_limits_all_text_renders_the_shared_accounts_table() {
 Name                   5h     Left    Weekly     Left  Reset                 Resets\n\
 -----------------------------------------------------------------------------------\n\
 alpha                 75%   0h  0m       60%   0h  0m  11-20 17:06 +00:00         -\n\
-beta                    -        -         -        -  -                          -\n"
+beta                    -        -         -        -  -                          -  permission_denied\n"
         );
     }
 }
@@ -451,7 +451,7 @@ fn diag_rate_limits_default_all_env_reads_every_profile_when_no_target_is_given(
 Name                   5h     Left    Weekly     Left  Reset                 Resets\n\
 -----------------------------------------------------------------------------------\n\
 alpha                 75%   0h  0m       60%   0h  0m  11-20 17:06 +00:00         -\n\
-beta                    -        -         -        -  -                          -\n"
+beta                    -        -         -        -  -                          -  permission_denied\n"
     );
 
     // JSON and named targets keep their single-target meaning.
@@ -489,6 +489,7 @@ fn diag_rate_limits_async_json_falls_back_to_cache_and_cached_mode_stays_offline
     assert_eq!(payload["results"], json!([alpha_result("network")]));
 
     fx.alpha_limited.store(true, Ordering::SeqCst);
+    age_shared_usage(&fx.root);
     let output = fx.run(&["diag", "rate-limits", "--async", "--json"]);
     assert_exit(&output, 0);
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
@@ -898,6 +899,7 @@ fn diag_rate_limits_user_agent_follows_the_installed_claude_code_version() {
         "#!/bin/sh\n[ \"$1\" = \"--version\" ] || exit 9\nprintf '2.3.45 (Claude Code)\\n'\n",
     );
     let user_agent = |options: CmdOptions| {
+        age_shared_usage(&fx.root);
         let output = run(
             &["diag", "rate-limits", "alpha", "--format", "json"],
             &options,

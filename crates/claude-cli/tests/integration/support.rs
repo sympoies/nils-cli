@@ -428,3 +428,25 @@ fi
     );
     bin_dir
 }
+
+/// Advance shared OAuth snapshots past the fetch interval without sleeping.
+/// Their data remains within the ten-minute display ceiling.
+pub(crate) fn age_shared_usage(root: &Path) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    for entry in std::fs::read_dir(root.join("usage-backoff"))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "response") {
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            value["fetched_at"] = serde_json::json!(now - 120);
+            std::fs::write(path, value.to_string()).unwrap();
+        }
+    }
+}

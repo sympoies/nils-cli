@@ -702,6 +702,7 @@ fn async_fetch_one_line(
     let err = errors.join("\n");
     AsyncFetchResult {
         line,
+        note: result.note,
         rc: result.rc,
         err,
         stale: result.stale,

@@ -30,10 +30,36 @@ not be interpreted as unlimited quota or zero usage.
 Do not parse `note`, stderr, Claude terminal output, or provider response
 bodies. Do not inspect Claude credential storage as a fallback.
 
-## Shared cooldown
+## Shared fetch and cooldown
 
-All OAuth usage callers on one host share the token-keyed persistent cooldown
-in the prompt-segment cache directory. A rate limit uses positive `Retry-After`
-or a 300-second default, doubles consecutive delays up to one hour, and clears
-on a successful HTTP read. `usage --source auto` skips the native `/usage`
-probe after an OAuth rate limit. Cache clearing does not clear the cooldown.
+OAuth usage readers on one host share a process-locked response cache and
+cooldown in the prompt-segment cache directory. A successful response is reused
+for 60 seconds across prompt segments, usage, diagnostics, and reset-status
+reads. The shared request includes the Claude Code status query so every reader
+can use the same payload. Reusing it preserves its original fetch time.
+
+The key is a digest of the account UUID from a matching stored profile or the
+active login metadata. Tokens without known account metadata use a token digest;
+readers must share the same cache directory and account metadata to coalesce.
+Neither tokens nor account identifiers are written to the shared state.
+
+A rate limit uses positive `Retry-After` (seconds or an HTTP date), or a
+300-second default. Consecutive local delays double up to one hour; a longer
+server hint is never shortened. Success resets the delay. Existing token-keyed
+cooldowns migrate to the account key. Cache clearing does not clear cooldowns
+or bypass the shared fetch interval. Reset submissions invalidate the shared
+response because they can change usage and grant availability.
+
+All readers can display the same eligible last snapshot while throttled, with
+its original age and the existing ten-minute display ceiling. `usage --source
+auto` skips the native `/usage` probe after an OAuth rate limit. Diagnostic tables
+show the throttle deadline and cache age, including the age of a snapshot too
+old to display. With no recorded default, the table highlights the stored
+profile matching the active login's token.
+
+## Follow-up: cross-host authority
+
+Each host still fetches independently. A configured authority could publish
+account-scoped usage snapshots and retry deadlines for replicas to read, reducing
+requests across hosts. This needs an explicit transport, freshness and authority
+failure contract; it is deferred from the host-local coordination in Refs #3039.
