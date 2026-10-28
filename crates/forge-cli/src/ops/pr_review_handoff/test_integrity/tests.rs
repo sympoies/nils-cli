@@ -1,6 +1,8 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+#[path = "ordinary_tests.rs"]
+mod ordinary_tests;
 #[path = "provenance_tests.rs"]
 mod provenance_tests;
 
@@ -274,18 +276,17 @@ fn subject(head: &str, base: &str, body: &str) -> serde_json::Value {
 impl BackendRunner for ComparisonRunner {
     fn run(&self, call: &BackendCall) -> Result<crate::backend::BackendSuccess, ForgeError> {
         let argv = call.plan_argv();
-        let stdout = if argv.iter().any(|s| s.contains("/compare/")) {
-            assert!(
-                argv.iter()
-                    .any(|s| s.contains("application/vnd.github.diff"))
-            );
-            self.patch.clone()
+        let files = ordinary_tests::files(&self.patch);
+        let stdout = if let Some(endpoint) = argv.iter().find(|s| s.contains("/files?")) {
+            ordinary_tests::page(&files, endpoint, &argv).to_string()
         } else {
-            self.subjects
+            let mut subject = self
+                .subjects
                 .borrow_mut()
                 .pop_front()
-                .expect("unexpected metadata read")
-                .to_string()
+                .expect("unexpected metadata read");
+            subject["changed_files"] = serde_json::json!(files.len());
+            subject.to_string()
         };
         Ok(crate::backend::BackendSuccess {
             stdout,
@@ -322,6 +323,19 @@ fn assertion_patch() -> String {
 }
 
 fn confirmation(patch: &str, base: &str, head: &str, body: &str) -> String {
+    let runner = ComparisonRunner {
+        subjects: std::cell::RefCell::new(
+            [subject(HEAD, BASE, body), subject(HEAD, BASE, body)].into(),
+        ),
+        patch: patch.into(),
+    };
+    let ctx = crate::provider::ProviderContext {
+        provider: crate::provider::Provider::GitHub,
+        host: "github.com".into(),
+        source: crate::provider::DetectionSource::Flag,
+        repo: Some("acme/widgets".into()),
+    };
+    let (_, patch, _) = comparison(&runner, &ctx, 7, HEAD).unwrap();
     format!(
         "Test changes confirmed: {}",
         sha256_digest(format!("{base}\n{head}\n{patch}\n{}", declarations(body)).as_bytes())

@@ -5,13 +5,15 @@ It runs in `pr review-handoff check` (including `--dry-run`) and the existing
 assigned delivery/merge publication gates. Unassigned PRs, GitLab, and the local
 provider do not use this designated-review gate.
 
-The check reads PR head, base, author and body, requests the immutable
-`base...head` diff, and rereads that metadata. It requires complete evidence;
+The check reads PR head, base, author and body, enumerates complete PR-file
+metadata, inspects source patches for that comparison, and rereads the PR metadata. It requires complete evidence;
 head/base/body drift, malformed or truncated hunks and binary source fail with
 `test_changes_incomplete`. Deterministic bounds fail with the non-retryable
 `test_changes_limit_exceeded` error; see [limits and recovery](#limits-and-recovery).
-Binary assets produce no findings but count toward comparison bounds. The existing backend
-limits and redaction apply. No patch source text is included in diagnostics.
+Ordinary comparisons discard non-source patches before backend stdout capture;
+asset deletions and binaries are represented by file metadata and blob IDs.
+Source paths include ordinary application files because they can contain inline
+tests. The existing backend limits and redaction apply. No patch source text is included in diagnostics.
 
 ## Findings
 
@@ -202,17 +204,25 @@ adaptations or declarations; stale confirmations cannot admit a changed import.
 Deterministic bounds never become retryable just because provider evidence is
 fetched again. They use exit 65, `test_changes_limit_exceeded`,
 `details.retryable=false` and `details.next_action=split_comparison_or_rename_paths`.
-The diagnostic names the bound and recovery; there is no silent bypass.
+The diagnostic names the bound and recovery; oversized ordinary source patches
+also name the affected paths. There is no silent bypass.
 
 | Limit name | Accepted comparison | Recovery |
 | --- | --- | --- |
-| `file_count` | Fewer than 300 files, including binary assets | Split the PR into smaller comparisons |
-| `diff_bytes` | At most 4 MiB (4,194,304 UTF-8 bytes) | Split the PR into smaller comparisons |
+| `file_count` | Fewer than 300 source paths in ordinary inspection; fewer than 300 residual files for provenance imports | Split the PR into smaller comparisons |
+| `diff_bytes` | At most 4 MiB (4,194,304 UTF-8 bytes) of ordinary source patches or provenance residual patches | Split the PR into smaller comparisons |
 | `path_bytes` | Unquoted printable ASCII paths without whitespace, control, quote or pipe bytes | Rename affected paths to supported names, splitting the PR if needed |
 
-These ordinary bounds remain unchanged without a provenance declaration. With
-one, `file_count` and `diff_bytes` apply to the residual preview; the complete
-enumeration additionally enforces `provider_file_count` below 3,000. A large
+Complete PR-file enumeration enforces `provider_file_count` below 3,000 in both
+modes. Ordinary inspection reads 100-file metadata pages with patches removed,
+then requests a bounded single-file patch only when either the old or new path
+has a supported source extension. Missing source patches are reconstructed from
+verified immutable blobs using the same procedure as residual provenance patches.
+File metadata is rechecked before accepting each patch; the confirmation binds
+all enumerated file metadata, inspected patches and any resolved merge base.
+Unrelated assets consume neither the 4 MiB patch budget nor the 300-source-path
+budget. With a provenance declaration, `file_count` and `diff_bytes` still apply
+to the residual preview. A large
 initial import can use [verified provenance](#provenance-imports) instead of
 splitting identical upstream additions solely to fit the preview.
 

@@ -180,6 +180,13 @@ JSON
   "api repos/acme/widgets/compare/"*)
     cat "${{TEST_INTEGRITY_DIFF:-/dev/null}}"; exit 0 ;;
   "api repos/acme/widgets/pulls/7/files?"*)
+    if [ -n "${{TEST_INTEGRITY_FILES_DIR:-}}" ]; then
+      case "$2" in
+        *per_page=100*) cat "$TEST_INTEGRITY_FILES_DIR/metadata-page${{2##*page=}}.json" ;;
+        *) cat "$TEST_INTEGRITY_FILES_DIR/patch-page${{2##*page=}}.json" ;;
+      esac
+      exit $?
+    fi
     cat "$TEST_PROVENANCE_DIR/page${{2##*page=}}.json"; exit $? ;;
   "api repos/acme/upstream/git/commits/"*)
     cat "$TEST_PROVENANCE_DIR/commit.json"; exit $? ;;
@@ -190,7 +197,7 @@ JSON
       if [ -n "${{TEST_INTEGRITY_METADATA:-}}" ]; then
         cat "$TEST_INTEGRITY_METADATA"
       else
-        echo '{{"head":"{head}","base":"'"${{PROVIDER_BASE:-{OLD}}}"'","author":"contributor","body":""}}'
+        echo '{{"head":"{head}","base":"'"${{PROVIDER_BASE:-{OLD}}}"'","author":"contributor","body":"","changed_files":0}}'
       fi ;;
     *base.ref*) echo "${{PROVIDER_BASE:-{OLD}}} ${{PROVIDER_BASE_REF:-main}}" ;;
     *) echo "${{PROVIDER_BASE:-{OLD}}}" ;;

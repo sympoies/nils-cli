@@ -145,7 +145,7 @@ fn test_path(path: &str) -> bool {
         || name.ends_with("Test.java")
 }
 
-fn source(path: &str) -> bool {
+pub(super) fn source(path: &str) -> bool {
     matches!(
         path.rsplit('.').next(),
         Some(
