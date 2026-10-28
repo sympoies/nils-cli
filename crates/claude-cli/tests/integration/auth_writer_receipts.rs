@@ -126,7 +126,7 @@ fn writer_receipt_rejects_invalid_or_unbound_attempt_before_mutation() {
 }
 
 #[test]
-fn writer_receipt_legacy_replacement_and_prune_invalidate_old_evidence() {
+fn writer_receipt_receipt_free_replacement_and_prune_invalidate_old_evidence() {
     let tmp = tempfile::tempdir().unwrap();
     assert_exit(&publish(entry(), tmp.path()), 0);
     assert_eq!(receipt(tmp.path())["state"], "completed");
