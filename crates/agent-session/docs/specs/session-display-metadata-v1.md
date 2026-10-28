@@ -61,3 +61,28 @@ sessions. No provider, account selection or fallback configuration changes.
 Consumers must deploy compatible role readers before enabling new producer
 values. A missing mode/revision projection means the daemon does not support the
 mode control; clients must not claim a local setting is persisted remotely.
+
+## On-demand refresh
+
+`agent-session refresh ID` and `POST /sessions/{exact-id}/refresh` (bearer, empty
+body) re-read the facts a session displays from live provider state. They run
+only when asked; nothing polls.
+
+- `model`: the latest model in the provider transcript (Claude) or rollout
+  turn context (Codex), read from a bounded tail window.
+- `reasoning_effort`: the latest rollout turn-context effort (Codex). Claude
+  transcripts record no effort, so a Claude model change clears the stored
+  effort rather than guessing.
+- `title`: a structured, unpinned title is re-rendered with `references` taken
+  from the session's current work issues (at most two, as `repo #N`). Pinned
+  titles, plain titles and sessions without work are left alone. A change
+  advances `title_revision`.
+
+The response lists the fields that `changed`, the fields that could not be
+re-detected in `unavailable`, and the refreshed session view as `session`. The
+provider account is always `unavailable`: the account brokers are token-free and
+report no signed-in identity (tracked in sympoies/nils-cli#3029), so the response carries the current
+`codex_account` / `claude_account` views unchanged. A refresh with nothing new
+does not rewrite the record. Sessions other than Claude and Codex fail with
+`refresh-unsupported-agent`. The serve envelope is
+`{"machine": ..., "refresh": {...}}`.

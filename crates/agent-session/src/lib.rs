@@ -302,12 +302,8 @@ fn dispatch(cli: Cli) -> i32 {
         Command::Run(args) => run_one_shot(&context, args),
         Command::List(args) => run_list(&context, args),
         Command::Board(args) => board::run(&context, args),
-        Command::Show(args) => match load_session_view(&context, &args.id, None) {
-            Ok(view) => {
-                render_single_success(COMMAND_COMMAND, args.format, &view, render_command_text)
-            }
-            Err(err) => render_error(COMMAND_COMMAND, args.format, err),
-        },
+        Command::Show(args) => session_model::refresh::run_show(&context, args),
+        Command::Refresh(args) => session_model::refresh::run(&context, args),
         Command::AutoResume(args) => auto_resume::cli::run(&context, args),
         Command::Attach(args) => run_attach(&context, args),
         Command::Logs(args) => run_logs(&context, args),

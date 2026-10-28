@@ -1863,3 +1863,5 @@ mod retitle_tests {
         }
     }
 }
+
+include!("serve_refresh_tests.rs");

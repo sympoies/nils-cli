@@ -59,6 +59,7 @@ agent-session start --agent claude --issue sympoies/nils-cli#2032   # child of t
 agent-session list
 agent-session board --state live --since 3d --format json   # who else is working (session board v1)
 agent-session glance <id> --tail 40
+agent-session refresh <id> --format json   # re-read model, effort and title on demand
 agent-session command <id>
 agent-session attach <id>
 agent-session logs <id>
