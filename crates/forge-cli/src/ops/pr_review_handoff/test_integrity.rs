@@ -95,15 +95,7 @@ fn comparison<R: BackendRunner>(
     let (patch, findings) = if let Some(declaration) = provenance::parse(&subject.body)? {
         provenance::comparison(runner, ctx, number, &subject, &declaration)?
     } else {
-        let patch = runner
-            .run(&api(
-                ctx,
-                format!("repos/{repo}/compare/{}...{head}", subject.base),
-                &["--header", "Accept: application/vnd.github.diff"],
-            ))?
-            .stdout;
-        let findings = diff::detect(&patch)?;
-        (patch, findings)
+        provenance::ordinary_comparison(runner, ctx, number, &subject)?
     };
     if read_subject()? != subject {
         return Err(error(

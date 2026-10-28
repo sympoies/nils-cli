@@ -11,9 +11,11 @@ use super::{
 };
 
 mod declaration;
+mod ordinary;
 mod residual;
 pub(super) use declaration::parse;
 use declaration::{Declaration, valid_path};
+pub(super) use ordinary::comparison as ordinary_comparison;
 
 const PREFIX: &str = "provenance-import-v1\n";
 
@@ -53,7 +55,7 @@ fn read<R: BackendRunner, T: DeserializeOwned>(
     serde_json::from_str(&output.stdout).map_err(|_| failure())
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 struct ChangedFile {
     filename: String,
     status: String,
@@ -136,24 +138,31 @@ fn files<R: BackendRunner>(
     ctx: &ProviderContext,
     number: u64,
     subject: &Subject,
+    metadata_only: bool,
 ) -> Result<Vec<ChangedFile>, ForgeError> {
     let count = subject.changed_files.ok_or_else(incomplete)?;
     if count >= 3000 {
         return Err(limit(
             "provider_file_count",
-            "provenance comparisons require fewer than 3,000 files",
+            "complete comparisons require fewer than 3,000 files",
         ));
     }
     let repo = ctx.repo.as_deref().ok_or_else(incomplete)?;
     let mut files = Vec::new();
     let mut paths = BTreeSet::new();
     for page in 1..=count.div_ceil(100) {
-        let batch: Vec<ChangedFile> = read(
-            runner,
+        let extra = if metadata_only {
+            &["--jq", "map(del(.patch))"][..]
+        } else {
+            &[]
+        };
+        let output = runner.run(&api(
             ctx,
             format!("repos/{repo}/pulls/{number}/files?per_page=100&page={page}"),
-            incomplete,
-        )?;
+            extra,
+        ))?;
+        let batch: Vec<ChangedFile> =
+            serde_json::from_str(&output.stdout).map_err(|_| incomplete())?;
         if batch.len() != (count - files.len()).min(100) {
             return Err(incomplete());
         }
@@ -182,7 +191,9 @@ fn files<R: BackendRunner>(
             files.push(file);
         }
     }
-    files.sort_by(|a, b| a.filename.cmp(&b.filename));
+    if !metadata_only {
+        files.sort_by(|a, b| a.filename.cmp(&b.filename));
+    }
     Ok(files)
 }
 
@@ -217,7 +228,7 @@ pub(super) fn comparison<R: BackendRunner>(
     subject: &Subject,
     d: &Declaration,
 ) -> Result<(String, Vec<diff::Finding>), ForgeError> {
-    let files = files(runner, ctx, number, subject)?;
+    let files = files(runner, ctx, number, subject, false)?;
     let tree = upstream(runner, ctx, d)?;
     let merge_base = if files
         .iter()

@@ -8,6 +8,47 @@ const UPSTREAM: &str = "cccccccccccccccccccccccccccccccccccccccc";
 const TREE: &str = "dddddddddddddddddddddddddddddddddddddddd";
 const BLOB: &str = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
+#[test]
+fn ordinary_cleanup_ignores_large_non_test_deletions() {
+    let mut fixture = ImportFixture::new(0);
+    fixture.body.clear();
+    fixture.files = (0..2500)
+        .map(|n| {
+            json!({
+                "filename": format!("evidence/record{n}.json"), "status": "removed",
+                "sha": BLOB, "additions": 0, "deletions": 1,
+                "patch": format!("@@ -1 +0,0 @@\n-{}", "x".repeat(1800))
+            })
+        })
+        .chain((0..4).map(|n| {
+            json!({
+                "filename": format!("tests/contract{n}.rs"), "status": "added",
+                "sha": BLOB, "additions": 2, "deletions": 0,
+                "patch": "@@ -0,0 +1,2 @@\n+#[test]\n+fn contract() { assert!(true); }"
+            })
+        }))
+        .collect();
+    assert!(
+        fixture
+            .files
+            .iter()
+            .map(|f| f["patch"].as_str().unwrap().len())
+            .sum::<usize>()
+            > 4 * 1024 * 1024
+    );
+    let (_, _, findings) = fixture.inspect().unwrap();
+    assert!(findings.is_empty());
+    let calls = fixture.calls.borrow();
+    assert!(!calls.iter().any(|call| call.contains("/compare/")));
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.contains("per_page=1&"))
+            .count(),
+        4
+    );
+}
+
 struct ImportFixture {
     body: String,
     files: Vec<Value>,
@@ -65,14 +106,25 @@ impl BackendRunner for ImportFixture {
         self.calls.borrow_mut().push(endpoint.clone());
         let stdout = if endpoint.contains("/files?") {
             let page: usize = endpoint.rsplit("page=").next().unwrap().parse().unwrap();
-            let start = (page - 1) * 100;
-            let end = (start + 100).min(self.files.len());
+            let size = if endpoint.contains("per_page=1&") {
+                1
+            } else {
+                100
+            };
+            let start = (page - 1) * size;
+            let end = (start + size).min(self.files.len());
             let end = if self.truncate {
                 end.saturating_sub(1).max(start)
             } else {
                 end
             };
-            serde_json::to_string(&self.files[start.min(end)..end]).unwrap()
+            let mut batch = self.files[start.min(end)..end].to_vec();
+            if argv.iter().any(|arg| arg == "map(del(.patch))") {
+                for file in &mut batch {
+                    file.as_object_mut().unwrap().remove("patch");
+                }
+            }
+            serde_json::to_string(&batch).unwrap()
         } else if endpoint.contains("/git/commits/") {
             json!({"sha": self.commit, "tree": {"sha": TREE}}).to_string()
         } else if endpoint.contains("/git/trees/") {
@@ -327,7 +379,7 @@ fn invalid_or_example_declarations_cannot_activate_an_import_exemption() {
             .calls
             .borrow()
             .iter()
-            .any(|call| call.contains("/compare/"))
+            .any(|call| call.contains("/files?"))
     );
     for body in [
         original.repeat(2),
