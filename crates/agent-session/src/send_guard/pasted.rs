@@ -6,6 +6,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use unicode_width::UnicodeWidthChar;
 
 #[derive(Debug, PartialEq, Eq)]
 enum WrappedProofObservation {
@@ -54,17 +55,19 @@ impl Admission<'_> {
             return Some(input);
         }
         let target = format!("{}:0.0", self.record.tmux_session);
+        let steps = text.chars().count();
+        let last_cells = text.chars().next_back()?.width()?;
         // A visual layout may omit or pad spaces. Check the logical length:
-        // N-1 characters must stop one cell before the known endpoint, and one
-        // more must reach it. This rejects both extra and missing separators.
+        // N-1 characters must stop one character before the known endpoint,
+        // and one more must reach it. This rejects both extra and missing separators.
         // A matched final row contains a nonempty paste remainder, so its
         // endpoint is past column 2 and the preceding cell is defined.
         for (key, count, endpoint) in [
             ("C-a", 1, None),
             (
                 "Right",
-                text.len().checked_sub(1)?,
-                Some((end.0 - 1, end.1)),
+                steps.checked_sub(1)?,
+                Some((end.0 - last_cells, end.1)),
             ),
             ("Right", 1, Some(end)),
         ] {

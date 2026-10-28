@@ -342,7 +342,11 @@ fn wrapped_refusal_preserves_and_classifies_a_mixed_draft() {
         let output = guarded_text(&fixture, &text);
         let details = details_any(
             &output,
-            &["send-composer-mismatch", "send-guard-observation-timeout"],
+            &[
+                "send-composer-mismatch",
+                "send-composer-unobservable",
+                "send-guard-observation-timeout",
+            ],
         );
         // Claude's readable wrapped mismatch proves enough ownership to remove
         // the paste. Codex lacks that proof and must leave both inputs intact.
