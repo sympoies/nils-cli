@@ -77,6 +77,8 @@ forge-cli --repo example/widget workflow dispatch build.yml --ref main --input m
 forge-cli --repo example/widget run rerun 42 --job 19 --expected-head "$EXPECTED_HEAD"
 forge-cli --repo example/widget comment edit 123 --body-file correction.md
 forge-cli --repo example/widget comment delete 123 --kind review --dry-run
+forge-cli --repo example/widget comment redact 123 --inspect
+forge-cli --repo example/widget comment redact 123 --expected-author alice --expected-body-sha256 "$BODY_SHA256" --body-file replacement.md
 ```
 
 Comment IDs are native database IDs: the default `issue` kind covers issue/PR
@@ -86,6 +88,13 @@ completion. Use `--dry-run` to inspect a plan without writing. See the
 [command contract](docs/specs/forge-cli-spec-v1.md#release-create--release-upload)
 for flags and typed outputs. Release and deletion commands require the caller's
 existing authorization.
+
+`comment redact` replaces another author's issue/PR timeline comment (not review
+diff comments). `--inspect` prints the author and the SHA-256 of the exact body
+without the body; the write requires the expected author, that digest and a
+replacement file, and its digest check is read-then-write, not atomic. See
+[`comment redact`](docs/specs/forge-publication-admin-v1.md#comment-redact) for
+permission checks and refusal codes.
 
 ## Empty repository bootstrap
 
