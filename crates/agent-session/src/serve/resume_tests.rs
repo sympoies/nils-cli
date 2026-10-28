@@ -5,6 +5,9 @@ use pretty_assertions::assert_eq;
 use std::os::unix::fs::PermissionsExt;
 use tower::ServiceExt;
 
+#[path = "resume_consent_tests.rs"]
+mod consent;
+
 const ID: &str = "00000000-0000-4000-8000-000000000007";
 const TOKEN: &str = "fixture-daemon-token";
 

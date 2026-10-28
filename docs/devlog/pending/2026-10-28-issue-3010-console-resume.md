@@ -26,6 +26,11 @@
 - Compose with account-switch recovery and session metadata refresh on current
   main. Preserve explicit bound-account intent settlement under source guards;
   preflight remains observational.
+- Preserve original account-selection consent separately from the resolved
+  execution account. Two target/transport regression contracts pass after
+  reproducing an unintended launch when a switch was queued after preflight;
+  omitted-account refusal preserves source state, while an explicit selection
+  still launches once and replays its receipt without another upstream request.
 - Real-provider recall and deployed Console role acceptance remain a separate
   gate after the matching Console relay is available.
 

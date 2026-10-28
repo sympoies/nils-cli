@@ -35,6 +35,12 @@ pub(super) struct CreateBody {
     /// Account-bound new-record resume; accepted only by the versioned resume route.
     #[serde(default)]
     pub(super) resume: Option<String>,
+    /// Original account-selection consent; the resolved account remains a separate pin.
+    #[serde(
+        default,
+        deserialize_with = "super::resume_start::deserialize_account_consent"
+    )]
+    pub(super) resume_account_explicit: Option<bool>,
     #[serde(default)]
     pub(super) agent_args: Vec<String>,
     #[serde(default)]

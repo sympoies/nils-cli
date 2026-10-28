@@ -2,6 +2,13 @@
 use super::*;
 use crate::start_resume::{PREFLIGHT_SCHEMA, Request, refusal};
 
+pub(super) fn deserialize_account_consent<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <bool as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
 pub(super) fn routes() -> Router<Arc<ServeState>> {
     Router::new()
         .route("/resume-preflight/v1", post(target_check))

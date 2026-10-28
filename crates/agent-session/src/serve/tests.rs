@@ -3309,7 +3309,7 @@ fn codex_listing_broker(lock: &GlobalStateLock, dir: &Path, accounts: &[&str]) -
     EnvGuard::set(lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER", &argv)
 }
 
-mod startup_fixtures;
+pub(super) mod startup_fixtures;
 use startup_fixtures::resume_tmux;
 
 fn fake_agent(dir: &Path, name: &str) -> PathBuf {

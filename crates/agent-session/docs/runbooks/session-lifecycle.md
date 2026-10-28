@@ -187,7 +187,17 @@ admission under the conversation and source guards.
 
 A Console start forwards `session.resume` and the resolved `claude_account`
 through ordinary owner, origin/workspace, lineage, work, role, title, provider
-arguments and prompt handling. The origin daemon retains its at-most-once
+arguments and prompt handling. It also carries `session.resume_account_explicit`,
+a boolean derived from the original requested account before resolving that pin.
+An omitted account sets it to `false`: a pending switch queued after preflight
+must still refuse at final admission without changing the source intent.
+An explicit bound-account selection sets it to `true`, preserving deliberate
+cancellation. Both cases retain the resolved-account equality check. Relays
+preserve this boolean, including `false`; it is not a preflight field. A present
+nonboolean value or a flag without `resume` refuses. Direct target clients that
+omit the flag retain the explicit selection semantics of `claude_account`.
+
+The origin daemon retains its at-most-once
 operation receipt and checks the target before submission. Console must send
 resumed creates to **`POST /sessions/resume/v1`**, which performs final guarded
 admission through ordinary start. It must never send `resume` to unversioned

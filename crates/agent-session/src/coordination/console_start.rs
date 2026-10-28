@@ -371,6 +371,10 @@ fn relay_operation(
                 machine.unwrap_or(&config.machine),
                 &request,
             )?;
+            child.insert(
+                "resume_account_explicit".into(),
+                json!(request.account.is_some()),
+            );
             child.insert("claude_account".into(), data["account"].clone());
         }
         relay_create(config, session, &incarnation, machine, child, operation_id)

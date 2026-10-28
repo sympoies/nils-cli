@@ -345,7 +345,12 @@ pub(super) fn guard_other_writers(
     Ok(locks)
 }
 
-fn admit(context: &CliContext, args: &Request, tmux: &Path) -> Result<Admission, CliError> {
+fn admit(
+    context: &CliContext,
+    args: &Request,
+    tmux: &Path,
+    account_explicit: bool,
+) -> Result<Admission, CliError> {
     let agent = args.validate()?;
     let id = &args.resume;
     let (matching, sources) = matching_sources(context, agent, id, None)?;
@@ -357,7 +362,7 @@ fn admit(context: &CliContext, args: &Request, tmux: &Path) -> Result<Admission,
     }
     let mut original = None;
     for record in &matching {
-        let account = source_account(record, args.account.as_deref())?;
+        let account = source_account(record, args.account.as_deref().filter(|_| account_explicit))?;
         if args.account.as_ref().is_some_and(|a| a != &account.0) {
             return Err(refusal("resume-account-mismatch"));
         }
@@ -428,7 +433,7 @@ pub(crate) fn preflight(
     machine: &str,
 ) -> Result<Value, CliError> {
     account_broker::adopt_serve_brokers(&context.state_dir);
-    let admitted = admit(context, request, tmux)?;
+    let admitted = admit(context, request, tmux, true)?;
     Ok(
         json!({"agent":request.agent,"provider_session_id":request.resume,"machine":machine,"account":admitted.account}),
     )
@@ -463,7 +468,8 @@ pub(super) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
     // ordinary start has persisted/launched the new managed record.
     let request = Request::from_args(&args);
     let tmux = resolve_tmux_bin(args.tmux_bin.as_deref());
-    drop(admit(context, &request, &tmux)?);
+    let account_explicit = args.initial_resume_account_explicit.unwrap_or(true);
+    drop(admit(context, &request, &tmux, account_explicit)?);
     let _conversation = conversation_lock(context, args.agent, args.resume.as_deref().unwrap())
         .map_err(|error| {
             refusal(if error.code() == "coordination-lock-timeout" {
@@ -472,7 +478,7 @@ pub(super) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
                 "resume-source-unknown"
             })
         })?;
-    let admitted = admit(context, &request, &tmux)?;
+    let admitted = admit(context, &request, &tmux, account_explicit)?;
     args.account = Some(admitted.account.clone());
     args.cwd = Some(admitted.cwd.clone());
     let prepared = claude_account::materialize(&admitted.account)

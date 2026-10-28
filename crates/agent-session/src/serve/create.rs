@@ -9,7 +9,7 @@ pub(super) async fn create_handler(
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
     }
-    if body.resume.is_some() {
+    if body.resume.is_some() || body.resume_account_explicit.is_some() {
         return envelope_err(crate::start_resume::refusal("resume-unsupported"));
     }
     if let Err(error) = crate::launch_env::validate(&body.launch_env) {
@@ -252,6 +252,7 @@ pub(super) async fn create_handler_inner(
     let args = cli::StartArgs {
         resume: body.resume,
         check_resume: false,
+        initial_resume_account_explicit: body.resume_account_explicit,
         workspace: None,
         title_mode: match body.title_mode {
             crate::display_metadata::TitleMode::Auto => "auto",

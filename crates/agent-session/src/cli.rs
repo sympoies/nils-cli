@@ -187,6 +187,9 @@ pub struct StartArgs {
     /// Check resume admission without creating a record, runtime, prompt or operation.
     #[arg(long, requires = "resume", conflicts_with = "reconcile")]
     pub check_resume: bool,
+    /// Internal: original account-selection consent, independent of a resolved pin.
+    #[arg(skip)]
+    pub initial_resume_account_explicit: Option<bool>,
     /// Public workspace slug; inherits the managed parent workspace when omitted.
     #[arg(long, value_name = "SLUG")]
     pub workspace: Option<String>,
