@@ -108,6 +108,7 @@ cursor observations must prove its logical start, character count, and end
 before Enter. Every character must be one cursor step one or two cells wide,
 so wide (for example CJK) text counts steps in characters and endpoints in
 cells. Padding and omitted word separators alone are insufficient proof.
+
 Codex captures may omit a final logical ASCII space as well as spaces at word
 wraps; its cursor endpoint must still include every pasted cell. Each proof
 uses the active provider's composer region, including when another provider's
@@ -337,6 +338,7 @@ is required; arbitrary unknown rows are never reconstructed. Submission
 admission requires an exact single row or the cursor-proven wrapped paste
 described above. Exact single-row matches retain
 Backspace-only cleanup, including the existing trailing-space comparison.
+
 For Claude wrapped or proven-prefix input of one- or two-cell characters,
 cleanup moves to the logical line start, verifies the first composer row,
 moves right by exactly the paste's character count, and verifies the visual
