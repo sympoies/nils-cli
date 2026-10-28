@@ -12,6 +12,9 @@ or integrating a specific subsystem.
   model settings, and secret safety.
 - [Lifecycle incident evidence](runbooks/lifecycle-journal.md): bounded per-session
   lifecycle records, refusal proof steps, retention, and runtime exit observations.
+- [Codex account recovery acceptance](runbooks/codex-account-recovery-acceptance.md):
+  disposable-session recipes for startup recovery and an idle fixture without
+  a model turn.
 - [Work coordination](runbooks/work-coordination.md): coordination modes,
   declared paths, authority boundaries, advisory flow, and enforce flow.
 - [Serve daemon operations](runbooks/serve-daemon.md): safe startup,
