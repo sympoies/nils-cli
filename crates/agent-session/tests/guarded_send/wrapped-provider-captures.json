@@ -1,0 +1,88 @@
+{
+  "source": "https://github.com/sympoies/nils-cli/issues/2979#issuecomment-6466502248",
+  "columns": 80,
+  "cases": [
+    {
+      "case": "codex ascii",
+      "provider": "codex",
+      "text": "alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha ",
+      "rows": [
+        "\u001b[1m›\u001b[0m alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha",
+        "  beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta",
+        "  gamma delta alpha beta gamma delta alpha"
+      ],
+      "after_paste": [
+        43,
+        2
+      ],
+      "home": [
+        2,
+        0
+      ],
+      "before_end": [
+        42,
+        2
+      ],
+      "end": [
+        43,
+        2
+      ]
+    },
+    {
+      "case": "codex cjk",
+      "provider": "codex",
+      "text": "春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川",
+      "rows": [
+        "\u001b[1m›\u001b[0m 春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西",
+        "  南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月",
+        "  山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏",
+        "  秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北",
+        "  天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川"
+      ],
+      "after_paste": [
+        78,
+        4
+      ],
+      "home": [
+        2,
+        0
+      ],
+      "before_end": [
+        76,
+        4
+      ],
+      "end": [
+        78,
+        4
+      ]
+    },
+    {
+      "case": "claude cjk",
+      "provider": "claude",
+      "text": "春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川",
+      "rows": [
+        "\u001b[39m❯ 春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西",
+        "  南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月  ",
+        "  山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏",
+        "  秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北",
+        "  天地日月山川河海春夏秋冬東西南北天地日月山川河海春夏秋冬東西南北天地日月山川"
+      ],
+      "after_paste": [
+        78,
+        4
+      ],
+      "home": [
+        2,
+        0
+      ],
+      "before_end": [
+        76,
+        4
+      ],
+      "end": [
+        78,
+        4
+      ]
+    }
+  ]
+}

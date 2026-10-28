@@ -147,9 +147,12 @@ impl Admission<'_> {
                     return Some((current, false));
                 }
                 let at_target = match endpoint {
-                    None => {
-                        send_submit::cleanup_cursor_at_start(&pane, coordinates.0, coordinates.1)
-                    }
+                    None => send_submit::cleanup_cursor_at_start(
+                        &self.record.agent,
+                        &pane,
+                        coordinates.0,
+                        coordinates.1,
+                    ),
                     Some(end) => end == (coordinates.0, coordinates.1),
                 };
                 if at_target {

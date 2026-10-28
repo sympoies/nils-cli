@@ -41,12 +41,12 @@ impl Admission<'_> {
         }
         // Only a send admitted against an empty composer owns the known paste.
         // Cleanup's general joined-row fallback is not submit evidence.
-        if self.record.agent != "claude" || !self.args.require_empty_composer {
+        if !self.args.require_empty_composer {
             return None;
         }
         let text = pasted?;
-        let end = send_submit::cleanup_prefix_end(pane, text)?;
-        let input = send_submit::cleanup_composer_input("claude", pane, Some(text))?;
+        let agent = self.record.agent.as_str();
+        let (input, end) = send_submit::wrapped_composer_layout(agent, pane, text)?;
         if input != text {
             // The wrapped composer is readable, but does not contain only our
             // paste. Preserve the mismatch as an immediate refusal instead of
@@ -84,14 +84,15 @@ impl Admission<'_> {
                 )?;
                 match classify_wrapped_proof(
                     &input,
-                    send_submit::cleanup_composer_input("claude", &current, Some(text)),
+                    send_submit::wrapped_composer_layout(agent, &current, text)
+                        .map(|(input, _)| input),
                 ) {
                     WrappedProofObservation::Exact(_) => {}
                     WrappedProofObservation::Mismatch(input) => return Some(input),
                     WrappedProofObservation::Unobservable => return None,
                 }
                 let reached = endpoint.map_or_else(
-                    || send_submit::cleanup_cursor_at_start(&current, cursor.0, cursor.1),
+                    || send_submit::cleanup_cursor_at_start(agent, &current, cursor.0, cursor.1),
                     |expected| cursor == expected,
                 );
                 if reached {
