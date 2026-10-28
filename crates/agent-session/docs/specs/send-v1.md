@@ -101,13 +101,20 @@ Unknown or invalid app-server profiles and other providers or runtime kinds
 fail closed for these checks. Exact composer
 verification supports an unambiguous, single visible input line.
 
-With Claude,
+With Claude and Codex,
 a known single-line paste may also wrap across visible rows after
 empty-composer admission. The entire region must uniquely match the paste;
 cursor observations must prove its logical start, character count, and end
 before Enter. Every character must be one cursor step one or two cells wide,
 so wide (for example CJK) text counts steps in characters and endpoints in
 cells. Padding and omitted word separators alone are insufficient proof.
+
+Codex captures may omit a final logical ASCII space as well as spaces at word
+wraps; its cursor endpoint must still include every pasted cell. Each proof
+uses the active provider's composer region, including when another provider's
+prompt appears in scrollback. Codex additionally verifies the actual logical
+end: Right then Left must return to N-1, then Right must restore N. An invisible
+owner-appended blank cannot be admitted as part of the paste's expected prefix.
 Changed drafts, uncertain navigation, and styled wrapped suggestions refuse.
 Dialogs, unknown layouts, other wrapped/multiline input, opaque long-paste summaries, and
 unstyled placeholder text such as `Ask Codex to do anything` are unobservable.
@@ -330,8 +337,10 @@ assumption; simultaneous edits can still race the observations and keys.
 Cleanup uses the known paste to match wrapped Claude rows, considering written
 row-end padding and separator spaces omitted by word wrapping. A unique match
 is required; arbitrary unknown rows are never reconstructed. Submission
-admission still requires one observable row. Exact single-row matches retain
+admission requires an exact single row or the cursor-proven wrapped paste
+described above. Exact single-row matches retain
 Backspace-only cleanup, including the existing trailing-space comparison.
+
 For Claude wrapped or proven-prefix input of one- or two-cell characters,
 cleanup moves to the logical line start, verifies the first composer row,
 moves right by exactly the paste's character count, and verifies the visual

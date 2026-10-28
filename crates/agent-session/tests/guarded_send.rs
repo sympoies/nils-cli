@@ -158,6 +158,11 @@ elif command == 'paste-buffer':
         p.write_text(json.dumps(d))
 elif command == 'display-message':
     print_cursor()
+elif command == 'send-keys' and args[-2:] == ['Right', 'Left']:
+    cursor = int((root / 'cursor').read_text())
+    count = int(args[args.index('-N') + 1])
+    length = len((root / 'composer').read_text())
+    (root / 'cursor').write_text(str(max(0, min(length, cursor + count) - count)))
 elif command == 'send-keys' and args[-1] == 'Right':
     cursor = int((root / 'cursor').read_text())
     count = int(args[args.index('-N') + 1])
