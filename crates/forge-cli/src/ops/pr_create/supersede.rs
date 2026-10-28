@@ -125,12 +125,12 @@ fn source_unchanged(
     ))
 }
 
-/// Stable patch id of the branch's change against its merge base with the
+/// Whitespace-preserving patch id of the branch's change against its merge base with the
 /// default branch, independent of where the default branch has advanced to.
 fn branch_patch_id(workdir: &Path, base_ref: &str, head: &str) -> Result<String, ForgeError> {
     let merge_base = git_text(workdir, &["merge-base", base_ref, head])?;
     let diff = run_git(workdir, &["diff", "--binary", &merge_base, head], None)?;
-    let id = run_git(workdir, &["patch-id", "--stable"], Some(&diff.stdout))?;
+    let id = run_git(workdir, &["patch-id", "--verbatim"], Some(&diff.stdout))?;
     Ok(String::from_utf8_lossy(&id.stdout).into_owned())
 }
 

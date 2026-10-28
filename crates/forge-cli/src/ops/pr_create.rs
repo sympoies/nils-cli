@@ -2478,7 +2478,7 @@ mod tests {
     #[test]
     fn supersede_refuses_when_the_source_changed() {
         type Mutate = fn(&Path);
-        let cases: [(&str, Mutate); 3] = [
+        let cases: [(&str, Mutate); 4] = [
             ("commit after the merge", |repo| {
                 merge_default_branch(repo);
                 nils_test_support::git::commit_file(repo, "extra.txt", "x\n", "more source");
@@ -2496,6 +2496,21 @@ mod tests {
                 );
                 std::fs::write(repo.join("sneak.txt"), "x\n").unwrap();
                 git(repo, &["add", "sneak.txt"]);
+                git(repo, &["commit", "-q", "-m", "merge default"]);
+            }),
+            ("indentation changed inside the merge", |repo| {
+                git(
+                    repo,
+                    &[
+                        "merge",
+                        "--no-ff",
+                        "--no-commit",
+                        "-q",
+                        "refs/remotes/origin/main",
+                    ],
+                );
+                std::fs::write(repo.join("delivery.txt"), "  delivery\n").unwrap();
+                git(repo, &["add", "delivery.txt"]);
                 git(repo, &["commit", "-q", "-m", "merge default"]);
             }),
             (
