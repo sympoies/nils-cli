@@ -178,6 +178,28 @@ The Claude broker speaks the provider-neutral
   returns `account`.
 - `materialize --provider claude --account <nickname> --format json` returns
   `account`, which must echo the request, and `config_dir`.
+- `history-root --provider claude --account <nickname> --format json` returns
+  exactly `schema_version`, `provider`, `account`, `config_dir` and
+  `history_scope` (`account` or `shared`) for the existing authoritative account
+  directory.
+
+For deleted-source recovery, the explicit account selects the execution
+account. Its history may be account-local or a broker-authorized shared store,
+including a symlinked projects directory. The scope does not attest which
+account originally created a conversation. The broker validates the configured
+account-to-directory ownership; it must never return another account's
+directory or an unsafe root.
+
+`history-root` is strictly read only: no credential materialization, directory
+creation, refresh, default-account change or runtime/helper launch. Unknown
+accounts and unavailable or unsafe roots refuse. The consumer checks roster
+membership, schema, provider, exact account echo, history scope and directory
+safety; the path stays private. An older broker without this verb or its
+required scope fails closed with `resume-unsupported` and no fallback.
+
+The CLI projects the scope as optional additive `data.history_scope` in
+`cli.agent-session.resume-preflight.v1`. Retained bindings determine that scope
+locally without requiring this verb.
 
 Every response also carries `schema_version` and `"provider": "claude"`.
 

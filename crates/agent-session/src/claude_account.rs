@@ -14,6 +14,7 @@
 
 use std::fs;
 pub(crate) mod generation;
+pub(crate) mod history;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
