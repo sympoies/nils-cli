@@ -67,6 +67,8 @@ string `unknown`.
 | `sources` | `inbox`, `notifications`, `outbox`: each `available`, `invalid`, `unsupported`, or `unavailable` |
 | `records` | Ordered array of the record objects below |
 | `next_cursor` | Resume string, or `null` at end |
+| `routine_coalescing` | Object mapping each recipient session ID whose notification policy sets a `600` routine interval to `600`; `{}` when none (see [routine coordinator wake windows](coordination-mailbox-v1.md#routine-coordinator-wake-windows)) |
+| `notification_capabilities` | Array of advertised notification capabilities, currently `["routine-coalescing-v1"]` |
 | `receipt_usage` | Idempotency receipt usage: `{count, limit, principal_count, principals}`, where `principals` lists at most 16 principals by descending count as `{principal, count, limit, evicted, last_evicted_at}`; `evicted` is a cumulative count of finished receipts evicted at the cap and `last_evicted_at` (UTC RFC3339, `null` when none) is its recency signal. A principal's record persists while evictions recur less than one receipt TTL apart; once idle for a TTL it is removed lazily by a later eviction of any principal. `null` when the registry is unavailable |
 
 | Record field | Type / meaning |
@@ -160,11 +162,13 @@ scans; they must not treat a partial/failed scan as a clean host.
 
 ## Retention and compatibility
 
-Readers accept registry v1 through v4 and federation journal v1 through v6.
+Readers accept registry v1 through v6 and federation journal v1 through v6.
 Journal v5 retains quota refusal details; v6 retains destination suppression
 receipts. Registry v3 fences older writers that would erase suppression decisions;
 registry v4 is the fence written by the first worker delegation (see
 [scoped worker delegation](scoped-worker-delegation-v1.md#private-audit)).
+Registry v5 fences notification history and v6 fences routine coalescing (see
+[routine coordinator wake windows](coordination-mailbox-v1.md#routine-coordinator-wake-windows)).
 Missing stores are empty; corrupt/unreadable/unsupported stores produce `partial` with a fixed
 source code, leaving the other source observable. Store reads retain existing
 private-file checks. Federation journal reads are bounded to 38,535,168 bytes,

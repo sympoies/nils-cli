@@ -35,7 +35,9 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
 
   Both providers share these outcomes: an invalid nickname is `400 invalid-<provider>-account`; a
   nickname the broker does not list is `400 <provider>-account-unknown` (re-selecting the currently bound
-  account is always accepted, so it can cancel a queued switch); a stale `expected_session_incarnation`
+  account is accepted, so it can cancel a queued switch; on an authentication-quarantined Claude session
+  it first re-runs the credential preflight and can be refused as `claude-account-recheck-refused`, see
+  [operator recheck](claude-auth-recovery-v1.md#operator-recheck)); a stale `expected_session_incarnation`
   is `409 <provider>-account-session-incarnation-conflict`; a daemon or session without that provider's
   broker is `409 <provider>-account-unsupported`. Claude applies a switch by relaunching; see the [Claude
   account broker](serve-accounts-v1.md#claude-account-broker).
