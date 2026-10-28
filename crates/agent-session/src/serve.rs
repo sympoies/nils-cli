@@ -16,6 +16,8 @@ pub(crate) use error_response::envelope_err;
 
 #[path = "serve/history_images.rs"]
 mod history_images;
+#[path = "serve/session_info.rs"]
+mod session_info;
 #[path = "serve/structured_prompt.rs"]
 mod structured_prompt;
 #[cfg(test)]
@@ -1289,7 +1291,7 @@ fn router(state: Arc<ServeState>) -> Router {
         .route("/claude/accounts", get(claude_accounts_handler))
         .route("/retitle/readiness", get(retitle_readiness_handler))
         .route("/clipboard/unwrap/v1", post(clipboard_unwrap_handler))
-        .route("/sessions/{id}/retitle", post(session_retitle_handler))
+        .merge(session_info::routes())
         .route(
             "/sessions/{id}/display-metadata",
             post(display_metadata_handler),
@@ -3681,34 +3683,6 @@ async fn display_metadata_handler(
         Ok(Ok(session)) => envelope_ok(json!({"machine":state.machine,"session":session})),
         Ok(Err(error)) => envelope_err(error),
         Err(_) => join_err(),
-    }
-}
-
-async fn session_retitle_handler(
-    State(state): State<Arc<ServeState>>,
-    headers: HeaderMap,
-    AxPath(id): AxPath<String>,
-    body: Result<Json<crate::retitle::RetitleRequest>, JsonRejection>,
-) -> Response {
-    if let Some(response) = deny_unauthorized(&state, &headers) {
-        return response;
-    }
-    let Json(request) = match body {
-        Ok(body) => body,
-        Err(_) => {
-            return envelope_err(CliError::usage(
-                "invalid-json-body",
-                "retitle request body is invalid",
-                None,
-            ));
-        }
-    };
-    match execute_retitle(state.clone(), id, request).await {
-        Ok(retitle) => envelope_ok(json!({
-            "machine": state.machine,
-            "retitle": retitle,
-        })),
-        Err(error) => envelope_err(error),
     }
 }
 

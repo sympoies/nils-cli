@@ -29,9 +29,16 @@ pub(crate) fn checked_response(
         return Err(unavailable());
     }
     let data = &body["data"];
+    let known_shape =
+        data.as_object()
+            .is_some_and(|fields| match (fields.len(), fields.get("history_scope")) {
+                (4, None) => true,
+                (5, Some(scope)) => matches!(scope.as_str(), Some("account" | "shared")),
+                _ => false,
+            });
     if !success
         || body["ok"] != true
-        || data.as_object().is_none_or(|d| d.len() != 4)
+        || !known_shape
         || data["agent"] != request.agent
         || data["provider_session_id"] != request.resume
         || data["machine"].as_str().is_none_or(str::is_empty)
@@ -47,9 +54,11 @@ pub(crate) fn checked_response(
         return Err(refusal("resume-unsupported"));
     }
     // Rebuild the bounded public envelope; never return upstream history or filesystem fields.
-    Ok(
-        json!({"agent":request.agent,"provider_session_id":request.resume,"machine":data["machine"],"account":data["account"]}),
-    )
+    let mut result = json!({"agent":request.agent,"provider_session_id":request.resume,"machine":data["machine"],"account":data["account"]});
+    if let Some(scope) = data.get("history_scope") {
+        result["history_scope"] = scope.clone();
+    }
+    Ok(result)
 }
 
 /// Only explicit terminal admission evidence is safe to carry through a create hop.
@@ -58,6 +67,13 @@ pub(crate) fn forward_refusal(error: &Value) -> Option<CliError> {
         return None;
     }
     let code = match error["code"].as_str()? {
+        "resume-account-transition-pending" => {
+            return Some(CliError::data(
+                "resume-account-transition-pending",
+                "select the bound account explicitly to abandon the pending switch, or resume the existing session to apply it",
+                Some(json!({"session_created":false,"safe_to_retry":false})),
+            ));
+        }
         "resume-preflight-unavailable" => return Some(unavailable()),
         "resume-history-missing" => "resume-history-missing",
         "resume-account-mismatch" => "resume-account-mismatch",

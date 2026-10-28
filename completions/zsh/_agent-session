@@ -339,6 +339,17 @@ json\:"Single-record JSON envelope (snake_case)"))' \
     ;;
 esac
 ;;
+(refresh)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Session id:_default' \
+&& ret=0
+;;
 (activity)
 _arguments "${_arguments_options[@]}" : \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
@@ -1321,6 +1332,7 @@ _agent-session_commands() {
 'clear:Clear an idle conversation in place and verify its new provider identity' \
 'rebind:Recover an idle session by rebinding its live provider conversation' \
 'account:Show or switch the provider account of one session' \
+'refresh:Re-read one session'\''s model, reasoning effort and title from live state' \
 'activity:Inspect or ingest metadata-only agent turn lifecycle events' \
 'work-context:Manage authenticated structured work context and mutation leases' \
 'broker:Inspect or recover the per-session coordination broker' \
@@ -1659,6 +1671,11 @@ _agent-session__subcmd__readiness_commands() {
 _agent-session__subcmd__rebind_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session rebind commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__refresh_commands] )) ||
+_agent-session__subcmd__refresh_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session refresh commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__restart_commands] )) ||
 _agent-session__subcmd__restart_commands() {

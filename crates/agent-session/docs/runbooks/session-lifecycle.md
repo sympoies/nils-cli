@@ -119,7 +119,7 @@ read-only account-root authority needed for that case. Auth-quarantined sources
 continue through the existing recovery flow in
 [#3005](https://github.com/sympoies/nils-cli/issues/3005).
 
-A successful JSON check has exactly this envelope and these four data fields:
+A successful JSON check has this envelope and four required data fields:
 
 ```json
 {
@@ -134,13 +134,20 @@ A successful JSON check has exactly this envelope and these four data fields:
 }
 ```
 
+The response may also include the additive `history_scope` field (`account` or
+`shared`) under the same v1 schema, as specified in
+[#3012](https://github.com/sympoies/nils-cli/issues/3012). Relays preserve a valid
+target-reported value; an absent value is not authority to guess a history root.
+
 The response contains no paths, credentials or history content. A supported
 refusal has `ok:false`, one of `resume-history-missing`,
-`resume-account-mismatch`, `resume-source-live`, `resume-source-unknown` or
-`resume-unsupported`, and `error.details` with `session_created:false` and
+`resume-account-mismatch`, `resume-account-transition-pending`,
+`resume-source-live`, `resume-source-unknown` or `resume-unsupported`, and `error.details` with `session_created:false` and
 `safe_to_retry:false`. Malformed conversation IDs and unsupported capability
 return `resume-unsupported`. An older CLI's parse/schema failure is distinct from
-this supported rejection.
+this supported rejection. `resume-account-transition-pending` requires an
+explicit bound-account selection or recovery of the existing account transition;
+Console preserves that code and its terminal pre-create details.
 
 Start rechecks admission under conversation and source locks before creating its
 record. A prior successful check grants no admission lease. The source is never

@@ -102,6 +102,8 @@ pub enum Command {
     Rebind(ConversationArgs),
     /// Show or switch the provider account of one session.
     Account(AccountArgs),
+    /// Re-read one session's model, reasoning effort and title from live state.
+    Refresh(SessionRefArgs),
     /// Inspect or ingest metadata-only agent turn lifecycle events.
     Activity(ActivityArgs),
     /// Manage authenticated structured work context and mutation leases.

@@ -177,8 +177,24 @@ fn cli_console_check_does_not_read_prompt_or_create_operation_and_rejects_old_or
             answer["data"]["account"] = json!("/private/fixture-account");
             (answer, Some("resume-unsupported"))
         },
+        {
+            let mut answer = preflight();
+            answer["data"]["history_scope"] = json!("account");
+            (answer, None)
+        },
+        {
+            let mut answer = preflight();
+            answer["data"]["history_scope"] = json!("shared");
+            (answer, None)
+        },
+        {
+            let mut answer = preflight();
+            answer["data"]["history_scope"] = json!("unexpected");
+            (answer, Some("resume-unsupported"))
+        },
     ] {
         let f = Fixture::new();
+        let expected_success = answer.clone();
         let (url, worker) = stub(vec![(200, answer)]);
         let capability = seed_caller(&f, &url);
         let source = fs::read(f.record_path("source")).unwrap();
@@ -195,7 +211,7 @@ fn cli_console_check_does_not_read_prompt_or_create_operation_and_rejects_old_or
             json!({"machine":"target","session":{"agent":"claude","resume":CONVERSATION}})
         );
         match expected {
-            None => assert_eq!(out.stdout_json(), preflight(), "{}", out.stderr_text()),
+            None => assert_eq!(out.stdout_json(), expected_success, "{}", out.stderr_text()),
             Some(code) => {
                 assert_eq!(out.stdout_json()["error"]["code"], code);
                 assert_eq!(
@@ -242,6 +258,7 @@ fn cli_console_start_forwards_resume_account_and_ordinary_context_and_terminal_r
         None,
         Some("resume-source-live"),
         Some("resume-preflight-unavailable"),
+        Some("resume-account-transition-pending"),
     ] {
         let f = Fixture::new();
         let result = if let Some(code) = code {
