@@ -71,7 +71,8 @@ and the exact cached payload by digest. This prevents a limited account from
 receiving another account's windows after a credential switch or concurrent
 cache replacement. Caches without recorded ownership remain available to explicit
 cache reads; they are omitted on OAuth cooldown paths until a successful OAuth
-refresh establishes ownership. The foreground prompt uses local associations
+refresh establishes ownership. An eligible shared account snapshot can also
+populate the token-owned projection without changing its fetch time. The foreground prompt uses local associations
 without resolving credentials.
 
 ### Usage error envelopes
@@ -183,7 +184,9 @@ switch the default first. `auth use` reports an ambiguous target with
 payload rather than an envelope.
 
 `auth current` and `diag rate-limits --all` agree on the current default: both
-read `CLAUDE_SECRET_DIR/current`. `auth remote pull --all --into <dir>` also
+read `CLAUDE_SECRET_DIR/current`. When that record is absent, the diagnostic
+table highlights the profile whose token matches the active login; it does not
+write a default record. `auth remote pull --all --into <dir>` also
 records the authority's current default in `<dir>/.current` (one nickname line,
 owner-only, replaced atomically under the accounts lock), the file the host
 account broker reads, and removes a stale `.current` when the authority reports
@@ -235,7 +238,8 @@ negotiation, and automatic session recovery are separate contracts.
 
 `diag rate-limits` emits the shared `diag rate-limits` result shape that
 `codex-cli diag rate-limits` also emits. Each Claude result read from the
-network additionally carries `limit_resets`, the normalized status of the two
+shared OAuth reader (network or a response reused within 60 seconds)
+additionally carries `limit_resets`, the normalized status of the two
 Claude limit-reset programs. Results from `--cached` or a cache fallback, and
 failed results, omit it. A network body without either program reports both
 as `null`, so absence always means the value was not read.
@@ -244,7 +248,9 @@ A live rate limit or active shared cooldown preserves eligible cached diagnostic
 windows with `source: cache-fallback` and `reason_code: rate_limited`.
 `--cached` remains offline and carries the same reason while cooldown is active.
 Other accounts remain independent. These values are cached display data, not
-fresh quota authority.
+fresh quota authority. Text tables show the throttle deadline and available
+cache age even when cached windows are too old to display. See the
+[usage consumer runbook](../runbooks/usage-consumer.md) for shared fetch ownership.
 
 Live `--async --format json` collection normally falls back to stale cached
 windows after a profile request fails. A machine consumer that needs each

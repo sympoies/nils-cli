@@ -151,6 +151,7 @@ impl Fixture {
     }
 
     fn set_status(&self, code: u16, body: String) {
+        age_shared_usage(&self.root);
         *self.status.lock().expect("status") = (code, body);
     }
 
@@ -466,7 +467,7 @@ fn reset_rate_limits_reports_an_unavailable_program_without_posting() {
     assert_eq!(payload(&output)["result"]["reason"], Value::Null);
 
     let requests = fx.requests();
-    assert_eq!(requests.len(), 5);
+    assert_eq!(requests.len(), 3);
     assert!(requests.iter().all(|request| request.method == "GET"));
 }
 

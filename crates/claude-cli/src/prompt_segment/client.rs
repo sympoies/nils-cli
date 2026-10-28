@@ -70,7 +70,11 @@ pub fn fetch_usage(access_token: &str) -> Result<String, UsageFetchError> {
 
 /// Sends one `GET` to the OAuth usage endpoint with `access_token`.
 pub(crate) fn request_usage(access_token: &str) -> Result<String, RequestFailure> {
-    request_usage_with(access_token, None, DEFAULT_USER_AGENT)
+    request_usage_with(
+        access_token,
+        Some(crate::rate_limits::status::STATUS_QUERY),
+        DEFAULT_USER_AGENT,
+    )
 }
 
 /// Sends one `GET` to the OAuth usage endpoint with `query` appended and
@@ -87,6 +91,12 @@ pub(crate) fn request_usage_with(
         || (cooldown.is_none() && backoff::active_for(access_token))
     {
         return Err(RequestFailure::Backoff);
+    }
+    if let Some(body) = cooldown
+        .as_ref()
+        .and_then(|state| state.cached_response(backoff::now_epoch()))
+    {
+        return Ok(body);
     }
     let endpoint = with_query(&usage_endpoint(), query);
     let max_time_seconds = env_u64("CLAUDE_PROMPT_SEGMENT_MAX_TIME_SECONDS", 5);
@@ -128,8 +138,25 @@ pub(crate) fn request_usage_with(
 
     if let Some(cooldown) = &cooldown {
         let _ = cooldown.clear();
+        let _ = cooldown.store_response(backoff::now_epoch(), &body);
     }
     Ok(body)
+}
+
+pub(crate) fn cached_usage(access_token: &str) -> Option<(String, i64)> {
+    backoff::cached_usage(access_token)
+}
+
+pub(crate) fn fetched_at(access_token: &str) -> Option<i64> {
+    backoff::fetched_at(access_token).and_then(|epoch| i64::try_from(epoch).ok())
+}
+
+pub(crate) fn retry_at(access_token: &str) -> Option<u64> {
+    backoff::retry_at(access_token)
+}
+
+pub(crate) fn invalidate_response(access_token: &str) {
+    backoff::invalidate_response(access_token);
 }
 
 fn retry_after_seconds(value: &str, now: u64) -> Option<u64> {

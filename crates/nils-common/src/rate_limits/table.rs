@@ -19,6 +19,7 @@ pub enum RowState {
 }
 
 pub struct Row {
+    pub note: Option<String>,
     pub name: String,
     pub window_label: String,
     pub non_weekly_remaining: i64,
@@ -34,6 +35,7 @@ impl Row {
     pub fn empty(name: String) -> Self {
         Self {
             name,
+            note: None,
             window_label: String::new(),
             non_weekly_remaining: -1,
             non_weekly_reset_epoch: None,
@@ -55,6 +57,7 @@ impl Row {
 }
 
 struct TableDisplayRow {
+    note: Option<String>,
     is_current: bool,
     name: String,
     non_weekly: String,
@@ -142,6 +145,7 @@ pub fn render_all_accounts_table(mut rows: Vec<Row>, context: &TableContext<'_>)
             };
 
             TableDisplayRow {
+                note: row.note,
                 is_current: context.current_name == Some(row.name.as_str()),
                 name: row.name,
                 non_weekly: display_non_weekly,
@@ -191,6 +195,12 @@ pub fn render_all_accounts_table(mut rows: Vec<Row>, context: &TableContext<'_>)
             "{}  {}  {:>non_weekly_left_width$}  {}  {:>weekly_left_width$}  {:<reset_width$}  {:>resets_width$}\n",
             name, non_weekly, row.non_weekly_left, weekly, row.weekly_left, row.reset, row.resets,
         ));
+        if let Some(note) = row.note {
+            out.pop();
+            out.push_str("  ");
+            out.push_str(&note);
+            out.push('\n');
+        }
     }
 
     if let Some(update_time) = context.update_time {

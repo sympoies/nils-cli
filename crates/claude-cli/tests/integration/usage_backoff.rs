@@ -74,6 +74,7 @@ fn usage_backoff_second_caller_skips_http_and_preserves_cache() {
     assert_exit(&run(&["usage", "--source", "oauth"], &options), 0);
     assert_eq!(server.take_requests().len(), 1);
     limited.store(true, Ordering::SeqCst);
+    age_shared_usage(tmp.path());
     assert_exit(&run(&["prompt-segment", "--refresh"], &options), 0);
     assert_eq!(server.take_requests().len(), 1);
     let output = run(&["usage", "--format", "json"], &options);
@@ -156,7 +157,7 @@ fn usage_backoff_success_clears_expired_state() {
         "success must clear consecutive rate-limit state"
     );
     assert_exit(&run(&args, &options), 0);
-    assert_eq!(server.take_requests().len(), 3);
+    assert_eq!(server.take_requests().len(), 2);
 }
 
 #[test]
@@ -197,6 +198,7 @@ fn usage_backoff_shared_diag_modes_preserve_each_account_and_block_reset_status_
     );
     assert_eq!(server.take_requests().len(), 2);
     limited.store(true, Ordering::SeqCst);
+    age_shared_usage(tmp.path());
     assert_exit(
         &run(
             &["usage", "--source", "oauth", "--format", "json"],
@@ -219,11 +221,13 @@ fn usage_backoff_shared_diag_modes_preserve_each_account_and_block_reset_status_
         assert_eq!(alpha["reason_code"], "rate_limited");
         assert_eq!(alpha["windows"][0]["remaining_percent"], 75);
         let requests = server.take_requests();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(
-            requests[0].header_value("authorization").as_deref(),
-            Some("Bearer fixture-beta")
-        );
+        assert_eq!(requests.len(), usize::from(mode == "--all"));
+        if let Some(request) = requests.first() {
+            assert_eq!(
+                request.header_value("authorization").as_deref(),
+                Some("Bearer fixture-beta")
+            );
+        }
     }
     let output = run(
         &["diag", "rate-limits", "--async", "--json", "--cached"],

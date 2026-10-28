@@ -163,6 +163,14 @@ fn body_digest(body: &str) -> String {
 
 pub(crate) fn write_oauth_cache_file(path: &Path, body: &str, token: &str) -> Result<()> {
     write_cache_file(path, body)?;
+    if let Some(epoch) =
+        super::client::fetched_at(token).and_then(|epoch| u64::try_from(epoch).ok())
+    {
+        std::fs::File::options().write(true).open(path)?.set_times(
+            std::fs::FileTimes::new()
+                .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(epoch)),
+        )?;
+    }
     let owner = CacheOwner {
         token_key: backoff::token_key(token),
         body_digest: body_digest(body),

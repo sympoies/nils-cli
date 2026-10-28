@@ -335,7 +335,15 @@ fn try_oauth(
 ) -> Result<UsageResult, (ProviderUsageReason, Option<String>)> {
     let token = auth::resolve_access_token().ok_or((ProviderUsageReason::AuthRequired, None))?;
     let key = Some(backoff::token_key(&token.value));
-    let body = client::fetch_usage(&token.value).map_err(|error| (error.reason(), key.clone()))?;
+    let body = client::fetch_usage(&token.value).map_err(|error| {
+        if error.reason() == ProviderUsageReason::RateLimited
+            && let Some((body, _)) = client::cached_usage(&token.value)
+            && let Some(cache_file) = cache_file
+        {
+            let _ = cache::write_oauth_cache_file(cache_file, &body, &token.value);
+        }
+        (error.reason(), key.clone())
+    })?;
     let value: Value =
         serde_json::from_str(&body).map_err(|_| (ProviderUsageReason::Unknown, key.clone()))?;
     let usage = render::parse_usage_value(&value).ok_or((ProviderUsageReason::Unknown, key))?;
@@ -346,7 +354,7 @@ fn try_oauth(
         "oauth",
         false,
         cache_file,
-        Some(now_epoch_seconds()),
+        Some(client::fetched_at(&token.value).unwrap_or_else(now_epoch_seconds)),
         &usage,
         None,
     ))

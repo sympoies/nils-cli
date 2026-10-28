@@ -42,3 +42,6 @@ mod prompt_segment;
 mod usage;
 #[path = "integration/usage_backoff.rs"]
 mod usage_backoff;
+
+#[path = "integration/shared_usage.rs"]
+mod shared_usage;
