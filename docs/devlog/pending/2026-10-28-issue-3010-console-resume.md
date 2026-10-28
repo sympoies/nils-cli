@@ -17,12 +17,15 @@
 ### Evidence
 
 - Retain meaningful RED/GREEN evidence for HTTP contracts, replay, compatibility
-  and terminal transport details. Focused resume validation passed 12 CLI tests
-  and 151 library tests; scoped local validation and hosted CI gate delivery.
+  and terminal transport details. Scoped local validation and hosted CI gate
+  delivery.
 - The signed repair head passed its complete scoped package gate: 2,579 tests
   passed, one skipped. Current-main integration preserves that receipt and
   adds bounded transport coverage for optional history scope and pending account
   transitions.
+- Compose with account-switch recovery and session metadata refresh on current
+  main. Preserve explicit bound-account intent settlement under source guards;
+  preflight remains observational.
 - Real-provider recall and deployed Console role acceptance remain a separate
   gate after the matching Console relay is available.
 

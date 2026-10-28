@@ -150,8 +150,10 @@ explicit bound-account selection or recovery of the existing account transition;
 Console preserves that code and its terminal pre-create details.
 
 Start rechecks admission under conversation and source locks before creating its
-record. A prior successful check grants no admission lease. The source is never
-revived or rewritten. Resuming an old managed source or importing that same
+record. A prior successful check grants no admission lease. The source runtime
+stays stopped. An explicit bound-account selection may settle its pending account
+intent under those locks before launch; a read-only check never settles it.
+Resuming an old managed source or importing that same
 conversation also refuses while another managed writer exists. Auth quarantine
 continues to belong to the existing recovery flow. Start success uses
 `cli.agent-session.start.v1` with the new managed ID at `data.session.id`.
