@@ -37,6 +37,50 @@ pub(super) fn active(receipt: &Receipt) -> bool {
     )
 }
 
+/// A receipt that no longer fences the replacement runtime.
+pub(super) fn settled(receipt: &Receipt) -> bool {
+    matches!(
+        receipt.state.as_str(),
+        "runtime_resumed" | "credentials_refreshed"
+    )
+}
+
+pub(super) fn settle_receipt(receipt: &mut Receipt) {
+    if !settled(receipt) {
+        receipt.state = "credentials_refreshed".into();
+    }
+}
+
+/// Whether this incident's same-account recovery receipt fences the runtime.
+pub(super) fn fences(incident: &AuthIncident, record: &SessionRecord) -> bool {
+    incident.same_account_recovery.as_ref().is_some_and(|r| {
+        !settled(r)
+            && r.new_runtime_incarnation.as_deref()
+                == record.runtime.as_ref().map(|r| r.launch_id.as_str())
+            || active(r)
+                && record.runtime.as_ref().is_some_and(|runtime| {
+                    runtime.generation == incident.runtime_generation.saturating_add(1)
+                })
+    })
+}
+
+/// A later `credentials_refreshed` settlement of this runtime's incident
+/// supersedes the failed turn it followed, never a newer failure.
+fn failure_settled(store: &Store, record: &SessionRecord, completed_at: &str) -> bool {
+    let Ok(failed_at) = completed_at.parse::<jiff::Timestamp>() else {
+        return false;
+    };
+    store.incidents.iter().any(|i| {
+        same_runtime(i, record)
+            && i.status == "recovered"
+            && i.recovery_result.as_deref() == Some("credentials_refreshed")
+            && i.recovery_observed_at
+                .as_deref()
+                .and_then(|at| at.parse::<jiff::Timestamp>().ok())
+                .is_some_and(|at| at >= failed_at)
+    })
+}
+
 /// The caller holds the session lock through input. Incident observation uses
 /// that same lock, so quarantine starts at the committed failure boundary.
 pub(crate) fn ensure_input_allowed(
@@ -52,20 +96,12 @@ pub(crate) fn ensure_input_allowed(
         .incidents
         .iter()
         .any(|i| same_runtime(i, record) && i.status == "auth_failed");
-    let pending = store.incidents.iter().any(|i| {
-        i.same_account_recovery.as_ref().is_some_and(|r| {
-            r.state != "runtime_resumed"
-                && r.new_runtime_incarnation.as_deref()
-                    == record.runtime.as_ref().map(|r| r.launch_id.as_str())
-                || active(r)
-                    && record.runtime.as_ref().is_some_and(|runtime| {
-                        runtime.generation == i.runtime_generation.saturating_add(1)
-                    })
-        })
-    });
+    let pending = store.incidents.iter().any(|i| fences(i, record));
     let failed_activity = crate::activity::state_for_view(context, record).is_some_and(|s| {
-        s.last_turn
-            .is_some_and(|t| t.provider_failure_kind() == Some("authentication"))
+        s.last_turn.is_some_and(|t| {
+            t.provider_failure_kind() == Some("authentication")
+                && !failure_settled(&store, record, &t.completed_at)
+        })
     });
     if failed || pending || failed_activity {
         return Err(CliError::runtime(

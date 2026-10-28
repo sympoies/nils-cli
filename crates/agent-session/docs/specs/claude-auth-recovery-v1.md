@@ -34,6 +34,18 @@ An incident belonging to a replaced runtime does not quarantine an unrelated
 incarnation. A controller-owned replacement remains quarantined until its
 readiness check completes; a failed readiness check leaves it quarantined.
 
+## Operator recheck
+
+No turn can be admitted while quarantined, so a repaired credential needs an
+explicit exit. `account switch` to the account the session is already bound to
+queues nothing; on a quarantined session it re-runs the broker credential
+preflight and, when the failed launch's publication is known, requires a newer
+publication for that account. Only then it settles the owning incidents as
+`credentials_refreshed` and admits input again. A refused preflight returns
+`claude-account-recheck-refused` and leaves every receipt unchanged. A recovery or
+failover operation still in flight is never overridden (`recovery_in_progress`),
+and a later authentication failure quarantines the runtime again.
+
 ## Publication prerequisite
 
 At account binding and each launch, the broker's `list --provider claude`

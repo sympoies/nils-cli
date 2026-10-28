@@ -6,6 +6,7 @@ use std::fs;
 pub(crate) mod failover;
 #[cfg(test)]
 mod failover_tests;
+pub(crate) mod recheck;
 pub(crate) mod recovery;
 use std::path::Path;
 use std::process::Command;

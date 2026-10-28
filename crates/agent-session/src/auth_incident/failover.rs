@@ -37,6 +37,25 @@ impl Receipt {
             == record.runtime.as_ref().map(|r| r.launch_id.as_str())
             && self.new_runtime_generation == record.runtime.as_ref().map(|r| r.generation)
     }
+    /// Fences `record` as `ensure_input_allowed` does: unsettled, and owned by
+    /// the failed runtime (`current`) or by its recorded replacement launch.
+    pub(super) fn fences(&self, current: bool, record: &SessionRecord) -> bool {
+        self.quarantines()
+            && (current
+                || self.new_runtime_incarnation.as_deref()
+                    == record.runtime.as_ref().map(|r| r.launch_id.as_str()))
+    }
+    /// Still fences input: neither a switch nor a healthy turn settled it.
+    pub(super) fn quarantines(&self) -> bool {
+        !matches!(
+            self.state.as_str(),
+            "account_switched" | "healthy" | "credentials_refreshed"
+        )
+    }
+    /// A controller-owned operation whose effects are not yet decided.
+    pub(super) fn in_flight(&self) -> bool {
+        unsettled(self)
+    }
     pub(super) fn mark_healthy(&mut self) {
         self.state = "healthy".into();
         self.reason = None;
