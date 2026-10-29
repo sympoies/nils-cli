@@ -60,6 +60,19 @@ credentials alone do not claim a healthy model turn. Reporting failures do not
 prevent the provider's existing refresh path from running. Sessions without an
 owner route report `owner_unavailable` in the notification receipt.
 
+A session with no effective parent (for example a root coordinator) cannot
+receive its own incident, and input to a quarantined runtime stays refused.
+The daemon instead appends one fixed-classification event per notification to
+the daemon-independent observation spool, as described in
+[control-plane observation](specs/control-plane-observation-v1.md): stage
+`auth-incident`, code `auth-owner-unavailable` (or
+`auth-recovery-owner-unavailable` for the final result), correlation
+`sha256:` plus the `incident_id`, and for the incident a `recovery_action` that
+names `lineage adopt` to give the session an owner. A consumer deduplicates on
+the correlation and joins the typed incident from list or board JSON. Recording
+the event is not delivery: `delivered_at` stays null and a later restored owner
+route still delivers through the mailbox.
+
 Codex same-account refresh additionally writes a private, token-free
 `agent-session.codex-auth-recovery.v1` receipt store. Runtime incarnation and
 generation fence the store; each operation hashes the connection scope and
@@ -131,10 +144,12 @@ with JSON `null`. Consumers must ignore additive unknown members.
 | `status` | string | `auth_failed`, `recovered`, `recovery_failed`, or `runtime_replaced`. |
 | `recovery_result` | string or null | `healthy`, `credentials_refreshed`, `refresh_failed`, or `runtime_replaced`; null before a final result. |
 | `recovery_observed_at` | timestamp string or null | Final-result observation time. |
+| `recovery_path` | string, optional | Fixed class of the settlement: `model_health` (a healthy provider turn was observed), `credential_recheck` (an explicit operator same-account recheck passed) or `controller` (an automatic refresh, failover or lifecycle result). It never carries an identity, credential or request body. A bound `account_nickname` is a binding, not evidence of healthy authentication. |
 | `notification` | object | Initial incident notification receipt, shaped below. |
 | `recovery_notification` | object | Final-result notification receipt, with the same shape. |
 
-Each notification receipt contains all four members:
+Each notification receipt contains these four members, plus an optional
+`escalation` member:
 
 | Field | Type | Meaning / values |
 | --- | --- | --- |
@@ -142,6 +157,7 @@ Each notification receipt contains all four members:
 | `delivered_at` | timestamp string or null | Time durable inbox delivery was confirmed; does not imply the owner read or accepted the message. |
 | `message_id` | string or null | Mailbox identity after submission is recorded. |
 | `degraded_reason` | string or null | `owner_unavailable`, `relay_unavailable`, `relay_pending`, `delivery_unknown`, or `identity_conflict`; null when no degradation is recorded. |
+| `escalation` | object, optional | Present only after an `owner_unavailable` attempt: `route` (`observation_spool`), `state` (`recorded` once the event was appended, `unavailable` while the spool cannot be written and the next 15-second tick retries) and `recorded_at` (timestamp or null). It never implies delivery. |
 
 Timestamps use RFC 3339 strings. `auth_detection_health` is omitted before
 observation and otherwise contains exactly one of `structured`,

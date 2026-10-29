@@ -176,8 +176,7 @@ pub(super) fn observe_result(
             r.mark_credentials_refreshed();
         }
         incident.status = "recovered".into();
-        incident.recovery_result = Some(result.into());
-        incident.recovery_observed_at = Some(at.into());
+        incident.settle(observed_path(result), result, at);
         incident.recovery_notification = Notification::default();
         changed = true;
     }
@@ -202,8 +201,11 @@ fn persist(
         // A changed result gets its own stable outbox identity. The original
         // same-account result may already have been delivered.
         if incident.recovery_result.as_deref() != Some(r.state.as_str()) {
-            incident.recovery_result = Some(r.state.clone());
-            incident.recovery_observed_at = Some(jiff::Timestamp::now().to_string());
+            incident.settle(
+                PATH_CONTROLLER,
+                &r.state,
+                &jiff::Timestamp::now().to_string(),
+            );
             incident.recovery_notification = Notification::default();
         }
         if r.state == "account_switched" {

@@ -75,6 +75,7 @@ fn auth_recheck_settles_the_quarantine_once_credentials_are_republished() {
         store["incidents"][0]["recovery_result"],
         "credentials_refreshed"
     );
+    assert_eq!(store["incidents"][0]["recovery_path"], "credential_recheck");
     assert_eq!(
         store["incidents"][0]["failover"]["state"],
         "credentials_refreshed"

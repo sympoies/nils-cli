@@ -3,6 +3,9 @@
 //! are inspected in memory and never persisted or sent to the owner.
 
 use std::fs;
+mod escalation;
+#[cfg(test)]
+mod escalation_tests;
 pub(crate) mod failover;
 #[cfg(test)]
 mod failover_tests;
@@ -42,6 +45,10 @@ struct Notification {
     delivered_at: Option<String>,
     message_id: Option<String>,
     degraded_reason: Option<String>,
+    /// Independent alert state when the owner route is missing. Recording the
+    /// alert never sets `delivered_at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    escalation: Option<escalation::Receipt>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -59,6 +66,10 @@ pub(crate) struct AuthIncident {
     pub status: String,
     pub recovery_result: Option<String>,
     pub recovery_observed_at: Option<String>,
+    /// Fixed settlement class: `model_health`, `credential_recheck` or
+    /// `controller`. Never an identity, credential or request body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub same_account_recovery: Option<recovery::Receipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -77,6 +88,31 @@ struct Store {
     detection_health: Option<String>,
     #[serde(default)]
     terminal_auth_runtime: Option<String>,
+}
+
+impl AuthIncident {
+    /// Record a final result with the fixed class of path that produced it, so
+    /// a healthy model turn, an explicit same-account credential recheck and a
+    /// controller path stay distinguishable.
+    fn settle(&mut self, path: &str, result: &str, at: &str) {
+        self.recovery_path = Some(path.into());
+        self.recovery_result = Some(result.into());
+        self.recovery_observed_at = Some(at.into());
+    }
+}
+
+const PATH_MODEL_HEALTH: &str = "model_health";
+const PATH_CREDENTIAL_RECHECK: &str = "credential_recheck";
+const PATH_CONTROLLER: &str = "controller";
+
+/// A healthy provider turn is an observation; every other automatic result is
+/// reported by a controller.
+fn observed_path(result: &str) -> &'static str {
+    if result == "healthy" {
+        PATH_MODEL_HEALTH
+    } else {
+        PATH_CONTROLLER
+    }
 }
 
 fn error() -> CliError {
@@ -243,6 +279,7 @@ fn observe_locked(
         status: "auth_failed".into(),
         recovery_result: None,
         recovery_observed_at: None,
+        recovery_path: None,
         same_account_recovery: None,
         failover: None,
         notification: Notification::default(),
@@ -367,8 +404,7 @@ pub(crate) fn recover(
             "recovery_failed"
         }
         .into();
-        incident.recovery_result = Some(result.into());
-        incident.recovery_observed_at = Some(at.into());
+        incident.settle(observed_path(result), result, at);
         save(context, &current, &store)?;
     } else if changed {
         save(context, &current, &store)?;
@@ -657,8 +693,11 @@ fn retire_replaced(store: &mut Store, record: &SessionRecord) {
     for incident in &mut store.incidents {
         if !same_runtime(incident, record) && incident.status == "auth_failed" {
             incident.status = "runtime_replaced".into();
-            incident.recovery_result = Some("runtime_replaced".into());
-            incident.recovery_observed_at = Some(jiff::Timestamp::now().to_string());
+            incident.settle(
+                PATH_CONTROLLER,
+                "runtime_replaced",
+                &jiff::Timestamp::now().to_string(),
+            );
         }
     }
 }
@@ -813,6 +852,7 @@ pub(crate) fn tick(
             local_machine,
         )
     });
+    escalation::route_unowned(context, &mut pending.incidents);
     if serde_json::to_vec(&pending).map_err(|_| error())? == pending_before {
         return Ok(());
     }
@@ -824,20 +864,29 @@ pub(crate) fn tick(
     }
     let mut store = read(context, &current)?;
     let before = serde_json::to_vec(&store).map_err(|_| error())?;
-    for updated in pending.incidents {
+    merge_delivery(&mut store, pending.incidents);
+    if serde_json::to_vec(&store).map_err(|_| error())? != before {
+        save(context, &current, &store)?;
+    }
+    Ok(())
+}
+
+/// Fold receipts produced without the record lock into the current store. A
+/// settlement that landed meanwhile reset the final-result receipt for its new
+/// result; the snapshot's receipt belongs to the old result and is dropped.
+fn merge_delivery(store: &mut Store, pending: Vec<AuthIncident>) {
+    for updated in pending {
         if let Some(original) = store
             .incidents
             .iter_mut()
             .find(|incident| incident.incident_id == updated.incident_id)
         {
             original.notification = updated.notification;
-            original.recovery_notification = updated.recovery_notification;
+            if original.recovery_result == updated.recovery_result {
+                original.recovery_notification = updated.recovery_notification;
+            }
         }
     }
-    if serde_json::to_vec(&store).map_err(|_| error())? != before {
-        save(context, &current, &store)?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

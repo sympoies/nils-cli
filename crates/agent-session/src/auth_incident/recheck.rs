@@ -81,8 +81,7 @@ pub(crate) fn settle(
             recovery::settle_receipt(r);
         }
         incident.status = "recovered".into();
-        incident.recovery_result = Some("credentials_refreshed".into());
-        incident.recovery_observed_at = Some(at.clone());
+        incident.settle(PATH_CREDENTIAL_RECHECK, "credentials_refreshed", &at);
         incident.recovery_notification = Notification::default();
     }
     save(context, record, &store)
