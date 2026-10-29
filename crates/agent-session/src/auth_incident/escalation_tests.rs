@@ -32,7 +32,9 @@ fn with_owner(mut record: SessionRecord) -> SessionRecord {
 fn failed(record: &SessionRecord) -> (tempfile::TempDir, CliContext) {
     let tmp = tempfile::TempDir::new().unwrap();
     let context = CliContext {
-        state_dir: tmp.path().join("state"),
+        // The alert spool refuses a state root behind a symlink, and a platform
+        // temp dir may itself be one, so root the state at its physical path.
+        state_dir: fs::canonicalize(tmp.path()).unwrap().join("state"),
         host: None,
     };
     fs::create_dir_all(session_dir(&context, &record.id)).unwrap();
