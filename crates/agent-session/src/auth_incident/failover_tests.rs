@@ -5,8 +5,10 @@ use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
 
 fn fixture(root: &Path) -> (CliContext, SessionRecord) {
+    // The alert spool refuses a state root behind a symlink, and a platform
+    // temp dir may itself be one, so root the state at its physical path.
     let context = CliContext {
-        state_dir: root.join("state"),
+        state_dir: fs::canonicalize(root).unwrap().join("state"),
         host: None,
     };
     let mut record = crate::codex_account::record_with_binding_value(json!({
