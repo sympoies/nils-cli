@@ -3,7 +3,7 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `c7e5f319efbc36ee556168e1255d612170300fbc2bcb98dd465b6ec9dbf13e8f`
+- Cargo.lock SHA256: `9af671be28ccb2ff0c256e5c2edf408a36c277bb3d19dfae047fe3febdf5150b`
 - Third-party crates (`source != null`): 493
 
 ## Notice Extraction Policy
@@ -1022,14 +1022,6 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### fsevent-sys 4.1.0
-
-- License: `MIT`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file references:
-  - `LICENSE`
-
 ### futures-channel 0.3.32
 
 - License: `MIT OR Apache-2.0`
@@ -1164,7 +1156,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### graphql-tools 0.5.9
+### graphql-tools 0.5.10
 
 - License: `MIT`
 - Source: `crates.io`
@@ -1513,7 +1505,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### jaq-core 3.1.1
+### jaq-core 3.1.2
 
 - License: `MIT`
 - Source: `crates.io`
@@ -1527,7 +1519,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - Notice files: No explicit NOTICE file discovered.
 - License file reference: none declared
 
-### jaq-std 3.0.3
+### jaq-std 3.0.4
 
 - License: `MIT`
 - Source: `crates.io`
@@ -1846,7 +1838,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### minijinja 3.0.2
+### minijinja 3.0.4
 
 - License: `Apache-2.0`
 - Source: `crates.io`
@@ -1890,7 +1882,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### notify 8.2.0
+### notify 8.2.1
 
 - License: `CC0-1.0`
 - Source: `crates.io`
@@ -2061,6 +2053,13 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file reference: none declared
 
 ### objc2-core-media 0.3.2
+
+- License: `Zlib OR Apache-2.0 OR MIT`
+- Source: `crates.io`
+- Notice files: No explicit NOTICE file discovered.
+- License file reference: none declared
+
+### objc2-core-services 0.3.2
 
 - License: `Zlib OR Apache-2.0 OR MIT`
 - Source: `crates.io`
@@ -2632,7 +2631,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### roxmltree 0.21.1
+### roxmltree 0.21.2
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -3605,7 +3604,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### uuid 1.28.0
+### uuid 1.29.0
 
 - License: `Apache-2.0 OR MIT`
 - Source: `crates.io`
@@ -3762,7 +3761,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### webpki-roots 1.0.10
+### webpki-roots 1.0.11
 
 - License: `CDLA-Permissive-2.0`
 - Source: `crates.io`
