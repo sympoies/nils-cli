@@ -112,6 +112,12 @@ stage is `warn` or worse, because those are the states an operator must act on.
 | `trace` | the opt-in redacted trace could not be appended |
 | `dispatch` | a decision was produced (`code = dispatch-completed`) |
 
+`agent-session` records stage `auth-incident` when a provider authentication
+incident or its final result has no effective parent to notify. The event is
+deduplicated by `correlation` (`sha256:` plus the incident identity), carries
+no session identity, and is described in the
+[turn-state contract](../turn-state-contract.md#provider-authentication-incidents).
+
 A failing stage records the stable `HookError` code as its `code`, `error` as its
 disposition, and the classified recovery action when the fault is a known
 recoverable one. Additional non-terminal events are recorded for a degraded lane,
