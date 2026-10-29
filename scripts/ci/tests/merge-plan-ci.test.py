@@ -156,6 +156,7 @@ class ConsumerExecutionTests(unittest.TestCase):
             source.write_text('// synthetic fixture\n')
         # Audits are recorded, not run; FAIL_AUDIT names the one that must fail.
         for name in ('docs-placement-audit', 'docs-hygiene-audit', 'docs-prose-audit',
+                     'own-compat-audit', 'tests/own-compat-audit.test',
                      'file-size-audit', 'tempdir-leak-audit', 'markdownlint-audit',
                      'cli-output-contract-lint', 'forge-cli-fixture-lint', 'test-stale-audit',
                      'completion-asset-audit', 'completion-freshness-audit',
@@ -338,7 +339,8 @@ else:
         result, _ = self.execute()
         self.assertEqual(result.returncode, 0, result.stderr)
         audits = self.audits()
-        for expected in ('markdownlint-audit --strict', 'cli-output-contract-lint --strict',
+        for expected in ('own-compat-audit ', 'own-compat-audit.test ',
+                         'markdownlint-audit --strict', 'cli-output-contract-lint --strict',
                          'forge-cli-fixture-lint --strict', 'test-stale-audit --strict',
                          'completion-asset-audit --strict', 'zsh -f tests/zsh/completion.test.zsh'):
             with self.subTest(audit=expected):
@@ -375,7 +377,8 @@ else:
 
     def test_scoped_lane_fails_before_compiling_when_a_cheap_audit_fails(self):
         self.candidate()
-        for name in ('markdownlint-audit', 'cli-output-contract-lint', 'forge-cli-fixture-lint',
+        for name in ('own-compat-audit', 'own-compat-audit.test',
+                     'markdownlint-audit', 'cli-output-contract-lint', 'forge-cli-fixture-lint',
                      'test-stale-audit', 'completion-asset-audit', 'zsh-completion'):
             with self.subTest(audit=name):
                 self.log.unlink(missing_ok=True)

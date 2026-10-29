@@ -308,7 +308,7 @@ first_disallowed_release = "2.0.0"
 path = "crates/agent-runtime/src/commands/list_skills.rs"
 match = "// surface retained for backward-compatible source roots."
 kind = "removal-scheduled"
-reason = "Existing old skills source-root discovery; N11 owns old skills/manifest reader retirement with the current kit producer."
+reason = "Existing old Codex identify_skill source-root branches; N11 pairs retirement with current kit plugin layout/K4 proof while preserving current Hermes skill layout and plugin discovery."
 issue = "https://github.com/sympoies/nils-cli/issues/3083"
 expires = "2026-11-30"
 count = 1
@@ -336,7 +336,7 @@ count = 1
 path = "crates/agent-session/docs/specs/serve-history-v1.md"
 match = "within the read budget. `prompt_preview` remains the backward-compatible alias for the first-user"
 kind = "removal-scheduled"
-reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+reason = "Existing HistorySession.prompt_preview duplicate cloned from first_user_prompt_preview; N9 migrates supported readers to authoritative first/last fields before the release-owner-coordinated public cutover."
 issue = "https://github.com/sympoies/nils-cli/issues/3081"
 expires = "2026-11-30"
 count = 1
@@ -1018,11 +1018,12 @@ first_disallowed_release = "2.0.0"
 [[retention]]
 path = "crates/codex-cli/README.md"
 match = "- `--ephemeral` is a compatibility no-op in isolated mode and keeps its existing"
-kind = "current-contract"
-reason = "Current primary --ephemeral option still controls inherited-mode persistence; isolated mode already forces ephemeral launches. Current runtime/mod.rs, agent/exec.rs and agent_runtime_boundaries fixtures establish mode semantics, not an old-name reader."
-issue = "https://github.com/sympoies/nils-cli/issues/3074"
+kind = "removal-scheduled"
+reason = "Existing isolated-mode wrapper --ephemeral no-op; N5 retires that redundant input in 2.0 while preserving meaningful inherited upstream forwarding after checking its supported external contract/version. No product deletion in this audit batch."
+issue = "https://github.com/sympoies/nils-cli/issues/3077"
 expires = "2026-11-30"
 count = 1
+first_disallowed_release = "2.0.0"
 
 [[retention]]
 path = "crates/codex-cli/README.md"
