@@ -49,7 +49,7 @@ pub struct Env {
 
 impl Env {
     /// Resolve the real environment from configuration, git context, and CWD.
-    fn from_process() -> Result<Self, CmdError> {
+    pub(crate) fn from_process() -> Result<Self, CmdError> {
         let secrets_repo = std::env::var("SECRETS_REPO").ok();
         let home = std::env::var_os("HOME").map(PathBuf::from);
         let cwd = std::env::current_dir()
@@ -80,7 +80,7 @@ impl Env {
         })
     }
 
-    fn ensure_store(&self) -> Result<(), CmdError> {
+    pub(crate) fn ensure_store(&self) -> Result<(), CmdError> {
         if self.store_root.join(".git").exists() {
             Ok(())
         } else {
@@ -96,14 +96,14 @@ impl Env {
 }
 
 /// A structured command failure mapped to a stable exit code + error code.
-struct CmdError {
+pub(crate) struct CmdError {
     code: i32,
     error_code: String,
     message: String,
 }
 
 impl CmdError {
-    fn runtime(message: impl Into<String>) -> Self {
+    pub(crate) fn runtime(message: impl Into<String>) -> Self {
         Self {
             code: exit::RUNTIME,
             error_code: "runtime-error".to_string(),
@@ -111,7 +111,7 @@ impl CmdError {
         }
     }
 
-    fn unavailable(message: impl Into<String>, error_code: impl Into<String>) -> Self {
+    pub(crate) fn unavailable(message: impl Into<String>, error_code: impl Into<String>) -> Self {
         Self {
             code: exit::UNAVAILABLE,
             error_code: error_code.into(),
@@ -154,7 +154,7 @@ pub fn edit(name: Option<&str>, format: OutputFormat) -> i32 {
     }
 }
 
-fn dispatch<T, F>(format: OutputFormat, run: F) -> i32
+pub(crate) fn dispatch<T, F>(format: OutputFormat, run: F) -> i32
 where
     T: Outcome,
     F: FnOnce(&Env) -> Result<T, CmdError>,
@@ -168,7 +168,7 @@ where
 // ----------------------------- command bodies --------------------------------
 
 /// Resolve the store entry for an optional `[name]`, mirroring the bash lookup.
-fn resolve_entry(env: &Env, name: Option<&str>) -> Result<StoreEntry, CmdError> {
+pub(crate) fn resolve_entry(env: &Env, name: Option<&str>) -> Result<StoreEntry, CmdError> {
     match name {
         Some(name) => Ok(store::store_entry_for_name(&env.store_root, name)),
         None => {
@@ -624,10 +624,10 @@ fn prepare_add_signal_handler() -> Result<(), CmdError> {
 /// process group. All platforms retain synchronous `Command` ownership so Git
 /// finishes and is reaped before this guard restores ordinary interruption
 /// semantics.
-struct AddSignalPhase;
+pub(crate) struct AddSignalPhase;
 
 impl AddSignalPhase {
-    fn begin() -> Result<Self, CmdError> {
+    pub(crate) fn begin() -> Result<Self, CmdError> {
         prepare_add_signal_handler()?;
         ADD_PHASE.store(ADD_PHASE_CANCELLABLE, Ordering::Release);
         Ok(Self)
@@ -640,7 +640,7 @@ impl Drop for AddSignalPhase {
     }
 }
 
-fn ensure_add_not_interrupted() -> Result<(), CmdError> {
+pub(crate) fn ensure_add_not_interrupted() -> Result<(), CmdError> {
     if ADD_PHASE.load(Ordering::Acquire) == ADD_PHASE_INTERRUPTED {
         Err(add_interrupted_error())
     } else {
@@ -648,7 +648,7 @@ fn ensure_add_not_interrupted() -> Result<(), CmdError> {
     }
 }
 
-fn enter_add_commit_phase() -> Result<(), CmdError> {
+pub(crate) fn enter_add_commit_phase() -> Result<(), CmdError> {
     match ADD_PHASE.compare_exchange(
         ADD_PHASE_CANCELLABLE,
         ADD_PHASE_COMMITTING,
@@ -667,7 +667,7 @@ fn add_interrupted_error() -> CmdError {
     CmdError::runtime("operation interrupted — target unchanged, nothing committed")
 }
 
-fn run_add_sops(command: &mut Command) -> Result<ExitStatus, CmdError> {
+pub(crate) fn run_add_sops(command: &mut Command) -> Result<ExitStatus, CmdError> {
     let mut child = command.spawn().map_err(|err| {
         CmdError::unavailable(format!("failed to run sops: {err}"), "sops-unavailable")
     })?;
@@ -729,14 +729,14 @@ fn validate_encrypted_document(
 /// caught by the CLI. The sibling location guarantees `persist` can use a
 /// same-filesystem rename, including in linked Git worktrees, so the tracked
 /// target changes atomically from absent/old ciphertext to complete ciphertext.
-struct PrivateTempFile {
+pub(crate) struct PrivateTempFile {
     path: PathBuf,
     file: File,
     persisted: bool,
 }
 
 impl PrivateTempFile {
-    fn new(dir: &Path) -> Result<Self, CmdError> {
+    pub(crate) fn new(dir: &Path) -> Result<Self, CmdError> {
         for _ in 0..128 {
             let sequence = ADD_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
             let path = dir.join(format!(
@@ -785,17 +785,17 @@ impl PrivateTempFile {
         ))
     }
 
-    fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
-    fn reopen(&self) -> Result<File, CmdError> {
+    pub(crate) fn reopen(&self) -> Result<File, CmdError> {
         self.file.try_clone().map_err(|err| {
             CmdError::runtime(format!("cannot open private encryption output: {err}"))
         })
     }
 
-    fn persist(mut self, target: &Path) -> Result<(), CmdError> {
+    pub(crate) fn persist(mut self, target: &Path) -> Result<(), CmdError> {
         self.file.sync_all().map_err(|err| {
             CmdError::runtime(format!(
                 "cannot sync encrypted output before install: {err}"
@@ -841,7 +841,7 @@ fn count_dotenv_keys(path: &Path) -> usize {
 
 /// Per-command success payload. Implementors own both their human text and
 /// their JSON `data` (which MUST be metadata-only — never secret values).
-trait Outcome {
+pub(crate) trait Outcome {
     fn command(&self) -> &'static str;
     fn human(&self) -> String;
     fn to_json(&self) -> serde_json::Value;
