@@ -523,3 +523,63 @@ fn auth_failover_codex_apply_uses_time_after_the_broker_returns() {
     );
     assert_eq!(current.runtime.as_ref().unwrap().launch_id, *runtime);
 }
+
+#[test]
+fn auth_failover_concurrent_settlement_is_not_masked_by_a_stale_alert_receipt() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock, json!("beta"), false);
+    let (context, record) = fixture(tmp.path());
+    reconcile(&context, &record);
+    let now = || jiff::Timestamp::now().to_string();
+    recover(&context, &record, "refresh_failed", &now()).unwrap();
+    observe(
+        &context,
+        &record,
+        "official-retry",
+        AuthSource::CodexExternalRefresh,
+        Confidence::Authoritative,
+        &now(),
+    )
+    .unwrap();
+    recover(&context, &record, "credentials_refreshed", &now()).unwrap();
+
+    // Delivery runs on a snapshot taken outside the record lock and alerts the
+    // result that is current at that moment.
+    let no_owner = |_: &AuthIncident, _, _: &Notification| {
+        Err(CliError::runtime(
+            "auth-owner-unavailable",
+            "no owner route",
+            None,
+        ))
+    };
+    let mut pending = Store {
+        schema_version: SCHEMA.into(),
+        incidents: read(&context, &record).unwrap().incidents,
+        ..Store::default()
+    };
+    deliver_with(&mut pending, no_owner);
+    escalation::route_unowned(&context, &mut pending.incidents);
+
+    // A supported settlement lands before the snapshot is merged back.
+    recover(&context, &record, "healthy", &now()).unwrap();
+    let mut store = read(&context, &record).unwrap();
+    merge_delivery(&mut store, pending.incidents);
+    // The next tick delivers the settled result and alerts it.
+    deliver_with(&mut store, no_owner);
+    escalation::route_unowned(&context, &mut store.incidents);
+
+    let healthy = store
+        .incidents
+        .iter()
+        .find(|incident| incident.recovery_result.as_deref() == Some("healthy"))
+        .unwrap();
+    let expected = format!("sha256:{}", key(&healthy.incident_id, "recovery:healthy"));
+    let alerts = nils_common::observation::read_recent(&context.state_dir, 0).unwrap();
+    assert!(
+        alerts
+            .iter()
+            .any(|alert| alert.correlation.as_deref() == Some(expected.as_str())),
+        "the healthy result was never alerted: {alerts:?}"
+    );
+}

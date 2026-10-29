@@ -864,20 +864,29 @@ pub(crate) fn tick(
     }
     let mut store = read(context, &current)?;
     let before = serde_json::to_vec(&store).map_err(|_| error())?;
-    for updated in pending.incidents {
+    merge_delivery(&mut store, pending.incidents);
+    if serde_json::to_vec(&store).map_err(|_| error())? != before {
+        save(context, &current, &store)?;
+    }
+    Ok(())
+}
+
+/// Fold receipts produced without the record lock into the current store. A
+/// settlement that landed meanwhile reset the final-result receipt for its new
+/// result; the snapshot's receipt belongs to the old result and is dropped.
+fn merge_delivery(store: &mut Store, pending: Vec<AuthIncident>) {
+    for updated in pending {
         if let Some(original) = store
             .incidents
             .iter_mut()
             .find(|incident| incident.incident_id == updated.incident_id)
         {
             original.notification = updated.notification;
-            original.recovery_notification = updated.recovery_notification;
+            if original.recovery_result == updated.recovery_result {
+                original.recovery_notification = updated.recovery_notification;
+            }
         }
     }
-    if serde_json::to_vec(&store).map_err(|_| error())? != before {
-        save(context, &current, &store)?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]
