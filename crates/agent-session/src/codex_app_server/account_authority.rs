@@ -20,10 +20,9 @@ pub(super) async fn wait_for_bootstrap_binding(
         return Ok(());
     }
     let deadline = Instant::now() + CONTROL_SUBMIT_TOTAL_TIMEOUT;
-    let expected_binding = (
-        crate::codex_account::selected_account(record),
-        crate::codex_account::proxy_binding_diagnostic(record).1,
-    );
+    // The proxy record is a launch snapshot. Fence this request to its first
+    // live binding, then reject account/revision changes while it waits.
+    let mut expected_binding = None;
     let expected_runtime_id = record
         .runtime
         .as_ref()
@@ -80,7 +79,8 @@ pub(super) async fn wait_for_bootstrap_binding(
                 crate::codex_account::selected_account(&current),
                 crate::codex_account::proxy_binding_diagnostic(&current).1,
             );
-            if binding != expected_binding {
+            let expected_binding = expected_binding.get_or_insert_with(|| binding.clone());
+            if &binding != expected_binding {
                 return Err(initial_binding_rejection(
                     bootstrap,
                     context,
