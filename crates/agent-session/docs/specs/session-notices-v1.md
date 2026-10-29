@@ -102,25 +102,37 @@ authentication, blocked-state, durable key, receipt and unknown-outcome rules.
 
 ### Terminal delivery and queue mode
 
-Terminal Claude and Codex sessions use the verified terminal composer path;
-the complete envelope must be observable before Enter, and refusal never leaves
-partial input. `--queue` waits while the target reports busy, retries only the
-busy refusal, and delivers once it becomes idle. Other guard failures stop the
-request. The durable idempotency claim is made by the guarded send path when
-delivery proceeds. Queue mode requires `--idempotency-key` so a caller retry
-cannot submit the same queued notice again.
+Codex terminal sessions use the verified terminal composer path; the complete
+envelope must be observable before Enter. `--queue` waits while the target
+reports busy and retries only a preclaim busy admission refusal. Other failures
+stop the request, including the unsupported Claude transport refusal once idle.
+The durable idempotency claim is made by the guarded send path when delivery
+proceeds. Queue mode requires `--idempotency-key` so a caller retry cannot submit
+the same queued notice again. Post-paste failures retain their claim and report
+whether input remains; unknown input must never be cleared without ownership
+proof.
 
-Claude terminal delivery refuses, before claiming the idempotency key or
-pasting, when a notice body row ends with one or more ASCII spaces. Row end
-means immediately before a CR or LF line ending, or the end of the final body
-at EOF. This narrow transport restriction covers only ASCII spaces at those
-row boundaries. The codec continues to preserve every body byte, and native
-Codex acceptance is unchanged. The restriction remains until an exact
-logical-input ownership proof supports these rows
-([follow-up #3002](https://github.com/sympoies/nils-cli/issues/3002)). Internal
-mailbox-nudge and auto-resume notice producers must avoid generating
-line-trailing spaces at their own boundaries; their producer-side checks are
-tracked in [follow-up #3003](https://github.com/sympoies/nils-cli/issues/3003).
+Otherwise admitted Claude terminal notices return `notice-transport-unsupported`
+with `guard=transport`, `stage=admission`, `atomic=false`, `pasted=false` and
+`submitted=false`, before temporary input creation, buffer loading, paste, Enter
+or a new idempotency claim. Existing identity, idle, empty-composer and used-key
+checks still take precedence. A fresh key refused at this boundary remains
+available for a separately supported guarded send; an already consumed key
+continues to return `send-idempotency-key-used`.
+
+Every encoded notice is multiline, including one-line bodies. Claude can
+collapse its paste into an opaque placeholder that does not prove complete
+logical-draft bytes or ownership for safe clearing. This broad refusal supersedes
+the former `send-notice-trailing-spaces` restriction for Claude terminal notices.
+The codec preserves all body bytes, and Codex native and terminal delivery remain
+unchanged. Full Claude delivery and owned-clear acceptance remain blocked under
+[#3068](https://github.com/sympoies/nils-cli/issues/3068) and
+[#3002](https://github.com/sympoies/nils-cli/issues/3002).
+
+The exact unsupported admission receipt proves no new transport attempt. It adds
+no automatic fallback and does not authorize replay after an unknown, mismatch,
+timeout or used-key outcome. Successful unguarded multiline input does not prove
+a safe automated full-envelope fallback.
 
 Optional `--expect-runtime` and `--expect-provider-session` add caller bindings.
 There is no allow-blocked, arbitrary-key or terminal fallback mode.
