@@ -3,6 +3,7 @@ use super::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+pub(crate) mod owner_commands;
 mod reconcile;
 mod store;
 mod terminal;
@@ -33,6 +34,7 @@ pub(super) struct LookupQuery {
 #[serde(rename_all = "snake_case")]
 enum Outcome {
     Submitted,
+    CommandDispatched,
     Refused,
     Unknown,
 }
@@ -100,9 +102,16 @@ impl ResultRecord {
     }
 
     fn response(&self, machine: &str) -> Response {
-        if self.receipt.outcome == Outcome::Submitted {
+        if matches!(
+            self.receipt.outcome,
+            Outcome::Submitted | Outcome::CommandDispatched
+        ) {
             let mut data = json!({"machine":machine, "submitted":true,
                 "session_incarnation":self.receipt.session_incarnation, "receipt":self.receipt});
+            if self.receipt.outcome == Outcome::CommandDispatched {
+                data["submitted"] = json!(false);
+                data["command_dispatched"] = json!(true);
+            }
             if self.queued {
                 data["queued"] = json!(true);
             }
@@ -295,9 +304,16 @@ async fn dispatch(state: Arc<ServeState>, id: String, body: SubmitBody) -> Respo
 async fn dispatch_observing(
     state: Arc<ServeState>,
     id: String,
-    body: SubmitBody,
+    mut body: SubmitBody,
     proof: Option<Arc<Mutex<Option<reconcile::NativeProof>>>>,
 ) -> Response {
+    // Only this bearer-authenticated conversation entry creates owner origin.
+    // Force terminal guards even when the client normally sends busy replies.
+    let owner_command = owner_commands::parse(&body.text);
+    if let Some(command) = &owner_command {
+        body.text = command.text().to_owned();
+        body.require_idle = true;
+    }
     if !body.require_idle {
         return structured_prompt::submit_structured_prompt_handler_for_receipt(
             state,
@@ -364,6 +380,12 @@ async fn dispatch_observing(
     );
     args.guards = crate::send_guard::GuardArgs {
         expect_runtime: Some(body.expected_session_incarnation.clone()),
+        expect_provider_session: owner_command.as_ref().and_then(|_| {
+            record
+                .provider_resume
+                .as_ref()
+                .map(|resume| resume.session_id.clone())
+        }),
         require_idle: true,
         require_empty_composer: true,
         ..Default::default()
@@ -371,16 +393,25 @@ async fn dispatch_observing(
     let context = state.context.clone();
     let observed_proof = proof.clone();
     match tokio::task::spawn_blocking(move || {
-        crate::send::send_to_session_observing(&context, args, &mut |record, turn| {
-            if let Some(proof) = &observed_proof
-                && let Ok(mut proof) = proof.lock()
-            {
-                *proof = reconcile::NativeProof::new(record, turn, &fingerprint);
-            }
-        })
+        crate::send::send_owner_prompt_observing(
+            &context,
+            args,
+            owner_command,
+            &mut |record, turn| {
+                if let Some(proof) = &observed_proof
+                    && let Ok(mut proof) = proof.lock()
+                {
+                    *proof = reconcile::NativeProof::new(record, turn, &fingerprint);
+                }
+            },
+        )
     })
     .await
     {
+        Ok(Ok(sent)) if sent.command_dispatched => envelope_ok(json!({
+            "machine":state.machine, "submitted":false, "command_dispatched":true,
+            "session_incarnation":body.expected_session_incarnation
+        })),
         Ok(Ok(sent))
             if sent.submission.is_some_and(|s| {
                 matches!(
@@ -450,6 +481,19 @@ async fn classify(response: Response, mut receipt: Receipt) -> ResultRecord {
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or(Value::Null);
+    if status.is_success() && body["data"]["command_dispatched"] == true {
+        receipt.outcome = Outcome::CommandDispatched;
+        receipt.code = None;
+        receipt.confirmation_diagnostic = None;
+        return ResultRecord {
+            receipt,
+            status: status.as_u16(),
+            queued: false,
+            history_turn_id: None,
+            history_session_id: None,
+            native_confirmation: None,
+        };
+    }
     if status.is_success() && body["data"]["submitted"] == true {
         receipt.outcome = Outcome::Submitted;
         receipt.code = None;

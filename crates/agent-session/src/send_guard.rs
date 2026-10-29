@@ -211,7 +211,7 @@ impl Admission<'_> {
         }
     }
 
-    fn identity(&self, stage: &str) -> Result<(), CliError> {
+    pub(crate) fn identity(&self, stage: &str) -> Result<(), CliError> {
         let current = load_session_record(self.context, &self.record.id)?;
         if crate::ensure_same_session_identity(self.record, &current).is_err()
             || current

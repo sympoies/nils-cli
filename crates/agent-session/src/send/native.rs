@@ -10,6 +10,7 @@ pub(crate) struct Receipt {
 pub(super) struct Attempt<'a> {
     pub(super) started: Instant,
     pub(super) acknowledged: &'a mut dyn FnMut(&SessionRecord, &str),
+    pub(super) terminal_command: bool,
 }
 
 pub(super) fn deliver(
@@ -124,6 +125,7 @@ pub(super) fn deliver(
             transport: "codex_app_server",
             confirmation,
         }),
+        command_dispatched: false,
     })
 }
 

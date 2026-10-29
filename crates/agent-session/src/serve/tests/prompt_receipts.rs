@@ -5,6 +5,9 @@ use pretty_assertions::assert_eq;
 #[path = "auth_quarantine.rs"]
 mod auth_quarantine;
 
+#[path = "owner_command_ui.rs"]
+mod owner_command_ui;
+
 #[path = "direct_prompt.rs"]
 mod direct_prompt;
 
@@ -259,7 +262,7 @@ async fn accepted_prompt_with_recorded_runtime_exit_is_receipted_as_submitted() 
             uri,
             Some(TOKEN),
             json!({
-                "text": "/exit",
+                "text": "inspect before the runtime exits",
                 "expected_session_incarnation": launch,
                 "request_id": "exit-attempt",
             }),
@@ -388,7 +391,7 @@ async fn codex_worker_readiness_refusal_with_stopped_runtime_remains_unknown() {
             "/sessions/readiness-refusal-exit/prompt/v2",
             Some(TOKEN),
             json!({
-                "text": "/exit",
+                "text": "inspect before the runtime exits",
                 "expected_session_incarnation": launch,
                 "request_id": "readiness-refusal-attempt",
             }),

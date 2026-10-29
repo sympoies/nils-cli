@@ -169,6 +169,169 @@ fn native_fixture(root: &Path) -> (Arc<ServeState>, String, fs::File, Provider) 
 }
 
 #[tokio::test]
+async fn owner_commands_use_codex_tui_without_a_model_turn() {
+    for command in [
+        "/model",
+        "/effort",
+        "/status",
+        "/compact",
+        "/cost",
+        "/permissions",
+        "/provider-command argument",
+        "/reset",
+    ] {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (st, launch, _lease, provider) = native_fixture(tmp.path());
+        provider.busy.store(false, Ordering::SeqCst);
+        let uri = "/sessions/native-receipt/prompt/v2";
+        let body = json!({"text":command, "expected_session_incarnation":launch,
+            "request_id":"owner-command", "require_idle":false});
+        let (status, first) = call(
+            router(st.clone()),
+            post_json(uri, Some(TOKEN), body.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{command}: {first}");
+        assert_eq!(first["data"]["receipt"]["outcome"], "submitted");
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("submitted")).unwrap(),
+            command
+        );
+        assert_eq!(provider.mutations.load(Ordering::SeqCst), 0);
+        let (_, replay) = call(router(st), post_json(uri, Some(TOKEN), body)).await;
+        assert_eq!(replay, first);
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("enter-count")).unwrap(),
+            "1"
+        );
+    }
+}
+
+#[tokio::test]
+async fn owner_commands_codex_login_keeps_broker_managed_account_refusal() {
+    for quarantined in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (st, launch, _lease, provider) = native_fixture(tmp.path());
+        provider.busy.store(false, Ordering::SeqCst);
+        if quarantined {
+            let record = load_session_record(&st.context, "native-receipt").unwrap();
+            crate::auth_incident::observe(
+                &st.context,
+                &record,
+                "synthetic-auth-failure",
+                crate::auth_incident::AuthSource::CodexAppServer,
+                crate::activity::Confidence::Authoritative,
+                &jiff::Timestamp::now().to_string(),
+            )
+            .unwrap();
+            let path = tmp
+                .path()
+                .join("sessions/native-receipt/auth-incidents.json");
+            let mut incident: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            incident["incidents"][0]["failover"] = json!({
+                "schema_version":"agent-session.auth-failover.v1", "operation_id":"fixture-failover",
+                "state":"refused", "reason":"candidate_unavailable", "source_account":"fixture-account",
+                "source_binding_revision":1, "target_account":null, "provider_session_id":"receipt-thread",
+                "started_at_epoch":1, "deadline_epoch":2, "proof":null,
+                "new_runtime_incarnation":null, "new_runtime_generation":null,
+                "unknown_operation_count":0, "unknown_in_flight_effects":[],
+                "untracked_effects":"unknown", "replayed":false
+            });
+            fs::write(path, serde_json::to_vec(&incident).unwrap()).unwrap();
+            assert_eq!(
+                crate::auth_incident::recovery::guard_input(
+                    &st.context,
+                    &record,
+                    Some("/login"),
+                    &[SpecialKey::Enter],
+                )
+                .unwrap_err()
+                .code(),
+                "auth-quarantined"
+            );
+            let (status, ordinary) = call(
+                router(st.clone()),
+                post_json(
+                    "/sessions/native-receipt/prompt/v2",
+                    Some(TOKEN),
+                    json!({"text":"inspect the workspace", "expected_session_incarnation":launch,
+                    "request_id":"ordinary", "require_idle":true}),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert_eq!(ordinary["error"]["code"], "auth-quarantined");
+        }
+        let (status, result) = call(
+            router(st),
+            post_json(
+                "/sessions/native-receipt/prompt/v2",
+                Some(TOKEN),
+                json!({"text":"/login", "expected_session_incarnation":launch,
+                "request_id":"managed-login", "require_idle":false}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{result}");
+        assert_eq!(
+            result["error"]["code"],
+            if quarantined {
+                "auth-quarantined"
+            } else {
+                "codex-account-login-managed"
+            }
+        );
+        assert_eq!(result["error"]["details"]["receipt"]["outcome"], "refused");
+        assert!(!tmp.path().join("buffer").exists());
+        assert!(!tmp.path().join("submitted").exists());
+        assert_eq!(provider.mutations.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
+async fn owner_commands_codex_context_and_admission_refuse_without_delivery() {
+    for scenario in [
+        "/new",
+        "/clear",
+        "/resume previous",
+        "/fork",
+        "/n",
+        "busy",
+        "draft",
+        "runtime",
+        "binding",
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (st, launch, _lease, provider) = native_fixture(tmp.path());
+        provider.busy.store(scenario == "busy", Ordering::SeqCst);
+        if scenario == "draft" {
+            fs::write(tmp.path().join("composer"), "owner draft").unwrap();
+        }
+        if scenario == "binding" {
+            let mut record = load_session_record(&st.context, "native-receipt").unwrap();
+            record.extra.get_mut("codex_account_binding").unwrap()["applied_runtime_id"] =
+                json!("previous-runtime");
+            crate::write_session_record(&st.context, &record).unwrap();
+        }
+        let command = if scenario.starts_with('/') {
+            scenario
+        } else {
+            "/status"
+        };
+        let (status, result) = call(router(st), post_json(
+            "/sessions/native-receipt/prompt/v2", Some(TOKEN),
+            json!({"text":command, "expected_session_incarnation":if scenario == "runtime" {"old-launch"} else {&launch},
+                "request_id":"refused", "require_idle":false}),
+        )).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{scenario}: {result}");
+        assert_eq!(result["error"]["details"]["receipt"]["outcome"], "refused");
+        assert!(!tmp.path().join("buffer").exists());
+        assert!(!tmp.path().join("submitted").exists());
+        assert_eq!(provider.mutations.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
 async fn acknowledged_native_attempt_reconciles_without_another_dispatch() {
     let tmp = tempfile::TempDir::new().unwrap();
     let (st, launch, _lease, provider) = native_fixture(tmp.path());

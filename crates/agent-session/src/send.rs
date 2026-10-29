@@ -1,6 +1,7 @@
 //! Terminal send delivery; opt-in guards preserve unguarded delivery.
 pub(crate) mod input;
 mod native;
+use std::cell::Cell;
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
@@ -29,6 +30,9 @@ pub(crate) struct SendResult {
     pub(crate) tmux_session: String,
     pub(crate) sent_text: bool,
     pub(crate) keys: Vec<String>,
+    /// Internal owner-only proof; the HTTP receipt carries its typed outcome.
+    #[serde(skip)]
+    pub(crate) command_dispatched: bool,
     /// Present when the send typed text and pressed exactly `enter`: what the
     /// pane showed after the submit. A stuck prompt is an error instead.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,8 +46,8 @@ pub(crate) struct SendResult {
 // Native dispatch keeps its short deadline so provider event waiters can run.
 // Terminal admission and each guarded Enter require several tmux round trips;
 // reserve those checks as well as the swallowed-Enter confirmation interval.
-fn guarded_hold_budget(record: &SessionRecord) -> Duration {
-    if codex_app_server::runtime_is_supported(record) {
+fn guarded_hold_budget(record: &SessionRecord, terminal_command: bool) -> Duration {
+    if codex_app_server::runtime_is_supported(record) && !terminal_command {
         send_submit::HOLD_BUDGET
     } else {
         Duration::from_secs(15)
@@ -75,7 +79,16 @@ pub(crate) fn send_to_session(
 
 pub(crate) fn send_to_session_observing(
     context: &CliContext,
+    args: cli::SendArgs,
+    acknowledged: &mut dyn FnMut(&SessionRecord, &str),
+) -> Result<SendResult, CliError> {
+    send_owner_prompt_observing(context, args, None, acknowledged)
+}
+
+pub(crate) fn send_owner_prompt_observing(
+    context: &CliContext,
     mut args: cli::SendArgs,
+    owner_command: Option<crate::serve::prompt_receipts::owner_commands::Command>,
     acknowledged: &mut dyn FnMut(&SessionRecord, &str),
 ) -> Result<SendResult, CliError> {
     // Picker shortcuts type into the terminal rather than paste. Never send
@@ -106,7 +119,16 @@ pub(crate) fn send_to_session_observing(
     let mut manual_input = ManualInputSection::new(record_lock);
     let mut record = load_session_record(context, &observed.id)?;
     ensure_same_session_identity(&observed, &record)?;
-    crate::auth_incident::recovery::guard_input(context, &record, text.as_deref(), &args.keys)?;
+    if !(record.agent == "claude"
+        && owner_command.as_ref().is_some_and(|command| {
+            command.is_login(text.as_deref()) && args.keys == [SpecialKey::Enter]
+        }))
+    {
+        crate::auth_incident::recovery::guard_input(context, &record, text.as_deref(), &args.keys)?;
+    }
+    if let Some(command) = &owner_command {
+        command.check(&record)?;
+    }
     if live_status(&tmux_bin, &record.tmux_session) != "running" {
         return Err(CliError::runtime(
             "session-not-running",
@@ -122,7 +144,7 @@ pub(crate) fn send_to_session_observing(
             args: &args.guards,
             tmux_bin: &tmux_bin,
             verify_composer: carries_literal_text(text.as_deref()) && !args.keys.is_empty(),
-            deadline: guard_started + guarded_hold_budget(&record),
+            deadline: guard_started + guarded_hold_budget(&record, owner_command.is_some()),
         };
         admission.check_key()?;
         admission.check(None, "admission")?;
@@ -164,6 +186,7 @@ pub(crate) fn send_to_session_observing(
             native::Attempt {
                 started: guard_started,
                 acknowledged,
+                terminal_command: owner_command.is_some(),
             },
         );
     }
@@ -232,6 +255,7 @@ pub(crate) fn send_to_session_observing(
         submission,
         guards: None,
         native: None,
+        command_dispatched: false,
     })
 }
 
@@ -433,11 +457,12 @@ fn guarded(
         args: &args.guards,
         tmux_bin,
         verify_composer: carries_literal_text(text.as_deref()) && !args.keys.is_empty(),
-        deadline: hold_started + guarded_hold_budget(&record),
+        deadline: hold_started + guarded_hold_budget(&record, attempt.terminal_command),
     };
     admission.check_key()?;
     admission.check(None, "admission")?;
-    if codex_app_server::runtime_is_supported(&record)
+    if !attempt.terminal_command
+        && codex_app_server::runtime_is_supported(&record)
         && args.guards.require_idle
         && args.guards.require_empty_composer
         && carries_literal_text(text.as_deref())
@@ -490,6 +515,7 @@ fn guarded(
     }
     // Mixed-prefix recovery needs an exact-paste observation before a conflict.
     let mut observed_paste = false;
+    let command_ui = Cell::new(false);
     // From here the pasted text sits in the input: a refusal must report it.
     let mut after_paste = || -> Result<Option<send_submit::SubmitReport>, CliError> {
         if let Some(text) = literal
@@ -511,21 +537,36 @@ fn guarded(
                 send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
             };
             if let Some(probe) = probe {
-                Ok(Some(send_submit::submit_and_confirm(
+                let mut observations = 0;
+                let report = send_submit::submit_and_confirm(
                     &record.agent,
                     &probe,
                     admission.deadline,
                     |timeout| {
-                        if args.guards.notice_envelope {
+                        let pane = if args.guards.notice_envelope {
                             capture_notice_visible_pane_with_timeout(tmux_bin, &target, timeout)
                         } else {
                             capture_visible_pane_with_timeout(tmux_bin, &target, timeout)
+                        };
+                        if observations > 0
+                            && attempt.terminal_command
+                            && pane.as_deref().is_some_and(|pane| {
+                                send_submit::command_ui_observed(&record.agent, pane)
+                            })
+                        {
+                            command_ui.set(true);
                         }
+                        observations += 1;
+                        pane
                     },
                     |timeout| recorded_tmux_runtime_stopped(tmux_bin, &record, timeout),
-                    || true,
+                    || !command_ui.get(),
                     press_enter,
-                )?))
+                )?;
+                if command_ui.get() {
+                    admission.identity("submit")?;
+                }
+                Ok(Some(report))
             } else {
                 press_enter()?;
                 Ok(Some(send_submit::SubmitReport {
@@ -561,6 +602,7 @@ fn guarded(
     record.updated_at = Zoned::now().timestamp().to_string();
     write_session_record(context, &record)?;
     if let Some(report) = submission
+        && !command_ui.get()
         && matches!(
             report.outcome,
             send_submit::SubmitOutcome::Stuck | send_submit::SubmitOutcome::Unverified
@@ -594,6 +636,7 @@ fn guarded(
         submission,
         guards: Some(send_guard::GuardReport { atomic: false }),
         native: None,
+        command_dispatched: command_ui.get(),
     })
 }
 

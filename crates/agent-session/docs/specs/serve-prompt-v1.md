@@ -95,16 +95,19 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   }
   ```
 
-  `outcome` is `submitted`, `refused` or `unknown`. `code` is null for
-  submitted, the stable refusal code for refused, or
-  `structured-prompt-outcome-unknown` for unknown. Successful keyed POSTs retain
+  `outcome` is `submitted`, `command_dispatched`, `refused` or `unknown`.
+  `code` is null for submitted/command-dispatched, the stable refusal code for
+  refused, or `structured-prompt-outcome-unknown` for unknown. Successful
+  submitted POSTs retain
   `data.machine`, `data.submitted: true`, `data.session_incarnation` and the
-  optional `data.queued: true`, adding `data.receipt`. Refused/unknown POSTs use
+  optional `data.queued: true`, adding `data.receipt`. Observed command UI uses
+  the HTTP 200 command-dispatch envelope described below, with `submitted: false`
+  and the same receipt identity. Refused/unknown POSTs use
   `ok: false` and place the receipt in `error.details.receipt`. Unknown returns
   HTTP 500 with `error.code: structured-prompt-outcome-unknown`, except for
   guarded dispatch failures described below, which return HTTP 409.
 
-  For a Codex request, history may include a `prompt_request` object on the
+  For a submitted Codex prompt, history may include a `prompt_request` object on the
   matching user message. Its `request_id`, `session_id` and
   `session_incarnation` equal the keyed receipt fields. The daemon joins these
   values using the provider's accepted turn identifier; the provider identifier
@@ -176,6 +179,61 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   code. These external provider/UI observations remain non-atomic, as in
   [guarded send](send-v1.md); a later failure after possible paste or native
   dispatch is `unknown`, even if no submission was confirmed.
+
+  Owner-typed slash commands on the authenticated v2 conversation route always
+  use the existing guarded live TUI composer, including when `require_idle` is
+  absent or false. They never enter an app-server model turn. The route pins
+  the runtime and provider conversation, requires idle activity and an empty
+  composer, and retains account-input authority and submission receipts.
+  Leading whitespace is removed before typing the slash command. Provider
+  arguments remain subject to the existing single-line/control restrictions.
+
+  The context-command denylist mirrors Salon's
+  `packages/ui/src/terminalContextCommandGuard.ts`: Claude refuses `/clear`,
+  `/new`, `/reset`, `/resume`, `/branch`, `/teleport`, `/tp`; Codex refuses
+  `/new`, `/clear`, `/resume`, `/fork`. An argument does not bypass an exact
+  command refusal; bare prefixes that can complete to a listed command also
+  refuse. Changes to these lists must update both mirrors. Refusal returns
+  `409 send-context-command-unsupported` with a terminal `refused` receipt and
+  directs the owner to the managed session lifecycle.
+
+  All other owner slash commands, including `/model`, `/effort`, `/status`,
+  `/compact`, `/cost` and `/permissions`, go to the provider TUI. Managed Codex
+  `/login` outside quarantine returns `409 codex-account-login-managed` before
+  input: its accounts are broker-managed, and the owner uses the Console account
+  switch. Existing
+  account-login/logout RPC refusals remain intact; quarantined Codex input keeps
+  its `auth-quarantined` refusal. Only the exact authenticated
+  Claude owner `/login` command may enter an authentication-quarantined runtime
+  as recovery; the quarantine remains until existing recovery observes success.
+  Other input, generic send, raw input, notifications and peer/model callers
+  retain their quarantine checks. No public owner-origin flag exists.
+
+  A positively observed owner command-UI transition returns HTTP 200 with
+  `data.command_dispatched: true`, `data.submitted: false`, and the bound
+  receipt below. It is terminal for request replay/lookup, requires no transcript
+  echo, and does not mean model input, selected settings or completed login.
+  Generic `submitted`, `refused` and `unknown` meanings are unchanged.
+
+  ```json
+  {
+    "request_id": "command-attempt",
+    "session_id": "session-one",
+    "session_incarnation": "launch-one",
+    "outcome": "command_dispatched",
+    "code": null
+  }
+  ```
+
+  Command-UI recognition currently covers Claude's observed Settings frame
+  (Status/Config/Usage/Stats tabs and its cancellation hint), after exact guarded
+  input and Enter with identity rechecked. It never answers that dialog or
+  repeats Enter into it. The retained native fixture contains original
+  structural rows only; omitted body rows are not reconstructed, and spacing
+  parity with production `-N/-T` captures remains unverified. Other command
+  dialogs, unreadable panes and ordinary prompt dialogs remain `unknown`;
+  a terminal write alone never proves command execution. Consumers must accept
+  `command_dispatched` in the existing receipt object to render this success.
 
   Guarded terminal submission retries one swallowed Enter only while its exact paste and all
   guards still hold. A stuck or unverified submission attempts the same bounded,
