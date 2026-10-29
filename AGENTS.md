@@ -26,7 +26,12 @@ Open only the references relevant to the requested change:
 ## Development log writers
 
 - Source `scripts/dev-env.sh` in every development/automation shell; this
-  repository requires `DEVLOG_LAYOUT=fragments` and `devlog >=1.31.16`.
+  repository requires `DEVLOG_LAYOUT=fragments` and `devlog >=1.31.16`. The
+  sole exception is a `semantic-commit` authoring call required by the delivery
+  guard to be the only command in its tool call: invoke it without a preceding
+  source, environment assignment, or wrapper. If a commit-time hook requires
+  missing `DEVLOG_LAYOUT`, stop and report the exact error to the environment
+  owner.
 - Use `devlog new` for durable outcomes. It writes a unique
   `docs/devlog/pending/YYYY-MM-DD-slug.md`; keep its identity comment.
 - Ordinary PRs never edit month files, fold entries, or refresh the shared
