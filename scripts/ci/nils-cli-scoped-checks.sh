@@ -32,6 +32,8 @@ done
 # break runs here too; the baseline files are audit-only and read by these.
 run bash scripts/ci/docs-placement-audit.sh --strict
 run bash scripts/ci/docs-hygiene-audit.sh --strict
+run bash scripts/ci/own-compat-audit.sh
+run bash scripts/ci/tests/own-compat-audit.test.sh
 run bash scripts/ci/markdownlint-audit.sh --strict
 run bash scripts/ci/cli-output-contract-lint.sh --strict
 run bash scripts/ci/forge-cli-fixture-lint.sh --strict

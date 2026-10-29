@@ -34,6 +34,7 @@ class DevlogPolicy(unittest.TestCase):
             if (ROOT / path).exists():
                 self.write(path, (ROOT / path).read_text())
         for name in ('docs-placement-audit.sh', 'docs-hygiene-audit.sh',
+                     'own-compat-audit.sh',
                      'markdownlint-audit.sh', 'cli-output-contract-lint.sh',
                      'forge-cli-fixture-lint.sh', 'docs-prose-audit.sh',
                      'tests/docs-prose-audit.test.sh'):

@@ -9,8 +9,9 @@ JSON output from:
 - `codex-cli auth login|use|save|remove|refresh|auto-refresh|status|current|sync|remote pull`
 - `codex-cli prompt-segment status`
 
-Human-readable output remains the default UX. JSON mode must be explicit (`--format json` or
-`--json` where supported for compatibility).
+Human-readable output remains the default UX. JSON mode must be explicit through
+`--format json`. Existing hidden `--json` aliases still parse until the scheduled
+[N4](https://github.com/sympoies/nils-cli/issues/3076) 2.0.0 removal slice lands.
 
 ## Schema Versions and Command Paths
 
@@ -134,6 +135,10 @@ fields for an absent sibling window are `null` (reset fields may be omitted). Wh
 `windows` is empty, `summary` is omitted. Consumers must not infer a 5-hour window when
 only the weekly window is present.
 
+The current `summary` duplicate is scheduled for removal with supported consumers
+in [N8](https://github.com/sympoies/nils-cli/issues/3080), in the same 2.0.0 train;
+this policy update does not change the emitted payload.
+
 Informational (do not hard-depend for schema validation):
 
 - `raw_usage` (allowlisted upstream usage projection; shape may evolve)
@@ -164,7 +169,10 @@ the error message.
 - Renaming/removing/changing semantics of stable fields is breaking and requires a new schema
   version.
 - Informational fields may be added/adjusted, but must not break stable field interpretation.
-- Keep prior schema behavior available until consumers migrate.
+- Migrate supported producers, consumers, docs and mutable records together,
+  then delete prior forms under the repository-only rule in `DEVELOPMENT.md`.
+  Preserve immutable provenance; only a release-owner-approved adjacent-release
+  cross-host wire/state window may have a concrete release fence and hard expiry.
 
 ### Stored secret names
 

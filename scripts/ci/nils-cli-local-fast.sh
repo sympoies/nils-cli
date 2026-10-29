@@ -555,6 +555,7 @@ elif [[ "$docs_hygiene" -eq 1 ]]; then
   # the code-only lane reports the missing prerequisite before launching it.
   require_cmd rg
   run bash scripts/ci/docs-hygiene-audit.sh --strict
+  run bash scripts/ci/own-compat-audit.sh
 fi
 
 for shell_file in "${shell_files[@]}"; do
@@ -577,6 +578,7 @@ run bash scripts/ci/tests/tempdir-leak-audit.test.sh
 run bash scripts/ci/tests/tempdir-leak-probe.test.sh
 run bash scripts/ci/tests/test-env-isolation-guard.test.sh
 run bash scripts/ci/tests/crates-io-status.test.sh
+run bash scripts/ci/tests/own-compat-audit.test.sh
 
 # file-size-audit ratchets Rust source sizes against a committed baseline. It
 # needs no build, so it runs for every code change set, as CI does.

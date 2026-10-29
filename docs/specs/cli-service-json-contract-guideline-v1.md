@@ -120,7 +120,11 @@ else: invalid envelope
 
 - Within one `schema_version`, additive fields are allowed.
 - Renaming/removing required fields is breaking and requires a new `schema_version`.
-- If breaking changes are required, keep prior version behavior available until consumers migrate.
+- For breaking changes, migrate supported producers, consumers, docs and mutable
+  records together and delete the prior reader/writer under `DEVELOPMENT.md`'s
+  repository-only current-contract rule. Preserve immutable provenance. Only a
+  release-owner-approved adjacent-release cross-host wire/state window may be
+  baselined with a concrete release fence and hard expiry.
 
 ## Testing requirements
 

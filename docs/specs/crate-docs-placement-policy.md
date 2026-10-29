@@ -48,31 +48,26 @@ The following are disallowed as canonical docs at repository root:
 - Crate-owned files named like `docs/runbooks/<crate>-*.md` or `docs/specs/<crate>-*.md`
 - Any crate-owned documentation placed directly under `/docs/` because it is "temporarily easier"
 
-If a historical root path must remain for compatibility, it MUST be a short stub that points to the
-`canonical` crate-local path and MUST NOT duplicate full canonical content.
+When moving a historical root path, update supported script/test/doc callers in
+the same change and delete the old path. Do not add a redirect shim for an old
+repository path. External links alone do not authorize retaining a repository
+contract; `DEVELOPMENT.md` owns the repository-only current-contract rule.
 
-## Compatibility Stub Lifecycle Decision
+## Historical Stub Cleanup
 
-Compatibility stubs under root `docs/` are temporary compatibility artifacts.
-
-- Stubs MUST keep a `Moved to:` target and migration metadata.
-- Stubs MUST remain redirect-only shims and MUST NOT carry canonical runbook/spec/report content.
-- Stubs MUST be removed once inbound-reference checks show no active script/test/doc caller still
-  depends on the old path.
-
-Root stub retention criteria:
-
-- Keep a stub only when a stable historical path is still referenced by scripts, tests, or external
-  documentation.
-- If there are no remaining inbound references and no compatibility requirement, remove the old root
-  path instead of keeping a dead redirect.
+Existing redirect stubs are cleanup debt, not a template for new moves. Inventory
+their callers, migrate those callers and delete each old stub with its owning
+cleanup slice. A local documentation path does not qualify for the adjacent-release
+cross-host wire/state exception. Historical plans and immutable provenance remain
+evidence, not active documentation contracts.
 
 ## Documentation Lifecycle and Retention
 
 Contributors MUST classify lifecycle status before adding/removing docs:
 
 - `canonical`: current source-of-truth documentation.
-- `compat-stub`: redirect shim containing only `Moved to` metadata.
+- `compat-stub`: existing redirect debt to remove with its supported callers;
+  never a lifecycle choice for new documentation.
 - `transient-dev-record`: temporary development-phase record.
 
 `transient-dev-record` handling:
@@ -107,8 +102,8 @@ When adding or moving docs, contributors MUST:
 2. Place `crate-local` docs in `crates/<crate>/docs/...` using canonical paths.
 3. Keep root `docs/` paths for `workspace-level` docs only.
 4. Update references so README/runbooks/specs point to canonical locations.
-5. For moved root docs, leave a compatibility stub only when active callers still reference the old
-   path; otherwise remove the root path entirely.
+5. For moved root docs, update supported callers and remove the old root path in
+   the same change; do not create a redirect stub.
 
 Contributors SHOULD:
 

@@ -254,26 +254,7 @@ else
   fi
 fi
 
-# Legacy-removal guardrails (reintroduction detection)
-legacy_docs_hits="$(rg_scan_existing -n --hidden --glob '!.git' -S '\blegacy\b' --audit-paths \
-  docs/specs docs/runbooks BINARY_DEPENDENCIES.md crates/*/README.md crates/*/docs)"
-if [[ -n "$legacy_docs_hits" ]]; then
-  record_issue error "legacy keyword reintroduced in active docs"
-  while IFS= read -r line; do
-    [[ -n "$line" ]] || continue
-    record_issue error "  doc-hit: $line"
-  done <<<"$legacy_docs_hits"
-fi
-
-legacy_rs_hits="$(rg_scan_existing -n --hidden --glob '!.git' --glob '*.rs' -S '\blegacy\b' \
-  --audit-paths crates)"
-if [[ -n "$legacy_rs_hits" ]]; then
-  record_issue error "legacy keyword reintroduced in Rust sources"
-  while IFS= read -r line; do
-    [[ -n "$line" ]] || continue
-    record_issue error "  rs-hit: $line"
-  done <<<"$legacy_rs_hits"
-fi
+# Removed-surface tombstones stay independent of own-compat-audit.sh's ratchet.
 
 removed_redirect_hits="$(rg_scan_existing -n -S 'handle_legacy_redirect|"provider" \| "debug" \| "workflow" \| "automation"' \
   --audit-paths crates/codex-cli/src/main.rs)"
