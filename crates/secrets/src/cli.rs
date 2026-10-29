@@ -15,6 +15,7 @@ EXAMPLES:
   secrets add                  # encrypt ./.env into the store, commit, push
   secrets which                # print the selected entry path
   secrets which --explain      # explain the selected store and entry
+  secrets set service TOKEN --value-stdin  # read through EOF; hand off delivery
   secrets list                 # list every store entry name
   secrets edit my-stack        # sops-edit a store entry
   secrets completion zsh
@@ -25,8 +26,8 @@ ENVIRONMENT:
 
 SECURITY:
   stdout and --format json carry only METADATA (store paths, entry names,
-  counts). Decrypted secret VALUES are written to the selected output (mode 600) and are
-  never echoed to stdout or the JSON envelope.
+  counts). Pull writes decrypted VALUES to the selected output (mode 600); set
+  handles VALUES only in memory. Values are never echoed to stdout or JSON.
 
 EXIT CODES:
   0    success
@@ -40,8 +41,8 @@ EXIT CODES:
     name = "secrets",
     version,
     long_version = nils_build_info::long_version(env!("CARGO_PKG_VERSION")),
-    about = "Pull / add a repo's .env from the central SOPS store",
-    long_about = "Thin wrapper over sops and git: decrypt a repo's store entry into ./.env, or encrypt ./.env back into the central store. Secret values never touch stdout.",
+    about = "Pull, add, or set dotenv entries in the central SOPS store",
+    long_about = "Decrypt a store entry into ./.env, encrypt a local dotenv file, or atomically set one key from stdin and hand off signed commit/PR delivery. Secret values never touch stdout.",
     after_help = ROOT_AFTER_HELP
 )]
 pub struct Cli {
@@ -65,6 +66,8 @@ pub enum Command {
     Pull(PullArgs),
     /// Encrypt a plaintext env file into the store, commit, and push
     Add(AddArgs),
+    /// Set one key from stdin, atomically encrypt, and hand off signed commit/PR
+    Set(SetArgs),
     /// List every store entry name
     List,
     /// Print the selected entry path; use --explain to show store selection
@@ -112,6 +115,22 @@ pub struct AddArgs {
     pub file: String,
 }
 
+#[derive(Args, Debug)]
+#[command(
+    after_help = "STDIN: non-terminal UTF-8 through EOF; final LF is part of the value. Empty is allowed; NUL and CR are refused. Quotes, backslashes, dollars and LF are escaped in a double-quoted dotenv value. No shell evaluation. Requires a clean governed non-default managed store worktree. Encrypted write success leaves signed commit/PR delivery pending; follow the returned next_actions in the selected store."
+)]
+pub struct SetArgs {
+    /// Selected entry, using the same name resolution as pull/which
+    #[arg(value_name = "name", add = ArgValueCandidates::new(name_candidates))]
+    pub name: String,
+    /// Dotenv key: ASCII letter/underscore, then letters/digits/underscores
+    #[arg(value_name = "key")]
+    pub key: String,
+    /// Read the value only from non-terminal stdin through EOF (never argv)
+    #[arg(long, required = true)]
+    pub value_stdin: bool,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum CompletionShell {
     Bash,
@@ -157,6 +176,7 @@ where
             format,
         ),
         Some(Command::Add(args)) => runtime::add(&args.file, format),
+        Some(Command::Set(args)) => crate::setter::set(&args.name, &args.key, format),
         Some(Command::List) => runtime::list(format),
         Some(Command::Which(args)) => runtime::which(args.name.as_deref(), args.explain, format),
         Some(Command::Edit(args)) => runtime::edit(args.name.as_deref(), format),

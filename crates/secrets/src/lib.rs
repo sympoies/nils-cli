@@ -1,15 +1,15 @@
-//! `secrets` — pull / add dotenv entries from a SOPS store.
+//! `secrets` — pull, add, and set dotenv entries in a SOPS store.
 //!
-//! It is a thin orchestrator over `sops` and `git`: it never parses or renders the
-//! *contents* of an encrypted store entry. The decrypted plaintext is written
-//! directly to disk (mode `600`) and is never routed back through stdout or the
-//! JSON envelope. See `crates/secrets/docs/README.md` for the no-secret-leak
-//! contract.
+//! `pull` redirects decrypted values to a mode-600 file. `set` updates one
+//! assignment in memory and atomically installs validated ciphertext, then
+//! explicitly hands off signed commit/PR delivery. Values never enter stdout,
+//! diagnostics, JSON metadata, or delivery text. See the crate README.
 
 pub mod cli;
 pub mod completion;
 
 pub mod runtime;
+mod setter;
 pub mod store;
 
 pub fn run() -> i32 {

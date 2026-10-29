@@ -1,6 +1,6 @@
 # nils-secrets
 
-`secrets` pulls and pushes dotenv entries in a SOPS-encrypted store. From an
+`secrets` pulls, adds, and sets dotenv entries in a SOPS-encrypted store. From an
 application checkout, it uses the git `origin` remote to select an entry unless
 an explicit name is supplied.
 
@@ -9,6 +9,7 @@ an explicit name is supplied.
 ```bash
 secrets pull [name] [--output <path>] [--force]
 secrets add [file]
+secrets set <name> <key> --value-stdin
 secrets list
 secrets which [name] [--explain]
 secrets edit [name]
@@ -25,6 +26,65 @@ secrets completion zsh
 an existing explicit destination is preserved unless `--force` is used.
 Relative output paths are resolved from the current directory. Created output
 files have mode `600`.
+
+## Set one key from stdin
+
+`secrets set <name> <key> --value-stdin` creates an entry or replaces exactly
+one key. It uses the same store and entry-name lookup as `pull` and `which`.
+Keys use ASCII letters, digits, and underscores, with a letter or underscore
+first; the `sops_` prefix is reserved. Other keys and comments are preserved.
+Existing documents must contain unique single-line `KEY=value` assignments,
+blank lines, or `#` comments; ambiguous/unsupported input is refused unchanged.
+
+Pipe the value from a producer that keeps it out of arguments and logs:
+
+```bash
+secret-producer | secrets set service TOKEN --value-stdin
+```
+
+Stdin must be non-terminal UTF-8, read through EOF, at most 1 MiB. Empty input
+sets an empty string. Every byte is significant: a final LF is part of the
+value, so producers must choose their newline behavior deliberately. NUL, CR,
+and control characters other than LF and TAB are refused. Values become
+single-line, double-quoted dotenv assignments: quotes, backslashes, dollar
+signs, LF, and TAB are escaped as `\"`, `\\`, `\$`, `\n`, and `\t`. There is
+no shell evaluation. Terminal input is refused before reading to prevent echo;
+there is no interactive prompt, value argument, or plaintext input file.
+Existing decrypted documents and SOPS output are limited to 16 MiB.
+
+Before reading stdin or writing, `set` requires the selected store root to be
+a clean linked worktree reported as managed by `git-cli worktree list`, on an
+attached branch different from the locally resolved `origin/HEAD`. Create it
+with `git-cli worktree add` in the store repository, set the local remote HEAD
+if needed, and point `SECRETS_REPO` at that worktree. Primary, unmanaged,
+detached, dirty, unresolved-default, and symlink entry paths are refused.
+No store is fetched or automatically moved to another checkout.
+
+Both new and existing entries are re-encrypted using the selected store's
+root `.sops.yaml` creation rules for the **final entry path**, including
+recipient changes. Recipient/config environment overrides are ignored during
+encryption; decryption identities still use the normal SOPS configuration.
+Rules that leave assignment values unencrypted are refused. A mode-600 sibling
+contains ciphertext only; SOPS decrypts and MAC-verifies the complete candidate
+before atomic same-filesystem rename. Before the installation commit point,
+input, encryption, validation, or handled SIGINT/SIGTERM failure preserves prior
+ciphertext and removes owned temporary files. The worktree is rechecked before
+installation. Handle only one writer per store worktree. Uncatchable termination
+(such as SIGKILL) may leave a private ciphertext temporary file to remove after
+inspection; it never contains plaintext.
+
+A successful exit means **encrypted write completed**. Signed commit/PR
+delivery is explicitly handed off and remains **pending**. `set` does not stage,
+commit, push, or contact a provider. Text and JSON report the entry, store,
+branch, `encrypted_write_completed`, `delivery_verified`, and next actions;
+`committed` and `pr_created` are false and `delivery_status` is `pending`.
+In that store worktree, review and stage only the reported entry with
+`git add -- <entry>`, use `semantic-commit` for a signed commit, publish with
+`git-cli push`, and use `forge-cli pr deliver --no-merge` with metadata-only
+text. Verify the signature and exact PR head through that governed workflow.
+Signing or provider failure leaves the encrypted write pending: preserve it,
+repair delivery, and do not replay `set`. A subsequent call refuses the dirty
+worktree. Unrelated changes must be handled separately.
 
 ## Store selection
 
@@ -61,9 +121,9 @@ envelope (`schema_version` / `ok` / `data` or `error`) per the
 [CLI Service JSON Contract Guideline](../../docs/specs/cli-service-json-contract-guideline-v1.md).
 
 Standard output and the JSON envelope carry metadata only: store paths, entry
-names, booleans, and counts. Decrypted values are redirected to the selected
-mode-600 output file and are never echoed to standard output or included in the
-JSON envelope.
+names, booleans, and counts. `pull` redirects decrypted values to the selected
+mode-600 output file; `set` keeps its value and decrypted document in memory.
+Values are never echoed to standard output or included in the JSON envelope.
 
 `add` encrypts into a hidden mode-600 temporary output beside the final entry,
 asks SOPS to decrypt and MAC-verify the complete temporary document, and only
@@ -89,5 +149,6 @@ appears on standard output or standard error.
 
 ## Dependencies
 
-Requires `git` and `sops` on `PATH`, plus a SOPS decryption identity configured
-for the selected store.
+Requires `git` and `sops` on `PATH`; `set` also requires `git-cli` for managed
+worktree verification. Configure a SOPS decryption identity for the selected
+store.
