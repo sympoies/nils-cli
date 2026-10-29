@@ -499,7 +499,7 @@ This rubric classifies findings into `migrate`, `extend-shared`, `keep-local`, o
 1. Output contract parity: human-readable text, warning style, and section ordering stay stable.
 2. Exit semantics parity: success/failure exit codes and failure conditions stay stable.
 3. Color policy parity: `--no-color` and `NO_COLOR=1` behavior stays stable.
-4. JSON parity: machine-readable fields and error envelopes remain backward compatible.
+4. JSON contracts: align current producers, consumers and docs; delete old forms per DEVELOPMENT.md.
 
 ## Test and Delivery Gates
 

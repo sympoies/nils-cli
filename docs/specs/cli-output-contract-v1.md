@@ -14,16 +14,16 @@ Goals:
 - one set of exit codes (BSD sysexits-aligned);
 - one path for parse and unknown-subcommand errors that respects
   `--format json`;
-- a documented deprecation path for pre-contract `--json` boolean flags
-  so downstream agents and scripts do not break during the migration.
+- coordinated producer/consumer migration and scheduled 2.0 retirement of
+  pre-contract `--json` aliases under the repository-only current-contract rule.
 
 ## Scope
 
 Apply this contract to every user-facing binary in the workspace:
 
 - New binaries MUST adopt the contract before they ship.
-- Existing binaries SHOULD migrate within one minor release cycle. The
-  rollout plan has been retired after rollout (see repository history).
+- Existing binaries follow the current-contract rule in `DEVELOPMENT.md`;
+  this spec does not require a one-minor retention period.
 - Binaries that already publish a `schema_version` (notably
   `agent-workflow-primitives`) keep their string literals byte-stable;
   only the surrounding envelope changes when they migrate.
@@ -41,9 +41,9 @@ guideline still apply unchanged.
 
 - The canonical flag is `--format text|json` (rendered through
   `nils_common::cli_contract::OutputFormat`'s `clap::ValueEnum`).
-- Binaries that previously shipped `--json` MAY keep it as a hidden alias
-  (`#[arg(long, global = true, hide = true, conflicts_with = "format")]`)
-  for one minor cycle, after which it MUST be removed.
+- Existing hidden `--json` aliases are scheduled for removal in the coordinated
+  2.0.0 slice [N4](https://github.com/sympoies/nils-cli/issues/3076). They still
+  parse until that slice lands; no new old-form aliases may be introduced.
 - New binaries MUST NOT introduce a `--json` boolean flag. The lint
   script at `scripts/ci/cli-output-contract-lint.sh` (added in Sprint 3
   of the migration plan) enforces this on PRs.
@@ -207,28 +207,28 @@ The worked example is in
 [`crates/cli-template/src/main.rs`](../../crates/cli-template/src/main.rs)
 (see `parse_or_exit` and `detect_format_from_argv`).
 
-## Compatibility retention: `--json` boolean flag
+## Scheduled 2.0 retirement: `--json` aliases
 
-The canonical output selector is `--format text|json`. Existing hidden
-`--json` flags are retained for compatibility with scripts and other CLI
-consumers; they do not expire automatically after a minor release cycle.
+The canonical output selector is `--format text|json`. N4 owns removal of the
+existing hidden aliases and migration of supported callers, docs, completions
+and lint in the 2.0.0 train. Until that separate slice lands, current hidden
+parsing and explicit-format conflicts remain implemented. This text-only policy
+batch does not remove them. A primary JSON flag, such as image-processing's,
+is distinct from an alias and is outside N4's removal scope.
 
-- Keep existing aliases hidden (`hide = true`) and preserve their current
-  parsing and output behavior. For commands that already declare
-  `conflicts_with = "format"`, combining `--json` with an explicit `--format`
-  remains a parse-time usage error (exit `64`).
-- New commands should use `--format text|json` rather than introduce a
-  `--json` alias. The contract lint rejects `--json` clap flags without
-  `hide = true`; internal serialization fields are not CLI aliases.
-- Removal requires a separate, explicit breaking-change decision that names
-  the affected commands and consumers, documents the migration path, and
-  announces the removal version. Until that decision is approved and
-  documented, retain the aliases regardless of elapsed minor releases.
+New commands MUST use `--format text|json` and MUST NOT introduce old-form
+aliases. The current lint still checks that existing aliases are hidden;
+N4 changes that lint with the producer cutover. Internal serialization fields
+are not CLI aliases.
 
-`agent-workflow-primitives` and `staged-context` carry their own
-schema-version aliases; their deprecation timelines are documented in
-their respective migration tasks (rollout plan retired; see repository
-history).
+`DEVELOPMENT.md` owns the repository-only migration rule: move supported
+producers, consumers, docs and mutable records together and delete old forms.
+There is no indefinite or one-minor retention requirement. Only a named
+adjacent-release cross-host wire/state window can receive an expiring baseline
+with a concrete first-disallowed release; local restore/replay is ineligible.
+Immutable evidence and signed provenance are not rewritten by this rule.
+Other existing schema/field debt is owned by the linked N3–N12 deletion issues
+in the audit baseline, not by an open-ended retention promise here.
 
 ## Testing requirements
 

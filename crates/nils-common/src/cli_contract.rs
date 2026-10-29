@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 /// Canonical output-format flag value for every workspace CLI.
 ///
 /// Binaries surface this enum via `clap`'s `value_enum`, typically as
-/// `--format text|json`. Pre-contract `--json` boolean flags may remain as
-/// hidden aliases for one minor cycle (see the contract spec).
+/// `--format text|json`. Existing hidden `--json` aliases are scheduled for
+/// the coordinated 2.0 retirement slice (see the contract spec).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 #[clap(rename_all = "lower")]
 pub enum OutputFormat {

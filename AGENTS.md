@@ -14,6 +14,7 @@
 Open only the references relevant to the requested change:
 
 - Maintenance principles and routine workflow: `DEVELOPMENT.md`
+- Repository-only current-contract rule and expiring audit: `DEVELOPMENT.md#current-contracts-in-this-repository`
 - Detailed setup, validation, coverage, and publishing reference:
   `docs/runbooks/workspace-maintenance-reference.md`
 - Runtime dependency and degradation reference: `BINARY_DEPENDENCIES.md`

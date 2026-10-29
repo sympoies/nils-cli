@@ -247,6 +247,9 @@ if [[ ! -f Cargo.toml ]]; then
   die "Cargo.toml not found in repo root"
 fi
 
+# Enforce concrete compatibility retirement fences before changing release files.
+bash scripts/ci/own-compat-audit.sh --release "$version"
+
 sanitize_rust_build_env
 
 if [[ "$allow_dirty" -eq 0 ]]; then

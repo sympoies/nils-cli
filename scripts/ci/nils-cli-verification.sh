@@ -9,6 +9,8 @@ Usage:
 Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/docs-placement-audit.sh --strict
   - bash scripts/ci/docs-hygiene-audit.sh --strict
+  - bash scripts/ci/own-compat-audit.sh
+  - bash scripts/ci/tests/own-compat-audit.test.sh
   - bash scripts/ci/markdownlint-audit.sh --strict
   - bash scripts/ci/cli-output-contract-lint.sh --strict
   - bash scripts/ci/forge-cli-fixture-lint.sh --strict
@@ -190,6 +192,7 @@ run_doc_tests() {
 run python3 scripts/ci/devlog-check.py
 run bash scripts/ci/docs-placement-audit.sh --strict
 run bash scripts/ci/docs-hygiene-audit.sh --strict
+run bash scripts/ci/own-compat-audit.sh
 run bash scripts/ci/markdownlint-audit.sh --strict
 run bash scripts/ci/cli-output-contract-lint.sh --strict
 run bash scripts/ci/forge-cli-fixture-lint.sh --strict
@@ -229,6 +232,7 @@ run python3 scripts/ci/tests/merge-plan-policy.test.py
 run bash scripts/ci/tests/shared-helper-adoption-audit.test.sh
 run bash scripts/ci/tests/publish-order-audit.test.sh
 run bash scripts/ci/tests/docs-hygiene-audit.test.sh
+run bash scripts/ci/tests/own-compat-audit.test.sh
 run bash scripts/ci/tests/workspace-test-stale-audit.test.sh
 run bash scripts/ci/tests/file-size-audit.test.sh
 run bash scripts/ci/tests/docs-prose-audit.test.sh

@@ -7,7 +7,7 @@ set -euo pipefail
 # `git rev-parse --show-toplevel` and scans `docs` / `crates/*/docs`. So each
 # case runs the real script black-box inside a throwaway `git init` repo whose
 # only populated tree is `docs/`; every other guardrail (transient-doc,
-# legacy-keyword, removed-surface scans) is a no-op against the empty fixture,
+# removed-surface scans) is a no-op against the empty fixture,
 # leaving the duplicate-hash block as the behavior under test.
 #
 # Coverage:
@@ -310,13 +310,15 @@ done
 cat >"$late_failing_rg_bin/rg" <<'STUB'
 #!/bin/sh
 case "$*" in
-  *'\blegacy\b'*) exit 2 ;;
+  *'handle_legacy_redirect'*) exit 2 ;;
   *) exit 1 ;;
 esac
 STUB
 chmod +x "$late_failing_rg_bin/rg"
 mkdir -p "$clean_repo/docs/specs"
 printf '# late probe fixture\n' >"$clean_repo/docs/specs/late.md"
+mkdir -p "$clean_repo/crates/codex-cli/src"
+printf '// tombstone scan target\n' >"$clean_repo/crates/codex-cli/src/main.rs"
 assert_fails "late ripgrep failure keeps diagnostic" "$clean_repo" 2 \
   "ripgrep scan failed (exit 2)" "$late_failing_rg_bin"
 if grep -qF "PASS: docs hygiene audit" <<<"$audit_output"; then

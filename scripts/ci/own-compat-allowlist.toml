@@ -1,0 +1,1782 @@
+# Exact existing occurrences only. This ratchet grants no authority to add old forms.
+# A removal slice deletes its matching rows with its source/docs/tests.
+# Counts also reject duplicating an already-baselined construct in the same file.
+# No rollback-window rows are authorized in this batch; release-owner data is
+# required before any such row may be added. Local restore/replay is ineligible.
+# Expiry is a hard stop, not a scheduled automatic extension.
+# N3 https://github.com/sympoies/nils-cli/issues/3075
+# N4 https://github.com/sympoies/nils-cli/issues/3076 (2.0.0)
+# N5 https://github.com/sympoies/nils-cli/issues/3077 (2.0.0)
+# N6 https://github.com/sympoies/nils-cli/issues/3078 (2.0.0)
+# N7 https://github.com/sympoies/nils-cli/issues/3079
+# N8 https://github.com/sympoies/nils-cli/issues/3080 (2.0.0)
+# N9 https://github.com/sympoies/nils-cli/issues/3081
+# N10 https://github.com/sympoies/nils-cli/issues/3082
+# N11 https://github.com/sympoies/nils-cli/issues/3083
+# N12 https://github.com/sympoies/nils-cli/issues/3084
+schema_version = 1
+
+[[retention]]
+path = "completions/zsh/_agent-out"
+match = "'path-for:Compatibility allocator for rendered state_out artifact paths' \\"
+kind = "removal-scheduled"
+reason = "Existing path-for allocator and generated/help documentation; N5 migrates the state_out producer and removes this forwarder in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3077"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "completions/zsh/_claude-cli"
+match = "'(--format)--json[Hidden alias for \\`--format json\\`]' \\"
+kind = "removal-scheduled"
+reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 14
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "completions/zsh/_codex-cli"
+match = "'(--format)--json[Hidden alias for \\`--format json\\` (kept for backwards compatibility)]' \\"
+kind = "removal-scheduled"
+reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 16
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "completions/zsh/_evidence"
+match = "'(--format)--json[Hidden alias for \\`--format json\\` kept for symmetry with neighbouring CLIs]' \\"
+kind = "removal-scheduled"
+reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 12
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/agent-hook/docs/specs/agent-hook-v1.md"
+match = "legacy_ttl_seconds"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-hook/src/contract.rs"
+match = "legacy_ttl_seconds"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 3
+
+[[retention]]
+path = "crates/agent-hook/src/evaluator.rs"
+match = "legacy_ttl_seconds"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 5
+
+[[retention]]
+path = "crates/agent-hook/src/liveness.rs"
+match = "legacy_classify"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-hook/src/liveness.rs"
+match = "legacy_ttl_seconds"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 4
+
+[[retention]]
+path = "crates/agent-hook/src/model.rs"
+match = "default_legacy_ttl"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-hook/src/model.rs"
+match = "legacy_ttl_seconds"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-hook/src/setup.rs"
+match = "hooks_legacy"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-hook/src/setup.rs"
+match = "legacy_before"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 17
+
+[[retention]]
+path = "crates/agent-hook/src/setup.rs"
+match = "legacy_command"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-hook/src/setup.rs"
+match = "legacy_command_for_policy"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-hook/src/setup.rs"
+match = "legacy_count"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-hook/src/setup.rs"
+match = "legacy_json_handler"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 3
+
+[[retention]]
+path = "crates/agent-hook/src/setup.rs"
+match = "legacy_markers_repaired"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-hook/src/setup.rs"
+match = "legacy_residue_count"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 6
+
+[[retention]]
+path = "crates/agent-hook/src/setup.rs"
+match = "legacy_toml_handler"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 3
+
+[[retention]]
+path = "crates/agent-hook/src/setup.rs"
+match = "remove_legacy_toml_handlers"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-hook/src/setup.rs"
+match = "remove_owned_and_legacy_json"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 3
+
+[[retention]]
+path = "crates/agent-hook/tests/coordination_ingress.rs"
+match = "legacy_ttl_seconds"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-hook/tests/dsh_ingress.rs"
+match = "legacy_ttl_seconds"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-memory/src/cli.rs"
+match = "#[arg(long, hide = true, conflicts_with = \"format\")]"
+kind = "removal-scheduled"
+reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 13
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/agent-memory/src/cli.rs"
+match = "/// Hidden alias for `--format json` (kept for convenience)."
+kind = "removal-scheduled"
+reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 4
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/agent-memory/src/cli.rs"
+match = "/// Hidden alias for `--format json`."
+kind = "removal-scheduled"
+reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 9
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/agent-memory/src/cli.rs"
+match = "alias = \"idx\""
+kind = "current-contract"
+reason = "Current command abbreviations in the canonical parser vocabulary, not an earlier version reader or renamed command migration."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-memory/src/cli.rs"
+match = "alias = \"ls\""
+kind = "current-contract"
+reason = "Current command abbreviations in the canonical parser vocabulary, not an earlier version reader or renamed command migration."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-out/README.md"
+match = "Compatibility allocator for rendered `state_out(...)` helper calls that emit"
+kind = "removal-scheduled"
+reason = "Existing path-for allocator and generated/help documentation; N5 migrates the state_out producer and removes this forwarder in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3077"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/agent-out/src/cli.rs"
+match = "/// Compatibility allocator for rendered state_out artifact paths."
+kind = "removal-scheduled"
+reason = "Existing path-for allocator and generated/help documentation; N5 migrates the state_out producer and removes this forwarder in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3077"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/agent-runtime/src/commands/list_skills.rs"
+match = "// surface retained for backward-compatible source roots."
+kind = "removal-scheduled"
+reason = "Existing old skills source-root discovery; N11 owns old skills/manifest reader retirement with the current kit producer."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/docs/runbooks/serve-daemon.md"
+match = "Provider import uses `provider_resume_id` (compatibility alias: `resume_id`)."
+kind = "removal-scheduled"
+reason = "Existing resume_id request alias and owning documentation; N5 migrates to provider_resume_id in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3077"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/agent-session/docs/specs/broker-evidence-v1.md"
+match = "| Exact terminal state (`completed`, `failed`, `abandoned`, backward-compatible `expired`) | Retire only its unchanged matching private record. |"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/docs/specs/serve-history-v1.md"
+match = "within the read budget. `prompt_preview` remains the backward-compatible alias for the first-user"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/docs/specs/serve-session-create-v1.md"
+match = "unconditional updates for backward-compatible clients."
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/docs/specs/session-coordination-v1.md"
+match = "`expired` is accepted only as a retained backward-compatible terminal state."
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/docs/specs/session-coordination-v1.md"
+match = "compatibility fallback fits the graceful termination deadline. No command"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/docs/specs/session-retitle-v2.md"
+match = "legacy_command_provider"
+kind = "removal-scheduled"
+reason = "Retired retitle-v2 readiness protocol surface; N10 owns the paired supported-client cutover."
+issue = "https://github.com/sympoies/nils-cli/issues/3082"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-session/src/activity/registration.rs"
+match = "legacy_residue_count"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-session/src/activity/tests/doctor.rs"
+match = "legacy_residue_count"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/auto_resume.rs"
+match = "legacy_usage_window_terminal"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 3
+
+[[retention]]
+path = "crates/agent-session/src/auto_resume.rs"
+match = "legacy_usage_window_terminal_is_recovered_only_while_still_eligible"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/board/ledger.rs"
+match = "launch_env_legacy_closed_records_project_an_empty_map_without_rewriting_history"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/codex_account.rs"
+match = "alias = \"chatgpt_plan_type\""
+kind = "removal-scheduled"
+reason = "N12 owns classification/retirement of nickname and provider-plan aliases against actual provider contracts; no claim that an external field is obsolete."
+issue = "https://github.com/sympoies/nils-cli/issues/3084"
+expires = "2026-11-30"
+count = 3
+
+[[retention]]
+path = "crates/agent-session/src/codex_account.rs"
+match = "alias = \"nickname\""
+kind = "removal-scheduled"
+reason = "N12 owns classification/retirement of nickname and provider-plan aliases against actual provider contracts; no claim that an external field is obsolete."
+issue = "https://github.com/sympoies/nils-cli/issues/3084"
+expires = "2026-11-30"
+count = 3
+
+[[retention]]
+path = "crates/agent-session/src/codex_account.rs"
+match = "legacy_queued_intent_mints_identity_before_entering_applying"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/codex_app_server.rs"
+match = "legacy_snapshot"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-session/src/coordination/audit.rs"
+match = "\"agent-session.federation-journal.v1\" | \"agent-session.federation-journal.v2\""
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/audit.rs"
+match = "\"agent-session.federation-journal.v3\" | \"agent-session.federation-journal.v4\""
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/audit.rs"
+match = "\"agent-session.federation-journal.v5\" | \"agent-session.federation-journal.v6\""
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/broker.rs"
+match = "/// Resume retains the old record before the new pane identity overwrites it."
+kind = "current-contract"
+reason = "Current resume transaction retains its pre-update record to fence identity replacement; this is not support for an old schema."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/broker.rs"
+match = "generation_two_legacy_broker_capture_ignores_recycled_numeric_selector"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/broker.rs"
+match = "legacy_completion_recovery_ms"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/broker.rs"
+match = "legacy_process_runtime_status"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 4
+
+[[retention]]
+path = "crates/agent-session/src/coordination/broker.rs"
+match = "legacy_registry_only_completion_after_caller_loss_is_drained_by_new_sidecar"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/broker.rs"
+match = "legacy_registry_only_drain_reconciles_stale_true_after_empty_observation"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/broker.rs"
+match = "legacy_runtime_status"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-session/src/coordination/broker.rs"
+match = "make_legacy_broker"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-session/src/coordination/broker_notification_tests.rs"
+match = "inspection_distinguishes_drained_mail_from_submitted_prompt_and_sanitizes_legacy_values"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/contention_tests.rs"
+match = "// The held launcher executes a compatibility fallback after a failed exit"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/delegation/mod.rs"
+match = "LEGACY_REGISTRY_VERSION"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/delegation/tests.rs"
+match = "\"agent-session.coordination-registry.v1\" | \"agent-session.coordination-registry.v2\""
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-session/src/coordination/delegation/tests.rs"
+match = "\"agent-session.coordination-registry.v3\" | \"agent-session.coordination-registry.v4\""
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/heartbeat_state.rs"
+match = "unstamped_legacy_index_observes_empty_queue_once_and_preserves_authority"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/mod.rs"
+match = "LEGACY_REGISTRY_VERSION"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/notification.rs"
+match = "LEGACY_PROMPT_PREFIX"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-session/src/coordination/notification_prompt_tests.rs"
+match = "mailbox_reminder_history_hides_new_and_legacy_typed_and_queued_rows"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/notification_prompt_tests.rs"
+match = "mailbox_reminder_recognizes_new_and_legacy_transcript_prefixes"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/remote.rs"
+match = "AUDIT_JOURNAL_VERSION | REFUSAL_JOURNAL_VERSION"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/remote.rs"
+match = "JOURNAL_VERSION | EXTENDED_JOURNAL_VERSION"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/coordination/remote.rs"
+match = "LEGACY_JOURNAL_VERSION"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-session/src/coordination/remote.rs"
+match = "LEGACY_REGISTRY_VERSION"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 4
+
+[[retention]]
+path = "crates/agent-session/src/coordination/remote.rs"
+match = "tagged_remote_ingress_requires_v2_and_keeps_legacy_wire_shape"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/lib.rs"
+match = "legacy_rendered"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-session/src/lib.rs"
+match = "legacy_title"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 3
+
+[[retention]]
+path = "crates/agent-session/src/lib.rs"
+match = "render_v122_legacy_session_title_state"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 4
+
+[[retention]]
+path = "crates/agent-session/src/lib.rs"
+match = "structured_title_boundary_accepts_v122_legacy_pairs_during_transition"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/lib.rs"
+match = "v122_legacy_title_contains_reference"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-session/src/provider_history/history_images.rs"
+match = "parts_query_serializes_empty_array_while_legacy_shape_omits_field"
+kind = "current-contract"
+reason = "Provider image request-shape regression fixture compares current query modes; the test name does not enable a retired repository reader."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/retitle.rs"
+match = "legacy_command_provider"
+kind = "removal-scheduled"
+reason = "Retired retitle-v2 readiness protocol surface; N10 owns the paired supported-client cutover."
+issue = "https://github.com/sympoies/nils-cli/issues/3082"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/serve/tests.rs"
+match = "expected_title_detects_repeated_legacy_writer_changes"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/serve/tests.rs"
+match = "generation_two_legacy_broker_resume_ignores_recycled_numeric_selector"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/serve/tests.rs"
+match = "legacy_broker_resume_uses_prior_persisted_identity"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/serve/tests.rs"
+match = "legacy_resume_allows_tmux_to_reuse_the_stopped_internal_session_id"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/serve/tests.rs"
+match = "make_legacy_broker"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 3
+
+[[retention]]
+path = "crates/agent-session/src/serve/tests/origin_tests.rs"
+match = "claude_legacy_switch_retires_the_verified_stop_and_applies_next_account"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/serve/tests/origin_tests.rs"
+match = "make_legacy_broker"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/serve_create_body.rs"
+match = "alias = \"resume_id\""
+kind = "removal-scheduled"
+reason = "Existing resume_id request alias and owning documentation; N5 migrates to provider_resume_id in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3077"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/agent-session/tests/integration/cli.rs"
+match = "legacy_residue_count"
+kind = "removal-scheduled"
+reason = "Existing old hook registration/liveness contract and its owning fixtures; remove with current kit producers and zero-old-registration proof in N11."
+issue = "https://github.com/sympoies/nils-cli/issues/3083"
+expires = "2026-11-30"
+count = 4
+
+[[retention]]
+path = "crates/agent-session/tests/retitle_readiness_contract.rs"
+match = "legacy_command_provider"
+kind = "removal-scheduled"
+reason = "Retired retitle-v2 readiness protocol surface; N10 owns the paired supported-client cutover."
+issue = "https://github.com/sympoies/nils-cli/issues/3082"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/agent-workflow-primitives/README.md"
+match = "independent of the host's current version-pin. The field is backward compatible:"
+kind = "removal-scheduled"
+reason = "Existing pre-producer skill-usage record reader; N12 owns current-producer inventory and retirement while preserving immutable archived evidence bytes."
+issue = "https://github.com/sympoies/nils-cli/issues/3084"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-workflow-primitives/README.md"
+match = "merged input. The older `pr-comment` profile is a compatibility alias to the"
+kind = "removal-scheduled"
+reason = "Existing pr-comment profile alias documentation; N5 migrates callers to provider-review and retires the alias in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3077"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/agent-workflow-primitives/src/heuristic_inbox.rs"
+match = "RAW_RECORD_SCHEMA_V1 | RAW_RECORD_SCHEMA_V2"
+kind = "removal-scheduled"
+reason = "Existing pre-producer evidence/skill schema acceptance; N12 inventories current producers and preserves authoritative variants and immutable evidence."
+issue = "https://github.com/sympoies/nils-cli/issues/3084"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-workflow-primitives/src/skill_usage.rs"
+match = "/// version-pin moves. Backward compatible: records created before this field"
+kind = "removal-scheduled"
+reason = "Existing pre-producer skill-usage record reader; N12 owns current-producer inventory and retirement while preserving immutable archived evidence bytes."
+issue = "https://github.com/sympoies/nils-cli/issues/3084"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/agent-workflow-primitives/src/skill_usage.rs"
+match = "RECORD_SCHEMA_VERSION | RECORD_SCHEMA_VERSION_V2"
+kind = "removal-scheduled"
+reason = "Existing pre-producer evidence/skill schema acceptance; N12 inventories current producers and preserves authoritative variants and immutable evidence."
+issue = "https://github.com/sympoies/nils-cli/issues/3084"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/api-gql/src/cli.rs"
+match = "alias = \"expect-empty\""
+kind = "current-contract"
+reason = "Current API command vocabulary synonyms in one parser; not a declared predecessor schema or renamed contract."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/api-gql/src/cli.rs"
+match = "alias = \"operation\""
+kind = "current-contract"
+reason = "Current API command vocabulary synonyms in one parser; not a declared predecessor schema or renamed contract."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/api-gql/src/cli.rs"
+match = "alias = \"variables\""
+kind = "current-contract"
+reason = "Current API command vocabulary synonyms in one parser; not a declared predecessor schema or renamed contract."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/api-grpc/src/cli.rs"
+match = "alias = \"expect-empty\""
+kind = "current-contract"
+reason = "Current API command vocabulary synonyms in one parser; not a declared predecessor schema or renamed contract."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/api-rest/src/cli.rs"
+match = "alias = \"expect-empty\""
+kind = "current-contract"
+reason = "Current API command vocabulary synonyms in one parser; not a declared predecessor schema or renamed contract."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/api-websocket/src/cli.rs"
+match = "alias = \"expect-empty\""
+kind = "current-contract"
+reason = "Current API command vocabulary synonyms in one parser; not a declared predecessor schema or renamed contract."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/claude-cli/src/cli.rs"
+match = "#[arg(long = \"json\", hide = true, conflicts_with = \"format\")]"
+kind = "removal-scheduled"
+reason = "Existing hidden JSON alias; N4 owns canonical-format migration in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/claude-cli/src/cli.rs"
+match = "/// Hidden alias for `--format json`."
+kind = "removal-scheduled"
+reason = "Existing hidden JSON alias; N4 owns canonical-format migration in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/claude-cli/src/prompt_segment/mod.rs"
+match = "parse_ttl_seconds_accepts_zero_for_legacy_force_refresh"
+kind = "current-contract"
+reason = "Zero TTL remains a valid value of the current canonical TTL variable; the historical test name is not an old-name reader."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/claude-cli/src/prompt_segment/mod.rs"
+match = "resolve_ttl_prefers_segment_env_before_legacy_env"
+kind = "removal-scheduled"
+reason = "Existing prompt TTL old-name behavior fixture; N6 owns environment-name migration in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3078"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/claude-cli/tests/integration/completion_contract.rs"
+match = "\"'(--format)--json[Hidden alias for \\\\`--format json\\\\`]' \\\\\","
+kind = "removal-scheduled"
+reason = "Existing hidden JSON alias; N4 owns canonical-format migration in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/cli-template/src/main.rs"
+match = "#[arg(long, global = true, hide = true, conflicts_with = \"format\")]"
+kind = "removal-scheduled"
+reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/cli-template/src/main.rs"
+match = "/// Hidden alias for `--format json` (kept for backwards compatibility)."
+kind = "removal-scheduled"
+reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/codex-cli/README.md"
+match = "- `--ephemeral` is a compatibility no-op in isolated mode and keeps its existing"
+kind = "current-contract"
+reason = "Current primary --ephemeral option still controls inherited-mode persistence; isolated mode already forces ephemeral launches. Current runtime/mod.rs, agent/exec.rs and agent_runtime_boundaries fixtures establish mode semantics, not an old-name reader."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/codex-cli/README.md"
+match = "The inherited path retains its compatibility fallback."
+kind = "removal-scheduled"
+reason = "Existing inherited commit-tool fallback; N12 owns removal after current commit consumers are inventoried."
+issue = "https://github.com/sympoies/nils-cli/issues/3084"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/codex-cli/src/cli.rs"
+match = "#[arg(long = \"json\", hide = true, conflicts_with = \"format\")]"
+kind = "removal-scheduled"
+reason = "Existing hidden JSON alias or generated-output fixture; N4 removes it with supported callers in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 2
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/codex-cli/src/cli.rs"
+match = "/// Hidden alias for `--format json` (kept for backwards compatibility)."
+kind = "removal-scheduled"
+reason = "Existing hidden JSON alias or generated-output fixture; N4 removes it with supported callers in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 2
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/codex-cli/tests/integration/completion_contract.rs"
+match = "\"'(--format)--json[Hidden alias for \\\\`--format json\\\\` (kept for backwards compatibility)]' \\\\\","
+kind = "removal-scheduled"
+reason = "Existing hidden JSON alias or generated-output fixture; N4 removes it with supported callers in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/docker-tools/src/runtime.rs"
+match = "LEGACY_USAGE"
+kind = "removal-scheduled"
+reason = "Existing predecessor Docker usage result or secrets paths key alias; N6 owns canonical-only migration in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3078"
+expires = "2026-11-30"
+count = 2
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/forge-cli/src/cli.rs"
+match = "alias = \"label\""
+kind = "current-contract"
+reason = "Current label command vocabulary synonym; not a retired command-name migration."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/forge-cli/src/ops/pr_create.rs"
+match = "parse_view_output_gitlab_legacy_wip_field"
+kind = "external"
+reason = "GitLab provider draft-field response fixture; it tests external input rather than an old nils-cli schema. N12 owns external-contract classification."
+issue = "https://github.com/sympoies/nils-cli/issues/3084"
+expires = "2026-11-30"
+count = 1
+external_version = "GitLab REST API v4 work_in_progress field"
+
+[[retention]]
+path = "crates/forge-cli/src/ops/pr_review.rs"
+match = "alias = \"startLine\""
+kind = "current-contract"
+reason = "Current ReviewThreadSpec input vocabulary supports API-style field spellings in one schema; no retired version producer/reader is declared."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/forge-cli/src/ops/pr_review.rs"
+match = "alias = \"startSide\""
+kind = "current-contract"
+reason = "Current ReviewThreadSpec input vocabulary supports API-style field spellings in one schema; no retired version producer/reader is declared."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/forge-cli/src/ops/pr_review.rs"
+match = "alias = \"subjectType\""
+kind = "current-contract"
+reason = "Current ReviewThreadSpec input vocabulary supports API-style field spellings in one schema; no retired version producer/reader is declared."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/forge-cli/src/ops/pr_review_handoff/approval.rs"
+match = "//! Typed admission is separate from the compatibility `reviewed` status."
+kind = "removal-scheduled"
+reason = "Existing duplicate reviewed status beside typed admission; N8 owns canonical output migration in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3080"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/forge-cli/src/ops/pr_review_threads.rs"
+match = "github_comment_anchors_paginate_beyond_legacy_page_cap"
+kind = "current-contract"
+reason = "Regression test proves pagination exceeds an old cap; no retired reader, alias or fallback is accepted."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/forge-cli/src/ops/pr_review_threads.rs"
+match = "github_fingerprints_paginate_beyond_legacy_page_cap"
+kind = "current-contract"
+reason = "Regression test proves pagination exceeds an old cap; no retired reader, alias or fallback is accepted."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/forge-cli/src/ops/pr_review_threads.rs"
+match = "github_thread_comments_paginate_beyond_legacy_page_cap"
+kind = "current-contract"
+reason = "Regression test proves pagination exceeds an old cap; no retired reader, alias or fallback is accepted."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/forge-cli/src/ops/pr_review_threads.rs"
+match = "github_threads_paginates_beyond_legacy_page_cap_and_marks_complete"
+kind = "current-contract"
+reason = "Regression test proves pagination exceeds an old cap; no retired reader, alias or fallback is accepted."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/forge-cli/src/ops/repo_bootstrap.rs"
+match = "LEGACY_RECEIPT_SCHEMA"
+kind = "removal-scheduled"
+reason = "Existing retired bootstrap/review-state acceptance; N7 owns current receipt/ledger producers and integrity-preserving retirement."
+issue = "https://github.com/sympoies/nils-cli/issues/3079"
+expires = "2026-11-30"
+count = 4
+
+[[retention]]
+path = "crates/forge-cli/src/ops/review_state.rs"
+match = "all_legacy"
+kind = "current-contract"
+reason = "Immutable recorded review markers and historical visible text retain identical signed chain meaning; no retired ledger schema is upgraded."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "crates/git-cli/docs/specs/git-cli-worktree-convention.md"
+match = "accepted as a compatibility no-op. Removal prevents known collisions; it does"
+kind = "removal-scheduled"
+reason = "Existing worktree --safe no-op and owning help/completion; N5 removes the redundant input with current callers in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3077"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/git-cli/src/cli.rs"
+match = "visible_alias = \"action\""
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/cli.rs"
+match = "visible_alias = \"blob\""
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/cli.rs"
+match = "visible_alias = \"copy\""
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/cli.rs"
+match = "visible_alias = \"default\""
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/cli.rs"
+match = "visible_alias = \"delete-merged\""
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/cli.rs"
+match = "visible_alias = \"hash\""
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/cli.rs"
+match = "visible_alias = \"history\""
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/cli.rs"
+match = "visible_alias = \"issue\""
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/cli.rs"
+match = "visible_alias = \"release\""
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/cli.rs"
+match = "visible_alias = \"stash\""
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/cli.rs"
+match = "visible_alias = \"tag\""
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/cli.rs"
+match = "visible_aliases = [\"context_json\", \"contextjson\", \"json\"]"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/cli.rs"
+match = "visible_aliases = [\"prs\", \"merge-requests\", \"mrs\"]"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/cli.rs"
+match = "visible_aliases = [\"pull-request\", \"mr\", \"merge-request\"]"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/completion.rs"
+match = ".help(\"Compatibility no-op\"),"
+kind = "removal-scheduled"
+reason = "Existing worktree --safe no-op and owning help/completion; N5 removes the redundant input with current callers in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3077"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/git-cli/src/completion.rs"
+match = ".visible_alias(\"action\")"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/completion.rs"
+match = ".visible_alias(\"blob\")"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/completion.rs"
+match = ".visible_alias(\"copy\")"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/completion.rs"
+match = ".visible_alias(\"default\")"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/completion.rs"
+match = ".visible_alias(\"delete-merged\")"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/completion.rs"
+match = ".visible_alias(\"hash\")"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/completion.rs"
+match = ".visible_alias(\"history\")"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/completion.rs"
+match = ".visible_alias(\"issue\")"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/completion.rs"
+match = ".visible_alias(\"release\")"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/completion.rs"
+match = ".visible_alias(\"stash\")"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/completion.rs"
+match = ".visible_alias(\"tag\")"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/completion.rs"
+match = ".visible_aliases([\"context_json\", \"contextjson\", \"json\"])"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/completion.rs"
+match = ".visible_aliases([\"prs\", \"merge-requests\", \"mrs\"])"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/completion.rs"
+match = ".visible_aliases([\"pull-request\", \"mr\", \"merge-request\"])"
+kind = "current-contract"
+reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/git-cli/src/worktree.rs"
+match = "\"Removal blocks known foreign holders and fresh Git locks, preserves unsaved work, and uses no network unless --forge-delivery requests merged PR evidence. --safe is a compatibility no-op.\""
+kind = "removal-scheduled"
+reason = "Existing worktree --safe no-op and owning help/completion; N5 removes the redundant input with current callers in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3077"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/git-cli/src/worktree/dirty_checkout_adoption/tests/adoption_deadline.rs"
+match = "legacy_lock_wait"
+kind = "current-contract"
+reason = "Regression compares a wait against the obsolete duration; current shared-deadline locking is exercised and no old path executes."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 3
+
+[[retention]]
+path = "crates/image-processing/src/cli.rs"
+match = "#[arg( long, hide = true, help = \"Hidden alias for `--format json` (kept for backwards compatibility)\" )]"
+kind = "current-contract"
+reason = "Image-processing JSON is the current primary selector despite misleading help text; N4 corrects that description only, not primary flag behavior."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/image-processing/src/cli.rs"
+match = "help = \"Hidden alias for `--format json` (kept for backwards compatibility)\""
+kind = "current-contract"
+reason = "Image-processing JSON is the current primary selector despite misleading help text; N4 corrects that description only, not primary flag behavior."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/image-processing/src/convert.rs"
+match = "/// stay backward compatible (the field was always `None` before)."
+kind = "current-contract"
+reason = "Canonical orientation_report maps NoTransforms to None in the current output; no second schema, reader or duplicate representation is retained."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/macos-agent/src/transport/mod.rs"
+match = "// Absent from older peers; omitted when empty so older clients see the same envelope."
+kind = "removal-scheduled"
+reason = "Existing RemoteError omitted-hints wire shape; N12 owns retirement/classification. No adjacent-release rollback window is granted without release-owner pair/fence evidence."
+issue = "https://github.com/sympoies/nils-cli/issues/3084"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/nils-common/src/agent_attribution.rs"
+match = "generator_marker_matches_legacy_link_and_prose_forms"
+kind = "current-contract"
+reason = "Generator marker recognizer identifies immutable commit/PR provenance text; it does not execute a retired product contract."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/nils-common/src/coordination_projection.rs"
+match = "NOTIFICATION_HISTORY_REGISTRY_VERSION | COALESCING_REGISTRY_VERSION"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/nils-common/src/coordination_projection.rs"
+match = "REGISTRY_VERSION | CLAIM_FENCE_REGISTRY_VERSION"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/nils-common/src/coordination_projection.rs"
+match = "SUPPRESSION_REGISTRY_VERSION | DELEGATION_REGISTRY_VERSION"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/nils-common/src/coordination_projection.rs"
+match = "projection_reader_accepts_legacy_and_fence_aware_registry_markers"
+kind = "removal-scheduled"
+reason = "Existing old session/coordination state reader, writer or positive fixture; N9 owns producer inventory and retirement. Scheduled debt only, no rollback window authorized."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/nils-evidence/src/cli.rs"
+match = "#[arg(long, global = true, hide = true, conflicts_with = \"format\")]"
+kind = "removal-scheduled"
+reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/nils-evidence/src/cli.rs"
+match = "/// Hidden alias for `--format json` kept for symmetry with neighbouring"
+kind = "removal-scheduled"
+reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/secrets/src/store.rs"
+match = "alias = \"paths\""
+kind = "removal-scheduled"
+reason = "Existing predecessor Docker usage result or secrets paths key alias; N6 owns canonical-only migration in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3078"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/semantic-commit/src/commit.rs"
+match = "\"--json\" => { options.output_format = OutputFormat::Json"
+kind = "removal-scheduled"
+reason = "Existing hand-parsed JSON alias or its generated completion vocabulary; N4 migrates canonical-format callers in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 2
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/semantic-commit/src/completion.rs"
+match = ".alias(\"bullet\")"
+kind = "current-contract"
+reason = "Current structured-body option synonym; no previous schema or renamed-contract reader is declared."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "crates/semantic-commit/src/completion.rs"
+match = ".help(\"Alias for --format json\")"
+kind = "removal-scheduled"
+reason = "Existing hand-parsed JSON alias or its generated completion vocabulary; N4 migrates canonical-format callers in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 3
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/semantic-commit/src/default_branch/options.rs"
+match = "OptionKind::Json => \"Alias for --format json\","
+kind = "removal-scheduled"
+reason = "Existing hand-parsed JSON alias or its generated completion vocabulary; N4 migrates canonical-format callers in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "crates/semantic-commit/src/staged_context.rs"
+match = "\"--json\" => { options.format = OutputFormat::Json"
+kind = "removal-scheduled"
+reason = "Existing hand-parsed JSON alias or its generated completion vocabulary; N4 migrates canonical-format callers in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "docs/runbooks/review-specialists-primitive.md"
+match = "- `pr-comment`: compatibility alias to `provider-review`; it cannot render the"
+kind = "removal-scheduled"
+reason = "Existing pr-comment profile alias documentation; N5 owns canonical provider-review migration in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3077"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "docs/runbooks/review-specialists-primitive.md"
+match = "its `pr-comment` compatibility alias"
+kind = "removal-scheduled"
+reason = "Existing pr-comment profile alias documentation; N5 owns canonical provider-review migration in the 2.0 train."
+issue = "https://github.com/sympoies/nils-cli/issues/3077"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "scripts/ci/cli-output-contract-lint.sh"
+match = "The contract requires `--json` to be a hidden alias for `--format json`."
+kind = "removal-scheduled"
+reason = "Existing hidden-selector lint permits the still-implemented JSON aliases; N4 changes this exact lint with the canonical-only producer cutover."
+issue = "https://github.com/sympoies/nils-cli/issues/3076"
+expires = "2026-11-30"
+count = 1
+first_disallowed_release = "2.0.0"
+
+[[retention]]
+path = "scripts/ci/nils-cli-merge-plan-checks.py"
+match = "schema_version') not in ('nils-cli.merge-plan.v1', 'nils-cli.merge-plan.v2') or plan.get('inputs')"
+kind = "removal-scheduled"
+reason = "Existing no-op release flag, merge-plan v1 reader or old resource-ticket fixture; N3 owns active producer inventory and retirement."
+issue = "https://github.com/sympoies/nils-cli/issues/3075"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "scripts/ci/prepare-release-bump.sh"
+match = "skip_checks=0 # backward-compat alias of the default; tracked for usage notes only"
+kind = "removal-scheduled"
+reason = "Existing no-op release flag, merge-plan v1 reader or old resource-ticket fixture; N3 owns active producer inventory and retirement."
+issue = "https://github.com/sympoies/nils-cli/issues/3075"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "scripts/ci/tests/cli-output-contract-lint.test.sh"
+match = "#[arg(long, global = true, hide = true, conflicts_with = \"format\")]"
+kind = "current-contract"
+reason = "Synthetic hidden-selector fixture verifies the current lint boundary; no runtime JSON alias is provided by this audit test."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "scripts/ci/tests/cli-output-contract-lint.test.sh"
+match = "/// Hidden alias for --format json"
+kind = "current-contract"
+reason = "Synthetic hidden-selector fixture verifies the current lint boundary; no runtime JSON alias is provided by this audit test."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "scripts/ci/tests/docs-hygiene-audit.test.sh"
+match = "handle_legacy_redirect"
+kind = "current-contract"
+reason = "Synthetic tombstone/stale-marker guard fixture; it tests rejection or inventory diagnostics, not retained product behavior."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "scripts/ci/tests/gate-resources.test.py"
+match = "legacy_first_ticket"
+kind = "removal-scheduled"
+reason = "Existing no-op release flag, merge-plan v1 reader or old resource-ticket fixture; N3 owns active producer inventory and retirement."
+issue = "https://github.com/sympoies/nils-cli/issues/3075"
+expires = "2026-11-30"
+count = 6
+
+[[retention]]
+path = "scripts/ci/tests/gate-resources.test.py"
+match = "test_previous_scanner_preserves_urgent_and_legacy_fifo_and_queue_age"
+kind = "removal-scheduled"
+reason = "Existing no-op release flag, merge-plan v1 reader or old resource-ticket fixture; N3 owns active producer inventory and retirement."
+issue = "https://github.com/sympoies/nils-cli/issues/3075"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "scripts/ci/tests/merge-plan-metadata.test.py"
+match = "test_ci_consumer_accepts_legacy_and_current_plans_but_holds_unknown_versions"
+kind = "removal-scheduled"
+reason = "Existing no-op release flag, merge-plan v1 reader or old resource-ticket fixture; N3 owns active producer inventory and retirement."
+issue = "https://github.com/sympoies/nils-cli/issues/3075"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "scripts/ci/tests/merge-plan-metadata.test.py"
+match = "test_new_recovery_is_versioned_and_legacy_v1_contract_remains_closed"
+kind = "current-contract"
+reason = "Negative schema fixture proves the v2 recovery output fails the old v1 schema; it is not an accepting reader."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "scripts/ci/tests/merge-plan-metadata.test.py"
+match = "version in ('nils-cli.merge-plan.v1', 'nils-cli.merge-plan.v2', 'nils-cli.merge-plan.v3')"
+kind = "removal-scheduled"
+reason = "Existing no-op release flag, merge-plan v1 reader or old resource-ticket fixture; N3 owns active producer inventory and retirement."
+issue = "https://github.com/sympoies/nils-cli/issues/3075"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "scripts/ci/tests/prepare-release-bump.test.sh"
+match = "LEGACY_RELEASE_READER"
+kind = "current-contract"
+reason = "Synthetic rollback-window source and baseline prove release preparation refuses the first-disallowed release before changing release files."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 2
+
+[[retention]]
+path = "scripts/ci/tests/workspace-test-stale-audit.test.sh"
+match = "legacy_contract"
+kind = "current-contract"
+reason = "Synthetic tombstone/stale-marker guard fixture; it tests rejection or inventory diagnostics, not retained product behavior."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1
+
+[[retention]]
+path = "scripts/ci/tests/workspace-test-stale-audit.test.sh"
+match = "legacy_helper"
+kind = "current-contract"
+reason = "Synthetic tombstone/stale-marker guard fixture; it tests rejection or inventory diagnostics, not retained product behavior."
+issue = "https://github.com/sympoies/nils-cli/issues/3074"
+expires = "2026-11-30"
+count = 1

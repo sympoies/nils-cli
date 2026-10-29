@@ -122,7 +122,9 @@ flag, but it should point users to the right subcommand help.
 ## Structural Help Tests
 
 Help tests should lock structure, not prose. Assert section headings, expected
-commands/options, known environment variable names, and compatibility aliases.
+commands/options and known environment variable names. The named old-form CLI
+aliases in N4/N5 are scheduled for coordinated 2.0 retirement; do not add new
+old-form aliases. Follow the repository-only rule in `DEVELOPMENT.md`.
 Do not snapshot the full help output line by line.
 
 Recommended assertions:

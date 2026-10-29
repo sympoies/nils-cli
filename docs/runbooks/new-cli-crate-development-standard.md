@@ -130,7 +130,9 @@ Every user-facing CLI command surface must have explicit output behavior.
 
 - Additive fields are allowed within the same schema version.
 - Renaming/removing required fields is breaking and requires a new schema version.
-- Keep old schema behavior available until consumers migrate.
+- Migrate supported producers, consumers, docs and mutable records together;
+  delete old readers and dual writes under `DEVELOPMENT.md`'s repository-only
+  current-contract rule. Preserve immutable evidence provenance.
 - Contract tests are mandatory for required keys/types and representative failure paths.
 
 ## Command and UX Rules

@@ -42,6 +42,9 @@ create_temp_repo() {
     "${repo_dir}/scripts" \
     "${repo_dir}/scripts/ci"
 
+  cp "${script_dir}/../own-compat-audit.sh" "${repo_dir}/scripts/ci/own-compat-audit.sh"
+  printf 'schema_version = 1\n' > "${repo_dir}/scripts/ci/own-compat-allowlist.toml"
+
   cat > "${repo_dir}/Cargo.toml" <<'EOF'
 [workspace]
 members = ["crates/codex-cli"]
@@ -356,6 +359,44 @@ test_allow_dirty_rejects_non_release_managed_paths() {
   fi
 }
 
+test_compatibility_fence_precedes_release_mutation() {
+  local tmp repo before status
+  tmp="$(mktemp -d)"
+  repo="${tmp}/repo"
+  mkdir -p "$repo"
+  create_temp_repo "$repo" "v0.6.4"
+  printf 'const LEGACY_RELEASE_READER: u8 = 1;\n' > "$repo/crates/codex-cli/compat.rs"
+  python3 - "$repo/scripts/ci/own-compat-allowlist.toml" <<'PY'
+import datetime
+from pathlib import Path
+import sys
+expiry = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
+Path(sys.argv[1]).write_text(f'''schema_version = 1
+[[retention]]
+path = "crates/codex-cli/compat.rs"
+match = "LEGACY_RELEASE_READER"
+count = 1
+kind = "rollback-window"
+reason = "Synthetic cross-host reader retained only across this exact release pair."
+issue = "https://github.com/sympoies/nils-cli/issues/3081"
+expires = "{expiry}"
+previous_release = "0.6.3"
+current_release = "0.6.4"
+first_disallowed_release = "0.6.5"
+cross_host = "Sender and receiver exchange journal state across hosts."
+''')
+PY
+  before="$(cat "$repo/Cargo.toml")"
+  set +e
+  (cd "$repo" && "$entrypoint" --version 0.6.5 --prepare-only) >"$tmp/output" 2>&1
+  status=$?
+  set -e
+  [[ "$status" -ne 0 ]] || fail "release fence must reject preparation"
+  assert_contains "$tmp/output" 'release fence 0.6.5 reached'
+  [[ "$(cat "$repo/Cargo.toml")" == "$before" ]] || fail "fenced release changed workspace version"
+  [[ ! -e "$repo/Cargo.lock" ]] || fail "fenced release ran the lockfile writer"
+}
+
 test_release_flags_that_publish_are_rejected() {
   local tmp repo bin_dir flag rc
   tmp="$(mktemp -d)"
@@ -409,6 +450,7 @@ run_all() {
     test_skip_checks_is_deprecated_alias_of_default
     test_readme_already_at_target_is_not_warned
     test_allow_dirty_rejects_non_release_managed_paths
+    test_compatibility_fence_precedes_release_mutation
     test_release_flags_that_publish_are_rejected
     test_usage_documents_preparation_only
   )
