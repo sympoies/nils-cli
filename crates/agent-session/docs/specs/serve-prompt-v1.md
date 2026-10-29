@@ -95,16 +95,19 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   }
   ```
 
-  `outcome` is `submitted`, `refused` or `unknown`. `code` is null for
-  submitted, the stable refusal code for refused, or
-  `structured-prompt-outcome-unknown` for unknown. Successful keyed POSTs retain
+  `outcome` is `submitted`, `command_dispatched`, `refused` or `unknown`.
+  `code` is null for submitted/command-dispatched, the stable refusal code for
+  refused, or `structured-prompt-outcome-unknown` for unknown. Successful
+  submitted POSTs retain
   `data.machine`, `data.submitted: true`, `data.session_incarnation` and the
-  optional `data.queued: true`, adding `data.receipt`. Refused/unknown POSTs use
+  optional `data.queued: true`, adding `data.receipt`. Observed command UI uses
+  the HTTP 200 command-dispatch envelope described below, with `submitted: false`
+  and the same receipt identity. Refused/unknown POSTs use
   `ok: false` and place the receipt in `error.details.receipt`. Unknown returns
   HTTP 500 with `error.code: structured-prompt-outcome-unknown`, except for
   guarded dispatch failures described below, which return HTTP 409.
 
-  For a Codex request, history may include a `prompt_request` object on the
+  For a submitted Codex prompt, history may include a `prompt_request` object on the
   matching user message. Its `request_id`, `session_id` and
   `session_incarnation` equal the keyed receipt fields. The daemon joins these
   values using the provider's accepted turn identifier; the provider identifier
