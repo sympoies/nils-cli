@@ -1,0 +1,34 @@
+{
+  "provider": "Claude Code 2.1.296",
+  "capture_flags": [
+    "-e",
+    "-p"
+  ],
+  "scope": "Original structural rows only; omitted body rows are not reconstructed or blank-filled. This is not a full native frame or exact-input proof. Production -N/-T occupied-space parity is unknown.",
+  "rows": [
+    {
+      "sourceRow": 0,
+      "styled": "\u001b[38;5;153m────────────────────────────────────────────────────────────────────────────────"
+    },
+    {
+      "sourceRow": 1,
+      "styled": "\u001b[39m  \u001b[1m\u001b[38;5;153mSettings\u001b[0m \u001b[1m\u001b[38;5;16m\u001b[48;5;153m Status \u001b[0m  Config   Usage   Stats"
+    },
+    {
+      "sourceRow": 2,
+      "styled": ""
+    },
+    {
+      "sourceRow": 21,
+      "styled": ""
+    },
+    {
+      "sourceRow": 22,
+      "styled": "  \u001b[38;5;246mEsc\u001b[39m \u001b[38;5;246mto\u001b[39m \u001b[38;5;246mcancel\u001b[39m"
+    },
+    {
+      "sourceRow": 23,
+      "styled": ""
+    }
+  ]
+}

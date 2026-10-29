@@ -4,6 +4,9 @@ use super::{
 };
 use unicode_width::UnicodeWidthChar;
 
+mod command_ui;
+pub(crate) use command_ui::observed as command_ui_observed;
+
 pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
     composer_input(agent, pane, false)
 }

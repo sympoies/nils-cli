@@ -34,6 +34,7 @@ pub(super) struct LookupQuery {
 #[serde(rename_all = "snake_case")]
 enum Outcome {
     Submitted,
+    CommandDispatched,
     Refused,
     Unknown,
 }
@@ -101,9 +102,16 @@ impl ResultRecord {
     }
 
     fn response(&self, machine: &str) -> Response {
-        if self.receipt.outcome == Outcome::Submitted {
+        if matches!(
+            self.receipt.outcome,
+            Outcome::Submitted | Outcome::CommandDispatched
+        ) {
             let mut data = json!({"machine":machine, "submitted":true,
                 "session_incarnation":self.receipt.session_incarnation, "receipt":self.receipt});
+            if self.receipt.outcome == Outcome::CommandDispatched {
+                data["submitted"] = json!(false);
+                data["command_dispatched"] = json!(true);
+            }
             if self.queued {
                 data["queued"] = json!(true);
             }
@@ -400,6 +408,10 @@ async fn dispatch_observing(
     })
     .await
     {
+        Ok(Ok(sent)) if sent.command_dispatched => envelope_ok(json!({
+            "machine":state.machine, "submitted":false, "command_dispatched":true,
+            "session_incarnation":body.expected_session_incarnation
+        })),
         Ok(Ok(sent))
             if sent.submission.is_some_and(|s| {
                 matches!(
@@ -469,6 +481,19 @@ async fn classify(response: Response, mut receipt: Receipt) -> ResultRecord {
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or(Value::Null);
+    if status.is_success() && body["data"]["command_dispatched"] == true {
+        receipt.outcome = Outcome::CommandDispatched;
+        receipt.code = None;
+        receipt.confirmation_diagnostic = None;
+        return ResultRecord {
+            receipt,
+            status: status.as_u16(),
+            queued: false,
+            history_turn_id: None,
+            history_session_id: None,
+            native_confirmation: None,
+        };
+    }
     if status.is_success() && body["data"]["submitted"] == true {
         receipt.outcome = Outcome::Submitted;
         receipt.code = None;

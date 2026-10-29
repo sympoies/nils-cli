@@ -5,6 +5,9 @@ use pretty_assertions::assert_eq;
 #[path = "auth_quarantine.rs"]
 mod auth_quarantine;
 
+#[path = "owner_command_ui.rs"]
+mod owner_command_ui;
+
 #[path = "direct_prompt.rs"]
 mod direct_prompt;
 

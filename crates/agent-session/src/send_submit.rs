@@ -20,6 +20,7 @@ pub(crate) use composer::cleanup::{
     input as cleanup_composer_input, matched_layout as wrapped_composer_layout,
     prefix_end as cleanup_prefix_end,
 };
+pub(crate) use composer::command_ui_observed;
 pub(crate) use composer::{
     composer_holds, direct_composer_input, exact_composer_input, known_multiline_cursor_holds,
     known_multiline_input,

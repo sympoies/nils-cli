@@ -173,7 +173,6 @@ async fn owner_commands_use_codex_tui_without_a_model_turn() {
     for command in [
         "/model",
         "/effort",
-        "/login",
         "/status",
         "/compact",
         "/cost",
@@ -205,6 +204,87 @@ async fn owner_commands_use_codex_tui_without_a_model_turn() {
             fs::read_to_string(tmp.path().join("enter-count")).unwrap(),
             "1"
         );
+    }
+}
+
+#[tokio::test]
+async fn owner_commands_codex_login_keeps_broker_managed_account_refusal() {
+    for quarantined in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (st, launch, _lease, provider) = native_fixture(tmp.path());
+        provider.busy.store(false, Ordering::SeqCst);
+        if quarantined {
+            let record = load_session_record(&st.context, "native-receipt").unwrap();
+            crate::auth_incident::observe(
+                &st.context,
+                &record,
+                "synthetic-auth-failure",
+                crate::auth_incident::AuthSource::CodexAppServer,
+                crate::activity::Confidence::Authoritative,
+                &jiff::Timestamp::now().to_string(),
+            )
+            .unwrap();
+            let path = tmp
+                .path()
+                .join("sessions/native-receipt/auth-incidents.json");
+            let mut incident: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            incident["incidents"][0]["failover"] = json!({
+                "schema_version":"agent-session.auth-failover.v1", "operation_id":"fixture-failover",
+                "state":"refused", "reason":"candidate_unavailable", "source_account":"fixture-account",
+                "source_binding_revision":1, "target_account":null, "provider_session_id":"receipt-thread",
+                "started_at_epoch":1, "deadline_epoch":2, "proof":null,
+                "new_runtime_incarnation":null, "new_runtime_generation":null,
+                "unknown_operation_count":0, "unknown_in_flight_effects":[],
+                "untracked_effects":"unknown", "replayed":false
+            });
+            fs::write(path, serde_json::to_vec(&incident).unwrap()).unwrap();
+            assert_eq!(
+                crate::auth_incident::recovery::guard_input(
+                    &st.context,
+                    &record,
+                    Some("/login"),
+                    &[SpecialKey::Enter],
+                )
+                .unwrap_err()
+                .code(),
+                "auth-quarantined"
+            );
+            let (status, ordinary) = call(
+                router(st.clone()),
+                post_json(
+                    "/sessions/native-receipt/prompt/v2",
+                    Some(TOKEN),
+                    json!({"text":"inspect the workspace", "expected_session_incarnation":launch,
+                    "request_id":"ordinary", "require_idle":true}),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert_eq!(ordinary["error"]["code"], "auth-quarantined");
+        }
+        let (status, result) = call(
+            router(st),
+            post_json(
+                "/sessions/native-receipt/prompt/v2",
+                Some(TOKEN),
+                json!({"text":"/login", "expected_session_incarnation":launch,
+                "request_id":"managed-login", "require_idle":false}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{result}");
+        assert_eq!(
+            result["error"]["code"],
+            if quarantined {
+                "auth-quarantined"
+            } else {
+                "codex-account-login-managed"
+            }
+        );
+        assert_eq!(result["error"]["details"]["receipt"]["outcome"], "refused");
+        assert!(!tmp.path().join("buffer").exists());
+        assert!(!tmp.path().join("submitted").exists());
+        assert_eq!(provider.mutations.load(Ordering::SeqCst), 0);
     }
 }
 

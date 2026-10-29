@@ -125,6 +125,7 @@ pub(super) fn deliver(
             transport: "codex_app_server",
             confirmation,
         }),
+        command_dispatched: false,
     })
 }
 

@@ -195,13 +195,42 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   directs the owner to the managed session lifecycle.
 
   All other owner slash commands, including `/model`, `/effort`, `/status`,
-  `/compact`, `/cost` and `/permissions`, go to the provider TUI. Only the exact
-  authenticated owner `/login` command may enter an authentication-quarantined
-  runtime as recovery; the quarantine remains until existing recovery observes
-  success. Other input, generic send, raw input, notifications and peer/model
-  callers retain their quarantine checks. No public owner-origin flag exists.
-  A command dialog that the existing observer cannot recognize remains an
-  `unknown` result; a terminal write alone never proves command execution.
+  `/compact`, `/cost` and `/permissions`, go to the provider TUI. Managed Codex
+  `/login` outside quarantine returns `409 codex-account-login-managed` before
+  input: its accounts are broker-managed, and the owner uses the Console account
+  switch. Existing
+  account-login/logout RPC refusals remain intact; quarantined Codex input keeps
+  its `auth-quarantined` refusal. Only the exact authenticated
+  Claude owner `/login` command may enter an authentication-quarantined runtime
+  as recovery; the quarantine remains until existing recovery observes success.
+  Other input, generic send, raw input, notifications and peer/model callers
+  retain their quarantine checks. No public owner-origin flag exists.
+
+  A positively observed owner command-UI transition returns HTTP 200 with
+  `data.command_dispatched: true`, `data.submitted: false`, and the bound
+  receipt below. It is terminal for request replay/lookup, requires no transcript
+  echo, and does not mean model input, selected settings or completed login.
+  Generic `submitted`, `refused` and `unknown` meanings are unchanged.
+
+  ```json
+  {
+    "request_id": "command-attempt",
+    "session_id": "session-one",
+    "session_incarnation": "launch-one",
+    "outcome": "command_dispatched",
+    "code": null
+  }
+  ```
+
+  Command-UI recognition currently covers Claude's observed Settings frame
+  (Status/Config/Usage/Stats tabs and its cancellation hint), after exact guarded
+  input and Enter with identity rechecked. It never answers that dialog or
+  repeats Enter into it. The retained native fixture contains original
+  structural rows only; omitted body rows are not reconstructed, and spacing
+  parity with production `-N/-T` captures remains unverified. Other command
+  dialogs, unreadable panes and ordinary prompt dialogs remain `unknown`;
+  a terminal write alone never proves command execution. Consumers must accept
+  `command_dispatched` in the existing receipt object to render this success.
 
   Guarded terminal submission retries one swallowed Enter only while its exact paste and all
   guards still hold. A stuck or unverified submission attempts the same bounded,

@@ -25,6 +25,14 @@ impl Command {
     pub(crate) fn check(&self, record: &SessionRecord) -> Result<(), CliError> {
         let value = self.text.trim();
         let name = value.split_whitespace().next().unwrap_or_default();
+        if record.agent == "codex" && name == "/login" {
+            return Err(CliError::runtime(
+                "codex-account-login-managed",
+                "Codex accounts are broker-managed; use the Console account switch instead of /login",
+                Some(json!({"id":record.id, "stage":"admission",
+                    "pasted":false, "submitted":false})),
+            ));
+        }
         // Mirrored contract: Salon packages/ui/src/terminalContextCommandGuard.ts.
         // Changes to either provider list must also update that consumer guard.
         let commands: &[&str] = match record.agent.as_str() {
