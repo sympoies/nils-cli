@@ -3,8 +3,8 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `c7e5f319efbc36ee556168e1255d612170300fbc2bcb98dd465b6ec9dbf13e8f`
-- Third-party crates (`source != null`): 493
+- Cargo.lock SHA256: `6af933d5f84940603a0b525a05ab48a8a1fa891e0813d63bb7b94eabb1a8f13f`
+- Third-party crates (`source != null`): 494
 - Workspace crates (`source == null`, excluded below): 41
 
 ## Notes
@@ -17,7 +17,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 
 | License Expression | Crate Count |
 | --- | ---: |
-| MIT OR Apache-2.0 | 238 |
+| MIT OR Apache-2.0 | 239 |
 | MIT | 101 |
 | Apache-2.0 OR MIT | 41 |
 | Zlib OR Apache-2.0 OR MIT | 20 |
@@ -392,7 +392,8 @@ This file documents third-party Rust crate licenses used by this workspace.
 | serde_with | 3.24.0 | MIT OR Apache-2.0 | crates.io |
 | serde_with_macros | 3.24.0 | MIT OR Apache-2.0 | crates.io |
 | serde_yaml_ng | 0.10.0 | MIT | crates.io |
-| sha1 | 0.10.6 | MIT OR Apache-2.0 | crates.io |
+| sha1 | 0.10.7 | MIT OR Apache-2.0 | crates.io |
+| sha1 | 0.11.0 | MIT OR Apache-2.0 | crates.io |
 | sha2 | 0.11.1 | MIT OR Apache-2.0 | crates.io |
 | sharded-slab | 0.1.7 | MIT | crates.io |
 | shell-words | 1.1.1 | MIT/Apache-2.0 | crates.io |
