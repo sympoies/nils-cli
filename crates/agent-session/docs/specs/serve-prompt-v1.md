@@ -177,6 +177,32 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   [guarded send](send-v1.md); a later failure after possible paste or native
   dispatch is `unknown`, even if no submission was confirmed.
 
+  Owner-typed slash commands on the authenticated v2 conversation route always
+  use the existing guarded live TUI composer, including when `require_idle` is
+  absent or false. They never enter an app-server model turn. The route pins
+  the runtime and provider conversation, requires idle activity and an empty
+  composer, and retains account-input authority and submission receipts.
+  Leading whitespace is removed before typing the slash command. Provider
+  arguments remain subject to the existing single-line/control restrictions.
+
+  The context-command denylist mirrors Salon's
+  `packages/ui/src/terminalContextCommandGuard.ts`: Claude refuses `/clear`,
+  `/new`, `/reset`, `/resume`, `/branch`, `/teleport`, `/tp`; Codex refuses
+  `/new`, `/clear`, `/resume`, `/fork`. An argument does not bypass an exact
+  command refusal; bare prefixes that can complete to a listed command also
+  refuse. Changes to these lists must update both mirrors. Refusal returns
+  `409 send-context-command-unsupported` with a terminal `refused` receipt and
+  directs the owner to the managed session lifecycle.
+
+  All other owner slash commands, including `/model`, `/effort`, `/status`,
+  `/compact`, `/cost` and `/permissions`, go to the provider TUI. Only the exact
+  authenticated owner `/login` command may enter an authentication-quarantined
+  runtime as recovery; the quarantine remains until existing recovery observes
+  success. Other input, generic send, raw input, notifications and peer/model
+  callers retain their quarantine checks. No public owner-origin flag exists.
+  A command dialog that the existing observer cannot recognize remains an
+  `unknown` result; a terminal write alone never proves command execution.
+
   Guarded terminal submission retries one swallowed Enter only while its exact paste and all
   guards still hold. A stuck or unverified submission attempts the same bounded,
   identity-fenced cleanup as a post-paste guard failure. These uncertain guarded

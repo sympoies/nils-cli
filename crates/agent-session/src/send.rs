@@ -42,8 +42,8 @@ pub(crate) struct SendResult {
 // Native dispatch keeps its short deadline so provider event waiters can run.
 // Terminal admission and each guarded Enter require several tmux round trips;
 // reserve those checks as well as the swallowed-Enter confirmation interval.
-fn guarded_hold_budget(record: &SessionRecord) -> Duration {
-    if codex_app_server::runtime_is_supported(record) {
+fn guarded_hold_budget(record: &SessionRecord, terminal_command: bool) -> Duration {
+    if codex_app_server::runtime_is_supported(record) && !terminal_command {
         send_submit::HOLD_BUDGET
     } else {
         Duration::from_secs(15)
@@ -75,7 +75,16 @@ pub(crate) fn send_to_session(
 
 pub(crate) fn send_to_session_observing(
     context: &CliContext,
+    args: cli::SendArgs,
+    acknowledged: &mut dyn FnMut(&SessionRecord, &str),
+) -> Result<SendResult, CliError> {
+    send_owner_prompt_observing(context, args, None, acknowledged)
+}
+
+pub(crate) fn send_owner_prompt_observing(
+    context: &CliContext,
     mut args: cli::SendArgs,
+    owner_command: Option<crate::serve::prompt_receipts::owner_commands::Command>,
     acknowledged: &mut dyn FnMut(&SessionRecord, &str),
 ) -> Result<SendResult, CliError> {
     // Picker shortcuts type into the terminal rather than paste. Never send
@@ -106,7 +115,14 @@ pub(crate) fn send_to_session_observing(
     let mut manual_input = ManualInputSection::new(record_lock);
     let mut record = load_session_record(context, &observed.id)?;
     ensure_same_session_identity(&observed, &record)?;
-    crate::auth_incident::recovery::guard_input(context, &record, text.as_deref(), &args.keys)?;
+    if let Some(command) = &owner_command {
+        command.check(&record)?;
+    }
+    if !owner_command.as_ref().is_some_and(|command| {
+        command.is_login(text.as_deref()) && args.keys == [SpecialKey::Enter]
+    }) {
+        crate::auth_incident::recovery::guard_input(context, &record, text.as_deref(), &args.keys)?;
+    }
     if live_status(&tmux_bin, &record.tmux_session) != "running" {
         return Err(CliError::runtime(
             "session-not-running",
@@ -122,7 +138,7 @@ pub(crate) fn send_to_session_observing(
             args: &args.guards,
             tmux_bin: &tmux_bin,
             verify_composer: carries_literal_text(text.as_deref()) && !args.keys.is_empty(),
-            deadline: guard_started + guarded_hold_budget(&record),
+            deadline: guard_started + guarded_hold_budget(&record, owner_command.is_some()),
         };
         admission.check_key()?;
         admission.check(None, "admission")?;
@@ -164,6 +180,7 @@ pub(crate) fn send_to_session_observing(
             native::Attempt {
                 started: guard_started,
                 acknowledged,
+                terminal_command: owner_command.is_some(),
             },
         );
     }
@@ -433,11 +450,12 @@ fn guarded(
         args: &args.guards,
         tmux_bin,
         verify_composer: carries_literal_text(text.as_deref()) && !args.keys.is_empty(),
-        deadline: hold_started + guarded_hold_budget(&record),
+        deadline: hold_started + guarded_hold_budget(&record, attempt.terminal_command),
     };
     admission.check_key()?;
     admission.check(None, "admission")?;
-    if codex_app_server::runtime_is_supported(&record)
+    if !attempt.terminal_command
+        && codex_app_server::runtime_is_supported(&record)
         && args.guards.require_idle
         && args.guards.require_empty_composer
         && carries_literal_text(text.as_deref())

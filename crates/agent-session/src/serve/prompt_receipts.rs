@@ -3,6 +3,7 @@ use super::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+pub(crate) mod owner_commands;
 mod reconcile;
 mod store;
 mod terminal;
@@ -295,9 +296,16 @@ async fn dispatch(state: Arc<ServeState>, id: String, body: SubmitBody) -> Respo
 async fn dispatch_observing(
     state: Arc<ServeState>,
     id: String,
-    body: SubmitBody,
+    mut body: SubmitBody,
     proof: Option<Arc<Mutex<Option<reconcile::NativeProof>>>>,
 ) -> Response {
+    // Only this bearer-authenticated conversation entry creates owner origin.
+    // Force terminal guards even when the client normally sends busy replies.
+    let owner_command = owner_commands::parse(&body.text);
+    if let Some(command) = &owner_command {
+        body.text = command.text().to_owned();
+        body.require_idle = true;
+    }
     if !body.require_idle {
         return structured_prompt::submit_structured_prompt_handler_for_receipt(
             state,
@@ -364,6 +372,12 @@ async fn dispatch_observing(
     );
     args.guards = crate::send_guard::GuardArgs {
         expect_runtime: Some(body.expected_session_incarnation.clone()),
+        expect_provider_session: owner_command.as_ref().and_then(|_| {
+            record
+                .provider_resume
+                .as_ref()
+                .map(|resume| resume.session_id.clone())
+        }),
         require_idle: true,
         require_empty_composer: true,
         ..Default::default()
@@ -371,13 +385,18 @@ async fn dispatch_observing(
     let context = state.context.clone();
     let observed_proof = proof.clone();
     match tokio::task::spawn_blocking(move || {
-        crate::send::send_to_session_observing(&context, args, &mut |record, turn| {
-            if let Some(proof) = &observed_proof
-                && let Ok(mut proof) = proof.lock()
-            {
-                *proof = reconcile::NativeProof::new(record, turn, &fingerprint);
-            }
-        })
+        crate::send::send_owner_prompt_observing(
+            &context,
+            args,
+            owner_command,
+            &mut |record, turn| {
+                if let Some(proof) = &observed_proof
+                    && let Ok(mut proof) = proof.lock()
+                {
+                    *proof = reconcile::NativeProof::new(record, turn, &fingerprint);
+                }
+            },
+        )
     })
     .await
     {

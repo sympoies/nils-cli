@@ -200,6 +200,9 @@ A payload whose trimmed content is exactly `/compact` uses
 must observe confirmed completion before issuing a continuation. Other leading
 slash commands refuse with `send-native-command-unsupported`; they are never
 silently converted into model prompts or delivered through a terminal fallback.
+The authenticated conversation v2 route separately sends owner slash commands
+through guarded TUI input; see [owner command admission](serve-prompt-v1.md).
+This does not change the CLI native `/compact` profile or generic input authority.
 
 Native success adds `native: { "transport": "codex_app_server",
 "confirmation": "input_observed" | "compact_started" }` and reports
