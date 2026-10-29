@@ -34,7 +34,8 @@ async fn launch_env_create_matches_cli_for_all_provider_profiles() {
         fs::write(&tmux, script.replacen('\n', "\nfor arg; do case \"$arg\" in AGENT_SESSION_PRIVATE_PROVIDER_ENV=*) rm -f \"${arg#*=}\";; esac; done\n", 1)).unwrap();
         let mut st = state(tmp.path(), Some(TOKEN), tmux);
         Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
-        let values = json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1"});
+        let readback = r#"["/docs/guide.md","/docs/reference.md"]"#;
+        let values = json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1", "AGENT_RUNTIME_PROJECT_READBACK_PATHS":readback});
         let (status, body) = call(
             router(st.clone()),
             post_json(
@@ -68,6 +69,9 @@ async fn launch_env_create_matches_cli_for_all_provider_profiles() {
                 .unwrap()
                 .contains("-e AGENT_RUNTIME_SUPPRESS_MEMORY=1")
         );
+        assert!(fs::read_to_string(&log).unwrap().contains(&format!(
+            "-e AGENT_RUNTIME_PROJECT_READBACK_PATHS={readback}"
+        )));
         let projected =
             crate::board::project_record(&body["data"]["session"], "host-a", None, false).unwrap();
         assert_eq!(projected["launch_env"], values);
