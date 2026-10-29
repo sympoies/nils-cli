@@ -113,78 +113,113 @@ fn notice_native_unknown_outcome_never_replays() {
 
 #[test]
 fn notice_terminal_delivers_the_envelope_through_guarded_input() {
-    for provider in ["claude", "codex"] {
-        let fixture = Fixture::new(provider);
-        fs::write(fixture.root().join("notice-body"), "synthetic").unwrap();
-        fs::write(fixture.root().join("start-turn-on-enter"), "").unwrap();
-        let output = fixture.notice(&[]);
-        assert_eq!(
-            output.code,
-            0,
-            "{} calls={:?}",
-            output.stdout_text(),
-            fixture.calls()
-        );
-        assert_eq!(
-            output.stdout_json()["schema_version"],
-            "cli.agent-session.notice.v1"
-        );
-        let envelope = "<!-- agent-notice:v1 kind=schedule.tick source=scheduler id=Example-1 -->\n\nsynthetic";
-        let submissions: Vec<String> = fs::read_to_string(fixture.root().join("submissions"))
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        assert_eq!(submissions, [envelope]);
-        let calls = fixture.calls();
-        assert!(calls.iter().any(|call| call[0] == "paste-buffer"));
-        assert!(calls.iter().any(|call| call[0] == "send-keys" && call.last().is_some_and(|key| key == "Enter")));
-    }
-}
-
-#[test]
-fn claude_terminal_notice_soft_wrapped_body_submits_exactly_once() {
-    let fixture = Fixture::new("claude");
-    let body = "x".repeat(100);
-    fs::write(fixture.root().join("notice-body"), &body).unwrap();
+    let fixture = Fixture::new("codex");
+    fs::write(fixture.root().join("notice-body"), "synthetic").unwrap();
     fs::write(fixture.root().join("start-turn-on-enter"), "").unwrap();
-    fs::write(fixture.root().join("wrap-80"), "").unwrap();
-
     let output = fixture.notice(&[]);
-    assert_eq!(output.code, 0, "{}", output.stdout_text());
-    let envelope = format!(
-        "<!-- agent-notice:v1 kind=schedule.tick source=scheduler id=Example-1 -->\n\n{body}"
+    assert_eq!(
+        output.code,
+        0,
+        "{} calls={:?}",
+        output.stdout_text(),
+        fixture.calls()
     );
+    assert_eq!(
+        output.stdout_json()["schema_version"],
+        "cli.agent-session.notice.v1"
+    );
+    let envelope =
+        "<!-- agent-notice:v1 kind=schedule.tick source=scheduler id=Example-1 -->\n\nsynthetic";
     let submissions: Vec<String> = fs::read_to_string(fixture.root().join("submissions"))
         .unwrap()
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
     assert_eq!(submissions, [envelope]);
+    let calls = fixture.calls();
+    assert!(calls.iter().any(|call| call[0] == "paste-buffer"));
     assert!(
-        fixture
-            .calls()
+        calls
             .iter()
-            .any(|call| { call[0] == "capture-pane" && call.iter().any(|arg| arg == "-J") })
+            .any(|call| call[0] == "send-keys" && call.last().is_some_and(|key| key == "Enter"))
     );
 }
 
 #[test]
-fn claude_terminal_notice_unicode_body_uses_terminal_cell_width() {
-    let fixture = Fixture::new("claude");
-    fs::write(fixture.root().join("notice-body"), "本文").unwrap();
-    fs::write(fixture.root().join("start-turn-on-enter"), "").unwrap();
+fn claude_terminal_notices_refuse_before_transport_or_claim() {
+    // These are modeled envelopes, not proof of native collapsed-paste ownership.
+    for body in [
+        "x".into(),
+        "synthetic one-line notice".into(),
+        "x".repeat(100),
+        "本文".into(),
+        (0..36).map(|i| format!("row {i}\n")).collect(),
+        "A \nB".into(),
+        "A \r\nB".into(),
+        "A ".into(),
+        "A \rB".into(),
+    ] {
+        let fixture = Fixture::new("claude");
+        fs::write(fixture.root().join("notice-body"), body).unwrap();
+        fs::write(fixture.root().join("start-turn-on-enter"), "").unwrap();
+        fs::write(
+            fixture.root().join("paste-replacement"),
+            "[Pasted text #1 +2 lines]",
+        )
+        .unwrap();
+        let output = fixture.notice(&[]);
+        let value = fixture.refused(&output, "notice-transport-unsupported");
+        assert_eq!(value["schema_version"], "cli.agent-session.notice.v1");
+        for (field, expected) in [
+            ("guard", json!("transport")),
+            ("stage", json!("admission")),
+            ("atomic", json!(false)),
+            ("pasted", json!(false)),
+            ("submitted", json!(false)),
+        ] {
+            assert_eq!(value["error"]["details"][field], expected);
+        }
+        fixture.no_delivery();
+        assert!(fixture.calls().iter().all(|call| call[0] != "load-buffer"));
+        assert_eq!(
+            fs::read_to_string(fixture.root().join("composer")).unwrap(),
+            ""
+        );
+        for entry in fs::read_dir(fixture.root().join("state/sessions/guarded")).unwrap() {
+            let name = entry.unwrap().file_name();
+            let name = name.to_str().unwrap();
+            assert!(
+                !name.starts_with("send-input-") && !name.starts_with("send-key-"),
+                "{name}"
+            );
+        }
+    }
+}
 
-    let output = fixture.notice(&[]);
+#[test]
+fn claude_refused_notice_key_allows_one_supported_send() {
+    let fixture = Fixture::new("claude");
+    fixture.refused(&fixture.notice(&[]), "notice-transport-unsupported");
+    fixture.no_delivery();
+    fs::write(fixture.root().join("start-turn-on-enter"), "").unwrap();
+    let guards = [
+        "--require-idle",
+        "--require-empty-composer",
+        "--idempotency-key",
+        "notice-once",
+    ];
+    let output = fixture.send(&guards);
     assert_eq!(output.code, 0, "{}", output.stdout_text());
-    let submissions: Vec<String> = fs::read_to_string(fixture.root().join("submissions"))
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
+    fixture.idle();
+    // The supported send has now consumed this key; neither route may reuse it.
+    fixture.refused(&fixture.notice(&[]), "send-idempotency-key-used");
+    fixture.refused(&fixture.send(&guards), "send-idempotency-key-used");
     assert_eq!(
-        submissions,
-        ["<!-- agent-notice:v1 kind=schedule.tick source=scheduler id=Example-1 -->\n\n本文"]
+        fs::read_to_string(fixture.root().join("submissions"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
     );
 }
 
@@ -203,85 +238,56 @@ fn notice_terminal_refusal_leaves_existing_composer_untouched() {
 }
 
 #[test]
-fn notice_terminal_hard_newline_edit_is_not_submitted_as_a_soft_wrap() {
-    for provider in ["claude", "codex"] {
-        let fixture = Fixture::new(provider);
-        fs::write(fixture.root().join("notice-body"), "A B").unwrap();
-        fs::write(fixture.root().join("start-turn-on-enter"), "").unwrap();
-        fs::write(
-            fixture.root().join("paste-replacement"),
-            "<!-- agent-notice:v1 kind=schedule.tick source=scheduler id=Example-1 -->\n\nA\nB",
-        )
-        .unwrap();
-        let output = fixture.notice(&[]);
-        fixture.refused(&output, "send-composer-mismatch");
-        assert!(fixture.calls().iter().all(|call| {
-            !(call[0] == "send-keys" && call.last().is_some_and(|key| key == "Enter"))
-        }));
-        assert!(!fixture.root().join("submissions").exists());
-        fixture.refused(&fixture.notice(&[]), "send-idempotency-key-used");
+fn claude_notice_preserves_earlier_identity_idle_and_observation_refusals() {
+    for (extra, phase, draft, code) in [
+        (
+            vec!["--expect-runtime", "wrong"],
+            "waiting",
+            "",
+            "send-identity-mismatch",
+        ),
+        (
+            vec!["--expect-provider-session", "wrong"],
+            "waiting",
+            "",
+            "send-identity-mismatch",
+        ),
+        (vec![], "working", "", "send-session-not-idle"),
+        (vec![], "unknown", "", "send-idle-unobservable"),
+        (
+            vec![],
+            "waiting",
+            "[Pasted text #1 +2 lines]",
+            "send-composer-unobservable",
+        ),
+    ] {
+        let fixture = Fixture::new("claude");
+        let activity = fixture.root().join("state/sessions/guarded/activity.json");
+        let mut state: Value = serde_json::from_slice(&fs::read(&activity).unwrap()).unwrap();
+        state["state"]["phase"] = json!(phase);
+        fs::write(activity, serde_json::to_vec(&state).unwrap()).unwrap();
+        fs::write(fixture.root().join("composer"), draft).unwrap();
+        fixture.refused(&fixture.notice(&extra), code);
+        fixture.no_delivery();
+        assert_eq!(
+            fs::read_to_string(fixture.root().join("composer")).unwrap(),
+            draft
+        );
     }
 }
 
 #[test]
-fn claude_terminal_notice_row_ending_spaces_refuse_before_claim() {
-    let fixture = Fixture::new("claude");
-    fs::write(fixture.root().join("notice-body"), "A \nB").unwrap();
-    let value = fixture.refused(&fixture.notice(&[]), "send-notice-trailing-spaces");
-    assert_eq!(value["error"]["details"]["stage"], "admission");
-    fixture.no_delivery();
-
-    fs::write(fixture.root().join("start-turn-on-enter"), "").unwrap();
-    fs::write(fixture.root().join("notice-body"), "A\nB").unwrap();
-    let retry = fixture.notice(&[]);
-    assert_eq!(retry.code, 0, "{}", retry.stdout_text());
-}
-
-#[test]
-fn claude_terminal_notice_crlf_row_ending_spaces_refuse_before_claim() {
-    let fixture = Fixture::new("claude");
-    fs::write(fixture.root().join("notice-body"), "A \r\nB").unwrap();
-    let value = fixture.refused(&fixture.notice(&[]), "send-notice-trailing-spaces");
-    assert_eq!(value["error"]["details"]["stage"], "admission");
-    fixture.no_delivery();
-}
-
-#[test]
-fn claude_terminal_notice_final_row_spaces_refuse_before_claim() {
-    let fixture = Fixture::new("claude");
-    fs::write(fixture.root().join("notice-body"), "A ").unwrap();
-    let value = fixture.refused(&fixture.notice(&[]), "send-notice-trailing-spaces");
-    assert_eq!(value["error"]["details"]["stage"], "admission");
-    fixture.no_delivery();
-}
-
-#[test]
-fn claude_terminal_notice_lone_cr_row_ending_spaces_refuse_before_claim() {
-    let fixture = Fixture::new("claude");
-    fs::write(fixture.root().join("notice-body"), "A \rB").unwrap();
-    let value = fixture.refused(&fixture.notice(&[]), "send-notice-trailing-spaces");
-    assert_eq!(value["error"]["details"]["stage"], "admission");
-    fixture.no_delivery();
-}
-
-#[test]
-fn claude_terminal_notice_extra_trailing_space_is_not_renderer_padding() {
-    let fixture = Fixture::new("claude");
+fn notice_terminal_hard_newline_edit_is_not_submitted_as_a_soft_wrap() {
+    let fixture = Fixture::new("codex");
     fs::write(fixture.root().join("notice-body"), "A B").unwrap();
     fs::write(fixture.root().join("start-turn-on-enter"), "").unwrap();
-    fs::write(fixture.root().join("live-layout"), "").unwrap();
     fs::write(
         fixture.root().join("paste-replacement"),
-        "<!-- agent-notice:v1 kind=schedule.tick source=scheduler id=Example-1 -->\n\nA B ",
+        "<!-- agent-notice:v1 kind=schedule.tick source=scheduler id=Example-1 -->\n\nA\nB",
     )
     .unwrap();
     let output = fixture.notice(&[]);
-    assert_eq!(output.code, 1, "{}", output.stderr_text());
-    let refusal = output.stdout_json();
-    assert!(matches!(
-        refusal["error"]["code"].as_str(),
-        Some("send-composer-unobservable" | "send-guard-observation-timeout")
-    ));
+    fixture.refused(&output, "send-composer-mismatch");
     assert!(fixture.calls().iter().all(|call| {
         !(call[0] == "send-keys" && call.last().is_some_and(|key| key == "Enter"))
     }));
@@ -290,8 +296,8 @@ fn claude_terminal_notice_extra_trailing_space_is_not_renderer_padding() {
 }
 
 #[test]
-fn queued_terminal_notice_waits_for_idle_and_submits_once() {
-    let fixture = Fixture::new("claude");
+fn queued_codex_terminal_notice_waits_for_idle_and_submits_once() {
+    let fixture = Fixture::new("codex");
     fs::write(fixture.root().join("notice-body"), "synthetic").unwrap();
     fs::write(fixture.root().join("start-turn-on-enter"), "").unwrap();
     let activity = fixture.root().join("state/sessions/guarded/activity.json");
@@ -327,4 +333,23 @@ fn queued_terminal_notice_waits_for_idle_and_submits_once() {
             .count(),
         1
     );
+}
+
+#[test]
+fn queued_claude_notice_stops_on_transport_refusal_without_claim() {
+    let fixture = Fixture::new("claude");
+    let value = fixture.refused(
+        &fixture.notice(&["--queue"]),
+        "notice-transport-unsupported",
+    );
+    assert_eq!(value["error"]["details"]["stage"], "admission");
+    fixture.no_delivery();
+    assert!(fixture.calls().iter().all(|call| call[0] != "load-buffer"));
+    let output = fixture.send(&[
+        "--require-idle",
+        "--require-empty-composer",
+        "--idempotency-key",
+        "notice-once",
+    ]);
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
 }
