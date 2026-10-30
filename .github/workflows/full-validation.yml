@@ -277,7 +277,7 @@ jobs:
             -- --exact --nocapture
 
   test_macos:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 75
     permissions:
       contents: read
