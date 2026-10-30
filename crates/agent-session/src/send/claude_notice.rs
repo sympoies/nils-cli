@@ -10,6 +10,8 @@ use std::path::Path;
 use std::time::Instant;
 
 mod bridge;
+#[cfg(test)]
+mod module_contract;
 pub(crate) mod runtime;
 pub(crate) mod store;
 
