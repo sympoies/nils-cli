@@ -35,7 +35,9 @@ Workspace-level keep/delete ownership decisions are tracked in
   through launch/registration/rollback or deletion. Persistent lock files use
   the shared session state root and must not be unlinked.
 - `forge_identity`: optional strict user policy, shared principal/profile resolution, credential actor verification, process-local
-  Git identity, and private metadata audit; [contract](docs/specs/forge-identity-policy-v1.md).
+  Git identity, dedicated replay-commit authorization/execution, and private metadata audit;
+  [contract](docs/specs/forge-identity-policy-v1.md). Replay binds the original branch's remote while detached;
+  generic Git preparation continues to refuse raw history replay.
 - `env`: truthy parsing helpers, env-presence checks, `NO_COLOR` and prompt-segment color toggles, duration parsing, and trimmed non-empty
   env lookup.
 - `shell`: POSIX single-quote escaping (with selectable escape style) and ANSI stripping modes.

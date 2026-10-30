@@ -53,6 +53,7 @@ fn build_completion_command() -> Command {
         .long_version(nils_build_info::long_version(env!("CARGO_PKG_VERSION")))
         .about("Commit workflow helper with semantic commit validation")
         .disable_help_subcommand(true)
+        .subcommand(crate::rebase::clap_command())
         .subcommand(
             Command::new("staged-context")
                 .about("Print staged change context for commit message generation")

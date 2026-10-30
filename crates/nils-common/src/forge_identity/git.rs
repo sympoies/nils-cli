@@ -2,7 +2,7 @@ use super::{Authorization, Error, Operation, Profile, Result, Target, load, mana
 use std::path::Path;
 use std::process::Command;
 
-fn raw(cwd: Option<&Path>, args: &[&str]) -> Result<String> {
+pub(super) fn raw(cwd: Option<&Path>, args: &[&str]) -> Result<String> {
     let mut command = Command::new("git");
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
@@ -67,15 +67,16 @@ pub fn authoring_remote(cwd: Option<&Path>) -> Result<String> {
         Some(1) => None,
         _ => return Err(Error::new("identity_target_unknown")),
     };
+    authoring_remote_for_branch(cwd, branch.as_deref())
+}
+pub(super) fn authoring_remote_for_branch(
+    cwd: Option<&Path>,
+    branch: Option<&str>,
+) -> Result<String> {
     let selected = branch
-        .as_ref()
         .and_then(|branch| optional(cwd, &format!("branch.{branch}.pushRemote")))
         .or_else(|| optional(cwd, "remote.pushDefault"))
-        .or_else(|| {
-            branch
-                .as_ref()
-                .and_then(|branch| optional(cwd, &format!("branch.{branch}.remote")))
-        });
+        .or_else(|| branch.and_then(|branch| optional(cwd, &format!("branch.{branch}.remote"))));
     if let Some(remote) = selected
         && remote != "."
     {
@@ -343,6 +344,7 @@ fn prepare_git_inner(
     command: &mut Command,
     cwd: Option<&Path>,
     args: &[&str],
+    replay_branch: Option<&str>,
 ) -> Result<Option<Authorization>> {
     // Local inspections do not load policy or credentials.
     let mut i = 0;
@@ -377,7 +379,10 @@ fn prepare_git_inner(
     {
         return Err(Error::new("identity_git_override"));
     }
-    let remote = selected_remote(cwd, tail, op)?;
+    let remote = match replay_branch {
+        Some(branch) => authoring_remote_for_branch(cwd, Some(branch))?,
+        None => selected_remote(cwd, tail, op)?,
+    };
     let (target, url) = target_for_remote(cwd, &remote, op != Operation::GitRead)?;
     let path = managed_path(cwd)?;
     let auth = policy.authorize(&target, Some(&path), op, std::ffi::OsStr::new("gh"))?;
@@ -481,9 +486,19 @@ pub fn prepare_git_with_deadline(
     args: &[&str],
     deadline: Option<std::time::Instant>,
 ) -> Result<Option<Authorization>> {
-    let result = super::probe::with_deadline(deadline, || prepare_git_inner(command, cwd, args));
+    let result =
+        super::probe::with_deadline(deadline, || prepare_git_inner(command, cwd, args, None));
     if let Err(error) = &result {
         super::audit_refusal(error.code)?;
     }
     result
+}
+
+pub(super) fn prepare_replay_commit(
+    command: &mut Command,
+    cwd: &Path,
+    branch: &str,
+) -> Result<Authorization> {
+    prepare_git_inner(command, Some(cwd), &["commit"], Some(branch))?
+        .ok_or(Error::new("identity_policy_not_configured"))
 }

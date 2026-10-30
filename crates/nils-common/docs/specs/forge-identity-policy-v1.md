@@ -253,6 +253,23 @@ message-reuse options that retain another commit's author. Local `merge --ff-onl
 remains available. The existing default-branch/signing/delivery gates remain
 independent. An installed policy does not authorize a commit or provider operation.
 
+`semantic-commit rebase` is the dedicated linear replay exception. Its finite
+entry point requires a configured identity policy, a non-default managed linked
+worktree and a verified original branch. The shared replay executor rechecks that
+branch against attached HEAD or the saved merge-backend branch and original tip,
+and uses its remote precedence during detached continuation. It preserves the
+original authors and messages while pinning the authenticated profile's committer
+and signer. Generic `prepare_git` still refuses raw rebase and other history
+authoring overrides.
+
+The replay executor accepts only the owner's fixed initial replay arguments or
+continuation. Saved continuation must enable keyless signing and contain ordinary
+pick commands; explicit saved keys, exec/merge programs, autostash and ref updates
+refuse before execution. Authorization is renewed for each invocation. A started
+conflict or signing failure retains Git's resulting recovery state; it is not
+automatically aborted or retried. See the
+[`semantic-commit` replay interface](../../../semantic-commit/README.md#rebase).
+
 `git-cli open pr` uses one selected collaboration repository when it contacts gh;
 a credential refusal does not try another identity or ambient repository.
 Raw external `git`/`gh` invocations outside these managed runners are not covered.
