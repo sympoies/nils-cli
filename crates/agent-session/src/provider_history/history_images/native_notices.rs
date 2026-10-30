@@ -54,6 +54,7 @@ impl Bindings {
         offset: u64,
         line: &[u8],
         value: &Value,
+        include_parts: bool,
     ) -> Decision {
         let Some(proof) = self.rows.get(&offset) else {
             return Decision::NotBound;
@@ -84,7 +85,7 @@ impl Bindings {
             text: row.text,
             timestamp: row.timestamp,
             images: Vec::new(),
-            parts: None,
+            parts: include_parts.then(Vec::new),
             human_prompt: false,
         }))
     }

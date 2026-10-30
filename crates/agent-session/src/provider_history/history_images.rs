@@ -159,7 +159,7 @@ pub(super) fn read_messages(
         if line.len() > MAX_LINE_BYTES && image_sources(&value).is_empty() {
             continue;
         }
-        match notices.project(session, line_offset, &line, &value) {
+        match notices.project(session, line_offset, &line, &value, include_parts) {
             native_notices::Decision::Notice(message) => {
                 messages.push(*message);
                 continue;
@@ -339,7 +339,7 @@ pub(super) fn push_reverse_message(
     if line.len() > MAX_LINE_BYTES && image_sources(&value).is_empty() {
         return;
     }
-    match notices.project(session, line_offset, line, &value) {
+    match notices.project(session, line_offset, line, &value, include_parts) {
         native_notices::Decision::Notice(message) => {
             messages.push(*message);
             return;

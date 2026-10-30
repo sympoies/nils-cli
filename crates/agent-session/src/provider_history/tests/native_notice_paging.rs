@@ -84,6 +84,7 @@ fn native_notice_bound_history_keeps_exact_text_and_physical_paging() {
         for include_parts in [false, true] {
             let temp = tempfile::TempDir::new().unwrap();
             let (catalog, id, expected_texts) = notice_catalog(temp.path(), &text);
+            let expected_parts = include_parts.then(|| serde_json::json!([]));
             for reverse in [false, true] {
                 let mut cursor = None;
                 let mut messages = Vec::new();
@@ -127,7 +128,14 @@ fn native_notice_bound_history_keeps_exact_text_and_physical_paging() {
                 let value = serde_json::to_value(&messages[1]).unwrap();
                 assert_eq!(value["text"], text);
                 assert!(value.get("prompt_request").is_none());
+                assert_eq!(value.get("parts"), expected_parts.as_ref());
             }
+            let latest = catalog
+                .messages_with_parts(&id, None, 2, HistoryMessageDirection::Latest, include_parts)
+                .unwrap();
+            let notice = latest.messages.iter().find(|m| m.role == "notice").unwrap();
+            let value = serde_json::to_value(notice).unwrap();
+            assert_eq!(value.get("parts"), expected_parts.as_ref());
         }
     }
 }
