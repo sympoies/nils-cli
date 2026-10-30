@@ -67,7 +67,7 @@ fn error(error: NoticeError) -> CliError {
 }
 
 fn require_enabled() -> Result<(), CliError> {
-    if std::env::var(WRITERS_ENV).as_deref() == Ok("1") {
+    if writers_enabled() {
         return Ok(());
     }
     Err(CliError::runtime(
@@ -75,6 +75,10 @@ fn require_enabled() -> Result<(), CliError> {
         "notice writers are disabled; deploy compatible readers before setting AGENT_SESSION_NOTICE_WRITERS=1",
         None,
     ))
+}
+
+pub(crate) fn writers_enabled() -> bool {
+    std::env::var(WRITERS_ENV).as_deref() == Ok("1")
 }
 
 pub(crate) fn prepare_start(args: &mut cli::StartArgs) -> Result<(), CliError> {

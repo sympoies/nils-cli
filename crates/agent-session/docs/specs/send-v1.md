@@ -219,6 +219,39 @@ uncertain outcomes before choosing a new key. Deleting the session state also
 ends its deduplication history. Persistent storage must honor file and
 directory synchronization for restart durability.
 
+### Native Claude notices
+
+Only the internal notice-envelope route can use the managed Claude module.
+An ordinary `send`, including one whose text resembles a notice, retains its
+existing behavior. Gate-enabled fresh launches/resumes on Claude Code
+`2.1.296` mount the module; other versions and existing runtimes without it keep
+the unsupported notice admission boundary. There is no new flag, compatibility
+mode, runtime injection or terminal fallback.
+
+The native notice input is the complete LF-only UTF-8 envelope, at most 16 KiB.
+Its spaces and final LF are never trimmed. Identity, idle, pending-ingress,
+mounted-empty and used-key checks precede native authorization. A fresh native
+handshake is required before durable key/operation consumption, and consumption
+is synchronized before text release. The record lock is released before native
+API entry so required hooks can run; no record writes occur while it is
+released. Confirmation reacquires and checks identity in the same original
+Claude send budget, without renewing it.
+
+Success requires the exact returned input and one exact newly appended provider
+row bound to that operation. It reports `native: { "transport": "claude_mod",
+"confirmation": "notice_row_observed" }`, `submission.outcome: "submitted"`,
+`submission.enter_presses: 0` and `guards.atomic: false`. No tmux input buffer,
+paste, Enter, draft filling or clearing is used. A concurrent human edit remains
+the human's input, even if it makes the notice unconfirmed.
+
+Every postclaim drop, mismatch, unknown result, identity change or timeout keeps
+the claim and returns `notice-native-unconfirmed` with unknown submission. It
+cannot become the safe `notice-transport-unsupported` admission receipt, and no
+error triggers replay or plain fallback. Expiry bounds local authorization and
+confirmation; it does not cancel an already authorized remote provider call or
+promise that it cannot complete later. See [session notices](session-notices-v1.md)
+for the initial persistent metadata bound and consumer rollout requirements.
+
 ## Opt-in native diagnostic trace
 
 `AGENT_SESSION_GUARDED_TRACE_FILE` enables a private timing trace for a supported

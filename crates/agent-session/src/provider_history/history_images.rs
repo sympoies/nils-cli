@@ -12,6 +12,7 @@ mod history_parts;
 #[path = "compact_tests.rs"]
 mod compact_tests;
 
+pub(super) mod native_notices;
 #[path = "upload_references.rs"]
 mod upload_references;
 
@@ -118,6 +119,8 @@ pub(super) fn read_messages(
     offset: u64,
     limit: usize,
     include_parts: bool,
+    notices: &native_notices::Bindings,
+    deadline: Instant,
 ) -> Result<HistoryMessagesPage, HistoryError> {
     let file = fs::File::open(&session.transcript_path).map_err(|_| HistoryError::NotFound)?;
     let mut reader = BufReader::new(file);
@@ -127,7 +130,6 @@ pub(super) fn read_messages(
     let mut messages = Vec::new();
     let mut line = Vec::new();
     let mut scanned = 0usize;
-    let deadline = Instant::now() + MESSAGE_SCAN_MAX_DURATION;
     while messages.len() < limit {
         if scanned >= MAX_MESSAGE_SCAN_LINES || Instant::now() >= deadline {
             let next = reader.stream_position().map_err(|_| HistoryError::Io)?;
@@ -156,6 +158,14 @@ pub(super) fn read_messages(
         };
         if line.len() > MAX_LINE_BYTES && image_sources(&value).is_empty() {
             continue;
+        }
+        match notices.project(session, line_offset, &line, &value, include_parts) {
+            native_notices::Decision::Notice(message) => {
+                messages.push(*message);
+                continue;
+            }
+            native_notices::Decision::Rejected => continue,
+            native_notices::Decision::NotBound => {}
         }
         let normalized = normalize_message(
             &session.provider,
@@ -316,6 +326,7 @@ pub(super) fn push_reverse_message(
     line_offset: u64,
     messages: &mut Vec<HistoryMessage>,
     include_parts: bool,
+    notices: &native_notices::Bindings,
 ) {
     let raw_line = raw_line.strip_suffix(b"\r").unwrap_or(raw_line);
     if raw_line.is_empty() || raw_line.len() > MAX_IMAGE_RECORD_BYTES {
@@ -327,6 +338,14 @@ pub(super) fn push_reverse_message(
     };
     if line.len() > MAX_LINE_BYTES && image_sources(&value).is_empty() {
         return;
+    }
+    match notices.project(session, line_offset, line, &value, include_parts) {
+        native_notices::Decision::Notice(message) => {
+            messages.push(*message);
+            return;
+        }
+        native_notices::Decision::Rejected => return,
+        native_notices::Decision::NotBound => {}
     }
     let normalized = normalize_message(
         &session.provider,
@@ -1058,8 +1077,9 @@ pub(super) fn read_messages_reverse(
     before: Option<u64>,
     limit: usize,
     include_parts: bool,
+    notices: &native_notices::Bindings,
+    deadline: Instant,
 ) -> Result<HistoryMessagesPage, HistoryError> {
-    let deadline = Instant::now() + MESSAGE_SCAN_MAX_DURATION;
     let mut file = fs::File::open(&session.transcript_path).map_err(|_| HistoryError::NotFound)?;
     let file_len = file.metadata().map_err(|_| HistoryError::Io)?.len();
     read_messages_reverse_from_reader(
@@ -1070,9 +1090,12 @@ pub(super) fn read_messages_reverse(
         limit,
         deadline,
         include_parts,
+        notices,
     )
 }
 
+// Keep the bounded reader and its existing paging inputs explicit at this seam.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn read_messages_reverse_from_reader<R: Read + Seek>(
     session: &HistorySession,
     reader: &mut R,
@@ -1081,6 +1104,7 @@ pub(super) fn read_messages_reverse_from_reader<R: Read + Seek>(
     limit: usize,
     deadline: Instant,
     include_parts: bool,
+    notices: &native_notices::Bindings,
 ) -> Result<HistoryMessagesPage, HistoryError> {
     let end = before.unwrap_or(file_len);
     if end > file_len {
@@ -1164,6 +1188,7 @@ pub(super) fn read_messages_reverse_from_reader<R: Read + Seek>(
                         line_offset,
                         &mut messages,
                         include_parts,
+                        notices,
                     );
                 }
                 partial.clear();
@@ -1176,6 +1201,7 @@ pub(super) fn read_messages_reverse_from_reader<R: Read + Seek>(
                     line_offset,
                     &mut messages,
                     include_parts,
+                    notices,
                 );
             }
             if messages.len() == limit {
@@ -1198,10 +1224,24 @@ pub(super) fn read_messages_reverse_from_reader<R: Read + Seek>(
                     for fragment in partial.iter().rev() {
                         joined.extend_from_slice(fragment);
                     }
-                    push_reverse_message(session, &joined, 0, &mut messages, include_parts);
+                    push_reverse_message(
+                        session,
+                        &joined,
+                        0,
+                        &mut messages,
+                        include_parts,
+                        notices,
+                    );
                 }
             } else {
-                push_reverse_message(session, &chunk[..right], 0, &mut messages, include_parts);
+                push_reverse_message(
+                    session,
+                    &chunk[..right],
+                    0,
+                    &mut messages,
+                    include_parts,
+                    notices,
+                );
             }
             break;
         }

@@ -58,7 +58,7 @@ mod startup;
 use runtime_teardown::split_scope::TmuxTerminationOptions as TmuxOptions;
 use runtime_teardown::tmux_kill_identity_with_timeout;
 use stable_executable::resolve_agent_session_executable;
-use startup::start_interactive_tmux;
+use startup::{start_interactive_tmux, start_resume_tmux};
 pub(crate) mod send;
 use send::input::send_input_unlocked;
 mod send_guard;
@@ -5002,34 +5002,6 @@ fn resume_session_locked(
         session_generation: record.runtime.as_ref().map(|runtime| runtime.generation),
         bootstrap,
     })
-}
-
-fn start_resume_tmux(
-    tmux_bin: &Path,
-    agent_bin: &Path,
-    state_dir: &Path,
-    record: &SessionRecord,
-    resume_args: &[String],
-) -> Result<TmuxRuntimeIdentity, CliError> {
-    let mut command = new_session_command(tmux_bin, tmux_scope_runner().as_ref());
-    command
-        .arg("new-session")
-        .arg("-d")
-        .arg("-P")
-        .arg("-F")
-        .arg(TMUX_RUNTIME_IDENTITY_FORMAT)
-        .arg("-s")
-        .arg(&record.tmux_session)
-        .arg("-c")
-        .arg(&record.cwd);
-    add_runtime_tmux_environment(&mut command, state_dir, record)?;
-    begin_held_runtime(&mut command, state_dir, record)?;
-    add_interactive_agent_environment(&mut command);
-    command
-        .arg(agent_bin)
-        .args(resume_args)
-        .args(&record.agent_args);
-    run_tmux_new_session(command, tmux_bin, record)
 }
 
 pub fn launch_gate_path(state_dir: &Path, record: &SessionRecord) -> PathBuf {

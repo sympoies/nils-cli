@@ -2,8 +2,6 @@
 use history_images::normalize_message;
 pub(crate) mod history_images;
 pub(crate) use history_images::HistoryMessage;
-#[cfg(test)]
-use history_images::read_messages;
 use history_images::{push_incremental_message, read_compacted_image_line};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -1503,33 +1501,7 @@ fn read_dsh_messages(
 }
 
 #[cfg(test)]
-pub(crate) fn messages(
-    sources: &[HistorySource],
-    history_id: &str,
-    cursor: Option<&str>,
-    limit: usize,
-    direction: HistoryMessageDirection,
-) -> Result<HistoryMessagesPage, HistoryError> {
-    let limit = limit.clamp(1, 100);
-    let session = find_session(sources, history_id).ok_or(HistoryError::NotFound)?;
-    match direction {
-        HistoryMessageDirection::Forward => {
-            read_messages(&session, parse_message_cursor(cursor)?, limit, false)
-        }
-        HistoryMessageDirection::Latest => {
-            if cursor.is_some() {
-                return Err(HistoryError::InvalidCursor);
-            }
-            history_images::read_messages_reverse(&session, None, limit, false)
-        }
-        HistoryMessageDirection::Older => history_images::read_messages_reverse(
-            &session,
-            Some(parse_required_message_cursor(cursor)?),
-            limit,
-            false,
-        ),
-    }
-}
+use history_images::messages::messages;
 
 fn parse_message_cursor(cursor: Option<&str>) -> Result<u64, HistoryError> {
     cursor
@@ -2713,6 +2685,8 @@ fn truncate_chars(value: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[path = "native_notice_paging.rs"]
+    mod native_notice_paging;
     use super::*;
 
     #[path = "prompt_binding_tests.rs"]
@@ -2760,6 +2734,7 @@ mod tests {
                     0,
                     &mut messages,
                     false,
+                    &history_images::native_notices::Bindings::default(),
                 );
                 assert_eq!(
                     messages.len(),
@@ -3368,40 +3343,6 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
     }
 
     #[test]
-    fn dense_latest_page_stops_after_one_reverse_chunk() {
-        let session = history_session("dense", "2026-09-01T00:00:00Z");
-        let mut transcript = vec![b'x'; REVERSE_MESSAGE_CHUNK_BYTES * 2];
-        transcript.push(b'\n');
-        for index in 0..50 {
-            transcript.extend_from_slice(
-                format!(
-                    "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"message {index}\"}}]}}}}\n"
-                )
-                .as_bytes(),
-            );
-        }
-        let file_len = transcript.len() as u64;
-        let mut reader = CountingReader {
-            inner: Cursor::new(transcript),
-            bytes_read: 0,
-        };
-
-        let page = history_images::read_messages_reverse_from_reader(
-            &session,
-            &mut reader,
-            file_len,
-            None,
-            50,
-            Instant::now() + MESSAGE_SCAN_MAX_DURATION,
-            false,
-        )
-        .unwrap();
-
-        assert_eq!(page.messages.len(), 50);
-        assert!(reader.bytes_read <= REVERSE_MESSAGE_CHUNK_BYTES);
-    }
-
-    #[test]
     fn generated_200_mib_sparse_semantic_tail_characterizes_v2_starvation() {
         const RECORDS: u64 = 44_000;
         const ROW_BYTES: usize = 4_767;
@@ -3431,6 +3372,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             100,
             Instant::now() + Duration::from_secs(60),
             false,
+            &history_images::native_notices::Bindings::default(),
         )
         .unwrap();
 
@@ -3628,6 +3570,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             20,
             Instant::now() + MESSAGE_SCAN_MAX_DURATION,
             false,
+            &history_images::native_notices::Bindings::default(),
         )
         .unwrap();
         assert_eq!(reverse.messages.len(), 1);
@@ -3755,6 +3698,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             20,
             Instant::now() + Duration::from_secs(5),
             false,
+            &history_images::native_notices::Bindings::default(),
         )
         .unwrap();
         assert_eq!(page.messages.len(), 1);
@@ -3806,6 +3750,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             20,
             Instant::now() + Duration::from_secs(5),
             false,
+            &history_images::native_notices::Bindings::default(),
         )
         .unwrap();
         assert_eq!(page.messages.len(), 1);
@@ -3915,6 +3860,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             20,
             Instant::now() + MESSAGE_SCAN_MAX_DURATION,
             false,
+            &history_images::native_notices::Bindings::default(),
         )
         .unwrap();
         assert_eq!(page.messages.len(), 2);
