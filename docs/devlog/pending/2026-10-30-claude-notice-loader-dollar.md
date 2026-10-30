@@ -12,9 +12,11 @@
 ### Why / context
 
 - Native acceptance of the receipt-bound notice module failed at load time
-  because the loader statically rejects the engine handle being assigned. Refs
-  #3068.
+  because the loader statically rejects the engine handle being assigned.
+  Refs #3068.
 
 ### Evidence
 
-- TODO
+- The new call-shape scan and the pinned-loader validate run failed on the
+  previous module at the engine-handle assignment and pass after the fix.
+- The existing guarded-send notice tests and the local-fast check pass.
