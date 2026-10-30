@@ -7,9 +7,14 @@ pub(crate) struct Command {
     text: String,
 }
 
+/// A command is a leading `/name`. A first token with another slash is an
+/// absolute path (for example a session upload), which stays ordinary input;
+/// this also makes a namespaced `/ns/cmd` name plain input.
 pub(super) fn parse(text: &str) -> Option<Command> {
-    text.trim_start().starts_with('/').then(|| Command {
-        text: text.trim_start().to_owned(),
+    let text = text.trim_start();
+    let first = text.split_whitespace().next()?;
+    (first.starts_with('/') && !first[1..].contains('/')).then(|| Command {
+        text: text.to_owned(),
     })
 }
 

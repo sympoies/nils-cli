@@ -188,6 +188,13 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   Leading whitespace is removed before typing the slash command. Provider
   arguments remain subject to the existing single-line/control restrictions.
 
+  A command is recognized by its first whitespace-delimited token: `/name` with
+  no further slash. A first token that is a multi-component absolute path, such
+  as an uploaded file path with an optional caption, is ordinary prompt text and
+  follows the caller's `require_idle` policy; a path as a command argument keeps
+  the command guarded. A namespaced `/ns/cmd` name is therefore ordinary text
+  too, since no supported provider command has that shape.
+
   The context-command denylist mirrors Salon's
   `packages/ui/src/terminalContextCommandGuard.ts`: Claude refuses `/clear`,
   `/new`, `/reset`, `/resume`, `/branch`, `/teleport`, `/tp`; Codex refuses
