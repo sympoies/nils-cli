@@ -23,6 +23,10 @@ async fn owner_command_ui_is_dispatched_without_a_model_submission() {
         "../../send_submit/composer/command-ui-claude-2.1.296.json"
     ))
     .unwrap();
+    let wrapped: Value = serde_json::from_str(include_str!(
+        "../../send_submit/composer/command-ui-claude-wrapped-56.json"
+    ))
+    .unwrap();
     let frame = |name: &str| rows(&claude["frames"][name]).join("\n");
     // (scenario, owner text, retained pane, positive native command UI)
     let scenarios = [
@@ -43,6 +47,12 @@ async fn owner_command_ui_is_dispatched_without_a_model_submission() {
             "model-picker",
             "/model",
             frame("model_picker_settled"),
+            true,
+        ),
+        (
+            "wrapped-model-picker",
+            "/model",
+            rows(&wrapped["frames"]["model_picker_wrapped_56"]).join("\n"),
             true,
         ),
         (

@@ -236,13 +236,15 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   (Status/Config/Usage/Stats tabs and its cancellation hint) and its `Select
   model` and `Effort` pickers, each a rule with its title directly below and a
   last non-empty cancellation footer. A picker has no further rule or composer
-  row below its title; only a numbered option may start with `❯`.
+  row below its title; only a numbered option may start with `❯`. Wrapped rows
+  are supported: option rows may continue on following rows, and a footer hint
+  that wraps may leave a final `· Esc to cancel` row.
 
   Recognition follows exact guarded input and Enter with identity rechecked. It
   never answers the dialog or repeats Enter into it. The retained native fixtures
-  contain original structural rows only (Claude Code 2.1.296, 80 columns,
-  Haiku); omitted body rows are not reconstructed. Other pane sizes, models and
-  providers (Codex `/model` is unobserved) are not recognized. Other command
+  contain original structural rows only (Claude Code 2.1.296, 80 columns
+  Haiku, and the `Select model` picker wrapped at 56 columns); omitted body rows
+  are not reconstructed. Other models and providers (Codex `/model` is unobserved) are not recognized. Other command
   dialogs, autocomplete menus, a dismissed picker, unreadable panes and ordinary
   prompt dialogs remain `unknown`; a terminal write alone never proves command
   execution. Consumers must accept `command_dispatched` in the existing receipt

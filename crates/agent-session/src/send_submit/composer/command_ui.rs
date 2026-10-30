@@ -14,9 +14,11 @@ pub(crate) fn observed(agent: &str, pane: &str) -> bool {
     };
     // A native dialog replaces the composer, so its cancellation hint is the
     // last non-empty row; a composer or status rows below it mean history.
+    // In a narrow pane the hint row wraps, so the cancel tail can be its own
+    // row led by the `·` separator.
     let footer = lines[end].trim();
     let bare_footer = footer == "Esc to cancel";
-    if !bare_footer && !footer.ends_with(" · Esc to cancel") {
+    if !bare_footer && !footer.ends_with(" · Esc to cancel") && footer != "· Esc to cancel" {
         return false;
     }
     // Claude's native Settings frame (Status tab) and its Select model and
