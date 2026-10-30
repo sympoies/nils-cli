@@ -111,6 +111,15 @@ Git locks produce receipt warnings. Non-Linux `lsof` diagnostics or probe
 failures retain the target. This is a best-effort collision inventory: opaque holders
 cannot be proven absent and may be missed. No elevated privilege is required.
 
+Every removal failure carries `details.phase` (`fence`, `backup`, `remove` or
+`prune`) and `details.worktree_mutated`. The fence and backup phases never
+change the target's tracked files or real index. If the destructive
+`git worktree remove` does not finish (including the bounded-runner timeout), the
+command reports `removal-remove-incomplete`, rewrites any tracked content that
+went missing from the snapshot (or HEAD when none was needed) without touching
+existing files or the real index, and reports `details.recovery`
+(`none-needed`, `restored` or `failed`) so the same command can be retried.
+
 The transaction retains the shared lifecycle lock through snapshot and deletion.
 Launchers and removers must use the same physical checkout namespace:
 `AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME`, then
@@ -259,7 +268,8 @@ workspace envelope:
 Error responses use stable `error.code` values such as `branch-exists`,
 `worktree-path-exists`, `worktree-not-found`, `refuse-primary-worktree`,
 `removal-unmanaged`, the collision codes above, `removal-target-changed`,
-`removal-backup-failed`, and `removal-backup-acknowledgment-required`.
+`removal-backup-failed`, `removal-remove-incomplete`, and
+`removal-backup-acknowledgment-required`.
 
 `git-cli worktree` and `git-cli branch cleanup --remove-worktrees` share the
 managed removal transaction, including backup and collision checks. Batch
