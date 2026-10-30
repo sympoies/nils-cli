@@ -13,11 +13,13 @@ pub(crate) fn clap_command() -> Command {
         .arg(
             Arg::new("continue")
                 .long("continue")
+                .help("Continue the current replay with authenticated signing")
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("repo")
                 .long("repo")
+                .help("Path to the managed linked worktree")
                 .value_name("path")
                 .value_hint(ValueHint::DirPath),
         )
