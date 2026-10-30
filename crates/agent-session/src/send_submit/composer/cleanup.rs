@@ -1,5 +1,5 @@
 //! Wrapped-row matching for cleanup and cursor-verified submit admission.
-use super::{claude_composer, codex_composer, exact_composer_input, styled_text};
+use super::{claude_composer, codex_composer, composer_holds, exact_composer_input, styled_text};
 use unicode_width::UnicodeWidthChar;
 
 /// Terminal cells of `text` when every character is one cursor step and one or
@@ -189,9 +189,10 @@ pub(crate) fn matched_layout(
                 // Unknown draft content must fit entirely in this last row.
                 if let Some(suffix) = visible.strip_prefix(rest).or_else(|| {
                     // Captures can omit the final logical ASCII space as well
-                    // as wrap separators. Its cursor cell still counts; the
-                    // caller must prove the N-1 and N endpoints before Enter.
-                    (agent == "codex" && visible == rest.trim_end_matches(' ')).then_some("")
+                    // as wrap separators (Claude Code 2.1.296 too). Its cursor
+                    // cell still counts; the caller must prove the cursor path
+                    // and the logical end before Enter.
+                    (visible == rest.trim_end_matches(' ')).then_some("")
                 }) {
                     let candidate = (
                         format!("{pasted}{suffix}"),
@@ -230,7 +231,7 @@ pub(crate) fn matched_layout(
     );
     // Preserve the ordinary dialog and placeholder checks after matching.
     exact_composer_input(agent, &flattened)
-        .filter(|observed| observed == &input)
+        .filter(|observed| composer_holds(agent, observed, &input))
         .map(|input| (input, end))
 }
 

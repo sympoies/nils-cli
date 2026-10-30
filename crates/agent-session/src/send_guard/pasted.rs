@@ -47,7 +47,7 @@ impl Admission<'_> {
         let text = pasted?;
         let agent = self.record.agent.as_str();
         let (input, end) = send_submit::wrapped_composer_layout(agent, pane, text)?;
-        if input != text {
+        if !send_submit::composer_holds(agent, &input, text) {
             // The wrapped composer is readable, but does not contain only our
             // paste. Preserve the mismatch as an immediate refusal instead of
             // treating it as a transient observation and retrying into a later
@@ -62,7 +62,7 @@ impl Admission<'_> {
         // and one more must reach it. This rejects both extra and missing separators.
         // A matched final row contains a nonempty paste remainder, so its
         // endpoint is past column 2 and the preceding cell is defined.
-        let mut navigation = vec![
+        let navigation = [
             (&["C-a"][..], 1, None),
             (
                 &["Right"][..],
@@ -70,17 +70,12 @@ impl Admission<'_> {
                 Some((end.0 - last_cells, end.1)),
             ),
             (&["Right"][..], 1, Some(end)),
-        ];
-        if agent == "codex" {
-            // A matched prefix can hide an owner-appended blank. Right then
+            // Both renderers can hide an owner-appended blank. Right then
             // Left must return to N-1 only when N is the actual logical end.
-            // Observing that changed position also avoids accepting a stale
-            // unchanged cursor before the extra Right has been processed.
-            navigation.extend([
-                (&["Right", "Left"][..], 1, Some((end.0 - last_cells, end.1))),
-                (&["Right"][..], 1, Some(end)),
-            ]);
-        }
+            // The changed position also rejects a stale cursor observation.
+            (&["Right", "Left"][..], 1, Some((end.0 - last_cells, end.1))),
+            (&["Right"][..], 1, Some(end)),
+        ];
         for (keys, count, endpoint) in navigation {
             self.identity(stage).ok()?;
             let mut command = Command::new(self.tmux_bin);

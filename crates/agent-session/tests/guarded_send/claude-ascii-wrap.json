@@ -1,0 +1,17 @@
+{
+  "source": "https://github.com/sympoies/nils-cli/issues/2979#issuecomment-6517464974",
+  "note": "Synthetic composer projection only. Rows retain styling and asymmetric padding. Cursor y is relative to the first composer row. Home and intermediate navigation are modeled in tests, not native observations.",
+  "columns": 80,
+  "text": "Reply ACK2979ASCII only. Do not use tools or change files. Ignore padding: alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha ",
+  "rows": [
+    "\u001b[39m❯ Reply ACK2979ASCII only. Do not use tools or change files. Ignore padding:  ",
+    "  alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha       ",
+    "  alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha",
+    "  alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha     ",
+    "  alpha alpha alpha alpha                                                     "
+  ],
+  "after_paste": [
+    26,
+    4
+  ]
+}
