@@ -39,12 +39,37 @@ Retained DSH provider history is not listed or resumed by the serve API. Remove
 retired DSH launch profiles from the daemon configuration.
 
 `GET /history/sessions/{history_id}/messages` resolves the opaque history id inside the daemon and
-returns normalized `user`/`assistant` text messages and Codex `goal` creation objectives in bounded
+returns normalized `user`/`assistant` text messages, verified machine `notice` messages and Codex `goal` creation objectives in bounded
 pages. Injected AGENTS and Goal continuation context are excluded. Claude user messages include prompts
 the user sent while a turn was running (`queued_command` attachments); queued task notifications, peer
 messages, auto-continuations, meta or machine-markup prompts, and agent-session mailbox reminders are
 excluded. A slash command that Claude Code records as command markup is shown as typed (`/name args`),
 once; local-command output and interrupt markers recorded as `user` rows are excluded.
+
+A Claude native notice is a separate `role: "notice"` message only when the
+daemon joins an immutable successful producer receipt to the exact provider
+session/profile, native row UUID, physical byte offset and raw-row/body digests.
+A marker, plugin name or self-asserted envelope id is never authority. Unbound
+system rows remain excluded; invalid, unknown, conflicting or changed proof is
+not downgraded to a user or assistant message. Ordinary human messages with a
+notice header remain user messages.
+
+Notice `text` is the complete exact envelope, including header, blank line,
+trailing spaces and final LF. It is not trimmed or truncated. Message id,
+timestamp, chronological row order and physical-offset cursor semantics retain
+their existing meanings in forward/latest/older pages. Notices carry no images,
+attachments, public receipt token or structured duplicate body, including when
+`parts=v1` is requested. The internal history binding persists outside session
+deletion; archive does not rewrite the provider row. Missing or changed physical
+proof cannot be reconstructed by matching similar text. A temporarily locked or
+corrupt notice ledger returns a bounded history-read error without advancing a
+cursor, rather than silently skipping bound rows.
+
+These messages are not human input: consumers exclude them from outbox
+acknowledgment, last-user previews, stuck/pending reconciliation, unread/attention
+signals and automatic title input. This does not establish a human
+`prompt_request` association for Claude or change ordinary last-prompt,
+compaction, sidechain or incremental semantic-memory selection.
 
 Codex user messages may include an optional `prompt_request` object with `request_id`, `session_id`, and
 `session_incarnation` when the daemon can join the provider's accepted turn identifier to a keyed

@@ -1,4 +1,5 @@
 //! Terminal send delivery; opt-in guards preserve unguarded delivery.
+pub(crate) mod claude_notice;
 pub(crate) mod input;
 mod native;
 use std::cell::Cell;
@@ -461,6 +462,28 @@ fn guarded(
     };
     admission.check_key()?;
     admission.check(None, "admission")?;
+    if !attempt.terminal_command
+        && args.guards.notice_envelope
+        && record.agent == "claude"
+        && args.guards.require_idle
+        && args.guards.require_empty_composer
+        && carries_literal_text(text.as_deref())
+        && args.keys == [SpecialKey::Enter]
+        && let Some(capability) = claude_notice::runtime::readiness(context, &record)
+    {
+        let deadline = admission.deadline;
+        return claude_notice::deliver(
+            context,
+            args,
+            text.expect("literal notice input"),
+            record,
+            tmux_bin,
+            manual_input,
+            attempt,
+            deadline,
+            capability,
+        );
+    }
     if !attempt.terminal_command
         && codex_app_server::runtime_is_supported(&record)
         && args.guards.require_idle

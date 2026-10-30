@@ -90,6 +90,11 @@ pub(super) fn start_interactive_tmux(
         }
         AgentKind::Claude => {
             command.args(provider_launch_args);
+            if let Some(module) =
+                crate::send::claude_notice::runtime::prepare_launch(state_dir, record, agent_bin)?
+            {
+                command.arg("--plugin-dir").arg(module);
+            }
             if let Some(title) = record
                 .title
                 .as_deref()
@@ -104,6 +109,37 @@ pub(super) fn start_interactive_tmux(
         }
     }
     command.args(agent_args);
+    run_tmux_new_session(command, tmux_bin, record)
+}
+
+pub(super) fn start_resume_tmux(
+    tmux_bin: &Path,
+    agent_bin: &Path,
+    state_dir: &Path,
+    record: &SessionRecord,
+    resume_args: &[String],
+) -> Result<TmuxRuntimeIdentity, CliError> {
+    let mut command = new_session_command(tmux_bin, tmux_scope_runner().as_ref());
+    command
+        .arg("new-session")
+        .arg("-d")
+        .arg("-P")
+        .arg("-F")
+        .arg(TMUX_RUNTIME_IDENTITY_FORMAT)
+        .arg("-s")
+        .arg(&record.tmux_session)
+        .arg("-c")
+        .arg(&record.cwd);
+    add_runtime_tmux_environment(&mut command, state_dir, record)?;
+    begin_held_runtime(&mut command, state_dir, record)?;
+    add_interactive_agent_environment(&mut command);
+    command.arg(agent_bin).args(resume_args);
+    if let Some(module) =
+        crate::send::claude_notice::runtime::prepare_launch(state_dir, record, agent_bin)?
+    {
+        command.arg("--plugin-dir").arg(module);
+    }
+    command.args(&record.agent_args);
     run_tmux_new_session(command, tmux_bin, record)
 }
 
