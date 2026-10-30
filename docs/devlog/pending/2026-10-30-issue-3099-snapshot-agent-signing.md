@@ -6,6 +6,9 @@
 - Worktree removal snapshot commits use the existing forge commit authorization
   and command-local signing identity, with bounded execution, redaction and
   completion auditing.
+- Detached snapshots use the existing identity owner's repository remote
+  selection while preserving attached branch precedence and ambiguous-target
+  refusal.
 
 ### Why / context
 
@@ -17,7 +20,8 @@
 
 - The pre-fix regression returned removal-backup-failed for commit signing; the
   corrected regression verifies the selected backup signer and restores the
-  staged bytes.
+  staged bytes. A detached-worktree regression first reproduced identity target
+  refusal, then passed with verified selected signing and restored bytes.
 
 ### Links
 

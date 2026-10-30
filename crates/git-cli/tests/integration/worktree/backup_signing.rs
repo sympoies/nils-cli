@@ -194,7 +194,20 @@ fi
 
 #[test]
 fn selected_identity_signs_snapshot_and_restores_staged_bytes() {
+    assert_selected_snapshot(SigningFixture::new());
+}
+
+#[test]
+fn selected_identity_signs_detached_snapshot_and_restores_staged_bytes() {
     let fixture = SigningFixture::new();
+    git(
+        Path::new(&fixture.removal.target),
+        &["checkout", "--detach"],
+    );
+    assert_selected_snapshot(fixture);
+}
+
+fn assert_selected_snapshot(fixture: SigningFixture) {
     let options = fixture.options();
     // Prove the ambient signer is unusable without changing its configuration.
     let ambient = run_with(
