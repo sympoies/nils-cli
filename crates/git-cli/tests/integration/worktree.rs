@@ -2245,3 +2245,7 @@ mod non_linux;
 
 #[path = "worktree/backup_signing.rs"]
 mod backup_signing;
+
+#[cfg(target_os = "linux")]
+#[path = "worktree/removal_atomicity.rs"]
+mod removal_atomicity;

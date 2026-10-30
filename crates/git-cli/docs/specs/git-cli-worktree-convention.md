@@ -111,6 +111,27 @@ Git locks produce receipt warnings. Non-Linux `lsof` diagnostics or probe
 failures retain the target. This is a best-effort collision inventory: opaque holders
 cannot be proven absent and may be missed. No elevated privilege is required.
 
+Every removal failure carries `details.phase` (`fence`, `backup`, `remove` or
+`prune`) and `details.worktree_mutation` (`none`, `started`, `unknown` or
+`removed`). The fence and backup phases never change the target's tracked files
+or real index.
+
+If the destructive `git worktree remove` does not finish
+(including the bounded-runner timeout), the command reports
+`removal-remove-incomplete`. Only inside the original verified target and
+registration, it rewrites tracked content that is missing but represented by the
+snapshot (or HEAD when none was needed), installing each entry create-new and
+no-follow so a replaced parent is refused and an entry that appears meanwhile is
+kept.
+
+Recovery never overwrites an existing entry, the real index, or paths omitted
+from the snapshot (missing omissions are counted and reported), and it never
+prunes or forces. `details.recovery` is `none-needed`, `restored`, `partial` or `failed`;
+the mutation stays `started` once deletion is proven, and `unknown` when the
+child's other effects cannot be verified. `backup_ref` and `backup_omissions`
+accompany the failure, and unproven recovery fails closed with the manual
+`git-cli worktree restore` route.
+
 The transaction retains the shared lifecycle lock through snapshot and deletion.
 Launchers and removers must use the same physical checkout namespace:
 `AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME`, then
@@ -259,7 +280,8 @@ workspace envelope:
 Error responses use stable `error.code` values such as `branch-exists`,
 `worktree-path-exists`, `worktree-not-found`, `refuse-primary-worktree`,
 `removal-unmanaged`, the collision codes above, `removal-target-changed`,
-`removal-backup-failed`, and `removal-backup-acknowledgment-required`.
+`removal-backup-failed`, `removal-remove-incomplete`, and
+`removal-backup-acknowledgment-required`.
 
 `git-cli worktree` and `git-cli branch cleanup --remove-worktrees` share the
 managed removal transaction, including backup and collision checks. Batch
