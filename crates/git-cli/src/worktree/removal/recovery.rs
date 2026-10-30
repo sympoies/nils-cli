@@ -2,34 +2,55 @@
 //!
 //! Every proof and the backup snapshot have passed before this runs, so the
 //! only way to lose tracked content is the destructive child itself being cut
-//! off. Content that is missing afterwards is rewritten from the snapshot (or
-//! from HEAD when no snapshot was needed) without touching existing files or
-//! the real index.
+//! off. Content the snapshot (or HEAD, when no snapshot was needed) still
+//! represents and that is now missing is rewritten, but only into the original
+//! verified target and registration, and never over an existing entry or the
+//! real index. Anything unproven fails closed with the original failure.
 use super::{
-    CliError, Fence, backup::Receipt, git, git_error_reason, in_phase, lease, probe, refused,
+    CliError, Fence,
+    backup::{Omission, Receipt},
+    git, git_error_reason, in_phase, lease, probe, refused,
 };
 use serde_json::json;
 use std::{
     ffi::OsString,
     fs,
     io::Write,
-    os::unix::ffi::{OsStrExt, OsStringExt},
+    os::unix::{
+        ffi::{OsStrExt, OsStringExt},
+        fs::{MetadataExt, OpenOptionsExt},
+    },
     path::{Path, PathBuf},
     process::Command,
 };
 
 pub(in crate::worktree) struct Plan {
     git_dir: PathBuf,
+    git_dir_identity: (u64, u64),
+    target_identity: (u64, u64),
     source: String,
     backup_ref: Option<String>,
+    omissions: Vec<Omission>,
 }
 
 enum Recovery {
-    /// Nothing tracked was missing.
+    /// Nothing the snapshot represents was missing.
     NoneNeeded,
     Restored(usize),
-    /// Recovery could not run or finish; content may be missing.
-    Failed,
+    /// Restored, but omitted paths are missing and cannot be rewritten.
+    Partial(usize),
+    /// Recovery could not run or finish; `started` is true when deletion is proven.
+    Failed {
+        started: bool,
+    },
+}
+
+fn identity(path: &Path) -> std::io::Result<(u64, u64)> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_dir() {
+        return Err(std::io::ErrorKind::InvalidInput.into());
+    }
+    Ok((metadata.dev(), metadata.ino()))
 }
 
 pub(in crate::worktree) fn plan(
@@ -37,15 +58,27 @@ pub(in crate::worktree) fn plan(
     fence: &Fence,
     backup: &Receipt,
 ) -> Result<Plan, CliError> {
-    let git_dir = git(target, &["rev-parse", "--absolute-git-dir"])
-        .map_err(|error| in_phase(error, "remove", false))?;
+    let git_dir = PathBuf::from(
+        git(target, &["rev-parse", "--absolute-git-dir"])
+            .map_err(|error| in_phase(error, "remove", "none"))?,
+    );
+    let unproven = |_| {
+        in_phase(
+            refused("removal-target-changed", "target identity unavailable"),
+            "remove",
+            "none",
+        )
+    };
     Ok(Plan {
-        git_dir: git_dir.into(),
+        git_dir_identity: identity(&git_dir).map_err(unproven)?,
+        target_identity: identity(target).map_err(unproven)?,
+        git_dir,
         source: backup
             .reference
             .clone()
             .unwrap_or_else(|| fence.removed_head.clone()),
         backup_ref: backup.reference.clone(),
+        omissions: backup.omissions.clone(),
     })
 }
 
@@ -58,7 +91,7 @@ pub(in crate::worktree) fn remove(
         in_phase(
             refused("removal-proof-unavailable", "target path unreadable"),
             "remove",
-            false,
+            "none",
         )
     })?;
     match probe("git", &["worktree", "remove", "--force", path], repo_root) {
@@ -74,39 +107,39 @@ pub(in crate::worktree) fn remove(
             return Err(incomplete(target, plan, reason));
         }
     }
-    git(repo_root, &["worktree", "prune"]).map_err(|error| in_phase(error, "prune", true))?;
+    git(repo_root, &["worktree", "prune"]).map_err(|error| in_phase(error, "prune", "removed"))?;
     Ok(())
 }
 
 fn incomplete(target: &Path, plan: &Plan, reason: String) -> CliError {
-    let recovery = recover(target, plan);
-    let (message, hint, mutated, state, restored) = match recovery {
+    // The child's effects cannot be fully verified (ignored files, empty
+    // directories), so a clean tracked-content check is only "unknown".
+    let (message, hint, mutation, state, restored) = match recover(target, plan) {
         Recovery::NoneNeeded => (
-            "worktree removal did not complete; no tracked content was removed and the target is retained",
+            "worktree removal did not complete; tracked content is intact but other effects cannot be verified, and the target is retained",
             "Retry the same command".to_owned(),
-            false,
+            "unknown",
             "none-needed",
             0,
         ),
         Recovery::Restored(count) => (
-            "worktree removal did not complete; missing tracked content was restored and the target is retained",
+            "worktree removal did not complete; deletion had started and missing tracked content was restored; the target is retained",
             "Retry the same command".to_owned(),
-            true,
+            "started",
             "restored",
             count,
         ),
-        Recovery::Failed => (
-            "worktree removal did not complete and tracked content may be missing; restoration failed",
-            plan.backup_ref.as_ref().map_or_else(
-                || {
-                    format!(
-                        "Recreate the worktree from {} with git-cli worktree add, or run git checkout -- . inside the target if it still exists",
-                        plan.source
-                    )
-                },
-                |backup| format!("Run git-cli worktree restore {backup} or git checkout -- . inside the target"),
-            ),
-            true,
+        Recovery::Partial(count) => (
+            "worktree removal did not complete; deletion had started and omitted backup paths could not be restored; the target is retained",
+            manual_route(plan),
+            "started",
+            "partial",
+            count,
+        ),
+        Recovery::Failed { started } => (
+            "worktree removal did not complete and restoration was not possible; tracked content may be missing",
+            manual_route(plan),
+            if started { "started" } else { "unknown" },
             "failed",
             0,
         ),
@@ -117,28 +150,64 @@ fn incomplete(target: &Path, plan: &Plan, reason: String) -> CliError {
             "reason": reason,
             "recovery": state,
             "restored_paths": restored,
+            "backup_ref": plan.backup_ref,
+            "backup_omissions": plan.omissions,
         }));
-    in_phase(error, "remove", mutated)
+    in_phase(error, "remove", mutation)
+}
+
+fn manual_route(plan: &Plan) -> String {
+    plan.backup_ref.as_ref().map_or_else(
+        || {
+            format!(
+                "Recreate the worktree from {} with git-cli worktree add",
+                plan.source
+            )
+        },
+        |backup| {
+            format!(
+                "Run git-cli worktree restore {backup}, or git checkout -- . inside the target if it remains"
+            )
+        },
+    )
 }
 
 fn recover(target: &Path, plan: &Plan) -> Recovery {
-    // The administrative directory is deleted last; without it neither the
-    // index nor registration remain to restore into.
+    // The administrative directory is deleted last; without it the index and
+    // registration no longer exist to restore into.
     if !plan.git_dir.is_dir() {
-        return Recovery::Failed;
+        return Recovery::Failed { started: true };
+    }
+    let registered = fs::canonicalize(target).is_ok_and(|real| {
+        fs::read(plan.git_dir.join("gitdir"))
+            .is_ok_and(|bytes| bytes.trim_ascii_end() == real.join(".git").as_os_str().as_bytes())
+    });
+    if !registered
+        || identity(target).ok() != Some(plan.target_identity)
+        || identity(&plan.git_dir).ok() != Some(plan.git_dir_identity)
+    {
+        return Recovery::Failed { started: false };
     }
     match restore_missing(target, plan) {
-        Ok(0) => Recovery::NoneNeeded,
-        Ok(count) => Recovery::Restored(count),
-        Err(_) => Recovery::Failed,
+        Ok((0, 0)) => Recovery::NoneNeeded,
+        Ok((count, 0)) => Recovery::Restored(count),
+        Ok((count, _)) => Recovery::Partial(count),
+        Err(_) => Recovery::Failed { started: true },
     }
 }
 
-fn restore_missing(target: &Path, plan: &Plan) -> anyhow::Result<usize> {
+/// Returns (restored entries, omitted entries that are missing and left alone).
+fn restore_missing(target: &Path, plan: &Plan) -> anyhow::Result<(usize, usize)> {
     let mut restored = 0;
     let pointer = target.join(".git");
     if fs::symlink_metadata(&pointer).is_err() {
-        fs::write(&pointer, format!("gitdir: {}\n", plan.git_dir.display()))?;
+        // create_new + O_NOFOLLOW: never write through a replaced entry.
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&pointer)?
+            .write_all(format!("gitdir: {}\n", plan.git_dir.display()).as_bytes())?;
         restored += 1;
     }
     let tree = bounded(
@@ -148,6 +217,7 @@ fn restore_missing(target: &Path, plan: &Plan) -> anyhow::Result<usize> {
         &["ls-tree", "-r", "-z", "--full-tree", &plan.source],
     )?;
     let mut missing = Vec::new();
+    let mut omitted = 0;
     for entry in tree.split(|byte| *byte == 0).filter(|e| !e.is_empty()) {
         // "<mode> SP <type> SP <oid> TAB <path>"; gitlinks are never snapshot content.
         let Some(tab) = entry.iter().position(|byte| *byte == b'\t') else {
@@ -157,23 +227,31 @@ fn restore_missing(target: &Path, plan: &Plan) -> anyhow::Result<usize> {
             continue;
         }
         let path = &entry[tab + 1..];
-        let missing_path =
-            match fs::symlink_metadata(target.join(OsString::from_vec(path.to_vec()))) {
-                Ok(_) => false,
-                Err(error) => error.kind() == std::io::ErrorKind::NotFound,
-            };
-        if missing_path {
+        let absent = matches!(
+            fs::symlink_metadata(target.join(OsString::from_vec(path.to_vec()))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        );
+        if !absent {
+            continue;
+        }
+        if plan
+            .omissions
+            .iter()
+            .any(|omission| omission.path.as_bytes() == path)
+        {
+            omitted += 1;
+        } else {
             missing.push(path);
         }
     }
     if missing.is_empty() {
-        return Ok(restored);
+        return Ok((restored, omitted));
     }
     let temporary = tempfile::tempdir()?;
     let pathspecs = temporary.path().join("pathspecs");
     let mut file = fs::File::create(&pathspecs)?;
     for path in &missing {
-        file.write_all(OsString::from_vec(path.to_vec()).as_bytes())?;
+        file.write_all(path)?;
         file.write_all(&[0])?;
     }
     file.flush()?;
@@ -191,7 +269,7 @@ fn restore_missing(target: &Path, plan: &Plan) -> anyhow::Result<usize> {
             "--pathspec-file-nul",
         ],
     )?;
-    Ok(restored + missing.len())
+    Ok((restored + missing.len(), omitted))
 }
 
 fn bounded(

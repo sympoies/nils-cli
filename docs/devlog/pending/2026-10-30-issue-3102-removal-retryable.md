@@ -6,9 +6,9 @@
 - A worktree removal whose destructive git step fails or exceeds the bounded
   runner now restores any tracked content that went missing from the backup
   snapshot (or HEAD), keeps the target registered, and reports
-  removal-remove-incomplete with the phase, whether files were mutated, and the
+  removal-remove-incomplete with the phase, the mutation state, and the
   recovery outcome.
-- Every removal failure carries details.phase and details.worktree_mutated;
+- Every removal failure carries details.phase and details.worktree_mutation;
   fence and backup phases never mutate the target.
 
 ### Why / context

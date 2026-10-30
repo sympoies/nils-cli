@@ -585,15 +585,22 @@ pub(super) fn fence(
     })
 }
 
-/// Record which removal phase failed and whether it changed the worktree.
-pub(super) fn in_phase(mut error: CliError, phase: &'static str, mutated: bool) -> CliError {
+/// Record which removal phase failed and its effect on the worktree:
+/// `none`, `started`, `unknown` or `removed`.
+pub(super) fn in_phase(
+    mut error: CliError,
+    phase: &'static str,
+    mutation: &'static str,
+) -> CliError {
     let mut details = match error.details.take().map(|details| *details) {
         Some(Value::Object(details)) => details,
         Some(other) => serde_json::Map::from_iter([("reason".to_owned(), other)]),
         None => serde_json::Map::new(),
     };
     details.entry("phase").or_insert(json!(phase));
-    details.entry("worktree_mutated").or_insert(json!(mutated));
+    details
+        .entry("worktree_mutation")
+        .or_insert(json!(mutation));
     error.details = Some(Box::new(Value::Object(details)));
     error
 }

@@ -31,8 +31,7 @@ fn clear_fault(fixture: &RemovalFixture) {
 struct Manifest {
     index: String,
     status: String,
-    diff: String,
-    files: Vec<(PathBuf, Vec<u8>)>,
+    files: Vec<(PathBuf, Option<Vec<u8>>)>,
 }
 
 fn manifest(target: &Path) -> Manifest {
@@ -49,7 +48,7 @@ fn manifest(target: &Path) -> Manifest {
     let mut files: Vec<_> = tracked
         .split('\0')
         .filter(|path| !path.is_empty())
-        .map(|path| (PathBuf::from(path), fs::read(target.join(path)).unwrap()))
+        .map(|path| (PathBuf::from(path), fs::read(target.join(path)).ok()))
         .collect();
     files.sort();
     Manifest {
@@ -58,7 +57,6 @@ fn manifest(target: &Path) -> Manifest {
             target,
             &["status", "--porcelain=v1", "--untracked-files=all"],
         ),
-        diff: git(target, &["diff", "--binary", "HEAD"]),
         files,
     }
 }
@@ -98,7 +96,7 @@ fn proof_failure_reports_phase_without_mutation_and_retries() {
     let error = error_of(&fixture);
     assert_eq!(error["code"], "removal-backup-failed");
     assert_eq!(error["details"]["phase"], "backup");
-    assert_eq!(error["details"]["worktree_mutated"], false);
+    assert_eq!(error["details"]["worktree_mutation"], "none");
     assert!(registered(&fixture));
     assert_eq!(manifest(target).files, before.files);
     assert_eq!(manifest(target).index, before.index);
@@ -106,27 +104,39 @@ fn proof_failure_reports_phase_without_mutation_and_retries() {
 }
 
 #[test]
-fn destructive_timeout_restores_dirty_bytes_and_stays_retryable() {
+fn destructive_timeout_restores_only_missing_snapshot_entries() {
     let fixture = RemovalFixture::new();
     let target = Path::new(&fixture.target);
+    fs::write(target.join("gone.txt"), "gone\n").unwrap();
+    fs::write(target.join("kept.txt"), "kept\n").unwrap();
+    fixture.commit();
     dirty(target);
+    fs::remove_file(target.join("gone.txt")).unwrap();
     let before = manifest(target);
     // The real incident: the destructive child deletes content, then outlives
-    // the 15s bounded runner and is killed mid-removal.
+    // the 15s bounded runner and is killed mid-removal. An entry rewritten
+    // after the snapshot must survive the recovery untouched.
     inject(
         &fixture,
-        "*\"worktree remove\"*) find \"$last\" -mindepth 1 -maxdepth 1 ! -name .git ! -type d -delete; sleep 60 ;;",
+        "*\"worktree remove\"*) find \"$last\" -mindepth 1 -maxdepth 1 ! -name .git ! -name README.md ! -type d -delete; echo 'edited after snapshot' > \"$last/README.md\"; sleep 60 ;;",
     );
     let error = error_of(&fixture);
     assert!(registered(&fixture));
-    assert_eq!(manifest(target).files, before.files);
-    assert_eq!(manifest(target).index, before.index);
-    assert_eq!(manifest(target).status, before.status);
-    assert_eq!(manifest(target).diff, before.diff);
+    let after = manifest(target);
+    assert_eq!(after.index, before.index);
+    assert!(!target.join("gone.txt").exists());
+    let mut expected = before.files;
+    for (path, bytes) in &mut expected {
+        if path == Path::new("README.md") {
+            *bytes = Some(b"edited after snapshot\n".to_vec());
+        }
+    }
+    assert_eq!(after.files, expected);
     assert_eq!(error["code"], "removal-remove-incomplete");
     assert_eq!(error["details"]["phase"], "remove");
-    assert_eq!(error["details"]["worktree_mutated"], true);
+    assert_eq!(error["details"]["worktree_mutation"], "started");
     assert_eq!(error["details"]["recovery"], "restored");
+    assert!(error["details"]["backup_ref"].is_string());
     retried_ok(&fixture);
 }
 
@@ -147,6 +157,7 @@ fn destructive_failure_restores_clean_tree_and_git_pointer() {
     assert!(manifest(target).status.is_empty());
     assert_eq!(error["code"], "removal-remove-incomplete");
     assert_eq!(error["details"]["phase"], "remove");
+    assert_eq!(error["details"]["worktree_mutation"], "started");
     assert_eq!(error["details"]["recovery"], "restored");
     retried_ok(&fixture);
 }
