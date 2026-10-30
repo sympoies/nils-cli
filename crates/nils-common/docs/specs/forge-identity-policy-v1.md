@@ -221,6 +221,9 @@ limited to GitHub. The local file-backed provider remains local.
 Git transport resolves the actual selected remote or explicit URL and uses
 `pushurl` for pushes. Multiple URLs refuse. Authoring selects `branch.pushRemote`,
 then `remote.pushDefault`, then `branch.remote`, or a sole configured remote.
+For a detached HEAD, authoring selects `remote.pushDefault` or a sole configured
+remote; multiple remotes without an explicit repository default refuse. Probe
+failures do not select a remote.
 Both commit diagnostics use that same authoring selection; an explicit `--remote`
 (including `--remote origin`) selects that remote instead. Unknown or ambiguous
 repositories/principals refuse.

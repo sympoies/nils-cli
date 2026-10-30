@@ -54,10 +54,28 @@ fn operation(tail: &[&str]) -> Result<Option<Operation>> {
     }
 }
 pub fn authoring_remote(cwd: Option<&Path>) -> Result<String> {
-    let branch = raw(cwd, &["symbolic-ref", "--quiet", "--short", "HEAD"])?;
-    let selected = optional(cwd, &format!("branch.{branch}.pushRemote"))
+    let mut command = Command::new("git");
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    command.args(["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    let output = super::probe::run(&mut command)?;
+    // Git symbolic-ref exits 1 for a detached HEAD with --quiet. Other
+    // failures, including bounded probe errors, must not select a remote.
+    let branch = match output.status.code() {
+        Some(0) => Some(String::from_utf8_lossy(&output.stdout).trim().to_owned()),
+        Some(1) => None,
+        _ => return Err(Error::new("identity_target_unknown")),
+    };
+    let selected = branch
+        .as_ref()
+        .and_then(|branch| optional(cwd, &format!("branch.{branch}.pushRemote")))
         .or_else(|| optional(cwd, "remote.pushDefault"))
-        .or_else(|| optional(cwd, &format!("branch.{branch}.remote")));
+        .or_else(|| {
+            branch
+                .as_ref()
+                .and_then(|branch| optional(cwd, &format!("branch.{branch}.remote")))
+        });
     if let Some(remote) = selected
         && remote != "."
     {

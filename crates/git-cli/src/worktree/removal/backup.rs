@@ -1,5 +1,7 @@
 //! Object-backed worktree preservation; the real index is never the snapshot index.
 use super::{CliError, Fence, git, git_error_reason, lease, probe, probe_error_reason, refused};
+mod signing;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -283,8 +285,7 @@ pub(in crate::worktree) fn capture(
     {
         args.push("-S");
     }
-    let commit = git(target, &args)
-        .map_err(|error| caused_failure("snapshot commit could not be written", error))?;
+    let commit = signing::commit(target, &args)?;
     let slug = target
         .file_name()
         .and_then(|s| s.to_str())

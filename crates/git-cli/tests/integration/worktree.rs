@@ -2242,3 +2242,6 @@ fn removal_shared_hardlink_holders_follow_open_and_mapping_paths() {
 #[cfg(not(target_os = "linux"))]
 #[path = "worktree/non_linux.rs"]
 mod non_linux;
+
+#[path = "worktree/backup_signing.rs"]
+mod backup_signing;
