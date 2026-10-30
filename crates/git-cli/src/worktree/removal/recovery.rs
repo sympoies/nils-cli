@@ -13,16 +13,19 @@ use super::{
 };
 use serde_json::json;
 use std::{
+    collections::HashSet,
     ffi::OsString,
     fs,
     io::Write,
     os::unix::{
         ffi::{OsStrExt, OsStringExt},
-        fs::{MetadataExt, OpenOptionsExt},
+        fs::MetadataExt,
     },
     path::{Path, PathBuf},
     process::Command,
 };
+
+mod install;
 
 pub(in crate::worktree) struct Plan {
     git_dir: PathBuf,
@@ -196,18 +199,19 @@ fn recover(target: &Path, plan: &Plan) -> Recovery {
     }
 }
 
+fn absent(target: &Path, relative: &[u8]) -> bool {
+    matches!(
+        fs::symlink_metadata(target.join(OsString::from_vec(relative.to_vec()))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
 /// Returns (restored entries, omitted entries that are missing and left alone).
 fn restore_missing(target: &Path, plan: &Plan) -> anyhow::Result<(usize, usize)> {
+    let root = install::open_root(target, plan.target_identity)?;
     let mut restored = 0;
-    let pointer = target.join(".git");
-    if fs::symlink_metadata(&pointer).is_err() {
-        // create_new + O_NOFOLLOW: never write through a replaced entry.
-        fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&pointer)?
-            .write_all(format!("gitdir: {}\n", plan.git_dir.display()).as_bytes())?;
+    if let Some(mut pointer) = install::dot_git(&root)? {
+        pointer.write_all(format!("gitdir: {}\n", plan.git_dir.display()).as_bytes())?;
         restored += 1;
     }
     let tree = bounded(
@@ -216,39 +220,34 @@ fn restore_missing(target: &Path, plan: &Plan) -> anyhow::Result<(usize, usize)>
         None,
         &["ls-tree", "-r", "-z", "--full-tree", &plan.source],
     )?;
+    let omitted: HashSet<&[u8]> = plan
+        .omissions
+        .iter()
+        .map(|omission| omission.path.as_bytes())
+        .collect();
     let mut missing = Vec::new();
-    let mut omitted = 0;
     for entry in tree.split(|byte| *byte == 0).filter(|e| !e.is_empty()) {
         // "<mode> SP <type> SP <oid> TAB <path>"; gitlinks are never snapshot content.
         let Some(tab) = entry.iter().position(|byte| *byte == b'\t') else {
             continue;
         };
-        if entry.starts_with(b"160000 ") {
-            continue;
-        }
         let path = &entry[tab + 1..];
-        let absent = matches!(
-            fs::symlink_metadata(target.join(OsString::from_vec(path.to_vec()))),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound
-        );
-        if !absent {
-            continue;
-        }
-        if plan
-            .omissions
-            .iter()
-            .any(|omission| omission.path.as_bytes() == path)
-        {
-            omitted += 1;
-        } else {
+        if !entry.starts_with(b"160000 ") && !omitted.contains(path) && absent(target, path) {
             missing.push(path);
         }
     }
+    // Omissions never enter the snapshot (untracked ones are not in the tree),
+    // so their absence is counted from the recorded list and never restored.
+    let omitted_missing = omitted.iter().filter(|path| absent(target, path)).count();
     if missing.is_empty() {
-        return Ok((restored, omitted));
+        return Ok((restored, omitted_missing));
     }
-    let temporary = tempfile::tempdir()?;
-    let pathspecs = temporary.path().join("pathspecs");
+    // Materialize outside the target, then install only still-missing entries
+    // create-new and no-follow under the verified root.
+    let scratch = tempfile::tempdir()?;
+    let work = scratch.path().join("tree");
+    fs::create_dir(&work)?;
+    let pathspecs = scratch.path().join("pathspecs");
     let mut file = fs::File::create(&pathspecs)?;
     for path in &missing {
         file.write_all(path)?;
@@ -258,9 +257,9 @@ fn restore_missing(target: &Path, plan: &Plan) -> anyhow::Result<(usize, usize)>
     let pathspec_arg = format!("--pathspec-from-file={}", pathspecs.display());
     // A scratch index keeps `restore` from rewriting the real index.
     bounded(
-        target,
+        &work,
         plan,
-        Some(&temporary.path().join("index")),
+        Some(&scratch.path().join("index")),
         &[
             "restore",
             "--worktree",
@@ -269,7 +268,12 @@ fn restore_missing(target: &Path, plan: &Plan) -> anyhow::Result<(usize, usize)>
             "--pathspec-file-nul",
         ],
     )?;
-    Ok((restored + missing.len(), omitted))
+    for path in missing {
+        if install::install(&root, &work, path)? {
+            restored += 1;
+        }
+    }
+    Ok((restored, omitted_missing))
 }
 
 fn bounded(

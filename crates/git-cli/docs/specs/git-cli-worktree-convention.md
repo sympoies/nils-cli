@@ -120,9 +120,13 @@ If the destructive `git worktree remove` does not finish
 (including the bounded-runner timeout), the command reports
 `removal-remove-incomplete`. Only inside the original verified target and
 registration, it rewrites tracked content that is missing but represented by the
-snapshot (or HEAD when none was needed). It never overwrites an existing entry,
-the real index, or paths omitted from the snapshot, and it never prunes or
-forces. `details.recovery` is `none-needed`, `restored`, `partial` or `failed`;
+snapshot (or HEAD when none was needed), installing each entry create-new and
+no-follow so a replaced parent is refused and an entry that appears meanwhile is
+kept.
+
+Recovery never overwrites an existing entry, the real index, or paths omitted
+from the snapshot (missing omissions are counted and reported), and it never
+prunes or forces. `details.recovery` is `none-needed`, `restored`, `partial` or `failed`;
 the mutation stays `started` once deletion is proven, and `unknown` when the
 child's other effects cannot be verified. `backup_ref` and `backup_omissions`
 accompany the failure, and unproven recovery fails closed with the manual

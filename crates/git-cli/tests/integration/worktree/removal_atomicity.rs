@@ -1,6 +1,7 @@
 //! A failed removal proof or destructive child must leave the target intact,
 //! registered and retryable, and the error must say whether it mutated files.
 use super::{RemovalFixture, git, parse_json};
+use nils_test_support::cmd::run_with;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::fs;
@@ -78,7 +79,18 @@ fn retried_ok(fixture: &RemovalFixture) {
 }
 
 fn error_of(fixture: &RemovalFixture) -> Value {
-    let result = fixture.remove("safe");
+    error_of_with(fixture, &[])
+}
+
+fn error_of_with(fixture: &RemovalFixture, extra: &[&str]) -> Value {
+    let mut args = vec!["worktree", "remove", "safe"];
+    args.extend(extra);
+    args.extend(["--format", "json"]);
+    let result = run_with(
+        &fixture.harness.git_cli_bin(),
+        &args,
+        &fixture.options(fixture.repo.path()),
+    );
     assert_ne!(result.code, 0, "{}", result.stdout_text());
     parse_json(&result)["error"].clone()
 }
@@ -160,4 +172,53 @@ fn destructive_failure_restores_clean_tree_and_git_pointer() {
     assert_eq!(error["details"]["worktree_mutation"], "started");
     assert_eq!(error["details"]["recovery"], "restored");
     retried_ok(&fixture);
+}
+
+#[test]
+fn deleted_untracked_omission_is_reported_partial_and_never_restored() {
+    let fixture = RemovalFixture::new();
+    let target = Path::new(&fixture.target);
+    git(
+        fixture.repo.path(),
+        &["config", "worktree.backupMaxBytes", "8"],
+    );
+    fs::write(target.join("large.bin"), b"0123456789abcdef").unwrap();
+    inject(
+        &fixture,
+        "*\"worktree remove\"*) unlink \"$last/large.bin\"; exit 1 ;;",
+    );
+    let error = error_of_with(&fixture, &["--acknowledge-backup-omissions"]);
+    assert!(!target.join("large.bin").exists());
+    assert_eq!(error["code"], "removal-remove-incomplete");
+    assert_eq!(error["details"]["recovery"], "partial");
+    assert_eq!(error["details"]["worktree_mutation"], "started");
+    assert_eq!(error["details"]["backup_omissions"][0]["path"], "large.bin");
+}
+
+#[test]
+fn replaced_parent_symlink_is_refused_without_writing_outside() {
+    let fixture = RemovalFixture::new();
+    let target = Path::new(&fixture.target);
+    fs::create_dir(target.join("sub")).unwrap();
+    fs::write(target.join("sub/a.txt"), "tracked\n").unwrap();
+    fixture.commit();
+    let outside = tempfile::tempdir().unwrap();
+    inject(
+        &fixture,
+        &format!(
+            "*\"worktree remove\"*) unlink \"$last/sub/a.txt\"; rmdir \"$last/sub\"; ln -s {} \"$last/sub\"; exit 1 ;;",
+            outside.path().display()
+        ),
+    );
+    let error = error_of(&fixture);
+    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
+    assert!(
+        fs::symlink_metadata(target.join("sub"))
+            .unwrap()
+            .is_symlink()
+    );
+    assert_eq!(error["code"], "removal-remove-incomplete");
+    assert_eq!(error["details"]["recovery"], "failed");
+    assert_eq!(error["details"]["worktree_mutation"], "started");
+    assert!(registered(&fixture));
 }
