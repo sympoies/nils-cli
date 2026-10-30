@@ -109,12 +109,14 @@ before Enter. Every character must be one cursor step one or two cells wide,
 so wide (for example CJK) text counts steps in characters and endpoints in
 cells. Padding and omitted word separators alone are insufficient proof.
 
-Codex captures may omit a final logical ASCII space as well as spaces at word
-wraps; its cursor endpoint must still include every pasted cell. Each proof
-uses the active provider's composer region, including when another provider's
-prompt appears in scrollback. Codex additionally verifies the actual logical
-end: Right then Left must return to N-1, then Right must restore N. An invisible
-owner-appended blank cannot be admitted as part of the paste's expected prefix.
+Both providers' captures may omit final logical ASCII spaces as well as spaces
+at word wraps; the cursor endpoint must still include every pasted cell.
+Claude's padding normalization does not remove those cells from the known
+paste's cursor proof. Each proof uses the active provider's composer region,
+including when another provider's prompt appears in scrollback. Both providers
+verify the actual logical end: Right then Left must return to N-1, then Right
+must restore N. An invisible owner-appended blank cannot be admitted as part of
+the paste's expected prefix.
 Changed drafts, uncertain navigation, and styled wrapped suggestions refuse.
 Dialogs, unknown layouts, other wrapped/multiline input, opaque long-paste summaries, and
 unstyled placeholder text such as `Ask Codex to do anything` are unobservable.
