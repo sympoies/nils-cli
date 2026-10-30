@@ -4,7 +4,6 @@ export function register(on) {
   let inFlight = false;
   let lastOp;
   let timer;
-  let host;
   const schema = (name) => `agent-session.claude-notice-${name}.v1`;
   const keys = (value, names) => value && typeof value === 'object'
     && !Array.isArray(value) && Object.keys(value).sort().join(',') === [...names].sort().join(',');
@@ -28,7 +27,6 @@ export function register(on) {
     const result = await next(e);
     if (started || !e.isInteractive || e.surface !== 'terminal') return result;
     started = true;
-    host = $;
     const root = $.plugin.root;
     const unavailable = () => $.fs.write(`${root}/ready.json`, JSON.stringify({
       schema_version: schema('ready'), state: 'unavailable',
@@ -115,7 +113,7 @@ export function register(on) {
   });
   on('session.end', async ($, e, next) => {
     if (timer) timer.cancel();
-    if (host) await host.fs.write(`${host.plugin.root}/ready.json`, JSON.stringify({
+    if (started) await $.fs.write(`${$.plugin.root}/ready.json`, JSON.stringify({
       schema_version: schema('ready'), state: 'unavailable',
     }));
     return next(e);
