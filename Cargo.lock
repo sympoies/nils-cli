@@ -2723,6 +2723,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "nils-research-cli"
+version = "1.39.8"
+dependencies = [
+ "axum",
+ "clap",
+ "clap_complete",
+ "jiff",
+ "nils-build-info",
+ "nils-common",
+ "pretty_assertions",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "nils-screen-record"
 version = "1.39.8"
 dependencies = [
