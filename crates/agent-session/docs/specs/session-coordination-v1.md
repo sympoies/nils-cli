@@ -635,11 +635,21 @@ token as bearer and `x-agent-session-operation-id`, and this body. It has no `so
 
 An uncertain operation is reconciled with one read,
 `GET {AGENT_SESSION_RELAY_URL}/api/coordination/board/v1?source_service_id=ID&source_service_generation=GENERATION&owner=OWNER&machine=MACHINE`,
-and a candidate is reported only when its record has `machine`, `lineage.parent: null` and
-`console_owner` equal to the request. The relay must bind the selectors and `owner` to the
-authenticated machine's explicit service admission before it creates or returns anything. An
-aggregator that does not accept this shape fails the start as `console-start-unavailable`; there is no
-fallback to the session-scoped call.
+and a candidate is reported only when its record has `machine`, a `lineage` object whose `parent`
+is null (a record without `lineage` is not a root) and `console_owner` equal to the request. The relay
+must bind the selectors and `owner` to the authenticated machine's explicit service admission before
+it creates or returns anything.
+
+The aggregator's answer is mapped as for session-scoped starts, and there is no fallback to the
+session-scoped call:
+
+- An unadmitted service, owner or target is answered with `console-start-service-unauthorized`,
+  `console-start-service-owner-denied` or `console-start-service-target-denied`.
+- Any typed usage- or data-class aggregator code, including those and a rejection of the request
+  shape such as `invalid-request`, is forwarded with its own code and records the operation
+  `not_created` with `safe_to_retry: true`.
+- Only a missing or unreadable answer is `console-start-unavailable`; it leaves the operation
+  `ambiguous`, to be reconciled.
 
 ### Receipt and idempotency
 

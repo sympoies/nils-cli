@@ -5,6 +5,7 @@
 
 use super::*;
 use pretty_assertions::assert_eq;
+use std::net::TcpStream;
 
 const SERVICE: &str = "svc-a";
 const GENERATION: &str = "gen-1";
@@ -546,7 +547,11 @@ fn service_start_uncertain_result_reconciles_without_a_second_create() {
     let mut other = record(MACHINE, "candidate-other", Some("inc"), true);
     other["lineage"] = json!({"parent": null});
     other["console_owner"] = json!("owner-b");
-    aggregator.reply_json(200, &board(vec![mine, other]));
+    // A record without lineage is not known to be a root.
+    let mut unrooted = record(MACHINE, "candidate-unrooted", Some("inc"), true);
+    unrooted.as_object_mut().unwrap().remove("lineage");
+    unrooted["console_owner"] = json!(OWNER);
+    aggregator.reply_json(200, &board(vec![mine, other, unrooted]));
     let replay = request.run(&fixture, &operation);
     assert_eq!(replay.code, 0, "{}", replay.stdout_text());
     let data = replay.stdout_json()["data"].clone();
@@ -643,5 +648,170 @@ fn service_start_options_are_complete_and_never_name_a_parent_or_resume() {
         let output = fixture.start_via_console(&args, false);
         assert_eq!(output.code, 64, "{args:?}: {}", output.stdout_text());
         assert_eq!(error_of(&output)["code"], "parse-error", "{args:?}");
+    }
+}
+
+fn valid_body(fixture: &Fixture, operation: &str) -> Value {
+    json!({
+        "service_id": SERVICE,
+        "service_generation": GENERATION,
+        "owner": OWNER,
+        "machine": MACHINE,
+        "expires_at": at(600),
+        "operation_id": operation,
+        "session": {"agent": "claude", "cwd": fixture.root}
+    })
+}
+
+/// An aggregator that accepts connections and never answers, so a start stays in flight.
+struct Stalled {
+    aggregator: Aggregator,
+    held: Arc<Mutex<Vec<TcpStream>>>,
+}
+
+impl Stalled {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind stalled aggregator");
+        let url = format!("http://{}", listener.local_addr().expect("stalled addr"));
+        let held = Arc::new(Mutex::new(Vec::new()));
+        let keep = held.clone();
+        thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                keep.lock().expect("held streams").push(stream);
+            }
+        });
+        Self {
+            aggregator: Aggregator {
+                url,
+                state: Arc::default(),
+            },
+            held,
+        }
+    }
+
+    fn connections(&self) -> usize {
+        self.held.lock().expect("held streams").len()
+    }
+}
+
+#[test]
+fn service_route_holds_no_worker_for_a_caller_that_never_finishes_a_request() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let admission = Admission::new(&fixture);
+    let serve = admission.serve(&fixture, &aggregator);
+
+    // Eight local processes send any bearer and then stall their bodies.
+    let stalled: Vec<TcpStream> = (0..8)
+        .map(|_| {
+            let mut stream = TcpStream::connect(serve.addr).expect("connect");
+            write!(
+                stream,
+                "POST {ROUTE} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer anything\r\nContent-Length: 1000\r\n\r\n{{",
+                serve.addr
+            )
+            .expect("partial request");
+            stream
+        })
+        .collect();
+    thread::sleep(Duration::from_millis(500));
+
+    // The admitted service is still served.
+    created(&aggregator, "service-child");
+    let (status, body) = post(
+        &serve,
+        SERVICE_TOKEN,
+        &valid_body(&fixture, &new_operation()),
+    );
+    assert_eq!(
+        (status, body["receipt"]["state"].as_str()),
+        (201, Some("created")),
+        "{body}"
+    );
+    drop(stalled);
+}
+
+#[test]
+fn service_route_keeps_its_bound_while_a_start_outlives_its_client() {
+    let fixture = Fixture::new();
+    let stalled = Stalled::start();
+    let admission = Admission::new(&fixture);
+    let serve = admission.serve(&fixture, &stalled.aggregator);
+
+    // Eight starts reach the aggregator, then their clients disconnect.
+    let clients: Vec<_> = (0..8)
+        .map(|_| {
+            let url = format!("http://{}{ROUTE}", serve.addr);
+            let body = valid_body(&fixture, &new_operation());
+            thread::spawn(move || {
+                let _ = reqwest::blocking::Client::builder()
+                    .timeout(Duration::from_secs(1))
+                    .build()
+                    .expect("client")
+                    .post(url)
+                    .bearer_auth(SERVICE_TOKEN)
+                    .json(&body)
+                    .send();
+            })
+        })
+        .collect();
+    for client in clients {
+        client.join().expect("client thread");
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while stalled.connections() < 8 {
+        assert!(
+            Instant::now() < deadline,
+            "starts did not reach the aggregator"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    thread::sleep(Duration::from_millis(300));
+
+    // The eight starts still run, so a ninth is refused rather than started.
+    let response = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .expect("client")
+        .post(format!("http://{}{ROUTE}", serve.addr))
+        .bearer_auth(SERVICE_TOKEN)
+        .json(&valid_body(&fixture, &new_operation()))
+        .send()
+        .expect("the ninth start is refused promptly");
+    let body: Value = response.json().expect("refusal json");
+    assert_eq!(body["error"]["code"], "console-start-unavailable", "{body}");
+    assert_eq!(stalled.connections(), 8);
+}
+
+#[test]
+fn service_start_typed_aggregator_rejection_records_a_retryable_not_created() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let admission = Admission::new(&fixture);
+    let _serve = admission.serve(&fixture, &aggregator);
+    let request = Request::new(&admission);
+
+    // A typed refusal of the admitted service, owner or target, and a usage-class rejection.
+    for (status, code, exit) in [
+        (403, "console-start-service-owner-denied", 65),
+        (400, "invalid-request", 64),
+    ] {
+        let operation = new_operation();
+        aggregator.reply_json(
+            status,
+            &json!({"ok":false,"error":{"code":code,"message":"refused"}}),
+        );
+        let output = request.run(&fixture, &operation);
+        assert_eq!(output.code, exit, "{code}: {}", output.stdout_text());
+        let error = error_of(&output);
+        assert_eq!(error["code"], code);
+
+        // The operation is recorded as not created and may be retried.
+        let probe = request.reconcile(&fixture, &operation);
+        assert_eq!(probe.code, 0, "{code}: {}", probe.stdout_text());
+        let data = probe.stdout_json()["data"].clone();
+        assert_eq!(data["receipt"]["state"], "not_created", "{code}");
+        assert_eq!(data["receipt"]["safe_to_retry"], true, "{code}");
+        assert_eq!(data["receipt"]["session"], Value::Null, "{code}");
     }
 }

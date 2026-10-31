@@ -55,13 +55,6 @@ async fn service_console_start_handler(
         }
         _ => return envelope_err(service::unauthorized()),
     };
-    let Ok(permit) = CONSOLE_START_WORKERS.try_acquire() else {
-        return envelope_err(CliError::unavailable(
-            "console-start-unavailable",
-            "service console start workers are busy",
-            None,
-        ));
-    };
     let body = match tokio::time::timeout(
         Duration::from_secs(5),
         axum::body::to_bytes(body, 2 * 1024 * 1024),
@@ -74,8 +67,18 @@ async fn service_console_start_handler(
     let Some(body) = body else {
         return envelope_err(service::invalid_request());
     };
+    // A caller that never finishes its body holds no slot; the start owns its slot
+    // even if the HTTP client disconnects.
+    let Ok(permit) = CONSOLE_START_WORKERS.try_acquire() else {
+        return envelope_err(CliError::unavailable(
+            "console-start-unavailable",
+            "service console start workers are busy",
+            None,
+        ));
+    };
     let owner = state.clone();
     let result = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
         let mut forbidden = service_mailbox_tokens(&owner);
         if let Some(token) = owner.token.as_deref() {
             forbidden.push(token.to_owned());
@@ -94,7 +97,6 @@ async fn service_console_start_handler(
         )
     })
     .await;
-    drop(permit);
     match result {
         Ok(Ok(value)) => (StatusCode::CREATED, Json(value)).into_response(),
         Ok(Err(error)) => envelope_err(error),

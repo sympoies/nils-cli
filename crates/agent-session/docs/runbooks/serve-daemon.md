@@ -794,4 +794,6 @@ operator bearer, the relay tokens and every mailbox service credential.
 Revoke by replacing the document without the entry or removing its credential; both take effect on the
 next request without a restart. Rotate by provisioning a new credential and generation; operation
 receipts stay reachable across the rotation. The aggregator must accept the service-selector create and
-board shapes in the specification; until it does, starts fail as `console-start-unavailable`.
+board shapes in the specification; until it does, an aggregator that rejects them answers with its own
+typed code (the operation is `not_created` and retryable) and an unreadable answer is
+`console-start-unavailable` (the operation is `ambiguous`).
