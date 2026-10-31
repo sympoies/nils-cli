@@ -48,6 +48,10 @@ pub(crate) enum HistoryPart {
         #[serde(rename = "ref")]
         image_ref: String,
         #[serde(skip_serializing_if = "Option::is_none")]
+        origin: Option<super::image_provenance::ImageOrigin>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        attachment_ref: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         mime: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         bytes: Option<u64>,
@@ -157,7 +161,7 @@ pub(crate) fn record_parts(
     (bound_parts(parts), role)
 }
 
-fn bound_parts(parts: Vec<HistoryPart>) -> Vec<HistoryPart> {
+pub(super) fn bound_parts(parts: Vec<HistoryPart>) -> Vec<HistoryPart> {
     let mut output = Vec::new();
     let mut used: usize = 2;
     for mut part in parts {
@@ -650,6 +654,8 @@ fn push_image_range(
             id: id.to_string(),
             timestamp: timestamp.map(str::to_string),
             image_ref: image.id.clone(),
+            origin: image.origin,
+            attachment_ref: image.attachment_ref.clone(),
             mime,
             bytes,
         });

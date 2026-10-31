@@ -12,6 +12,7 @@ mod history_parts;
 #[path = "compact_tests.rs"]
 mod compact_tests;
 
+mod image_provenance;
 pub(super) mod native_notices;
 #[path = "upload_references.rs"]
 mod upload_references;
@@ -584,9 +585,13 @@ fn content_text(content: &Value) -> String {
 }
 
 /// References are source-bound selectors, never URLs or client-supplied paths.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct HistoryImage {
     pub(crate) id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) origin: Option<image_provenance::ImageOrigin>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) attachment_ref: Option<String>,
 }
 
 const MAX_IMAGES: usize = 16;
@@ -602,7 +607,14 @@ enum ImageSource<'a> {
 
 fn image_sources(value: &Value) -> Vec<ImageSource<'_>> {
     let mut sources = Vec::new();
-    let content = value
+    if let Some(content) = image_content(value) {
+        collect_images(content, &mut sources, 0);
+    }
+    sources
+}
+
+fn image_content(value: &Value) -> Option<&Value> {
+    value
         .pointer("/payload/content")
         .or_else(|| {
             matches!(
@@ -613,11 +625,7 @@ fn image_sources(value: &Value) -> Vec<ImageSource<'_>> {
             .flatten()
         })
         .or_else(|| value.pointer("/message/content"))
-        .or_else(|| claude_queued_prompt_blocks(value));
-    if let Some(content) = content {
-        collect_images(content, &mut sources, 0);
-    }
-    sources
+        .or_else(|| claude_queued_prompt_blocks(value))
 }
 
 fn collect_images<'a>(content: &'a Value, sources: &mut Vec<ImageSource<'a>>, depth: usize) {
@@ -722,11 +730,14 @@ fn descriptors(session: &HistorySession, offset: u64, value: &Value) -> Vec<Hist
     }
     let segment = segment_key(session);
     let row = row_key(value);
+    let origins = image_provenance::origins(&session.provider, value);
     sources
         .iter()
         .enumerate()
         .map(|(index, _)| HistoryImage {
             id: format!("{segment}.{offset}.{index}.{row}"),
+            origin: origins.get(index).copied().flatten(),
+            attachment_ref: None,
         })
         .collect()
 }

@@ -18,6 +18,10 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::for_provider("codex")
+    }
+
+    fn for_provider(provider: &str) -> Self {
         let temp = tempfile::TempDir::new().unwrap();
         let state_dir = temp.path().join("state");
         let cwd = temp.path().to_path_buf();
@@ -33,29 +37,42 @@ impl Fixture {
                 "fixture-launch",
                 1,
             );
-            record.agent = "codex".into();
+            record.agent = provider.into();
             record.cwd = cwd.to_string_lossy().into_owned();
-            record.provider_resume.as_mut().unwrap().provider = "codex".into();
+            record.provider_resume.as_mut().unwrap().provider = provider.into();
             crate::write_session_record(&state.context, &record).unwrap();
         }
         Arc::get_mut(&mut state).unwrap().history_catalog = Arc::new(HistoryCatalog::new(
             vec![provider_history::HistorySource {
-                provider: "codex".into(),
+                provider: provider.into(),
                 agent_profile: None,
                 root: root.clone(),
             }],
             provider_history::archive_root(&state_dir),
             provider_history::star_root(&state_dir),
         ));
-        let transcript = root.join("rollout.jsonl");
+        let transcript = if provider == "claude" {
+            fs::create_dir_all(root.join("repo")).unwrap();
+            root.join("repo/own-provider.jsonl")
+        } else {
+            root.join("rollout.jsonl")
+        };
         let meta = json!({"type":"session_meta","payload":{"id":"own-provider","cwd":cwd,
             "timestamp":"2026-10-16T00:00:00Z","source":"cli","cli_version":"0.134.0"}});
-        fs::write(&transcript, format!("{meta}\n")).unwrap();
+        fs::write(
+            &transcript,
+            if provider == "codex" {
+                format!("{meta}\n")
+            } else {
+                String::new()
+            },
+        )
+        .unwrap();
         Self {
             _temp: temp,
             state,
             transcript,
-            history: provider_history::stable_history_id("codex", None, "own-provider"),
+            history: provider_history::stable_history_id(provider, None, "own-provider"),
             png: base64::engine::general_purpose::STANDARD
                 .decode(PNG)
                 .unwrap(),
@@ -123,7 +140,7 @@ impl Fixture {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 65536)
+        let body = axum::body::to_bytes(response.into_body(), 256 * 1024)
             .await
             .unwrap();
         serde_json::from_slice(&body).unwrap()
@@ -260,7 +277,7 @@ async fn quoted_upload_history_selectors_recheck_ownership_without_shifting_afte
     let refreshed = fixture.refresh().await;
     assert_eq!(
         refreshed["data"]["messages"][0]["images"],
-        json!([{"id":second_id}])
+        json!([images[1].clone()])
     );
     // Swapping a previously accepted file for a symlink cannot escape the upload root.
     std::os::unix::fs::symlink(&outside, &first).unwrap();
@@ -320,3 +337,6 @@ async fn quoted_upload_history_keeps_structured_and_markdown_images_and_image_on
 
 #[path = "download_filename_tests.rs"]
 mod download_filename_tests;
+
+#[path = "image_provenance_tests.rs"]
+mod image_provenance_tests;

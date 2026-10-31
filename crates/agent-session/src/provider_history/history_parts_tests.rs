@@ -24,6 +24,7 @@ fn project(provider: &str, values: &[Value]) -> Vec<Value> {
                 .enumerate()
                 .map(|(image_index, _)| super::super::HistoryImage {
                     id: format!("opaque-image-{index}-{image_index}"),
+                    ..Default::default()
                 })
                 .collect();
             record_parts(
