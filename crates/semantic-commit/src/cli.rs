@@ -1,4 +1,4 @@
-use crate::{commit, completion, default_branch, staged_context};
+use crate::{commit, completion, default_branch, rebase, staged_context};
 use clap::error::ErrorKind;
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use nils_common::cli_contract::exit;
@@ -34,6 +34,8 @@ enum Command {
     Fixup(RawArgs),
     #[command(about = "Create a squash! commit for staged changes")]
     Squash(RawArgs),
+    #[command(about = "Replay a non-default managed branch with authenticated signing")]
+    Rebase(RawArgs),
     #[command(about = "Export shell completion script")]
     Completion(RawArgs),
     #[command(about = "Display help message")]
@@ -67,6 +69,7 @@ where
         Some(Command::DefaultBranch(raw)) => default_branch::run(&raw.args),
         Some(Command::Fixup(raw)) => commit::run_fixup(&raw.args),
         Some(Command::Squash(raw)) => commit::run_squash(&raw.args),
+        Some(Command::Rebase(raw)) => rebase::run(&raw.args),
         Some(Command::Completion(raw)) => completion::run(&raw.args),
         Some(Command::Help) | None => print_help_stdout(),
     }
