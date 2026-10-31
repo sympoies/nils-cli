@@ -1,34 +1,62 @@
 //! Resolve a known primary Claude conversation before scanning unrelated metadata.
 
+use std::collections::BTreeSet;
 use std::path::Component;
 
-use nils_provider_resume::ClaudeResumeScanBudget;
+use nils_provider_resume::{ClaudeResumeScanBudget, collect_claude_provider_resume_matches};
 
 use super::{
-    AgentKind, Path, PathBuf, file_identity, fs, open_regular_file, opened_file_still_current,
-    read_claude_session_cwd, resolve_provider_transcript_path_from_roots,
+    Path, PathBuf, file_identity, fs, open_regular_file, opened_file_still_current,
+    read_claude_session_cwd,
 };
 
+/// Outcome of looking up a known primary Claude conversation. Only `NotFound`
+/// is a completed lookup that proved no candidate exists; everything ambiguous,
+/// unsafe or incomplete is `Unresolved`.
+pub(super) enum Lookup {
+    Found(PathBuf),
+    NotFound,
+    Unresolved,
+}
+
 pub(super) fn resolve(root: &Path, session_id: &str) -> Option<PathBuf> {
+    match lookup(root, session_id) {
+        Lookup::Found(path) => Some(path),
+        Lookup::NotFound | Lookup::Unresolved => None,
+    }
+}
+
+pub(super) fn lookup(root: &Path, session_id: &str) -> Lookup {
     // The root comes from the session's configuration binding. Resolve its
     // account link without following project or transcript links during discovery.
-    let canonical_root = if fs::symlink_metadata(root).ok()?.file_type().is_symlink() {
-        Some(fs::canonicalize(root).ok()?)
-    } else {
-        None
+    let canonical_root = match fs::symlink_metadata(root) {
+        Ok(metadata) if metadata.file_type().is_symlink() => match fs::canonicalize(root) {
+            Ok(root) => Some(root),
+            Err(_) => return Lookup::Unresolved,
+        },
+        Ok(_) => None,
+        Err(_) => return Lookup::Unresolved,
     };
     let root = canonical_root.as_deref().unwrap_or(root);
     match known_source(root, session_id) {
-        Ok(Some(path)) => Some(path),
+        Ok(Some(path)) => Lookup::Found(path),
         // Retain discovery for older/noncanonical transcript filenames, but
         // never turn an incomplete or unsafe exact lookup into a fallback win.
-        Ok(None) => resolve_provider_transcript_path_from_roots(
-            AgentKind::Claude,
-            session_id,
-            None,
-            Some(root),
-        ),
-        Err(()) => None,
+        Ok(None) => {
+            let mut matches = BTreeSet::new();
+            let mut budget = ClaudeResumeScanBudget::from_env();
+            collect_claude_provider_resume_matches(root, session_id, &mut matches, &mut budget);
+            match (budget.truncated, matches.len()) {
+                (true, _) => Lookup::Unresolved,
+                (false, 0) => Lookup::NotFound,
+                (false, 1) => matches
+                    .into_iter()
+                    .next()
+                    .map_or(Lookup::Unresolved, |found| Lookup::Found(found.path)),
+                (false, _) => Lookup::Unresolved,
+            }
+        }
+        Err(()) => Lookup::Unresolved,
     }
 }
 

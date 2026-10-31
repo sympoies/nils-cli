@@ -872,3 +872,29 @@ fn claude_notice_unattached_session_refuses_with_a_typed_reason() {
         fixture.no_delivery();
     }
 }
+
+#[test]
+fn claude_notice_unprovable_transcript_lookup_keeps_the_generic_unavailable_code() {
+    let leading_record_without_cwd =
+        format!("{}\n", json!({"type":"summary","sessionId":"provider-one"}));
+    for case in ["duplicate", "no-cwd"] {
+        let fixture = super::Fixture::new("claude");
+        let peer = Peer::start(&fixture, "accepted");
+        let projects = fixture.root().join("provider-config/projects");
+        let transcript = projects.join("synthetic/provider-one.jsonl");
+        if case == "duplicate" {
+            fs::create_dir_all(projects.join("other")).unwrap();
+            fs::copy(&transcript, projects.join("other/provider-one.jsonl")).unwrap();
+        } else {
+            fs::write(&transcript, &leading_record_without_cwd).unwrap();
+        }
+        // Waiting for a turn cannot fix an ambiguous or unprovable lookup, so
+        // only a clean not-found may claim the transcript does not exist yet.
+        fixture.refused(
+            &send_notice(&fixture, "synthetic\n"),
+            "notice-native-unavailable",
+        );
+        assert!(peer.text.lock().unwrap().is_empty(), "{case}");
+        fixture.no_delivery();
+    }
+}

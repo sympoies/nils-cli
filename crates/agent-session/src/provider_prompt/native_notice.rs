@@ -2,12 +2,13 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::claude_source::{self, Lookup};
 use crate::send::claude_notice::{Binding, PLUGIN, sha256, version};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -22,7 +23,8 @@ pub(crate) struct Stamp {
 /// Why no baseline could be captured before sending.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum CaptureError {
-    /// The bound provider session has no resolvable transcript yet.
+    /// A completed lookup found no transcript for the bound provider session.
+    /// Ambiguous, unsafe, incomplete or unprovable lookups are `Unavailable`.
     NoTranscript,
     Unavailable,
 }
@@ -118,16 +120,28 @@ pub(crate) fn payload(line: &[u8]) -> &[u8] {
 
 impl Baseline {
     pub(crate) fn capture(record: &crate::SessionRecord) -> Result<Self, CaptureError> {
-        let source =
-            super::resolve_provider_prompt_source(record).ok_or(CaptureError::NoTranscript)?;
-        if source.provider != super::ProviderKind::Claude {
-            return Err(CaptureError::Unavailable);
-        }
-        let path = source
-            .validated_path()
-            .ok_or(CaptureError::NoTranscript)?
-            .to_path_buf();
-        Self::pin(path).ok_or(CaptureError::Unavailable)
+        let resume = record
+            .provider_resume
+            .as_ref()
+            .filter(|resume| {
+                record.agent == "claude"
+                    && resume.provider == "claude"
+                    && !resume.session_id.trim().is_empty()
+            })
+            .ok_or(CaptureError::Unavailable)?;
+        let root = super::claude_projects_root_for_record(record, super::claude_projects_root())
+            .ok_or(CaptureError::Unavailable)?;
+        let path = match claude_source::lookup(&root, &resume.session_id) {
+            Lookup::Found(path) => path,
+            Lookup::NotFound => return Err(CaptureError::NoTranscript),
+            Lookup::Unresolved => return Err(CaptureError::Unavailable),
+        };
+        // A found file whose leading records do not prove this conversation is
+        // not a baseline, and waiting for a turn cannot be assumed to fix it.
+        let source = super::ProviderPromptSource::for_history("claude", &resume.session_id, path)
+            .and_then(|source| source.validated_path().map(Path::to_path_buf))
+            .ok_or(CaptureError::Unavailable)?;
+        Self::pin(source).ok_or(CaptureError::Unavailable)
     }
 
     fn pin(path: PathBuf) -> Option<Self> {

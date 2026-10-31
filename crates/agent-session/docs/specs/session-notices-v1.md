@@ -234,9 +234,9 @@ complete later. No remote cancellation or atomic composer guarantee is implied.
 The route never clears a new or unknown human draft.
 
 The native route needs a pre-send provider transcript baseline to prove that the
-confirming row is new. A session whose bound provider conversation has no
-resolvable transcript yet, typically before its first ordinary provider turn, is
-refused with `notice-native-baseline-unavailable` (`guard=baseline`,
+confirming row is new. A session whose bound provider conversation is
+proven to have no transcript yet, typically before its first ordinary provider
+turn, is refused with `notice-native-baseline-unavailable` (`guard=baseline`,
 `stage=admission`, `atomic=false`, `pasted=false`, `submitted=false`). This is
 distinct from `notice-transport-unsupported` (runtime lacks the module) and from
 `notice-native-unavailable` (any other native failure). The refusal precedes the
@@ -245,6 +245,14 @@ new transport attempt exists. A caller may wait until the session has had an
 ordinary turn and then send as a new request with the same or a fresh key.
 It adds no automatic retry and no plain-terminal fallback, and the baseline is
 never inferred or created without a provider turn.
+
+Only a completed lookup that finds no candidate transcript uses that code. A
+lookup that is ambiguous (more than one candidate), unsafe or unreadable at the
+known path, incomplete (scan budget or deadline exhausted, projects root
+unresolved) or unprovable (a found transcript whose leading records do not carry
+the provider session id and a working directory) returns
+`notice-native-unavailable`, because waiting for a turn cannot be assumed to fix
+it.
 
 Private notice attestations live outside managed session directories so history
 survives session deletion/archive. The initial ledger bound is 8 MiB, 4 KiB per
