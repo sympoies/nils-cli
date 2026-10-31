@@ -773,3 +773,25 @@ original schema. Incompatible or unavailable relays fail safely, retaining the
 existing outbox/delivery evidence. Recipient movement or replacement never
 retargets a committed envelope; resolve a new recipient and use a new operation
 only after the operator has reconciled the old delivery state.
+
+## Admit a Console-start service
+
+Console-start admission is a separate, opt-in authority from mailbox service submission. It lets a
+deterministic service start a Console-owned root session for an admitted owner on an admitted machine,
+and grants no mailbox, shell or session capability. Use a dedicated credential that differs from the
+operator bearer, the relay tokens and every mailbox service credential.
+
+1. Provision the credential and the admission document as for a mailbox service: private regular
+   files owned by the daemon's user, mode `0600`, one link, absolute credential path.
+2. Write the document described in
+   [Service Console starts v1](../specs/session-coordination-v1.md#service-console-starts-v1), listing
+   exactly the owners, target machines and maximum request lifetime the service may use.
+3. Supply it when the daemon starts: `--console-start-services-file "$CONSOLE_START_ADMISSION_FILE"`
+   (or `AGENT_SESSION_CONSOLE_START_SERVICES_FILE`). The daemon must have federation configured.
+4. The service job runs `agent-session start --via-console --service ... --reconcile` after any
+   uncertain response, and repeats the identical request, including `--expires-at`, to replay a result.
+
+Revoke by replacing the document without the entry or removing its credential; both take effect on the
+next request without a restart. Rotate by provisioning a new credential and generation; operation
+receipts stay reachable across the rotation. The aggregator must accept the service-selector create and
+board shapes in the specification; until it does, starts fail as `console-start-unavailable`.

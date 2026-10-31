@@ -2649,7 +2649,7 @@ fn state_with_dependencies(
         token: token.map(str::to_string),
         board: false,
         federation: None,
-        mailbox_services_file: None,
+        service_files: Default::default(),
         mailbox_service_workers: Arc::new(tokio::sync::Semaphore::new(16)),
         max_attachment_bytes: DEFAULT_MAX_ATTACHMENT_BYTES,
         tmux_bin,

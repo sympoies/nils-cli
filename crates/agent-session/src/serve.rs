@@ -100,6 +100,8 @@ use account_drain::{apply_pending_codex_accounts, repair_blocked_codex_accounts}
 mod claude_completion;
 #[path = "serve_claude_prompt_ack.rs"]
 mod claude_prompt_ack;
+#[path = "serve/console_service.rs"]
+mod console_service;
 #[path = "serve/create.rs"]
 mod create;
 #[path = "serve_create_body.rs"]
@@ -110,8 +112,6 @@ mod prompt_scan;
 mod remote_outbox;
 #[path = "serve/resume_start.rs"]
 mod resume_start;
-#[path = "serve/console_service.rs"]
-mod console_service;
 use create_body::{CreateBody, create_body_lineage, validate_create_accounts};
 #[path = "serve_shell.rs"]
 mod shell;
@@ -222,7 +222,7 @@ struct ServeState {
     /// Session board routes (`board.rs`) answer only when enabled.
     board: bool,
     federation: Option<crate::coordination::remote::Config>,
-    mailbox_services_file: Option<PathBuf>,
+    service_files: console_service::ServiceFiles,
     mailbox_service_workers: Arc<tokio::sync::Semaphore>,
     max_attachment_bytes: u64,
     tmux_bin: PathBuf,
@@ -1151,9 +1151,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             token,
             board,
             federation,
-            mailbox_services_file: args.mailbox_services_file.clone().or_else(|| {
-                crate::non_empty_env("AGENT_SESSION_MAILBOX_SERVICES_FILE").map(PathBuf::from)
-            }),
+            service_files: console_service::ServiceFiles::from_args(&args),
             mailbox_service_workers: Arc::new(tokio::sync::Semaphore::new(16)),
             max_attachment_bytes,
             tmux_bin,

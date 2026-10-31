@@ -1,11 +1,110 @@
 //! Loopback routes for explicitly admitted local services.
 use super::*;
 
+/// Admission documents of the services this daemon accepts; each is disabled when omitted.
+#[derive(Default)]
+pub(super) struct ServiceFiles {
+    mailbox: Option<PathBuf>,
+    console_start: Option<PathBuf>,
+}
+impl ServiceFiles {
+    pub(super) fn from_args(args: &crate::cli::ServeArgs) -> Self {
+        let file = |flag: &Option<PathBuf>, env: &str| {
+            flag.clone()
+                .or_else(|| crate::non_empty_env(env).map(PathBuf::from))
+        };
+        Self {
+            mailbox: file(
+                &args.mailbox_services_file,
+                "AGENT_SESSION_MAILBOX_SERVICES_FILE",
+            ),
+            console_start: file(
+                &args.console_start_services_file,
+                "AGENT_SESSION_CONSOLE_START_SERVICES_FILE",
+            ),
+        }
+    }
+}
+
 pub(super) fn routes() -> Router<Arc<ServeState>> {
-    Router::new().route(
-        crate::coordination::service::ROUTE,
-        post(service_mailbox_handler),
+    Router::new()
+        .route(
+            crate::coordination::service::ROUTE,
+            post(service_mailbox_handler),
+        )
+        .route(
+            crate::coordination::console_start::service::ROUTE,
+            post(service_console_start_handler),
+        )
+}
+
+/// Bounds concurrent Console starts by admitted services, apart from mailbox submission.
+static CONSOLE_START_WORKERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
+
+/// `POST /coordination/services/console-start/v1`: direct loopback peers only,
+/// with an admitted service's own credential; never a session capability.
+async fn service_console_start_handler(
+    State(state): State<Arc<ServeState>>,
+    request: axum::extract::Request,
+) -> Response {
+    use crate::coordination::console_start::service;
+    let (parts, body) = request.into_parts();
+    let token = match remote_session_token(&parts.headers) {
+        Ok(token) if token.len() <= 256 && crate::activity_ingress::from_loopback_peer(&parts) => {
+            token
+        }
+        _ => return envelope_err(service::unauthorized()),
+    };
+    let Ok(permit) = CONSOLE_START_WORKERS.try_acquire() else {
+        return envelope_err(CliError::unavailable(
+            "console-start-unavailable",
+            "service console start workers are busy",
+            None,
+        ));
+    };
+    let body = match tokio::time::timeout(
+        Duration::from_secs(5),
+        axum::body::to_bytes(body, 2 * 1024 * 1024),
     )
+    .await
+    {
+        Ok(Ok(bytes)) => serde_json::from_slice::<Value>(&bytes).ok(),
+        _ => None,
+    };
+    let Some(body) = body else {
+        return envelope_err(service::invalid_request());
+    };
+    let owner = state.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let mut forbidden = service_mailbox_tokens(&owner);
+        if let Some(token) = owner.token.as_deref() {
+            forbidden.push(token.to_owned());
+        }
+        if let Some(config) = owner.federation.as_ref() {
+            forbidden.extend([config.token.clone(), config.ingress_token.clone()]);
+        }
+        let forbidden: Vec<&str> = forbidden.iter().map(String::as_str).collect();
+        service::relay_route(
+            &owner.context,
+            owner.federation.as_ref(),
+            owner.service_files.console_start.as_deref(),
+            &token,
+            &forbidden,
+            &body,
+        )
+    })
+    .await;
+    drop(permit);
+    match result {
+        Ok(Ok(value)) => (StatusCode::CREATED, Json(value)).into_response(),
+        Ok(Err(error)) => envelope_err(error),
+        Err(_) => join_err(),
+    }
+}
+
+/// A Console-start credential must not also authorize mailbox submission.
+fn service_mailbox_tokens(state: &ServeState) -> Vec<String> {
+    crate::coordination::service::admitted_tokens(state.service_files.mailbox.as_deref())
 }
 
 // Remote submission trusts only local session capability, never an operator token.
@@ -81,7 +180,7 @@ async fn service_mailbox_handler(
             args,
             || {
                 service::authenticate(
-                    owner.mailbox_services_file.as_deref(),
+                    owner.service_files.mailbox.as_deref(),
                     &service_id,
                     &generation,
                     &token,

@@ -1608,3 +1608,6 @@ mod console_operations;
 
 #[path = "board_relay/delegation.rs"]
 mod delegation;
+
+#[path = "board_relay/service_console_start.rs"]
+mod service_console_start;
