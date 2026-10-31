@@ -497,3 +497,11 @@ esac
     assert_eq!(notification["state"], "queued");
     assert_eq!(notification["last_reason"], "recipient-attached");
 }
+
+mod mailbox_notice {
+    include!("mailbox_notice.rs");
+}
+
+mod mailbox_controller {
+    include!("mailbox_controller.rs");
+}

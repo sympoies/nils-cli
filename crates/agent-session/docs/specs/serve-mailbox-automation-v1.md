@@ -17,7 +17,10 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   structured submission: idle turns use `turn/start`, while an authoritative active turn uses
   `turn/steer` with its exact `expectedTurnId`. The control connection transiently maps the durable
   projected turn fence back to the matching raw active turn id; raw ids never enter session documents or
-  API projections. Long-running work observes the body-free prompt at the provider's next model
+  API projections. Notice-capable recipients receive the canonical `mailbox.wake`
+  envelope under the existing writer gate, with coalesced unread counts.
+  Explicitly unsupported recipients retain the plain reminder; failed/uncertain
+  notice attempts never fall back or repeat. Long-running work observes the body-free reminder at the provider's next model
   checkpoint. Both paths retain the exact incarnation and no-claim/no-operation generation fence.
 
   Terminal-backed Codex and Claude runtimes use the same notification-generation CAS plus exact
