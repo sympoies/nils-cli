@@ -758,13 +758,13 @@ fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
     for resume in [false, true] {
         for (gate, version, mounted, reason, observed) in [
             ("1", "2.1.296", true, "", ""),
-            ("1", "2.1.314", true, "", ""),
+            ("1", "2.1.316", true, "", ""),
             (
                 "1",
-                "2.1.315",
+                "2.1.317",
                 false,
                 "provider-version-unsupported",
-                "2.1.315",
+                "2.1.317",
             ),
             (
                 "1",
@@ -793,7 +793,7 @@ fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
                     "reason": reason,
                     "provider_version": (!observed.is_empty()).then_some(observed),
                     "supported_min": "2.1.296",
-                    "supported_max": "2.1.314",
+                    "supported_max": "2.1.316",
                 })),
                 "{case}"
             );
@@ -817,17 +817,17 @@ fn seed_attach_status(fixture: &super::Fixture, status: Option<Value>) {
 
 fn status(reason: &str, version: Option<&str>) -> Value {
     json!({"schema_version":"agent-session.claude-notice-attach.v1","state":"not-attached",
-        "reason":reason,"provider_version":version,"supported_min":"2.1.296","supported_max":"2.1.314"})
+        "reason":reason,"provider_version":version,"supported_min":"2.1.296","supported_max":"2.1.316"})
 }
 
 #[test]
 fn claude_notice_unattached_session_refuses_with_a_typed_reason() {
     for (seed, code, reason, version) in [
         (
-            Some(status("provider-version-unsupported", Some("2.1.315"))),
+            Some(status("provider-version-unsupported", Some("2.1.317"))),
             "notice-native-version-unsupported",
             "provider-version-unsupported",
-            json!("2.1.315"),
+            json!("2.1.317"),
         ),
         (
             Some(status("provider-version-unreadable", None)),
@@ -856,7 +856,7 @@ fn claude_notice_unattached_session_refuses_with_a_typed_reason() {
             json!({"id":"guarded","guard":"transport","stage":"admission","atomic":false,
                 "pasted":false,"submitted":false,
                 "native_module":{"attached":false,"reason":reason,"provider_version":version,
-                    "supported_min":"2.1.296","supported_max":"2.1.314"}}),
+                    "supported_min":"2.1.296","supported_max":"2.1.316"}}),
             "{reason}"
         );
         // Refused before any claim or input: the key stays unused.
