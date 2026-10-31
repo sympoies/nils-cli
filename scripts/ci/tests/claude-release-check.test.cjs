@@ -7,7 +7,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const test = require("node:test");
 const { discover, verifyIntegrity, isolatedEnvironment, candidateChanges, checkCandidate,
-  runReleaseCheck, range } = require("../../../.github/scripts/claude-release-check.cjs");
+  runReleaseCheck, collectReleaseCheck, range } = require("../../../.github/scripts/claude-release-check.cjs");
 const REPOSITORY = path.resolve(__dirname, "../../..");
 const VERSION = "crates/agent-session/src/send/claude_notice/version.rs";
 const NOTICE = "crates/agent-session/tests/guarded_send/claude_notice.rs";
@@ -77,9 +77,15 @@ function fixture({ newest = "2.1.318", passing = true } = {}) {
   const core = { setFailed: (x) => state.failures.push(x), summary: { addRaw: () => core.summary, write: async () => {} } };
   return { state, options: { github: { rest, paginate: async (method, args) => (await method(args)).data }, core,
     context: { repo: { owner: "example", repo: "project" }, ref: "refs/heads/main", sha: state.source, runId: 7 },
-    root: ROOT, artifactDir, discoverRelease: async () => metadata(newest),
-    checkRelease: async () => { state.checked++; return { passed: passing, commands: [{ command: "contract tests", exit: passing ? 0 : 1 }],
-      packages: [{ name: PACKAGE, version: newest, ...metadata(newest).dist, verified: true }], failure: passing ? null : "module contract failed" }; },
+    root: ROOT, artifactDir,
+    checked: { schema_version: 1, source_sha: state.source, release: metadata(newest),
+      check: { passed: passing, commands: [
+        { command: "npm install --prefix $SANDBOX/install --ignore-scripts --omit=optional --offline --no-audit --no-fund --no-package-lock $SANDBOX/0.tgz $SANDBOX/1.tgz", exit: passing ? 0 : 1, signal: null },
+        { command: "$SANDBOX/bin/claude --version", exit: 0, signal: null },
+        { command: "$CONTRACT_TEST_BINARY send::claude_notice::module_contract:: --nocapture (call-shape scan and claude plugin validate)", exit: 0, signal: null },
+      ], packages: [PACKAGE, PLATFORM].map(name => ({ name, version: newest, ...metadata(newest, name).dist, verified: true })) } },
+    patch: ["2.1.316", "2.1.99"].includes(newest) || !passing ? {} : candidateChanges(ROOT, newest),
+    fetchJSON: async url => metadata(newest, url.includes("linux-x64") ? PLATFORM : PACKAGE),
     writeResult: (result) => { state.result = result; } } };
 }
 
@@ -151,7 +157,7 @@ test("passing candidate creates one draft with exact source/integrity/exits/arti
   const pr = state.pulls[0];
   assert.equal(pr.draft, true); assert.equal(pr.base.ref, "main");
   for (const text of ["2.1.318", "Native acceptance: PENDING", "exact-version native", "reviewed merge", "Refs #3138", "Test changes", metadata().dist.integrity,
-    options.context.sha, "contract tests", "exit 0", "/actions/runs/7", "claude-release-check"]) assert.ok(pr.body.includes(text), text);
+    options.context.sha, "module_contract::", "exit 0", "/actions/runs/7", "claude-release-check"]) assert.ok(pr.body.includes(text), text);
   assert.equal(state.issues.length, 0);
   const tree = state.writes.find(([kind]) => kind === "tree")[1];
   assert.deepEqual(tree.tree.map(x => x.path).sort(), [VERSION, NOTICE, SPEC].sort());
@@ -279,6 +285,7 @@ test("repeat failure runs reuse immutable first evidence when source/run details
   const original = state.issues[0].body;
   options.context.runId = 8;
   options.context.sha = "e".repeat(40);
+  options.checked.source_sha = options.context.sha;
   const before = state.writes.length;
   await runReleaseCheck(options);
   assert.equal(state.writes.length, before);
@@ -314,4 +321,46 @@ test("workflow selects the real agent_session library executable from Cargo arti
     process: { env: { GITHUB_ENV: "/synthetic/environment" }, exit: (code) => { throw new Error(`exit ${code}`); } },
   });
   assert.deepEqual(writes, [["/synthetic/environment", "CLAUDE_CONTRACT_TEST_BINARY=/synthetic/agent_session-tests\n"]]);
+});
+
+test("untrusted candidate execution has a read-only job and a separate fresh provider-write runner", () => {
+  const workflow = fs.readFileSync(path.join(REPOSITORY, ".github/workflows/claude-release-check.yml"), "utf8");
+  const check = workflow.slice(workflow.indexOf("  check:"), workflow.indexOf("  publish:"));
+  const publish = workflow.slice(workflow.indexOf("  publish:"));
+  assert.match(check, /permissions:\n      contents: read/);
+  assert.doesNotMatch(check, /(?:contents|issues|pull-requests): write|github-script|github-token:/);
+  assert.match(publish, /needs: check/);
+  assert.match(publish, /download-artifact@v8/);
+  assert.match(publish, /pull-requests: write/);
+  assert.doesNotMatch(publish, /checkCandidate|collectReleaseCheck|spawnSync|cargo test|npm install/);
+});
+
+
+test("read-only collection skips in-range execution and emits source-bound candidate evidence plus patch", async () => {
+  for (const [newest, passing] of [["2.1.316", true], ["2.1.318", true], ["2.1.318", false]]) {
+    const { options } = fixture({ newest, passing });
+    let calls = 0;
+    const collected = await collectReleaseCheck({ sourceSha: options.context.sha, root: ROOT,
+      discoverRelease: async () => metadata(newest),
+      checkRelease: async () => { calls++; return options.checked.check; }, writeEvidence: () => {} });
+    assert.equal(collected.checked.source_sha, options.context.sha);
+    assert.equal(calls, newest === "2.1.316" ? 0 : 1);
+    assert.equal(Object.keys(collected.patch).length, newest !== "2.1.316" && passing ? 3 : 0);
+  }
+});
+
+test("privileged publication rejects stale, injected or inconsistent artifact inputs before provider writes", async () => {
+  for (const variant of ["source", "path", "allowed-content", "command", "package", "integrity", "pass-with-failed-command"]) {
+    const { state, options } = fixture();
+    if (variant === "source") options.checked.source_sha = "f".repeat(40);
+    if (variant === "path") options.patch["unexpected.rs"] = "arbitrary source";
+    if (variant === "allowed-content") options.patch[VERSION] += "\nmalicious edit";
+    if (variant === "command") options.checked.check.commands[0].command = "untrusted command prose";
+    if (variant === "package") options.checked.check.packages[0].tarball = "https://untrusted.invalid/package";
+    if (variant === "integrity") options.checked.check.packages[0].integrity = integrity(Buffer.from("altered"));
+    if (variant === "pass-with-failed-command") options.checked.check.commands[0].exit = 1;
+    await runReleaseCheck(options);
+    assert.equal(state.result.status, "error", variant);
+    assert.deepEqual(state.writes, [], variant);
+  }
 });

@@ -15,14 +15,12 @@ permissions:
 
 jobs:
   check:
-    # Only trusted default-branch code can prepare provider records.
+    # Candidate code runs only on this read-only runner, with no token input.
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
-      contents: write
-      issues: write
-      pull-requests: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -83,23 +81,76 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_ENV, `CLAUDE_CONTRACT_TEST_BINARY=${binaries[0].executable}\n`);
           JS
 
-      - name: Check and prepare draft range candidate
+      - name: Collect isolated contract evidence and range-only patch
         if: always() && !cancelled() && steps.discover.outcome != 'skipped'
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const fs = require("node:fs");
-            const { runReleaseCheck } = require("./.github/scripts/claude-release-check.cjs");
-            const file = "claude-release-check/discovery.json";
-            const discoverRelease = fs.existsSync(file)
-              ? async () => JSON.parse(fs.readFileSync(file, "utf8")) : undefined;
-            await runReleaseCheck({ github, context, core, discoverRelease });
+        run: |
+          source scripts/dev-env.sh
+          node <<'JS'
+          const fs = require("node:fs");
+          const { collectReleaseCheck } = require("./.github/scripts/claude-release-check.cjs");
+          const file = "claude-release-check/discovery.json";
+          const discoverRelease = fs.existsSync(file)
+            ? async () => JSON.parse(fs.readFileSync(file, "utf8")) : undefined;
+          collectReleaseCheck({ sourceSha: process.env.GITHUB_SHA, discoverRelease })
+            .catch(() => { console.error("Evidence collection unavailable"); process.exitCode = 1; });
+          JS
 
       - name: Retain exact candidate evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: claude-release-check
+          path: claude-release-check/
+          if-no-files-found: warn
+          retention-days: 30
+
+
+  publish:
+    # A fresh runner consumes data only; no upstream install or candidate execution.
+    needs: check
+    if: github.ref == 'refs/heads/main' && !cancelled() && needs.check.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout trusted source revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Read candidate evidence from the read-only job
+        uses: actions/download-artifact@v8
+        with:
+          name: claude-release-check
+          path: ${{ runner.temp }}/claude-check-evidence
+
+      - name: Prepare draft range candidate from validated evidence
+        uses: actions/github-script@v9
+        env:
+          CLAUDE_CHECK_ARTIFACT_DIR: ${{ runner.temp }}/claude-check-evidence
+        with:
+          script: |
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const { runReleaseCheck } = require("./.github/scripts/claude-release-check.cjs");
+            const read = name => {
+              const file = path.join(process.env.CLAUDE_CHECK_ARTIFACT_DIR, name);
+              if (!fs.lstatSync(file).isFile() || fs.statSync(file).size > 2 * 1024 * 1024)
+                throw new Error("Bounded regular evidence file required");
+              return JSON.parse(fs.readFileSync(file, "utf8"));
+            };
+            await runReleaseCheck({ github, context, core,
+              checked: read("checked.json"), patch: read("candidate.patch.json") });
+
+      - name: Retain publication result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: claude-release-publication
           path: claude-release-check/
           if-no-files-found: warn
           retention-days: 30

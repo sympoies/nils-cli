@@ -15,6 +15,11 @@ const NOTICE = "crates/agent-session/tests/guarded_send/claude_notice.rs";
 const SPEC = "crates/agent-session/docs/specs/session-notices-v1.md";
 const CREATION_UNAVAILABLE = "candidate creation unavailable; maintainer must check workflow PR creation permission and prepare the draft manually or rerun; do not add credentials or change repository settings automatically";
 const END = "<!-- claude-release-check:end -->";
+const COMMANDS = [
+  "npm install --prefix $SANDBOX/install --ignore-scripts --omit=optional --offline --no-audit --no-fund --no-package-lock $SANDBOX/0.tgz $SANDBOX/1.tgz",
+  "$SANDBOX/bin/claude --version",
+  "$CONTRACT_TEST_BINARY send::claude_notice::module_contract:: --nocapture (call-shape scan and claude plugin validate)",
+];
 const sha = (text) => crypto.createHash("sha256").update(text).digest("hex");
 const read = (root, file) => fs.readFileSync(path.join(root, file), "utf8");
 const stable = (text) => /^(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})$/.test(text || "");
@@ -56,7 +61,7 @@ async function getBytes(url, limit = 400 * 1024 * 1024) {
 const getJSON = async (url) => JSON.parse((await getBytes(url, 2 * 1024 * 1024)).toString("utf8"));
 async function discover(fetchJSON = getJSON) {
   // npm's official latest dist-tag, with prerelease/non-SemVer values refused.
-  return metadata(await fetchJSON(`${REGISTRY}${encodeURIComponent(PACKAGE).replace("%40", "@")}/latest`), PACKAGE);
+  return metadata(await fetchJSON(`${REGISTRY}@anthropic-ai%2Fclaude-code/latest`), PACKAGE);
 }
 function verifyIntegrity(bytes, integrity) {
   if (!/^sha512-[A-Za-z0-9+/]{86}==$/.test(integrity || "")) throw new Error("invalid registry integrity");
@@ -106,15 +111,15 @@ async function checkCandidate({ release, contractBinary, root = process.cwd(), f
     };
     run("npm", ["install", "--prefix", path.join(sandbox, "install"), "--ignore-scripts", "--omit=optional", "--offline",
       "--no-audit", "--no-fund", "--no-package-lock", path.join(sandbox, "0.tgz"), path.join(sandbox, "1.tgz")],
-    "npm install --prefix $SANDBOX/install --ignore-scripts --omit=optional --offline --no-audit --no-fund --no-package-lock $SANDBOX/0.tgz $SANDBOX/1.tgz");
+    COMMANDS[0]);
     const binary = path.join(sandbox, "install/node_modules", PLATFORM, "claude");
     if (!fs.statSync(binary).isFile()) throw new Error("official executable layout changed");
     fs.symlinkSync(binary, path.join(sandbox, "bin/claude"));
-    const banner = run(binary, ["--version"], "$SANDBOX/bin/claude --version").trim();
+    const banner = run(binary, ["--version"], COMMANDS[1]).trim();
     if (banner !== `${release.version} (Claude Code)`) throw new Error("candidate banner mismatch");
     if (!contractBinary || !path.isAbsolute(contractBinary)) throw new Error("compiled contract test binary required");
     const output = run(contractBinary, ["send::claude_notice::module_contract::", "--nocapture"],
-      "$CONTRACT_TEST_BINARY send::claude_notice::module_contract:: --nocapture (call-shape scan and claude plugin validate)");
+      COMMANDS[2]);
     // The existing optional installed-CLI test must actually run for this candidate.
     if (!output.includes(`checking the module against Claude Code ${release.version}\n`) || output.includes("skipped:") ||
         !/test result: ok\. [3-9]\d* passed; 0 failed; 0 ignored;/.test(output)) throw new Error("contract skipped or incomplete");
@@ -153,6 +158,64 @@ function candidateChanges(root, candidate) {
     [SPEC]: spec.replace(bounds, `\`${current.min}\` through \`${candidate}\` inclusive`)
       .replace(`The current upper bound, \`${old}\`, rests`, `The previously accepted upper bound, \`${old}\`, rests`)
       .replace("### Tested Claude Code range\n\n", `### Tested Claude Code range\n\n${pending}`) };
+}
+// Runs only in the read-only job. The provider-write job never calls this
+// collector or executes an executable from the candidate/evidence artifact.
+async function collectReleaseCheck({ sourceSha, root = process.cwd(), discoverRelease = discover,
+  checkRelease = checkCandidate, contractBinary = process.env.CLAUDE_CONTRACT_TEST_BINARY,
+  artifactDir = "claude-release-check", writeEvidence = (checked, patch) => {
+    fs.mkdirSync(artifactDir, { recursive: true });
+    fs.writeFileSync(path.join(artifactDir, "checked.json"), JSON.stringify(checked, null, 2));
+    fs.writeFileSync(path.join(artifactDir, "candidate.patch.json"), JSON.stringify(patch, null, 2));
+  } }) {
+  const checked = { schema_version: 1, source_sha: sourceSha, release: null, check: null, error: null };
+  let patch = {};
+  try {
+    const release = metadata(await discoverRelease(), PACKAGE);
+    checked.release = { name: release.name, version: release.version, dist: release.dist,
+      optionalDependencies: { [PLATFORM]: release.optionalDependencies?.[PLATFORM] } };
+    if (compare(release.version, range(root).max) > 0) {
+      fs.mkdirSync(artifactDir, { recursive: true });
+      checked.check = await checkRelease({ release, contractBinary, artifactDir });
+      if (checked.check.passed) patch = candidateChanges(root, release.version);
+    }
+  } catch { checked.error = "unprivileged release collection failed"; }
+  writeEvidence(checked, patch);
+  return { checked, patch };
+}
+async function validateCollected({ checked, patch, root, sourceSha, fetchJSON }) {
+  if (checked?.schema_version !== 1 || checked.source_sha !== sourceSha || checked.error || !checked.release)
+    throw new Error("source-bound candidate evidence unavailable; inspect read-only check artifacts");
+  const release = metadata(checked.release, PACKAGE);
+  // Artifact contents are untrusted. Re-read exact registry metadata as data,
+  // then regenerate the only allowed source patch from this trusted checkout.
+  const official = metadata(await fetchJSON(`${REGISTRY}${encodeURIComponent(PACKAGE)}/${release.version}`), PACKAGE, release.version);
+  if (release.dist.tarball !== official.dist.tarball || release.dist.integrity !== official.dist.integrity)
+    throw new Error("candidate registry evidence mismatch");
+  if (compare(release.version, range(root).max) <= 0) {
+    if (Object.keys(patch || {}).length) throw new Error("unexpected in-range patch");
+    return release;
+  }
+  const check = checked.check;
+  if (!check || typeof check.passed !== "boolean" || !Array.isArray(check.packages) || check.packages.length > 2 ||
+      !Array.isArray(check.commands) || check.commands.length > 3) throw new Error("invalid candidate check evidence");
+  for (const [index, item] of check.packages.entries()) {
+    const name = [PACKAGE, PLATFORM][index];
+    const found = index === 0 ? official : metadata(await fetchJSON(`${REGISTRY}${encodeURIComponent(name)}/${release.version}`), name, release.version);
+    if (item.name !== name || item.version !== release.version || item.tarball !== found.dist.tarball ||
+        item.integrity !== found.dist.integrity || typeof item.verified !== "boolean") throw new Error("candidate package evidence mismatch");
+  }
+  for (const [index, command] of check.commands.entries()) {
+    if (command.command !== COMMANDS[index] || !(command.exit === null || Number.isInteger(command.exit) && command.exit >= 0 && command.exit <= 255) ||
+        ![null, undefined, "SIGTERM", "SIGKILL"].includes(command.signal)) throw new Error("invalid candidate command evidence");
+  }
+  if (check.passed && (check.packages.length !== 2 || check.commands.length !== 3 ||
+      check.packages.some(item => !item.verified) || check.commands.some(item => item.exit !== 0 || item.signal)))
+    throw new Error("incomplete passing candidate evidence");
+  const expected = check.passed ? candidateChanges(root, release.version) : {};
+  if (!patch || JSON.stringify(Object.keys(patch).sort()) !== JSON.stringify(Object.keys(expected).sort()) ||
+      Object.entries(expected).some(([file, content]) => patch[file] !== content)) throw new Error("candidate patch differs from trusted range-only patch");
+  return release;
 }
 function evidence(result) {
   return ["## Claude Code release check", "", `- Candidate: ${result.newest}`,
@@ -235,8 +298,7 @@ async function prepareDraft({ github, context, root, result }) {
     return { status: "draft", url: (await github.rest.pulls.create({ ...context.repo, head: branch, base: "main", title, body, draft: true })).data.html_url };
   } catch { throw new Error(CREATION_UNAVAILABLE); }
 }
-async function runReleaseCheck({ github, context, core, root = process.cwd(), discoverRelease = discover,
-  checkRelease = checkCandidate, contractBinary = process.env.CLAUDE_CONTRACT_TEST_BINARY,
+async function runReleaseCheck({ github, context, core, root = process.cwd(), checked, patch, fetchJSON = getJSON,
   artifactDir = "claude-release-check", writeResult = (result) => {
     fs.mkdirSync(artifactDir, { recursive: true }); fs.writeFileSync(path.join(artifactDir, "result.json"), `${JSON.stringify(result, null, 2)}\n`);
   } }) {
@@ -247,12 +309,11 @@ async function runReleaseCheck({ github, context, core, root = process.cwd(), di
   try {
     const repo = (await github.rest.repos.get(context.repo)).data;
     if (repo.default_branch !== "main" || context.ref !== "refs/heads/main") throw new Error("default-branch-only execution required");
-    const release = metadata(await discoverRelease(), PACKAGE);
+    const release = await validateCollected({ checked, patch, root, sourceSha: context.sha, fetchJSON });
     result.newest = release.version;
     if (compare(release.version, current.max) <= 0) { result.status = "current"; result.action = "In-range or older; no candidate installation or provider writes."; }
     else {
-      fs.mkdirSync(artifactDir, { recursive: true });
-      result.check = await checkRelease({ release, contractBinary, root, artifactDir });
+      result.check = checked.check;
       if (!result.check.passed) {
         result.status = "failed"; result.action = "Isolated installation or module contract failed; inspect command artifacts and keep the current range.";
         result.issue_url = await failureIssue({ github, context, result });
@@ -284,4 +345,4 @@ async function runReleaseCheck({ github, context, core, root = process.cwd(), di
   }
   return result;
 }
-module.exports = { range, compare, discover, verifyIntegrity, isolatedEnvironment, candidateChanges, checkCandidate, runReleaseCheck };
+module.exports = { collectReleaseCheck, range, compare, discover, verifyIntegrity, isolatedEnvironment, candidateChanges, checkCandidate, runReleaseCheck };

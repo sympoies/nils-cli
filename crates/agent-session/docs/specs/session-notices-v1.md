@@ -170,7 +170,11 @@ verifies the wrapper and matching Linux executable package against registry
 SHA-512 integrity before an isolated temporary install. It runs the existing
 call-shape and `claude plugin validate` contract tests with private home/config,
 XDG and temporary directories, no inherited credentials, settings, plugins or
-runtime homes, and no updater.
+runtime homes, and no updater. Candidate discovery, compilation, installation
+and execution run in a read-only job. A separate fresh runner holds provider
+write permissions and consumes bounded JSON evidence only; it rechecks source
+and registry metadata and regenerates the allowed range-only patch from trusted
+source before comparing the artifact. It never executes the candidate.
 
 In-range releases create nothing. A newer failing
 candidate upserts one version-keyed issue; a newer passing candidate prepares
