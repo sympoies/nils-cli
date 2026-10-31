@@ -58,6 +58,8 @@ approved = {
     "data": {
         "head_sha": head,
         "status": "reviewed",
+        "approval_policy": "final-approval",
+        "handoff": {"approval_policy": "final-approval"},
         "approval": {"state": "finally-approved", "reviewed_head": head},
     },
 }
@@ -109,6 +111,8 @@ elif tool == "forge-cli" and args == ["--provider", "github", "--repo", repo,
     if fixture["merge_exit"]:
         print("canonical merge gate refused changed evidence", file=sys.stderr)
         sys.exit(fixture["merge_exit"])
+    if "merge_approval_state" in fixture:
+        print(json.dumps({"approval_state": fixture["merge_approval_state"]}))
     Path(os.environ["QUEUED"]).write_text("canonical forge admission\n")
 else:
     print(f"unexpected offline transport call: {tool} {args!r}", file=sys.stderr)
@@ -143,6 +147,16 @@ app_commit = copy.deepcopy(normal["commit"])
 app_commit["author"]["login"] = "artifact-automation[bot]"
 case("exact-head approved artifact app and app/dependabot author", allow=True,
      pr=app_pr, commit=app_commit)
+# The strict precheck override does not change the persisted assignment.
+# The canonical receipt omits the source-pass default in data.handoff, even
+# while the top-level effective policy and selected approval are final. A newer
+# same-head COMMENTED pass can then satisfy a source-pass merge. The workflow
+# must reject this route before invoking merge; the strict owner rechecks the
+# final policy for the positive paths instead.
+source_pass = copy.deepcopy(approved)
+source_pass["data"]["handoff"] = {}
+case("source-pass assignment superseded by COMMENTED pass after final precheck",
+     admission=source_pass, merge_approval_state="source-passed", forbid_merge=True)
 human = copy.deepcopy(normal["commit"])
 human["author"] = {"login": "integration-maintainer", "type": "User"}
 case("human integration head", commit=human)
@@ -191,8 +205,11 @@ with tempfile.TemporaryDirectory(prefix="dependabot-admission-") as directory:
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         transport = calls.read_text() if calls.exists() else ""
         canonical = queued.exists() and queued.read_text() == "canonical forge admission\n"
+        merge_called = any(call[0] == "forge-cli" and "merge" in call
+                           for call in map(json.loads, transport.splitlines()))
         if (queued.exists() != allow or (allow and (result.returncode != 0 or not canonical))
-                or (not allow and result.returncode not in (0, 65))):
+                or (not allow and result.returncode not in (0, 65))
+                or (fixture.get("forbid_merge") and merge_called)):
             failures.append(name)
             print(f"FAIL: {name}: queued={queued.exists()}, expected={allow}, exit={result.returncode}")
             print(result.stdout + transport)
