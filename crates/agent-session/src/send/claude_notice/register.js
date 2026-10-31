@@ -1,4 +1,4 @@
-// External native contract: Claude Code 2.1.296. No terminal input mutations.
+// External native contract: the tested Claude Code range. No terminal input mutations.
 export function register(on) {
   let started = false;
   let inFlight = false;
@@ -33,11 +33,11 @@ export function register(on) {
     }));
     try {
       const boot = JSON.parse(await $.fs.read(`${root}/bootstrap.json`));
-      if (!keys(boot, ['schema_version', 'launch', 'module_sha256', 'socket_path', 'nonce'])
+      if (!keys(boot, ['schema_version', 'launch', 'module_sha256', 'provider_version', 'socket_path', 'nonce'])
           || boot.schema_version !== schema('runtime')
           || !keys(boot.launch, ['session_id', 'incarnation', 'generation', 'profile'])
           || !/^[a-f0-9]{64}$/.test(boot.module_sha256) || !/^[a-f0-9]{64}$/.test(boot.nonce)
-          || typeof boot.socket_path !== 'string' || !boot.socket_path.startsWith('/')) throw new Error();
+          || typeof boot.provider_version !== 'string' || typeof boot.socket_path !== 'string' || !boot.socket_path.startsWith('/')) throw new Error();
       const observe = async () => ({
         session: await $.env.get('AGENT_SESSION_ID'),
         incarnation: await $.env.get('AGENT_SESSION_RUNTIME_ID'),
@@ -47,10 +47,10 @@ export function register(on) {
       const first = await observe();
       const current = (value) => value.session === boot.launch.session_id
         && value.incarnation === boot.launch.incarnation && value.provider === first.provider
-        && value.version === '2.1.296' && value.terminal;
+        && value.version === boot.provider_version && value.terminal;
       if (!current(first) || !first.provider) throw new Error();
       const binding = { launch: boot.launch, provider: 'claude', provider_session_id: first.provider,
-        provider_version: '2.1.296', module_sha256: boot.module_sha256 };
+        provider_version: boot.provider_version, module_sha256: boot.module_sha256 };
       const empty = async () => {
         const draft = await $.prompt.read();
         return draft.text === '' && draft.cursor === 0;

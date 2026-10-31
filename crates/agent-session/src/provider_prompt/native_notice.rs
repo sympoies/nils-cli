@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::send::claude_notice::{Binding, PLUGIN, PROVIDER_VERSION, sha256};
+use crate::send::claude_notice::{Binding, PLUGIN, sha256, version};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -43,10 +43,10 @@ pub(crate) struct Proof {
 /// without the private producer claim and exact physical-row receipt binding.
 pub(crate) fn row(value: &Value, binding: &Binding) -> Option<Row> {
     if binding.provider != "claude"
-        || binding.provider_version != PROVIDER_VERSION
+        || !version::supported(&binding.provider_version)
         || value.get("type")?.as_str()? != "user"
         || value.get("sessionId")?.as_str()? != binding.provider_session_id
-        || value.get("version")?.as_str()? != PROVIDER_VERSION
+        || value.get("version")?.as_str()? != binding.provider_version
         || value.get("promptSource")?.as_str()? != "system"
         || value.get("isSidechain")?.as_bool()?
     {

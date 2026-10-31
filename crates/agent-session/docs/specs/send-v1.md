@@ -225,9 +225,9 @@ directory synchronization for restart durability.
 
 Only the internal notice-envelope route can use the managed Claude module.
 An ordinary `send`, including one whose text resembles a notice, retains its
-existing behavior. Gate-enabled fresh launches/resumes on Claude Code
-`2.1.296` mount the module; other versions and existing runtimes without it keep
-the unsupported notice admission boundary. There is no new flag, compatibility
+existing behavior. Gate-enabled fresh launches, resumes and restarts on a Claude Code release in
+the tested range of the notice spec mount the module; other versions and
+existing runtimes without it keep the unsupported notice admission boundary. There is no new flag, compatibility
 mode, runtime injection or terminal fallback.
 
 The native notice input is the complete LF-only UTF-8 envelope, at most 16 KiB.

@@ -116,8 +116,9 @@ the same queued notice again. Post-paste failures retain their claim and report
 whether input remains; unknown input must never be cleared without ownership
 proof.
 
-Claude Code `2.1.296` supports a separate native module route on gate-enabled
-fresh launches and resumes. It submits the full envelope directly through the
+Claude Code releases in the tested range below support a separate native module
+route on gate-enabled fresh launches, resumes and restarts (a restart relaunches
+through the same resume path). It submits the full envelope directly through the
 native API, without filling or pasting into the composer. The initial bound is
 UTF-8 text only, no CR bytes, and at most 16 KiB for the complete envelope.
 Accepted LF, row-trailing spaces and final LF bytes are preserved. The shared
@@ -125,19 +126,54 @@ codec does not acquire this delivery limit. Unsupported text returns
 `notice-native-text-unsupported` before a new claim or input authorization.
 
 Mounting uses the existing writer gate at launch. Old runtimes, gate-off
-launches and other provider versions do not gain the module later. They are
-never injected into, restarted or sent through a plain fallback by `notice`.
-Matching private readiness must be followed by a fresh identity/empty-composer
-handshake before claiming the operation. Native empty reads alone do not prove
-that a composer is mounted; existing independent terminal admission remains.
+launches and releases outside the tested range do not gain the module later.
+They are never injected into, restarted or sent through a plain fallback by
+`notice`. Matching private readiness must be followed by a fresh
+identity/empty-composer handshake before claiming the operation. Native empty
+reads alone do not prove that a composer is mounted; existing independent
+terminal admission remains.
 
-Otherwise admitted Claude notices without matching candidate module readiness return `notice-transport-unsupported`
+### Tested Claude Code range
+
+The module depends on the provider's static module-loader rules and on native
+API semantics, so the supported releases are a reviewed range, not a runtime
+probe: `2.1.296` through `2.1.314` inclusive. The launch strictly parses
+`<major>.<minor>.<patch> (Claude Code)` from `--version` and compares
+numerically. An unreadable or unparseable version is unsupported. The probed
+version is recorded in the module bootstrap; the module and readiness compare
+the provider's reported version to it, and a provider row must carry the bound
+version. The range never widens at runtime. The upper bound is raised only by a
+reviewed change that cites the module call-shape scan, `claude plugin validate`
+and a native notice run on that exact release; moving the lower bound would make
+older private ledger records unreadable and needs its own review. Sessions
+started before an upgrade of `agent-session` lack the bootstrap field and stay
+unattached until restarted.
+
+Every Claude launch, resume and restart that does not mount the module records
+why in a private `attach.json` beside the incarnation (`state` `not-attached`,
+`reason`, the observed `provider_version` or null, and the `supported_min` /
+`supported_max` in force at launch). Reasons are `writers-disabled`,
+`provider-version-unsupported` and `provider-version-unreadable`. The record is
+diagnostic only and grants nothing.
+
+Admitted Claude notices without matching candidate module readiness are refused
 with `guard=transport`, `stage=admission`, `atomic=false`, `pasted=false` and
 `submitted=false`, before temporary input creation, buffer loading, paste, Enter
-or a new idempotency claim. Existing identity, idle, empty-composer and used-key
-checks still take precedence. A fresh key refused at this boundary remains
-available for a separately supported guarded send; an already consumed key
-continues to return `send-idempotency-key-used`.
+or a new idempotency claim, and carry `native_module`:
+`{attached: false, reason, provider_version, supported_min, supported_max}`
+(`provider_version` is a string or null). The code separates the causes:
+
+- `notice-native-version-unsupported` when the recorded reason is
+  `provider-version-unsupported` or `provider-version-unreadable`.
+- `notice-transport-unsupported` for every other case, with `reason`
+  `writers-disabled` or `unrecorded` (a runtime that recorded nothing).
+
+Existing identity, idle, empty-composer and used-key checks still take
+precedence. A fresh key refused at this boundary remains available for a
+separately supported guarded send; an already consumed key continues to return
+`send-idempotency-key-used`. Neither code adds a retry or fallback permission.
+Consumers that match refusal codes literally must add
+`notice-native-version-unsupported`; `agent-session` keeps no legacy code for it.
 
 Every encoded notice is multiline, including one-line bodies. Claude can
 collapse its paste into an opaque placeholder that does not prove complete

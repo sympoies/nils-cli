@@ -696,3 +696,133 @@ fn claude_notice_concurrent_attempt_is_busy_before_consumption() {
         fixture.no_delivery();
     });
 }
+
+fn attach_status(root: &Path) -> Option<Value> {
+    let incarnations = fs::read_dir(root.join("state/sessions/synthetic/claude-notice")).ok()?;
+    let mut found = incarnations
+        .map(|entry| entry.unwrap().path().join("attach.json"))
+        .filter(|path| path.is_file());
+    let path = found.next()?;
+    assert!(found.next().is_none(), "one status per incarnation");
+    Some(serde_json::from_slice(&fs::read(path).unwrap()).unwrap())
+}
+
+#[test]
+fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
+    for resume in [false, true] {
+        for (gate, version, mounted, reason, observed) in [
+            ("1", "2.1.296", true, "", ""),
+            ("1", "2.1.314", true, "", ""),
+            (
+                "1",
+                "2.1.315",
+                false,
+                "provider-version-unsupported",
+                "2.1.315",
+            ),
+            (
+                "1",
+                "2.1.295",
+                false,
+                "provider-version-unsupported",
+                "2.1.295",
+            ),
+            ("1", "garbled", false, "provider-version-unreadable", ""),
+            ("0", "2.1.296", false, "writers-disabled", ""),
+        ] {
+            let temp = tempfile::tempdir_in("/tmp").unwrap();
+            let (_, calls) = launch_case(temp.path(), gate, version, resume);
+            let case = format!("{gate} {version} resume={resume}");
+            assert_eq!(mounted_module(&calls).is_some(), mounted, "{case}");
+            let status = attach_status(temp.path());
+            if mounted {
+                assert_eq!(status, None, "{case}");
+                continue;
+            }
+            assert_eq!(
+                status,
+                Some(json!({
+                    "schema_version": "agent-session.claude-notice-attach.v1",
+                    "state": "not-attached",
+                    "reason": reason,
+                    "provider_version": (!observed.is_empty()).then_some(observed),
+                    "supported_min": "2.1.296",
+                    "supported_max": "2.1.314",
+                })),
+                "{case}"
+            );
+        }
+    }
+}
+
+fn seed_attach_status(fixture: &super::Fixture, status: Option<Value>) {
+    let Some(status) = status else { return };
+    let dir = fixture
+        .root()
+        .join("state/sessions/guarded/claude-notice/runtime-one");
+    fs::create_dir_all(&dir).unwrap();
+    for path in [dir.parent().unwrap(), dir.as_path()] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let path = dir.join("attach.json");
+    fs::write(&path, status.to_string()).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+fn status(reason: &str, version: Option<&str>) -> Value {
+    json!({"schema_version":"agent-session.claude-notice-attach.v1","state":"not-attached",
+        "reason":reason,"provider_version":version,"supported_min":"2.1.296","supported_max":"2.1.314"})
+}
+
+#[test]
+fn claude_notice_unattached_session_refuses_with_a_typed_reason() {
+    for (seed, code, reason, version) in [
+        (
+            Some(status("provider-version-unsupported", Some("2.1.315"))),
+            "notice-native-version-unsupported",
+            "provider-version-unsupported",
+            json!("2.1.315"),
+        ),
+        (
+            Some(status("provider-version-unreadable", None)),
+            "notice-native-version-unsupported",
+            "provider-version-unreadable",
+            Value::Null,
+        ),
+        (
+            Some(status("writers-disabled", None)),
+            "notice-transport-unsupported",
+            "writers-disabled",
+            Value::Null,
+        ),
+        (
+            None,
+            "notice-transport-unsupported",
+            "unrecorded",
+            Value::Null,
+        ),
+    ] {
+        let fixture = super::Fixture::new("claude");
+        seed_attach_status(&fixture, seed);
+        let value = fixture.refused(&send_notice(&fixture, "synthetic\n"), code);
+        assert_eq!(
+            value["error"]["details"],
+            json!({"id":"guarded","guard":"transport","stage":"admission","atomic":false,
+                "pasted":false,"submitted":false,
+                "native_module":{"attached":false,"reason":reason,"provider_version":version,
+                    "supported_min":"2.1.296","supported_max":"2.1.314"}}),
+            "{reason}"
+        );
+        // Refused before any claim or input: the key stays unused.
+        assert!(
+            !fs::read_dir(fixture.root().join("state/sessions/guarded"))
+                .unwrap()
+                .any(|entry| entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("send-key-"))
+        );
+        fixture.no_delivery();
+    }
+}

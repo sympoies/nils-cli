@@ -9,15 +9,16 @@ use std::cell::Cell;
 use std::path::Path;
 use std::time::Instant;
 
+pub(crate) mod attach;
 mod bridge;
 #[cfg(test)]
 mod module_contract;
 pub(crate) mod runtime;
 pub(crate) mod store;
+pub(crate) mod version;
 
-// External Claude Code 2.1.296's generated module contract and native probes
-// establish prompt.submit(asUser), prompt.read, timers and HTTP Unix sockets.
-pub(crate) const PROVIDER_VERSION: &str = "2.1.296";
+// The tested Claude Code range in `version` shares one external module contract
+// and native probes: prompt.submit(asUser), prompt.read, timers and HTTP Unix sockets.
 pub(crate) const PLUGIN: &str = "agent-session-claude-notice";
 
 pub(crate) fn sha256(bytes: &[u8]) -> String {

@@ -11,6 +11,7 @@ use pretty_assertions::assert_eq;
 
 use super::PLUGIN;
 use super::runtime::MODULE;
+use super::version::{SUPPORTED_MIN, Version};
 
 fn is_ident(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '$'
@@ -173,20 +174,22 @@ fn dollar_check_rejects_every_form_the_loader_rejects() {
     assert_eq!(dollar_misuse(accepted), Vec::<usize>::new());
 }
 
-/// Runs the pinned external loader's own check; skipped where that Claude Code build is absent.
+/// Runs the installed external loader's own check; skipped where no Claude Code at or above the
+/// tested minimum is installed. A newer build than the tested range is checked too, so the same
+/// test serves as the candidate check before the range is raised by review.
 #[test]
-fn embedded_module_loads_in_the_pinned_claude_code() {
-    let pinned = Command::new("claude")
+fn embedded_module_loads_in_the_installed_claude_code() {
+    let installed = Command::new("claude")
         .arg("--version")
         .output()
-        .is_ok_and(|output| {
-            output.status.success()
-                && String::from_utf8_lossy(&output.stdout).trim() == "2.1.296 (Claude Code)"
-        });
-    if !pinned {
-        eprintln!("skipped: Claude Code 2.1.296 is not installed");
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| Version::parse_banner(&String::from_utf8_lossy(&output.stdout)));
+    let Some(version) = installed.filter(|version| *version >= SUPPORTED_MIN) else {
+        eprintln!("skipped: no Claude Code {SUPPORTED_MIN} or newer is installed");
         return;
-    }
+    };
+    eprintln!("checking the module against Claude Code {version}");
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir_all(dir.path().join(".claude-plugin")).expect("manifest dir");
     std::fs::create_dir_all(dir.path().join("hooks")).expect("hooks dir");
