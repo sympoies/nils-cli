@@ -1,0 +1,105 @@
+name: Claude Code release check
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+# Serialize discovery, version-keyed issues and immutable candidate branches.
+concurrency:
+  group: claude-release-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Only trusted default-branch code can prepare provider records.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Test release preparation fixtures
+        run: |
+          source scripts/dev-env.sh
+          node scripts/ci/tests/claude-release-check.test.cjs
+
+      - name: Discover official stable release
+        id: discover
+        # Discovery errors still reach the reporting step; never fabricate a candidate.
+        continue-on-error: true
+        run: |
+          source scripts/dev-env.sh
+          node <<'JS'
+          const fs = require("node:fs");
+          const { discover, range, compare } = require("./.github/scripts/claude-release-check.cjs");
+          (async () => {
+            fs.mkdirSync("claude-release-check", { recursive: true });
+            const release = await discover();
+            fs.writeFileSync("claude-release-check/discovery.json", JSON.stringify(release, null, 2));
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `newer=${compare(release.version, range(process.cwd()).max) > 0}\n`);
+          })().catch(() => { console.error("Official stable registry discovery failed; inspect the reporting step."); process.exitCode = 1; });
+          JS
+
+      - name: Set up Rust for the existing contract tests
+        if: steps.discover.outputs.newer == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Compile existing module contract tests
+        id: compile
+        if: steps.discover.outputs.newer == 'true'
+        continue-on-error: true
+        env:
+          CARGO_BUILD_JOBS: "4"
+        # Build only trusted checkout code. Candidate execution below gets a cleared environment.
+        run: |
+          source scripts/dev-env.sh
+          node <<'JS'
+          const fs = require("node:fs");
+          const { spawnSync } = require("node:child_process");
+          const args = ["test", "--locked", "-p", "nils-agent-session", "--lib", "--no-run", "--message-format=json"];
+          const output = spawnSync("cargo", args, { encoding: "utf8", timeout: 1800000, maxBuffer: 64 * 1024 * 1024 });
+          fs.writeFileSync("claude-release-check/contract-build.json", JSON.stringify({ command: ["cargo", ...args].join(" "), exit: output.status, signal: output.signal }));
+          fs.writeFileSync("claude-release-check/contract-build.log", `${output.stdout || ""}${output.stderr || ""}`);
+          if (output.status !== 0) process.exit(1);
+          const records = output.stdout.split("\n").filter(Boolean).map(line => JSON.parse(line));
+          const binaries = records.filter(row => row.reason === "compiler-artifact" && row.profile.test && row.executable && row.target.name === "agent_session");
+          if (binaries.length !== 1) throw new Error("Expected one compiled module contract test binary");
+          fs.appendFileSync(process.env.GITHUB_ENV, `CLAUDE_CONTRACT_TEST_BINARY=${binaries[0].executable}\n`);
+          JS
+
+      - name: Check and prepare draft range candidate
+        if: always() && !cancelled() && steps.discover.outcome != 'skipped'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require("node:fs");
+            const { runReleaseCheck } = require("./.github/scripts/claude-release-check.cjs");
+            const file = "claude-release-check/discovery.json";
+            const discoverRelease = fs.existsSync(file)
+              ? async () => JSON.parse(fs.readFileSync(file, "utf8")) : undefined;
+            await runReleaseCheck({ github, context, core, discoverRelease });
+
+      - name: Retain exact candidate evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: claude-release-check
+          path: claude-release-check/
+          if-no-files-found: warn
+          retention-days: 30

@@ -164,6 +164,31 @@ older private ledger records unreadable and needs its own review. Sessions
 started before an upgrade of `agent-session` lack the bootstrap field and stay
 unattached until restarted.
 
+The default-branch-only [scheduled release check](../../../../.github/workflows/claude-release-check.yml)
+reads the official npm `@anthropic-ai/claude-code` latest stable release and
+verifies the wrapper and matching Linux executable package against registry
+SHA-512 integrity before an isolated temporary install. It runs the existing
+call-shape and `claude plugin validate` contract tests with private home/config,
+XDG and temporary directories, no inherited credentials, settings, plugins or
+runtime homes, and no updater.
+
+In-range releases create nothing. A newer failing
+candidate upserts one version-keyed issue; a newer passing candidate prepares
+one version-keyed draft PR changing only the maximum and directly necessary
+expectations and prospective docs. Exact source, version, integrity, commands,
+exits and run artifacts accompany the candidate. Existing human edits, review
+activity, ready/closed decisions and occupied branches are preserved; candidate
+creation failure is actionable in the retained report and failure issue. First
+failure evidence and candidate branches stay immutable; later runs reuse the
+version-keyed records and retain fresh evidence in their run artifacts.
+
+**Contract success never claims native success.** Each future candidate starts
+with **Native acceptance: PENDING**. Exact-version native notice acceptance and
+reviewed merge gates remain required before extending the range. The check does
+not merge, release, deploy or widen a running module's range. Its schedule
+reduces detection delay but cannot guarantee beating every external auto-update;
+it does not define host pinning or update policy.
+
 Every Claude launch, resume and restart that does not mount the module records
 why in a private `attach.json` beside the incarnation (`state` `not-attached`,
 `reason`, the observed `provider_version` or null, and the `supported_min` /
