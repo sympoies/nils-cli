@@ -46,6 +46,7 @@ mod integration {
     mod provider_registry;
     mod rate_limit_gate;
     mod read_metadata;
+    mod release_lifecycle;
     mod repo_bootstrap;
     mod repo_bootstrap_github;
     mod repo_bootstrap_gitlab;

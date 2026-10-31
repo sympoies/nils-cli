@@ -1,4 +1,5 @@
-//! Repository-bound release creation and asset upload.
+//! Repository-bound GitHub releases and assets.
+mod lifecycle;
 use super::github_write::{self as write, invalid};
 use crate::backend::{BackendCall, BackendProgram};
 use crate::cli::{GlobalFlags, ReleaseCommand};
@@ -21,9 +22,14 @@ pub fn run(
     command: ReleaseCommand,
     format: OutputFormat,
 ) -> Result<i32, ForgeError> {
+    let command = match command {
+        ReleaseCommand::Create(_) | ReleaseCommand::Upload(_) => command,
+        command => return lifecycle::run(global, command, format),
+    };
     let op = match &command {
         ReleaseCommand::Create(_) => "release.create",
         ReleaseCommand::Upload(_) => "release.upload",
+        _ => unreachable!("lifecycle commands dispatched above"),
     };
     let ctx = write::target(global, op)?;
     let mut argv = vec![OsString::from("release")];
@@ -82,6 +88,7 @@ pub fn run(
             argv.extend(assets);
             (args.tag, args.assets.len())
         }
+        _ => unreachable!("lifecycle commands dispatched above"),
     };
     ctx.push_repo_override(&mut argv);
     let call = BackendCall::new(BackendProgram::Gh, argv);

@@ -15,6 +15,9 @@ use crate::error::ForgeError;
 use crate::ops;
 use crate::provider::ProviderHint;
 
+mod release;
+pub use release::*;
+
 mod security;
 pub use security::*;
 
@@ -279,49 +282,6 @@ pub enum Command {
     Completion(CompletionArgs),
 }
 
-#[derive(Args, Debug)]
-pub struct ReleaseArgs {
-    #[command(subcommand)]
-    pub command: ReleaseCommand,
-}
-#[derive(Subcommand, Debug)]
-pub enum ReleaseCommand {
-    /// Create a release with explicit title and notes.
-    Create(ReleaseCreateArgs),
-    /// Upload files to an existing release.
-    Upload(ReleaseUploadArgs),
-}
-#[derive(Args, Debug)]
-pub struct ReleaseCreateArgs {
-    pub tag: String,
-    #[arg(long)]
-    pub title: String,
-    /// Markdown notes file; use - to read stdin.
-    #[arg(long)]
-    pub notes_file: String,
-    #[arg(long)]
-    pub target: Option<String>,
-    #[arg(long)]
-    pub verify_tag: bool,
-    #[arg(long)]
-    pub draft: bool,
-    #[arg(long)]
-    pub prerelease: bool,
-    /// Explicitly mark (or do not mark) this release as latest.
-    #[arg(long)]
-    pub latest: Option<bool>,
-    /// Optional release asset files.
-    pub assets: Vec<PathBuf>,
-}
-#[derive(Args, Debug)]
-pub struct ReleaseUploadArgs {
-    pub tag: String,
-    #[arg(required = true)]
-    pub assets: Vec<PathBuf>,
-    /// Replace existing release assets with the same name.
-    #[arg(long)]
-    pub clobber: bool,
-}
 #[derive(Args, Debug)]
 pub struct WorkflowArgs {
     #[command(subcommand)]

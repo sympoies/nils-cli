@@ -49,10 +49,21 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
     let read = Effect::ReadOnly;
     let mutation = Effect::Mutation;
     match &cli.command {
+        Some(Command::Release(crate::cli::ReleaseArgs {
+            command: ReleaseCommand::View(_),
+        })) => (
+            "release.view",
+            read,
+            network,
+            vec!["provider", "identity_policy"],
+        ),
         Some(Command::Release(args)) => (
             match args.command {
                 ReleaseCommand::Create(_) => "release.create",
                 ReleaseCommand::Upload(_) => "release.upload",
+                ReleaseCommand::Edit(_) => "release.edit",
+                ReleaseCommand::Delete(_) => "release.delete",
+                ReleaseCommand::View(_) => unreachable!("read handled above"),
             },
             mutation,
             ProviderEffect::NetworkWrite,

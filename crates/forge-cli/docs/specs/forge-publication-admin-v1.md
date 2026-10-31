@@ -31,6 +31,84 @@ GitHub-only repository writes; both return `provider`, `repository`, `tag`,
   of every asset. A create URL comes from backend stdout; upload has no URL
   when the backend supplies none.
 
+### `release view` / `release edit` / `release delete`
+
+These operations support GitHub only and require one literal tag selector.
+Repository and authority come from `--repo`/`--host` or the selected remote;
+provider response URLs never choose mutation targets. Revision expressions,
+`refs/` prefixes, option-like selectors, URL escapes and unsafe Git ref names
+are refused with `release_tag_invalid` before provider calls.
+
+- `release view <tag>` is `read_only` / `network_read` and uses `api_read`
+  identity. Published releases use the REST tag lookup; after a 404, an exact
+  GraphQL pending-tag lookup resolves drafts and reads their REST database ID.
+
+  Its `cli.forge-cli.release.view.v1` data contains `provider`,
+  `repository`, `release_id`, `tag`, `url`, nullable `title`,
+  `target_commitish`, `target_commit`, `draft`, `prerelease`, `notes`, and
+  `assets: [{name, size, digest}]`. `digest` is the provider value or `null`
+  when omitted; no local digest is invented. Text output includes these values.
+  Exact tag refs are resolved through commit objects and annotated tag objects,
+  with at most 16 resolution steps. A draft without a tag resolves its
+  `target_commitish` through the commit API. A branch name is never reported as
+  a commit SHA. A published release without a resolvable tag fails with
+  `release_target_unresolved`.
+- `release edit <tag> --notes-file <path|-> [--title <title>]` replaces notes
+  and optionally the title. It returns the same fields under
+  `cli.forge-cli.release.edit.v1` after independent readback. Guarded UTF-8
+  notes and title travel literally in a scoped JSON file using `gh api --input`;
+  stdin is supported and content stays out of argv and dry-run plans. PATCH
+  includes only `body` and, when requested, `name`. Readback verifies release
+  identity, notes/title, target, draft/prerelease state and assets. It also
+  resolves the tag again and refuses a changed target. Omitted title is preserved.
+- `release delete <tag> [--cleanup-tag] [--allow-version-tag]` deletes the
+  selected release by its verified database ID. It verifies absence at both
+  that ID and the exact tag's release lookup. Only `--cleanup-tag` permits a
+  subsequent DELETE of `refs/tags/<tag>`; it never deletes branches or separate
+  assets. Before cleanup, the exact ref/object must still match preflight;
+  after cleanup the exact ref must be absent. A tag already absent at both
+  reads needs no DELETE. `cli.forge-cli.release.delete.v1` success data contains
+  `provider`, `repository`, `release_id`, `tag`, `release_deleted: true`, and
+  `tag_deleted` (true only when cleanup was requested and absence verified).
+
+The fixed deletion guard protects canonical **SemVer 2.0.0** tags with one
+optional lowercase `v`: three dot-separated decimal components without leading
+zeroes (except zero), optional `-` prerelease identifiers, and optional `+` build
+identifiers. Identifiers are nonempty dot-separated ASCII alphanumeric/hyphen
+strings; numeric prerelease identifiers have no leading zeroes. Numeric build
+identifiers may have leading zeroes. For example, `v1.2.3`, `1.2.3-rc.1`, and
+`v1.2.3+build.07` require `--allow-version-tag` **before any provider call**,
+even without cleanup or under dry-run. That flag permits release deletion;
+`--cleanup-tag` separately permits tag removal. Ordinary evidence-style tags
+need no version override. There is no configurable tag-pattern engine.
+
+Edit/delete are `mutation` / `network_write` with `api_write` identity, including
+preflight and verification reads. Unknown/inaccessible tag releases yield
+`DATA 65` / `release_not_found` with repository/tag/access guidance. Protected
+tags yield `release_version_tag_protected` (`DATA 65`). Invalid response identity
+or malformed snapshots fail before mutation. Provider request/status failures
+remain errors. Release absence requires HTTP 404 for the selected ID and
+published tag lookup plus a successful GraphQL lookup with no release at that
+tag. Tag absence requires HTTP 404 for the exact ref. A failed process,
+permission error, network failure or unparseable readback never proves absence.
+
+After a write, `release_edit_failed`, `release_delete_failed`,
+`release_cleanup_failed`, `release_readback_failed` or `release_readback_mismatch`
+yields `UNAVAILABLE 69`. Details supply `next_action` and do not recommend blind
+mutation retries. Delete error details include `release_deleted` and
+`tag_deleted`: these indicate **verified absence**, not guesses about an
+uncertain write outcome. Release deletion verified before a tag cleanup failure
+is reported as partial (`release_deleted: true`, `tag_deleted: false`). A failed
+release verification prevents tag cleanup. Writes are never automatically
+replayed. Preflight/readback checks are not atomic compare-and-swap; concurrent
+provider changes remain possible between calls.
+
+Offline `--dry-run` validates selectors, version protection and local payloads,
+then emits `plan` plus ordered `follow_up` plans without credentials/actor probes
+or provider calls. Unresolved release IDs, conditional draft discovery and annotated-tag reads
+are explicit placeholders. Dry-run does not establish release existence,
+permissions or readback success.
+
 ### `workflow dispatch`
 
 `workflow dispatch <workflow-id|file.yml|file.yaml> --ref <branch|tag>
