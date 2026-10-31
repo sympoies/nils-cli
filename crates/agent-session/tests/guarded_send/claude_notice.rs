@@ -685,11 +685,13 @@ fn claude_notice_without_provider_transcript_refuses_distinctly_and_claims_nothi
     assert_eq!(details["submitted"], false);
     assert!(peer.text.lock().unwrap().is_empty());
     let sessions = fixture.root().join("state/sessions/guarded");
-    assert!(!fs::read_dir(&sessions).unwrap().any(|entry| entry
-        .unwrap()
-        .file_name()
-        .to_string_lossy()
-        .starts_with("send-key-")));
+    assert!(!fs::read_dir(&sessions).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("send-key-")
+    }));
     assert!(
         !fixture
             .root()
