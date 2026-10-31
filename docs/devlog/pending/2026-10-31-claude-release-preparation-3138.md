@@ -9,7 +9,9 @@
 
 ### Why / context
 
-- Candidate code runs on a read-only runner; a fresh publication runner validates source/registry evidence and regenerates the allowed patch. Clearing a child environment alone does not isolate a parent action write token.
+- Candidate code runs on a read-only runner; a fresh publication runner validates source/registry evidence and
+  regenerates the allowed patch. Clearing a child environment alone does not isolate a parent action write
+  token.
 
 - Contract checks alone cannot establish native delivery; each candidate
   retains native acceptance PENDING and exact-version native and reviewed merge
@@ -18,7 +20,8 @@
 
 ### Evidence
 
-- The read-only job boundary fixture failed against the original write-capable job before repair. Nineteen fixtures now cover that split and rejection of stale or injected artifact fields/content.
+- The read-only job boundary fixture failed against the original write-capable job before repair. Nineteen
+  fixtures now cover that split and rejection of stale or injected artifact fields/content.
 
 - Fixture acceptance covers discovery, integrity, child isolation, in-range
   no-op, passing drafts, failures, unavailable creation, deduplication and
