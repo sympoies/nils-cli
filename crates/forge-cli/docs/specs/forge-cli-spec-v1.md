@@ -395,6 +395,12 @@ backend mapping, validation rules, and output schema versions.
 
 See [publication and administration](forge-publication-admin-v1.md#release-create--release-upload) for this contract.
 
+### `release view` / `release edit` / `release delete`
+
+See [release lifecycle operations](forge-publication-admin-v1.md#release-view--release-edit--release-delete)
+for resolved target commits, guarded notes editing, version-tag protection,
+explicit tag cleanup, verified readback, identity and failure contracts.
+
 ### `run rerun`
 
 See [workflow run reruns](forge-run-rerun-v1.md) for identity-scoped GitHub
