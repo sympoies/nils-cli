@@ -179,9 +179,8 @@ jobs:
 
   merge:
     name: Merge green dependabot bump
-    # Gate on the CI workflow's own conclusion rather than `gh pr merge --auto`:
-    # main carries no required status checks, so an auto-merge would land the
-    # bump before CI ever reported.
+    # The triggering CI must describe the exact head. Canonical forge admission
+    # additionally owns current review/ledger, required-check and queue gates.
     if: >-
       github.event.workflow_run.name == 'CI'
       && github.event.workflow_run.event == 'pull_request'
@@ -209,9 +208,30 @@ jobs:
           app-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
 
+      - name: Check out trusted admission owner
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository }}
+          # workflow_run executes the default-branch workflow. Never use the
+          # triggering PR's head_sha/ref for executable admission code.
+          ref: ${{ github.workflow_sha }}
+          token: ${{ steps.bot_token.outputs.token }}
+          persist-credentials: false
+
+      - name: Build canonical admission owner
+        env:
+          CARGO_BUILD_JOBS: 4
+          CARGO_TARGET_DIR: ${{ runner.temp }}/forge-target
+        run: |
+          set -euo pipefail
+          source scripts/dev-env.sh
+          cargo build --locked -p nils-forge-cli
+
       - name: Squash merge the bump
         env:
           GH_TOKEN: ${{ steps.bot_token.outputs.token }}
+          BOT_APP_SLUG: ${{ steps.bot_token.outputs.app-slug }}
+          FORGE_BIN: ${{ runner.temp }}/forge-target/debug/forge-cli
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           REPO: ${{ github.repository }}
@@ -246,4 +266,38 @@ jobs:
             exit 0
           fi
 
-          gh pr merge "${number}" --repo "${REPO}" --squash
+          # The PR author stays Dependabot even after a maintainer pushes an
+          # integration commit. Only verified automation heads stay on this
+          # route; human or unknown attribution belongs to steward delivery.
+          # GitHub's signed API commits use web-flow as the committer. The
+          # artifact App's public identity comes from the token action, never
+          # from a private account or a machine's Git configuration.
+          if [ -z "${BOT_APP_SLUG}" ]; then
+            echo "Missing artifact App identity; use steward-managed delivery."
+            exit 1
+          fi
+          commit_json="$(gh api "repos/${REPO}/commits/${HEAD_SHA}")"
+          if ! printf '%s' "${commit_json}" | jq -e \
+            --arg head "${HEAD_SHA}" --arg app "${BOT_APP_SLUG}[bot]" '
+              .sha == $head and .commit.verification.verified == true
+              and .author.type == "Bot"
+              and (.author.login == "dependabot[bot]" or .author.login == $app)
+              and .committer.type == "User" and .committer.login == "web-flow"
+            ' >/dev/null; then
+            echo "Head attribution is not verified automation; use steward-managed delivery."
+            exit 0
+          fi
+
+          # Aggregate reviewDecision may retain an approval from an older head.
+          # The existing designated owner checks the exact native APPROVED
+          # publication and its ledger, including governed COMMENTED blockers.
+          # Do not write, recreate or disposition review state in this workflow.
+          "${FORGE_BIN}" --provider github --repo "${REPO}" --format json \
+            pr review-handoff check "${number}" --expected-head "${HEAD_SHA}" \
+            --approval-policy final-approval
+
+          # Re-read canonical review/ledger/native state and required checks,
+          # then bind queue/merge to this same CI head through the owner CAS.
+          "${FORGE_BIN}" --provider github --repo "${REPO}" \
+            pr merge "${number}" --method squash --expected-head "${HEAD_SHA}" \
+            --review-convergence
