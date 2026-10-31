@@ -150,7 +150,9 @@ access as on `2.1.314`. The run showed: a gate-enabled fresh launch mounted the
 module, a notice after an ordinary turn was delivered as a plugin-attributed row
 with zero Enter presses and a repeated key was refused, a restart mounted a new
 incarnation and delivered a fresh-key notice, and a gate-off launch recorded
-`writers-disabled`. A native run on `2.1.314` showed the same
+`writers-disabled`
+([#3136](https://github.com/sympoies/nils-cli/issues/3136#issuecomment-6541042426)).
+A native run on `2.1.314` showed the same
 ([#3136](https://github.com/sympoies/nils-cli/issues/3136#issuecomment-6538469717)).
 Those runs did not exercise other releases inside the range, long or non-ASCII
 bodies, busy-turn delivery or Console rendering.
