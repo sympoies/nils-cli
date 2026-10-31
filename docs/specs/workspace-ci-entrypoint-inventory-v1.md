@@ -119,6 +119,7 @@ records the keep/delete decision plus the active caller evidence.
 | `scripts/ci/markdownlint-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` docs-only and full passes |
 | `scripts/ci/nils-cli-checks-entrypoint.sh` | keep | `.github/workflows/ci.yml` Linux `test` job and shared full-validation jobs + `docs/runbooks/workspace-maintenance-reference.md` local-fast and CI/full commands |
 | `scripts/ci/nils-cli-local-fast.sh` | keep | `scripts/ci/nils-cli-checks-entrypoint.sh --local-fast` delegates changed-scope planning/execution here |
+| `scripts/ci/own-compat-audit.sh` | keep | `scripts/ci/nils-cli-verification.sh` full pass + `scripts/ci/nils-cli-local-fast.sh` + `scripts/ci/nils-cli-scoped-checks.sh` + `scripts/ci/prepare-release-bump.sh` (`--release`) + `scripts/ci/tests/own-compat-audit.test.sh` |
 | `scripts/ci/publish-order-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step + `scripts/ci/tests/publish-order-audit.test.sh` |
 | `scripts/ci/release-tarball-third-party-audit.sh` | keep | `.github/workflows/release.yml` `build` job |
 | `scripts/ci/release-only-checks.sh` | keep | exact-base reduced PR lane in `.github/workflows/ci.yml` Linux `test` job + `scripts/ci/tests/release-workflow-contract.test.sh` |
