@@ -58,6 +58,7 @@ pub struct Limits {
     pub max_bytes: usize,
     pub max_chars: usize,
     pub max_redirects: usize,
+    /// Requested provider generation limit, not a guaranteed aggregate billing cap.
     pub max_output_tokens: u32,
     pub max_tool_uses: u32,
 }

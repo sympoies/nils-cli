@@ -304,3 +304,21 @@ fn serve_bind_failure_uses_a_structured_cli_runtime_error() {
     assert_eq!(wire["schema_version"], "cli.research-cli.error.v1");
     assert_eq!(wire["error"]["code"], "bind-error");
 }
+
+#[tokio::test]
+async fn http_and_cli_contract_preserve_usage_on_provider_output_overrun() {
+    let (engine, _) = support::engine(Provider::Anthropic, "output-overrun");
+    let mut request = Request::new(Operation::Search, "example", Provider::Anthropic);
+    request.limits.max_output_tokens = 128;
+    let expected = engine.execute(request.clone()).await;
+    assert_eq!(exit_code(&expected), 1);
+    let (status, actual) = http(engine, "/v1/search", serde_json::to_value(request).unwrap()).await;
+    assert_eq!(status, 502);
+    assert_eq!(actual["error"]["code"], "provider-output-limit");
+    assert_eq!(actual["data"]["usage"]["raw"]["output_tokens"], 129);
+    assert_eq!(actual["data"]["truncated"], true);
+    assert_eq!(
+        without_time(actual),
+        without_time(serde_json::to_value(expected).unwrap())
+    );
+}

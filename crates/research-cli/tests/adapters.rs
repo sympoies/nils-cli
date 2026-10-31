@@ -215,3 +215,38 @@ fn anthropic_native_fetch_preserves_only_returned_document_text() {
     assert_eq!(fetched.published_at, None);
     assert_eq!(fetched.final_url, None);
 }
+
+#[tokio::test]
+async fn anthropic_reported_aggregate_overrun_is_an_explicit_partial_failure() {
+    let (engine, transport) = engine(Provider::Anthropic, "output-overrun");
+    let mut request = Request::new(Operation::Search, "example", Provider::Anthropic);
+    request.limits.max_output_tokens = 128;
+    let envelope = engine.execute(request).await;
+    assert!(
+        !envelope.ok,
+        "reported aggregate overrun must not appear as success"
+    );
+    assert_eq!(
+        envelope.error.as_ref().unwrap().code,
+        "provider-output-limit"
+    );
+    assert_eq!(exit_code(&envelope), 1);
+    let data = envelope.data.unwrap();
+    assert_eq!(data.usage.output_tokens, Some(129));
+    assert_eq!(
+        data.usage.raw,
+        Some(fixture(Provider::Anthropic, "output-overrun")["usage"].clone())
+    );
+    assert!(!data.sources.is_empty());
+    assert!(data.truncated);
+    assert!(data.warnings.iter().any(|w| w.contains("aggregate output") && w.contains("cannot be retroactively capped")));
+    assert_eq!(transport.calls.lock().unwrap().len(), 1);
+
+    let (engine, _) = self::engine(Provider::Anthropic, "output-overrun");
+    let mut equal = Request::new(Operation::Search, "example", Provider::Anthropic);
+    equal.limits.max_output_tokens = 129;
+    assert!(
+        engine.execute(equal).await.ok,
+        "usage equal to the requested limit is allowed"
+    );
+}

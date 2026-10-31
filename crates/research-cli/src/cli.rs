@@ -96,7 +96,7 @@ pub struct LimitArgs {
     /// Maximum redirects per public URL.
     #[arg(long, default_value_t = 5)]
     pub max_redirects: usize,
-    /// Maximum model output tokens (model operations only).
+    /// Requested model output token limit; aggregate usage may exceed it.
     #[arg(long, default_value_t = 1024)]
     pub max_output_tokens: u32,
     /// Maximum uses of each configured server tool.

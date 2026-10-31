@@ -119,6 +119,17 @@ pub fn parse(
             .push("Messages turn incomplete; no paid continuation was attempted".into());
     }
     finish(request, result, &text);
+    let output_overrun = result
+        .usage
+        .output_tokens
+        .is_some_and(|tokens| tokens > u64::from(request.limits.max_output_tokens));
+    if output_overrun {
+        result.truncated = true;
+        result.warnings.push(format!(
+            "Provider reported aggregate output above requested max_output_tokens={}; upstream billed tokens cannot be retroactively capped",
+            request.limits.max_output_tokens
+        ));
+    }
     if !tool_errors.is_empty() {
         result.usage.cost_usd_estimate = None;
         result
@@ -140,6 +151,12 @@ pub fn parse(
     if !tool_errors.is_empty() {
         result.truncated = true;
         result.warnings.push("Server tool use limit reached".into());
+    }
+    if output_overrun {
+        return Err(ResearchError::new(
+            "provider-output-limit",
+            "Provider aggregate output exceeded the requested token limit",
+        ));
     }
     Ok(())
 }

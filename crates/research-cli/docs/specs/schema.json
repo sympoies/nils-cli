@@ -107,7 +107,8 @@
         "max_output_tokens": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 8192
+          "maximum": 8192,
+          "description": "Requested provider generation limit, not a guaranteed aggregate billing cap. Anthropic reported aggregate overruns return provider-output-limit with preserved usage."
         },
         "max_tool_uses": {
           "type": "integer",

@@ -41,7 +41,7 @@ _arguments "${_arguments_options[@]}" : \
 '--max-bytes=[Maximum bytes read per URL or provider response]:MAX_BYTES:_default' \
 '--max-chars=[Maximum aggregate prose characters returned]:MAX_CHARS:_default' \
 '--max-redirects=[Maximum redirects per public URL]:MAX_REDIRECTS:_default' \
-'--max-output-tokens=[Maximum model output tokens (model operations only)]:MAX_OUTPUT_TOKENS:_default' \
+'--max-output-tokens=[Requested model output token limit; aggregate usage may exceed it]:MAX_OUTPUT_TOKENS:_default' \
 '--max-tool-uses=[Maximum uses of each configured server tool]:MAX_TOOL_USES:_default' \
 '--format=[Primary output format]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
@@ -56,7 +56,7 @@ _arguments "${_arguments_options[@]}" : \
 '--max-bytes=[Maximum bytes read per URL or provider response]:MAX_BYTES:_default' \
 '--max-chars=[Maximum aggregate prose characters returned]:MAX_CHARS:_default' \
 '--max-redirects=[Maximum redirects per public URL]:MAX_REDIRECTS:_default' \
-'--max-output-tokens=[Maximum model output tokens (model operations only)]:MAX_OUTPUT_TOKENS:_default' \
+'--max-output-tokens=[Requested model output token limit; aggregate usage may exceed it]:MAX_OUTPUT_TOKENS:_default' \
 '--max-tool-uses=[Maximum uses of each configured server tool]:MAX_TOOL_USES:_default' \
 '--format=[Primary output format]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
@@ -78,7 +78,7 @@ _arguments "${_arguments_options[@]}" : \
 '--max-bytes=[Maximum bytes read per URL or provider response]:MAX_BYTES:_default' \
 '--max-chars=[Maximum aggregate prose characters returned]:MAX_CHARS:_default' \
 '--max-redirects=[Maximum redirects per public URL]:MAX_REDIRECTS:_default' \
-'--max-output-tokens=[Maximum model output tokens (model operations only)]:MAX_OUTPUT_TOKENS:_default' \
+'--max-output-tokens=[Requested model output token limit; aggregate usage may exceed it]:MAX_OUTPUT_TOKENS:_default' \
 '--max-tool-uses=[Maximum uses of each configured server tool]:MAX_TOOL_USES:_default' \
 '--format=[Primary output format]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \

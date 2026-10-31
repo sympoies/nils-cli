@@ -20,6 +20,10 @@ search and brief default to one provider request, one use per configured tool,
 1024 model output tokens, 30 seconds, 256 KiB per response and 16 Ki characters
 of returned prose. Brief with URLs allows Anthropic search and fetch separately;
 OpenAI uses its aggregate `max_tool_calls` limit. There are no automatic retries.
+The requested token limit is a provider generation parameter, not a hard
+aggregate billing cap across hosted tool iterations. An Anthropic-reported
+aggregate output overrun returns an explicit partial failure with raw usage
+preserved; already billed tokens cannot be retroactively capped.
 
 Provider keys come only from `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`. No external
 binary is needed. Rust dependencies include reqwest with rustls, Tokio, axum,

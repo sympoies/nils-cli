@@ -11,9 +11,9 @@ Canonical crate-local specification. Refs #3161.
   maps flags directly to this request.
 - Search and brief require a query. Read-url requires exactly one URL and performs no model request. Brief first reads supplied public
   URLs, then performs at most one provider API request. Keys are environment-only.
-- Limits bound the whole deadline, bytes per response, aggregate prose output characters, redirects, model output tokens, and server tool
-  uses. URL destinations must be public at every redirect; DNS answers are checked and pinned to the connection, and environment proxies
-  are disabled.
+- Limits bound the whole client deadline, bytes per response, aggregate prose output characters and redirects. Provider requests set
+  model generation token limits and server tool-use caps; these are not a guaranteed aggregate billing cap. URL destinations must be
+  public at every redirect; DNS answers are checked and pinned to the connection, and environment proxies are disabled.
 - Success envelopes use `cli.research-cli.<operation>.v1`, `ok`, `data`, and optional envelope `warnings`. Failures retain available
   partial `data` with the same schema plus `error: {code,message,details?}`. Parse errors use `cli.research-cli.error.v1`. No automatic
   retries or model/provider substitution.
@@ -50,6 +50,18 @@ route. Malformed/oversized JSON uses a structured error; the HTTP body limit is 
 limit, 504 = deadline, 502 = upstream failure, 200 = successful or warned partial result. CLI exits: 0 success, 64 syntax, 65 invalid
 request, 69 missing key/unsupported provider capability, 1 runtime/upstream failure. Completion exports bash/zsh from clap; no aliases or
 runtime completion modes.
+
+## Provider output limits
+
+`max_output_tokens` configures the provider generation limit. Hosted tool
+iterations can report larger aggregate output usage; the request parameter
+is not proof of a hard aggregate spend cap. Upstream billed tokens cannot
+be retroactively capped. If Anthropic reports aggregate output above the
+caller limit, the engine returns `provider-output-limit` with `ok: false`,
+`truncated: true`, an explicit warning, and preserved partial data/raw usage.
+The CLI exits 1 and HTTP returns 502. Unknown usage stays unknown; an overrun
+is never hidden by clipping the reported token count or its cost estimate.
+No paid retry, guessed per-iteration split or provider/model fallback occurs.
 
 ## Provider synthesis
 
