@@ -142,7 +142,9 @@ probe: `2.1.296` through `2.1.314` inclusive. The launch strictly parses
 numerically. An unreadable or unparseable version is unsupported. The probed
 version is recorded in the module bootstrap; the module and readiness compare
 the provider's reported version to it, and a provider row must carry the bound
-version. The range never widens at runtime. The upper bound is raised only by a
+version.
+
+The range never widens at runtime. The upper bound is raised only by a
 reviewed change that cites the module call-shape scan, `claude plugin validate`
 and a native notice run on that exact release; moving the lower bound would make
 older private ledger records unreadable and needs its own review. Sessions
