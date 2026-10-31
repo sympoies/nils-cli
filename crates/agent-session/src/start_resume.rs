@@ -312,6 +312,15 @@ fn matching_sources(
                 .map_err(|_| refusal("resume-source-unknown"))?;
             Ok::<_, CliError>(record)
         };
+        // A directory with no record cannot be a source; a present record
+        // that cannot be read or validated still refuses.
+        if matches!(
+            fs::symlink_metadata(entry.path().join("session.json")),
+            Err(e) if e.kind() == io::ErrorKind::NotFound
+        ) {
+            eprintln!("warning: skipped session directory without session.json: {source_id}");
+            continue;
+        }
         let observed = read()?;
         let matches = |r: &SessionRecord| {
             r.agent == agent.as_str()
@@ -367,7 +376,7 @@ fn admit(
                 // admission needs one exact file, even when copies share cwd.
                 let mut matches = std::collections::BTreeSet::new();
                 let mut budget = nils_provider_resume::ClaudeResumeScanBudget::from_env();
-                nils_provider_resume::collect_claude_provider_resume_matches(
+                nils_provider_resume::collect_claude_named_resume_matches(
                     &config_dir.join("projects"),
                     id,
                     &mut matches,
