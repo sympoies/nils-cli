@@ -49,7 +49,7 @@ pub(super) fn sender_origin_metadata(sender_id: &str, generation: &str) -> Optio
 pub(crate) fn is_service_sender(id: &str) -> bool {
     id.starts_with(SENDER_PREFIX)
 }
-fn valid_selector(value: &str) -> bool {
+pub(crate) fn valid_selector(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && value
@@ -83,6 +83,18 @@ pub(crate) struct Submit {
     pub expected_recipient_incarnation: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<cli::MessageCategory>,
+}
+
+/// Credentials admitted for mailbox submission; an unreadable document admits none.
+pub(crate) fn admitted_tokens(admission_file: Option<&Path>) -> Vec<String> {
+    let admission = admission_file
+        .and_then(|file| read_private_file(file, 32 * 1024).ok())
+        .and_then(|bytes| serde_json::from_slice::<Admission>(&bytes).ok());
+    admission
+        .into_iter()
+        .flat_map(|admission| admission.services)
+        .filter_map(|entry| credential(&entry.credential_file).ok())
+        .collect()
 }
 
 pub(crate) fn unauthorized() -> CliError {

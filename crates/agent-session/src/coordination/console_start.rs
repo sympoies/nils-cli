@@ -21,6 +21,7 @@ use crate::{CliContext, CliError};
 pub(crate) mod diagnostics;
 mod operation;
 mod retention;
+pub(crate) mod service;
 mod start_args;
 mod start_failure;
 pub(crate) use start_args::{OperationArgs, render_text, start_args};
@@ -154,6 +155,7 @@ fn forwarded(code: Option<&str>, message: &Value) -> CliError {
     let message = bounded_line(message).unwrap_or("the console start request failed");
     match code {
         INVALID_CODE
+        | "console-start-service-invalid"
         | "console-start-operation-conflict"
         | "console-start-operation-not-found"
         | "console-start-operation-expired"
@@ -173,6 +175,10 @@ fn forwarded(code: Option<&str>, message: &Value) -> CliError {
         | "launch-env-key-duplicate"
         | "launch-env-assignment-invalid" => CliError::usage(code, message, None),
         "coordination-unauthorized"
+        | "console-start-service-unauthorized"
+        | "console-start-service-owner-denied"
+        | "console-start-service-target-denied"
+        | "console-start-service-expired"
         | "delegation-unauthorized"
         | "delegation-scope-denied"
         | "delegation-expired"
@@ -304,7 +310,7 @@ pub(crate) fn relay_route(
     if !operation::valid_id(&operation) {
         return Err(invalid());
     }
-    diagnostics::run(&operation, || {
+    diagnostics::run(&operation, false, || {
         relay_operation(context, federation, session, token, body, &operation)
     })
 }
@@ -327,6 +333,10 @@ fn relay_operation(
     let Some(config) = federation else {
         return Err(disabled());
     };
+    let scope = operation::Scope::Session {
+        caller: session,
+        incarnation: &incarnation,
+    };
     if body["reconcile"] == true {
         if body
             .as_object()
@@ -334,31 +344,25 @@ fn relay_operation(
         {
             return Err(invalid());
         }
-        let (receipt, _) = operation::Receipt::begin(
-            context,
-            session,
-            &incarnation,
-            operation_id,
-            body,
-            &config.machine,
-            &caller.created_at,
-        )?;
-        return receipt.reconcile(config, session, &incarnation);
+        let origin = operation::Origin::session(session, &incarnation, &caller.created_at, false);
+        let (receipt, _) =
+            operation::Receipt::begin(context, &origin, operation_id, body, &config.machine)?;
+        return receipt.reconcile(config, &scope);
     }
     let (machine, lineage, child) = checked_request(body).ok_or_else(invalid)?;
     lineage::require_root_for_role(lineage.role.as_deref(), !lineage.no_parent)?;
     let mut child = child_session(&config.machine, &caller, &lineage, child)?;
+    let origin =
+        operation::Origin::session(session, &incarnation, &caller.created_at, lineage.no_parent);
     let (mut receipt, submit) = operation::Receipt::begin(
         context,
-        session,
-        &incarnation,
+        &origin,
         operation_id,
         body,
         machine.unwrap_or(&config.machine),
-        &caller.created_at,
     )?;
     if !submit {
-        return receipt.reconcile(config, session, &incarnation);
+        return receipt.reconcile(config, &scope);
     }
     let result = (|| {
         if child.contains_key("resume") {
@@ -377,38 +381,45 @@ fn relay_operation(
             );
             child.insert("claude_account".into(), data["account"].clone());
         }
-        relay_create(config, session, &incarnation, machine, child, operation_id)
+        let source = json!({"source_session_id": session, "source_incarnation": incarnation});
+        relay_create(config, source, machine, child, operation_id)
     })();
     if receipt.finish(context, &result).is_err() {
-        let mut error = unavailable(
-            "operation_receipt",
-            "persist_failed",
-            "the start outcome could not be recorded; reconcile before retrying",
-            false,
-            false,
-        );
-        if let Ok(value) = &result {
-            error.details_mut().as_mut().unwrap()["created_session_id"] =
-                value["session"]["id"].clone();
-        }
-        return Err(error);
+        return Err(persist_failed(&result));
     }
     result
 }
 
+/// The start outcome could not be recorded; a created session stays named.
+fn persist_failed(result: &Result<Value, CliError>) -> CliError {
+    let mut error = unavailable(
+        "operation_receipt",
+        "persist_failed",
+        "the start outcome could not be recorded; reconcile before retrying",
+        false,
+        false,
+    );
+    if let Ok(value) = result {
+        error.details_mut().as_mut().unwrap()["created_session_id"] =
+            value["session"]["id"].clone();
+    }
+    error
+}
+
+/// `source` names who asks: the caller's session members, or an admitted
+/// service's selectors and owner. Its members are merged into the request.
 fn relay_create(
     config: &Config,
-    session: &str,
-    incarnation: &str,
+    source: Value,
     machine: Option<&str>,
     child: Map<String, Value>,
     operation_id: &str,
 ) -> Result<Value, CliError> {
-    let mut request = json!({
-        "source_session_id": session,
-        "source_incarnation": incarnation,
-        "session": child,
-    });
+    let mut request = json!({ "session": child });
+    request
+        .as_object_mut()
+        .expect("request object")
+        .extend(source.as_object().expect("source object").clone());
     if let Some(machine) = machine {
         request["machine"] = json!(machine);
     }
@@ -514,24 +525,20 @@ fn cli_operation(
         machine,
         session,
         lineage,
-        options.reconcile,
+        options,
         &operation_id,
     )
 }
 
-fn cli_request(
+/// The managed caller's runtime or delegation credential and its session id.
+fn managed_caller(
     context: &CliContext,
     capability_file: Option<&Path>,
-    machine: Option<&str>,
-    session: Value,
-    lineage: &ChildLineage,
-    reconcile: bool,
-    operation_id: &str,
-) -> Result<Value, CliError> {
+) -> Result<(String, String), CliError> {
     let unmanaged = || {
         CliError::usage(
             "console-start-unmanaged",
-            "--via-console requires a managed caller or a worker delegation",
+            "--via-console requires a managed caller, a worker delegation, or an admitted service",
             None,
         )
     };
@@ -558,6 +565,29 @@ fn cli_request(
         super::authenticate_token(context, &caller, &token)?;
         caller
     };
+    Ok((token, caller))
+}
+
+fn cli_request(
+    context: &CliContext,
+    capability_file: Option<&Path>,
+    machine: Option<&str>,
+    session: Value,
+    lineage: &ChildLineage,
+    options: &OperationArgs,
+    operation_id: &str,
+) -> Result<Value, CliError> {
+    let reconcile = options.reconcile;
+    // A service presents its own credential to a service route; a managed
+    // caller (or its delegation) to its own session's route.
+    let service = options.service.admitted();
+    let (token, caller) = match &service {
+        Some(service) => (service::credential(service.credential_file)?, None),
+        None => {
+            let (token, caller) = managed_caller(context, capability_file)?;
+            (token, Some(caller))
+        }
+    };
     let resuming = session.get("resume").is_some();
     let route = if resuming {
         "console-resume"
@@ -573,6 +603,15 @@ fn cli_request(
             true,
         )
     })?;
+    let service_route = ["coordination", "services", "console-start", "v1"];
+    let session_route;
+    let segments: &[&str] = match &caller {
+        Some(caller) => {
+            session_route = ["sessions", caller.as_str(), route, "v1"];
+            &session_route
+        }
+        None => &service_route,
+    };
     url.path_segments_mut()
         .map_err(|_| {
             unavailable(
@@ -584,26 +623,32 @@ fn cli_request(
             )
         })?
         .pop_if_empty()
-        .extend(["sessions", caller.as_str(), route, "v1"]);
+        .extend(segments);
     let requested_pinned = session["title_mode"] == "pinned";
     let requested_launch_env = crate::launch_env::from_json(session.get("launch_env"))?;
-    let mut request = json!({ "session": session });
-    if let Some(machine) = machine {
-        request["machine"] = json!(machine);
-    }
-    if lineage.no_parent {
-        request["no_parent"] = json!(true);
-    }
-    if let Some(work) = lineage.work.to_request_json() {
-        request["work"] = work;
-    }
-    if let Some(role) = &lineage.role {
-        request["role"] = json!(role);
-    }
-    request["operation_id"] = json!(operation_id);
-    if reconcile {
-        request = json!({"operation_id":operation_id,"reconcile":true});
-    }
+    let request = match &service {
+        Some(service) => service::cli_body(service, machine, session, operation_id, reconcile)?,
+        None => {
+            let mut request = json!({ "session": session });
+            if let Some(machine) = machine {
+                request["machine"] = json!(machine);
+            }
+            if lineage.no_parent {
+                request["no_parent"] = json!(true);
+            }
+            if let Some(work) = lineage.work.to_request_json() {
+                request["work"] = work;
+            }
+            if let Some(role) = &lineage.role {
+                request["role"] = json!(role);
+            }
+            request["operation_id"] = json!(operation_id);
+            if reconcile {
+                request = json!({"operation_id":operation_id,"reconcile":true});
+            }
+            request
+        }
+    };
     let response = client()?
         .post(url)
         .bearer_auth(&token)

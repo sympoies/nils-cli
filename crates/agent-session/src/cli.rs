@@ -1715,6 +1715,11 @@ pub struct ServeArgs {
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub mailbox_services_file: Option<PathBuf>,
 
+    /// Private, reference-only Console-start service admission document. Disabled when omitted.
+    /// Falls back to AGENT_SESSION_CONSOLE_START_SERVICES_FILE. Re-read on each request.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub console_start_services_file: Option<PathBuf>,
+
     /// Machine identity reported in responses. Falls back to
     /// AGENT_SESSION_MACHINE, then --host, then the short hostname.
     #[arg(long, value_name = "NAME")]

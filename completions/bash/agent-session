@@ -3292,7 +3292,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__serve)
-            opts="-h --bind --token --token-stdin --mailbox-services-file --machine --allow-non-loopback --board --tmux-bin --config --check --format --state-dir --host --help"
+            opts="-h --bind --token --token-stdin --mailbox-services-file --console-start-services-file --machine --allow-non-loopback --board --tmux-bin --config --check --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3307,6 +3307,21 @@ _agent__session() {
                     return 0
                     ;;
                 --mailbox-services-file)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --console-start-services-file)
                     local oldifs
                     if [ -n "${IFS+x}" ]; then
                         oldifs="$IFS"
@@ -3378,7 +3393,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__start)
-            opts="-h --resume --check-resume --workspace --agent --cwd --title --id --prompt --prompt-file --prompt-stdin --notice-kind --notice-source --notice-id --tmux-bin --agent-bin --agent-arg --env --coordination-mode --paste-delay-ms --via-console --operation-id --reconcile --machine --account --agent-profile --no-parent --role --title-mode --forge-initiator --program --issue --no-inherit-work --format --state-dir --host --help"
+            opts="-h --resume --check-resume --workspace --agent --cwd --title --id --prompt --prompt-file --prompt-stdin --notice-kind --notice-source --notice-id --tmux-bin --agent-bin --agent-arg --env --coordination-mode --paste-delay-ms --via-console --operation-id --reconcile --service --service-generation --credential-file --owner --expires-at --machine --account --agent-profile --no-parent --role --title-mode --forge-initiator --program --issue --no-inherit-work --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3489,6 +3504,37 @@ _agent__session() {
                     return 0
                     ;;
                 --operation-id)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --service)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --service-generation)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --credential-file)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --owner)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expires-at)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
