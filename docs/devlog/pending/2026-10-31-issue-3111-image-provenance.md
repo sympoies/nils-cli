@@ -15,6 +15,9 @@
   correlation; matching bytes, display names and working-directory read
   permission cannot. References hash owned storage identity without adding
   download authority or rewriting provider inputs.
+- Explicit nonhuman Claude markers do not prove user attachment origin;
+  nested tool-result provenance remains independently provable without
+  changing carrier visibility or typed-parts suppression.
 
 ### Evidence
 
@@ -23,6 +26,10 @@
   history image route suite passes all 20 tests, including ownership refusals,
   captions, pagination, parts parity, independent uploads and response caps.
   Native provider/client acceptance remains separately scheduled.
+- Review repair captured three fresh failures for explicit system,
+  compact-summary and transcript-only image carriers before the metadata-only
+  guard. The original positive provenance and Claude upload acceptance remain
+  in the affected-package validation.
 
 ### Links
 

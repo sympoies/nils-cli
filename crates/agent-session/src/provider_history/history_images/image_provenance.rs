@@ -25,7 +25,12 @@ pub(super) fn origins(provider: &str, value: &Value) -> Vec<Option<ImageOrigin>>
             _ => return Vec::new(),
         },
         "claude" if value["type"] == "user" && value["message"]["role"] == "user" => {
-            Some(UserAttachment)
+            // Claude can carry nonhuman context in a user envelope. Keep its
+            // image visibility, but only nested tool blocks prove an origin.
+            (value["promptSource"] != "system"
+                && value["isCompactSummary"] != true
+                && value["isVisibleInTranscriptOnly"] != true)
+                .then_some(UserAttachment)
         }
         "claude" if value["type"] == "assistant" && value["message"]["role"] == "assistant" => None,
         "claude" if claude_queued_prompt_blocks(value).is_some() => Some(UserAttachment),

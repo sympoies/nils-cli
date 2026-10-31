@@ -329,3 +329,44 @@ async fn correlated_metadata_respects_the_parts_byte_cap() {
     assert!(message["images"][0]["attachment_ref"].is_string());
     assert!(serde_json::to_vec(&message["parts"]).unwrap().len() <= 64 * 1024);
 }
+
+async fn assert_nonhuman_claude_image_origin(marker: &str, value: Value) {
+    let fixture = Fixture::for_provider("claude");
+    let image =
+        json!({"type":"image","source":{"type":"base64","media_type":"image/png","data":PNG}});
+    let mut row = json!({"type":"user","sessionId":"own-provider","cwd":fixture._temp.path(),
+        "uuid":"nonhuman-image-row","version":"2.1.312","isSidechain":false,"isMeta":null,
+        "message":{"role":"user","content":[image,
+            {"type":"tool_result","tool_use_id":"read","content":[image]}]}});
+    row[marker] = value;
+    fixture.row(row);
+    let page = fixture.refresh().await;
+    let message = &page["data"]["messages"][0];
+    let images = message["images"].as_array().unwrap();
+    assert_eq!(images.len(), 2, "retain the existing image-bearing carrier");
+    assert!(
+        images[0].get("origin").is_none(),
+        "{marker} is not user provenance"
+    );
+    assert_eq!(images[1]["origin"], "tool_result");
+    assert_eq!(
+        message["parts"],
+        json!([]),
+        "retain existing nonhuman parts suppression"
+    );
+}
+
+#[tokio::test]
+async fn nonhuman_claude_system_source_omits_user_origin() {
+    assert_nonhuman_claude_image_origin("promptSource", json!("system")).await;
+}
+
+#[tokio::test]
+async fn nonhuman_claude_compact_summary_omits_user_origin() {
+    assert_nonhuman_claude_image_origin("isCompactSummary", json!(true)).await;
+}
+
+#[tokio::test]
+async fn nonhuman_claude_transcript_only_omits_user_origin() {
+    assert_nonhuman_claude_image_origin("isVisibleInTranscriptOnly", json!(true)).await;
+}
