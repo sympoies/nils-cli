@@ -45,6 +45,19 @@ pub(crate) fn unavailable() -> CliError {
     )
 }
 
+/// Refused before any listener, claim or input: the provider has no transcript
+/// to baseline yet. This grants no retry or fallback permission.
+pub(crate) fn baseline_unavailable(record: &SessionRecord) -> CliError {
+    CliError::runtime(
+        "notice-native-baseline-unavailable",
+        "native notice needs a provider transcript baseline; none exists for this session yet",
+        Some(
+            json!({"id":record.id,"guard":"baseline","stage":"admission","atomic":false,
+            "pasted":false,"submitted":false}),
+        ),
+    )
+}
+
 pub(crate) fn private_dir(path: &Path) -> Result<(), CliError> {
     match DirBuilder::new().mode(0o700).create(path) {
         Ok(()) => {}
