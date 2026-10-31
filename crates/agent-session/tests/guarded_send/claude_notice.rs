@@ -666,6 +666,52 @@ fn claude_notice_ledger_reserves_unfinished_pairs_and_refuses_partial_data() {
 }
 
 #[test]
+fn claude_notice_without_provider_transcript_refuses_distinctly_and_claims_nothing() {
+    let fixture = super::Fixture::new("claude");
+    let peer = Peer::start(&fixture, "accepted");
+    let transcript = fixture
+        .root()
+        .join("provider-config/projects/synthetic/provider-one.jsonl");
+    let bytes = fs::read(&transcript).unwrap();
+    fs::remove_file(&transcript).unwrap();
+    let value = fixture.refused(
+        &send_notice(&fixture, "synthetic\n"),
+        "notice-native-baseline-unavailable",
+    );
+    let details = &value["error"]["details"];
+    assert_eq!(details["guard"], "baseline");
+    assert_eq!(details["stage"], "admission");
+    assert_eq!(details["pasted"], false);
+    assert_eq!(details["submitted"], false);
+    assert!(peer.text.lock().unwrap().is_empty());
+    let sessions = fixture.root().join("state/sessions/guarded");
+    assert!(!fs::read_dir(&sessions).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("send-key-")
+    }));
+    assert!(
+        !fixture
+            .root()
+            .join("state/history/claude-notices/ledger.jsonl")
+            .exists()
+    );
+    fixture.no_delivery();
+    // The refusal claimed nothing, so the same key delivers once the provider
+    // has recorded a turn.
+    fs::write(&transcript, bytes).unwrap();
+    let output = send_notice(&fixture, "synthetic\n");
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(peer.text.lock().unwrap().len(), 1);
+    fixture.refused(
+        &send_notice(&fixture, "synthetic\n"),
+        "send-idempotency-key-used",
+    );
+}
+
+#[test]
 fn claude_notice_concurrent_attempt_is_busy_before_consumption() {
     let fixture = super::Fixture::new("claude");
     let peer = Peer::start(&fixture, "hold");

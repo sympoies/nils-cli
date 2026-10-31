@@ -1,4 +1,5 @@
 //! Notice-only native input; terminal containment remains the unsupported route.
+use crate::provider_prompt::native_notice::CaptureError;
 use crate::{
     CliContext, CliError, ManualInputSection, SessionRecord, cli, send_guard, send_submit,
 };
@@ -106,8 +107,13 @@ pub(super) fn deliver(
             ),
         ));
     }
-    let mut baseline = crate::provider_prompt::native_notice::Baseline::capture(&record)
-        .ok_or_else(runtime::unavailable)?;
+    let mut baseline =
+        crate::provider_prompt::native_notice::Baseline::capture(&record).map_err(|error| {
+            match error {
+                CaptureError::NoTranscript => runtime::baseline_unavailable(&record),
+                CaptureError::Unavailable => runtime::unavailable(),
+            }
+        })?;
     let dir = runtime::module_dir(&context.state_dir, &record)?;
     let op = uuid::Uuid::new_v4().to_string();
     let listener = bridge::Listener::open(dir, &bootstrap, &ready.binding, op.clone()).map_err(|error| {

@@ -19,6 +19,14 @@ pub(crate) struct Stamp {
     pub(crate) continuity_sha256: String,
 }
 
+/// Why no baseline could be captured before sending.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum CaptureError {
+    /// The bound provider session has no resolvable transcript yet.
+    NoTranscript,
+    Unavailable,
+}
+
 pub(crate) struct Baseline {
     pub(crate) stamp: Stamp,
     path: PathBuf,
@@ -109,12 +117,20 @@ pub(crate) fn payload(line: &[u8]) -> &[u8] {
 }
 
 impl Baseline {
-    pub(crate) fn capture(record: &crate::SessionRecord) -> Option<Self> {
-        let source = super::resolve_provider_prompt_source(record)?;
+    pub(crate) fn capture(record: &crate::SessionRecord) -> Result<Self, CaptureError> {
+        let source =
+            super::resolve_provider_prompt_source(record).ok_or(CaptureError::NoTranscript)?;
         if source.provider != super::ProviderKind::Claude {
-            return None;
+            return Err(CaptureError::Unavailable);
         }
-        let path = source.validated_path()?.to_path_buf();
+        let path = source
+            .validated_path()
+            .ok_or(CaptureError::NoTranscript)?
+            .to_path_buf();
+        Self::pin(path).ok_or(CaptureError::Unavailable)
+    }
+
+    fn pin(path: PathBuf) -> Option<Self> {
         let (mut file, metadata) = super::open_regular_file(&path).ok()?;
         let eof = metadata.len();
         if eof > 0 {
