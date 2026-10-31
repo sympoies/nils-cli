@@ -33,6 +33,7 @@ members = [
   "crates/agent-scope-lock",
   "crates/nils-evidence",
   "crates/web-evidence",
+  "crates/research-cli",
   "crates/agent-workflow-primitives",
   "crates/forge-cli",
   "crates/github-app-cli",

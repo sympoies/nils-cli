@@ -35,6 +35,7 @@ Completion obligations for those binaries are tracked in
 | Agent policy and evidence | `agent-runtime`, `agent-hook`, `agent-memory`, `agent-out`, `agent-session`, `agent-scope-lock`, `agent-run`, `test-first-evidence`, `web-evidence`, `browser-session`, `canary-check`, `docs-impact`, `heuristic-inbox`, `model-cross-check`, `repo-retro`, `review-evidence`, `review-specialists`, `skill-usage`, `evidence` | Render/install/audit runtime-kit surfaces, dispatch one shared cross-provider hook policy, manage local agent memory stores, run project commands through explicit env handling, allocate artifact paths, start tmux-backed agent sessions, enforce edit scope, inspect repo retrospectives, merge specialist review evidence, persist deterministic workflow evidence, or migrate and query the durable skill-usage evidence archive. |
 | Commit delivery | `semantic-commit` | Run validated commit workflows. |
 | Development log | `devlog` | Record durable outcomes in a repository development log, check its structural integrity, and search past decisions. |
+| Research | `research-cli` | Search with a selected model provider, read bounded public URLs, or prepare cited briefs through a shared CLI/HTTP engine. |
 | Provider lanes | `codex-cli`, `claude-cli` | Run provider-specific diagnostics, auth checks, and workflow adapters. |
 | Markdown rendering | `md-render` | Render `.md.tera` templates from JSON view data through the shared `nils-markdown` engine. |
 | Desktop, media, and local utilities | `docker-tools`, `macos-agent`, `screen-record`, `image-processing`, `speech-test-cli`, `fzf-cli`, `secrets`, `zsh-kit` | Operate containers, automate desktop tasks, capture or convert media, generate or replay speech fixtures, use interactive shell helpers, manage the encrypted environment store, or bootstrap an operator-supplied Zsh repository at runtime. |
@@ -109,6 +110,8 @@ Each crate is either a standalone CLI binary, a multi-binary crate, or a shared 
 - [crates/agent-hook](crates/agent-hook): shared, versioned Codex/Claude hook policy dispatcher and setup owner.
 - [crates/agent-scope-lock](crates/agent-scope-lock): Deterministic edit-scope lock CLI for agent workflows (`create`, `read`,
   `validate`, `clear`).
+- [crates/research-cli](crates/research-cli): Provider-selectable search, bounded public URL reading, and cited briefs through one
+  CLI/HTTP engine (`search`, `read-url`, `brief`, `serve`, `completion`).
 - [crates/web-evidence](crates/web-evidence): Redacted static HTTP evidence capture for agent workflows (`capture`, `completion`).
 - [crates/nils-evidence](crates/nils-evidence): Durable workflow-evidence archive and query CLI (`evidence`).
 - [crates/agent-workflow-primitives](crates/agent-workflow-primitives): Multi-binary local-first agent workflow primitives
