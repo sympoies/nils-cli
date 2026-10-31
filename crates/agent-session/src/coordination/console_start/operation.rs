@@ -310,7 +310,9 @@ impl Receipt {
                         matches_parent || self.value["no_parent"] == true && parent.is_null()
                     }
                     Scope::Service { owner, .. } => {
-                        parent.is_null() && record["console_owner"] == *owner
+                        record["lineage"].is_object()
+                            && parent.is_null()
+                            && record["console_owner"] == *owner
                     }
                 };
                 if record["machine"] != self.value["machine"] || !ours {
