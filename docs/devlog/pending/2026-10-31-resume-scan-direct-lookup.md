@@ -6,7 +6,7 @@
 - Deleted-source resume probes the one PROVIDER_SESSION_ID.jsonl filename per
   Claude project directory instead of scanning every transcript, so normal-size
   histories resolve at default scan settings.
-- A managed session directory with an unreadable or missing session.json is
+- A managed session directory without a session.json is
   skipped with a stderr warning instead of refusing every resume.
 
 ### Why / context

@@ -312,13 +312,16 @@ fn matching_sources(
                 .map_err(|_| refusal("resume-source-unknown"))?;
             Ok::<_, CliError>(record)
         };
-        let observed = match read() {
-            Ok(record) => record,
-            Err(_) => {
-                eprintln!("warning: skipped unreadable session directory {source_id}");
-                continue;
-            }
-        };
+        // A directory with no record cannot be a source; a present record
+        // that cannot be read or validated still refuses.
+        if matches!(
+            fs::symlink_metadata(entry.path().join("session.json")),
+            Err(e) if e.kind() == io::ErrorKind::NotFound
+        ) {
+            eprintln!("warning: skipped session directory without session.json: {source_id}");
+            continue;
+        }
+        let observed = read()?;
         let matches = |r: &SessionRecord| {
             r.agent == agent.as_str()
                 && r.provider_resume

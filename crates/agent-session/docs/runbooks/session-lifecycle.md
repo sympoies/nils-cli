@@ -109,8 +109,9 @@ record, runtime, prompt or lifecycle/Console operation, read prompt files or
 materialize credentials. It checks exact conversation history under the
 original broker account's config root, the requested cwd, every matching managed
 source's account and stopped runtime, ownership, pending effects and auth
-quarantine. A managed session directory whose record cannot be read is skipped
-with a `warning:` line on stderr; it never refuses the check.
+quarantine. A managed session directory without a `session.json` is skipped with a
+`warning:` line on stderr; a present but unreadable or invalid record still
+refuses with `resume-source-unknown`.
 
 For retained sources, an omitted account resolves from the unique original
 binding; `--account` cannot rebind that source to another account. Missing or
