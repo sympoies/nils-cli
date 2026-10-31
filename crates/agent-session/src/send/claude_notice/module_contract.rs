@@ -5,6 +5,7 @@
 //! "$ itself is assigned (bound, passed, spread, returned or read); $ is always spelled
 //! $.noun.event(...) at the call site". The module is not otherwise executed by any test, so
 //! this is the only guard that it still loads.
+use std::path::Path;
 use std::process::Command;
 
 use pretty_assertions::assert_eq;
@@ -174,12 +175,41 @@ fn dollar_check_rejects_every_form_the_loader_rejects() {
     assert_eq!(dollar_misuse(accepted), Vec::<usize>::new());
 }
 
+/// A `claude` invocation confined to `home`. The external CLI writes provider config, backups and
+/// caches, and may read credentials, so the child gets a private home, no inherited environment
+/// beyond the executable lookup path, and no updater.
+fn claude(home: &Path) -> Command {
+    let mut command = Command::new("claude");
+    command.env_clear().current_dir(home);
+    if let Some(path) = std::env::var_os("PATH") {
+        command.env("PATH", path);
+    }
+    for (name, dir) in [
+        ("HOME", ""),
+        ("CLAUDE_CONFIG_DIR", "config"),
+        ("XDG_CONFIG_HOME", "xdg-config"),
+        ("XDG_CACHE_HOME", "xdg-cache"),
+        ("XDG_DATA_HOME", "xdg-data"),
+        ("XDG_STATE_HOME", "xdg-state"),
+        ("TMPDIR", "tmp"),
+    ] {
+        let path = home.join(dir);
+        std::fs::create_dir_all(&path).expect("private claude directory");
+        command.env(name, path);
+    }
+    command.env("DISABLE_AUTOUPDATER", "1");
+    command
+}
+
 /// Runs the installed external loader's own check; skipped where no Claude Code at or above the
 /// tested minimum is installed. A newer build than the tested range is checked too, so the same
-/// test serves as the candidate check before the range is raised by review.
+/// test serves as the candidate check before the range is raised by review. The child runs in a
+/// private home inside the test's own temporary directory.
 #[test]
 fn embedded_module_loads_in_the_installed_claude_code() {
-    let installed = Command::new("claude")
+    let sandbox = tempfile::tempdir().expect("tempdir");
+    let home = sandbox.path().join("home");
+    let installed = claude(&home)
         .arg("--version")
         .output()
         .ok()
@@ -190,9 +220,9 @@ fn embedded_module_loads_in_the_installed_claude_code() {
         return;
     };
     eprintln!("checking the module against Claude Code {version}");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::fs::create_dir_all(dir.path().join(".claude-plugin")).expect("manifest dir");
-    std::fs::create_dir_all(dir.path().join("hooks")).expect("hooks dir");
+    let module = sandbox.path().join("module");
+    std::fs::create_dir_all(module.join(".claude-plugin")).expect("manifest dir");
+    std::fs::create_dir_all(module.join("hooks")).expect("hooks dir");
     let manifest =
         format!(r#"{{"name":"{PLUGIN}","version":"1.0.0","description":"module load check"}}"#);
     for (path, text) in [
@@ -200,11 +230,11 @@ fn embedded_module_loads_in_the_installed_claude_code() {
         ("hooks/hooks.json", r#"{"modules":["./register.js"]}"#),
         ("hooks/register.js", MODULE),
     ] {
-        std::fs::write(dir.path().join(path), text).expect("write");
+        std::fs::write(module.join(path), text).expect("write");
     }
-    let output = Command::new("claude")
+    let output = claude(&home)
         .args(["plugin", "validate"])
-        .arg(dir.path())
+        .arg(&module)
         .output()
         .expect("claude plugin validate");
     assert!(
