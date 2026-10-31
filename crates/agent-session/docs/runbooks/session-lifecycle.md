@@ -109,7 +109,8 @@ record, runtime, prompt or lifecycle/Console operation, read prompt files or
 materialize credentials. It checks exact conversation history under the
 original broker account's config root, the requested cwd, every matching managed
 source's account and stopped runtime, ownership, pending effects and auth
-quarantine.
+quarantine. A managed session directory whose record cannot be read is skipped
+with a `warning:` line on stderr; it never refuses the check.
 
 For retained sources, an omitted account resolves from the unique original
 binding; `--account` cannot rebind that source to another account. Missing or
@@ -122,7 +123,8 @@ After a managed source is deleted, an explicit account selects the execution
 account. Recovery requires the broker's read-only `history-root`
 verb to resolve its existing configuration root and declare the history scope
 as `account` or `shared`. Exactly one matching `PROVIDER_SESSION_ID.jsonl` file
-must exist under that root's projects history. Shared history may be reached
+must exist under that root's projects history; each project directory is probed
+for that one filename rather than scanning every transcript. Shared history may be reached
 through a broker-authorized symlink; it does not establish original account
 ownership. Missing or duplicate history refuses, and no alternate account root
 is searched. Older brokers without this verb or its scope field return

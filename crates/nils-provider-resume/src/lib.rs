@@ -167,7 +167,7 @@ pub fn resolve_resume_source_in(
 
     let mut matches = BTreeSet::new();
     let mut budget = ClaudeResumeScanBudget::from_env();
-    collect_claude_provider_resume_matches(root, session_id, &mut matches, &mut budget);
+    collect_claude_named_resume_matches(root, session_id, &mut matches, &mut budget);
     if budget.truncated {
         return Err(ResumeResolveError::Truncated);
     }
@@ -499,6 +499,52 @@ pub fn collect_claude_provider_resume_matches(
             if let Some(cwd) = read_claude_session_cwd(&path, session_id) {
                 matches.insert(ProviderHistoryMatch { path, cwd });
             }
+        }
+    }
+}
+
+/// Collect the Claude Code project transcript named for `session_id`.
+///
+/// Claude names each transcript `<session_id>.jsonl` inside its project
+/// directory, so this probes that one filename per project instead of
+/// enumerating every transcript. The candidate must still carry `session_id`
+/// and a non-empty `cwd` in its leading records. Only project directories
+/// count against the bounded scan budget.
+pub fn collect_claude_named_resume_matches(
+    projects_root: &Path,
+    session_id: &str,
+    matches: &mut BTreeSet<ProviderHistoryMatch>,
+    budget: &mut ClaudeResumeScanBudget,
+) {
+    if session_id.is_empty()
+        || session_id.contains(['/', '\\', '\0'])
+        || session_id.starts_with('.')
+    {
+        return;
+    }
+    let filename = format!("{session_id}.jsonl");
+    let Ok(projects) = fs::read_dir(projects_root) else {
+        return;
+    };
+    for project in projects.flatten() {
+        if !budget.visit_entry() {
+            return;
+        }
+        let Ok(project_type) = project.file_type() else {
+            continue;
+        };
+        if !project_type.is_dir() {
+            continue;
+        }
+        let path = project.path().join(&filename);
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !metadata.file_type().is_file() {
+            continue;
+        }
+        if let Some(cwd) = read_claude_session_cwd(&path, session_id) {
+            matches.insert(ProviderHistoryMatch { path, cwd });
         }
     }
 }
@@ -982,7 +1028,7 @@ mod tests {
         let project = projects.join("-repo-two");
         fs::create_dir_all(&project).unwrap();
         fs::write(
-            project.join("session.jsonl"),
+            project.join("claude-id.jsonl"),
             "{\"sessionId\":\"claude-id\",\"cwd\":\"/repo/two\"}\n",
         )
         .unwrap();
@@ -1000,7 +1046,7 @@ mod tests {
         let project = projects.join("-repo-three");
         fs::create_dir_all(&project).unwrap();
         fs::write(
-            project.join("session.jsonl"),
+            project.join("claude-id.jsonl"),
             "{\"sessionId\":\"claude-id\",\"isSidechain\":true,\"cwd\":\"/repo/three\"}\n",
         )
         .unwrap();
@@ -1058,6 +1104,28 @@ mod tests {
         };
         collect_claude_provider_resume_matches(&projects, "dup", &mut matches, &mut budget);
         assert!(budget.truncated, "entry budget must truncate the scan");
+    }
+
+    #[test]
+    fn claude_resolve_succeeds_on_large_history_at_default_budget() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let projects = tmp.path().join("projects");
+        for index in 0..700 {
+            let project = projects.join(format!("-proj-{index}"));
+            fs::create_dir_all(&project).unwrap();
+            for file in 0..9 {
+                fs::write(project.join(format!("other-{file}.jsonl")), "{}\n").unwrap();
+            }
+        }
+        fs::write(
+            projects.join("-proj-42/wanted.jsonl"),
+            "{\"sessionId\":\"wanted\",\"cwd\":\"/repo\"}\n",
+        )
+        .unwrap();
+
+        let resolved = resolve_resume_source_in(ResumeProvider::Claude, &projects, "wanted")
+            .expect("large history resolves at default settings");
+        assert_eq!(resolved.cwd, PathBuf::from("/repo"));
     }
 
     #[test]

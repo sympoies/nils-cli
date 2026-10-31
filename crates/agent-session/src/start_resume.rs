@@ -312,7 +312,13 @@ fn matching_sources(
                 .map_err(|_| refusal("resume-source-unknown"))?;
             Ok::<_, CliError>(record)
         };
-        let observed = read()?;
+        let observed = match read() {
+            Ok(record) => record,
+            Err(_) => {
+                eprintln!("warning: skipped unreadable session directory {source_id}");
+                continue;
+            }
+        };
         let matches = |r: &SessionRecord| {
             r.agent == agent.as_str()
                 && r.provider_resume
@@ -367,7 +373,7 @@ fn admit(
                 // admission needs one exact file, even when copies share cwd.
                 let mut matches = std::collections::BTreeSet::new();
                 let mut budget = nils_provider_resume::ClaudeResumeScanBudget::from_env();
-                nils_provider_resume::collect_claude_provider_resume_matches(
+                nils_provider_resume::collect_claude_named_resume_matches(
                     &config_dir.join("projects"),
                     id,
                     &mut matches,

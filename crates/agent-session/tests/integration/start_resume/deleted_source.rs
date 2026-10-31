@@ -144,6 +144,20 @@ fn explicit_account_recovers_deleted_source_without_preflight_writes() {
 }
 
 #[test]
+fn broken_session_directory_is_reported_not_fatal() {
+    let f = deleted_source();
+    fs::create_dir_all(f.state.join("sessions/broken")).unwrap();
+    let out = f.run(&["--account", "original", "--check-resume"]);
+    assert_eq!(out.code, 0, "{} {}", out.stdout_text(), out.stderr_text());
+    assert_eq!(out.stdout_json()["ok"], true);
+    assert!(
+        out.stderr_text().contains("broken"),
+        "{}",
+        out.stderr_text()
+    );
+}
+
+#[test]
 fn deleted_source_requires_account_authority_and_exact_scoped_history() {
     for case in [
         "omitted",
