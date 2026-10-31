@@ -9,7 +9,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::{Binding, Launch, PLUGIN, PROVIDER_VERSION, sha256};
+use super::attach::{self, Reason};
+use super::version::{self, Version};
+use super::{Binding, Launch, PLUGIN, sha256};
 use crate::{CliContext, CliError, SessionRecord};
 
 pub(crate) const MODULE: &str = include_str!("register.js");
@@ -23,6 +25,7 @@ pub(crate) struct Bootstrap {
     pub(crate) schema_version: String,
     pub(crate) launch: Launch,
     pub(crate) module_sha256: String,
+    pub(crate) provider_version: String,
     pub(crate) socket_path: PathBuf,
     pub(crate) nonce: String,
 }
@@ -72,7 +75,7 @@ pub(crate) fn private_dir(path: &Path) -> Result<(), CliError> {
     Ok(())
 }
 
-fn write_new(path: &Path, bytes: &[u8]) -> Result<(), CliError> {
+pub(super) fn write_new(path: &Path, bytes: &[u8]) -> Result<(), CliError> {
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -156,7 +159,7 @@ fn socket_name(state: &Path, record: &SessionRecord) -> Result<String, CliError>
     Ok(format!("cn-{}.sock", &namespace[..16]))
 }
 
-fn existing_private_dir(path: &Path) -> bool {
+pub(super) fn existing_private_dir(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|meta| {
         // SAFETY: geteuid has no preconditions.
         meta.is_dir() && meta.uid() == unsafe { libc::geteuid() } && meta.mode() & 0o777 == 0o700
@@ -168,17 +171,32 @@ pub(crate) fn prepare_launch(
     record: &SessionRecord,
     agent_bin: &Path,
 ) -> Result<Option<PathBuf>, CliError> {
-    if record.agent != "claude" || !crate::notice::writers_enabled() {
+    if record.agent != "claude" {
+        return Ok(None);
+    }
+    if !crate::notice::writers_enabled() {
+        attach::record(state, record, Reason::WritersDisabled, None);
         return Ok(None);
     }
     let mut command = Command::new(agent_bin);
     command.arg("--version");
-    let version =
-        crate::run_output_with_timeout_and_strict_cap(command, Duration::from_secs(2), 256);
-    if !version.is_ok_and(|output| {
-        output.status.success()
-            && String::from_utf8_lossy(&output.stdout).trim() == "2.1.296 (Claude Code)"
-    }) {
+    let banner =
+        crate::run_output_with_timeout_and_strict_cap(command, Duration::from_secs(2), 256)
+            .ok()
+            .filter(|output| output.status.success());
+    let Some(provider_version) =
+        banner.and_then(|output| Version::parse_banner(&String::from_utf8_lossy(&output.stdout)))
+    else {
+        attach::record(state, record, Reason::ProviderVersionUnreadable, None);
+        return Ok(None);
+    };
+    if !provider_version.supported() {
+        attach::record(
+            state,
+            record,
+            Reason::ProviderVersionUnsupported,
+            Some(&provider_version),
+        );
         return Ok(None);
     }
     let launch = Launch::from_record(record)?;
@@ -191,6 +209,7 @@ pub(crate) fn prepare_launch(
         schema_version: BOOT_SCHEMA.into(),
         launch,
         module_sha256: sha256(MODULE.as_bytes()),
+        provider_version: provider_version.to_string(),
         socket_path: socket_path(state, record)?,
         nonce: format!(
             "{}{}",
@@ -254,7 +273,8 @@ pub(crate) fn readiness(
         || ready.binding.provider != "claude"
         || provider.provider != "claude"
         || ready.binding.provider_session_id != provider.session_id
-        || ready.binding.provider_version != PROVIDER_VERSION
+        || ready.binding.provider_version != bootstrap.provider_version
+        || !version::supported(&bootstrap.provider_version)
         || ready.binding.module_sha256 != bootstrap.module_sha256
     {
         return None;

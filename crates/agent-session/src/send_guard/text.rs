@@ -12,11 +12,9 @@ impl Admission<'_> {
         // Every notice envelope is multiline. Claude can collapse the paste
         // into an opaque block whose exact bytes and ownership are unproved.
         if self.args.notice_envelope && self.record.agent == "claude" {
-            return Err(self.refusal(
-                "notice-transport-unsupported",
-                "Claude terminal notices cannot be verified exactly; delivery is unsupported",
-                "transport",
-                "admission",
+            return Err(crate::send::claude_notice::attach::refusal(
+                self.context,
+                self.record,
             ));
         }
         if !self.verify_composer {

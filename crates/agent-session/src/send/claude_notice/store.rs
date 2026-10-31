@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use super::{Binding, PROVIDER_VERSION, runtime, sha256};
+use super::{Binding, runtime, sha256, version};
 use crate::provider_prompt::native_notice::{Proof, Stamp};
 use crate::{CliContext, CliError};
 
@@ -128,7 +128,7 @@ fn id_valid(id: &str, max: usize) -> bool {
 
 fn binding_valid(binding: &Binding) -> bool {
     binding.provider == "claude"
-        && binding.provider_version == PROVIDER_VERSION
+        && version::supported(&binding.provider_version)
         && id_valid(&binding.launch.session_id, 128)
         && id_valid(&binding.launch.incarnation, 128)
         && binding.launch.generation > 0
