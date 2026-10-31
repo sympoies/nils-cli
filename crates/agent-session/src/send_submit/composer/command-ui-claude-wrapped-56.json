@@ -1,0 +1,115 @@
+{
+  "provider": "Claude Code 2.1.296",
+  "capture_flags": [
+    "-e",
+    "-p",
+    "-N",
+    "-T"
+  ],
+  "scope": "Synthetic model names. Original structural rows of the Select model picker in a 56x24 pane (every option row wraps onto a continuation row; the footer splits so that '· Esc to cancel' is its own last row), raw `tmux capture-pane -p -e -N -T` with byte-exact SGR escapes. Only Claude Code 2.1.296 at 56 columns was captured.",
+  "frames": {
+    "model_picker_wrapped_56": {
+      "purpose": "positive wrapped Select model picker, settled",
+      "cursor_row": 9,
+      "cursor_col": 2,
+      "rows": [
+        {
+          "sourceRow": 0,
+          "styled": ""
+        },
+        {
+          "sourceRow": 1,
+          "styled": "\u001b[38;5;153m────────────────────────────────────────────────────────"
+        },
+        {
+          "sourceRow": 2,
+          "styled": "\u001b[39m  \u001b[1m\u001b[38;5;153mSelect model\u001b[0m                                        "
+        },
+        {
+          "sourceRow": 3,
+          "styled": "  \u001b[38;5;246mSwitch between Claude models. Your pick becomes the "
+        },
+        {
+          "sourceRow": 4,
+          "styled": "\u001b[39m  \u001b[38;5;246mdefault for new sessions. For other/previous model \u001b[39m "
+        },
+        {
+          "sourceRow": 5,
+          "styled": "  \u001b[38;5;246mnames, specify\u001b[39m \u001b[38;5;246mwith\u001b[39m \u001b[38;5;246m--model.\u001b[39m                       "
+        },
+        {
+          "sourceRow": 6,
+          "styled": "                                                      "
+        },
+        {
+          "sourceRow": 7,
+          "styled": "    \u001b[38;5;246m1.  \u001b[39mDefault (recommended)  \u001b[38;5;215mModa 1.1\u001b[38;5;246m · Best for \u001b[39m  "
+        },
+        {
+          "sourceRow": 8,
+          "styled": "                               \u001b[38;5;246meveryday, complex tasks"
+        },
+        {
+          "sourceRow": 9,
+          "styled": "\u001b[39m  \u001b[38;5;153m❯\u001b[39m \u001b[38;5;246m2.  \u001b[38;5;75mModa 1.1\u001b[39m \u001b[38;5;75m✔\u001b[39m             \u001b[38;5;246mFor complex work and "
+        },
+        {
+          "sourceRow": 10,
+          "styled": "\u001b[39m                               \u001b[38;5;246meveryday tasks\u001b[39m         "
+        },
+        {
+          "sourceRow": 11,
+          "styled": "    \u001b[38;5;246m3.  \u001b[39mGamma 2.2              \u001b[38;5;246mFor your\u001b[39m \u001b[38;5;246mtoughest \u001b[39m     "
+        },
+        {
+          "sourceRow": 12,
+          "styled": "                               \u001b[38;5;246mchallenges\u001b[39m             "
+        },
+        {
+          "sourceRow": 13,
+          "styled": "    \u001b[38;5;246m4.\u001b[39m  Deltaa 3.3             \u001b[38;5;246mMost\u001b[39m \u001b[38;5;246mefficient\u001b[39m \u001b[38;5;246mfor"
+        },
+        {
+          "sourceRow": 14,
+          "styled": "\u001b[39m                               \u001b[38;5;246msimpler\u001b[39m \u001b[38;5;246mtasks"
+        },
+        {
+          "sourceRow": 15,
+          "styled": "\u001b[39m  \u001b[38;5;246m↓\u001b[39m \u001b[38;5;246m5.\u001b[39m  Omega 4.4              \u001b[38;5;246mFastest\u001b[39m \u001b[38;5;246mfor\u001b[39m \u001b[38;5;246mquick"
+        },
+        {
+          "sourceRow": 16,
+          "styled": "\u001b[39m                               \u001b[38;5;246manswers"
+        },
+        {
+          "sourceRow": 17,
+          "styled": "\u001b[39m     \u001b[38;5;246m…\u001b[39m \u001b[38;5;246m+7\u001b[39m \u001b[38;5;246mmodels"
+        },
+        {
+          "sourceRow": 18,
+          "styled": ""
+        },
+        {
+          "sourceRow": 19,
+          "styled": "\u001b[39m  \u001b[38;5;215m◐\u001b[38;5;246m Medium\u001b[39m \u001b[38;5;246meffort\u001b[39m \u001b[38;5;246m(default)\u001b[38;5;239m ←/→\u001b[39m \u001b[38;5;239mto\u001b[39m \u001b[38;5;239madjust"
+        },
+        {
+          "sourceRow": 20,
+          "styled": ""
+        },
+        {
+          "sourceRow": 21,
+          "styled": "\u001b[39m  \u001b[38;5;246mEnter\u001b[39m \u001b[38;5;246mto\u001b[39m \u001b[38;5;246mset\u001b[39m \u001b[38;5;246mas\u001b[39m \u001b[38;5;246mdefault\u001b[39m \u001b[38;5;246m·\u001b[39m \u001b[38;5;246ms\u001b[39m \u001b[38;5;246mto\u001b[39m \u001b[38;5;246muse\u001b[39m \u001b[38;5;246mthis\u001b[39m \u001b[38;5;246msession\u001b[39m \u001b[38;5;246monly"
+        },
+        {
+          "sourceRow": 22,
+          "styled": "\u001b[39m  \u001b[38;5;246m·\u001b[39m \u001b[38;5;246mEsc\u001b[39m \u001b[38;5;246mto\u001b[39m \u001b[38;5;246mcancel"
+        },
+        {
+          "sourceRow": 23,
+          "styled": ""
+        }
+      ]
+    }
+  }
+}
