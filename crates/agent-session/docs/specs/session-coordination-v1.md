@@ -608,7 +608,7 @@ its `owners`; `machine` is in its `machines`; and `expires_at` is in the future 
 Owner resolution stays with the aggregator.
 
 | Code | Class | HTTP | Cause |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `console-start-service-unauthorized` | data/65 | 401 | disabled, missing or invalid admission, unknown service or generation, wrong or shared credential, non-loopback peer, or a session capability |
 | `console-start-service-owner-denied` | data/65 | 422 | `owner` not admitted for the service |
 | `console-start-service-target-denied` | data/65 | 422 | `machine` not admitted for the service |
