@@ -340,3 +340,6 @@ mod download_filename_tests;
 
 #[path = "image_provenance_tests.rs"]
 mod image_provenance_tests;
+
+#[path = "queued_upload_tests.rs"]
+mod queued_upload_tests;
