@@ -1,0 +1,332 @@
+{
+  "schema_version": "agent-session.mailbox-read-events.fixtures.v1",
+  "history_id": "h-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "events": [
+    {
+      "name": "read",
+      "message": {
+        "id": "h-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-11111111-1111-4111-8111-111111111111-mailbox",
+        "role": "notice",
+        "text": "<!-- agent-notice:v1 kind=mailbox.read source=agent-session id=11111111-1111-4111-8111-111111111111 -->\n\nPlease review the synthetic change.\n",
+        "timestamp": "2026-11-02T01:02:03.456Z",
+        "mailbox": {
+          "schema_version": "agent-session.mailbox-read-event.v1",
+          "message_id": "11111111-1111-4111-8111-111111111111",
+          "sender": {
+            "kind": "session",
+            "machine": "machine-a",
+            "session_id": "sender-session-1"
+          },
+          "category": "handoff",
+          "state": "read",
+          "read_at": "2026-11-02T01:02:03.456Z",
+          "acknowledged_at": null,
+          "revision": 1,
+          "availability": "complete",
+          "body_prefix": "none"
+        }
+      }
+    },
+    {
+      "name": "acknowledged-same-position",
+      "message": {
+        "id": "h-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-11111111-1111-4111-8111-111111111111-mailbox",
+        "role": "notice",
+        "text": "<!-- agent-notice:v1 kind=mailbox.read source=agent-session id=11111111-1111-4111-8111-111111111111 -->\n\nPlease review the synthetic change.\n",
+        "timestamp": "2026-11-02T01:02:03.456Z",
+        "mailbox": {
+          "schema_version": "agent-session.mailbox-read-event.v1",
+          "message_id": "11111111-1111-4111-8111-111111111111",
+          "sender": {
+            "kind": "session",
+            "machine": "machine-a",
+            "session_id": "sender-session-1"
+          },
+          "category": "handoff",
+          "state": "acknowledged",
+          "read_at": "2026-11-02T01:02:03.456Z",
+          "acknowledged_at": "2026-11-02T01:05:00.000Z",
+          "revision": 2,
+          "availability": "complete",
+          "body_prefix": "none"
+        }
+      }
+    },
+    {
+      "name": "ack-before-read",
+      "message": {
+        "id": "h-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-22222222-2222-4222-8222-222222222222-mailbox",
+        "role": "notice",
+        "text": "<!-- agent-notice:v1 kind=mailbox.read source=agent-session id=22222222-2222-4222-8222-222222222222 -->\n\nSynthetic status update",
+        "timestamp": "2026-11-02T01:05:00.000Z",
+        "mailbox": {
+          "schema_version": "agent-session.mailbox-read-event.v1",
+          "message_id": "22222222-2222-4222-8222-222222222222",
+          "sender": {
+            "kind": "session",
+            "machine": "machine-a",
+            "session_id": "sender-session-1"
+          },
+          "category": "progress",
+          "state": "acknowledged",
+          "read_at": null,
+          "acknowledged_at": "2026-11-02T01:05:00.000Z",
+          "revision": 1,
+          "availability": "complete",
+          "body_prefix": "none"
+        }
+      }
+    },
+    {
+      "name": "read-after-ack-sets-read-at-only",
+      "message": {
+        "id": "h-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-22222222-2222-4222-8222-222222222222-mailbox",
+        "role": "notice",
+        "text": "<!-- agent-notice:v1 kind=mailbox.read source=agent-session id=22222222-2222-4222-8222-222222222222 -->\n\nSynthetic status update",
+        "timestamp": "2026-11-02T01:05:00.000Z",
+        "mailbox": {
+          "schema_version": "agent-session.mailbox-read-event.v1",
+          "message_id": "22222222-2222-4222-8222-222222222222",
+          "sender": {
+            "kind": "session",
+            "machine": "machine-a",
+            "session_id": "sender-session-1"
+          },
+          "category": "progress",
+          "state": "acknowledged",
+          "read_at": "2026-11-02T01:06:00.000Z",
+          "acknowledged_at": "2026-11-02T01:05:00.000Z",
+          "revision": 2,
+          "availability": "complete",
+          "body_prefix": "none"
+        }
+      }
+    },
+    {
+      "name": "service-sender-exact-body",
+      "message": {
+        "id": "h-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-33333333-3333-4333-8333-333333333333-mailbox",
+        "role": "notice",
+        "text": "<!-- agent-notice:v1 kind=mailbox.read source=agent-session id=33333333-3333-4333-8333-333333333333 -->\n\n  Line one\r\n\n本文 <tag> -->\n",
+        "timestamp": "2026-11-02T01:02:03.456Z",
+        "mailbox": {
+          "schema_version": "agent-session.mailbox-read-event.v1",
+          "message_id": "33333333-3333-4333-8333-333333333333",
+          "sender": {
+            "kind": "service",
+            "machine": "machine-a",
+            "service_id": "dispatcher"
+          },
+          "category": "uncategorized",
+          "state": "read",
+          "read_at": "2026-11-02T01:02:03.456Z",
+          "acknowledged_at": null,
+          "revision": 1,
+          "availability": "complete",
+          "body_prefix": "none"
+        }
+      }
+    },
+    {
+      "name": "forwarded-copy-has-fresh-id-and-forwarder-sender",
+      "message": {
+        "id": "h-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-55555555-5555-4555-8555-555555555555-mailbox",
+        "role": "notice",
+        "text": "<!-- agent-notice:v1 kind=mailbox.read source=agent-session id=55555555-5555-4555-8555-555555555555 -->\n\nPlease review the synthetic change.\n",
+        "timestamp": "2026-11-02T01:02:03.456Z",
+        "mailbox": {
+          "schema_version": "agent-session.mailbox-read-event.v1",
+          "message_id": "55555555-5555-4555-8555-555555555555",
+          "sender": {
+            "kind": "session",
+            "machine": "machine-a",
+            "session_id": "forwarder-session-1"
+          },
+          "category": "handoff",
+          "state": "read",
+          "read_at": "2026-11-02T01:02:03.456Z",
+          "acknowledged_at": null,
+          "revision": 1,
+          "availability": "complete",
+          "body_prefix": "none"
+        }
+      }
+    },
+    {
+      "name": "leading-marker-body-gets-one-lf-prefix",
+      "message": {
+        "id": "h-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-66666666-6666-4666-8666-666666666666-mailbox",
+        "role": "notice",
+        "text": "<!-- agent-notice:v1 kind=mailbox.read source=agent-session id=66666666-6666-4666-8666-666666666666 -->\n\n\n<!-- agent-notice:v1 kind=mailbox source=peer -->\n\nnested body\n",
+        "timestamp": "2026-11-02T01:02:03.456Z",
+        "mailbox": {
+          "schema_version": "agent-session.mailbox-read-event.v1",
+          "message_id": "66666666-6666-4666-8666-666666666666",
+          "sender": {
+            "kind": "session",
+            "machine": "machine-a",
+            "session_id": "sender-session-1"
+          },
+          "category": "report",
+          "state": "read",
+          "read_at": "2026-11-02T01:02:03.456Z",
+          "acknowledged_at": null,
+          "revision": 1,
+          "availability": "complete",
+          "body_prefix": "lf"
+        }
+      }
+    },
+    {
+      "name": "parts-v1",
+      "message": {
+        "id": "h-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-44444444-4444-4444-8444-444444444444-mailbox",
+        "role": "notice",
+        "text": "<!-- agent-notice:v1 kind=mailbox.read source=agent-session id=44444444-4444-4444-8444-444444444444 -->\n\nSynthetic body",
+        "timestamp": "2026-11-02T01:02:03.456Z",
+        "parts": [],
+        "mailbox": {
+          "schema_version": "agent-session.mailbox-read-event.v1",
+          "message_id": "44444444-4444-4444-8444-444444444444",
+          "sender": {
+            "kind": "session",
+            "machine": "machine-a",
+            "session_id": "sender-session-1"
+          },
+          "category": "report",
+          "state": "read",
+          "read_at": "2026-11-02T01:02:03.456Z",
+          "acknowledged_at": null,
+          "revision": 1,
+          "availability": "complete",
+          "body_prefix": "none"
+        }
+      }
+    }
+  ],
+  "placement": {
+    "transcript_length": 500,
+    "rows": [
+      {
+        "id": "r0",
+        "offset": 0
+      },
+      {
+        "id": "r1",
+        "offset": 100
+      },
+      {
+        "id": "r2",
+        "offset": 250
+      },
+      {
+        "id": "r3",
+        "offset": 400
+      }
+    ],
+    "events": [
+      {
+        "id": "e1",
+        "anchor": 0
+      },
+      {
+        "id": "e2",
+        "anchor": 100
+      },
+      {
+        "id": "e3",
+        "anchor": 120
+      },
+      {
+        "id": "e4",
+        "anchor": 120
+      },
+      {
+        "id": "e5",
+        "anchor": 400
+      },
+      {
+        "id": "e6",
+        "anchor": 999
+      }
+    ],
+    "total_order": [
+      "e1",
+      "r0",
+      "e2",
+      "r1",
+      "e3",
+      "e4",
+      "r2",
+      "e5",
+      "r3",
+      "e6"
+    ],
+    "forward_pages": [
+      {
+        "cursor": null,
+        "next_cursor": 250,
+        "ids": [
+          "e1",
+          "r0",
+          "e2",
+          "r1",
+          "e3",
+          "e4"
+        ]
+      },
+      {
+        "cursor": 250,
+        "next_cursor": 400,
+        "ids": [
+          "r2",
+          "e5"
+        ]
+      },
+      {
+        "cursor": 400,
+        "next_cursor": null,
+        "ids": [
+          "r3",
+          "e6"
+        ]
+      }
+    ],
+    "reverse_pages": [
+      {
+        "older_cursor": null,
+        "next_older_cursor": 400,
+        "ids": [
+          "r3",
+          "e6"
+        ]
+      },
+      {
+        "older_cursor": 400,
+        "next_older_cursor": 250,
+        "ids": [
+          "r2",
+          "e5"
+        ]
+      },
+      {
+        "older_cursor": 250,
+        "next_older_cursor": 100,
+        "ids": [
+          "r1",
+          "e3",
+          "e4"
+        ]
+      },
+      {
+        "older_cursor": 100,
+        "next_older_cursor": null,
+        "ids": [
+          "e1",
+          "r0",
+          "e2"
+        ]
+      }
+    ]
+  }
+}

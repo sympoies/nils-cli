@@ -106,6 +106,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/agent-session/docs/specs/serve-terminal-v1.md`
 - `crates/agent-session/docs/specs/serve-usage-v1.md`
 - `crates/agent-session/docs/specs/history-images-v1.md`
+- `crates/agent-session/docs/specs/mailbox-read-events-v1.md`
 - `crates/agent-session/docs/specs/scoped-worker-delegation-v1.md`
 - `crates/agent-session/docs/specs/session-board-v1.md`
 - `crates/agent-session/docs/specs/session-context-usage-v1.md`
