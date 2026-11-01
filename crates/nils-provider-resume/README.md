@@ -44,6 +44,13 @@ deadline budget.
   `CodexResumeScanBudget`, `ClaudeResumeScanBudget`,
   `CODEX_RESUME_SCAN_MAX_DEPTH`, `CLAUDE_SESSION_META_MAX_LINE_BYTES`.
 
+`CodexHistorySnapshot::scan(root, budget)` shares one complete bounded header
+walk within a query. `unique_path(id)` returns a path only for a single match;
+callers must revalidate the selected source before reading it. Truncated walks
+return no snapshot. This transient discovery uses the same arbitrary-filename,
+metadata and entry/deadline rules as `collect_codex_provider_resume_matches`;
+it is neither persisted nor a source of mutation authority.
+
 ## Scan tuning
 
 The bounded scan reads these env vars (defaults chosen to stay well under a

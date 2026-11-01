@@ -20,6 +20,9 @@ use std::io::{self, BufRead, Read};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
+mod codex_history;
+pub use codex_history::CodexHistorySnapshot;
+
 use jiff::Timestamp;
 use serde_json::Value;
 
@@ -374,41 +377,14 @@ pub fn collect_codex_provider_resume_matches(
     matches: &mut BTreeSet<ProviderHistoryMatch>,
     budget: &mut CodexResumeScanBudget,
 ) {
-    if depth > CODEX_RESUME_SCAN_MAX_DEPTH {
-        return;
-    }
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        if !budget.visit_entry() {
-            return;
-        }
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            collect_codex_provider_resume_matches(&path, depth + 1, session_id, matches, budget);
-            if budget.truncated {
-                return;
-            }
-            continue;
-        }
-        if !file_type.is_file()
-            || path.extension().and_then(|value| value.to_str()) != Some("jsonl")
-        {
-            continue;
-        }
-        if let Some(meta) = read_codex_resumable_session_meta(&path)
-            && meta.session_id == session_id
-        {
+    codex_history::visit_metadata(dir, depth, budget, &mut |path, meta| {
+        if meta.session_id == session_id {
             matches.insert(ProviderHistoryMatch {
                 path,
                 cwd: meta.cwd,
             });
         }
-    }
+    });
 }
 
 /// Bounded-scan budget for Claude Code project-transcript walks.

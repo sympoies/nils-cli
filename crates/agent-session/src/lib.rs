@@ -70,6 +70,8 @@ mod serve_config;
 mod session_account;
 mod session_model;
 mod session_record;
+mod session_views;
+use session_views::{list_sessions, list_sessions_for_serve, visit_session_views};
 mod usage;
 
 #[cfg(test)]
@@ -5754,145 +5756,6 @@ fn record_workdir_usage(context: &CliContext, cwd: &Path) {
     }
 }
 
-fn list_sessions(
-    context: &CliContext,
-    tmux_bin: Option<&Path>,
-) -> Result<Vec<SessionView>, CliError> {
-    list_sessions_with_shadow_sampling(context, tmux_bin, false)
-}
-
-fn list_sessions_for_serve(
-    context: &CliContext,
-    tmux_bin: Option<&Path>,
-) -> Result<Vec<SessionView>, CliError> {
-    list_sessions_with_shadow_sampling(context, tmux_bin, true)
-}
-
-fn list_sessions_with_shadow_sampling(
-    context: &CliContext,
-    tmux_bin: Option<&Path>,
-    schedule_shadow_sampling: bool,
-) -> Result<Vec<SessionView>, CliError> {
-    let mut records = Vec::new();
-    visit_session_views(context, tmux_bin, schedule_shadow_sampling, &mut |view| {
-        records.push(view?);
-        Ok(())
-    })?;
-    records.sort_by(|a, b| {
-        b.updated_at
-            .cmp(&a.updated_at)
-            .then_with(|| b.created_at.cmp(&a.created_at))
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    Ok(records)
-}
-
-/// Build one view per session directory, in directory order, handing each
-/// per-entry result to `visit`. `list` stops at the first failed entry; the
-/// session board (`board.rs`) instead skips and counts it. An error from the
-/// sessions root itself, or one `visit` returns, ends the walk.
-fn visit_session_views(
-    context: &CliContext,
-    tmux_bin: Option<&Path>,
-    schedule_shadow_sampling: bool,
-    visit: &mut dyn FnMut(Result<SessionView, CliError>) -> Result<(), CliError>,
-) -> Result<(), CliError> {
-    let sessions_root = context.state_dir.join("sessions");
-    if !sessions_root.exists() {
-        return Ok(());
-    }
-    let tmux_bin = tmux_bin
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| resolve_tmux_bin(None));
-    let tmux_snapshots = tmux_session_snapshots(&tmux_bin);
-    let coordination_registry = coordination::public_summary_registry_snapshot(context);
-    for entry in fs::read_dir(&sessions_root).map_err(|err| {
-        CliError::runtime(
-            "session-list-failed",
-            format!("failed to read {}: {err}", sessions_root.display()),
-            Some(json!({ "path": display_path(&sessions_root) })),
-        )
-    })? {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(err) => {
-                visit(Err(CliError::runtime(
-                    "session-list-failed",
-                    format!("failed to read session entry: {err}"),
-                    None,
-                )))?;
-                continue;
-            }
-        };
-        if entry.path().is_dir() {
-            let entry_name = entry.file_name().to_string_lossy().to_string();
-            let record_path = entry.path().join("session.json");
-            if record_path.is_file() {
-                let record =
-                    ensure_record_in_session_dir(context, &record_path, &entry.path(), &entry_name)
-                        .and_then(|resolved| {
-                            let record = read_session_record(&resolved.record_path)?;
-                            validate_record_id(
-                                &record,
-                                &resolved.expected_id,
-                                &resolved.record_path,
-                            )?;
-                            Ok(record)
-                        });
-                let record = match record {
-                    Ok(record) => record,
-                    Err(err) => {
-                        visit(Err(err))?;
-                        continue;
-                    }
-                };
-                let (status, observed_last_terminal_activity_at) = session_list_runtime_snapshot(
-                    context,
-                    &tmux_bin,
-                    tmux_snapshots.as_ref(),
-                    &record,
-                );
-                let observed_status = status.clone();
-                let (record, status) = reconcile_startup_projection(
-                    context,
-                    record,
-                    status,
-                    tmux_snapshots
-                        .as_ref()
-                        .map(|snapshots| &snapshots.started_at),
-                );
-                let last_terminal_activity_at = if status == observed_status {
-                    observed_last_terminal_activity_at
-                } else {
-                    last_terminal_activity_at(&tmux_bin, &record, &status)
-                };
-                let record = if status == "running" {
-                    record
-                } else {
-                    backfill_provider_resume(context, record)
-                };
-                visit(Ok(session_view_from_parts(
-                    context,
-                    &record,
-                    status,
-                    last_terminal_activity_at,
-                    &tmux_bin,
-                    schedule_shadow_sampling,
-                    coordination_registry
-                        .as_ref()
-                        .map(|registry| {
-                            coordination::public_summary_from_registry(
-                                context, registry, &record.id,
-                            )
-                        })
-                        .unwrap_or_default(),
-                )))?;
-            }
-        }
-    }
-    Ok(())
-}
-
 fn load_session_view(
     context: &CliContext,
     id: &str,
@@ -6746,9 +6609,11 @@ fn session_view(
         tmux_bin,
         false,
         coordination::public_summary(context, &record.id),
+        context_usage::projection(context, record),
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn session_view_from_parts(
     context: &CliContext,
     record: &SessionRecord,
@@ -6757,6 +6622,7 @@ fn session_view_from_parts(
     tmux_bin: &Path,
     schedule_shadow_sampling: bool,
     coordination_summary: coordination::CoordinationSummary,
+    context_usage: Option<context_usage::ContextUsage>,
 ) -> SessionView {
     let resume_blocked_reason = None;
     let resumable = is_resumable(record);
@@ -6778,7 +6644,7 @@ fn session_view_from_parts(
     let (auth_incident, auth_detection_health) = auth_incident::projection(context, record);
     SessionView {
         origin: origin::Fields::of(record),
-        context_usage: context_usage::projection(context, record),
+        context_usage,
         launch_env: launch_env::projection(record.extra.get("launch_env")),
         model_settings: session_model::ModelSettings::for_record(record),
         id: record.id.clone(),

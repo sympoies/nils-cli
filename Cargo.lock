@@ -2718,6 +2718,7 @@ version = "1.40.0"
 dependencies = [
  "jiff",
  "nils-common",
+ "pretty_assertions",
  "serde_json",
  "tempfile",
 ]
