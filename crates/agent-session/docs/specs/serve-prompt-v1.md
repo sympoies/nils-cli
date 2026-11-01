@@ -188,6 +188,13 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   Leading whitespace is removed before typing the slash command. Provider
   arguments remain subject to the existing single-line/control restrictions.
 
+  A command is recognized by its first whitespace-delimited token: `/name` with
+  no further slash. A first token that is a multi-component absolute path, such
+  as an uploaded file path with an optional caption, is ordinary prompt text and
+  follows the caller's `require_idle` policy; a path as a command argument keeps
+  the command guarded. A namespaced `/ns/cmd` name is therefore ordinary text
+  too, since no supported provider command has that shape.
+
   The context-command denylist mirrors Salon's
   `packages/ui/src/terminalContextCommandGuard.ts`: Claude refuses `/clear`,
   `/new`, `/reset`, `/resume`, `/branch`, `/teleport`, `/tp`; Codex refuses
@@ -226,14 +233,22 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   ```
 
   Command-UI recognition currently covers Claude's observed Settings frame
-  (Status/Config/Usage/Stats tabs and its cancellation hint), after exact guarded
-  input and Enter with identity rechecked. It never answers that dialog or
-  repeats Enter into it. The retained native fixture contains original
-  structural rows only; omitted body rows are not reconstructed, and spacing
-  parity with production `-N/-T` captures remains unverified. Other command
-  dialogs, unreadable panes and ordinary prompt dialogs remain `unknown`;
-  a terminal write alone never proves command execution. Consumers must accept
-  `command_dispatched` in the existing receipt object to render this success.
+  (Status/Config/Usage/Stats tabs and its cancellation hint) and its `Select
+  model` and `Effort` pickers, each a rule with its title directly below and a
+  last non-empty cancellation footer. A picker has no further rule or composer
+  row below its title; only a numbered option may start with `❯`. Wrapped rows
+  are supported: option rows may continue on following rows, and a footer hint
+  that wraps may leave a final `· Esc to cancel` row.
+
+  Recognition follows exact guarded input and Enter with identity rechecked. It
+  never answers the dialog or repeats Enter into it. The retained native fixtures
+  contain original structural rows only (Claude Code 2.1.296, 80 columns
+  Haiku, and the `Select model` picker wrapped at 56 columns); omitted body rows
+  are not reconstructed. Other models and providers (Codex `/model` is unobserved) are not recognized. Other command
+  dialogs, autocomplete menus, a dismissed picker, unreadable panes and ordinary
+  prompt dialogs remain `unknown`; a terminal write alone never proves command
+  execution. Consumers must accept `command_dispatched` in the existing receipt
+  object to render this success.
 
   Guarded terminal submission retries one swallowed Enter only while its exact paste and all
   guards still hold. A stuck or unverified submission attempts the same bounded,

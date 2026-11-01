@@ -154,6 +154,8 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/macos-agent/docs/specs/macos-agent-journal-v2.md`
 - `crates/nils-common/docs/specs/forge-identity-policy-v1.md`
 - `crates/nils-common/docs/specs/markdown-helpers-contract-v1.md`
+- `crates/research-cli/docs/specs/completion.md`
+- `crates/research-cli/docs/specs/contract.md`
 - `crates/nils-markdown/CHANGELOG.md`
 
 ## Crate Top-Level README Inventory (Keep)
@@ -164,7 +166,7 @@ as the GitHub crate-directory landing page) and a `docs/README.md` index for cra
 These files are excluded from the canonical Crate-Local Inventory `find` pattern, so they are
 tracked here.
 
-Top-level crate READMEs (one per workspace member, 40 total):
+Top-level crate READMEs (one per workspace member, 42 total):
 
 - `crates/agent-hook/README.md`
 - `crates/agent-memory/README.md`
@@ -204,10 +206,12 @@ Top-level crate READMEs (one per workspace member, 40 total):
 - `crates/screen-record/README.md`
 - `crates/secrets/README.md`
 - `crates/semantic-commit/README.md`
+- `crates/speech-test-cli/README.md`
+- `crates/research-cli/README.md`
 - `crates/web-evidence/README.md`
 - `crates/zsh-kit/README.md`
 
-Crate `docs/README.md` index files (one per workspace member, 40 total):
+Crate `docs/README.md` index files (one per workspace member, 42 total):
 
 - `crates/agent-hook/docs/README.md`
 - `crates/agent-memory/docs/README.md`
@@ -247,6 +251,8 @@ Crate `docs/README.md` index files (one per workspace member, 40 total):
 - `crates/screen-record/docs/README.md`
 - `crates/secrets/docs/README.md`
 - `crates/semantic-commit/docs/README.md`
+- `crates/speech-test-cli/docs/README.md`
+- `crates/research-cli/docs/README.md`
 - `crates/web-evidence/docs/README.md`
 - `crates/zsh-kit/docs/README.md`
 

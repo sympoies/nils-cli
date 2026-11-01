@@ -3,12 +3,14 @@
 mod git;
 mod policy;
 mod probe;
+mod replay;
 pub mod session;
 pub use git::{
     authoring_remote, prepare_git, prepare_git_with_deadline, target_for_remote, verify_key,
 };
 pub use policy::{Credential, Operation, Policy, Profile, Selection, Target};
 pub use probe::with_deadline as with_probe_deadline;
+pub use replay::execute_replay_commit;
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};

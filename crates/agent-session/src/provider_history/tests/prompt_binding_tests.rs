@@ -94,6 +94,7 @@ fn codex_history_turn_ids_distinguish_duplicate_text_and_image_only_turns() {
         3,
         Instant::now() + Duration::from_secs(1),
         false,
+        &history_images::native_notices::Bindings::default(),
     )
     .unwrap();
     assert_eq!(

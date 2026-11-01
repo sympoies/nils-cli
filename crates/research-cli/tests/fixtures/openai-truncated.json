@@ -1,0 +1,64 @@
+{
+  "id": "resp_fixture",
+  "model": "gpt-6-luna",
+  "status": "incomplete",
+  "output": [
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "I will search the web.",
+          "annotations": []
+        }
+      ]
+    },
+    {
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "query": "example domain",
+        "sources": [
+          {
+            "type": "url",
+            "url": "https://example.com/article"
+          }
+        ]
+      }
+    },
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "{\"summary\":",
+          "annotations": [
+            {
+              "type": "url_citation",
+              "url": "https://example.com/article",
+              "title": "Example source",
+              "start_index": 0,
+              "end_index": 1
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 120,
+    "output_tokens": 80,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 10
+    }
+  },
+  "incomplete_details": {
+    "reason": "max_output_tokens"
+  }
+}

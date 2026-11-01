@@ -1,0 +1,9 @@
+{
+  "http_status": 429,
+  "body": {
+    "error": {
+      "type": "rate_limit_error",
+      "message": "Synthetic quota limit"
+    }
+  }
+}

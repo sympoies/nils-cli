@@ -17,6 +17,7 @@ mod delivery;
 mod lsof;
 #[cfg(target_os = "linux")]
 mod procfs;
+pub(super) mod recovery;
 
 pub(super) struct Fence {
     _registry: Option<lease::RemovalLeaseGuard>,
@@ -584,20 +585,24 @@ pub(super) fn fence(
     })
 }
 
-pub(super) fn remove(target: &Path, repo_root: &Path) -> Result<(), CliError> {
-    git(
-        repo_root,
-        &[
-            "worktree",
-            "remove",
-            "--force",
-            target
-                .to_str()
-                .ok_or_else(|| refused("removal-proof-unavailable", "target path unreadable"))?,
-        ],
-    )?;
-    git(repo_root, &["worktree", "prune"])?;
-    Ok(())
+/// Record which removal phase failed and its effect on the worktree:
+/// `none`, `started`, `unknown` or `removed`.
+pub(super) fn in_phase(
+    mut error: CliError,
+    phase: &'static str,
+    mutation: &'static str,
+) -> CliError {
+    let mut details = match error.details.take().map(|details| *details) {
+        Some(Value::Object(details)) => details,
+        Some(other) => serde_json::Map::from_iter([("reason".to_owned(), other)]),
+        None => serde_json::Map::new(),
+    };
+    details.entry("phase").or_insert(json!(phase));
+    details
+        .entry("worktree_mutation")
+        .or_insert(json!(mutation));
+    error.details = Some(Box::new(Value::Object(details)));
+    error
 }
 
 #[cfg(test)]

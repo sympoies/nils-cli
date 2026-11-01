@@ -73,6 +73,9 @@ intended remote. GitLab and Local are unsupported for these commands.
 ```sh
 forge-cli --repo example/widget release create v1.0.0 --title 'Release 1.0.0' --notes-file notes.md --verify-tag --draft
 forge-cli --repo example/widget release upload v1.0.0 artifact.tar.gz
+forge-cli --repo example/widget release view v1.0.0 --format json
+forge-cli --repo example/widget release edit v1.0.0 --notes-file notes.md
+forge-cli --repo example/widget release delete evidence-check --cleanup-tag
 forge-cli --repo example/widget workflow dispatch build.yml --ref main --input mode=check
 forge-cli --repo example/widget run rerun 42 --job 19 --expected-head "$EXPECTED_HEAD"
 forge-cli --repo example/widget comment edit 123 --body-file correction.md
@@ -87,7 +90,10 @@ remain literal strings, and dispatch success records acceptance rather than run
 completion. Use `--dry-run` to inspect a plan without writing. See the
 [command contract](docs/specs/forge-cli-spec-v1.md#release-create--release-upload)
 for flags and typed outputs. Release and deletion commands require the caller's
-existing authorization.
+existing authorization. Canonical SemVer tags require `--allow-version-tag`
+for release deletion; `--cleanup-tag` separately opts into tag removal. The
+[release lifecycle contract](docs/specs/forge-publication-admin-v1.md#release-view--release-edit--release-delete)
+describes target resolution, notes readback and partial deletion failures.
 
 `comment redact` replaces another author's issue/PR timeline comment (not review
 diff comments). `--inspect` prints the author and the SHA-256 of the exact body

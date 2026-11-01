@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 #[path = "notification_coalescing.rs"]
 pub(super) mod coalescing;
 
+#[path = "notification_notice.rs"]
+mod notice;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -239,6 +242,8 @@ pub(crate) fn claim_hook_reminder(
     if !has_live_unread(registry, target_session_id, target_incarnation, now) {
         return None;
     }
+    let notice_prompt = crate::notice::writers_enabled()
+        .then(|| notice::encode_counts(registry, target_session_id, target_incarnation, now));
     let receipt = registry
         .notifications
         .get_mut(&receipt_key(target_session_id, target_incarnation))?;
@@ -253,27 +258,21 @@ pub(crate) fn claim_hook_reminder(
     }
     let attempted_at = jiff::Timestamp::from_second(now).ok()?;
     receipt.routine_last_submitted_at_epoch = now;
-    receipt.attempted_prompt = receipt.prompt.clone();
+    receipt.attempted_prompt = notice_prompt.or_else(|| receipt.prompt.clone());
     receipt.state = "prompt_submitted".to_string();
     receipt.attempted_generation = receipt.generation;
     receipt.notified_generation = receipt.generation;
     receipt.attempted_queued_at_epoch = receipt.queued_at_epoch;
     receipt.attempted_at_epoch = now;
     receipt.attempted_at = Some(attempted_at.to_string());
-    receipt.attempted_prompt_format = Some(
-        if receipt.attempted_prompt.is_some() {
-            "mailbox-counts.v1"
-        } else {
-            observation::PROMPT_FORMAT
-        }
-        .to_string(),
-    );
+    receipt.attempted_prompt_format =
+        Some(notice::attempt_format(receipt.attempted_prompt.as_deref()).to_string());
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some("prompt-accepted".to_string());
     let generation = receipt.generation;
     receipt.record_attempt(generation, "prompt-accepted", now);
     Some(NotificationCandidate {
-        prompt: receipt.prompt.clone(),
+        prompt: receipt.attempted_prompt.clone(),
         target_session_id: target_session_id.to_string(),
         target_incarnation: target_incarnation.to_string(),
         generation: receipt.generation,
@@ -608,14 +607,8 @@ pub(super) fn transition_attempt_at(
     receipt.attempted_queued_at_epoch = receipt.queued_at_epoch;
     receipt.attempted_at_epoch = now;
     receipt.attempted_at = Some(attempted_at.to_string());
-    receipt.attempted_prompt_format = Some(
-        if receipt.attempted_prompt.is_some() {
-            "mailbox-counts.v1"
-        } else {
-            observation::PROMPT_FORMAT
-        }
-        .to_string(),
-    );
+    receipt.attempted_prompt_format =
+        Some(notice::attempt_format(receipt.attempted_prompt.as_deref()).to_string());
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some(REASON_ATTEMPTING.to_string());
     Some(NotificationCandidate {

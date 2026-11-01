@@ -56,8 +56,10 @@ presentation; they do not acquire special behavior.
 
 ## Reader contract and fixtures
 
-Parse only logical user-input messages after existing provider metadata
-admission and before rendering. Provider-aware consumers may unwrap one
+Parse logical user-input messages and daemon-admitted `role: "notice"` messages
+after provider metadata admission and before rendering. The latter requires
+the daemon's private producer receipt, not merely the display marker or a
+plugin name. Provider-aware consumers may unwrap one
 recognized, fully matched provider paste wrapper before parsing; the codec
 itself does not strip XML tags or guess wrappers. The `pasted-wrapper` fixture
 is deliberately unclassified as raw text. A consumer that recognizes that
@@ -74,8 +76,10 @@ body while raw-copy paths retain the original message.
 
 History adapters retain marked notices. Existing provider metadata filters
 remain authoritative: a marker does not admit system context, compaction
-summaries or sidechain records that would otherwise be excluded. Unmarked
-unmarked mailbox reminders retain their existing filtering behavior.
+summaries or sidechain records that would otherwise be excluded. Only an exact
+producer-receipt-backed native notice gets the separate machine role. Ordinary
+human messages with a valid header retain their user role. Unmarked mailbox
+reminders retain their existing filtering behavior.
 No history is rewritten or retroactively classified from an unmarked prefix.
 
 The language-neutral [fixture corpus](../../tests/fixtures/session-notices-v1.json)
@@ -102,38 +106,193 @@ authentication, blocked-state, durable key, receipt and unknown-outcome rules.
 
 ### Terminal delivery and queue mode
 
-Terminal Claude and Codex sessions use the verified terminal composer path;
-the complete envelope must be observable before Enter, and refusal never leaves
-partial input. `--queue` waits while the target reports busy, retries only the
-busy refusal, and delivers once it becomes idle. Other guard failures stop the
-request. The durable idempotency claim is made by the guarded send path when
-delivery proceeds. Queue mode requires `--idempotency-key` so a caller retry
-cannot submit the same queued notice again.
+Codex terminal sessions use the verified terminal composer path; the complete
+envelope must be observable before Enter. `--queue` waits while the target
+reports busy and retries only a preclaim busy admission refusal. Other failures
+stop the request, including the unsupported Claude transport refusal once idle.
+The durable idempotency claim is made by the guarded send path when delivery
+proceeds. Queue mode requires `--idempotency-key` so a caller retry cannot submit
+the same queued notice again. Post-paste failures retain their claim and report
+whether input remains; unknown input must never be cleared without ownership
+proof.
 
-Claude terminal delivery refuses, before claiming the idempotency key or
-pasting, when a notice body row ends with one or more ASCII spaces. Row end
-means immediately before a CR or LF line ending, or the end of the final body
-at EOF. This narrow transport restriction covers only ASCII spaces at those
-row boundaries. The codec continues to preserve every body byte, and native
-Codex acceptance is unchanged. The restriction remains until an exact
-logical-input ownership proof supports these rows
-([follow-up #3002](https://github.com/sympoies/nils-cli/issues/3002)). Internal
-mailbox-nudge and auto-resume notice producers must avoid generating
-line-trailing spaces at their own boundaries; their producer-side checks are
-tracked in [follow-up #3003](https://github.com/sympoies/nils-cli/issues/3003).
+Claude Code releases in the tested range below support a separate native module
+route on gate-enabled fresh launches, resumes and restarts (a restart relaunches
+through the same resume path). It submits the full envelope directly through the
+native API, without filling or pasting into the composer. The initial bound is
+UTF-8 text only, no CR bytes, and at most 16 KiB for the complete envelope.
+Accepted LF, row-trailing spaces and final LF bytes are preserved. The shared
+codec does not acquire this delivery limit. Unsupported text returns
+`notice-native-text-unsupported` before a new claim or input authorization.
+
+Mounting uses the existing writer gate at launch. Old runtimes, gate-off
+launches and releases outside the tested range do not gain the module later.
+They are never injected into, restarted or sent through a plain fallback by
+`notice`. Matching private readiness must be followed by a fresh
+identity/empty-composer handshake before claiming the operation. Native empty
+reads alone do not prove that a composer is mounted; existing independent
+terminal admission remains.
+
+### Tested Claude Code range
+
+The module depends on the provider's static module-loader rules and on native
+API semantics, so the supported releases are a reviewed range, not a runtime
+probe: `2.1.296` through `2.1.316` inclusive. The launch strictly parses
+`<major>.<minor>.<patch> (Claude Code)` from `--version` and compares
+numerically. An unreadable or unparseable version is unsupported. The probed
+version is recorded in the module bootstrap; the module and readiness compare
+the provider's reported version to it, and a provider row must carry the bound
+version.
+
+The current upper bound, `2.1.316`, rests on the module contract checks plus a
+native run on that release, with the same hooks, API calls and environment
+access as on `2.1.314`. The run showed: a gate-enabled fresh launch mounted the
+module, a notice after an ordinary turn was delivered as a plugin-attributed row
+with zero Enter presses and a repeated key was refused, a restart mounted a new
+incarnation and delivered a fresh-key notice, and a gate-off launch recorded
+`writers-disabled`
+([#3136](https://github.com/sympoies/nils-cli/issues/3136#issuecomment-6541042426)).
+A native run on `2.1.314` showed the same
+([#3136](https://github.com/sympoies/nils-cli/issues/3136#issuecomment-6538469717)).
+Those runs did not exercise other releases inside the range, long or non-ASCII
+bodies, busy-turn delivery or Console rendering.
+
+The range never widens at runtime. The upper bound is raised only by a
+reviewed change that cites the module call-shape scan, `claude plugin validate`
+and a native notice run on that exact release; moving the lower bound would make
+older private ledger records unreadable and needs its own review. Sessions
+started before an upgrade of `agent-session` lack the bootstrap field and stay
+unattached until restarted.
+
+The default-branch-only [scheduled release check](../../../../.github/workflows/claude-release-check.yml)
+reads the official npm `@anthropic-ai/claude-code` latest stable release and
+verifies the wrapper and matching Linux executable package against registry
+SHA-512 integrity before an isolated temporary install. It runs the existing
+call-shape and `claude plugin validate` contract tests with private home/config,
+XDG and temporary directories, no inherited credentials, settings, plugins or
+runtime homes, and no updater. Candidate discovery, compilation, installation
+and execution run in a read-only job. A separate fresh runner holds provider
+write permissions and consumes bounded JSON evidence only; it rechecks source
+and registry metadata and regenerates the allowed range-only patch from trusted
+source before comparing the artifact. It never executes the candidate.
+
+In-range releases create nothing. A newer failing
+candidate upserts one version-keyed issue; a newer passing candidate prepares
+one version-keyed draft PR changing only the maximum and directly necessary
+expectations and prospective docs. Exact source, version, integrity, commands,
+exits and run artifacts accompany the candidate. Existing human edits, review
+activity, ready/closed decisions and occupied branches are preserved; candidate
+creation failure is actionable in the retained report and failure issue. First
+failure evidence and candidate branches stay immutable; later runs reuse the
+version-keyed records and retain fresh evidence in their run artifacts.
+
+**Contract success never claims native success.** Each future candidate starts
+with **Native acceptance: PENDING**. Exact-version native notice acceptance and
+reviewed merge gates remain required before extending the range. The check does
+not merge, release, deploy or widen a running module's range. Its schedule
+reduces detection delay but cannot guarantee beating every external auto-update;
+it does not define host pinning or update policy.
+
+Every Claude launch, resume and restart that does not mount the module records
+why in a private `attach.json` beside the incarnation (`state` `not-attached`,
+`reason`, the observed `provider_version` or null, and the `supported_min` /
+`supported_max` in force at launch). Reasons are `writers-disabled`,
+`provider-version-unsupported` and `provider-version-unreadable`. The record is
+diagnostic only and grants nothing.
+
+Admitted Claude notices without matching candidate module readiness are refused
+with `guard=transport`, `stage=admission`, `atomic=false`, `pasted=false` and
+`submitted=false`, before temporary input creation, buffer loading, paste, Enter
+or a new idempotency claim, and carry `native_module`:
+`{attached: false, reason, provider_version, supported_min, supported_max}`
+(`provider_version` is a string or null). The code separates the causes:
+
+- `notice-native-version-unsupported` when the recorded reason is
+  `provider-version-unsupported` or `provider-version-unreadable`.
+- `notice-transport-unsupported` for every other case, with `reason`
+  `writers-disabled` or `unrecorded` (a runtime that recorded nothing).
+
+Existing identity, idle, empty-composer and used-key checks still take
+precedence. A fresh key refused at this boundary remains available for a
+separately supported guarded send; an already consumed key continues to return
+`send-idempotency-key-used`. Neither code adds a retry or fallback permission.
+Consumers that match refusal codes literally must add
+`notice-native-version-unsupported`; `agent-session` keeps no legacy code for it.
+
+Every encoded notice is multiline, including one-line bodies. Claude can
+collapse its paste into an opaque placeholder that does not prove complete
+logical-draft bytes or ownership for safe clearing. This broad refusal supersedes
+the former `send-notice-trailing-spaces` restriction for Claude terminal notices.
+The codec preserves all body bytes, and Codex native and terminal delivery remain
+unchanged. The native module does not weaken this terminal containment. Real
+Claude short/long submission, rendering, trailing-space and refusal acceptance
+remain separate gates under
+[#3068](https://github.com/sympoies/nils-cli/issues/3068) and
+[#3002](https://github.com/sympoies/nils-cli/issues/3002).
+
+The exact unsupported admission receipt proves no new transport attempt. It adds
+no automatic fallback and does not authorize replay after an unknown, mismatch,
+timeout or used-key outcome. Successful unguarded multiline input does not prove
+a safe automated full-envelope fallback.
 
 Optional `--expect-runtime` and `--expect-provider-session` add caller bindings.
 There is no allow-blocked, arbitrary-key or terminal fallback mode.
 The JSON envelope is `cli.agent-session.notice.v1`, with the guarded send
 receipt fields. `send` retains general input semantics and adds no marker.
 
-Codex app-server runtimes use native submission. Terminal runtimes require
-exact composer verification of the known multiline envelope before submission.
+Codex app-server runtimes use native submission. Codex terminal runtimes require
+exact composer verification of the known multiline envelope before submission;
+Claude uses the supported native module route above or refuses before input.
 A refusal never downgrades to raw tmux or presses Enter. Live
 provider/compaction readback remains follow-up acceptance under
 [#2986](https://github.com/sympoies/nils-cli/issues/2986).
 A native unknown outcome retains its claim; inspect the existing receipt and
 provider history instead of retrying with a fresh key.
+
+Native Claude success adds `native.transport: "claude_mod"` and
+`native.confirmation: "notice_row_observed"`, with zero physical Enter presses.
+It requires an exact native result and one exact new provider row in the same
+runtime/provider binding, followed by identity reacquisition within the original
+local send budget. The provider row keeps its system/plugin attribution;
+ordinary human/last-prompt selectors are unchanged. This is the private daemon
+attesting its own operation, not a provider signature or human authorship.
+
+The operation is durably consumed before releasing text to the module. A drop,
+mismatch, crash, timeout or missing confirmation retains consumption and returns
+`notice-native-unconfirmed`, never the safe unsupported-admission receipt.
+`notice-native-unavailable` also adds no fallback or retry permission. There is
+one original local budget; an already authorized provider call may execute or
+complete later. No remote cancellation or atomic composer guarantee is implied.
+The route never clears a new or unknown human draft.
+
+The native route needs a pre-send provider transcript baseline to prove that the
+confirming row is new. A session whose bound provider conversation is
+proven to have no transcript yet, typically before its first ordinary provider
+turn, is refused with `notice-native-baseline-unavailable` (`guard=baseline`,
+`stage=admission`, `atomic=false`, `pasted=false`, `submitted=false`). This is
+distinct from `notice-transport-unsupported` (runtime lacks the module) and from
+`notice-native-unavailable` (any other native failure). The refusal precedes the
+module endpoint, the idempotency claim and all input, so no key is claimed and no
+new transport attempt exists. A caller may wait until the session has had an
+ordinary turn and then send as a new request with the same or a fresh key.
+It adds no automatic retry and no plain-terminal fallback, and the baseline is
+never inferred or created without a provider turn.
+
+Only a completed lookup that finds no candidate transcript uses that code. A
+lookup that is ambiguous (more than one candidate), unsafe or unreadable at the
+known path, incomplete (scan budget or deadline exhausted, projects root
+unresolved) or unprovable (a found transcript whose leading records do not carry
+the provider session id and a working directory) returns
+`notice-native-unavailable`, because waiting for a turn cannot be assumed to fix
+it.
+
+Private notice attestations live outside managed session directories so history
+survives session deletion/archive. The initial ledger bound is 8 MiB, 4 KiB per
+record including its delimiter, with two full slots reserved for every attempt
+across sessions (at most 1,024 attempts). Unfinished attempts retain both slots.
+Capacity, corruption or unavailable storage refuses new authorization; there is
+no automatic eviction, expiry, rotation or repair. The existing caller-key
+deduplication lifetime described in [send v1](send-v1.md) is unchanged.
 
 Initial prompts can explicitly use the same encoder:
 
@@ -153,15 +312,35 @@ All new writers require the explicit environment gate
 `AGENT_SESSION_NOTICE_WRITERS=1` in the CLI caller environment. Unset or any
 other value returns `notice-writers-disabled` before reading a body or starting
 a runtime. The default remains off until compatible readers and downstream
-mirrors are deployed. This PR does not enable any writer or change internal
-mailbox/auto-resume producers.
+mirrors are deployed. This does not enable any writer globally. The internal mailbox producer uses
+this gate; auto-resume integration is separate.
 
 Deploy the spec/codec first, then compatible readers and mirrors, then enable
 writers only in the intended caller environment. Roll back by unsetting the
-writer gate; retain readers for notices already stored in history. Internal
-mailbox nudge and auto-resume integration will call the same encoder directly,
-preserving their existing delivery guards, generations and retry ownership.
-They must not shell out to `notice` or move mailbox bodies into nudges.
+writer gate; retain readers for notices already stored in history. Internal mailbox reminders call the same encoder directly with kind
+`mailbox.wake`, source `agent-session` and no display id. The body is the
+coalesced live unread-count reminder, for example `Mailbox: h=1 r=2`; it never
+contains message bodies or recipient identity. Idle and working Codex retain
+their existing start/steer paths; authenticated hook claims return the same
+notice text. Supported terminal recipients use guarded notice delivery,
+including the existing native Claude module. This preserves the mailbox's
+single generation/incarnation claim across controller and hook paths.
+
+The mailbox keeps its existing plain reminder only when the writer gate is
+off or the receiver is known to lack notice support. Missing readiness on an
+installed module is uncertain and defers; a failed or uncertain notice attempt
+never authorizes a plain fallback or a second attempt. Attempt receipts retain
+the exact envelope and `mailbox-notice.v1` format; positive observation can
+resolve an uncertain notice, while absence keeps it parked. Historical prompt
+attempts retain their original interpretation. No mailbox producer shells out
+to `notice`. Auto-resume integration remains separate.
+
+Readers must accept and validate the separate notice role before native writers
+are enabled. Machine notices must not acknowledge a human outbox item or become
+last-user previews, stuck/pending signals, unread/attention input or automatic
+title input. Source tests, review, installation and real native/rendered
+acceptance are distinct states; the writer gate stays off until the rollout
+owner has verified the complete consumer path.
 
 Disposable synthetic acceptance must compare sent bytes against raw provider
 user text for Claude terminal and Codex app-server/terminal, covering start,

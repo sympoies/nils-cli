@@ -713,11 +713,16 @@ fn remove_worktree(args: &RemoveArgs) -> Result<RemoveOutput, CliError> {
     }
 
     let target_arg = display_path(&target);
-    let fence = removal::fence(&target, &layout, args.forge_delivery)?;
-    let backup = removal::backup::capture(&target, &fence, args.acknowledge_backup_omissions)?;
-    fence.release_own_lease()?;
+    let fence = removal::fence(&target, &layout, args.forge_delivery)
+        .map_err(|error| removal::in_phase(error, "fence", "none"))?;
+    let backup = removal::backup::capture(&target, &fence, args.acknowledge_backup_omissions)
+        .map_err(|error| removal::in_phase(error, "backup", "none"))?;
+    fence
+        .release_own_lease()
+        .map_err(|error| removal::in_phase(error, "fence", "none"))?;
     let build = build_dir::path_for_worktree(&target, &layout);
-    removal::remove(&target, &layout.repo_root)?;
+    let recovery = removal::recovery::plan(&target, &fence, &backup)?;
+    removal::recovery::remove(&target, &layout.repo_root, &recovery)?;
     let mut warnings = fence.warnings;
     let build_dir_removed = match build.as_deref().map(build_dir::reclaim) {
         Some(Ok(removed)) => removed,

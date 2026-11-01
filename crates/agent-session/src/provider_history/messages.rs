@@ -52,12 +52,20 @@ impl HistoryCatalog {
                 include_parts,
             );
         }
+        let deadline = Instant::now() + MESSAGE_SCAN_MAX_DURATION;
+        let notices = history_images::native_notices::Bindings::load(
+            self.session_state_dir.as_deref(),
+            session,
+            deadline,
+        )?;
         let mut page = match direction {
             HistoryMessageDirection::Forward => read_messages(
                 session,
                 parse_message_cursor(cursor)?,
                 limit.clamp(1, 100),
                 include_parts,
+                &notices,
+                deadline,
             ),
             HistoryMessageDirection::Latest => {
                 if cursor.is_some() {
@@ -68,6 +76,8 @@ impl HistoryCatalog {
                     None,
                     limit.clamp(1, 100),
                     include_parts,
+                    &notices,
+                    deadline,
                 )
             }
             HistoryMessageDirection::Older => history_images::read_messages_reverse(
@@ -75,6 +85,8 @@ impl HistoryCatalog {
                 Some(parse_required_message_cursor(cursor)?),
                 limit.clamp(1, 100),
                 include_parts,
+                &notices,
+                deadline,
             ),
         }?;
         self.project_upload_references(session, &mut page.messages, include_parts);
@@ -83,5 +95,43 @@ impl HistoryCatalog {
             apply_prompt_request_bindings(&mut page.messages, &bindings);
         }
         Ok(page)
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn messages(
+    sources: &[HistorySource],
+    history_id: &str,
+    cursor: Option<&str>,
+    limit: usize,
+    direction: HistoryMessageDirection,
+) -> Result<HistoryMessagesPage, HistoryError> {
+    let limit = limit.clamp(1, 100);
+    let notices = history_images::native_notices::Bindings::default();
+    let deadline = Instant::now() + MESSAGE_SCAN_MAX_DURATION;
+    let session = find_session(sources, history_id).ok_or(HistoryError::NotFound)?;
+    match direction {
+        HistoryMessageDirection::Forward => read_messages(
+            &session,
+            parse_message_cursor(cursor)?,
+            limit,
+            false,
+            &notices,
+            deadline,
+        ),
+        HistoryMessageDirection::Latest => {
+            if cursor.is_some() {
+                return Err(HistoryError::InvalidCursor);
+            }
+            history_images::read_messages_reverse(&session, None, limit, false, &notices, deadline)
+        }
+        HistoryMessageDirection::Older => history_images::read_messages_reverse(
+            &session,
+            Some(parse_required_message_cursor(cursor)?),
+            limit,
+            false,
+            &notices,
+            deadline,
+        ),
     }
 }

@@ -14,7 +14,9 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         | "retitle-v3-operation-not-found"
         | "history-session-not-found" => StatusCode::NOT_FOUND,
         "mailbox-service-forbidden" => StatusCode::FORBIDDEN,
-        "coordination-unauthorized" | "mailbox-service-unauthorized" => StatusCode::UNAUTHORIZED,
+        "coordination-unauthorized"
+        | "mailbox-service-unauthorized"
+        | "console-start-service-unauthorized" => StatusCode::UNAUTHORIZED,
         "rate-limited" | "retitle-provider-rate-limited" => StatusCode::TOO_MANY_REQUESTS,
         "wait-timeout" | "retitle-provider-timeout" => StatusCode::REQUEST_TIMEOUT,
         "session-capacity-exceeded"

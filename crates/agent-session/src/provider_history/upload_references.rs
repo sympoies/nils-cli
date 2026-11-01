@@ -9,11 +9,11 @@ impl HistoryCatalog {
         messages: &mut [HistoryMessage],
         include_parts: bool,
     ) {
-        if session.provider == "codex" {
-            for message in messages
-                .iter_mut()
-                .filter(|message| message.role == "user" && message.text.contains(['\'', '"']))
-            {
+        if matches!(session.provider.as_str(), "codex" | "claude") {
+            for message in messages.iter_mut().filter(|message| {
+                !message.images.is_empty()
+                    || (message.role == "user" && message.text.contains(['\'', '"']))
+            }) {
                 let Some(offset) = message
                     .id
                     .rsplit_once('-')
@@ -36,33 +36,34 @@ impl HistoryCatalog {
                 let Ok(value) = serde_json::from_slice::<Value>(&line) else {
                     continue;
                 };
-                let Some((projected, images)) = self.upload_projection(session, offset, &value)
-                else {
-                    continue;
-                };
-                let Some((_, text, _, _)) = normalize_message(
-                    &session.provider,
-                    &session.provider_session_id,
-                    &line,
-                    &projected,
-                ) else {
-                    continue;
-                };
-                message.text = truncate_chars(text.trim(), MAX_MESSAGE_CHARS);
-                message.images = images;
-                if include_parts {
-                    message.parts = Some(
-                        history_parts::record_parts(
-                            &session.provider,
-                            session.provider_version.as_deref(),
-                            &projected,
-                            true,
-                            &message.images,
-                            &message.id,
-                        )
-                        .0,
-                    );
+                if message.role == "user"
+                    && message.text.contains(['\'', '"'])
+                    && let Some((projected, images)) =
+                        self.upload_projection(session, offset, &value)
+                    && let Some((_, text, _, _)) = normalize_message(
+                        &session.provider,
+                        &session.provider_session_id,
+                        &line,
+                        &projected,
+                    )
+                {
+                    message.text = truncate_chars(text.trim(), MAX_MESSAGE_CHARS);
+                    message.images = images;
+                    if include_parts {
+                        message.parts = Some(
+                            history_parts::record_parts(
+                                &session.provider,
+                                session.provider_version.as_deref(),
+                                &projected,
+                                true,
+                                &message.images,
+                                &message.id,
+                            )
+                            .0,
+                        );
+                    }
                 }
+                self.correlate_image_uploads(session, &value, message);
             }
         }
         if include_parts {
@@ -76,15 +77,17 @@ impl HistoryCatalog {
         offset: u64,
         value: &Value,
     ) -> Option<(Value, Vec<HistoryImage>)> {
-        let blocks = upload_content(value)?;
+        let blocks = upload_content(&session.provider, value)?;
         let original = descriptors(session, offset, value);
         let mut original_index = 0;
         let mut images = Vec::new();
         let mut content = Vec::new();
         let mut changed = false;
         for (block_index, block) in blocks.iter().enumerate() {
-            if block.get("type").and_then(Value::as_str) == Some("input_text")
-                && let Some(text) = block.get("text").and_then(Value::as_str)
+            if matches!(
+                block.get("type").and_then(Value::as_str),
+                Some("input_text" | "text")
+            ) && let Some(text) = block.get("text").and_then(Value::as_str)
             {
                 let mut consumed = 0;
                 for (start, end, path) in quoted_paths(text) {
@@ -112,6 +115,8 @@ impl HistoryCatalog {
                             start,
                             row_key(value)
                         ),
+                        origin: Some(image_provenance::ImageOrigin::UserAttachment),
+                        attachment_ref: self.owned_attachment_ref(session, path),
                     });
                     consumed = end;
                     changed = true;
@@ -137,7 +142,23 @@ impl HistoryCatalog {
             return None;
         }
         let mut projected = value.clone();
-        projected["payload"]["content"] = Value::Array(content);
+        if session.provider == "claude" {
+            for block in &mut content {
+                if block["type"] == "input_text" {
+                    block["type"] = Value::String("text".into());
+                }
+                if block["type"] == "input_image" {
+                    block["type"] = Value::String("image".into());
+                }
+            }
+            if projected["type"] == "attachment" {
+                projected["attachment"]["prompt"] = Value::Array(content);
+            } else {
+                projected["message"]["content"] = Value::Array(content);
+            }
+        } else {
+            projected["payload"]["content"] = Value::Array(content);
+        }
         Some((projected, images))
     }
 
@@ -156,9 +177,15 @@ impl HistoryCatalog {
         let start = start
             .parse::<usize>()
             .map_err(|_| ImageReadError::Unavailable)?;
-        let text = upload_content(value)
-            .and_then(|blocks| blocks.get(block))
-            .filter(|block| block.get("type").and_then(Value::as_str) == Some("input_text"))
+        let blocks = upload_content(&session.provider, value).ok_or(ImageReadError::Deleted)?;
+        let text = blocks
+            .get(block)
+            .filter(|block| {
+                matches!(
+                    block.get("type").and_then(Value::as_str),
+                    Some("input_text" | "text")
+                )
+            })
             .and_then(|block| block.get("text"))
             .and_then(Value::as_str)
             .ok_or(ImageReadError::Deleted)?;
@@ -182,12 +209,12 @@ impl HistoryCatalog {
         })
     }
 
-    fn upload_file(
+    pub(super) fn upload_file(
         &self,
         session: &HistorySession,
         name: &str,
     ) -> Result<fs::File, ImageReadError> {
-        if session.provider != "codex" {
+        if !matches!(session.provider.as_str(), "codex" | "claude") {
             return Err(ImageReadError::Unavailable);
         }
         let path = Path::new(name);
@@ -221,11 +248,35 @@ impl HistoryCatalog {
     }
 }
 
-fn upload_content(value: &Value) -> Option<&Vec<Value>> {
-    (value.get("type")?.as_str()? == "response_item"
-        && value.pointer("/payload/type")?.as_str()? == "message"
-        && value.pointer("/payload/role")?.as_str()? == "user")
-        .then(|| value.pointer("/payload/content")?.as_array())?
+fn upload_content<'a>(provider: &str, value: &'a Value) -> Option<Cow<'a, [Value]>> {
+    match provider {
+        "codex"
+            if value["type"] == "response_item"
+                && value["payload"]["type"] == "message"
+                && value["payload"]["role"] == "user" =>
+        {
+            Some(Cow::Borrowed(
+                value.pointer("/payload/content")?.as_array()?,
+            ))
+        }
+        // Claude Code 2.1.312 user strings and 2.1.316 human queued strings
+        // can contain quoted uploads without a native structured image.
+        "claude" => {
+            let content = if value["type"] == "user" && value["message"]["role"] == "user" {
+                value.pointer("/message/content")?
+            } else {
+                crate::provider_prompt::claude_queued_prompt_value(value)?
+            };
+            if let Some(text) = content.as_str() {
+                Some(Cow::Owned(vec![
+                    serde_json::json!({"type":"text","text":text}),
+                ]))
+            } else {
+                Some(Cow::Borrowed(content.as_array()?))
+            }
+        }
+        _ => None,
+    }
 }
 
 fn quoted_paths(text: &str) -> impl Iterator<Item = (usize, usize, &str)> {

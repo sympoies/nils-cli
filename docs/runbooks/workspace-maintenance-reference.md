@@ -546,6 +546,7 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/markdownlint-audit.sh --strict`
 - `bash scripts/ci/cli-output-contract-lint.sh --strict`
 - `bash scripts/ci/forge-cli-fixture-lint.sh --strict`
+- `bash scripts/ci/own-compat-audit.sh`
 - `bash scripts/ci/tests/node-scope.test.sh`
 - `bash scripts/ci/tests/install-local-release-binaries.test.sh`
 - `bash scripts/ci/tests/completion-freshness-audit.test.sh`
@@ -563,6 +564,7 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/tests/shared-helper-adoption-audit.test.sh`
 - `bash scripts/ci/tests/publish-order-audit.test.sh`
 - `bash scripts/ci/tests/docs-hygiene-audit.test.sh`
+- `bash scripts/ci/tests/own-compat-audit.test.sh`
 - `bash scripts/ci/tests/workspace-test-stale-audit.test.sh`
 - `python3 scripts/ci/tests/assert-import-audit.test.py`
 - `bash scripts/ci/tests/file-size-audit.test.sh`

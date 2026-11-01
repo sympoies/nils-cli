@@ -10,6 +10,7 @@ nils-agent-scope-lock
 nils-term
 nils-markdown
 nils-web-evidence
+nils-research-cli
 nils-agent-workflow-primitives
 nils-git-summary
 nils-git-cli

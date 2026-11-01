@@ -311,6 +311,43 @@ operations:
     output:
       data: { provider: github, repository: string, tag: string, url: nullable<string>, assets: integer }
 
+  - id: release.view
+    schema_version: cli.forge-cli.release.view.v1
+    summary: Read an exact GitHub release and resolve its actual target commit.
+    inputs:
+      - { name: tag, type: string, required: true }
+    validations: [release_tag_invalid]
+    backends:
+      github: [api, "repos/<repo>/releases/tags/<encoded-tag>", --method, GET]
+    output:
+      data: { provider: github, repository: string, release_id: integer, tag: string, url: string, title: nullable<string>, target_commitish: string, target_commit: string, draft: bool, prerelease: bool, notes: string, assets: "list<{name,size,digest:nullable<string>}>" }
+
+  - id: release.edit
+    schema_version: cli.forge-cli.release.edit.v1
+    summary: Replace guarded release notes and optional title, then verify readback.
+    inputs:
+      - { name: tag, type: string, required: true }
+      - { name: --notes-file, type: path-or-stdin, required: true }
+      - { name: --title, type: string, optional: true }
+    validations: [release_tag_invalid, no_local_path, no_agent_attribution]
+    backends:
+      github: [api, "repos/<repo>/releases/<release-id>", --method, PATCH, --input, <payload-file>]
+    output:
+      data: { provider: github, repository: string, release_id: integer, tag: string, url: string, title: nullable<string>, target_commitish: string, target_commit: string, draft: bool, prerelease: bool, notes: string, assets: "list<{name,size,digest:nullable<string>}>" }
+
+  - id: release.delete
+    schema_version: cli.forge-cli.release.delete.v1
+    summary: Delete an exact release with SemVer protection and explicit optional tag cleanup.
+    inputs:
+      - { name: tag, type: string, required: true }
+      - { name: --cleanup-tag, type: bool, default: false }
+      - { name: --allow-version-tag, type: bool, default: false }
+    validations: [release_tag_invalid, release_version_tag_protected]
+    backends:
+      github: [api, "repos/<repo>/releases/<release-id>", --method, DELETE]
+    output:
+      data: { provider: github, repository: string, release_id: integer, tag: string, release_deleted: bool, tag_deleted: bool }
+
   - id: run.rerun
     schema_version: cli.forge-cli.run.rerun.v1
     summary: Request one identity-scoped GitHub rerun at the expected current PR head.

@@ -928,10 +928,10 @@ fn parse_claude_enqueued_prompt_value(value: &Value, session_id: &str) -> Option
 }
 
 /// The prompt of a `queued_command` attachment the user sent while a Claude turn
-/// was running: a string, or a list of content blocks when it carries an image.
+/// was running: a string or a list of content blocks.
 /// Task notifications, peer messages, auto-continuations, and meta injections
 /// share that shape and are rejected.
-fn claude_queued_prompt_value(value: &Value) -> Option<&Value> {
+pub(crate) fn claude_queued_prompt_value(value: &Value) -> Option<&Value> {
     if value.get("type").and_then(Value::as_str) != Some("attachment")
         || value.get("isSidechain").and_then(Value::as_bool) == Some(true)
     {
@@ -2683,3 +2683,6 @@ mod session_model_tests {
         assert_eq!(latest_claude_model_from_tail(rows, false, "missing"), None);
     }
 }
+pub(crate) mod native_notice;
+#[cfg(test)]
+mod native_notice_tests;

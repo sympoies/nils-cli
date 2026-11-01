@@ -251,7 +251,8 @@ fn version_alignment_schema_v1_keeps_prefixed_required_cli_floor() {
     assert_eq!(
         output.code,
         0,
-        "schema-v1 prefixed floor was previously accepted: {}",
+        "schema-v1 prefixed floor was previously accepted; stdout={}; stderr={}",
+        output.stdout_text(),
         output.stderr_text()
     );
 }

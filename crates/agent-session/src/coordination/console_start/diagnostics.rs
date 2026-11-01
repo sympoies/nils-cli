@@ -29,8 +29,10 @@ fn millis(start: Instant) -> u64 {
     start.elapsed().as_millis().min(u64::MAX as u128) as u64
 }
 
+/// `service` selects the reconcile hint for an admitted service, which repeats its own options.
 pub(super) fn run(
     operation: &str,
+    service: bool,
     action: impl FnOnce() -> Result<Value, CliError>,
 ) -> Result<Value, CliError> {
     let started = Instant::now();
@@ -65,6 +67,9 @@ pub(super) fn run(
             "console-start-operation-expired" => {
                 "inspect Console for the earlier child before using a fresh UUIDv7".to_string()
             }
+            _ if service => format!(
+                "inspect by repeating the --service, --service-generation, --credential-file and --owner options with --operation-id {operation} --reconcile"
+            ),
             _ => format!(
                 "inspect with agent-session start --via-console --operation-id {operation} --reconcile --format json"
             ),

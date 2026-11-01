@@ -22,6 +22,7 @@ Commands:
   default-branch  Create one governed signed commit on the primary checkout's default branch
   fixup           Create a fixup! commit for staged changes
   squash          Create a squash! commit for staged changes
+  rebase          Replay a non-default managed branch with authenticated signing
   completion      Export shell completion script
   help            Display help message
 ```
@@ -110,6 +111,40 @@ Message-construction options:
 - `--scope <scope>` - structured message scope
 - `--subject <subject>` - structured message subject
 - `--body-bullet <text>` - structured message body bullet; repeatable
+
+## `rebase`
+
+```text
+semantic-commit rebase <upstream> [--repo <path>]
+semantic-commit rebase --continue [--repo <path>]
+```
+
+Replay a linear, non-default branch in a managed linked worktree. Start from a
+clean worktree and name an upstream commit or ref. The command uses the merge
+backend and the configured, authenticated forge identity for the committer and
+signer. Original authors and messages remain intact. Signing configuration is
+applied to this operation only; the command never writes Git configuration.
+An identity policy and cached remote default-branch metadata are required.
+
+After a conflict, inspect the files, resolve the conflict, stage the resolution,
+and run `semantic-commit rebase --continue`. Each invocation authenticates the
+selected identity again, using the original branch's remote selection even
+while HEAD is detached. Continuation accepts ordinary linear replay state with
+keyless signing enabled; saved command programs, autostash, ref updates and
+explicit saved signing-key overrides are outside this command's contract.
+
+Preflight or authorization refusals leave Git unstarted. Once Git starts, a
+conflict, signing failure or bounded execution failure may have changed HEAD,
+the index or rebase state. The command retains that state for inspection and
+reports recovery guidance; it never automatically aborts or retries. Use
+`forge-cli identity doctor --operation commit` to diagnose identity or signing
+refusals. Inspect the current state before choosing continuation or Git's
+explicit abort recovery.
+
+The interface accepts only an upstream or `--continue`, plus `--repo`. It does
+not accept interactive replay, exec, onto, branch selection, skip, abort or
+signing overrides. It never fetches, pushes or updates remote Git refs;
+identity authentication still verifies the configured provider actor.
 
 ## `default-branch`
 
@@ -324,7 +359,7 @@ subjects prefixed with `fixup!` or `squash!`.
 
 ## Non-Goals
 
-`semantic-commit` does not push, force-push, rebase, create PRs, choose branch
+`semantic-commit` does not push, force-push, create PRs, choose branch
 names, or stage files implicitly. Those decisions belong to the surrounding
 agent workflow.
 
