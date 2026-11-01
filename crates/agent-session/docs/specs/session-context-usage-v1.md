@@ -60,13 +60,20 @@ overrides. See the
 provider's [model configuration](https://code.claude.com/docs/en/model-config).
 
 The source is bound to the managed session's provider resume identity and
-configured provider root, using bounded unique-match discovery. Discovery is
-cached for 30 seconds per binding. Each read considers at most the final
-256 KiB, skips partial lines, and caches only the five allowlisted facts with a
-file fingerprint. Within the discovery cache lifetime, unchanged files require no
-transcript-body read. Both source
-and observation caches are bounded to 256 entries. A command started in a new
-process performs the same bounded read; it never reads a complete large file.
+configured provider root, using bounded unique-match discovery. One CLI `list`
+request shares a complete Codex history-header scan across records with the same
+provider root, effective configuration and launch profile. It keeps arbitrary
+filenames, requires a unique matching header, and revalidates each selected source
+before reading usage. A truncated scan supplies no sources, including ids already
+seen. The snapshot is discarded after the query; later queries rediscover sources.
+
+Other projections, including Claude usage, single-record inspection, serve and
+board collection, keep their 30-second per-binding discovery cache. Each usage
+read considers at most the final 256 KiB, skips partial lines, and caches only
+the five allowlisted facts with a file fingerprint. Within the discovery cache
+lifetime, unchanged files require no transcript-body read. Both existing source
+and observation caches are bounded to 256 entries. No path reads a complete
+large transcript for usage; batched discovery reads only bounded leading metadata.
 
 Missing, replaced, truncated, or unreadable files do not reuse cached usage.
 A compaction boundary invalidates earlier usage until a later valid observation

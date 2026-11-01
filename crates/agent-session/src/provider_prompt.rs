@@ -16,6 +16,8 @@ use crate::{
 };
 
 mod claude_source;
+mod query_sources;
+pub(crate) use query_sources::QuerySources;
 mod preview;
 use preview::PreviewMessages;
 pub(crate) use preview::{LastMessage, SessionPreviews};
