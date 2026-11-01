@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const MAX_LEDGER_BYTES: u64 = 32 * 1024 * 1024;
+const LOCK_ATTEMPTS: u32 = 5;
+const LOCK_RETRY: std::time::Duration = std::time::Duration::from_millis(20);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
@@ -61,6 +63,26 @@ pub(crate) struct Event {
     pub(crate) revision: u64,
 }
 
+/// Contention means another writer is mid-append; recording is display-only,
+/// so a short bounded wait then skip, never a block on the committed read.
+fn lock_bounded(file: &fs::File) -> io::Result<()> {
+    for attempt in 0..LOCK_ATTEMPTS {
+        // SAFETY: flock only observes the descriptor owned by `file`; the lock
+        // is released when the descriptor closes.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::WouldBlock {
+            return Err(error);
+        }
+        if attempt + 1 < LOCK_ATTEMPTS {
+            std::thread::sleep(LOCK_RETRY);
+        }
+    }
+    Err(io::ErrorKind::WouldBlock.into())
+}
+
 fn ledger_path(state_dir: &Path, history_id: &str) -> PathBuf {
     state_dir
         .join("history/mailbox-reads")
@@ -90,11 +112,7 @@ pub(crate) fn record(
         .create(true)
         .mode(0o600)
         .open(&path)?;
-    // SAFETY: flock only observes the descriptor owned by `file`; the lock is
-    // released when the descriptor closes.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
+    lock_bounded(&file)?;
     let events = fold(&read_all(&mut file)?)?;
     let existing = events
         .iter()
