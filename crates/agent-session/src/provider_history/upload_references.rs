@@ -151,7 +151,11 @@ impl HistoryCatalog {
                     block["type"] = Value::String("image".into());
                 }
             }
-            projected["message"]["content"] = Value::Array(content);
+            if projected["type"] == "attachment" {
+                projected["attachment"]["prompt"] = Value::Array(content);
+            } else {
+                projected["message"]["content"] = Value::Array(content);
+            }
         } else {
             projected["payload"]["content"] = Value::Array(content);
         }
@@ -255,10 +259,14 @@ fn upload_content<'a>(provider: &str, value: &'a Value) -> Option<Cow<'a, [Value
                 value.pointer("/payload/content")?.as_array()?,
             ))
         }
-        // Claude Code 2.1.312 also stores a human upload as a single quoted
-        // path/newline/caption string, without a native structured image.
-        "claude" if value["type"] == "user" && value["message"]["role"] == "user" => {
-            let content = value.pointer("/message/content")?;
+        // Claude Code 2.1.312 user strings and 2.1.316 human queued strings
+        // can contain quoted uploads without a native structured image.
+        "claude" => {
+            let content = if value["type"] == "user" && value["message"]["role"] == "user" {
+                value.pointer("/message/content")?
+            } else {
+                crate::provider_prompt::claude_queued_prompt_value(value)?
+            };
             if let Some(text) = content.as_str() {
                 Some(Cow::Owned(vec![
                     serde_json::json!({"type":"text","text":text}),
