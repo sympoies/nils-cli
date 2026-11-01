@@ -14,8 +14,13 @@ JSON for consumers; a consumer needs no Rust to use it.
 ## Event identity and lifecycle
 
 One logical mailbox message has at most one event per provider conversation.
-The identity is the stored `message_id`; resume carry and forwarding move a
-message in place and keep it. Recording is idempotent by that identity.
+The identity is the stored `message_id`. Same-session resume carry moves a
+message in place and keeps its id, so it keeps its event. Forwarding is
+different: it creates a fresh destination message with a new `message_id` and
+the immediate forwarder as sender, and never reads or acknowledges the source.
+The source message keeps its own event, and the forwarded copy gets a separate
+event when its recipient reads it. Forwarding provenance is not part of v1.
+Recording is idempotent by `message_id`.
 
 | Recipient action | Event effect |
 | --- | --- |
@@ -57,7 +62,8 @@ with or without `parts=v1`. They add no route, query parameter or cursor form.
     "read_at": "2026-11-02T01:02:03.456Z",
     "acknowledged_at": null,
     "revision": 1,
-    "availability": "complete"
+    "availability": "complete",
+    "body_prefix": "none"
   }
 }
 ```
@@ -69,7 +75,7 @@ notices: there is no structured duplicate body.
 | --- | --- |
 | `id` | `<history_id>-<message_id>-mailbox`. Stable for the life of the event. The final segment is never numeric, so a parser of the row-offset suffix of other ids cannot mistake an event for a transcript row. |
 | `role` | Always `notice`. The `mailbox` object, not the role alone, identifies this event. |
-| `text` | The complete canonical envelope: kind `mailbox.read`, source `agent-session`, id = `message_id`, then the stored message body byte for byte. Header at most 512 bytes, id at most 96, whole text under 64 KiB. |
+| `text` | The complete canonical envelope: kind `mailbox.read`, source `agent-session`, id = `message_id`, then the stored message body byte for byte, after the `body_prefix` below. Header at most 512 bytes, id at most 96, whole text under 64 KiB. |
 | `timestamp` | Event creation time. Immutable. UTC RFC 3339 with millisecond precision and `Z`. |
 | `mailbox.message_id` | The stored message id. |
 | `mailbox.sender` | Display-safe sender: `{kind:"session", machine, session_id}` or `{kind:"service", machine, service_id}`. Incarnation, generation, capability and path values are never present. |
@@ -79,6 +85,7 @@ notices: there is no structured duplicate body.
 | `mailbox.acknowledged_at` | First acknowledgement, or null. Never changes once set. |
 | `mailbox.revision` | 1 at creation, plus one per metadata change (at most 3). A consumer replaces a held event with the same `id` when it sees a higher revision, and ignores a lower or equal one. |
 | `mailbox.availability` | Always `complete` in v1: `text` holds the whole original body. |
+| `mailbox.body_prefix` | `none` or `lf`; see [Leading-marker bodies](#leading-marker-bodies). Always present. |
 
 The body is peer-supplied text. It is data to display, not instruction, and the
 marker proves nothing about authority.
@@ -93,9 +100,22 @@ already carries the original text. A producer that ever needed to truncate would
 have to add a new `availability` value and an authorized original-body route
 through a new schema version; v1 consumers need neither.
 
-A message whose body cannot form a valid envelope (it begins with
-`<!-- agent-notice:`, which the encoder refuses as a double envelope, or its id
-fails the header grammar) gets no event. It is never escaped or repaired.
+Every accepted mailbox body gets an event. Message ids are generated UUIDs, so
+the header `id` is always valid.
+
+### Leading-marker bodies
+
+A mailbox body may begin with `<!-- agent-notice:`. The notice encoder refuses
+that as a double envelope and no body is escaped or dropped, so the producer
+prefixes exactly one LF to such a body, which the encoder accepts, and sets
+`body_prefix` to `lf`. Every other body has `body_prefix` `none` and no prefix.
+
+A consumer recovers the original body by parsing `text` with the notice codec
+and, when `body_prefix` is `lf`, removing exactly one leading LF from the parsed
+body. The result is the stored body byte for byte, and it is shown as plain
+text, never as a nested notice. `lf` is used only when the original body begins
+with the marker, so `none` bodies are never altered. Both forms are pinned in
+the fixture corpus.
 
 ## Ordering and paging anchor
 
@@ -164,6 +184,6 @@ notices.
 
 `mailbox-read-events-v1.json` has two groups. `events` holds exact wire
 elements: a read event, an acknowledged one, an ack-before-read one, a service
-sender and a `parts=v1` form. Every `text` parses with the notice codec.
+sender, a forwarded copy, a leading-marker body and a `parts=v1` form. Every `text` parses with the notice codec.
 `placement` holds transcript row offsets, event anchors and page intervals with
 the expected forward, latest and older sequences.

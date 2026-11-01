@@ -1,6 +1,6 @@
 //! Frozen consumer fixture for `docs/specs/mailbox-read-events-v1.md`.
 use agent_session::notice::{NoticeEnvelope, parse_notice};
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::Value;
 
 fn corpus() -> Value {
@@ -54,6 +54,43 @@ fn event_elements_carry_the_canonical_envelope_and_safe_metadata() {
             other => panic!("{name}: sender kind {other}"),
         }
     }
+}
+
+#[test]
+fn every_accepted_body_is_recoverable_and_forwarding_gets_a_fresh_event() {
+    use agent_session::notice::NoticeError;
+    let corpus = corpus();
+    let mut originals = std::collections::BTreeMap::new();
+    for case in corpus["events"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let mailbox = &case["message"]["mailbox"];
+        let text = case["message"]["text"].as_str().unwrap();
+        let parsed = parse_notice(text).unwrap();
+        let original = match mailbox["body_prefix"].as_str().unwrap() {
+            "none" => parsed.body,
+            "lf" => parsed.body.strip_prefix('\n').expect(name),
+            other => panic!("{name}: body_prefix {other}"),
+        };
+        let envelope = NoticeEnvelope::new(
+            "mailbox.read",
+            "agent-session",
+            mailbox["message_id"].as_str(),
+        )
+        .unwrap();
+        // The prefix exists exactly when the encoder would refuse the original.
+        let direct = envelope.encode(original);
+        if mailbox["body_prefix"] == "lf" {
+            assert_eq!(direct, Err(NoticeError::DoubleHeader), "{name}");
+            assert!(original.starts_with("<!-- agent-notice:"), "{name}");
+        } else {
+            assert_eq!(direct.as_deref(), Ok(text), "{name}");
+        }
+        originals.insert(name, (mailbox["message_id"].as_str().unwrap(), original));
+    }
+    let (read_id, read_body) = originals["read"];
+    let (copy_id, copy_body) = originals["forwarded-copy-has-fresh-id-and-forwarder-sender"];
+    assert_eq!(copy_body, read_body);
+    assert_ne!(copy_id, read_id);
 }
 
 /// The spec's partition rule: a page over raw interval `[lo, hi)` holds the
