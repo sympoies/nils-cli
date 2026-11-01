@@ -1,0 +1,40 @@
+{
+  "id": "msg_fixture",
+  "model": "claude-haiku-5-5",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "I will search the web."
+    },
+    {
+      "type": "server_tool_use",
+      "id": "srvtoolu_fixture",
+      "name": "web_search",
+      "input": {
+        "query": "example domain"
+      }
+    },
+    {
+      "type": "web_search_tool_result",
+      "tool_use_id": "srvtoolu_fixture",
+      "content": []
+    },
+    {
+      "type": "text",
+      "text": "{\"summary\": \"The example source documents a reserved domain.\", \"facts\": [{\"claim\": \"The domain is reserved for examples.\", \"source_urls\": [\"https://example.com/article\"]}, {\"claim\": \"This unsupported claim has no citation.\", \"source_urls\": []}], \"assessment\": {\"key_points\": [\"The cited source is a useful starting point.\"], \"suggested_directions\": [\"Check the primary specification.\"], \"preliminary_judgment\": \"The evidence supports a narrow conclusion.\", \"confidence\": \"low\"}, \"unknowns\": [\"The publication date is unknown.\"], \"conflicts\": []}",
+      "citations": []
+    }
+  ],
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 120,
+    "output_tokens": 80,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "server_tool_use": {
+      "web_search_requests": 1
+    }
+  }
+}

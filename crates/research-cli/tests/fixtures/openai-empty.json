@@ -1,0 +1,48 @@
+{
+  "id": "resp_fixture",
+  "model": "gpt-6-luna",
+  "status": "completed",
+  "output": [
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "I will search the web.",
+          "annotations": []
+        }
+      ]
+    },
+    {
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "query": "example domain",
+        "sources": []
+      }
+    },
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "{\"summary\": \"The example source documents a reserved domain.\", \"facts\": [{\"claim\": \"The domain is reserved for examples.\", \"source_urls\": [\"https://example.com/article\"]}, {\"claim\": \"This unsupported claim has no citation.\", \"source_urls\": []}], \"assessment\": {\"key_points\": [\"The cited source is a useful starting point.\"], \"suggested_directions\": [\"Check the primary specification.\"], \"preliminary_judgment\": \"The evidence supports a narrow conclusion.\", \"confidence\": \"low\"}, \"unknowns\": [\"The publication date is unknown.\"], \"conflicts\": []}",
+          "annotations": []
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 120,
+    "output_tokens": 80,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 10
+    }
+  }
+}
