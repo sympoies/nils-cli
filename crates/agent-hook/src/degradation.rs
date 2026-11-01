@@ -10,8 +10,8 @@
 //! The fix is lane separation rather than a weaker gate:
 //!
 //! * [`Lane::Conversation`] — prompts, session start, and clarification. A
-//!   runtime fault degrades this lane to read-only with one primary diagnosis and
-//!   one safe next action. No new authority is acquired.
+//!   runtime fault annotates this event with one diagnosis and one safe next
+//!   action. Each mutation keeps its own admission decision.
 //! * [`Lane::Mutation`] — tool admission. Unchanged: a fault that cannot be
 //!   proven still fails closed.
 //! * [`Lane::Terminal`] — the Stop family. A fault, or provider re-entry
@@ -21,6 +21,8 @@
 
 use nils_common::coordination_projection::CoordinationMode;
 use nils_common::observation::Severity;
+
+pub(crate) mod conversation;
 
 use crate::error::HookError;
 use crate::model::{
@@ -159,9 +161,10 @@ pub(crate) fn degraded_decision(
         Lane::Conversation => (
             CONVERSATION_DEGRADED,
             format!(
-                "agent-hook degraded lane: {} Conversation and read-only diagnosis stay available \
-                 while every mutation remains blocked. Next: {}.",
-                fault.summary, fault.recovery
+                "agent-hook degraded lane: {} {} Next: {}.",
+                fault.summary,
+                conversation::EVENT_CONTEXT,
+                fault.recovery
             ),
         ),
         Lane::Terminal => (

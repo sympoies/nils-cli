@@ -69,7 +69,7 @@ lane, and a typed runtime fault is handled per lane:
 
 | Lane | Events | Behavior on a typed runtime fault |
 | --- | --- | --- |
-| conversation | `UserPromptSubmit`, `SessionStart` | degrade to read-only with `coordination-degraded-read-only` |
+| conversation | `UserPromptSubmit`, `SessionStart` | event-scoped degradation context with `coordination-degraded-read-only` |
 | audited read-only | `PreToolUse` whose in-process effect is exactly `read_only` | warn with `activity-degraded-audited-read-only`; later authoritative rules still run |
 | terminal | `Stop`, `StopFailure` | terminal warning with reconciliation-pending evidence |
 | mutation | every other event | unchanged fail-closed posture |
@@ -101,6 +101,29 @@ the `agent-session.observation.v1` plane.
 Degrading the conversation lane acquires no new authority: the prompt is admitted
 as text, every mutation stays gated, and the original prompt is neither lost nor
 executed more than once because the turn correlation digest bounds replay.
+
+The conversation note applies to that event only. An authorized mutation may be
+retried and is evaluated individually against its own tool/hook result; an old
+conversation note is not a session-wide read-only restriction.
+
+After conversation degradation, the next successful evaluation of the previously
+degraded checks emits one `conversation-degradation-recovered` context. This
+presentation state is private and bound to the exact product, managed session,
+and runtime identity. Another identity, an unrelated successful rule, absent
+rules or coordination state, a failed mutation, and terminal Stop handling do
+not consume the pending observation. Subsequent healthy events and sessions that
+never degraded emit no recovery note. Recovery reports those selected checks
+only and grants no mutation authority; all other policy results stay effective.
+
+The observation retains each affected selected rule and its capability identity,
+including the configured reason. An unrelated coordination probe or a reused
+rule ID with different capability settings cannot satisfy that observation.
+Pending recovery is consumed only after fallible pre-emission trace work
+succeeds; a trace failure leaves it available for the next successful event.
+
+If persisting consumption fails, the original admission decision is emitted
+without recovery context and pending recovery remains available. Presentation
+state I/O never adds a denial.
 
 The terminal lane has two degradation boundaries. A coordination transaction
 that cannot run at all returns the compatibility classification
