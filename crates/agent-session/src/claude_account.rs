@@ -563,15 +563,9 @@ fn prepare_next_credentials(record: &SessionRecord) -> Result<Option<PathBuf>, C
     let Decoded::Valid(next) = decode_next(record) else {
         return Ok(None);
     };
-    let prepare = || {
+    let prepare = || -> Result<Option<PathBuf>, CliError> {
         let config_dir = materialize(&next.account)?;
-        if generation::published(&next.account)?.is_none() {
-            return Err(CliError::data(
-                "claude-account-credentials-unverified",
-                "the next Claude account has no verified credential publication",
-                None,
-            ));
-        }
+        generation::verify_switch(&next.account)?;
         Ok(Some(config_dir))
     };
     prepare().map_err(|error| {

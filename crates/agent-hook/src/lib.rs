@@ -643,7 +643,14 @@ fn run_dispatch(
                 // deadlocking; the mutation lane keeps its fail-closed posture.
                 None => match degradation::degraded_decision(Some(&loaded), &request, &raw, &error)
                 {
-                    Some(decision) => {
+                    Some(mut decision) => {
+                        let _recovery = degradation::conversation::update(
+                            &layout.state_root,
+                            &loaded,
+                            &prepared,
+                            &request,
+                            &mut decision,
+                        );
                         return complete_dispatch(args.format, started, &request, &decision);
                     }
                     None => {
@@ -663,7 +670,7 @@ fn run_dispatch(
     } else {
         None
     };
-    let decision = match evaluator::evaluate(
+    let mut decision = match evaluator::evaluate(
         &loaded,
         &mut request,
         &raw,
@@ -685,6 +692,13 @@ fn run_dispatch(
             );
         }
     };
+    let recovery = degradation::conversation::update(
+        &layout.state_root,
+        &loaded,
+        &prepared,
+        &request,
+        &mut decision,
+    );
     if args.trace
         && let Err(error) = trace::append(
             &layout.state_root,
@@ -702,6 +716,9 @@ fn run_dispatch(
             Some(&request),
             &raw,
         );
+    }
+    if let Some(recovery) = recovery {
+        recovery.commit(&mut decision);
     }
     complete_dispatch(args.format, started, &request, &decision)
 }

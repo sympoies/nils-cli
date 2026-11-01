@@ -236,9 +236,12 @@ mismatched nickname is `claude-account-broker-invalid-response`.
   queued intent. A nickname the broker does not list is refused with `claude-account-unknown`. Claude
   Code has no live credential swap, so the switch is applied only by a relaunch: when the session is
   running and its turn is `waiting`, the daemon first materializes and validates the new account
-  directory and requires complete verified publication evidence through the broker's
-  `credential_state_v1` capability. Missing, partial, or invalid evidence refuses the switch before
-  stopping. The turn state is checked again after preflight; a newly busy turn keeps the intent queued.
+  directory. A valid `agent-session.account-broker.v2` inventory without the optional
+  `credential_state_v1` capability permits the switch without recording a generation baseline,
+  matching ordinary launches. If the broker advertises the capability, complete verified
+  publication evidence is required; missing, partial, or invalid evidence refuses before stopping.
+  Invalid inventories and broker failures also refuse. The turn state is checked again after
+  preflight; a newly busy turn keeps the intent queued.
 
   A refusal returns `claude-account-switch-refused` (HTTP 422, with the broker's `cause` code) before
   anything is stopped or written, so the running session, its binding, and any previously queued intent

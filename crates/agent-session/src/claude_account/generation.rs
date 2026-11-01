@@ -179,6 +179,44 @@ pub(crate) fn published(account: &str) -> Result<Option<Publication>, CliError> 
     )
 }
 
+#[derive(Deserialize)]
+struct SwitchBrokerList {
+    schema_version: String,
+    provider: Option<String>,
+    accounts: Vec<AccountSummary>,
+    #[serde(default)]
+    capabilities: Vec<String>,
+}
+
+/// Manual account replacement supports account-broker.v2 without optional
+/// generation tracking. Only a validated inventory proves capability absence;
+/// publication failures from a broker that advertises it must still refuse.
+pub(crate) fn verify_switch(account: &str) -> Result<(), CliError> {
+    let list: SwitchBrokerList = BROKER.decode(
+        BROKER.call("list", &[], TIMEOUT)?,
+        "an invalid account list",
+        |r: &SwitchBrokerList| (r.schema_version.as_str(), r.provider.as_deref()),
+    )?;
+    let accounts = BROKER.validate_accounts(list.accounts)?;
+    if !accounts.iter().any(|entry| entry.account == account) {
+        return Err(BROKER.invalid_response("an account list missing the target account"));
+    }
+    if list.capabilities.iter().any(|c| c == "credential_state_v1")
+        && decode(
+            &BROKER.call("credential-state", &["--account", account], TIMEOUT)?,
+            account,
+        )?
+        .is_none()
+    {
+        return Err(CliError::data(
+            "claude-account-credentials-unverified",
+            "the next Claude account has no verified credential publication",
+            None,
+        ));
+    }
+    Ok(())
+}
+
 /// Compatibility launches proceed without capability, but cannot later infer a
 /// baseline from timestamps, binding revisions or credential materialization.
 pub(crate) fn capture(record: &mut SessionRecord, account: &str) {
