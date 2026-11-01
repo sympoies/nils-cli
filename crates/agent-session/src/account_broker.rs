@@ -217,8 +217,20 @@ impl BrokerClient {
         A: DeserializeOwned + Into<AccountSummary>,
     {
         let response = self.list_response::<A>(timeout)?;
-        let mut accounts: Vec<AccountSummary> = Vec::with_capacity(response.accounts.len());
-        for account in response.accounts {
+        Ok(AccountInventory {
+            accounts: self.validate_accounts(response.accounts)?,
+            selection_strategies: response.selection_strategies,
+        })
+    }
+
+    /// Validate entries from an already decoded inventory using the same rules
+    /// as `list`, including when another verb has just changed the inventory.
+    pub(crate) fn validate_accounts<A: Into<AccountSummary>>(
+        &self,
+        entries: Vec<A>,
+    ) -> Result<Vec<AccountSummary>, CliError> {
+        let mut accounts: Vec<AccountSummary> = Vec::with_capacity(entries.len());
+        for account in entries {
             let mut account: AccountSummary = account.into();
             self.ensure_broker_nickname(&account.account, "an unsafe account nickname")?;
             self.ensure_public_string(&account.label, MAX_LABEL_BYTES)?;
@@ -230,10 +242,7 @@ impl BrokerClient {
             account.plan = account.plan.filter(|value| !value.trim().is_empty());
             accounts.push(account);
         }
-        Ok(AccountInventory {
-            accounts,
-            selection_strategies: response.selection_strategies,
-        })
+        Ok(accounts)
     }
 
     /// A nickname returned by the broker must follow the shared nickname rule.
