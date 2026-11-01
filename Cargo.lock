@@ -2525,7 +2525,7 @@ dependencies = [
 name = "nils-forge-cli"
 version = "1.40.1"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "clap",
  "clap_complete",
