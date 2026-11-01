@@ -11,6 +11,9 @@ async fn claude_switch_http_preserves_preflight_cause_and_reason_without_stoppin
         "malformed_list",
         "invalid_capabilities",
         "missing_accounts",
+        "duplicate_account",
+        "invalid_account",
+        "invalid_metadata",
         "unavailable_list",
         "materialize",
         "unsafe_directory",
@@ -29,6 +32,15 @@ async fn claude_switch_http_preserves_preflight_cause_and_reason_without_stoppin
             "invalid_capabilities" => inventory["capabilities"] = json!(null),
             "missing_accounts" => {
                 inventory.as_object_mut().unwrap().remove("accounts");
+            }
+            "duplicate_account" => {
+                inventory["accounts"] = json!([{"account": "beta"}, {"account": "beta"}]);
+            }
+            "invalid_account" => {
+                inventory["accounts"][0]["account"] = json!("../alpha");
+            }
+            "invalid_metadata" => {
+                inventory["accounts"][0]["label"] = json!("invalid\nlabel");
             }
             "unsafe_directory" => {
                 fs::set_permissions(broker.config_dir("beta"), fs::Permissions::from_mode(0o777))
@@ -57,6 +69,9 @@ async fn claude_switch_http_preserves_preflight_cause_and_reason_without_stoppin
                 | "malformed_list"
                 | "invalid_capabilities"
                 | "missing_accounts"
+                | "duplicate_account"
+                | "invalid_account"
+                | "invalid_metadata"
                 | "unavailable_list"
         );
         let _override = if invalid_inventory {

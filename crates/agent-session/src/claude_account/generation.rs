@@ -197,7 +197,8 @@ pub(crate) fn verify_switch(account: &str) -> Result<(), CliError> {
         "an invalid account list",
         |r: &SwitchBrokerList| (r.schema_version.as_str(), r.provider.as_deref()),
     )?;
-    if !list.accounts.iter().any(|entry| entry.account == account) {
+    let accounts = BROKER.validate_accounts(list.accounts)?;
+    if !accounts.iter().any(|entry| entry.account == account) {
         return Err(BROKER.invalid_response("an account list missing the target account"));
     }
     if list.capabilities.iter().any(|c| c == "credential_state_v1")

@@ -7,6 +7,8 @@
   account-broker.v2 inventory without credential_state_v1, with no generation
   baseline. Advertised capability still requires verified publication; typed
   refusal details reach the serve boundary.
+- Post-materialization account entries reuse the canonical broker nickname,
+  uniqueness and public-metadata validation before replacement is authorized.
 
 ### Why / context
 
@@ -15,15 +17,22 @@
   distinguishes capability absence from invalid or unavailable broker
   responses. Same-account recovery generation rules and account-fenced resume
   controls remain authoritative.
+- A valid admission list does not validate a later response changed by
+  materialization. Review found this gap; extracting the existing validator
+  keeps ordinary lists and switch preflight on the same contract.
 
 ### Evidence
 
-- A synthetic switch failed on the baseline with capability_missing before
-  production edits; 19 focused switch tests passed after the fix and
-  same-profile helper build. Local-fast audits and clippy passed; its startup
-  stderr fixture failed on the working head and clean baseline, leaving the
-  gate incomplete.
+- Meaningful capability-absent switch RED preceded the initial fix. A second
+  RED on the reviewed head returned HTTP 200 for a duplicate post-materialization
+  list instead of HTTP 422; the shared-validation repair preceded its GREEN.
+- Focused switch, canonical broker and publication tests passed with existing
+  assertions retained. The original local startup failure, clean-base control
+  and actual same-source alternate-host gate PASS are retained with the PR;
+  the environment-specific difference remains tracked separately.
 
 ### Links
 
 - <https://github.com/sympoies/nils-cli/issues/3179>
+- <https://github.com/sympoies/nils-cli/issues/3182>
+- <https://github.com/sympoies/nils-cli/pull/3183>
