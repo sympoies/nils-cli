@@ -718,7 +718,7 @@ fn run_dispatch(
         );
     }
     if let Some(recovery) = recovery {
-        recovery.commit();
+        recovery.commit(&mut decision);
     }
     complete_dispatch(args.format, started, &request, &decision)
 }

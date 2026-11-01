@@ -485,3 +485,48 @@ fn trace_failure_retains_pending_recovery_until_provider_completion() {
         assert_eq!(next.stdout_json(), json!({}));
     }
 }
+
+#[test]
+fn failed_state_clear_retains_admission_and_pending_recovery() {
+    for product in ["codex", "claude"] {
+        let fixture = Fixture::new(POLICY);
+        helper(&fixture, false);
+        let degraded = dispatch(&fixture, product, "session-a", "runtime-a", prompt());
+        assert_eq!(degraded["action"], "warn");
+        helper(&fixture, true);
+        let directory = fixture
+            .state_home
+            .join("agent-hook/conversation-degradation");
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o500)).unwrap();
+        let unwritable = dispatch(&fixture, product, "session-a", "runtime-a", prompt());
+        // Restore before assertions so a regression cannot strand the fixture.
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            unwritable["action"], "allow",
+            "presentation write failure must preserve admission: {unwritable}"
+        );
+        assert_eq!(recovered(&unwritable), 0, "{unwritable}");
+        assert!(
+            unwritable["reasons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|reason| reason["code"] == "activity-recorded"
+                    && reason["disposition"] == "allow")
+        );
+        assert!(
+            !unwritable["context"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Conversation recovery")
+        );
+        let healthy = dispatch(&fixture, product, "session-a", "runtime-a", prompt());
+        let next = dispatch(&fixture, product, "session-a", "runtime-a", prompt());
+        assert_eq!(
+            recovered(&healthy),
+            1,
+            "pending must survive a failed clear"
+        );
+        assert_eq!(recovered(&next), 0);
+    }
+}

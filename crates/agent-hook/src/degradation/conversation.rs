@@ -51,12 +51,15 @@ impl Check {
 pub(crate) struct PendingRecovery {
     path: PathBuf,
     bytes: Vec<u8>,
+    original: NormalizedDecision,
     _lock: File,
 }
 
 impl PendingRecovery {
-    pub(crate) fn commit(self) {
-        let _ = nils_common::fs::write_atomic(&self.path, &self.bytes, 0o600);
+    pub(crate) fn commit(self, decision: &mut NormalizedDecision) {
+        if nils_common::fs::write_atomic(&self.path, &self.bytes, 0o600).is_err() {
+            *decision = self.original;
+        }
     }
 }
 
@@ -211,6 +214,7 @@ fn update_private(
         nils_common::fs::write_atomic(&path, &bytes, 0o600).ok()?;
         return None;
     }
+    let original = decision.clone();
     if decision.action == DecisionAction::Allow {
         decision.action = DecisionAction::Context;
     }
@@ -227,6 +231,7 @@ fn update_private(
     Some(PendingRecovery {
         path,
         bytes,
+        original,
         _lock: lock,
     })
 }

@@ -8,6 +8,8 @@
   recovery context for the exact product/session/runtime.
 - Recovery matches the affected selected rule and capability settings, and
   remains pending when trace preparation fails before provider delivery.
+- A failed presentation-state clear preserves the original admission decision
+  without emitting recovery, leaving it pending for a later successful event.
 
 ### Why / context
 
@@ -26,6 +28,9 @@
   reviewed production head: unrelated coordination success, a reused rule ID
   with a changed probe, and recovery lost after a failed trace. All seven
   process regressions pass after the finite repair.
+- A further real process regression reproduced recovery emitted after a failed
+  state-clear write. With writes restored, recovery is delivered once and then
+  omitted; all eight process regressions pass after the write-failure repair.
 
 ### Links
 

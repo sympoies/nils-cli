@@ -121,6 +121,10 @@ rule ID with different capability settings cannot satisfy that observation.
 Pending recovery is consumed only after fallible pre-emission trace work
 succeeds; a trace failure leaves it available for the next successful event.
 
+If persisting consumption fails, the original admission decision is emitted
+without recovery context and pending recovery remains available. Presentation
+state I/O never adds a denial.
+
 The terminal lane has two degradation boundaries. A coordination transaction
 that cannot run at all returns the compatibility classification
 `coordination-stop-reconciliation-required`, but its diagnostic makes no
