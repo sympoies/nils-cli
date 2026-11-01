@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `de5531d0245d0383c890ed70a89ac3e9ac013fcac30cc54e95dfe885fbd8d59d`
+- Cargo.lock SHA256: `04ef5dff76b4d7a17a52e78479262d946ef315ffc4d580040d030354bb8bd618`
 - Third-party crates (`source != null`): 493
 - Workspace crates (`source == null`, excluded below): 42
 
@@ -356,7 +356,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | regex-bites | 0.1.6 | MIT OR Apache-2.0 | crates.io |
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 | crates.io |
 | reqwest | 0.13.5 | MIT OR Apache-2.0 | crates.io |
-| resvg | 0.48.1 | Apache-2.0 OR MIT | crates.io |
+| resvg | 0.49.0 | Apache-2.0 OR MIT | crates.io |
 | rgb | 0.8.53 | MIT | crates.io |
 | ring | 0.17.14 | Apache-2.0 AND ISC | crates.io |
 | roxmltree | 0.20.0 | MIT OR Apache-2.0 | crates.io |
@@ -469,7 +469,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | untrusted | 0.9.0 | ISC | crates.io |
 | url | 2.5.8 | MIT OR Apache-2.0 | crates.io |
 | urlencoding | 2.1.3 | MIT | crates.io |
-| usvg | 0.48.1 | Apache-2.0 OR MIT | crates.io |
+| usvg | 0.49.0 | Apache-2.0 OR MIT | crates.io |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | crates.io |
 | utf8parse | 0.2.2 | Apache-2.0 OR MIT | crates.io |
 | uuid | 1.29.0 | Apache-2.0 OR MIT | crates.io |
