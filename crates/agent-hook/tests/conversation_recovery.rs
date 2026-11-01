@@ -306,3 +306,182 @@ fn conversation_recovery_does_not_admit_a_failed_mutation() {
         "a failed mutation must not consume pending recovery"
     );
 }
+
+#[test]
+fn unrelated_coordination_probe_cannot_consume_prompt_recovery() {
+    let policy = POLICY
+        .replace(
+            "agent-session.activity.v1",
+            "agent-session.semantic-conflict.v1",
+        )
+        .replace(
+            "events = [\"UserPromptSubmit\", \"PreToolUse\"]",
+            "events = [\"UserPromptSubmit\"]",
+        )
+        + r#"
+[[rules]]
+id = "fixture.owner"
+products = ["codex", "claude"]
+events = ["PreToolUse"]
+matcher = "Write"
+priority = 120
+mode = "enforce"
+failure_posture = "closed"
+override_class = "locked"
+capability = { id = "agent-session.owner-liveness.v1", reason_code = "owner-healthy" }
+"#;
+    for product in ["codex", "claude"] {
+        let fixture = Fixture::new(&policy);
+        nils_test_support::git::init_repo_at_with(&fixture.root, Default::default());
+        coordination(&fixture);
+        let registry = fixture.session_state.join("coordination/registry.json");
+        fs::write(&registry, b"{").unwrap();
+        let degraded = dispatch(&fixture, product, "session-a", "runtime-a", prompt());
+        assert_eq!(degraded["action"], "warn");
+        coordination(&fixture);
+        let unrelated = dispatch(
+            &fixture,
+            product,
+            "session-a",
+            "runtime-a",
+            json!({"hook_event_name":"PreToolUse", "tool_name":"Write", "cwd":fixture.root,
+                "tool_input":{"path":fixture.root.join("output.txt"), "content":"fixture"}}),
+        );
+        assert!(
+            unrelated["reasons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|reason| {
+                    reason["rule_id"] == "fixture.owner" && reason["disposition"] == "allow"
+                }),
+            "the unrelated selected probe must actually succeed: {unrelated}"
+        );
+        assert_eq!(
+            recovered(&unrelated),
+            0,
+            "an unrelated probe must not consume recovery"
+        );
+        let healthy = dispatch(&fixture, product, "session-a", "runtime-a", prompt());
+        assert_eq!(recovered(&healthy), 1);
+        assert_eq!(
+            recovered(&dispatch(
+                &fixture,
+                product,
+                "session-a",
+                "runtime-a",
+                prompt()
+            )),
+            0
+        );
+    }
+}
+
+#[test]
+fn reused_rule_id_with_a_different_probe_does_not_consume_recovery() {
+    let policy = POLICY.replace(
+        "agent-session.activity.v1",
+        "agent-session.semantic-conflict.v1",
+    );
+    for product in ["codex", "claude"] {
+        let fixture = Fixture::new(&policy);
+        coordination(&fixture);
+        let registry = fixture.session_state.join("coordination/registry.json");
+        fs::write(&registry, b"{").unwrap();
+        let degraded = dispatch(&fixture, product, "session-a", "runtime-a", prompt());
+        assert_eq!(degraded["action"], "warn");
+        coordination(&fixture);
+        let original_config = fs::read_to_string(&fixture.config).unwrap();
+        let changed = policy.replace("activity-recorded", "different-probe-healthy");
+        fs::write(&fixture.policy, &changed).unwrap();
+        fs::write(
+            &fixture.config,
+            original_config.replace(
+                &support::sha256(policy.as_bytes()),
+                &support::sha256(changed.as_bytes()),
+            ),
+        )
+        .unwrap();
+        let different = dispatch(&fixture, product, "session-a", "runtime-a", prompt());
+        assert!(
+            different["reasons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|reason| {
+                    reason["code"] == "different-probe-healthy" && reason["disposition"] == "allow"
+                })
+        );
+        assert_eq!(
+            recovered(&different),
+            0,
+            "a reused ID must not stand for the old probe"
+        );
+        fs::write(&fixture.policy, &policy).unwrap();
+        fs::write(&fixture.config, &original_config).unwrap();
+        let healthy = dispatch(&fixture, product, "session-a", "runtime-a", prompt());
+        assert_eq!(recovered(&healthy), 1);
+        assert_eq!(
+            recovered(&dispatch(
+                &fixture,
+                product,
+                "session-a",
+                "runtime-a",
+                prompt()
+            )),
+            0
+        );
+    }
+}
+
+#[test]
+fn trace_failure_retains_pending_recovery_until_provider_completion() {
+    for product in ["codex", "claude"] {
+        let fixture = Fixture::new(POLICY);
+        helper(&fixture, false);
+        dispatch(&fixture, product, "session-a", "runtime-a", prompt());
+        helper(&fixture, true);
+        let trace = fixture.state_home.join("agent-hook/trace.jsonl");
+        fs::create_dir(&trace).unwrap();
+        let helper_path = fixture.root.join("activity-helper");
+        let traced = || {
+            fixture.run_with_env(
+                &[
+                    "dispatch",
+                    "--product",
+                    product,
+                    "--format",
+                    "provider",
+                    "--trace",
+                ],
+                Some(&prompt().to_string()),
+                &[
+                    ("AGENT_SESSION_ID", "session-a"),
+                    ("AGENT_SESSION_RUNTIME_ID", "runtime-a"),
+                    ("AGENT_SESSION_BIN", helper_path.to_str().unwrap()),
+                ],
+            )
+        };
+        let failed = traced();
+        assert!(
+            failed.stdout_text().contains("trace-read-failed"),
+            "{} {}",
+            failed.stdout_text(),
+            failed.stderr_text()
+        );
+        assert!(!failed.stdout_text().contains("Conversation recovery"));
+        fs::remove_dir(&trace).unwrap();
+        let first = traced();
+        assert_eq!(first.code, 0, "{}", first.stderr_text());
+        assert!(
+            first.stdout_json()["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .is_some_and(|text| text.contains("Conversation recovery")),
+            "the failed trace must retain recovery: {}",
+            first.stdout_text()
+        );
+        let next = traced();
+        assert_eq!(next.code, 0, "{}", next.stderr_text());
+        assert_eq!(next.stdout_json(), json!({}));
+    }
+}

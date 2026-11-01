@@ -6,6 +6,8 @@
 - Both conversation degradation producers now scope their note to the current
   event; a successful evaluation of the previously degraded checks emits one
   recovery context for the exact product/session/runtime.
+- Recovery matches the affected selected rule and capability settings, and
+  remains pending when trace preparation fails before provider delivery.
 
 ### Why / context
 
@@ -20,6 +22,10 @@
   recovery reasons or provider context. The same four tests now pass, covering
   both note producers, repeated healthy events, identity isolation and
   unchanged failed-mutation refusal.
+- Three additional process regressions reproduced review findings on the
+  reviewed production head: unrelated coordination success, a reused rule ID
+  with a changed probe, and recovery lost after a failed trace. All seven
+  process regressions pass after the finite repair.
 
 ### Links
 

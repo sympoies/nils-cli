@@ -644,9 +644,10 @@ fn run_dispatch(
                 None => match degradation::degraded_decision(Some(&loaded), &request, &raw, &error)
                 {
                     Some(mut decision) => {
-                        degradation::conversation::update(
+                        let _recovery = degradation::conversation::update(
                             &layout.state_root,
                             &loaded,
+                            &prepared,
                             &request,
                             &mut decision,
                         );
@@ -691,7 +692,13 @@ fn run_dispatch(
             );
         }
     };
-    degradation::conversation::update(&layout.state_root, &loaded, &request, &mut decision);
+    let recovery = degradation::conversation::update(
+        &layout.state_root,
+        &loaded,
+        &prepared,
+        &request,
+        &mut decision,
+    );
     if args.trace
         && let Err(error) = trace::append(
             &layout.state_root,
@@ -709,6 +716,9 @@ fn run_dispatch(
             Some(&request),
             &raw,
         );
+    }
+    if let Some(recovery) = recovery {
+        recovery.commit();
     }
     complete_dispatch(args.format, started, &request, &decision)
 }

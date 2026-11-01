@@ -115,6 +115,12 @@ not consume the pending observation. Subsequent healthy events and sessions that
 never degraded emit no recovery note. Recovery reports those selected checks
 only and grants no mutation authority; all other policy results stay effective.
 
+The observation retains each affected selected rule and its capability identity,
+including the configured reason. An unrelated coordination probe or a reused
+rule ID with different capability settings cannot satisfy that observation.
+Pending recovery is consumed only after fallible pre-emission trace work
+succeeds; a trace failure leaves it available for the next successful event.
+
 The terminal lane has two degradation boundaries. A coordination transaction
 that cannot run at all returns the compatibility classification
 `coordination-stop-reconciliation-required`, but its diagnostic makes no

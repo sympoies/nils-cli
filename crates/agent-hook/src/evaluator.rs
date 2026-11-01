@@ -79,15 +79,15 @@ struct ExecutionBudgets {
 }
 
 #[derive(Debug)]
-struct PreparedRule<'a> {
-    rule: &'a crate::model::PolicyRule,
-    mode: RuleMode,
-    recovery: bool,
+pub(crate) struct PreparedRule<'a> {
+    pub(crate) rule: &'a crate::model::PolicyRule,
+    pub(crate) mode: RuleMode,
+    pub(crate) recovery: bool,
 }
 
 #[derive(Debug)]
 pub struct PreparedEvaluation<'a> {
-    rules: Vec<PreparedRule<'a>>,
+    pub(crate) rules: Vec<PreparedRule<'a>>,
     needs_coordination: bool,
     session_coordination: Option<&'a crate::model::PolicyRule>,
 }
