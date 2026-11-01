@@ -76,6 +76,17 @@ fn run_with_supervisor_config_on_remote(
     allowlisted: bool,
     remote: &str,
 ) -> super::super::support::CmdOutput {
+    let stale_after = if remote == "invalid" { "31d" } else { "2h" };
+    run_with_supervisor_policy(stub, args, allowlisted, remote, stale_after)
+}
+
+fn run_with_supervisor_policy(
+    stub: &StubEnv,
+    args: &[&str],
+    allowlisted: bool,
+    remote: &str,
+    stale_after: &str,
+) -> super::super::support::CmdOutput {
     let repo = stub.tempdir.path().join("repo");
     fs::create_dir_all(&repo).unwrap();
     let actor = stub
@@ -90,7 +101,6 @@ fn run_with_supervisor_config_on_remote(
     } else {
         "[]".to_string()
     };
-    let stale_after = if remote == "invalid" { "31d" } else { "2h" };
     fs::write(
         repo.join(".forge-cli.toml"),
         format!("[review_handoff]\nsupervisors = {supervisors}\nstale_after = \"{stale_after}\"\n"),
@@ -982,3 +992,6 @@ fn retired_coordinator_takeover_binds_the_selected_lifecycle_source() {
 
 #[path = "retired_coordinator/diagnostics.rs"]
 mod diagnostics;
+
+#[path = "retired_coordinator/deleted_producer.rs"]
+mod deleted_producer;
