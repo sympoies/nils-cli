@@ -30,6 +30,10 @@ pub struct GuardArgs {
     /// Internal marker enabling the notice-only multiline composer verifier.
     #[arg(skip)]
     pub notice_envelope: bool,
+    /// Internal provider-visible id for one native Codex dispatch. It lets the
+    /// accepted input be found again by id without the acknowledged turn id.
+    #[arg(skip)]
+    pub client_message_id: Option<String>,
     /// Require the active runtime launch id to match before delivery.
     #[arg(long, value_name = "INCARNATION")]
     pub expect_runtime: Option<String>,

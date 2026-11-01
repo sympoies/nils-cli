@@ -60,3 +60,35 @@ pub(super) fn input_observed_by(
     }
     observed
 }
+
+/// The turn holding the one user message that carries `client_id`, found
+/// without the acknowledged turn id. The id alone is not enough: the message
+/// must be exactly one text part that the caller accepts. A duplicate id, a
+/// different text or any unexpected shape is no match.
+pub(super) fn input_by_client_id(
+    history: &Value,
+    thread_id: &str,
+    client_id: &str,
+    matches_text: impl Fn(&str) -> bool,
+) -> Option<String> {
+    if history.pointer("/thread/id").and_then(Value::as_str) != Some(thread_id) {
+        return None;
+    }
+    let mut found = None;
+    for turn in history.pointer("/thread/turns")?.as_array()? {
+        for item in turn["items"].as_array()? {
+            if item["type"] != "userMessage" || item["clientId"].as_str() != Some(client_id) {
+                continue;
+            }
+            let content = item["content"].as_array()?;
+            let exact = content.len() == 1
+                && content[0]["type"] == "text"
+                && content[0]["text"].as_str().is_some_and(&matches_text);
+            if !exact || found.is_some() {
+                return None;
+            }
+            found = turn["id"].as_str().map(str::to_owned);
+        }
+    }
+    found.filter(|id| protocol_id_is_valid(id))
+}

@@ -68,14 +68,79 @@ impl NativeProof {
 }
 
 pub(super) async fn attempt(context: &CliContext, result: ResultRecord) -> ResultRecord {
-    if result.receipt.outcome != Outcome::Unknown || result.native_confirmation.is_none() {
+    if result.receipt.outcome != Outcome::Unknown {
         return result;
     }
     let original = result.clone();
     let context = context.clone();
-    tokio::task::spawn_blocking(move || confirm(&context, result))
-        .await
-        .unwrap_or(original)
+    tokio::task::spawn_blocking(move || {
+        if result.native_confirmation.is_some() {
+            confirm(&context, result)
+        } else {
+            confirm_by_client_id(&context, result)
+        }
+    })
+    .await
+    .unwrap_or(original)
+}
+
+/// A lost acknowledgement leaves no private proof. The accepted input is still
+/// found by the id its dispatch carried, and only with the exact claimed text.
+/// Absence proves nothing: the result stays unknown and nothing is dispatched.
+fn confirm_by_client_id(context: &CliContext, original: ResultRecord) -> ResultRecord {
+    let confirmed = || -> Option<ResultRecord> {
+        let receipt = &original.receipt;
+        let claimed = store::claim_fingerprint(context, receipt)?;
+        let client_id = super::client_message::id(
+            &receipt.session_id,
+            &receipt.session_incarnation,
+            &receipt.request_id,
+        );
+        let deadline = Instant::now() + crate::send_submit::HOLD_BUDGET;
+        let lock = crate::acquire_session_record_lock_timed(
+            context,
+            &receipt.session_id,
+            deadline.saturating_duration_since(Instant::now()),
+        )
+        .ok()?;
+        let record = load_session_record(context, &receipt.session_id).ok()?;
+        let launch_matches = |record: &SessionRecord| {
+            record
+                .runtime
+                .as_ref()
+                .is_some_and(|r| r.launch_id == receipt.session_incarnation)
+        };
+        let before = identity(&record).filter(|_| launch_matches(&record))?;
+        let _account = codex_app_server::acquire_account_mutation_gate(context, &record.id).ok()?;
+        crate::codex_account::ensure_proxy_input_allowed(&record).ok()?;
+        let mut client = codex_app_server::guarded::Client::connect(&record, deadline).ok()?;
+        // Provider ingress may need the record lock to hydrate the accepted input.
+        drop(lock);
+        let turn_id = client.find_client_input(&client_id, |text| {
+            [true, false]
+                .into_iter()
+                .any(|require_idle| store::fingerprint(text, require_idle) == claimed)
+        })?;
+        let _lock = crate::acquire_session_record_lock_timed(
+            context,
+            &record.id,
+            deadline.saturating_duration_since(Instant::now()),
+        )
+        .ok()?;
+        let current = load_session_record(context, &record.id).ok()?;
+        if !launch_matches(&current) || identity(&current).as_ref() != Some(&before) {
+            return None;
+        }
+        let history_session_id = current
+            .provider_resume
+            .as_ref()
+            .filter(|resume| resume.provider == "codex")
+            .map(|resume| resume.session_id.clone());
+        store::publish_confirmed_by_client_id(context, &original, turn_id, history_session_id)
+            .ok()
+            .flatten()
+    };
+    confirmed().unwrap_or(original)
 }
 
 fn confirm(context: &CliContext, original: ResultRecord) -> ResultRecord {

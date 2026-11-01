@@ -61,7 +61,7 @@ pub(super) fn deliver(
     record.updated_at = Zoned::now().timestamp().to_string();
     write_session_record(context, &record)?;
     let confirmation = client
-        .dispatch(&text, |turn_id| {
+        .dispatch(&text, args.guards.client_message_id.as_deref(), |turn_id| {
             (attempt.acknowledged)(&record, turn_id);
             // Acknowledged input may wait for synchronous provider ingress
             // before entering history. Ingress needs this record lock. Keep
