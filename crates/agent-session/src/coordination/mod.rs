@@ -16,6 +16,7 @@ pub mod mailbox;
 mod mailbox_wait;
 mod notification;
 mod notification_policy;
+pub(crate) mod read_events;
 pub(crate) mod resume_preflight;
 pub use notification::NotificationProjection;
 pub mod readiness;
@@ -294,8 +295,12 @@ pub(crate) fn run_message(context: &CliContext, args: cli::MessageArgs) -> i32 {
         MessageCommand::Inbox(args) => {
             ("message-inbox", args.format, mailbox::inbox(context, args))
         }
-        MessageCommand::Show(args) => ("message-show", args.format, mailbox::show(context, args)),
-        MessageCommand::Ack(args) => ("message-ack", args.format, mailbox::ack(context, args)),
+        MessageCommand::Show(args) => (
+            "message-show",
+            args.format,
+            read_events::show(context, args),
+        ),
+        MessageCommand::Ack(args) => ("message-ack", args.format, read_events::ack(context, args)),
         MessageCommand::Reply(args) => {
             ("message-reply", args.format, mailbox::reply(context, args))
         }
