@@ -20,6 +20,7 @@ same managed session's upload directory. Claude Code 2.1.316 human
 `attachment/queued_command` prompt strings use the same quoted-upload rules.
 Queued string and structured prompt images preserve caption/image order in
 `parts=v1`; repeated `rendered` text is not a second image source.
+
 These upload references become ordered image parts, leaving the surrounding
 caption text visible. Other quoted paths
 remain text: they must pass the attachment identity, path, size, extension and
