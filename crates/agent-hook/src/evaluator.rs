@@ -24,8 +24,8 @@ use crate::model::{
     ShadowObservation, TimeoutPosture,
 };
 
-const MAX_AGGREGATE_CONTEXT: usize = 16 * 1024;
-const MAX_REASONS: usize = 64;
+pub(crate) const MAX_AGGREGATE_CONTEXT: usize = 16 * 1024;
+pub(crate) const MAX_REASONS: usize = 64;
 const MAX_HANDLER_OUTPUT: usize = 256 * 1024;
 const MAX_EXECUTABLE_CAPABILITIES: usize = 17;
 const MAX_DISPATCH_CHILD_OUTPUT: usize = 512 * 1024;
@@ -660,7 +660,7 @@ fn activity_degradation_outcome(
         crate::degradation::lane(request.event.as_str()) == crate::degradation::Lane::Conversation;
     let (availability, lane_reason) = if conversation {
         (
-            "Conversation remains available in a read-only degraded lane; no mutation authority was granted.",
+            crate::degradation::conversation::EVENT_CONTEXT,
             crate::degradation::CONVERSATION_DEGRADED,
         )
     } else if read_only {
