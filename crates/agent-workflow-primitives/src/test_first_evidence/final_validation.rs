@@ -260,41 +260,8 @@ pub(super) fn run_resolve_final(args: ResolveFinalArgs) -> i32 {
     }
 }
 
-// Consume matches from the original text so a rendered tail is never rewritten again.
-fn portable_reference(reference: &str) -> String {
-    static URI: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let uri = URI.get_or_init(|| {
-        regex::Regex::new(r#"[A-Za-z][A-Za-z0-9+.-]*:[^\s<>"`]+"#)
-            .expect("valid portable reference URI regex")
-    });
-    let uri_ranges: Vec<_> = uri.find_iter(reference).map(|uri| uri.range()).collect();
-    let hits = nils_common::provider_payload::scan_local_paths(reference);
-    let mut remaining = reference;
-    let mut display = String::new();
-    while let Some((start, hit)) = hits
-        .iter()
-        .filter_map(|hit| remaining.find(&hit.sample).map(|start| (start, hit)))
-        .min_by_key(|(start, hit)| (*start, std::cmp::Reverse(hit.sample.len())))
-    {
-        display.push_str(&remaining[..start]);
-        let original_start = reference.len() - remaining.len() + start;
-        // URI components are audit-link text, not standalone filesystem references.
-        // Leave them intact so the unchanged publication guard can refuse them.
-        if uri_ranges
-            .iter()
-            .any(|range| range.contains(&original_start))
-        {
-            display.push_str(&hit.sample);
-        } else {
-            display.push_str(&hit.suggestion);
-        }
-        remaining = &remaining[start + hit.sample.len()..];
-    }
-    display.push_str(remaining);
-    display
-}
-
-/// Portable audit section for PR bodies containing explicit failed-final dispositions.
+/// Public audit metadata for explicit failed-final dispositions.
+/// Opaque evidence text stays in the immutable record, including command bytes.
 pub fn final_resolution_summary(record: &EvidenceRecord) -> String {
     if !record
         .final_validations
@@ -306,56 +273,23 @@ pub fn final_resolution_summary(record: &EvidenceRecord) -> String {
     let mut summary = String::from("## Final validation dispositions\n");
     for validation in &record.final_validations {
         summary.push_str(&format!(
-            "\n- {}: `{}` (scope {}, attempt {}).",
+            "\n- {}: command `sha256:{}` (scope {}, attempt {}).",
             validation.status.as_str().to_uppercase(),
-            portable_reference(&validation.command),
+            hex(&Sha256::digest(validation.command.as_bytes())),
             validation.scope.map_or("unknown", ValidationScope::as_str),
             validation.attempt
         ));
-        if let Some(detail) = &validation.summary {
-            summary.push_str(&format!(" {detail}"));
-        }
         if let Some(resolution) = &validation.resolution {
             summary.push_str(&format!(
-                " Resolved by `{}` (scope {}, attempt {}): {}. Investigation: {}.",
-                portable_reference(&resolution.passing_command),
+                " Resolved by command `sha256:{}` (scope {}, attempt {}).",
+                hex(&Sha256::digest(resolution.passing_command.as_bytes())),
                 resolution.passing_scope.as_str(),
                 resolution.passing_attempt,
-                resolution.reason,
-                resolution
-                    .investigation
-                    .iter()
-                    .map(|reference| portable_reference(reference))
-                    .collect::<Vec<_>>()
-                    .join("; ")
             ));
         }
     }
     summary.push('\n');
-    let summary = redact_text(&summary).value;
-    // Persisted records can come from producers that did not redact assignments.
-    // Apply compound-key masking only at export so stored command identities and
-    // their resolution references remain unchanged.
-    static COMPOUND_SECRET: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let assignments = COMPOUND_SECRET.get_or_init(|| {
-        regex::Regex::new(
-            r#"(?ix)
-            (?P<key>\b(?:[a-z0-9_-]*[_-])?(?:access[_-]?token|refresh[_-]?token|api[_-]?key|apikey|authorization|cookie|password|secret|session[_-]?id|token)(?:[_-][a-z0-9_-]+)*\b)
-            (?P<after_key>"?\s*[:=]\s*)
-            (?P<value>"[^"]*"|'[^']*'|[^\s,;&}`]+)
-            "#,
-        )
-        .expect("valid compound credential assignment regex")
-    });
-    assignments
-        .replace_all(&summary, |captures: &regex::Captures<'_>| {
-            if &captures["value"] == "[REDACTED]" {
-                captures[0].to_string()
-            } else {
-                format!("{}{}[REDACTED]", &captures["key"], &captures["after_key"])
-            }
-        })
-        .into_owned()
+    summary
 }
 
 #[cfg(test)]
@@ -442,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    fn final_disposition_summary_redacts_persisted_secret_shapes() {
+    fn final_disposition_summary_omits_persisted_secret_shapes() {
         let dir = tempfile::tempdir().unwrap();
         fixture(dir.path());
         assert_eq!(
@@ -471,7 +405,8 @@ mod tests {
             .push(synthetic.clone());
         let summary = final_resolution_summary(&result.record);
         assert!(!summary.contains(&synthetic));
-        assert!(summary.contains("[REDACTED]"));
+        assert!(!summary.contains("[REDACTED]"));
+        assert!(summary.contains("FAIL: command `sha256:"));
     }
 
     #[test]

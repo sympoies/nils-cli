@@ -1,4 +1,4 @@
-//! Publication uses portable display references while canonical evidence stays immutable.
+//! Publication exports typed disposition metadata while canonical evidence stays immutable.
 use std::{fs, path::Path};
 
 use agent_workflow_primitives::test_first_evidence::run_with_args;
@@ -40,6 +40,22 @@ fn fixture_with_commands(
     failed_command: &str,
     passing_command: &str,
 ) -> SubjectBoundEvidenceFixture {
+    fixture_with_disposition(
+        references,
+        failed_command,
+        passing_command,
+        "synthetic validation result",
+        "synthetic passing validation covers the same source",
+    )
+}
+
+fn fixture_with_disposition(
+    references: &[&str],
+    failed_command: &str,
+    passing_command: &str,
+    summary: &str,
+    reason: &str,
+) -> SubjectBoundEvidenceFixture {
     let fixture = SubjectBoundEvidenceFixture::new(
         "https://github.com/example/project.git",
         &[(".forge-cli.toml", "[test_first]\nrequire = true\n")],
@@ -73,6 +89,8 @@ fn fixture_with_commands(
             "affected-suite",
             "--status",
             "fail",
+            "--summary",
+            summary,
         ],
     );
     evidence(
@@ -85,6 +103,8 @@ fn fixture_with_commands(
             "full",
             "--status",
             "pass",
+            "--summary",
+            summary,
         ],
     );
     let mut resolution = vec![
@@ -101,7 +121,7 @@ fn fixture_with_commands(
         "--passing-attempt",
         "1",
         "--reason",
-        "synthetic passing validation covers the same source",
+        reason,
     ];
     for reference in references {
         resolution.extend(["--investigation", reference]);
@@ -121,7 +141,7 @@ fn create_args<'a>(operation: &'a str, evidence: &'a str) -> Vec<&'a str> {
         "--kind",
         "bug",
         "--title",
-        "fix: portable investigation references",
+        "fix: private evidence disposition export",
         "--body",
         BODY,
         "--base",
@@ -183,110 +203,15 @@ esac
 }
 
 #[test]
-fn macro_enrichment_reaches_stub_with_portable_final_summary() {
-    let fixture = fixture();
+fn create_and_deliver_keep_local_disposition_details_in_immutable_evidence() {
+    let summary = "validation report saved at /tmp/evidence/validation.log";
+    let reason = "same target confirmed in /var/tmp/evidence/investigation.json";
+    let investigation = "/opt/evidence/analysis.log";
+    let failed = "cargo test affected > /tmp/evidence/affected.log";
+    let passing = "bash /opt/evidence/checks.sh";
+    let fixture = fixture_with_disposition(&[investigation], failed, passing, summary, reason);
     let file = fixture.evidence.join("test-first-evidence.json");
     let before = fs::read(&file).unwrap();
-    let hash = Sha256::digest(&before);
-    let stub = StubEnv::new();
-    let capture = stub.tempdir.path().join("published-body.md");
-    let stub = publication_stub(stub, &capture);
-    let out = fixture.evidence.to_str().unwrap();
-    let mut args = create_args("deliver", out);
-    args.push("--no-merge");
-    let result = run_forge_cli_in(&stub, &args, Some(&fixture.repo));
-    assert!(
-        capture.is_file(),
-        "macro failed before publication: {}\n{}",
-        result.stdout,
-        result.stderr
-    );
-    assert_ne!(
-        result.code, 0,
-        "the fixture deliberately stops after capture"
-    );
-    let body = fs::read_to_string(capture).unwrap();
-    assert!(body.starts_with(BODY));
-    assert!(body.contains("## Final validation dispositions"));
-    assert!(body.contains("FAIL: `synthetic affected`"));
-    assert!(body.contains("Resolved by `synthetic full`"));
-    assert!(body.contains("$HOME/out/triage.log; $HOME/out/proof.json"));
-    assert!(nils_common::provider_payload::scan_local_paths(&body).is_empty());
-    forge_cli::validations::no_local_path(&body, "body").expect("normal publication guard");
-    assert_eq!(fs::read(&file).unwrap(), before);
-    assert_eq!(Sha256::digest(fs::read(&file).unwrap()), hash);
-    assert!(
-        String::from_utf8(before)
-            .unwrap()
-            .contains("/home/fixture/out/triage.log")
-    );
-    assert_eq!(git(&fixture.repo, &["status", "--porcelain"]), "");
-}
-
-#[test]
-fn nested_home_tail_keeps_the_existing_publication_guard_refusal() {
-    let fixture = fixture_with_references(&["/home/fixture/archive/home/example/report.log"]);
-    let file = fixture.evidence.join("test-first-evidence.json");
-    let before = fs::read(&file).unwrap();
-    let stub = StubEnv::new();
-    let capture = stub.tempdir.path().join("published-body.md");
-    let stub = publication_stub(stub, &capture);
-    let out = fixture.evidence.to_str().unwrap();
-    let mut args = create_args("deliver", out);
-    args.push("--no-merge");
-    let result = run_forge_cli_in(&stub, &args, Some(&fixture.repo));
-    assert_eq!(result.code, 65, "{}\n{}", result.stdout, result.stderr);
-    assert_eq!(
-        parse_envelope(&result.stdout)["error"]["code"],
-        "local_path_present"
-    );
-    assert!(
-        !capture.exists(),
-        "the guard must not publish a corrupted reference"
-    );
-    assert_eq!(fs::read(file).unwrap(), before);
-}
-
-#[test]
-fn create_and_deliver_refuse_uri_home_components_before_publication() {
-    let fixture = fixture_with_references(&[
-        "https://example.invalid/home/fixture/report",
-        "https://example.invalid/Users/fixture/report",
-    ]);
-    let file = fixture.evidence.join("test-first-evidence.json");
-    let before = fs::read(&file).unwrap();
-    let hash = Sha256::digest(&before);
-    let stub = StubEnv::new();
-    let capture = stub.tempdir.path().join("published-body.md");
-    let stub = publication_stub(stub, &capture);
-    for operation in ["create", "deliver"] {
-        let out = fixture.evidence.to_str().unwrap();
-        let mut args = create_args(operation, out);
-        if operation == "deliver" {
-            args.push("--no-merge");
-        }
-        let result = run_forge_cli_in(&stub, &args, Some(&fixture.repo));
-        assert_eq!(result.code, 65, "{}\n{}", result.stdout, result.stderr);
-        assert_eq!(
-            parse_envelope(&result.stdout)["error"]["code"],
-            "local_path_present"
-        );
-        assert!(!capture.exists(), "URI must not be corrupted and published");
-        assert_eq!(fs::read(&file).unwrap(), before);
-        assert_eq!(Sha256::digest(fs::read(&file).unwrap()), hash);
-    }
-}
-
-#[test]
-fn create_and_deliver_publish_portable_command_display_without_rewriting_evidence() {
-    let failed = "cargo test affected > /home/fixture/out/affected.log 2>&1";
-    let passing = "bash scripts/checks.sh > /Users/fixture/out/full.log 2>&1";
-    let fixture = fixture_with_commands(&["docs/repro.md"], failed, passing);
-    let file = fixture.evidence.join("test-first-evidence.json");
-    let before = fs::read(&file).unwrap();
-    let hash = Sha256::digest(&before);
-    let history: serde_json::Value = serde_json::from_slice(&before).unwrap();
-    assert!(BODY.find("/home/").is_none());
     for operation in ["create", "deliver"] {
         let stub = StubEnv::new();
         let capture = stub.tempdir.path().join("published-body.md");
@@ -298,26 +223,46 @@ fn create_and_deliver_publish_portable_command_display_without_rewriting_evidenc
         let result = run_forge_cli_in(&stub, &args, Some(&fixture.repo));
         assert!(
             capture.is_file(),
-            "failed before publication: {}\n{}",
+            "must reach the publication owner: {}\n{}",
             result.stdout,
             result.stderr
         );
-        assert_ne!(result.code, 0, "fixture stops after body capture");
+        assert_ne!(result.code, 0, "stub stops after capturing the actual body");
         let body = fs::read_to_string(capture).unwrap();
         assert!(body.starts_with(BODY));
-        assert!(body.contains("FAIL: `cargo test affected > $HOME/out/affected.log 2>&1`"));
-        assert!(body.contains("Resolved by `bash scripts/checks.sh > $HOME/out/full.log 2>&1`"));
-        assert!(body.contains("PASS: `bash scripts/checks.sh > $HOME/out/full.log 2>&1`"));
-        forge_cli::validations::no_local_path(&body, "body").expect("unchanged normal path guard");
+        assert!(body.contains(&format!(
+                "FAIL: command `sha256:{}` (scope affected-suite, attempt 1).",
+                Sha256::digest(failed.as_bytes())
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            )));
+        assert!(body.contains(&format!(
+                "PASS: command `sha256:{}` (scope full, attempt 1).",
+                Sha256::digest(passing.as_bytes())
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            )));
+        assert!(body.contains(&format!(
+                "Resolved by command `sha256:{}` (scope full, attempt 1).",
+                Sha256::digest(passing.as_bytes())
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            )));
+        for private_detail in [failed, passing, summary, reason, investigation] {
+            assert!(
+                !body.contains(private_detail),
+                "{operation} must not export local-only disposition details"
+            );
+        }
         assert_eq!(fs::read(&file).unwrap(), before);
-        assert_eq!(Sha256::digest(fs::read(&file).unwrap()), hash);
-        let after: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
-        assert_eq!(after["final_validations"], history["final_validations"]);
-        assert_eq!(after["subject"], history["subject"]);
     }
     let retained = String::from_utf8(before).unwrap();
-    assert!(retained.contains(failed));
-    assert!(retained.contains(passing));
+    for private_detail in [failed, passing, summary, reason, investigation] {
+        assert!(retained.contains(private_detail));
+    }
     assert_eq!(git(&fixture.repo, &["status", "--porcelain"]), "");
 }
 
