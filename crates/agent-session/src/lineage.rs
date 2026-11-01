@@ -1185,11 +1185,16 @@ mod tests {
         assert_eq!(opted_out.resolve(Some(&parent)), None);
         assert_eq!(inherit.resolve(None), None);
 
-        let program_only = WorkRequest::from_flags(Some("example-org/program-tracker#45"), &[], true).unwrap();
+        let program_only =
+            WorkRequest::from_flags(Some("example-org/program-tracker#45"), &[], true).unwrap();
         let resolved = program_only.resolve(Some(&parent)).unwrap();
         assert_eq!(
             (resolved.program, resolved.issues, resolved.inherited),
-            (Some(issue("example-org/program-tracker", 45)), Vec::new(), false)
+            (
+                Some(issue("example-org/program-tracker", 45)),
+                Vec::new(),
+                false
+            )
         );
     }
 
@@ -1283,7 +1288,10 @@ mod tests {
             },
         };
         let value = seed.to_create_json();
-        assert_eq!(LineageSeed::from_create_json("host-b", &value).unwrap(), seed);
+        assert_eq!(
+            LineageSeed::from_create_json("host-b", &value).unwrap(),
+            seed
+        );
 
         let root = LineageSeed::root("host-b", STARTER_CONSOLE, VIA_CONSOLE);
         let lineage = LineageSeed::from_create_json("host-b", &root.to_create_json())

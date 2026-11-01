@@ -1073,7 +1073,8 @@ fn console_start_sends_the_child_lineage_and_resolved_work() {
         "starter": {"kind": "session", "via": "console"},
         "budget": null,
     });
-    let program = json!({"provider": "github", "repository": "example-org/program-tracker", "number": 44});
+    let program =
+        json!({"provider": "github", "repository": "example-org/program-tracker", "number": 44});
     let issue = json!({"provider": "github", "repository": "sympoies/nils-cli", "number": 2032});
     record["work"] =
         json!({"program": program, "issues": [issue], "inherited": false, "revision": 2});
