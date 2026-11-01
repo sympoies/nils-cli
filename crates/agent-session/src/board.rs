@@ -181,6 +181,7 @@ pub(crate) fn closed_record(
         &crate::resolve_tmux_bin(None),
         false,
         crate::coordination::CoordinationSummary::default(),
+        crate::context_usage::projection(context, record),
     );
     view.last_terminal_activity_at = last_terminal_activity_at;
     let view = serde_json::to_value(&view).ok()?;

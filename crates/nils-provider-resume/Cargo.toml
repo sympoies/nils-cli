@@ -17,4 +17,5 @@ serde_json = { workspace = true }
 nils-common = { version = "1.40.0", path = "../nils-common", package = "nils-common" }
 
 [dev-dependencies]
+pretty_assertions = { workspace = true }
 tempfile = "3"

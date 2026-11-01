@@ -88,9 +88,38 @@ pub(crate) fn projection(context: &CliContext, record: &SessionRecord) -> Option
         );
     }
     let source = cache.sources.get(&key)?.1.as_ref()?.clone();
-    let mut usage = cache
-        .reader
-        .read_source(&source, &record.agent, &resume.session_id)?;
+    read_usage(&mut cache.reader, &source, record)
+}
+
+/// A cold CLI list owns its discovery and reader for exactly one request.
+/// Claude and all non-list projections keep their existing discovery lifetime.
+#[derive(Default)]
+pub(crate) struct Query {
+    sources: crate::provider_prompt::QuerySources,
+    reader: Reader,
+}
+
+impl Query {
+    pub(crate) fn projection(
+        &mut self,
+        context: &CliContext,
+        record: &SessionRecord,
+    ) -> Option<ContextUsage> {
+        if record.agent != "codex" {
+            return projection(context, record);
+        }
+        let source = self.sources.codex_source(record)?;
+        read_usage(&mut self.reader, &source, record)
+    }
+}
+
+fn read_usage(
+    reader: &mut Reader,
+    source: &ProviderPromptSource,
+    record: &SessionRecord,
+) -> Option<ContextUsage> {
+    let resume = record.provider_resume.as_ref()?;
+    let mut usage = reader.read_source(source, &record.agent, &resume.session_id)?;
     if record.agent == "claude"
         && let Some(window) = crate::runtime_environment::provider_facts::claude_window(record)
     {
