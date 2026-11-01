@@ -26,10 +26,16 @@ Open only the references relevant to the requested change:
 ## Development log writers
 
 - Source `scripts/dev-env.sh` in every development/automation shell; this
-  repository requires `DEVLOG_LAYOUT=fragments` and `devlog >=1.31.16`. The
-  sole exception is a `semantic-commit` authoring call required by the delivery
-  guard to be the only command in its tool call: invoke it without a preceding
-  source, environment assignment, or wrapper. If a commit-time hook requires
+  repository requires `DEVLOG_LAYOUT=fragments` and `devlog >=1.31.16`.
+- Exceptions are a `semantic-commit` authoring call and, when the owner guard
+  requires a stable sole-command context, a trusted `git-cli worktree remove
+  <exact owned absolute managed path>` call or a literal `git -C <exact owned
+  non-default managed checkout> merge --no-commit --no-ff --no-edit <verified
+  current-main commit>` preparation call. Each must be the only command in its
+  tool call, without a preceding source, environment assignment, or wrapper.
+  All target, ownership, backup, holder, default-branch, signing, and hook
+  guards remain in effect. If an owner tool refuses, stop and report its exact
+  error. If a commit-time hook requires
   missing `DEVLOG_LAYOUT`, stop and report the exact error to the environment
   owner.
 - Use `devlog new` for durable outcomes. It writes a unique
