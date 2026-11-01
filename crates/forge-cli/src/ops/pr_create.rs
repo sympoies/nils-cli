@@ -1790,11 +1790,11 @@ mod tests {
         let body = "## Summary\n\nResolve a validation failure.\n\n## Test plan\n\nCanonical validation passed.\n";
         let summary_body =
             append_validation_summary(body.to_string(), gate().unwrap().as_ref()).unwrap();
-        assert!(summary_body.contains("FAIL: `cargo test affected`"));
-        assert!(summary_body.contains("PASS: `bash scripts/check.sh`"));
-        assert!(summary_body.contains("isolated assertion failure"));
-        assert!(summary_body.contains("isolated base and head runs passed"));
-        assert!(summary_body.contains("Resolved by `bash scripts/check.sh`"));
+        assert!(summary_body.contains("FAIL: command `sha256:"));
+        assert!(summary_body.contains("PASS: command `sha256:"));
+        assert!(!summary_body.contains("isolated assertion failure"));
+        assert!(!summary_body.contains("isolated base and head runs passed"));
+        assert!(summary_body.contains("Resolved by command `sha256:"));
         git(&repo, &["branch", "fix/final-disposition"]);
         let env = Environment {
             test_first_policy: TestFirstPolicy {
@@ -1823,7 +1823,7 @@ mod tests {
     }
 
     #[test]
-    fn final_disposition_backend_body_redacts_compound_credentials() {
+    fn final_disposition_backend_body_omits_compound_credentials() {
         use std::cell::RefCell;
 
         struct CaptureRunner {
@@ -1983,20 +1983,25 @@ mod tests {
                 );
             }
             for retained in [
-                "FAIL: `cargo test affected AWS_SESSION_TOKEN=[REDACTED]` (scope",
-                "PASS: `canonical CLIENT_SECRET=[REDACTED]` (scope",
-                "Resolved by",
-                "canonical suite passed",
-                "isolated failure",
-                "canonical run passed",
-                "unchanged source",
-                "AWS_SESSION_TOKEN=[REDACTED]",
-                "CLIENT_SECRET=[REDACTED]",
-                "AWS_SECRET_ACCESS_KEY=[REDACTED]",
-                "SECRET_ACCESS_KEY=[REDACTED]",
-                "_CLIENT_SECRET=[REDACTED]",
+                "FAIL: command `sha256:",
+                "PASS: command `sha256:",
+                "Resolved by command `sha256:",
+                "(scope affected-suite, attempt 1).",
             ] {
-                assert!(body.contains(retained), "audit detail missing: {retained}");
+                assert!(
+                    body.contains(retained),
+                    "audit metadata missing: {retained}"
+                );
+            }
+            for private in [
+                "AWS_SESSION_TOKEN",
+                "CLIENT_SECRET",
+                "canonical suite passed",
+            ] {
+                assert!(
+                    !body.contains(private),
+                    "opaque evidence text exported: {private}"
+                );
             }
         }
     }
