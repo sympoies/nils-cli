@@ -112,8 +112,8 @@ pub(super) fn count_prompt<'a>(messages: impl Iterator<Item = &'a StoredMessage>
     )
 }
 
-/// The same counts spelled out, for notice delivery, which never types into the
-/// composer and so has no width bound.
+/// The same counts spelled out, for notice delivery. A notice envelope is
+/// multiline and is not held to the one-row width bound of the compact form.
 pub(super) fn explained_prompt<'a>(messages: impl Iterator<Item = &'a StoredMessage>) -> String {
     format!(
         "Mailbox: {}; agent-session message inbox",

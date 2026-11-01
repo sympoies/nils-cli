@@ -12,8 +12,8 @@
 ### Why / context
 
 - Refs #3180 and #3186: the compact letters were unexplained to agents and
-  people. Notice delivery never types into the composer, so the width bound
-  does not apply to it.
+  people. A notice envelope is multiline and is not held to the one-row width
+  bound, whichever route delivers it.
 
 ### Evidence
 

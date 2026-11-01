@@ -114,9 +114,11 @@ Multiple notification-eligible unread messages coalesce into one mailbox-level
 notification for the newest pending generation. With the existing notice writer
 gate enabled, notice-capable recipients receive the canonical `mailbox.wake`
 envelope with coalesced live unread counts spelled out with the inbox action,
-such as `Mailbox: 1 handoff, 2 report; agent-session message inbox`. Notice
-delivery does not type into the composer, so the 51-column bound below does not
-apply to it.
+such as `Mailbox: 1 handoff, 2 report; agent-session message inbox`. The
+Claude module, Codex app-server and hook claim never type into the composer.
+Codex terminal types the multiline envelope through the guarded composer path,
+which joins wrapped rows. None of them is held to the one-row 51-column bound
+below.
 
 Controller and hook delivery share the same generation claim. Supported
 terminal recipients use guarded notice delivery; Codex retains its start/steer
