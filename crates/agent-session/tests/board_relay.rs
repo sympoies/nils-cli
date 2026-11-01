@@ -1061,8 +1061,8 @@ fn console_start_sends_the_child_lineage_and_resolved_work() {
     let mut record: Value =
         serde_json::from_slice(&fs::read(&record_path).expect("record")).expect("record json");
     let root = json!({
-        "machine": "sympoies",
-        "session_id": "laoda-root",
+        "machine": "host-a",
+        "session_id": "program-root",
         "session_created_at": "2029-12-31T00:00:00Z",
     });
     record["lineage"] = json!({
@@ -1073,7 +1073,7 @@ fn console_start_sends_the_child_lineage_and_resolved_work() {
         "starter": {"kind": "session", "via": "console"},
         "budget": null,
     });
-    let program = json!({"provider": "github", "repository": "serenvia/laoda", "number": 44});
+    let program = json!({"provider": "github", "repository": "example-org/program-tracker", "number": 44});
     let issue = json!({"provider": "github", "repository": "sympoies/nils-cli", "number": 2032});
     record["work"] =
         json!({"program": program, "issues": [issue], "inherited": false, "revision": 2});

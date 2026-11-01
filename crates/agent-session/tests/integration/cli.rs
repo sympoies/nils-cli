@@ -934,7 +934,7 @@ JSON
   exit 1
 fi
 cat <<'JSON'
-{"schema_version":"claude-cli.usage.v1","command":"usage","ok":false,"error":{"code":"auth-unavailable","message":"missing auth at /Users/terry/.claude/token for user@example.com"}}
+{"schema_version":"claude-cli.usage.v1","command":"usage","ok":false,"error":{"code":"auth-unavailable","message":"missing auth at /Users/example/.claude/token for user@example.com"}}
 JSON
 exit 1
 "#,
@@ -978,7 +978,7 @@ exit 1
     assert_eq!(claude["ok"], false);
     assert_eq!(claude["error"]["code"], "auth-unavailable");
     let message = claude["error"]["message"].as_str().expect("message");
-    assert!(!message.contains("/Users/terry"));
+    assert!(!message.contains("/Users/example"));
     assert!(!message.contains("user@example.com"));
 }
 
@@ -3700,7 +3700,7 @@ fn start_accepts_hyphen_leading_agent_arg_values() {
             "--state-dir",
             &state_arg,
             "--host",
-            "sympoies",
+            "host-a",
             "start",
             "--agent",
             "codex",
@@ -4526,7 +4526,7 @@ fn list_command_and_delete_manage_existing_session() {
             "--state-dir",
             &state_arg,
             "--host",
-            "sympoies",
+            "host-a",
             "command",
             &id,
             "--format",
@@ -4545,7 +4545,7 @@ fn list_command_and_delete_manage_existing_session() {
         command_data["ssh_attach_command"]
             .as_str()
             .unwrap()
-            .starts_with("ssh -t sympoies"),
+            .starts_with("ssh -t host-a"),
         "missing ssh attach command: {command_data}"
     );
     let command_without_activity_envs = [
@@ -4560,7 +4560,7 @@ fn list_command_and_delete_manage_existing_session() {
             "--state-dir",
             &state_arg,
             "--host",
-            "sympoies",
+            "host-a",
             "command",
             &id,
             "--format",
@@ -7271,7 +7271,7 @@ fn list_ignores_retired_mode_registry_without_changing_existing_state() {
                     "objective_summary": "Deliver durable Main Agent recovery",
                     "objective_packet_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "controller": {
-                        "machine": "sympoies",
+                        "machine": "host-a",
                         "session_id": main_id,
                         "session_incarnation": "main-incarnation",
                         "session_created_at": "2000-01-01T00:00:00Z"
@@ -7292,13 +7292,13 @@ fn list_ignores_retired_mode_registry_without_changing_existing_state() {
                     "task_summary": "Project a resumed worker relationship",
                     "private_packet_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                     "primary_manager": {
-                        "machine": "sympoies",
+                        "machine": "host-a",
                         "session_id": main_id,
                         "session_incarnation": "main-incarnation",
                         "session_created_at": "2000-01-01T00:00:00Z"
                     },
                     "worker": {
-                        "machine": "sympoies",
+                        "machine": "host-a",
                         "session_id": worker_id,
                         "session_incarnation": "worker-prior-incarnation",
                         "session_created_at": "2000-01-01T00:00:00Z"
@@ -7307,7 +7307,7 @@ fn list_ignores_retired_mode_registry_without_changing_existing_state() {
                     "borrowed_by": [
                         {
                             "session": {
-                                "machine": "sympoies",
+                                "machine": "host-a",
                                 "session_id": "expired-borrower",
                                 "session_incarnation": "expired-borrower-incarnation",
                                 "session_created_at": "2000-01-01T00:00:00Z"
@@ -7317,7 +7317,7 @@ fn list_ignores_retired_mode_registry_without_changing_existing_state() {
                         },
                         {
                             "session": {
-                                "machine": "sympoies",
+                                "machine": "host-a",
                                 "session_id": "active-borrower",
                                 "session_incarnation": "active-borrower-incarnation",
                                 "session_created_at": "2000-01-01T00:00:00Z"

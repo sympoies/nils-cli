@@ -523,7 +523,7 @@ an `auth refresh` envelope.
     "synced": false,
     "refreshed_at": "2026-02-11T03:20:11Z",
     "remote_sync": true,
-    "remote_ssh": "g14",
+    "remote_ssh": "host-a",
     "remote_name": "team"
   }
 }

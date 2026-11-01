@@ -791,10 +791,10 @@ Release tarballs include:
 - `completions/zsh/` and `completions/bash/`
 - `README.md`, `LICENSE`, `THIRD_PARTY_LICENSES.md`, and `THIRD_PARTY_NOTICES.md`
 
-Releases run through the private sympoies-infra release broker: tagging, the
-GitHub Release, the tap update, and fleet convergence are not done by hand from
-this repository. Use the `project-release-nils-cli` skill in
-`serenvia/sympoies-infra` to release. The repo-owned
+Releases run through the private release broker: tagging, the GitHub Release,
+the tap update, and fleet convergence are not done by hand from this
+repository. Use the `project-release-nils-cli` skill in the broker repository
+to release. The repo-owned
 `scripts/ci/prepare-release-bump.sh` implements the canonical version-bump
 transform the broker consumes.
 

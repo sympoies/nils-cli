@@ -1154,7 +1154,7 @@ mod tests {
     #[test]
     fn work_inherits_each_dimension_unless_given_or_opted_out() {
         let parent = work(
-            Some(issue("serenvia/laoda", 44)),
+            Some(issue("example-org/program-tracker", 44)),
             vec![issue("sympoies/nils-cli", 2032)],
         );
         let inherit = WorkRequest::from_flags(None, &[], false).unwrap();
@@ -1185,11 +1185,11 @@ mod tests {
         assert_eq!(opted_out.resolve(Some(&parent)), None);
         assert_eq!(inherit.resolve(None), None);
 
-        let program_only = WorkRequest::from_flags(Some("serenvia/laoda#45"), &[], true).unwrap();
+        let program_only = WorkRequest::from_flags(Some("example-org/program-tracker#45"), &[], true).unwrap();
         let resolved = program_only.resolve(Some(&parent)).unwrap();
         assert_eq!(
             (resolved.program, resolved.issues, resolved.inherited),
-            (Some(issue("serenvia/laoda", 45)), Vec::new(), false)
+            (Some(issue("example-org/program-tracker", 45)), Vec::new(), false)
         );
     }
 
@@ -1264,14 +1264,14 @@ mod tests {
     #[test]
     fn create_body_lineage_round_trips_and_rejects_inconsistent_shapes() {
         let parent = SessionRef {
-            machine: "sympoies".to_string(),
+            machine: "host-a".to_string(),
             session_id: "85a7379c-0bfc-4675-bab9-31ed8dcfce92".to_string(),
             session_created_at: "2026-10-01T00:00:00Z".to_string(),
             session_incarnation: Some("launch-1".to_string()),
         };
         let seed = LineageSeed {
             forge_context: None,
-            machine: "c8".to_string(),
+            machine: "host-b".to_string(),
             parent: Some(ParentLink {
                 parent: parent.clone(),
                 root: parent.without_incarnation(),
@@ -1283,19 +1283,19 @@ mod tests {
             },
         };
         let value = seed.to_create_json();
-        assert_eq!(LineageSeed::from_create_json("c8", &value).unwrap(), seed);
+        assert_eq!(LineageSeed::from_create_json("host-b", &value).unwrap(), seed);
 
-        let root = LineageSeed::root("c8", STARTER_CONSOLE, VIA_CONSOLE);
-        let lineage = LineageSeed::from_create_json("c8", &root.to_create_json())
+        let root = LineageSeed::root("host-b", STARTER_CONSOLE, VIA_CONSOLE);
+        let lineage = LineageSeed::from_create_json("host-b", &root.to_create_json())
             .unwrap()
             .finalize("child", "2026-10-01T01:00:00Z");
         assert_eq!(
             json!(lineage),
             json!({
                 "schema_version": LINEAGE_SCHEMA,
-                "machine": "c8",
+                "machine": "host-b",
                 "parent": null,
-                "root": {"machine": "c8", "session_id": "child", "session_created_at": "2026-10-01T01:00:00Z"},
+                "root": {"machine": "host-b", "session_id": "child", "session_created_at": "2026-10-01T01:00:00Z"},
                 "depth": 0,
                 "starter": {"kind": "console", "via": "console"},
                 "budget": null,
@@ -1331,14 +1331,14 @@ mod tests {
         session_root["starter"]["kind"] = json!("session");
         cases.push(session_root);
         for case in cases {
-            let error = LineageSeed::from_create_json("c8", &case)
+            let error = LineageSeed::from_create_json("host-b", &case)
                 .expect_err(&case.to_string())
                 .into_inner();
             assert_eq!(error.code, LINEAGE_INVALID, "{case}");
         }
         let mut deep = value.clone();
         deep["depth"] = json!(MAX_DEPTH + 1);
-        let error = LineageSeed::from_create_json("c8", &deep)
+        let error = LineageSeed::from_create_json("host-b", &deep)
             .unwrap_err()
             .into_inner();
         assert_eq!(error.code, LINEAGE_DEPTH_EXCEEDED);

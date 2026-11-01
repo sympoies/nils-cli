@@ -3363,7 +3363,7 @@ fn normalize_claude_usage_preserves_reset_aliases() {
       { "label": "Month", "used_percent": 9, "remaining_percent": 91, "resetsAt": "2030-01-01T00:00:00.950339+00:00" },
       { "label": "Year", "used_percent": 1, "remaining_percent": 99, "resets_at_epoch": "1893456000000" },
       { "label": "Human", "used_percent": 4, "remaining_percent": 96, "resets_at": "Jul 12, 9pm (Asia/Taipei)" },
-      { "label": "Invalid", "used_percent": 2, "remaining_percent": 98, "resets_at": "/Users/terry/.claude/token" }
+      { "label": "Invalid", "used_percent": 2, "remaining_percent": 98, "resets_at": "/Users/example/.claude/token" }
     ]
   }
 }"#
@@ -3566,7 +3566,7 @@ fn normalize_codex_usage_prefers_actionable_reason_after_unknown_result() {
 fn default_usage_timeout_covers_slow_claude_usage_helpers() {
     assert!(
         Duration::from_millis(DEFAULT_USAGE_TIMEOUT_MS) >= Duration::from_secs(30),
-        "m4 claude-cli usage can take more than 20s before returning reset-bearing windows"
+        "a claude-cli usage call can take more than 20s before returning reset-bearing windows"
     );
 }
 
@@ -7932,18 +7932,18 @@ async fn create_stores_and_echoes_the_stated_lineage_and_work() {
         post_json("/sessions", Some(TOKEN), body)
     };
     let parent = json!({
-        "machine": "sympoies",
+        "machine": "host-a",
         "session_id": "85a7379c-0bfc-4675-bab9-31ed8dcfce92",
         "session_created_at": "2026-10-01T00:00:00Z",
         "session_incarnation": "parent-launch"
     });
     let root = json!({
-        "machine": "sympoies",
+        "machine": "host-a",
         "session_id": "root-session",
         "session_created_at": "2026-09-30T00:00:00Z"
     });
     let work = json!({
-        "program": {"provider": "github", "repository": "serenvia/laoda", "number": 44},
+        "program": {"provider": "github", "repository": "example-org/program-tracker", "number": 44},
         "issues": [{"provider": "github", "repository": "Sympoies/nils-cli", "number": 2032}],
         "inherited": true
     });
@@ -7976,7 +7976,7 @@ async fn create_stores_and_echoes_the_stated_lineage_and_work() {
         "budget": null
     });
     let expected_work = json!({
-        "program": {"provider": "github", "repository": "serenvia/laoda", "number": 44},
+        "program": {"provider": "github", "repository": "example-org/program-tracker", "number": 44},
         "issues": [{"provider": "github", "repository": "sympoies/nils-cli", "number": 2032}],
         "inherited": true,
         "revision": 1
@@ -15788,7 +15788,7 @@ async fn workdir_search_filters_default_project_and_config_roots() {
     let lock = GlobalStateLock::new();
     let tmp = tempfile::TempDir::new().unwrap();
     let home = tmp.path().join("home");
-    let project_match = home.join("Project/sympoies/agent-console");
+    let project_match = home.join("Project/example-org/agent-console");
     let second_match = home.join("Project/agent-tools");
     let too_deep_match = home.join("Project/a/b/c/d/e/agent-deep");
     let config_match = home.join(".config/zsh");
@@ -15864,9 +15864,9 @@ async fn workdir_search_filters_default_project_and_config_roots() {
 #[tokio::test]
 async fn repo_remote_url_resolves_github_and_gitlab_remotes() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let github_repo = tmp.path().join("home/Project/sympoies/agent-console");
+    let github_repo = tmp.path().join("home/Project/example-org/agent-console");
     let gitlab_repo = tmp.path().join("home/Project/acme/backend");
-    init_git_remote(&github_repo, "git@github.com:sympoies/agent-console.git");
+    init_git_remote(&github_repo, "git@github.com:example-org/agent-console.git");
     init_git_remote(
         &gitlab_repo,
         "ssh://git@gitlab.example.com:2222/group/sub/project.git",
@@ -15884,7 +15884,7 @@ async fn repo_remote_url_resolves_github_and_gitlab_remotes() {
     assert_eq!(body["data"]["machine"], "test-machine");
     assert_eq!(
         body["data"]["url"],
-        "https://github.com/sympoies/agent-console"
+        "https://github.com/example-org/agent-console"
     );
 
     let gitlab_path = format!("/repos/remote-url?cwd={}", gitlab_repo.to_string_lossy());
@@ -15908,9 +15908,9 @@ async fn workdir_search_can_return_git_repos_without_linked_worktrees() {
     let lock = GlobalStateLock::new();
     let tmp = tempfile::TempDir::new().unwrap();
     let home = tmp.path().join("home");
-    let project_repo = home.join("Project/sympoies/agent-console");
-    let linked_worktree = home.join("Project/sympoies/wt-agent-console-21");
-    let non_git_dir = home.join("Project/sympoies/notes");
+    let project_repo = home.join("Project/example-org/agent-console");
+    let linked_worktree = home.join("Project/example-org/wt-agent-console-21");
+    let non_git_dir = home.join("Project/example-org/notes");
     let config_repo = home.join(".config/zsh");
     std::fs::create_dir_all(project_repo.join(".git")).unwrap();
     std::fs::create_dir_all(&linked_worktree).unwrap();
@@ -15970,8 +15970,8 @@ async fn create_records_workdir_usage_for_recent_first_search() {
     let _unpinned = crate::agent_bin::unpinned_provider_env(&lock);
     let tmp = tempfile::TempDir::new().unwrap();
     let home = tmp.path().join("home");
-    let alpha_repo = home.join("Project/sympoies/alpha");
-    let beta_repo = home.join("Project/sympoies/beta");
+    let alpha_repo = home.join("Project/example-org/alpha");
+    let beta_repo = home.join("Project/example-org/beta");
     for repo in [&alpha_repo, &beta_repo] {
         std::fs::create_dir_all(repo).unwrap();
         assert!(

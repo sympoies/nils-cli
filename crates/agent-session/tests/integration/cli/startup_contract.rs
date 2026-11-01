@@ -35,7 +35,7 @@ pub(super) fn start_creates_session_state_without_printing_prompt() {
             "--state-dir",
             &state_arg,
             "--host",
-            "sympoies",
+            "host-a",
             "start",
             "--agent",
             "codex",
@@ -82,7 +82,7 @@ pub(super) fn start_creates_session_state_without_printing_prompt() {
         result["ssh_attach_command"]
             .as_str()
             .unwrap()
-            .starts_with("ssh -t sympoies ")
+            .starts_with("ssh -t host-a ")
     );
 
     let id = result["id"].as_str().expect("id");

@@ -108,7 +108,7 @@ codex-cli auth remove --format json --yes team-alpha.json
 codex-cli auth auto-refresh --format json
 codex-cli auth status --format json
 codex-cli auth current --format json
-codex-cli auth remote pull --ssh g14 --name team --access-only --write-active --format json
+codex-cli auth remote pull --ssh host-a --name team --access-only --write-active --format json
 codex-cli prompt-segment status --format json
 codex-cli agent run --capsule /absolute/private/capsule --format json
 codex-cli agent run --capsule /absolute/private/capsule --mcp-mode inherited --format json

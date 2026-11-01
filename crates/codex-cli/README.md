@@ -173,8 +173,8 @@ Auth examples:
 - `codex-cli auth status --format json`: Check active auth readiness for automation.
 - Import auth-host's current access-only `team` auth into the active local auth file:
   `codex-cli auth remote pull --ssh auth-host --name team --access-only --write-active`
-- Configure a replica to delegate default active-auth refresh to `g14`:
-  `eval "$(codex-cli config set remote-ssh g14)" && eval "$(codex-cli config set remote-name team)"`
+- Configure a replica to delegate default active-auth refresh to `host-a`:
+  `eval "$(codex-cli config set remote-ssh host-a)" && eval "$(codex-cli config set remote-name team)"`
 
 ### account
 

@@ -3421,7 +3421,7 @@ fn task_3_3_privacy_guards_deny_secret_memory_and_machine_local_output() {
         Some("bash|write|edit|str_replace_editor"),
     ));
     for content in [
-        "Install from /Users/terry/private/bin.",
+        "Install from /Users/example/private/bin.",
         "Install from /home/agent2/private/bin.",
     ] {
         let output = portable.run(

@@ -750,7 +750,7 @@ mod tests {
             "budget": null
         });
         view["work"] = json!({
-            "program": {"provider": "github", "repository": "o/laoda", "number": 44},
+            "program": {"provider": "github", "repository": "o/program-tracker", "number": 44},
             "issues": [{"provider": "github", "repository": "o/nils-cli", "number": 2032}],
             "inherited": true,
             "revision": 3
@@ -777,7 +777,7 @@ mod tests {
         assert_eq!(
             record["work"],
             json!({
-                "program": {"provider": "github", "repository": "o/laoda", "number": 44},
+                "program": {"provider": "github", "repository": "o/program-tracker", "number": 44},
                 "issues": [{"provider": "github", "repository": "o/nils-cli", "number": 2032}],
                 "inherited": true
             })
