@@ -71,16 +71,12 @@ fn submits_once(case: &str) {
         .filter(|call| call[0] == "send-keys")
         .map(|call| call.last().unwrap().as_str())
         .collect();
-    if case.starts_with("codex") {
-        assert_eq!(keys, ["C-a", "Right", "Right", "Left", "Right", "Enter"]);
-        assert!(
-            calls
-                .iter()
-                .any(|call| call.ends_with(&["Right".to_string(), "Left".to_string()]))
-        );
-    } else {
-        assert_eq!(keys, ["C-a", "Right", "Right", "Enter"]);
-    }
+    assert_eq!(keys, ["C-a", "Right", "Right", "Left", "Right", "Enter"]);
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.ends_with(&["Right".to_string(), "Left".to_string()]))
+    );
 }
 
 #[test]
@@ -238,3 +234,6 @@ fn codex_captured_wrap_requires_matching_layout_and_logical_cursor_path() {
         );
     }
 }
+
+#[path = "claude_trailing.rs"]
+mod claude_trailing;

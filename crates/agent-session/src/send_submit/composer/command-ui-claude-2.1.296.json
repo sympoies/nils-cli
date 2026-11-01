@@ -1,0 +1,158 @@
+{
+  "provider": "Claude Code 2.1.296",
+  "capture_flags": [
+    "-e",
+    "-p",
+    "-N",
+    "-T"
+  ],
+  "scope": "Original structural rows only, from raw `tmux capture-pane -p -e -N -T` of a disposable Haiku session (80x24, no conversation). Rows keep byte-exact SGR escapes; truncated rows keep their raw prefix and nothing after. Omitted rows are not reconstructed or blank-filled; the scrolled-back composer border rows that carried a session title were omitted. sourceRow is the tmux row within that frame and is not comparable across frames. Only Haiku with 80 columns was captured; Opus/Sonnet pickers and other pane sizes are unobserved.",
+  "frames": {
+    "model_picker_settled": {
+      "purpose": "positive Select model picker, settled (identical at first sight, at 409, +3s). Option rows truncated after first 'N.'; row 18 '+7 models' and rows 12/14-16/19/21 omitted",
+      "cursor_row": 17,
+      "cursor_col": 2,
+      "rows": [
+        {
+          "sourceRow": 8,
+          "styled": "\u001b[38;5;153m────────────────────────────────────────────────────────────────────────────────"
+        },
+        {
+          "sourceRow": 9,
+          "styled": "\u001b[39m  \u001b[1m\u001b[38;5;153mSelect model\u001b[0m                                                                "
+        },
+        {
+          "sourceRow": 10,
+          "styled": "  \u001b[38;5;246mSwitch between Claude models. Your pick becomes the default for new \u001b[39m     "
+        },
+        {
+          "sourceRow": 11,
+          "styled": "  \u001b[38;5;246msessions. For other/previous model names, specify with --model.\u001b[39m             "
+        },
+        {
+          "sourceRow": 13,
+          "styled": "    \u001b[38;5;246m1."
+        },
+        {
+          "sourceRow": 17,
+          "styled": "  \u001b[38;5;153m❯\u001b[39m \u001b[38;5;246m5."
+        },
+        {
+          "sourceRow": 20,
+          "styled": "  \u001b[38;5;239m○\u001b[39m \u001b[38;5;239mEffort\u001b[39m \u001b[38;5;239mnot\u001b[39m \u001b[38;5;239msupported\u001b[39m"
+        },
+        {
+          "sourceRow": 22,
+          "styled": "\u001b[39m  \u001b[38;5;246mEnter\u001b[39m \u001b[38;5;246mto\u001b[39m \u001b[38;5;246mset\u001b[39m \u001b[38;5;246mas\u001b[39m \u001b[38;5;246mdefault\u001b[39m \u001b[38;5;246m·\u001b[39m \u001b[38;5;246ms\u001b[39m \u001b[38;5;246mto\u001b[39m \u001b[38;5;246muse\u001b[39m \u001b[38;5;246mthis\u001b[39m \u001b[38;5;246msession\u001b[39m \u001b[38;5;246monly\u001b[39m \u001b[38;5;246m·\u001b[39m \u001b[38;5;246mEsc\u001b[39m \u001b[38;5;246mto\u001b[39m \u001b[38;5;246mcancel"
+        }
+      ]
+    },
+    "effort_picker_settled": {
+      "purpose": "positive Effort picker, settled (identical at first sight, at 409, +3s)",
+      "cursor_row": 19,
+      "cursor_col": 0,
+      "rows": [
+        {
+          "sourceRow": 11,
+          "styled": "\u001b[38;5;246m────────────────────────────────────────────────────────────────────────────────"
+        },
+        {
+          "sourceRow": 12,
+          "styled": "\u001b[39m  \u001b[1mEffort\u001b[0m                                                                      "
+        },
+        {
+          "sourceRow": 14,
+          "styled": "                   Faster                             Smarter                 "
+        },
+        {
+          "sourceRow": 15,
+          "styled": "                   \u001b[38;5;246m──────────────────────────────\u001b[1m\u001b[39m▲\u001b[0m\u001b[38;5;246m───────────"
+        },
+        {
+          "sourceRow": 16,
+          "styled": "\u001b[39m                   \u001b[38;5;246mlow\u001b[39m     \u001b[38;5;246mmedium\u001b[39m     \u001b[38;5;246mhigh\u001b[39m     \u001b[1m\u001b[38;5;147mxhigh\u001b[0m      \u001b[38;5;246mmax"
+        },
+        {
+          "sourceRow": 18,
+          "styled": "\u001b[39m  \u001b[38;5;246m←/→ to adjust · Enter to confirm · s for this session only · Esc to cancel"
+        }
+      ]
+    },
+    "model_prepicker_autocomplete": {
+      "purpose": "NEGATIVE (must stay unknown): slash autocomplete menu, composer holds typed /model, picker not yet rendered (t=0.284s)",
+      "cursor_row": 9,
+      "cursor_col": 8,
+      "rows": [
+        {
+          "sourceRow": 9,
+          "styled": "\u001b[39m❯ \u001b[38;5;153m/model\u001b[39m                                                                      "
+        },
+        {
+          "sourceRow": 10,
+          "styled": "\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────"
+        },
+        {
+          "sourceRow": 11,
+          "styled": "\u001b[39m  \u001b[38;5;153m❯ /\u001b[1mmodel\u001b[0m\u001b[38;5;153m"
+        }
+      ]
+    },
+    "effort_prepicker_autocomplete": {
+      "purpose": "NEGATIVE (must stay unknown): slash autocomplete menu, composer holds typed /effort, picker not yet rendered (t=0.343s)",
+      "cursor_row": 9,
+      "cursor_col": 9,
+      "rows": [
+        {
+          "sourceRow": 9,
+          "styled": "\u001b[39m❯ \u001b[38;5;153m/effort\u001b[39m                                                                     "
+        },
+        {
+          "sourceRow": 10,
+          "styled": "\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────"
+        },
+        {
+          "sourceRow": 11,
+          "styled": "\u001b[39m  \u001b[38;5;153m❯ /\u001b[1meffort\u001b[0m\u001b[38;5;153m"
+        }
+      ]
+    },
+    "plain_composer_after_escape_model": {
+      "purpose": "NEGATIVE plain composer after ONE Escape from /model; first status row truncated after '['",
+      "cursor_row": 15,
+      "cursor_col": 2,
+      "rows": [
+        {
+          "sourceRow": 15,
+          "styled": "\u001b[39m❯ "
+        },
+        {
+          "sourceRow": 16,
+          "styled": "\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────"
+        },
+        {
+          "sourceRow": 17,
+          "styled": "\u001b[39m  \u001b[36m["
+        }
+      ]
+    },
+    "plain_composer_after_escape_effort": {
+      "purpose": "NEGATIVE plain composer after ONE Escape from /effort; first status row truncated after '['",
+      "cursor_row": 12,
+      "cursor_col": 2,
+      "rows": [
+        {
+          "sourceRow": 12,
+          "styled": "\u001b[39m❯                                                                             "
+        },
+        {
+          "sourceRow": 13,
+          "styled": "\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────"
+        },
+        {
+          "sourceRow": 14,
+          "styled": "\u001b[39m  \u001b[36m["
+        }
+      ]
+    }
+  }
+}

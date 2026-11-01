@@ -23,22 +23,100 @@ fn invalid(code: &str, message: &str) -> CliError {
     CliError::usage(code, message, None)
 }
 
+pub(super) fn not_found() -> CliError {
+    invalid(
+        "console-start-operation-not-found",
+        "no start receipt exists for this caller and operation",
+    )
+}
+
+/// Who starts an operation: the receipt namespace, and what a new receipt records about the starter.
+pub(super) struct Origin<'a> {
+    key: String,
+    created_at: &'a str,
+    no_parent: bool,
+    extra: Value,
+}
+impl<'a> Origin<'a> {
+    pub(super) fn session(
+        caller: &str,
+        incarnation: &str,
+        caller_created_at: &'a str,
+        no_parent: bool,
+    ) -> Self {
+        Self {
+            key: format!("{caller}\n{incarnation}"),
+            created_at: caller_created_at,
+            no_parent,
+            extra: json!({}),
+        }
+    }
+
+    /// An admitted service starts a Console-owned root. The key omits the
+    /// service generation so a reconcile survives a generation rotation.
+    pub(super) fn service(machine: &str, service: &str, generation: &str, owner: &str) -> Self {
+        Self {
+            key: format!("service\n{machine}\n{service}"),
+            created_at: "",
+            no_parent: true,
+            extra: json!({
+                "principal": {"kind":"service","machine":machine,"service_id":service,"service_generation":generation},
+                "owner": owner
+            }),
+        }
+    }
+
+    fn name(&self, operation: &str) -> String {
+        format!(
+            "{PREFIX}{}",
+            digest_bytes(format!("{}\n{operation}", self.key).as_bytes())
+        )
+    }
+}
+
+/// The read-only identity a reconcile scan asks the aggregator about.
+pub(super) enum Scope<'a> {
+    Session {
+        caller: &'a str,
+        incarnation: &'a str,
+    },
+    Service {
+        id: &'a str,
+        generation: &'a str,
+        owner: &'a str,
+    },
+}
+
 pub(super) struct Receipt {
     name: String,
     value: Value,
 }
 impl Receipt {
+    /// Whether a receipt for this operation is already stored.
+    pub(super) fn exists(
+        context: &CliContext,
+        origin: &Origin,
+        operation: &str,
+    ) -> Result<bool, CliError> {
+        let _lock = lock_private_store(context, "console-start-operations.lock")?;
+        coordination_root(context)?
+            .join(format!("{}.json", origin.name(operation)))
+            .try_exists()
+            .map_err(|_| store_unavailable())
+    }
+
+    pub(super) fn value(&self) -> &Value {
+        &self.value
+    }
+
     pub(super) fn begin(
         context: &CliContext,
-        caller: &str,
-        incarnation: &str,
+        origin: &Origin,
         operation: &str,
         body: &Value,
         machine: &str,
-        caller_created_at: &str,
     ) -> Result<(Self, bool), CliError> {
-        let key = digest_bytes(format!("{caller}\n{incarnation}\n{operation}").as_bytes());
-        let name = format!("{PREFIX}{key}");
+        let name = origin.name(operation);
         let _lock = lock_private_store(context, "console-start-operations.lock")?;
         let root = coordination_root(context)?;
         let path = root.join(format!("{name}.json"));
@@ -68,21 +146,21 @@ impl Receipt {
                     super::retention::timestamp_ms(operation).ok_or_else(super::invalid)?;
                 if body["reconcile"] == true {
                     super::retention::require_live_id(&root, started_ms)?;
-                    return Err(invalid(
-                        "console-start-operation-not-found",
-                        "no start receipt exists for this caller incarnation and operation",
-                    ));
+                    return Err(not_found());
                 }
                 super::retention::admit(&root, started_ms)?;
-                let receipt = Self {
-                    name,
-                    value: json!({
-                        "schema_version":"agent-session.console-start-operation.v1",
-                        "request_hash":fingerprint,"machine":machine,"state":"ambiguous",
-                        "no_parent":body["no_parent"] == true,"safe_to_retry":false,
-                        "caller_created_at":caller_created_at,"operation_started_at_ms":started_ms
-                    }),
-                };
+                let mut value = json!({
+                    "schema_version":"agent-session.console-start-operation.v1",
+                    "request_hash":fingerprint,"machine":machine,"state":"ambiguous",
+                    "no_parent":origin.no_parent,"safe_to_retry":false,
+                    "caller_created_at":origin.created_at,"operation_started_at_ms":started_ms
+                });
+                if let (Some(value), Some(extra)) =
+                    (value.as_object_mut(), origin.extra.as_object())
+                {
+                    value.extend(extra.clone());
+                }
+                let receipt = Self { name, value };
                 receipt.save(context)?;
                 Ok((receipt, true))
             }
@@ -162,8 +240,7 @@ impl Receipt {
     pub(super) fn reconcile(
         &self,
         config: &super::Config,
-        caller: &str,
-        incarnation: &str,
+        scope: &Scope,
     ) -> Result<Value, CliError> {
         if let Some(error) = super::super::resume_preflight::forward_refusal(&self.value["failure"])
         {
@@ -186,13 +263,29 @@ impl Receipt {
         // One bounded read, never another POST create. Candidate identity is not adoption proof.
         let mut url = reqwest::Url::parse(&format!("{}/api/coordination/board/v1", config.url))
             .map_err(|_| store_unavailable())?;
-        url.query_pairs_mut()
-            .append_pair("source_session_id", caller)
-            .append_pair("source_incarnation", incarnation)
-            .append_pair(
+        {
+            let mut query = url.query_pairs_mut();
+            match scope {
+                Scope::Session {
+                    caller,
+                    incarnation,
+                } => query
+                    .append_pair("source_session_id", caller)
+                    .append_pair("source_incarnation", incarnation),
+                Scope::Service {
+                    id,
+                    generation,
+                    owner,
+                } => query
+                    .append_pair("source_service_id", id)
+                    .append_pair("source_service_generation", generation)
+                    .append_pair("owner", owner),
+            };
+            query.append_pair(
                 "machine",
                 self.value["machine"].as_str().unwrap_or_default(),
             );
+        }
         let response = client()?
             .get(url)
             .timeout(std::time::Duration::from_secs(5))
@@ -209,12 +302,20 @@ impl Receipt {
         {
             for record in records.iter().take(1024) {
                 let parent = &record["lineage"]["parent"];
-                let matches_parent = parent["session_id"] == caller
-                    && parent["machine"] == config.machine
-                    && parent["session_created_at"] == self.value["caller_created_at"];
-                if record["machine"] != self.value["machine"]
-                    || !(matches_parent || self.value["no_parent"] == true && parent.is_null())
-                {
+                let ours = match scope {
+                    Scope::Session { caller, .. } => {
+                        let matches_parent = parent["session_id"] == *caller
+                            && parent["machine"] == config.machine
+                            && parent["session_created_at"] == self.value["caller_created_at"];
+                        matches_parent || self.value["no_parent"] == true && parent.is_null()
+                    }
+                    Scope::Service { owner, .. } => {
+                        record["lineage"].is_object()
+                            && parent.is_null()
+                            && record["console_owner"] == *owner
+                    }
+                };
+                if record["machine"] != self.value["machine"] || !ours {
                     continue;
                 }
                 if let Some(id) = identifier(&record["session_id"]) {
@@ -266,12 +367,10 @@ mod tests {
         let operation = uuid::Uuid::now_v7().to_string();
         let (mut receipt, submitted) = Receipt::begin(
             &context,
-            "caller",
-            "launch",
+            &Origin::session("caller", "launch", "2030-01-01T00:00:00Z", false),
             &operation,
             &json!({"session":{"agent":"claude"}}),
             "target",
-            "2030-01-01T00:00:00Z",
         )
         .unwrap();
         assert!(submitted);

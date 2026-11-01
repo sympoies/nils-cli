@@ -351,3 +351,77 @@ async fn keyed_claude_reply_uses_native_queue_without_waiting_for_idle() {
         "1"
     );
 }
+
+/// Drives one Claude-busy reply with the caller's default policy (no
+/// `require_idle`) and returns the HTTP status plus envelope.
+async fn busy_claude_reply(text: &str) -> (StatusCode, Value) {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let launch = seed_claude_prompt_session(tmp.path(), ID);
+    let tmux = guard_tmux(tmp.path(), ID);
+    let queue = format!(
+        "  {text}\n  ctrl+x ctrl+s to send now\n· Working… (running tool)\n\
+         ────────────────────────────\n❯ \u{a0}Press up to edit queued messages\n\
+         ────────────────────────────\n  status"
+    );
+    fs::write(tmp.path().join("native-queue-pane"), queue).unwrap();
+    let script = fs::read_to_string(&tmux).unwrap().replace(
+        "if args[0] == 'capture-pane':\n",
+        "if args[0] == 'capture-pane':\n    if (root / 'submitted').exists(): print((root / 'native-queue-pane').read_text()); sys.exit(0)\n",
+    );
+    fs::write(&tmux, script).unwrap();
+    let st = state(tmp.path(), Some(TOKEN), tmux);
+    let mut record = load_session_record(&st.context, ID).unwrap();
+    record.provider_resume = Some(
+        serde_json::from_value(
+            json!({"provider":"claude", "session_id":"busy-conversation",
+            "resume_args":[], "captured_at":"2000-01-01T00:00:00Z", "capture_method":"fixture"}),
+        )
+        .unwrap(),
+    );
+    crate::write_session_record(&st.context, &record).unwrap();
+    activity::activate_runtime(&st.context, &record).unwrap();
+    let mut event = busy_event(&launch, "claude");
+    event.provider_session_id = Some("busy-conversation".to_owned());
+    activity::ingest_event(&st.context, ID, event).unwrap();
+    let request = json!({"text": text, "expected_session_incarnation": launch,
+        "request_id": "path-reply"});
+    let uri = format!("/sessions/{ID}/prompt/v2");
+    call(router(st), post_json(&uri, Some(TOKEN), request)).await
+}
+
+#[tokio::test]
+async fn absolute_path_prompt_is_a_plain_busy_reply_but_slash_commands_stay_guarded() {
+    for text in [
+        TEXT,
+        // Quoted paths never began with a slash and stay plain input.
+        "\"/srv/agent/uploads/session-photo.png\"",
+        "/srv/agent/uploads/session-photo.png",
+        "/srv/agent/uploads/session-photo.png what is wrong here",
+        // The same first-token rule: a multi-component name is not a command.
+        "/ns/cmd argument",
+    ] {
+        let (status, reply) = busy_claude_reply(text).await;
+        assert_eq!(status, StatusCode::OK, "{text}: {reply}");
+        assert_eq!(reply["data"]["queued"], true, "{text}");
+        assert_eq!(reply["data"]["receipt"]["outcome"], "submitted", "{text}");
+    }
+    // A genuine command, even with a path argument, is still owner-only
+    // terminal input that waits for an idle session instead of queueing.
+    for text in [
+        "/status",
+        "/model",
+        "/review /srv/agent/uploads/session-photo.png",
+    ] {
+        let (status, refused) = busy_claude_reply(text).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{text}: {refused}");
+        assert_eq!(refused["error"]["code"], "busy", "{text}");
+    }
+    // A bare slash or a prefix of a context command keeps its safe refusal.
+    for text in ["/", "/cl"] {
+        let (_, refused) = busy_claude_reply(text).await;
+        assert_eq!(
+            refused["error"]["code"], "send-context-command-unsupported",
+            "{text}: {refused}"
+        );
+    }
+}

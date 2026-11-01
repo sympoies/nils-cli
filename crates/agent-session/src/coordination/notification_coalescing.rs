@@ -34,29 +34,19 @@ pub(in crate::coordination) fn admit(
         }
         return;
     }
-    let mut counts = BTreeMap::<String, usize>::new();
-    for item in registry
-        .messages
-        .iter()
-        .filter(|item| {
-            item.recipient_session_id == message.recipient_session_id
-                && item.recipient_incarnation == message.recipient_incarnation
-                && item.state == "unread"
-                && !item.notification_suppressed
-                && item.expires_at_epoch > now
-        })
-        .chain(std::iter::once(message))
-    {
-        let category = match item.category.unwrap_or_default() {
-            MessageCategory::Progress => "p",
-            MessageCategory::Handoff => "h",
-            MessageCategory::Report => "r",
-            MessageCategory::Blocker => "b",
-            MessageCategory::Decision => "d",
-            MessageCategory::Uncategorized => "u",
-        };
-        *counts.entry(category.to_owned()).or_default() += 1;
-    }
+    let prompt = count_prompt(
+        registry
+            .messages
+            .iter()
+            .filter(|item| {
+                item.recipient_session_id == message.recipient_session_id
+                    && item.recipient_incarnation == message.recipient_incarnation
+                    && item.state == "unread"
+                    && !item.notification_suppressed
+                    && item.expires_at_epoch > now
+            })
+            .chain(std::iter::once(message)),
+    );
     if let Some(receipt) = registry.notifications.get_mut(&receipt_key(
         &message.recipient_session_id,
         &message.recipient_incarnation,
@@ -65,16 +55,7 @@ pub(in crate::coordination) fn admit(
         if urgent {
             receipt.urgent_generation = receipt.generation;
         }
-        receipt.prompt = (interval > 0).then(|| {
-            format!(
-                "Mailbox: {}",
-                counts
-                    .iter()
-                    .map(|(kind, count)| format!("{kind}={count}"))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            )
-        });
+        receipt.prompt = Some(prompt);
     }
 }
 
@@ -96,4 +77,28 @@ pub(super) fn is_count_prompt(prompt: &str) -> bool {
                     .parse::<u16>()
                     .is_ok_and(|value| value > 0 && value <= 256 && value.to_string() == count)
         })
+}
+
+/// Render only unread metadata selected by the owning mailbox transaction.
+pub(super) fn count_prompt<'a>(messages: impl Iterator<Item = &'a StoredMessage>) -> String {
+    let mut counts = BTreeMap::<&str, usize>::new();
+    for item in messages {
+        let category = match item.category.unwrap_or_default() {
+            MessageCategory::Progress => "p",
+            MessageCategory::Handoff => "h",
+            MessageCategory::Report => "r",
+            MessageCategory::Blocker => "b",
+            MessageCategory::Decision => "d",
+            MessageCategory::Uncategorized => "u",
+        };
+        *counts.entry(category).or_default() += 1;
+    }
+    format!(
+        "Mailbox: {}",
+        counts
+            .iter()
+            .map(|(kind, count)| format!("{kind}={count}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    )
 }

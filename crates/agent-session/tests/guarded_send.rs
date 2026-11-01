@@ -1,4 +1,6 @@
 //! Admission regressions use a modeled tmux executable and synthetic records.
+#[path = "guarded_send/claude_notice.rs"]
+mod claude_notice;
 #[path = "guarded_send/exit.rs"]
 mod exit;
 #[path = "guarded_send/live_composer.rs"]

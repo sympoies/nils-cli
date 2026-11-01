@@ -1,4 +1,5 @@
 //! Terminal send delivery; opt-in guards preserve unguarded delivery.
+pub(crate) mod claude_notice;
 pub(crate) mod input;
 mod native;
 use std::cell::Cell;
@@ -87,9 +88,27 @@ pub(crate) fn send_to_session_observing(
 
 pub(crate) fn send_owner_prompt_observing(
     context: &CliContext,
+    args: cli::SendArgs,
+    owner_command: Option<crate::serve::prompt_receipts::owner_commands::Command>,
+    acknowledged: &mut dyn FnMut(&SessionRecord, &str),
+) -> Result<SendResult, CliError> {
+    send_observing(context, args, owner_command, acknowledged, None)
+}
+
+pub(crate) fn send_mailbox_notice(
+    context: &CliContext,
+    args: cli::SendArgs,
+    candidate: &crate::coordination::NotificationCandidate,
+) -> Result<SendResult, CliError> {
+    send_observing(context, args, None, &mut |_, _| {}, Some(candidate))
+}
+
+fn send_observing(
+    context: &CliContext,
     mut args: cli::SendArgs,
     owner_command: Option<crate::serve::prompt_receipts::owner_commands::Command>,
     acknowledged: &mut dyn FnMut(&SessionRecord, &str),
+    notification: Option<&crate::coordination::NotificationCandidate>,
 ) -> Result<SendResult, CliError> {
     // Picker shortcuts type into the terminal rather than paste. Never send
     // them into a working/unknown session, even with --allow-blocked.
@@ -174,6 +193,9 @@ pub(crate) fn send_owner_prompt_observing(
         if !args.guards.enabled() {
             codex_account::authorize_terminal_input_locked(context, &mut record)?;
         }
+    }
+    if let Some(candidate) = notification {
+        crate::serve::begin_mailbox_notice(context, &record, &tmux_bin, candidate)?;
     }
     if args.guards.enabled() {
         return guarded(
@@ -461,6 +483,28 @@ fn guarded(
     };
     admission.check_key()?;
     admission.check(None, "admission")?;
+    if !attempt.terminal_command
+        && args.guards.notice_envelope
+        && record.agent == "claude"
+        && args.guards.require_idle
+        && args.guards.require_empty_composer
+        && carries_literal_text(text.as_deref())
+        && args.keys == [SpecialKey::Enter]
+        && let Some(capability) = claude_notice::runtime::readiness(context, &record)
+    {
+        let deadline = admission.deadline;
+        return claude_notice::deliver(
+            context,
+            args,
+            text.expect("literal notice input"),
+            record,
+            tmux_bin,
+            manual_input,
+            attempt,
+            deadline,
+            capability,
+        );
+    }
     if !attempt.terminal_command
         && codex_app_server::runtime_is_supported(&record)
         && args.guards.require_idle

@@ -529,3 +529,11 @@ fn clear_owned_notification(
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false)
 }
+
+mod mailbox_dispatch;
+mod native_notice;
+pub(super) use mailbox_dispatch::dispatch_coordination_notification;
+pub(crate) use native_notice::begin_mailbox_notice;
+
+#[cfg(test)]
+pub(super) use mailbox_dispatch::dispatch_terminal_coordination_notification;

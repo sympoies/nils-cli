@@ -1,0 +1,27 @@
+[package]
+name = "nils-research-cli"
+version = "1.40.0"
+edition.workspace = true
+license.workspace = true
+description = "CLI crate for nils-research-cli in the nils-cli workspace."
+repository = "https://github.com/sympoies/nils-cli"
+
+[[bin]]
+name = "research-cli"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+clap_complete = { workspace = true }
+nils-build-info = { version = "1.40.0", path = "../nils-build-info" }
+nils-common = { version = "1.40.0", path = "../nils-common" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+jiff = { workspace = true }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+tokio = { workspace = true }
+axum = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tower = { version = "0.5", features = ["util"] }

@@ -799,3 +799,7 @@ async fn mailbox_wake_accepts_verified_runtime_exit_after_enter() {
         1
     );
 }
+
+mod notices {
+    include!("mailbox_notice_terminal.rs");
+}

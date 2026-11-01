@@ -458,7 +458,8 @@ See [Cross-host mailbox federation v1](coordination-federation-v1.md#cross-host-
 `agent-session start --via-console [--machine MACHINE]` starts a session through Agent Console instead of
 launching tmux locally. Agent Console owns the new session for the same principal that owns the calling
 managed session, so the child appears in that owner's console list and board and can be attached. The
-command runs only inside a managed session: without `AGENT_SESSION_ID` it fails with
+command runs inside a managed session, with a scoped worker delegation, or as an admitted service
+([Service Console starts v1](#service-console-starts-v1)): without any of them it fails with
 `console-start-unmanaged`, and a missing or invalid capability for that session fails with
 `coordination-unauthorized`.
 
@@ -529,6 +530,160 @@ missing or malformed details as unsafe.
 ### Operation diagnostics and reconciliation
 
 See [Operation diagnostics and reconciliation](coordination-runtime-v1.md#operation-diagnostics-and-reconciliation).
+
+## Service Console starts v1
+
+An explicitly admitted deterministic service can start a Console-owned root session for an owner
+without a model turn and without another session's runtime credential. This is a separate authority
+from managed-session starts, scoped worker delegations and mailbox service submission; none of them
+grants it, and it grants none of them.
+
+```bash
+agent-session start --via-console --service ID --service-generation GENERATION \
+  --credential-file FILE --owner OWNER --machine MACHINE --expires-at TIMESTAMP \
+  --operation-id UUIDV7 --agent claude --cwd /abs/path [--title ...] [--prompt-file FILE] --format json
+agent-session start --via-console --service ID --service-generation GENERATION \
+  --credential-file FILE --owner OWNER --operation-id UUIDV7 --reconcile --format json
+```
+
+`--service` requires `--via-console`, `--service-generation`, `--credential-file` and `--owner`, and
+conflicts with `--no-parent`, `--role`, `--program`, `--issue`, `--no-inherit-work` and `--resume`.
+`--machine` and `--expires-at` are required to create and are refused with `--reconcile`. The other
+session options are those of [Owned child sessions v1](#owned-child-sessions-v1). The credential is
+read from a private file, never from argv or the environment.
+
+### Admission
+
+`serve --console-start-services-file FILE` (fallback `AGENT_SESSION_CONSOLE_START_SERVICES_FILE`)
+references a private regular file (mode `0600`, one link, at most 32 KiB), re-read on every request.
+Omission disables service starts. It is separate from the mailbox service document:
+
+```json
+{
+  "schema_version": "agent-session.console-start-services.v1",
+  "services": [
+    {
+      "service_id": "integration",
+      "service_generation": "generation-1",
+      "credential_file": "/absolute/private/integration.credential",
+      "owners": ["owner-a"],
+      "machines": ["host-a"],
+      "max_lifetime_seconds": 3600
+    }
+  ]
+}
+```
+
+IDs, generations and owners are 1-128 ASCII letters, digits, `-`, `_` or `.`; machine names are 1-128
+printable ASCII characters without spaces. At most 32
+services are admitted, with unique IDs; each lists 1-64 owners and 1-64 machines, and
+`max_lifetime_seconds` is 1-86400. The credential file holds a 32-256 byte printable ASCII token and
+must differ from the operator bearer, the federation relay and ingress tokens, and every mailbox
+service credential.
+
+### Route and authorization
+
+`POST /coordination/services/console-start/v1` accepts only a direct loopback peer, with the service
+credential as the bearer, at most 8 concurrent starts, a 5-second body read and a 2 MiB body. The
+body rejects unknown members:
+
+```json
+{
+  "service_id": "integration", "service_generation": "generation-1", "owner": "owner-a",
+  "operation_id": "UUIDv7", "machine": "host-a", "expires_at": "2030-01-01T00:10:00Z",
+  "session": {"agent": "claude", "cwd": "/abs/path", "title": "...", "prompt": "..."}
+}
+```
+
+`session` may set only `agent`, `cwd`, `workspace`, `launch_env`, `title_mode`, `title`, `prompt`,
+`agent_args`, `agent_profile`, `codex_account` and `claude_account`. The daemon sets the lineage: a
+root with `parent: null` and `starter {"kind": "console", "via": "console"}`, no forge context and no
+origin parent. A reconcile body is exactly `service_id`, `service_generation`, `owner`,
+`operation_id` and `reconcile: true`.
+
+A request is authorized only when, in this order and before any receipt or network call, the body is
+a closed request; the service ID, generation and credential match one admitted entry; `owner` is in
+its `owners`; `machine` is in its `machines`; and `expires_at` is in the future and within
+`max_lifetime_seconds`. With federation unconfigured the route fails with `console-start-disabled`.
+Owner resolution stays with the aggregator.
+
+| Code | Class | HTTP | Cause |
+| --- | --- | --- | --- |
+| `console-start-service-unauthorized` | data/65 | 401 | disabled, missing or invalid admission, unknown service or generation, wrong or shared credential, non-loopback peer, or a session capability |
+| `console-start-service-owner-denied` | data/65 | 422 | `owner` not admitted for the service |
+| `console-start-service-target-denied` | data/65 | 422 | `machine` not admitted for the service |
+| `console-start-service-expired` | data/65 | 422 | `expires_at` past or beyond the admitted lifetime |
+| `console-start-service-invalid` | usage/64 | 400 | unknown or missing member, forbidden `session` member, malformed selector, UUIDv7 or timestamp |
+
+Refusals are content-free: they never echo paths, credentials, prompts or upstream text, and the
+unauthorized code does not say which check failed. The existing `console-start-operation-conflict`,
+`-not-found`, `-expired`, `console-start-disabled` and `console-start-unavailable` codes apply unchanged.
+
+### Aggregator contract
+
+The daemon creates with `POST {AGENT_SESSION_RELAY_URL}/api/coordination/sessions/v1`, the relay
+token as bearer and `x-agent-session-operation-id`, and this body. It has no `source_session_id` or
+`source_incarnation`:
+
+```json
+{
+  "source_service_id": "integration", "source_service_generation": "generation-1",
+  "owner": "owner-a", "machine": "host-a",
+  "session": {"agent": "claude", "cwd": "/abs/path", "lineage": {"…": "…"}}
+}
+```
+
+An uncertain operation is reconciled with one read,
+`GET {AGENT_SESSION_RELAY_URL}/api/coordination/board/v1?source_service_id=ID&source_service_generation=GENERATION&owner=OWNER&machine=MACHINE`,
+and a candidate is reported only when its record has `machine`, a `lineage` object whose `parent`
+is null (a record without `lineage` is not a root) and `console_owner` equal to the request. The relay
+must bind the selectors and `owner` to the authenticated machine's explicit service admission before
+it creates or returns anything.
+
+The aggregator's answer is mapped as for session-scoped starts, and there is no fallback to the
+session-scoped call:
+
+- An unadmitted service, owner or target is answered with `console-start-service-unauthorized`,
+  `console-start-service-owner-denied` or `console-start-service-target-denied`.
+- Any typed usage- or data-class aggregator code, including those and a rejection of the request
+  shape such as `invalid-request`, is forwarded with its own code and records the operation
+  `not_created` with `safe_to_retry: true`.
+- Only a missing or unreadable answer is `console-start-unavailable`; it leaves the operation
+  `ambiguous`, to be reconciled.
+
+### Receipt and idempotency
+
+The operation receipt store of [Owned child sessions v1](#owned-child-sessions-v1) records the
+service principal and owner. Its key is the service machine, service ID and operation ID, so a
+reconcile survives a generation rotation; the submitting generation is recorded. A receipt belongs to
+the owner it was started for: reconciling it under another owner is `console-start-operation-not-found`.
+
+- The first request stores an `ambiguous` receipt under the store lock, then makes at most one
+  aggregator create call.
+- A retry must resend the identical request, including `expires_at`: the fingerprint covers `owner`,
+  `machine`, `expires_at` and `session`, and not the operation ID or the service generation. A
+  different request under the same operation ID fails `console-start-operation-conflict`.
+- Repeating the request returns the stored outcome and never posts again, including after `expires_at`
+  has passed; expiry is checked only for an operation with no receipt. An `ambiguous` repeat returns
+  the reconciliation, never a second create.
+- `--reconcile` is read-only and never adopts a candidate.
+
+Every success, replay and reconciliation carries `receipt`:
+
+```json
+{
+  "schema_version": "agent-session.console-start-service-receipt.v1",
+  "service_id": "integration", "service_generation": "generation-1", "owner": "owner-a",
+  "machine": "host-a", "operation_id": "UUIDv7",
+  "state": "created", "safe_to_retry": false,
+  "session": {"id": "...", "agent": "claude", "session_incarnation": "..."}
+}
+```
+
+`state` is `created`, `ambiguous`, `not_created` or `start_failed`; `session` is `null` until known.
+A consumer keeps its previous session unless `state` is `created` with a session ID, and rebinds its
+route only then. Operation diagnostics and the 7-day receipt retention are those of
+[Operation diagnostics and reconciliation](coordination-runtime-v1.md#operation-diagnostics-and-reconciliation).
 
 ## Service-origin submission
 

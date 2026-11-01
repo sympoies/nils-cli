@@ -346,14 +346,41 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   `terminal_activity_missing` and `coordinator_not_stale`. A retained row
   without `last_terminal_activity_at` is never repaired from other timestamps or
   caller input; only the session-board operator can supply that evidence.
-  A coordinator deleted or archived by `agent-session` is retained with its
-  close time as `last_terminal_activity_at`, so a configured supervisor can
-  take over once `stale_after` has elapsed; rows closed by an older release
-  may still lack it.
-- Safe coordinator rotation: hand over every review handoff (`recover` by the
-  original coordinator, or reassign) before deleting the old coordinator
-  session. Takeover by a supervisor is the fallback for a coordinator that was
-  retired first.
+  A coordinator deleted or archived by the current `agent-session` retains
+  observed terminal activity, or its close time when no exit was observed, as
+  `last_terminal_activity_at`. A configured supervisor can take over once
+  `stale_after` has elapsed; historical rows may still lack that evidence.
+- Current-producer fixture acceptance lives in
+  `tests/integration/pr_review_handoff/retired_coordinator/deleted_producer.rs`.
+  It pins both workspace binaries through `nils-test-support`, creates isolated
+  never-launched session metadata and a synthetic handoff, then runs the actual
+  `agent-session delete` and `board` commands. The executable adapter passes
+  producer output unchanged to recovery. A fresh refusal leaves the provider
+  ledger unchanged; after real elapsed time exceeds the minimum supported
+  `stale_after = "60s"`, a distinct allowlisted supervisor recovers a durable
+  tip and assigns a new reviewer, inspected at the exact head/base/tip. The
+  retained row and terminal timestamp stay unchanged throughout.
+- Safe coordinator rotation: transfer retained handoffs before deleting the
+  old coordinator session. Return or reassign reviewer intervals while the
+  coordinator is available. For coordinator ownership transfer, stop the old
+  coordinator while retaining its authoritative board evidence, wait for
+  `stale_after`, then have a configured distinct supervisor recover and assign
+  using the exact head/base/tip. Inspect the durable successor assignment before
+  deleting the old session. Reviewer-only recovery or reassignment leaves
+  coordinator ownership unchanged. Supervisor takeover after deletion is a
+  fallback when the retained row still proves terminal activity.
+- Historical missing or vanished evidence remains refused. Do not invent a
+  terminal timestamp, substitute unrelated activity, or edit retained records.
+  When authoritative evidence is unavailable, the owner can consider a
+  replacement PR through the bounded
+  [`pr create --supersedes <old-pr>` contract](forge-cli-spec-v1.md#test_first--test-first-evidence-gate).
+  Where that contract applies, it verifies the original test-first record at
+  the old provider head, requires the new head to contain it with only default
+  branch merges or commits, and requires the patch against the default branch
+  to remain unchanged. A replacement starts its own handoff and review; old
+  findings, authority and evidence remain attached to the original PR. If those
+  prerequisites cannot be proved, supersede also refuses; missing historical
+  authority remains unresolved rather than becoming automatic takeover.
 - Takeover appends a handoff recovery with `coordinator_transfer` containing
   `old_coordinator_digest`, `new_coordinator_digest`, `lifecycle_source_digest`,
   `reason` (`coordinator-retired`), `supervisor_digest`, and

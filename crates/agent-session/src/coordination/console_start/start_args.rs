@@ -10,6 +10,8 @@ pub struct OperationArgs {
     /// Inspect a prior Console start operation without creating a session.
     #[arg(long, requires_all = ["via_console", "operation_id"], conflicts_with_all = ["prompt", "prompt_file", "prompt_stdin", "launch_env"])]
     pub reconcile: bool,
+    #[command(flatten)]
+    pub service: super::service::ServiceArgs,
 }
 
 pub(crate) fn start_args(
@@ -26,7 +28,8 @@ pub(crate) fn start_args(
         return Err(super::invalid());
     }
     args.console_operation.operation_id = Some(operation_id.clone());
-    super::diagnostics::run(&operation_id, || build_args(context, args, work))
+    let service = args.console_operation.service.service.is_some();
+    super::diagnostics::run(&operation_id, service, || build_args(context, args, work))
 }
 
 fn build_args(

@@ -106,7 +106,7 @@ class DeliveryTests(unittest.TestCase):
             self.assertIn('persist-credentials: false', body)
             self.assertIn('timeout-minutes:', body)
         macos = job(full, 'test_macos')
-        self.assertIn('runs-on: macos-14', macos)
+        self.assertIn('runs-on: macos-15', macos)
         self.assertIn('timeout-minutes: 75', macos)
         self.assertIn('NILS_CLI_COVERAGE_FAIL_UNDER_LINES: "85"', macos)
         self.assertIn('NILS_CLI_TEST_RUNNER: llvm-cov', macos)

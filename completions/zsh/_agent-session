@@ -52,6 +52,11 @@ enforce\:"Require authenticated claims and mutation admission leases"
 off\:"Disable agent-session collision warnings and admission"))' \
 '--paste-delay-ms=[Delay before pasting the initial prompt into the tmux pane]:PASTE_DELAY_MS:_default' \
 '--operation-id=[Time-bearing UUIDv7 for a Console start; replay never creates another session]:UUID:_default' \
+'(--no-parent --role --program --issue --no-inherit-work --resume)--service=[Admitted service ID; starts a Console-owned root as that service]:ID:_default' \
+'--service-generation=[Admitted generation of the service]:GENERATION:_default' \
+'--credential-file=[Private service credential file; never a session capability]:PATH:_files' \
+'--owner=[Console owner the service acts for]:OWNER:_default' \
+'(--reconcile)--expires-at=[RFC 3339 time after which a new start with this operation is refused]:TIMESTAMP:_default' \
 '--machine=[Target machine for --via-console, as Agent Console names it. Defaults to this daemon'\''s machine]:MACHINE:_default' \
 '--account=[Broker account for --via-console or direct --resume. Resume defaults to the unique original account and cannot switch accounts]:NAME:_default' \
 '--agent-profile=[Launch profile for --via-console, as the target daemon advertises it. A profile owns its launch command, so Agent Console ignores --agent-arg with it]:ID:_default' \
@@ -1222,6 +1227,7 @@ _arguments "${_arguments_options[@]}" : \
 '--bind=[Versioned work-context (\`work-context/v1\`) and mailbox (\`messages/v1\`) routes share the same loopback control plane and library contracts. Address to bind. Defaults to loopback; a non-loopback address is refused unless --allow-non-loopback is passed (it exposes a remote shell)]:ADDR:_default' \
 '--token=[Bearer token required on activity streaming, write, and attach endpoints. Falls back to AGENT_SESSION_TOKEN. When unset, activity streaming, writes, and attach are disabled (session reads still work on loopback)]:TOKEN:_default' \
 '--mailbox-services-file=[Private, reference-only service mailbox admission document. Disabled when omitted. Falls back to AGENT_SESSION_MAILBOX_SERVICES_FILE. Re-read on each submission]:PATH:_files' \
+'--console-start-services-file=[Private, reference-only Console-start service admission document. Disabled when omitted. Falls back to AGENT_SESSION_CONSOLE_START_SERVICES_FILE. Re-read on each request]:PATH:_files' \
 '--machine=[Machine identity reported in responses. Falls back to AGENT_SESSION_MACHINE, then --host, then the short hostname]:NAME:_default' \
 '--tmux-bin=[tmux binary override]:PATH:_files' \
 '--config=[Versioned serve config (TOML or JSON by extension) holding launch profiles, retitle, the Codex account broker, and extra PATH entries. Non-empty environment variables take precedence over the file]:PATH:_files' \

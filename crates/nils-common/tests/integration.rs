@@ -11,3 +11,7 @@ mod forge_identity;
 mod markdown_table_canonicalization;
 #[path = "integration/provider_runtime_contract.rs"]
 mod provider_runtime_contract;
+
+#[cfg(unix)]
+#[path = "integration/forge_identity_remote.rs"]
+mod forge_identity_remote;

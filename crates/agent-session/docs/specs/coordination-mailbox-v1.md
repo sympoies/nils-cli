@@ -111,7 +111,18 @@ changes, so a direct CLI send made while the controller is absent catches up
 after restart.
 
 Multiple notification-eligible unread messages coalesce into one mailbox-level
-notification for the newest pending generation. For unconfigured recipients, the body-free wake is always
+notification for the newest pending generation. With the existing notice writer
+gate enabled, notice-capable recipients receive the canonical `mailbox.wake`
+envelope with coalesced live unread counts, such as `Mailbox: h=1 r=2`.
+Controller and hook delivery share the same generation claim. Supported
+terminal recipients use guarded notice delivery; Codex retains its start/steer
+semantics. Only a known unsupported notice receiver or a disabled writer gate
+uses the existing plain reminder. An installed module whose readiness is
+missing or invalid defers without fallback. Failed or uncertain notice attempts
+remain consumed; absent history never authorizes replay. See
+[session notices](session-notices-v1.md) for the envelope and rollout contract.
+
+For unconfigured recipients on the plain fallback path, the body-free wake is always
 35 ASCII characters, fitting one exactly observable input row in a 51-column
 pane for Claude and Codex:
 
@@ -184,12 +195,17 @@ prompts remain visible. The prior `Coordination mailbox has unread messages`
 prefix remains compatible, including dated and undated prior forms.
 
 New durable attempt receipts retain the additive `attempted_prompt_format`
-value `mailbox-short.v2`. A known-format attempt uses its exact bytes for both
+value `mailbox-short.v2` for plain fixed reminders, `mailbox-counts.v1` for
+plain counts, or `mailbox-notice.v1` with the exact envelope bytes for notices.
+A notice attempt requires positive observation to resolve; absence leaves it
+parked. A known plain-format attempt uses its exact bytes for both
 submission and absence. Prior `mailbox-short.v1` attempts retain their original
 dated bytes (or undated bytes for invalid queue times); they are never compared
 against the new short form. For unversioned receipts, exact current or prior
 dated/undated bytes after the attempt boundary can confirm submission; their
-absence cannot prove an unknown format absent. Unrecognized formats and
+absence cannot prove an unknown format absent.
+
+Unrecognized formats and
 ambiguous transcript timestamps remain parked. Prefix recognition alone never
 provides submission proof. Losing the additive format field to an older writer
 therefore keeps absence fail-closed rather than requeueing an uncertain attempt.
@@ -246,7 +262,7 @@ minute; the completion replaces the Stop as the latest event, so refusing it wou
 idle worker queued indefinitely. Terminal acceptance requires the byte-exact prompt as the content of a
 newer transcript-observed turn.
 
-A later provider observation reconciles `attempting` or `attempt_unknown`: an exact prompt proves
+A later provider observation reconciles plain `attempting` or `attempt_unknown`: an exact prompt proves
 `prompt_submitted`, a current transcript without it safely requeues, and unavailable observation leaves
 the attempted generation parked. A later send creates a new generation and supersedes an older
 `attempt_unknown` outcome; that older receipt cannot acknowledge the new generation. An active

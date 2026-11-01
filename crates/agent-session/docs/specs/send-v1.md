@@ -109,12 +109,14 @@ before Enter. Every character must be one cursor step one or two cells wide,
 so wide (for example CJK) text counts steps in characters and endpoints in
 cells. Padding and omitted word separators alone are insufficient proof.
 
-Codex captures may omit a final logical ASCII space as well as spaces at word
-wraps; its cursor endpoint must still include every pasted cell. Each proof
-uses the active provider's composer region, including when another provider's
-prompt appears in scrollback. Codex additionally verifies the actual logical
-end: Right then Left must return to N-1, then Right must restore N. An invisible
-owner-appended blank cannot be admitted as part of the paste's expected prefix.
+Both providers' captures may omit final logical ASCII spaces as well as spaces
+at word wraps; the cursor endpoint must still include every pasted cell.
+Claude's padding normalization does not remove those cells from the known
+paste's cursor proof. Each proof uses the active provider's composer region,
+including when another provider's prompt appears in scrollback. Both providers
+verify the actual logical end: Right then Left must return to N-1, then Right
+must restore N. An invisible owner-appended blank cannot be admitted as part of
+the paste's expected prefix.
 Changed drafts, uncertain navigation, and styled wrapped suggestions refuse.
 Dialogs, unknown layouts, other wrapped/multiline input, opaque long-paste summaries, and
 unstyled placeholder text such as `Ask Codex to do anything` are unobservable.
@@ -218,6 +220,39 @@ This guarantees at most one delivery attempt, not eventual delivery. Inspect
 uncertain outcomes before choosing a new key. Deleting the session state also
 ends its deduplication history. Persistent storage must honor file and
 directory synchronization for restart durability.
+
+### Native Claude notices
+
+Only the internal notice-envelope route can use the managed Claude module.
+An ordinary `send`, including one whose text resembles a notice, retains its
+existing behavior. Gate-enabled fresh launches, resumes and restarts on a Claude Code release in
+the tested range of the notice spec mount the module; other versions and
+existing runtimes without it keep the unsupported notice admission boundary. There is no new flag, compatibility
+mode, runtime injection or terminal fallback.
+
+The native notice input is the complete LF-only UTF-8 envelope, at most 16 KiB.
+Its spaces and final LF are never trimmed. Identity, idle, pending-ingress,
+mounted-empty and used-key checks precede native authorization. A fresh native
+handshake is required before durable key/operation consumption, and consumption
+is synchronized before text release. The record lock is released before native
+API entry so required hooks can run; no record writes occur while it is
+released. Confirmation reacquires and checks identity in the same original
+Claude send budget, without renewing it.
+
+Success requires the exact returned input and one exact newly appended provider
+row bound to that operation. It reports `native: { "transport": "claude_mod",
+"confirmation": "notice_row_observed" }`, `submission.outcome: "submitted"`,
+`submission.enter_presses: 0` and `guards.atomic: false`. No tmux input buffer,
+paste, Enter, draft filling or clearing is used. A concurrent human edit remains
+the human's input, even if it makes the notice unconfirmed.
+
+Every postclaim drop, mismatch, unknown result, identity change or timeout keeps
+the claim and returns `notice-native-unconfirmed` with unknown submission. It
+cannot become the safe `notice-transport-unsupported` admission receipt, and no
+error triggers replay or plain fallback. Expiry bounds local authorization and
+confirmation; it does not cancel an already authorized remote provider call or
+promise that it cannot complete later. See [session notices](session-notices-v1.md)
+for the initial persistent metadata bound and consumer rollout requirements.
 
 ## Opt-in native diagnostic trace
 
