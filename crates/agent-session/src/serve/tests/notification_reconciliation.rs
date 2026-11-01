@@ -2,7 +2,7 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[derive(Clone, Copy)]
-enum AttemptPrompt { Current, ShortV1, UnversionedShortV1, V1WithCurrentBytes, PriorDated, PriorUndated, UnknownFormat }
+enum AttemptPrompt { Notice, MissingNotice, Current, ShortV1, UnversionedShortV1, V1WithCurrentBytes, PriorDated, PriorUndated, UnknownFormat }
 
 #[tokio::test]
 async fn coordination_notification_reconcile_finds_delivered_prompt_before_later_prompt() {
@@ -64,10 +64,14 @@ async fn check_attempt(form: AttemptPrompt, submitted_at: &str, expected_state: 
         provision_ready_coordination_fixture(&state.context, &beta);
 
         send_notification_fixture(&state, &alpha_capability, "notification-delivered-gen").await;
-        let candidate = crate::coordination::pending_notifications(&state.context)
+        let mut candidate = crate::coordination::pending_notifications(&state.context)
             .expect("pending notification")
             .pop()
             .expect("notification candidate");
+        if matches!(form, AttemptPrompt::Notice | AttemptPrompt::MissingNotice) {
+            candidate.prompt = Some(crate::notice::NoticeEnvelope::new("mailbox.wake", "agent-session", None)
+                .unwrap().encode("Mailbox: u=1").unwrap());
+        }
         assert!(
             crate::coordination::begin_notification_attempt(&state.context, &candidate)
                 .expect("begin notification")
@@ -98,6 +102,7 @@ async fn check_attempt(form: AttemptPrompt, submitted_at: &str, expected_state: 
         }
         fs::write(path, serde_json::to_vec_pretty(&registry).unwrap()).unwrap();
         let prompt = match form {
+            AttemptPrompt::MissingNotice => "unrelated provider input".to_string(),
             AttemptPrompt::ShortV1 | AttemptPrompt::UnversionedShortV1 => {
                 let date = jiff::Timestamp::from_second(candidate.queued_at_epoch + 1).unwrap();
                 format!("Mailbox: {date}; agent-session message inbox")
@@ -164,4 +169,10 @@ pub(super) fn fixture_notification_prompt(state_dir: &Path) -> String {
         attempted_at_epoch: 0,
         attempted_at: None,
     })
+}
+
+#[tokio::test]
+async fn mailbox_notice_reconciliation_requires_positive_exact_observation() {
+    check_attempt(AttemptPrompt::Notice, "2030-01-01T00:01:40.800000000Z", "prompt_submitted").await;
+    check_attempt(AttemptPrompt::MissingNotice, "2030-01-01T00:01:40.800000000Z", "attempt_unknown").await;
 }

@@ -312,15 +312,28 @@ All new writers require the explicit environment gate
 `AGENT_SESSION_NOTICE_WRITERS=1` in the CLI caller environment. Unset or any
 other value returns `notice-writers-disabled` before reading a body or starting
 a runtime. The default remains off until compatible readers and downstream
-mirrors are deployed. This PR does not enable any writer or change internal
-mailbox/auto-resume producers.
+mirrors are deployed. This does not enable any writer globally. The internal mailbox producer uses
+this gate; auto-resume integration is separate.
 
 Deploy the spec/codec first, then compatible readers and mirrors, then enable
 writers only in the intended caller environment. Roll back by unsetting the
-writer gate; retain readers for notices already stored in history. Internal
-mailbox nudge and auto-resume integration will call the same encoder directly,
-preserving their existing delivery guards, generations and retry ownership.
-They must not shell out to `notice` or move mailbox bodies into nudges.
+writer gate; retain readers for notices already stored in history. Internal mailbox reminders call the same encoder directly with kind
+`mailbox.wake`, source `agent-session` and no display id. The body is the
+coalesced live unread-count reminder, for example `Mailbox: h=1 r=2`; it never
+contains message bodies or recipient identity. Idle and working Codex retain
+their existing start/steer paths; authenticated hook claims return the same
+notice text. Supported terminal recipients use guarded notice delivery,
+including the existing native Claude module. This preserves the mailbox's
+single generation/incarnation claim across controller and hook paths.
+
+The mailbox keeps its existing plain reminder only when the writer gate is
+off or the receiver is known to lack notice support. Missing readiness on an
+installed module is uncertain and defers; a failed or uncertain notice attempt
+never authorizes a plain fallback or a second attempt. Attempt receipts retain
+the exact envelope and `mailbox-notice.v1` format; positive observation can
+resolve an uncertain notice, while absence keeps it parked. Historical prompt
+attempts retain their original interpretation. No mailbox producer shells out
+to `notice`. Auto-resume integration remains separate.
 
 Readers must accept and validate the separate notice role before native writers
 are enabled. Machine notices must not acknowledge a human outbox item or become
