@@ -4,6 +4,10 @@
 # No rollback-window rows are authorized in this batch; release-owner data is
 # required before any such row may be added. Local restore/replay is ineligible.
 # Expiry is a hard stop, not a scheduled automatic extension.
+# current-contract rows have no removal slice, so they carry a long explicit expiry
+# (2027-11-30) and are re-reviewed then; the one external row keeps the audit's
+# six-month review cap. removal-scheduled rows of the 2.0.0 slices (N4, N5, N6, N8)
+# expire 2026-12-31 and are revisited then.
 # N3 https://github.com/sympoies/nils-cli/issues/3075
 # N4 https://github.com/sympoies/nils-cli/issues/3076 (2.0.0)
 # N5 https://github.com/sympoies/nils-cli/issues/3077 (2.0.0)
@@ -22,7 +26,7 @@ match = "'path-for:Compatibility allocator for rendered state_out artifact paths
 kind = "removal-scheduled"
 reason = "Existing path-for allocator and generated/help documentation; N5 migrates the state_out producer and removes this forwarder in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3077"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -32,7 +36,7 @@ match = "'(--format)--json[Hidden alias for \\`--format json\\`]' \\"
 kind = "removal-scheduled"
 reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 14
 first_disallowed_release = "2.0.0"
 
@@ -42,7 +46,7 @@ match = "'(--format)--json[Hidden alias for \\`--format json\\` (kept for backwa
 kind = "removal-scheduled"
 reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 16
 first_disallowed_release = "2.0.0"
 
@@ -52,7 +56,7 @@ match = "'(--format)--json[Hidden alias for \\`--format json\\` kept for symmetr
 kind = "removal-scheduled"
 reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 12
 first_disallowed_release = "2.0.0"
 
@@ -242,7 +246,7 @@ match = "#[arg(long, hide = true, conflicts_with = \"format\")]"
 kind = "removal-scheduled"
 reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 13
 first_disallowed_release = "2.0.0"
 
@@ -252,7 +256,7 @@ match = "/// Hidden alias for `--format json` (kept for convenience)."
 kind = "removal-scheduled"
 reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 4
 first_disallowed_release = "2.0.0"
 
@@ -262,7 +266,7 @@ match = "/// Hidden alias for `--format json`."
 kind = "removal-scheduled"
 reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 9
 first_disallowed_release = "2.0.0"
 
@@ -272,7 +276,7 @@ match = "alias = \"idx\""
 kind = "current-contract"
 reason = "Current command abbreviations in the canonical parser vocabulary, not an earlier version reader or renamed command migration."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -281,7 +285,7 @@ match = "alias = \"ls\""
 kind = "current-contract"
 reason = "Current command abbreviations in the canonical parser vocabulary, not an earlier version reader or renamed command migration."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -290,7 +294,7 @@ match = "Compatibility allocator for rendered `state_out(...)` helper calls that
 kind = "removal-scheduled"
 reason = "Existing path-for allocator and generated/help documentation; N5 migrates the state_out producer and removes this forwarder in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3077"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -300,7 +304,7 @@ match = "/// Compatibility allocator for rendered state_out artifact paths."
 kind = "removal-scheduled"
 reason = "Existing path-for allocator and generated/help documentation; N5 migrates the state_out producer and removes this forwarder in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3077"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -319,7 +323,7 @@ match = "Provider import uses `provider_resume_id` (compatibility alias: `resume
 kind = "removal-scheduled"
 reason = "Existing resume_id request alias and owning documentation; N5 migrates to provider_resume_id in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3077"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -491,7 +495,7 @@ match = "/// Resume retains the old record before the new pane identity overwrit
 kind = "current-contract"
 reason = "Current resume transaction retains its pre-update record to fence identity replacement; this is not support for an old schema."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -743,7 +747,7 @@ match = "parts_query_serializes_empty_array_while_legacy_shape_omits_field"
 kind = "current-contract"
 reason = "Provider image request-shape regression fixture compares current query modes; the test name does not enable a retired repository reader."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -824,7 +828,7 @@ match = "alias = \"resume_id\""
 kind = "removal-scheduled"
 reason = "Existing resume_id request alias and owning documentation; N5 migrates to provider_resume_id in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3077"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -861,7 +865,7 @@ match = "merged input. The older `pr-comment` profile is a compatibility alias t
 kind = "removal-scheduled"
 reason = "Existing pr-comment profile alias documentation; N5 migrates callers to provider-review and retires the alias in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3077"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -898,7 +902,7 @@ match = "alias = \"expect-empty\""
 kind = "current-contract"
 reason = "Current API command vocabulary synonyms in one parser; not a declared predecessor schema or renamed contract."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 2
 
 [[retention]]
@@ -907,7 +911,7 @@ match = "alias = \"operation\""
 kind = "current-contract"
 reason = "Current API command vocabulary synonyms in one parser; not a declared predecessor schema or renamed contract."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -916,7 +920,7 @@ match = "alias = \"variables\""
 kind = "current-contract"
 reason = "Current API command vocabulary synonyms in one parser; not a declared predecessor schema or renamed contract."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -925,7 +929,7 @@ match = "alias = \"expect-empty\""
 kind = "current-contract"
 reason = "Current API command vocabulary synonyms in one parser; not a declared predecessor schema or renamed contract."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -934,7 +938,7 @@ match = "alias = \"expect-empty\""
 kind = "current-contract"
 reason = "Current API command vocabulary synonyms in one parser; not a declared predecessor schema or renamed contract."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -943,7 +947,7 @@ match = "alias = \"expect-empty\""
 kind = "current-contract"
 reason = "Current API command vocabulary synonyms in one parser; not a declared predecessor schema or renamed contract."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -952,7 +956,7 @@ match = "#[arg(long = \"json\", hide = true, conflicts_with = \"format\")]"
 kind = "removal-scheduled"
 reason = "Existing hidden JSON alias; N4 owns canonical-format migration in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -962,7 +966,7 @@ match = "/// Hidden alias for `--format json`."
 kind = "removal-scheduled"
 reason = "Existing hidden JSON alias; N4 owns canonical-format migration in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -972,7 +976,7 @@ match = "parse_ttl_seconds_accepts_zero_for_legacy_force_refresh"
 kind = "current-contract"
 reason = "Zero TTL remains a valid value of the current canonical TTL variable; the historical test name is not an old-name reader."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -981,7 +985,7 @@ match = "resolve_ttl_prefers_segment_env_before_legacy_env"
 kind = "removal-scheduled"
 reason = "Existing prompt TTL old-name behavior fixture; N6 owns environment-name migration in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3078"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -991,7 +995,7 @@ match = "\"'(--format)--json[Hidden alias for \\\\`--format json\\\\`]' \\\\\","
 kind = "removal-scheduled"
 reason = "Existing hidden JSON alias; N4 owns canonical-format migration in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1001,7 +1005,7 @@ match = "#[arg(long, global = true, hide = true, conflicts_with = \"format\")]"
 kind = "removal-scheduled"
 reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1011,7 +1015,7 @@ match = "/// Hidden alias for `--format json` (kept for backwards compatibility)
 kind = "removal-scheduled"
 reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1021,7 +1025,7 @@ match = "- `--ephemeral` is a compatibility no-op in isolated mode and keeps its
 kind = "removal-scheduled"
 reason = "Existing isolated-mode wrapper --ephemeral no-op; N5 retires that redundant input in 2.0 while preserving meaningful inherited upstream forwarding after checking its supported external contract/version. No product deletion in this audit batch."
 issue = "https://github.com/sympoies/nils-cli/issues/3077"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1040,7 +1044,7 @@ match = "#[arg(long = \"json\", hide = true, conflicts_with = \"format\")]"
 kind = "removal-scheduled"
 reason = "Existing hidden JSON alias or generated-output fixture; N4 removes it with supported callers in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 2
 first_disallowed_release = "2.0.0"
 
@@ -1050,7 +1054,7 @@ match = "/// Hidden alias for `--format json` (kept for backwards compatibility)
 kind = "removal-scheduled"
 reason = "Existing hidden JSON alias or generated-output fixture; N4 removes it with supported callers in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 2
 first_disallowed_release = "2.0.0"
 
@@ -1060,7 +1064,7 @@ match = "\"'(--format)--json[Hidden alias for \\\\`--format json\\\\` (kept for 
 kind = "removal-scheduled"
 reason = "Existing hidden JSON alias or generated-output fixture; N4 removes it with supported callers in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1070,7 +1074,7 @@ match = "LEGACY_USAGE"
 kind = "removal-scheduled"
 reason = "Existing predecessor Docker usage result or secrets paths key alias; N6 owns canonical-only migration in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3078"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 2
 first_disallowed_release = "2.0.0"
 
@@ -1080,7 +1084,7 @@ match = "alias = \"label\""
 kind = "current-contract"
 reason = "Current label command vocabulary synonym; not a retired command-name migration."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1089,7 +1093,7 @@ match = "parse_view_output_gitlab_legacy_wip_field"
 kind = "external"
 reason = "GitLab provider draft-field response fixture; it tests external input rather than an old nils-cli schema. N12 owns external-contract classification."
 issue = "https://github.com/sympoies/nils-cli/issues/3084"
-expires = "2026-11-30"
+expires = "2027-04-30"
 count = 1
 external_version = "GitLab REST API v4 work_in_progress field"
 
@@ -1099,7 +1103,7 @@ match = "alias = \"startLine\""
 kind = "current-contract"
 reason = "Current ReviewThreadSpec input vocabulary supports API-style field spellings in one schema; no retired version producer/reader is declared."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1108,7 +1112,7 @@ match = "alias = \"startSide\""
 kind = "current-contract"
 reason = "Current ReviewThreadSpec input vocabulary supports API-style field spellings in one schema; no retired version producer/reader is declared."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1117,7 +1121,7 @@ match = "alias = \"subjectType\""
 kind = "current-contract"
 reason = "Current ReviewThreadSpec input vocabulary supports API-style field spellings in one schema; no retired version producer/reader is declared."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1126,7 +1130,7 @@ match = "//! Typed admission is separate from the compatibility `reviewed` statu
 kind = "removal-scheduled"
 reason = "Existing duplicate reviewed status beside typed admission; N8 owns canonical output migration in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3080"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1136,7 +1140,7 @@ match = "github_comment_anchors_paginate_beyond_legacy_page_cap"
 kind = "current-contract"
 reason = "Regression test proves pagination exceeds an old cap; no retired reader, alias or fallback is accepted."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1145,7 +1149,7 @@ match = "github_fingerprints_paginate_beyond_legacy_page_cap"
 kind = "current-contract"
 reason = "Regression test proves pagination exceeds an old cap; no retired reader, alias or fallback is accepted."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1154,7 +1158,7 @@ match = "github_thread_comments_paginate_beyond_legacy_page_cap"
 kind = "current-contract"
 reason = "Regression test proves pagination exceeds an old cap; no retired reader, alias or fallback is accepted."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1163,7 +1167,7 @@ match = "github_threads_paginates_beyond_legacy_page_cap_and_marks_complete"
 kind = "current-contract"
 reason = "Regression test proves pagination exceeds an old cap; no retired reader, alias or fallback is accepted."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1181,7 +1185,7 @@ match = "all_legacy"
 kind = "current-contract"
 reason = "Immutable recorded review markers and historical visible text retain identical signed chain meaning; no retired ledger schema is upgraded."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 2
 
 [[retention]]
@@ -1190,7 +1194,7 @@ match = "accepted as a compatibility no-op. Removal prevents known collisions; i
 kind = "removal-scheduled"
 reason = "Existing worktree --safe no-op and owning help/completion; N5 removes the redundant input with current callers in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3077"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1200,7 +1204,7 @@ match = "visible_alias = \"action\""
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1209,7 +1213,7 @@ match = "visible_alias = \"blob\""
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1218,7 +1222,7 @@ match = "visible_alias = \"copy\""
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1227,7 +1231,7 @@ match = "visible_alias = \"default\""
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1236,7 +1240,7 @@ match = "visible_alias = \"delete-merged\""
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1245,7 +1249,7 @@ match = "visible_alias = \"hash\""
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1254,7 +1258,7 @@ match = "visible_alias = \"history\""
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1263,7 +1267,7 @@ match = "visible_alias = \"issue\""
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1272,7 +1276,7 @@ match = "visible_alias = \"release\""
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1281,7 +1285,7 @@ match = "visible_alias = \"stash\""
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1290,7 +1294,7 @@ match = "visible_alias = \"tag\""
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1299,7 +1303,7 @@ match = "visible_aliases = [\"context_json\", \"contextjson\", \"json\"]"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1308,7 +1312,7 @@ match = "visible_aliases = [\"prs\", \"merge-requests\", \"mrs\"]"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1317,7 +1321,7 @@ match = "visible_aliases = [\"pull-request\", \"mr\", \"merge-request\"]"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1326,7 +1330,7 @@ match = ".help(\"Compatibility no-op\"),"
 kind = "removal-scheduled"
 reason = "Existing worktree --safe no-op and owning help/completion; N5 removes the redundant input with current callers in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3077"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1336,7 +1340,7 @@ match = ".visible_alias(\"action\")"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1345,7 +1349,7 @@ match = ".visible_alias(\"blob\")"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1354,7 +1358,7 @@ match = ".visible_alias(\"copy\")"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1363,7 +1367,7 @@ match = ".visible_alias(\"default\")"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1372,7 +1376,7 @@ match = ".visible_alias(\"delete-merged\")"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1381,7 +1385,7 @@ match = ".visible_alias(\"hash\")"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1390,7 +1394,7 @@ match = ".visible_alias(\"history\")"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1399,7 +1403,7 @@ match = ".visible_alias(\"issue\")"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1408,7 +1412,7 @@ match = ".visible_alias(\"release\")"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1417,7 +1421,7 @@ match = ".visible_alias(\"stash\")"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1426,7 +1430,7 @@ match = ".visible_alias(\"tag\")"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1435,7 +1439,7 @@ match = ".visible_aliases([\"context_json\", \"contextjson\", \"json\"])"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1444,7 +1448,7 @@ match = ".visible_aliases([\"prs\", \"merge-requests\", \"mrs\"])"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1453,7 +1457,7 @@ match = ".visible_aliases([\"pull-request\", \"mr\", \"merge-request\"])"
 kind = "current-contract"
 reason = "Current documented command synonyms in a single parser contract; not a prior-version reader or renamed old command."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1462,7 +1466,7 @@ match = "\"Removal blocks known foreign holders and fresh Git locks, preserves u
 kind = "removal-scheduled"
 reason = "Existing worktree --safe no-op and owning help/completion; N5 removes the redundant input with current callers in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3077"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1472,7 +1476,7 @@ match = "legacy_lock_wait"
 kind = "current-contract"
 reason = "Regression compares a wait against the obsolete duration; current shared-deadline locking is exercised and no old path executes."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 3
 
 [[retention]]
@@ -1481,7 +1485,7 @@ match = "#[arg( long, hide = true, help = \"Hidden alias for `--format json` (ke
 kind = "current-contract"
 reason = "Image-processing JSON is the current primary selector despite misleading help text; N4 corrects that description only, not primary flag behavior."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1490,7 +1494,7 @@ match = "help = \"Hidden alias for `--format json` (kept for backwards compatibi
 kind = "current-contract"
 reason = "Image-processing JSON is the current primary selector despite misleading help text; N4 corrects that description only, not primary flag behavior."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1499,7 +1503,7 @@ match = "/// stay backward compatible (the field was always `None` before)."
 kind = "current-contract"
 reason = "Canonical orientation_report maps NoTransforms to None in the current output; no second schema, reader or duplicate representation is retained."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1517,7 +1521,7 @@ match = "generator_marker_matches_legacy_link_and_prose_forms"
 kind = "current-contract"
 reason = "Generator marker recognizer identifies immutable commit/PR provenance text; it does not execute a retired product contract."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1562,7 +1566,7 @@ match = "#[arg(long, global = true, hide = true, conflicts_with = \"format\")]"
 kind = "removal-scheduled"
 reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1572,7 +1576,7 @@ match = "/// Hidden alias for `--format json` kept for symmetry with neighbourin
 kind = "removal-scheduled"
 reason = "Existing hidden JSON selector alias or its advertised fixture; N4 removes it with canonical-format callers in the approved 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1582,7 +1586,7 @@ match = "alias = \"paths\""
 kind = "removal-scheduled"
 reason = "Existing predecessor Docker usage result or secrets paths key alias; N6 owns canonical-only migration in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3078"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1592,7 +1596,7 @@ match = "\"--json\" => { options.output_format = OutputFormat::Json"
 kind = "removal-scheduled"
 reason = "Existing hand-parsed JSON alias or its generated completion vocabulary; N4 migrates canonical-format callers in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 2
 first_disallowed_release = "2.0.0"
 
@@ -1602,7 +1606,7 @@ match = ".alias(\"bullet\")"
 kind = "current-contract"
 reason = "Current structured-body option synonym; no previous schema or renamed-contract reader is declared."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1611,7 +1615,7 @@ match = ".help(\"Alias for --format json\")"
 kind = "removal-scheduled"
 reason = "Existing hand-parsed JSON alias or its generated completion vocabulary; N4 migrates canonical-format callers in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 3
 first_disallowed_release = "2.0.0"
 
@@ -1621,7 +1625,7 @@ match = "OptionKind::Json => \"Alias for --format json\","
 kind = "removal-scheduled"
 reason = "Existing hand-parsed JSON alias or its generated completion vocabulary; N4 migrates canonical-format callers in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1631,7 +1635,7 @@ match = "\"--json\" => { options.format = OutputFormat::Json"
 kind = "removal-scheduled"
 reason = "Existing hand-parsed JSON alias or its generated completion vocabulary; N4 migrates canonical-format callers in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1641,7 +1645,7 @@ match = "- `pr-comment`: compatibility alias to `provider-review`; it cannot ren
 kind = "removal-scheduled"
 reason = "Existing pr-comment profile alias documentation; N5 owns canonical provider-review migration in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3077"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1651,7 +1655,7 @@ match = "its `pr-comment` compatibility alias"
 kind = "removal-scheduled"
 reason = "Existing pr-comment profile alias documentation; N5 owns canonical provider-review migration in the 2.0 train."
 issue = "https://github.com/sympoies/nils-cli/issues/3077"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1661,7 +1665,7 @@ match = "The contract requires `--json` to be a hidden alias for `--format json`
 kind = "removal-scheduled"
 reason = "Existing hidden-selector lint permits the still-implemented JSON aliases; N4 changes this exact lint with the canonical-only producer cutover."
 issue = "https://github.com/sympoies/nils-cli/issues/3076"
-expires = "2026-11-30"
+expires = "2026-12-31"
 count = 1
 first_disallowed_release = "2.0.0"
 
@@ -1689,7 +1693,7 @@ match = "#[arg(long, global = true, hide = true, conflicts_with = \"format\")]"
 kind = "current-contract"
 reason = "Synthetic hidden-selector fixture verifies the current lint boundary; no runtime JSON alias is provided by this audit test."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1698,7 +1702,7 @@ match = "/// Hidden alias for --format json"
 kind = "current-contract"
 reason = "Synthetic hidden-selector fixture verifies the current lint boundary; no runtime JSON alias is provided by this audit test."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1707,7 +1711,7 @@ match = "handle_legacy_redirect"
 kind = "current-contract"
 reason = "Synthetic tombstone/stale-marker guard fixture; it tests rejection or inventory diagnostics, not retained product behavior."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1743,7 +1747,7 @@ match = "test_new_recovery_is_versioned_and_legacy_v1_contract_remains_closed"
 kind = "current-contract"
 reason = "Negative schema fixture proves the v2 recovery output fails the old v1 schema; it is not an accepting reader."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1761,7 +1765,7 @@ match = "LEGACY_RELEASE_READER"
 kind = "current-contract"
 reason = "Synthetic rollback-window source and baseline prove release preparation refuses the first-disallowed release before changing release files."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 2
 
 [[retention]]
@@ -1770,7 +1774,7 @@ match = "legacy_contract"
 kind = "current-contract"
 reason = "Synthetic tombstone/stale-marker guard fixture; it tests rejection or inventory diagnostics, not retained product behavior."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
 
 [[retention]]
@@ -1779,5 +1783,5 @@ match = "legacy_helper"
 kind = "current-contract"
 reason = "Synthetic tombstone/stale-marker guard fixture; it tests rejection or inventory diagnostics, not retained product behavior."
 issue = "https://github.com/sympoies/nils-cli/issues/3074"
-expires = "2026-11-30"
+expires = "2027-11-30"
 count = 1
