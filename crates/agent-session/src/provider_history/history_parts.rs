@@ -361,10 +361,14 @@ fn claude_parts(
         });
         if kind == "attachment" {
             if visible_message {
-                if let Some(text) = crate::provider_prompt::claude_queued_prompt_text(value) {
-                    push_text(&text, id, timestamp, parts);
-                }
-                push_images(images, value, id, timestamp, parts);
+                push_visible_content(
+                    crate::provider_prompt::claude_queued_prompt_value(value),
+                    images,
+                    value,
+                    id,
+                    timestamp,
+                    parts,
+                );
             }
             return;
         }

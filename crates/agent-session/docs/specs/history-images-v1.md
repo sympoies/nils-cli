@@ -16,8 +16,12 @@ rows and Codex tool-output rows use the `assistant` role, including in increment
 history; they are not human prompt evidence. Codex user `input_text` and Claude
 Code 2.1.312 user text (including a single-string quoted path, newline and caption)
 also recognize single- or double-quoted absolute paths to raster images in the
-same managed session's upload directory. These upload references become ordered
-image parts, leaving the surrounding caption text visible. Other quoted paths
+same managed session's upload directory. Claude Code 2.1.316 human
+`attachment/queued_command` prompt strings use the same quoted-upload rules.
+Queued string and structured prompt images preserve caption/image order in
+`parts=v1`; repeated `rendered` text is not a second image source.
+These upload references become ordered image parts, leaving the surrounding
+caption text visible. Other quoted paths
 remain text: they must pass the attachment identity, path, size, extension and
 raster signature checks before a descriptor is emitted. Projection does not
 change the transcript or deliver native images to the model.
