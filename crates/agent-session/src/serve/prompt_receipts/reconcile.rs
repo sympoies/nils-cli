@@ -11,7 +11,7 @@ pub(super) struct NativeProof {
     pub(super) history_session_id: Option<String>,
 }
 
-fn identity(record: &SessionRecord) -> Option<String> {
+pub(super) fn identity(record: &SessionRecord) -> Option<String> {
     if !codex_app_server::runtime_is_supported(record) {
         return None;
     }
@@ -91,11 +91,6 @@ fn confirm_by_client_id(context: &CliContext, original: ResultRecord) -> ResultR
     let confirmed = || -> Option<ResultRecord> {
         let receipt = &original.receipt;
         let claimed = store::claim_fingerprint(context, receipt)?;
-        let client_id = super::client_message::id(
-            &receipt.session_id,
-            &receipt.session_incarnation,
-            &receipt.request_id,
-        );
         let deadline = Instant::now() + crate::send_submit::HOLD_BUDGET;
         let lock = crate::acquire_session_record_lock_timed(
             context,
@@ -111,6 +106,10 @@ fn confirm_by_client_id(context: &CliContext, original: ResultRecord) -> ResultR
                 .is_some_and(|r| r.launch_id == receipt.session_incarnation)
         };
         let before = identity(&record).filter(|_| launch_matches(&record))?;
+        // The id embeds the identity current now. If the account, runtime or
+        // thread changed since dispatch, this computes a different id and the
+        // original row is never matched.
+        let client_id = super::client_message::id(&before, &receipt.request_id);
         let _account = codex_app_server::acquire_account_mutation_gate(context, &record.id).ok()?;
         crate::codex_account::ensure_proxy_input_allowed(&record).ok()?;
         let mut client = codex_app_server::guarded::Client::connect(&record, deadline).ok()?;

@@ -372,12 +372,13 @@ async fn dispatch_observing(
         .as_ref()
         .filter(|resume| resume.provider == "codex")
         .map(|resume| resume.session_id.clone());
-    // Only a claimed request has a durable identity to derive the id from.
+    // Only a claimed request has a durable identity to derive the id from, and
+    // only a record whose full identity is known can be fenced on later.
     let client_message_id = proof
         .as_ref()
         .and(body.request_id.as_deref())
-        .map(|request_id| {
-            client_message::id(&record.id, &body.expected_session_incarnation, request_id)
+        .and_then(|request_id| {
+            reconcile::identity(&record).map(|identity| client_message::id(&identity, request_id))
         });
     let mut args = crate::send::unguarded_args(
         record.id,

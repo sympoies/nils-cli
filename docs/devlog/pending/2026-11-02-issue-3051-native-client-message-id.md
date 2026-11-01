@@ -4,9 +4,12 @@
 ### Result
 
 - A keyed idle-only Codex prompt now sends a provider-visible client message id
-  derived from the receipt identity. When the turn acknowledgment is lost,
-  lookup or a repeated POST finds that one user message by its id and the exact
-  claimed text, and changes the receipt to submitted without another dispatch.
+  derived from the dispatch-time session identity (runtime, provider thread,
+  account binding) and the request id. When the turn acknowledgment is lost and
+  that identity is unchanged, lookup or a repeated POST finds that one user
+  message by its id and the exact claimed text, and changes the receipt to
+  submitted without another dispatch. A changed identity computes a different id
+  and matches nothing.
 
 ### Why / context
 

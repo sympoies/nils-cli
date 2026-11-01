@@ -131,11 +131,14 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   API. This does not add history waiting to ordinary immediate native input.
 
   A keyed idle-only native dispatch also sends a provider-visible client message
-  id derived from the receipt identity. When the acknowledgment was lost, lookup
-  or a repeated POST can find that one user message by its id, under the same
-  runtime, thread and account fences, and only if its single text part is exactly
-  the claimed prompt. A match changes the receipt to `submitted` without another
-  dispatch. A missing row proves nothing and the receipt stays unknown.
+  id derived from the dispatch-time session identity (runtime, provider thread,
+  account binding) and the request id. Lookup computes the id from the identity
+  current at lookup, so a changed runtime, thread or account computes a
+  different id and matches nothing. When the acknowledgment was lost and the
+  identity is unchanged, lookup or a repeated POST can find that one user message
+  by its id, and only if its single text part is exactly the claimed prompt. A
+  match changes the receipt to `submitted` without another dispatch. A missing
+  row proves nothing and the receipt stays unknown.
 
   Unknown receipts can include a value-free `confirmation_diagnostic`:
   `native_input_unconfirmed` means a native turn acknowledgment was retained but

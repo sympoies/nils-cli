@@ -553,7 +553,14 @@ async fn duplicate_post_confirms_native_input_and_preserves_a_later_composer_dra
 async fn lost_native_acknowledgement_is_confirmed_only_by_its_own_client_id() {
     // History kind 5 carries the id the daemon sent; kind 6 carries another id;
     // kind 0 carries none. Every row has the right text in the right thread.
-    for (kind, confirmed) in [(5, true), (6, false), (0, false)] {
+    // The last case keeps the original id and text but switches the account
+    // binding in place after dispatch, which keeps the launch and the thread.
+    for (kind, confirmed, switched) in [
+        (5, true, false),
+        (6, false, false),
+        (0, false, false),
+        (5, false, true),
+    ] {
         let tmp = tempfile::TempDir::new().unwrap();
         let (st, launch, _lease, provider) = native_fixture(tmp.path());
         provider.busy.store(false, Ordering::SeqCst);
@@ -576,6 +583,12 @@ async fn lost_native_acknowledgement_is_confirmed_only_by_its_own_client_id() {
         );
         provider.visible.store(true, Ordering::SeqCst);
         provider.history_kind.store(kind, Ordering::SeqCst);
+        if switched {
+            let path = tmp.path().join("sessions/native-receipt/session.json");
+            let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            record["codex_account_binding"]["revision"] = json!(2);
+            fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
+        }
         let (status, replay) = call(router(st), post_json(uri, Some(TOKEN), body)).await;
         if confirmed {
             assert_eq!(status, StatusCode::OK, "{replay}");
