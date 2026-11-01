@@ -44,6 +44,11 @@ pub(crate) fn observe_attempt(
         .clone()
         .unwrap_or_else(|| fixed_prompt(&candidate.target_session_id, candidate.queued_at_epoch));
     match format.as_deref() {
+        Some(super::notice::FORMAT) if candidate.prompt.is_some() => {
+            // A native call can complete late. Only positive observation may
+            // resolve it; absent text never authorizes replay or prompt fallback.
+            prompt_observed_after(&source, &current, &attempted_at).filter(|observed| *observed)
+        }
         Some("mailbox-counts.v1") if candidate.prompt.is_some() => {
             prompt_observed_after(&source, &current, &attempted_at)
         }

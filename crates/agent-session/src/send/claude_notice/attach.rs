@@ -153,3 +153,13 @@ pub(crate) fn refusal(context: &CliContext, session: &SessionRecord) -> CliError
         ),
     )
 }
+
+/// Only known absence of the module permits the mailbox's existing plain route.
+/// An installed module with missing/invalid readiness remains uncertain.
+pub(crate) fn known_unsupported(context: &CliContext, session: &SessionRecord) -> bool {
+    read(context, session).is_some()
+        || runtime::module_dir(&context.state_dir, session).is_ok_and(|dir| {
+            std::fs::symlink_metadata(dir)
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        })
+}

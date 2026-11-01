@@ -88,9 +88,27 @@ pub(crate) fn send_to_session_observing(
 
 pub(crate) fn send_owner_prompt_observing(
     context: &CliContext,
+    args: cli::SendArgs,
+    owner_command: Option<crate::serve::prompt_receipts::owner_commands::Command>,
+    acknowledged: &mut dyn FnMut(&SessionRecord, &str),
+) -> Result<SendResult, CliError> {
+    send_observing(context, args, owner_command, acknowledged, None)
+}
+
+pub(crate) fn send_mailbox_notice(
+    context: &CliContext,
+    args: cli::SendArgs,
+    candidate: &crate::coordination::NotificationCandidate,
+) -> Result<SendResult, CliError> {
+    send_observing(context, args, None, &mut |_, _| {}, Some(candidate))
+}
+
+fn send_observing(
+    context: &CliContext,
     mut args: cli::SendArgs,
     owner_command: Option<crate::serve::prompt_receipts::owner_commands::Command>,
     acknowledged: &mut dyn FnMut(&SessionRecord, &str),
+    notification: Option<&crate::coordination::NotificationCandidate>,
 ) -> Result<SendResult, CliError> {
     // Picker shortcuts type into the terminal rather than paste. Never send
     // them into a working/unknown session, even with --allow-blocked.
@@ -175,6 +193,9 @@ pub(crate) fn send_owner_prompt_observing(
         if !args.guards.enabled() {
             codex_account::authorize_terminal_input_locked(context, &mut record)?;
         }
+    }
+    if let Some(candidate) = notification {
+        crate::serve::begin_mailbox_notice(context, &record, &tmux_bin, candidate)?;
     }
     if args.guards.enabled() {
         return guarded(
