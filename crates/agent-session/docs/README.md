@@ -30,6 +30,9 @@ or integrating a specific subsystem.
   unknown-effect receipts.
 - [Session notices v1](specs/session-notices-v1.md): display-only envelope,
   fixture corpus, guarded notice delivery and writer rollout gate.
+- [Mailbox read events v1](specs/mailbox-read-events-v1.md): display-only
+  conversation events for mailbox reads and acknowledgements, identity,
+  transcript-offset ordering and authorization.
 - [Send v1](specs/send-v1.md): submission-time continuation guards, observation
   limits, durable idempotency claims, and refusal codes.
 - [Session context usage v1](specs/session-context-usage-v1.md): optional raw

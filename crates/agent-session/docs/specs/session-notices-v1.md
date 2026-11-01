@@ -77,7 +77,9 @@ body while raw-copy paths retain the original message.
 History adapters retain marked notices. Existing provider metadata filters
 remain authoritative: a marker does not admit system context, compaction
 summaries or sidechain records that would otherwise be excluded. Only an exact
-producer-receipt-backed native notice gets the separate machine role. Ordinary
+producer-receipt-backed native notice gets the separate machine role, apart from the
+display-only [mailbox read event](mailbox-read-events-v1.md) recorded by the daemon
+and never delivered. Ordinary
 human messages with a valid header retain their user role. Unmarked mailbox
 reminders retain their existing filtering behavior.
 No history is rewritten or retroactively classified from an unmarked prefix.

@@ -65,6 +65,9 @@ proof cannot be reconstructed by matching similar text. A temporarily locked or
 corrupt notice ledger returns a bounded history-read error without advancing a
 cursor, rather than silently skipping bound rows.
 
+Mailbox reads and acknowledgements add a second, display-only kind of `role: "notice"`
+message to the same pages; see [Mailbox read events v1](mailbox-read-events-v1.md).
+
 These messages are not human input: consumers exclude them from outbox
 acknowledgment, last-user previews, stuck/pending reconciliation, unread/attention
 signals and automatic title input. This does not establish a human
