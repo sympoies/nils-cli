@@ -319,7 +319,8 @@ Deploy the spec/codec first, then compatible readers and mirrors, then enable
 writers only in the intended caller environment. Roll back by unsetting the
 writer gate; retain readers for notices already stored in history. Internal mailbox reminders call the same encoder directly with kind
 `mailbox.wake`, source `agent-session` and no display id. The body is the
-coalesced live unread-count reminder, for example `Mailbox: h=1 r=2`; it never
+coalesced live unread-count reminder, for example `Mailbox: 1 handoff, 2 report;
+agent-session message inbox`; it never
 contains message bodies or recipient identity. Idle and working Codex retain
 their existing start/steer paths; authenticated hook claims return the same
 notice text. Supported terminal recipients use guarded notice delivery,

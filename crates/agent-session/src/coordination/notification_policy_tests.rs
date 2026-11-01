@@ -2,6 +2,7 @@
 use super::*;
 use crate::cli::{MessageCategory, MessageSendArgs};
 use nils_common::cli_contract::OutputFormat;
+use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::assert_eq;
 
 fn configure(context: &CliContext, recipient: &str) {
@@ -595,6 +596,10 @@ fn routine_coalescing_is_opt_in_and_urgent_mail_bypasses_the_window() {
 
 #[test]
 fn coalescing_window_survives_restart_and_hook_claim_until_ten_minutes() {
+    // This asserts the plain route, so the notice gate must be off whatever a
+    // concurrent notice test has set.
+    let lock = GlobalStateLock::new();
+    let _gate = EnvGuard::remove(&lock, crate::notice::WRITERS_ENV);
     let (_temp, context) = tests::fixture();
     write_atomic(&context.state_dir.join("coordination/notification-policy.json"), &serde_json::to_vec(&json!({
         "schema_version":"agent-session.notification-policy.v1", "recipients":[{"session_id":"recipient", "suppress_categories":[], "routine_interval_seconds":600}]

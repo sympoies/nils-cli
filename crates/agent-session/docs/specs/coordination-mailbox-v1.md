@@ -113,7 +113,13 @@ after restart.
 Multiple notification-eligible unread messages coalesce into one mailbox-level
 notification for the newest pending generation. With the existing notice writer
 gate enabled, notice-capable recipients receive the canonical `mailbox.wake`
-envelope with coalesced live unread counts, such as `Mailbox: h=1 r=2`.
+envelope with coalesced live unread counts spelled out with the inbox action,
+such as `Mailbox: 1 handoff, 2 report; agent-session message inbox`. The
+Claude module, Codex app-server and hook claim never type into the composer.
+Codex terminal types the multiline envelope through the guarded composer path,
+which joins wrapped rows. None of them is held to the one-row 51-column bound
+below.
+
 Controller and hook delivery share the same generation claim. Supported
 terminal recipients use guarded notice delivery; Codex retains its start/steer
 semantics. Only a known unsupported notice receiver or a disabled writer gate
@@ -391,11 +397,16 @@ authenticated service-origin messages bypass this window. Other recipients keep
 the existing default behavior. Service-origin inputs cannot be silenced by a
 progress/report suppression rule.
 
-Configured recipients receive a bounded body-free prompt such as
-`Mailbox: b=1 h=2 p=3`. The aliases are blocker (`b`), decision (`d`), handoff
-(`h`), progress (`p`), report (`r`) and uncategorized (`u`); omitted categories
-have zero messages. Counts fit a 51-column pane at the mailbox quota. Exact
-attempt text is retained for reconciliation; a later generation does not
+On the plain fallback path, configured recipients receive a bounded body-free
+prompt such as `Mailbox: b=1 h=2 p=3`. The aliases are blocker (`b`), decision
+(`d`), handoff (`h`), progress (`p`), report (`r`) and uncategorized (`u`);
+omitted categories have zero messages. Counts fit a 51-column pane at the
+mailbox quota, which is the only reason this form is compact. The notice body
+spells the same counts as `<n> <category>` joined by commas in the order above
+(blocker, decision, handoff, progress, report, uncategorized), then
+`; agent-session message inbox`.
+
+Exact attempt text is retained for reconciliation; a later generation does not
 acknowledge an older uncertain submission. `message audit` advertises
 `routine-coalescing-v1` under `notification_capabilities` and the configured
 recipient intervals under `routine_coalescing`. Consumers must deploy matching
