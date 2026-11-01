@@ -124,6 +124,86 @@ fn failed_claude_switch_then_new_resume_explicitly_abandons_pending_account() {
 }
 
 #[test]
+fn claude_switch_without_publication_capability_materializes_and_resumes() {
+    compatible_switch(false);
+}
+
+#[test]
+fn queued_claude_switch_without_publication_capability_applies_at_idle() {
+    compatible_switch(true);
+}
+
+fn compatible_switch(queued: bool) {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (st, broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
+    // The account-broker.v2 list is valid without optional capabilities.
+    // Use the underlying broker, not the publication-advertising wrapper.
+    let argv = json!([tmp.path().join("claude-broker")]).to_string();
+    let _compatible = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER", &argv);
+    crate::activity::ingest_event(
+        &st.context,
+        &record.id,
+        idle_account_event(&record, "start", "turn_started"),
+    )
+    .unwrap();
+    if queued {
+        let result =
+            crate::session_account::switch(&st.context, &record.id, "beta", None, &st.tmux_bin)
+                .unwrap();
+        let view = serde_json::to_value(result).unwrap();
+        assert_eq!(view["claude_account"]["next"]["state"], "queued");
+        assert_eq!(
+            view["claude_account"]["next"]["blocking_reason"],
+            "turn_busy"
+        );
+        assert!(!broker.calls().contains("materialize"));
+    }
+    crate::activity::ingest_event(
+        &st.context,
+        &record.id,
+        idle_account_event(&record, "done", "turn_completed"),
+    )
+    .unwrap();
+    if queued {
+        crate::session_account::claude_idle::apply_queued(&st.context, &record.id, &st.tmux_bin)
+            .expect("valid queued materialization without publication capability must switch");
+    } else {
+        crate::session_account::switch(&st.context, &record.id, "beta", None, &st.tmux_bin)
+            .expect("valid materialization without publication capability must switch");
+    }
+    let resumed = load_session_record(&st.context, &record.id).unwrap();
+    let view = serde_json::to_value(crate::claude_account::view_for_record(&resumed)).unwrap();
+    assert_eq!(view["selected_account"], "beta");
+    assert!(view.get("next").is_none());
+    let runtime = resumed.runtime.as_ref().unwrap();
+    let prior = record.runtime.as_ref().unwrap();
+    assert_ne!(runtime.launch_id, prior.launch_id);
+    assert_eq!(runtime.generation, prior.generation + 1);
+    assert_eq!(
+        serde_json::to_value(&resumed.provider_resume).unwrap(),
+        serde_json::to_value(&record.provider_resume).unwrap()
+    );
+    assert!(crate::claude_account::generation::baseline(&resumed).is_none());
+    assert!(!resumed.extra.contains_key("claude_launch_publication"));
+    assert!(!broker.calls().contains("credential-state"));
+    assert!(
+        broker
+            .calls()
+            .contains("materialize --provider claude --account beta")
+    );
+    let launch = fs::read_to_string(tmp.path().join("tmux.log")).unwrap();
+    assert!(launch.contains("new-session"));
+    assert!(launch.contains(&format!(
+        "CLAUDE_CONFIG_DIR={}",
+        broker.config_dir("beta").display()
+    )));
+}
+
+#[path = "account_switch_refusal.rs"]
+mod refusal;
+
+#[test]
 fn claude_switch_refuses_unverified_credentials_before_stopping() {
     let lock = GlobalStateLock::new();
     let tmp = tempfile::TempDir::new().unwrap();
