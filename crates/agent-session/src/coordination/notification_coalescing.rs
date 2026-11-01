@@ -79,26 +79,48 @@ pub(super) fn is_count_prompt(prompt: &str) -> bool {
         })
 }
 
-/// Render only unread metadata selected by the owning mailbox transaction.
-pub(super) fn count_prompt<'a>(messages: impl Iterator<Item = &'a StoredMessage>) -> String {
-    let mut counts = BTreeMap::<&str, usize>::new();
+fn category_counts<'a>(
+    messages: impl Iterator<Item = &'a StoredMessage>,
+) -> BTreeMap<(&'static str, &'static str), usize> {
+    let mut counts = BTreeMap::new();
     for item in messages {
         let category = match item.category.unwrap_or_default() {
-            MessageCategory::Progress => "p",
-            MessageCategory::Handoff => "h",
-            MessageCategory::Report => "r",
-            MessageCategory::Blocker => "b",
-            MessageCategory::Decision => "d",
-            MessageCategory::Uncategorized => "u",
+            MessageCategory::Progress => ("p", "progress"),
+            MessageCategory::Handoff => ("h", "handoff"),
+            MessageCategory::Report => ("r", "report"),
+            MessageCategory::Blocker => ("b", "blocker"),
+            MessageCategory::Decision => ("d", "decision"),
+            MessageCategory::Uncategorized => ("u", "uncategorized"),
         };
         *counts.entry(category).or_default() += 1;
     }
+    counts
+}
+
+/// Render only unread metadata selected by the owning mailbox transaction.
+///
+/// The compact form exists for the typed composer reminder, which must stay on
+/// one observable row of a 51-column pane.
+pub(super) fn count_prompt<'a>(messages: impl Iterator<Item = &'a StoredMessage>) -> String {
     format!(
         "Mailbox: {}",
-        counts
+        category_counts(messages)
             .iter()
-            .map(|(kind, count)| format!("{kind}={count}"))
+            .map(|((kind, _), count)| format!("{kind}={count}"))
             .collect::<Vec<_>>()
             .join(" ")
+    )
+}
+
+/// The same counts spelled out, for notice delivery, which never types into the
+/// composer and so has no width bound.
+pub(super) fn explained_prompt<'a>(messages: impl Iterator<Item = &'a StoredMessage>) -> String {
+    format!(
+        "Mailbox: {}; agent-session message inbox",
+        category_counts(messages)
+            .iter()
+            .map(|((_, name), count)| format!("{count} {name}"))
+            .collect::<Vec<_>>()
+            .join(", ")
     )
 }

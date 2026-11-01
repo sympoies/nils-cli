@@ -10,7 +10,7 @@ pub(super) fn encode_counts(
     incarnation: &str,
     now: i64,
 ) -> String {
-    let body = coalescing::count_prompt(registry.messages.iter().filter(|item| {
+    let body = coalescing::explained_prompt(registry.messages.iter().filter(|item| {
         item.recipient_session_id == session
             && item.recipient_incarnation == incarnation
             && item.state == "unread"
