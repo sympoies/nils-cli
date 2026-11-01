@@ -11,9 +11,9 @@
 
 ### Why / context
 
-- The compact letters were unexplained to agents and people. Notice delivery
-  never types into the composer, so the width bound does not apply to it. Refs
-  #3180 and #3186.
+- Refs #3180 and #3186: the compact letters were unexplained to agents and
+  people. Notice delivery never types into the composer, so the width bound
+  does not apply to it.
 
 ### Evidence
 
