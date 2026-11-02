@@ -275,10 +275,13 @@ printf '{"schema_version":"cli.semantic-commit.commit.v1","ok":true,"commit":{"s
         fs::write(
             &self.receipt,
             serde_json::to_vec_pretty(&serde_json::json!({
-                "schema_version": "forge-cli.repo-bootstrap.receipt.v1",
+                "schema_version": "forge-cli.repo-bootstrap.receipt.v2",
                 "provider": PROVIDER,
+                "host": "",
                 "repository": format!("{}/widgets", self.owner),
                 "owner_kind": "user",
+                "private": true,
+                "existing_empty": false,
                 "default_branch": "main",
                 "message": "chore: initialize repository",
                 "reason": "Operator authorized private repository bootstrap.",
