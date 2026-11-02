@@ -256,6 +256,7 @@ fn submit_fixture(
             body: ORIGINAL_BODY.into(),
             idempotency_key: "remote-failure-fixture-key".into(),
             reply_to: None,
+            reply_by: None,
             expires_in: None,
             reply_revision: None,
             expected_recipient_incarnation: Some(TARGET_INCARNATION.into()),

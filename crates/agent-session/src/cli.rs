@@ -1006,6 +1006,9 @@ pub struct MessageSendArgs {
     pub idempotency_key: String,
     #[arg(long)]
     pub reply_to: Option<String>,
+    /// Request a reply within 1 second to 7 days (for example 1h).
+    #[arg(long, value_name = "DURATION")]
+    pub reply_by: Option<String>,
     #[arg(long, value_name = "DURATION")]
     pub expires_in: Option<String>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]

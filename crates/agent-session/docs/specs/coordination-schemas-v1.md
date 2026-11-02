@@ -280,7 +280,9 @@ Stable failures are `invalid-idempotency-key`,
 
 Messages use `agent-session.message.v1`. Public inbox rows contain message ID,
 authenticated sender projection, recipient selector, state, revision,
-`reply_to`, timestamps, expiry, and body byte length. Only authenticated
+`reply_to`, timestamps, expiry, and body byte length. Messages with a reply
+deadline also include optional `reply_by` (UTC RFC3339); absence means no reply
+obligation. See the [reply deadline contract](coordination-mailbox-v1.md#optional-reply-deadlines). Only authenticated
 recipient `message show` and revision-based `message wait` success results
 contain a `body` field. The field is explicitly classified as
 `untrusted_peer_data`: peer-authored content that recipients act on within

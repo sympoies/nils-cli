@@ -134,8 +134,9 @@ without changing message state.
 
 For `POST /sessions/{id}/messages/v1`, `{id}` is the recipient. The required
 `X-Agent-Session-Capability` determines the sender; the JSON body contains only
-`body`, `idempotency_key`, optional `reply_to`, and optional `expires_in`, and
-rejects a `to` redirect selector. The session check body contains only
+`body`, `idempotency_key`, and optional `reply_to`, `expires_in`, `reply_by`,
+and `category`; it rejects a `to` redirect selector. `reply_by` uses the
+[bounded reply duration](coordination-mailbox-v1.md#optional-reply-deadlines). The session check body contains only
 `self_selector` (default false) and `allow_incomplete`; candidates are accepted
 only by the registry-level check route.
 

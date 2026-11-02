@@ -3,8 +3,9 @@
 ## Scope and authority
 
 `agent-session message audit` is a read-only owner metadata projection for one
-configured machine and state root. It lists overdue unread mail, unresolved
-mail targeting stopped/missing sessions or old incarnations, source federation
+configured machine and state root. It lists overdue unread mail, overdue reply
+obligations, unresolved mail targeting stopped/missing sessions or old
+incarnations, source federation
 queue failures, and failed/uncertain notification receipts. It includes all
 owners present in that root; session capabilities do not authorize this query.
 The local CLI relies on owner filesystem access, like the session board.
@@ -90,6 +91,8 @@ string `unknown`.
 | `recipient_status` | `{runtime, broker, current_incarnation, heartbeat_at, heartbeat_fresh}` |
 | `notification` | Exact-incarnation receipt described below, or `null` |
 | `resume_carry` | Inbox mail moved by same-session resume: `{original_recipient_incarnation, from_incarnation, carry_count, carried_at, carried_at_epoch}` (UTC RFC3339 / Unix seconds); `null` otherwise and for outbox records |
+| `reply_by` | Optional UTC RFC3339 reply deadline; absent when none (including outbox records) |
+| `replied_at` | Present with `reply_by`: UTC RFC3339 accepted reply time, or `null` while unanswered |
 | `anomalies` | Array of stable anomaly codes; empty for healthy records |
 
 `refusal_details` is available only for source quota refusals. Its
@@ -126,6 +129,7 @@ migration time or rewrites the stored receipt.
 
 | Code | Condition |
 | --- | --- |
+| `overdue-reply` | Retained destination mail has `reply_by` strictly before observation time and no accepted `reply_to` response; independent of `--older-than`, read/acknowledged/expired state |
 | `overdue-unread` | Live unread destination mail has ingress age greater than threshold |
 | `recipient-stopped` | Live unresolved inbox mail targets the current incarnation and its exact runtime or broker is stopped |
 | `recipient-missing` | Live unresolved inbox mail targets a provably absent local session record |
@@ -136,7 +140,9 @@ migration time or rewrites the stored receipt.
 | `notification-failed` | Live unresolved inbox mail has exact-incarnation `attempt_unknown` or `undeliverable` notification, except the normal `hook-delivered` fallback |
 
 Unresolved inbox mail means live `unread` or `read`; acknowledged/expired mail
-does not raise recipient or notification anomalies. Multiple flags coexist.
+does not raise recipient or notification anomalies. Reply deadlines remain separate
+from those mailbox states; a retained acknowledged/expired message may still
+have an unanswered reply obligation. Multiple flags coexist.
 Expired-but-unpruned mail projects `expired` without altering stored state.
 
 Collectors query `--include-healthy`, then join source/destination observations

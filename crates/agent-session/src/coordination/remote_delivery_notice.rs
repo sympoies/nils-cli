@@ -77,6 +77,7 @@ fn envelope(config: &Config, item: &Retained, sender: &Address) -> Envelope<Orig
         created_at_epoch: created,
         expires_at_epoch: expires_at(item).expect("selected terminal timestamp"),
         reply_to: None,
+        reply_by_epoch: None,
         reply_depth: 0,
         category: Some(crate::cli::MessageCategory::Report),
         forwarding: None,

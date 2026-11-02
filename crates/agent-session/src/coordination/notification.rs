@@ -1023,6 +1023,8 @@ mod tests {
             state: state.to_string(),
             revision: 1,
             reply_to: None,
+            reply_by_epoch: None,
+            reply_sent_at_epoch: None,
             reply_depth: 0,
             created_at: String::new(),
             created_at_epoch: 100,

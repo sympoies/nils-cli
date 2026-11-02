@@ -2443,7 +2443,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__message__send)
-            opts="-h --from --to --to-machine --body-file --capability-file --idempotency-key --reply-to --expires-in --format --category --state-dir --host --help"
+            opts="-h --from --to --to-machine --body-file --capability-file --idempotency-key --reply-to --reply-by --expires-in --format --category --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2496,6 +2496,10 @@ _agent__session() {
                     return 0
                     ;;
                 --reply-to)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --reply-by)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

@@ -60,6 +60,10 @@ struct Inbox {
     remote_created_at_epoch: Option<i64>,
     expires_at_epoch: i64,
     #[serde(default)]
+    reply_by_epoch: Option<i64>,
+    #[serde(default)]
+    reply_sent_at_epoch: Option<i64>,
+    #[serde(default)]
     category: Option<MessageCategory>,
     #[serde(default)]
     resume_carry: Option<super::mailbox::ResumeCarry>,
@@ -151,6 +155,10 @@ struct Record {
     sent_at: Option<String>,
     persisted_at: Option<String>,
     expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reply_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replied_at: Option<Option<String>>,
     unread_age_seconds: Option<i64>,
     end_to_end_latency_seconds: Option<i64>,
     mailbox_state: Option<&'static str>,
@@ -461,6 +469,8 @@ fn snapshot_at(
                 sent_at: time(m.remote_created_at_epoch.or(Some(m.created_at_epoch))),
                 persisted_at: time(Some(m.created_at_epoch)),
                 expires_at: time(Some(m.expires_at_epoch)),
+                reply_by: time(m.reply_by_epoch),
+                replied_at: m.reply_by_epoch.map(|_| time(m.reply_sent_at_epoch)),
                 unread_age_seconds: unread.then(|| age(now, Some(m.created_at_epoch))).flatten(),
                 end_to_end_latency_seconds: m
                     .remote_created_at_epoch
@@ -485,6 +495,11 @@ fn snapshot_at(
                 resume_carry: m.resume_carry.clone(),
                 anomalies: vec![],
             };
+            if m.reply_by_epoch.is_some_and(|deadline| deadline < now)
+                && m.reply_sent_at_epoch.is_none()
+            {
+                row.anomalies.push("overdue-reply");
+            }
             if row
                 .unread_age_seconds
                 .is_some_and(|age| age > query.older_than as i64)
@@ -565,6 +580,8 @@ fn snapshot_at(
                 sent_at: time(o.created_at_epoch),
                 persisted_at: time(o.persisted_at_epoch),
                 expires_at: time(Some(o.expires_at_epoch)),
+                reply_by: None,
+                replied_at: None,
                 unread_age_seconds: None,
                 end_to_end_latency_seconds: o
                     .persisted_at_epoch
@@ -915,3 +932,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "audit_reply_deadline_tests.rs"]
+mod reply_deadline_tests;
