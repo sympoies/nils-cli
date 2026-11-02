@@ -343,7 +343,11 @@ impl Fixture {
             .with_cwd(&self.root)
             .without_ambient_managed_session_env()
             .with_env_remove_many(&ISOLATED_ENV)
-            .with_envs(&envs);
+            .with_envs(&envs)
+            .with_env(
+                "AGENT_SESSION_RULES_FILE",
+                &self.root.join("rules.json").to_string_lossy(),
+            );
         run_resolved("agent-session", &argv, &options)
     }
 
@@ -362,6 +366,7 @@ impl Fixture {
             .arg(MACHINE)
             .args(args)
             .env("HOME", &self.home)
+            .env("AGENT_SESSION_RULES_FILE", self.root.join("rules.json"))
             .env("AGENT_SESSION_TOKEN", OPERATOR)
             .env("AGENT_SESSION_TMUX_BIN", self.fake_tmux())
             .env_remove("XDG_STATE_HOME")
@@ -1612,3 +1617,6 @@ mod delegation;
 
 #[path = "board_relay/service_console_start.rs"]
 mod service_console_start;
+
+#[path = "board_relay/operator_rules.rs"]
+mod operator_rules;

@@ -279,10 +279,12 @@ where
 }
 
 fn dispatch(cli: Cli) -> i32 {
+    if let Some(code) = cli::operator_rules::prepare(&cli.command) {
+        return code;
+    }
     if let Command::Completion(args) = cli.command {
         return completion::run(args.shell);
     }
-
     let format = coordination_routing::command_format(&cli.command);
     let context = match CliContext::resolve(cli.state_dir, cli.host) {
         Ok(context) => context,
@@ -294,7 +296,6 @@ fn dispatch(cli: Cli) -> i32 {
             );
         }
     };
-
     if matches!(
         cli.command,
         Command::Account(_) | Command::Resume(_) | Command::Restart(_) | Command::AutoResume(_)
@@ -335,10 +336,9 @@ fn dispatch(cli: Cli) -> i32 {
         Command::CodexAppServerProxy(args) => codex_app_server::run_proxy(&context, args),
         Command::Delete(args) => run_delete(&context, args),
         Command::Tmp(args) => runtime_environment::session_tmp::run(&context, args),
-        Command::Completion(_) => unreachable!("completion is handled before context resolution"),
+        Command::Completion(_) | Command::Rules(_) => unreachable!("handled earlier"),
     }
 }
-
 fn detect_format_from_args(args: &[OsString]) -> OutputFormat {
     let mut index = 1;
     while index < args.len() {

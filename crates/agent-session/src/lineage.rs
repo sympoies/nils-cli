@@ -325,11 +325,12 @@ pub(crate) fn role_from_create_body(value: Option<&Value>) -> Result<Option<Stri
     }
 }
 
-/// A coordinator is a root: it may not be started with a parent.
+/// By default both coordinator roles require a root; operator rules own this check.
 pub(crate) fn require_root_for_role(role: Option<&str>, has_parent: bool) -> Result<(), CliError> {
     if let Some(role) = role
         && matches!(role, ROLE_COORDINATOR | "domain-coordinator")
         && has_parent
+        && crate::cli::operator_rules::require_coordinator_root()
     {
         return Err(CliError::usage(
             ROLE_REQUIRES_ROOT,
