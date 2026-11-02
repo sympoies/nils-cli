@@ -252,6 +252,8 @@ impl QuotaRefusal {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Outbox {
     pub envelope: Envelope<Origin>,
+    #[serde(default, skip_serializing_if = "super::notification_policy::is_false")]
+    pub clears_reply_obligation: bool,
     pub request_digest: String,
     pub idempotency_key: String,
     pub state: String,
@@ -335,6 +337,9 @@ struct Retained {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     forwarding: Option<super::forwarding::Provenance>,
 }
+#[path = "remote_reply_obligation.rs"]
+mod reply_obligation;
+
 #[path = "remote_journal_version.rs"]
 mod journal_version;
 
@@ -881,16 +886,7 @@ where
             }
             let outcome = projection(&item);
             drop(locked);
-            if args.reply_to.is_some() {
-                let mut registry = lock_registry(context)?;
-                if super::mailbox::record_reply(
-                    &mut registry.registry,
-                    args.reply_to.as_deref(),
-                    now_epoch(),
-                ) {
-                    registry.save()?;
-                }
-            }
+            reply_obligation::replay(context, args.reply_to.as_deref())?;
             return Ok(outcome);
         }
     }
@@ -907,126 +903,132 @@ where
     } else {
         None
     };
-    let (destination, reply_depth) = if let Some(parent_id) = args.reply_to.as_deref() {
-        let locked = lock_registry(context)?;
-        let parent = locked
-            .registry
-            .messages
-            .iter()
-            .find(|m| {
-                m.message_id == parent_id
-                    && m.recipient_session_id == session
-                    && m.recipient_incarnation == source_incarnation
-            })
-            .ok_or_else(|| {
-                CliError::data("message-not-found", "reply message does not exist", None)
-            })?;
-        if parent.expires_at_epoch <= now_epoch() || parent.state == "expired" {
-            return Err(CliError::data(
-                "message-expired",
-                "reply message expired",
-                None,
-            ));
-        }
-        if args
-            .reply_revision
-            .is_some_and(|expected| expected != parent.revision)
-        {
-            return Err(CliError::data(
-                "message-revision-conflict",
-                "reply revision changed",
-                None,
-            ));
-        }
-        let sender = sender_address(parent).ok_or_else(invalid)?;
-        if sender.machine != args.to_machine
-            || sender.session_id != args.to_session
-            || parent.reply_depth >= 16
-        {
-            return Err(invalid());
-        }
-        (sender, parent.reply_depth + 1)
-    } else {
-        let discovered = peers_from(config, &origin).inspect_err(|_| {
-            observe_discovery_refusal(context, "peer-discovery-failed");
-        })?;
-        let matching = |peer: &&Value| {
-            peer["machine"] == args.to_machine && peer["session_id"] == args.to_session
-        };
-        let mut peer = discovered["peers"]
-            .as_array()
-            .expect("validated peers")
-            .iter()
-            .filter(matching)
-            .find(|peer| peer["messaging_supported"] == true)
-            .or_else(|| {
-                discovered["peers"]
-                    .as_array()
-                    .expect("validated peers")
-                    .iter()
-                    .find(matching)
-            })
-            .cloned()
-            .ok_or_else(|| {
-                observe_discovery_refusal(context, "recipient-not-discovered");
-                CliError::data(
-                    "remote-recipient-not-discovered",
-                    recipient_not_discovered_message(),
+    let (destination, reply_depth, clears_reply_obligation) =
+        if let Some(parent_id) = args.reply_to.as_deref() {
+            let locked = lock_registry(context)?;
+            let parent = locked
+                .registry
+                .messages
+                .iter()
+                .find(|m| {
+                    m.message_id == parent_id
+                        && m.recipient_session_id == session
+                        && m.recipient_incarnation == source_incarnation
+                })
+                .ok_or_else(|| {
+                    CliError::data("message-not-found", "reply message does not exist", None)
+                })?;
+            if parent.expires_at_epoch <= now_epoch() || parent.state == "expired" {
+                return Err(CliError::data(
+                    "message-expired",
+                    "reply message expired",
                     None,
-                )
+                ));
+            }
+            if args
+                .reply_revision
+                .is_some_and(|expected| expected != parent.revision)
+            {
+                return Err(CliError::data(
+                    "message-revision-conflict",
+                    "reply revision changed",
+                    None,
+                ));
+            }
+            let sender = sender_address(parent).ok_or_else(invalid)?;
+            if sender.machine != args.to_machine
+                || sender.session_id != args.to_session
+                || parent.reply_depth >= 16
+            {
+                return Err(invalid());
+            }
+            (
+                sender,
+                parent.reply_depth + 1,
+                parent.reply_by_epoch.is_some(),
+            )
+        } else {
+            let discovered = peers_from(config, &origin).inspect_err(|_| {
+                observe_discovery_refusal(context, "peer-discovery-failed");
             })?;
-        if peer["messaging_supported"] != true
-            && peer["messaging_unavailable_reason"] == "coordination-unavailable"
-        {
-            observe_discovery_refusal(context, "recipient-coordination-unavailable");
-            let expected = peer["session_incarnation"]
-                .as_str()
-                .ok_or_else(unavailable)?;
-            let refreshed = peers_from(config, &origin)?;
-            let mut exact = refreshed["peers"]
+            let matching = |peer: &&Value| {
+                peer["machine"] == args.to_machine && peer["session_id"] == args.to_session
+            };
+            let mut peer = discovered["peers"]
                 .as_array()
                 .expect("validated peers")
                 .iter()
                 .filter(matching)
-                .filter(|candidate| candidate["session_incarnation"] == expected);
-            peer = exact
-                .clone()
-                .find(|candidate| candidate["messaging_supported"] == true)
-                .or_else(|| exact.next())
+                .find(|peer| peer["messaging_supported"] == true)
+                .or_else(|| {
+                    discovered["peers"]
+                        .as_array()
+                        .expect("validated peers")
+                        .iter()
+                        .find(matching)
+                })
                 .cloned()
-                .ok_or_else(unavailable)?;
+                .ok_or_else(|| {
+                    observe_discovery_refusal(context, "recipient-not-discovered");
+                    CliError::data(
+                        "remote-recipient-not-discovered",
+                        recipient_not_discovered_message(),
+                        None,
+                    )
+                })?;
             if peer["messaging_supported"] != true
                 && peer["messaging_unavailable_reason"] == "coordination-unavailable"
             {
-                return Err(unavailable());
-            }
-        }
-        if peer["messaging_supported"] != true {
-            let reason = match peer["messaging_unavailable_reason"].as_str() {
-                Some("daemon-unsupported") => "recipient-daemon-unsupported",
-                Some("coordination-disabled") => "recipient-coordination-disabled",
-                Some("coordination-unavailable") => "recipient-coordination-unavailable",
-                _ => "recipient-messaging-unsupported",
-            };
-            observe_discovery_refusal(context, reason);
-            return Err(CliError::data(
-                "remote-messaging-unsupported",
-                "discovered remote recipient does not currently support messaging",
-                None,
-            ));
-        }
-        (
-            Address {
-                machine: args.to_machine.clone(),
-                session_id: args.to_session.clone(),
-                session_incarnation: peer["session_incarnation"]
+                observe_discovery_refusal(context, "recipient-coordination-unavailable");
+                let expected = peer["session_incarnation"]
                     .as_str()
-                    .ok_or_else(invalid)?
-                    .into(),
-            },
-            0,
-        )
-    };
+                    .ok_or_else(unavailable)?;
+                let refreshed = peers_from(config, &origin)?;
+                let mut exact = refreshed["peers"]
+                    .as_array()
+                    .expect("validated peers")
+                    .iter()
+                    .filter(matching)
+                    .filter(|candidate| candidate["session_incarnation"] == expected);
+                peer = exact
+                    .clone()
+                    .find(|candidate| candidate["messaging_supported"] == true)
+                    .or_else(|| exact.next())
+                    .cloned()
+                    .ok_or_else(unavailable)?;
+                if peer["messaging_supported"] != true
+                    && peer["messaging_unavailable_reason"] == "coordination-unavailable"
+                {
+                    return Err(unavailable());
+                }
+            }
+            if peer["messaging_supported"] != true {
+                let reason = match peer["messaging_unavailable_reason"].as_str() {
+                    Some("daemon-unsupported") => "recipient-daemon-unsupported",
+                    Some("coordination-disabled") => "recipient-coordination-disabled",
+                    Some("coordination-unavailable") => "recipient-coordination-unavailable",
+                    _ => "recipient-messaging-unsupported",
+                };
+                observe_discovery_refusal(context, reason);
+                return Err(CliError::data(
+                    "remote-messaging-unsupported",
+                    "discovered remote recipient does not currently support messaging",
+                    None,
+                ));
+            }
+            (
+                Address {
+                    machine: args.to_machine.clone(),
+                    session_id: args.to_session.clone(),
+                    session_incarnation: peer["session_incarnation"]
+                        .as_str()
+                        .ok_or_else(invalid)?
+                        .into(),
+                },
+                0,
+                false,
+            )
+        };
     if args
         .expected_recipient_incarnation
         .as_deref()
@@ -1170,6 +1172,7 @@ where
         }
         return Ok(projection(&item));
     }
+    reply_obligation::recover(&mut registry_guard, &locked.registry)?;
     // Expired entries retain an explicit unknown result; bounded capacity rejects, never evicts live IDs.
     locked.registry.compact(now);
     let destination = envelope.to.machine.clone();
@@ -1210,6 +1213,7 @@ where
     }
     let reply_to = envelope.reply_to.clone();
     let item = Outbox {
+        clears_reply_obligation,
         envelope,
         request_digest: digest,
         idempotency_key: args.idempotency_key,
@@ -1294,7 +1298,7 @@ pub(crate) fn drain_with_notice_state(
     notices: &mut NoticeState,
 ) -> Result<Option<i64>, CliError> {
     let items = {
-        let mut locked = lock_journal(context)?;
+        let mut locked = reply_obligation::lock_recovered(context)?;
         let now = now_epoch();
         if locked.registry.remote_outbox.iter().any(|item| {
             matches!(item.envelope.from, Origin::Service(_))
@@ -1336,7 +1340,7 @@ pub(crate) fn drain_with_notice_state(
                 .map_err(|_| unavailable())
                 .and_then(|response| response_json(response, Responder::Relay))
         };
-        let mut locked = lock_journal(context)?;
+        let mut locked = reply_obligation::lock_recovered(context)?;
         let Some(current) = locked
             .registry
             .remote_outbox
@@ -2480,6 +2484,7 @@ mod tests {
             });
             let mut locked = lock_journal(&context).unwrap();
             locked.registry.remote_outbox.push(Outbox {
+                clears_reply_obligation: false,
                 envelope: envelope().into_origin(),
                 request_digest: "fixture".into(),
                 idempotency_key: "fixture".into(),
@@ -2835,6 +2840,7 @@ mod tests {
         let (_temp, context) = fixture();
         let mut journal = lock_journal(&context).unwrap();
         journal.registry.remote_outbox.push(Outbox {
+            clears_reply_obligation: false,
             envelope: envelope().into_origin(),
             request_digest: "fixture".into(),
             idempotency_key: "fixture".into(),
@@ -3020,6 +3026,7 @@ mod tests {
         };
         let mut locked = lock_journal(&context).expect("journal");
         locked.registry.remote_outbox.push(Outbox {
+            clears_reply_obligation: false,
             envelope: message.into_origin(),
             request_digest: digest_bytes(&serde_json::to_vec(&args).expect("digest")),
             idempotency_key: args.idempotency_key.clone(),
@@ -3147,6 +3154,7 @@ mod tests {
         let id = message.message_id.clone();
         let mut locked = lock_journal(&context).expect("journal");
         locked.registry.remote_outbox.push(Outbox {
+            clears_reply_obligation: false,
             envelope: message.into_origin(),
             request_digest: "digest".into(),
             idempotency_key: "expiry-key-0001".into(),
@@ -3255,6 +3263,7 @@ mod tests {
         message.expires_at_epoch = now_epoch() + 86400;
         let delivered = state == "delivered";
         Outbox {
+            clears_reply_obligation: false,
             receipt: delivered.then(|| json!({"schema_version":DELIVERY_VERSION,"message_id":message.message_id,"state":"delivered","recipient":message.to,"persisted_at_epoch":now_epoch()})),
             envelope: message.into_origin(),
             request_digest: format!("digest-{key}"),
@@ -3730,6 +3739,7 @@ mod tests {
     fn service_failed_deliveries_retain_bodies_without_expanding_existing_bounds() {
         for state in ["rejected", "delivery-unknown", "delivered"] {
             let managed = Outbox {
+                clears_reply_obligation: false,
                 envelope: envelope().into_origin(),
                 request_digest: "digest".into(),
                 idempotency_key: "key".into(),
@@ -3814,6 +3824,7 @@ mod tests {
         {
             let mut locked = lock_journal(&context).unwrap();
             locked.registry.remote_outbox.push(Outbox {
+                clears_reply_obligation: false,
                 envelope,
                 request_digest: "digest".into(),
                 idempotency_key: "key".into(),

@@ -77,6 +77,11 @@ failures remain visible through the existing source audit. Reading or
 acknowledging a message does not answer it. Forwarding creates a separate
 message and does not transfer or answer the original reply obligation.
 
+After an interrupted registry write, read-only audit recognizes the durable
+accepted outbox reply without sender resubmission. Source writers recover the
+original reply marker before compacting acceptance metadata, preserving
+clearing after compaction.
+
 [`message audit`](mail-audit-v1.md) reports `overdue-reply` on retained destination
 mail strictly after its deadline until a reply is accepted. This includes read,
 acknowledged and expired retained messages. Ordinary retention rules still

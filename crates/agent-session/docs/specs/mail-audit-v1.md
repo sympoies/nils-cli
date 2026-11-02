@@ -144,6 +144,10 @@ does not raise recipient or notification anomalies. Reply deadlines remain separ
 from those mailbox states; a retained acknowledged/expired message may still
 have an unanswered reply obligation. Multiple flags coexist.
 Expired-but-unpruned mail projects `expired` without altering stored state.
+An accepted remote reply still clears its obligation if the registry marker
+write was interrupted: audit joins durable acceptance metadata without
+mutating either store. Normal source recovery persists the marker before
+compaction can discard that metadata.
 
 Collectors query `--include-healthy`, then join source/destination observations
 by message ID **and both complete endpoint incarnations**. Keep source send,
