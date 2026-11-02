@@ -415,6 +415,8 @@ fn styled_text(pane: &str) -> Option<(String, Vec<bool>)> {
 mod hyperlink;
 
 #[cfg(test)]
+mod corpus;
+#[cfg(test)]
 mod tests;
 
 pub(crate) mod cleanup;
