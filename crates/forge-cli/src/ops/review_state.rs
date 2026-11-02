@@ -126,9 +126,7 @@ pub struct ReviewLoopFinding {
     pub first_seen_head: String,
     pub last_seen_head: String,
     pub seen_count: u32,
-    #[serde(default)]
     pub reopen_count: u32,
-    #[serde(default)]
     pub threads: Vec<String>,
 }
 
@@ -148,9 +146,7 @@ pub struct ReviewLoopState {
     pub round: u32,
     pub no_progress_rounds: u32,
     pub budget: ReviewLoopBudget,
-    #[serde(default)]
     pub findings: BTreeMap<String, ReviewLoopFinding>,
-    #[serde(default)]
     pub extensions: Vec<ReviewLoopExtension>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hard_stop: Option<ReviewLoopHardStop>,
@@ -948,7 +944,7 @@ pub fn parse_state_marker(body: &str) -> Result<Option<ReviewStateRecord>, Forge
     })?;
     serde_json::from_str(&json).map(Some).map_err(|error| {
         state_conflict(
-            "review-state marker payload is invalid JSON",
+            "review-state marker payload does not match the current record contract; ask the reviewer or steward to coordinate current input; never rewrite retained ledgers",
             Some(error.to_string()),
         )
     })
@@ -2132,7 +2128,7 @@ mod tests {
                         assignment_generation: 1,
                         surrendered,
                         coordinator_transfer: None,
-                        base_ref: None,
+                        base_ref: "main".into(),
                         approval_policy: Default::default(),
                     },
                 },

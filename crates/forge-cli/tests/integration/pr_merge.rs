@@ -2476,7 +2476,7 @@ fn assigned_live_merge_refuses_before_backend_without_published_review() {
         assignment_generation: 1,
         surrendered: false,
         coordinator_transfer: None,
-        base_ref: None,
+        base_ref: "main".into(),
     };
     let record = ReviewStateRecord::new(
         "acme/widgets",

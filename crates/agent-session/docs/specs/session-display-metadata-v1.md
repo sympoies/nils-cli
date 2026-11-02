@@ -62,6 +62,48 @@ Consumers must deploy compatible role readers before enabling new producer
 values. A missing mode/revision projection means the daemon does not support the
 mode control; clients must not claim a local setting is persisted remotely.
 
+## Managed CLI title writers
+
+```bash
+agent-session title set SESSION "Review the parser" --if-revision 0 --format json
+agent-session title auto SESSION --if-revision 1 --format json
+```
+
+Both commands require a current ordinary runtime capability, supplied by
+`--capability-file` or `AGENT_SESSION_CAPABILITY_FILE`. There is no unauthenticated
+operator bypass on this CLI surface. The capability identifies the writer;
+an environment session selector alone is insufficient. Scoped worker credentials
+do not grant title access. The target ID is exact, and `--if-revision` is required
+and compares the target's `title_revision` under its lifecycle record lock.
+
+The permitted writers are the target itself, its recorded launch parent or root
+coordinator, and its currently recorded `lineage_adoption.adopted_by` steward.
+A supervising lead that is not the launch parent uses that existing adoption
+record. References match the writer's machine, exact ID and session creation
+identity; a replaced session does not inherit title access. Role labels,
+workspace membership and shared work references grant no access. This rule is
+specific to title updates and adds no grant mechanism or broader lineage power.
+Every other session receives `title-forbidden` (data/65) without a write.
+
+`set` trims the supplied title, requires a nonempty single line of at most 120
+Unicode characters, and rejects control characters and Unicode line separators.
+It uses the same plain-title validation as session creation. It stores the title,
+clears any previous structured topic, and sets `title_mode` to `pinned` atomically.
+`auto` sets the mode to `auto` and clears structured topic ownership, leaving the
+current display title until the next generated topic replaces it. Neither command
+invokes a provider or sends input to a running pane. Existing Console title-edit
+and retitle routes are unchanged.
+
+Each successful command advances `title_revision` and `display_revision`, fencing
+in-flight retitle and display-metadata requests. Stale title revisions return
+`title-revision-conflict` (data/65), with the current revision and typed recovery
+guidance, without writing. Validation failures use `title-invalid` or
+`title-too-long` (usage/64). Refusals never echo the submitted title or capability.
+Success uses `cli.agent-session.title-set.v1` or
+`cli.agent-session.title-auto.v1` and returns the ID, title, title mode and both
+revisions. Board, list and Console consume the canonical record through the
+same display projection as a start-time pinned title.
+
 ## On-demand refresh
 
 `agent-session refresh ID` and `POST /sessions/{exact-id}/refresh` (bearer, empty

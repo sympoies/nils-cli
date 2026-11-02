@@ -44,8 +44,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
-use axum::Json;
-use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -54,6 +52,7 @@ use axum::http::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
+use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
 use nils_common::cli_contract::{exit, schema_version_for};
 use nils_common::provider_usage::{ProviderUsageReason, prefer_reason};
@@ -82,7 +81,7 @@ use crate::provider_prompt::{
     ProviderPromptSource, ProviderPromptTail,
 };
 use crate::{
-    BINARY, CliContext, CliError, ProviderResumeImportArgs, SessionRecord, SessionRegistryFence,
+    CliContext, CliError, ProviderResumeImportArgs, SCHEMA, SessionRecord, SessionRegistryFence,
     SessionTitleState, SessionTitleStateInput, SessionView, StartFailureDisposition,
     WorkdirSearchOptions, archive_session_with_expected_incarnation,
     canonicalize_structured_title_pair, cleanup_session_delete_tombstones, glance_session,
@@ -1183,7 +1182,8 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             }
         };
         eprintln!(
-            "agent-session serve listening on http://{bind} (machine={})",
+            "{} serve listening on http://{bind} (machine={})",
+            crate::command_identity::executable(),
             state.machine
         );
         if let Err(error) = crate::coordination::remote::write_endpoint(
@@ -2446,7 +2446,7 @@ async fn activity_heartbeat_loop(
 // distinct from the CLI stdout envelopes: the `data` shape ({machine, ...}) is
 // serve-specific, so it must NOT reuse the CLI's per-command schema versions.
 fn serve_schema() -> String {
-    schema_version_for(BINARY, "serve", 1)
+    schema_version_for(SCHEMA, "serve", 1)
 }
 
 pub(crate) fn envelope_ok(data: Value) -> Response {

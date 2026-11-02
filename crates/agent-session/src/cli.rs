@@ -43,13 +43,13 @@ impl CoordinationMode {
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "agent-session",
+    name = crate::command_identity::executable(),
     version,
     long_version = nils_build_info::long_version(env!("CARGO_PKG_VERSION")),
     about = "Start and manage tmux-backed Codex and Claude Code sessions.",
     long_about = "Start and manage tmux-backed Codex and Claude Code sessions for mobile handoff workflows.",
     disable_help_subcommand = true,
-    after_help = "EXAMPLES:\n  agent-session start --agent codex --cwd ~/Project/app --prompt-file prompt.md\n  agent-session list\n  agent-session glance <id> --tail 40\n  agent-session send <id> --text yes --key enter\n  agent-session send <id> --key c-c\n  agent-session resume <id>\n  agent-session restart <id> --format json\n  agent-session metadata attach <id> --request-file metadata.json --if-revision 0 --idempotency-key attach-001 --format json\n  agent-session metadata show <id> --label acceptance.synthetic --format json\n  agent-session command <id>\n  agent-session attach <id>\n  agent-session delete <id>\n\nENVIRONMENT:\n  AGENT_SESSION_HOST       Hostname used in generated ssh attach commands.\n  AGENT_SESSION_STATE_DIR  Default state directory override.\n  AGENT_SESSION_TMUX_BIN   tmux binary override.\n  AGENT_SESSION_CODEX_BIN  codex binary override.\n  AGENT_SESSION_CLAUDE_BIN claude binary override.\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error"
+    after_help = format!("EXAMPLES:\n  {binary} start --agent codex --cwd ~/Project/app --prompt-file prompt.md\n  {binary} list\n  {binary} glance <id> --tail 40\n  {binary} send <id> --text yes --key enter\n  {binary} send <id> --key c-c\n  {binary} resume <id>\n  {binary} restart <id> --format json\n  {binary} metadata attach <id> --request-file metadata.json --if-revision 0 --idempotency-key attach-001 --format json\n  {binary} metadata show <id> --label acceptance.synthetic --format json\n  {binary} command <id>\n  {binary} attach <id>\n  {binary} delete <id>\n\nENVIRONMENT:\n  AGENT_SESSION_HOST       Hostname used in generated ssh attach commands.\n  AGENT_SESSION_STATE_DIR  Default state directory override.\n  AGENT_SESSION_TMUX_BIN   tmux binary override.\n  AGENT_SESSION_CODEX_BIN  codex binary override.\n  AGENT_SESSION_CLAUDE_BIN claude binary override.\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error", binary = crate::command_identity::executable())
 )]
 pub struct Cli {
     /// State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session.
@@ -104,6 +104,8 @@ pub enum Command {
     Account(AccountArgs),
     /// Re-read one session's model, reasoning effort and title from live state.
     Refresh(SessionRefArgs),
+    /// Pin a session title or resume generated topics with authenticated authority.
+    Title(crate::session_title::TitleArgs),
     /// Inspect or ingest metadata-only agent turn lifecycle events.
     Activity(ActivityArgs),
     /// Manage authenticated structured work context and mutation leases.

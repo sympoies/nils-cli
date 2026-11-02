@@ -1804,9 +1804,10 @@ pub fn unauthorized() -> CliError {
         "coordination authority could not be verified",
         None,
     )
-    .with_hint(
-        "this session is not a verified coordination broker incarnation; confirm authority with `agent-session broker identity` and ensure it was launched under enforced coordination before retrying",
-    )
+    .with_hint(format!(
+        "this session is not a verified coordination broker incarnation; confirm authority with `{} broker identity` and ensure it was launched under enforced coordination before retrying",
+        crate::command_identity::executable(),
+    ))
 }
 
 fn store_untrusted() -> CliError {

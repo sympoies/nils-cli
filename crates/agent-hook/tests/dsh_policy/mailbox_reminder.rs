@@ -22,6 +22,13 @@ fn managed_dsh_prompt_step_carries_short_undated_mailbox_reminder() {
     check_mailbox_reminder("Mailbox: agent-session message inbox");
 }
 
+// The notice writer gate is off on this route, so the plain reminder carries
+// one total in a readable line.
+#[test]
+fn managed_dsh_prompt_step_carries_the_gate_off_total_mailbox_reminder() {
+    check_mailbox_reminder("Mailbox: 3 unread; agent-session message inbox");
+}
+
 /// Stops a managed session whose same-directory session binary fails every
 /// call and reports `peer` as its release; `alias` makes it a symlink to a
 /// sibling file in the same directory.

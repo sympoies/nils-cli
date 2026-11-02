@@ -51,7 +51,7 @@ impl RuntimeExit {
     fn offer_resume(&mut self, id: &str) {
         self.recovery = Some(Resume {
             label: "Resume",
-            command: format!("agent-session resume {id}"),
+            command: format!("{} resume {id}", crate::command_identity::executable()),
             method: "POST",
             path: format!("/sessions/{id}/resume"),
         });

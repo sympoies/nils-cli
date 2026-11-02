@@ -39,7 +39,7 @@ pub(super) fn handoff(returned: Option<&str>) -> ReviewHandoff {
         assignment_generation: if returned.is_some() { 2 } else { 1 },
         surrendered: false,
         coordinator_transfer: None,
-        base_ref: None,
+        base_ref: "main".into(),
     }
 }
 
@@ -117,6 +117,37 @@ fn fixture_with_native(
 }
 
 fn fixture_with_native_and_comments(
+    head: &str,
+    records: &[ReviewStateRecord],
+    mut reviews: Vec<Value>,
+    mut native_override: Option<Value>,
+    comments_override: Option<Value>,
+) -> StubEnv {
+    let binding = records
+        .iter()
+        .rev()
+        .find(|r| matches!(r.payload, ReviewStatePayload::ReviewHandoff { .. }));
+    if let Some(binding) = binding {
+        for report in reviews.iter_mut().chain(native_override.iter_mut()) {
+            let body = report["body"].as_str().unwrap_or_default();
+            if !body.trim().is_empty() && !body.contains("<!-- forge-cli:review-handoff:v1 ") {
+                report["body"] = json!(format!(
+                    "{body}\n<!-- forge-cli:review-handoff:v1 {} -->",
+                    binding.record_digest
+                ));
+            }
+        }
+    }
+    fixture_with_unbound_native_and_comments(
+        head,
+        records,
+        reviews,
+        native_override,
+        comments_override,
+    )
+}
+
+fn fixture_with_unbound_native_and_comments(
     head: &str,
     records: &[ReviewStateRecord],
     reviews: Vec<Value>,
@@ -1894,7 +1925,7 @@ fn scope_refresh_requires_publication_after_the_new_handoff() {
     let seeded = records(h.clone(), Some(HEAD));
     h.base_sha = HEAD.into();
     h.assignment_generation = 2;
-    h.base_ref = Some("main".into());
+    h.base_ref = "main".into();
     let refresh = ReviewStateRecord::new(
         "acme/widgets",
         7,
@@ -1916,9 +1947,12 @@ fn scope_refresh_requires_publication_after_the_new_handoff() {
         if published_after_refresh {
             r["submittedAt"] = json!("2026-07-20T12:00:04Z");
         }
-        let stub = writable_ledger(fixture(HEAD, &seeded, vec![r]), &seeded)
-            .env("PROVIDER_BASE", HEAD)
-            .env("AGENT_REVIEWER_SESSION", "");
+        let stub = writable_ledger(
+            fixture_with_unbound_native_and_comments(HEAD, &seeded, vec![r], None, None),
+            &seeded,
+        )
+        .env("PROVIDER_BASE", HEAD)
+        .env("AGENT_REVIEWER_SESSION", "");
         let out = assign_handoff(
             &stub,
             REVIEWER_UUID,
@@ -2065,9 +2099,15 @@ fn newer_current_or_ambiguous_interval_report_cannot_reuse_earlier_pass() {
             ),
             _ => unreachable!(),
         });
-        let stub = fixture(HEAD, &seeded, vec![passing, newer])
-            .env("PROVIDER_BASE", HEAD)
-            .env("AGENT_REVIEW_ASSIGNMENT_GENERATION", "2");
+        let stub = fixture_with_unbound_native_and_comments(
+            HEAD,
+            &seeded,
+            vec![passing, newer],
+            None,
+            None,
+        )
+        .env("PROVIDER_BASE", HEAD)
+        .env("AGENT_REVIEW_ASSIGNMENT_GENERATION", "2");
         assert_refusal(&check(&stub, HEAD), 65, "awaiting_designated_review");
         let calls = fs::read_to_string(stub.tempdir.path().join("calls.log")).unwrap();
         assert!(
@@ -2390,3 +2430,5 @@ mod test_integrity;
 mod wrong_reviewer;
 
 mod persistence;
+
+mod current_contract;

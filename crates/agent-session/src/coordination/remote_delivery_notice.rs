@@ -53,9 +53,12 @@ fn envelope(config: &Config, item: &Retained, sender: &Address) -> Envelope<Orig
     };
     let body = format!(
         "Remote message {} ended in {} ({reason}). Inspect it with \
-agent-session message delivery --session <sender-session> --message {} --format json. \
+{} message delivery --session <sender-session> --message {} --format json. \
 {recovery}",
-        item.message_id, item.state, item.message_id
+        item.message_id,
+        item.state,
+        crate::command_identity::executable(),
+        item.message_id
     );
     let created = item
         .state_changed_at_epoch
@@ -326,6 +329,24 @@ mod tests {
     use serde_json::{Value, json};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn renamed_executable_is_used_in_delivery_notice() {
+        crate::command_identity::with_name("session-control", || {
+            let mut item = own_outbox("renamed-notice", "rejected").identity();
+            item.state_changed_at_epoch = Some(now_epoch());
+            let Origin::Session(sender) = &item.sender else {
+                panic!("session sender")
+            };
+            let notice = envelope(&config(), &item, sender);
+            assert!(
+                notice.body.contains(
+                    "session-control message delivery --session <sender-session> --message"
+                )
+            );
+            assert!(!notice.body.contains("agent-session message delivery"));
+        });
+    }
 
     fn retain_failure(context: &CliContext, key: &str, terminal: i64, expires: i64) {
         let mut item = own_outbox(key, "rejected");

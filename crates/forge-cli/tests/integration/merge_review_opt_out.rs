@@ -38,7 +38,7 @@ fn assignment_record() -> ReviewStateRecord {
                 assignment_generation: 1,
                 surrendered: false,
                 coordinator_transfer: None,
-                base_ref: None,
+                base_ref: "main".into(),
             },
         },
     )

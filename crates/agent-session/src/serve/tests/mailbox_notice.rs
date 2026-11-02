@@ -155,7 +155,7 @@ async fn controller(working: bool, writers: bool, outcome: Outcome) {
     if writers {
         assert_notice(&message);
     } else {
-        assert_eq!(message, "Mailbox: h=1 r=2");
+        assert_eq!(message, "Mailbox: 3 unread; agent-session message inbox");
     }
     if !matches!(outcome, Outcome::Accepted) {
         assert_eq!(notification_fixture(tmp.path())["state"], "attempt_unknown");
@@ -290,4 +290,81 @@ async fn mailbox_notice_hook_counts_only_live_unread_and_counts_unconfigured_mai
     let result = claim(&state);
     let notice = crate::notice::parse_notice(result["reminder"].as_str().unwrap()).unwrap();
     assert_eq!(notice.body, "Mailbox: 1 uncategorized; agent-session message inbox");
+}
+
+
+#[tokio::test]
+async fn mailbox_notice_writer_disabled_hook_leaves_codex_delivery_to_controller() {
+    use nils_test_support::cmd::{CmdOptions, run_resolved};
+
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    for (working, hook_gate) in [(false, None), (true, Some("0"))] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (state, launch, sender, _) = setup(tmp.path());
+        // Unconfigured receipts retain the fixed plain prompt until dispatch.
+        fs::remove_file(tmp.path().join("coordination/notification-policy.json")).unwrap();
+        turn(&state, &launch, working);
+        mail(&state, &sender).await;
+        let before = notification_fixture(tmp.path());
+        let record = load_session_record(&state.context, "beta").unwrap();
+        let capability = crate::coordination::capability_path(
+            &state.context,
+            "beta",
+            &crate::coordination::incarnation(&record).unwrap(),
+        );
+        let mut options = CmdOptions::new()
+            .with_cwd(tmp.path())
+            .with_env_remove_prefix("AGENT_SESSION_");
+        if let Some(value) = hook_gate {
+            options = options.with_env(crate::notice::WRITERS_ENV, value);
+        }
+        let output = run_resolved(
+            "agent-session",
+            &[
+                "--state-dir", tmp.path().to_str().unwrap(),
+                "message", "reminder", "--session", "beta",
+                "--capability-file", capability.to_str().unwrap(),
+                "--format", "json",
+            ],
+            &options,
+        );
+        assert_eq!(output.code, 0, "{}", output.stderr_text());
+        let result = output.stdout_json();
+        assert_eq!(
+            result["data"]["reminder"], Value::Null,
+            "a hook without notice writers must not emit a plain Codex reminder"
+        );
+        assert_eq!(notification_fixture(tmp.path()), before);
+
+        let (handle, mut commands) = codex_app_server::control_channel();
+        state.codex_controls.lock().unwrap().insert(
+            "beta".into(), CodexControlEntry { launch_id: launch, handle },
+        );
+        let responder = tokio::spawn(async move {
+            let message = match commands.recv().await.unwrap() {
+                codex_app_server::ControlCommand::Prompt { message, response } => {
+                    assert!(!working);
+                    response.send(Ok("notice-accepted".into())).unwrap();
+                    message
+                }
+                codex_app_server::ControlCommand::Steer {
+                    message, expected_turn_id, response,
+                } => {
+                    assert!(working);
+                    response.send(Ok(expected_turn_id)).unwrap();
+                    message
+                }
+                _ => panic!("unexpected controller command"),
+            };
+            (message, commands)
+        });
+        drain_coordination_notifications(state.clone()).await;
+        let (message, mut commands) = responder.await.unwrap();
+        assert_notice(&message);
+        assert_eq!(notification_fixture(tmp.path())["notified_generation"], 3);
+        assert!(claim(&state)["reminder"].is_null());
+        drain_coordination_notifications(state.clone()).await;
+        assert!(commands.try_recv().is_err(), "one generation is delivered once");
+    }
 }

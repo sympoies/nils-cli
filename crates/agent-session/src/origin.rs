@@ -88,7 +88,7 @@ pub(crate) fn invalid_workspace() -> CliError {
         "workspace-invalid",
         "workspace must be a public lowercase slug of 1-64 bytes with single hyphen or dot separators and alphanumeric ends",
         Some(
-            json!({"recovery":{"action":"correct-request", "command":"agent-session start --agent codex --workspace example-workspace", "hint":"Use a non-secret slug, for example example-workspace; paths are forbidden."}}),
+            json!({"recovery":{"action":"correct-request", "command":format!("{} start --agent codex --workspace example-workspace", crate::command_identity::executable()), "hint":"Use a non-secret slug, for example example-workspace; paths are forbidden."}}),
         ),
     )
 }

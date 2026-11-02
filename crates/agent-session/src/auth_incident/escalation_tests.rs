@@ -6,8 +6,6 @@ use nils_common::observation::{self, Severity};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-const OWNER_ACTION: &str = "agent-session lineage adopt <CHILD> --by <SESSION>";
-
 fn record() -> SessionRecord {
     serde_json::from_value(json!({
         "schema_version":"agent-session.session.v1", "id":"root-fixture", "agent":"claude", "mode":"interactive", "title":null,
@@ -85,7 +83,16 @@ fn parentless_incident_records_one_deduplicated_alert_without_claiming_delivery(
             incident["incident_id"].as_str().unwrap()
         ))
     );
-    assert_eq!(alert.recovery_action.as_deref(), Some(OWNER_ACTION));
+    assert_eq!(
+        alert.recovery_action.as_deref(),
+        Some(
+            format!(
+                "{} lineage adopt <CHILD> --by <SESSION>",
+                crate::command_identity::executable()
+            )
+            .as_str()
+        )
+    );
 
     let receipt = &incident["notification"];
     assert_eq!(receipt["delivered_at"], Value::Null);
@@ -195,4 +202,12 @@ fn settlement_alert_and_path_distinguish_health_from_controller_results() {
         assert_eq!(alerts[1].recovery_action, None);
         assert_ne!(alerts[0].correlation, alerts[1].correlation);
     }
+}
+
+#[test]
+fn renamed_executable_is_used_in_owner_escalation() {
+    crate::command_identity::with_name(
+        "session-control",
+        parentless_incident_records_one_deduplicated_alert_without_claiming_delivery,
+    );
 }

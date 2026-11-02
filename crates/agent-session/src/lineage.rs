@@ -1,9 +1,9 @@
 //! Session lineage and work references (`session-lineage-work-v1`).
 //!
-//! `lineage` records which session started this one. It is written once when
-//! the record is created and is descriptive only: it never authorizes
-//! anything. `work` names the program and issues a session works on; a child
-//! inherits its parent's by default.
+//! `lineage` records which session started this one, written once at creation.
+//! Its relationships are descriptive except for authenticated title-writer
+//! checks defined in session-display-metadata-v1. `work` names the program and
+//! issues a session works on; a child inherits its parent's by default.
 
 use std::collections::BTreeMap;
 

@@ -9,6 +9,7 @@ use crate::cli::{self, Command};
 pub(crate) fn command_name(command: &Command) -> Option<&'static str> {
     match command {
         Command::AutoResume(_) => Some("auto-resume"),
+        Command::Title(args) => Some(crate::session_title::name(args)),
         Command::Notice(_) => Some("notice"),
         Command::Workspace(_) => Some("workspace-set"),
         Command::Readiness(_) => Some("readiness"),
@@ -118,6 +119,8 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             ("message", "wait") => Some("message-wait"),
             ("message", "reminder") => Some("message-reminder"),
             ("workspace", "set") => Some("workspace-set"),
+            ("title", "set") => Some("title-set"),
+            ("title", "auto") => Some("title-auto"),
             ("metadata", "attach") => Some("metadata-attach"),
             ("metadata", "show") => Some("metadata-show"),
             ("account", "show") => Some("account-show"),
@@ -133,6 +136,7 @@ pub(crate) fn command_format(command: &Command) -> OutputFormat {
         Command::Readiness(args) => args.format,
         Command::Delegation(args) => crate::coordination::delegation::format(args),
         Command::AutoResume(args) => args.format,
+        Command::Title(args) => crate::session_title::target(args).format,
         Command::Start(args) => args.format,
         Command::Run(args) => args.format,
         Command::List(args) => args.format,
