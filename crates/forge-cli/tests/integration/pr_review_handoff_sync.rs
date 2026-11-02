@@ -108,12 +108,7 @@ fn sync(conflicting: bool) -> Sync {
 }
 
 fn assigned(base: &str, reviewed: &str) -> Vec<ReviewStateRecord> {
-    scoped(base, reviewed, Some("main"))
-}
-
-/// An assignment, optionally bound to the provider base branch name.
-fn scoped(base: &str, reviewed: &str, base_ref: Option<&str>) -> Vec<ReviewStateRecord> {
-    let mut handoff = json!({
+    let handoff = json!({
         "coordinator_digest": review_state::sha256_digest(b"worker-session"),
         "reviewer_digest": review_state::sha256_digest(b"reviewer-session"),
         "review_author": "review-app[bot]",
@@ -122,10 +117,8 @@ fn scoped(base: &str, reviewed: &str, base_ref: Option<&str>) -> Vec<ReviewState
         "returned_reason": null,
         "assignment_generation": 1,
         "surrendered": false,
+        "base_ref": "main",
     });
-    if let Some(base_ref) = base_ref {
-        handoff["base_ref"] = json!(base_ref);
-    }
     let handoff: ReviewHandoff = serde_json::from_value(handoff).unwrap();
     let first = ReviewStateRecord::new(
         "acme/widgets",
@@ -491,17 +484,7 @@ fn retarget_to_a_descendant_base_requires_the_recorded_base_ref() {
     // A retarget to a branch descending from the assigned base keeps every
     // SHA ancestry fact; only the recorded base branch name exposes it.
     let s = sync(false);
-    let seeded = scoped(&s.base, &s.reviewed, None);
-    let stub = writable_ledger(
-        fixture(&s.synced, &seeded, vec![review(&s.reviewed, "pass")]),
-        &seeded,
-    )
-    .env("PROVIDER_BASE", &s.main)
-    .env("PROVIDER_BASE_REF", "release");
-    let output = handoff_cmd(&stub, s.repo.path(), false, "check", &s.synced);
-    assert_not_carried(&output, &stub, "base-ref-unrecorded");
-
-    let seeded = scoped(&s.base, &s.reviewed, Some("main"));
+    let seeded = assigned(&s.base, &s.reviewed);
     let stub = writable_ledger(
         fixture(&s.synced, &seeded, vec![review(&s.reviewed, "pass")]),
         &seeded,
@@ -649,7 +632,7 @@ fn assignment_binds_the_base_ref_and_sha_from_the_same_provider_response() {
         panic!("expected assignment");
     };
     assert_eq!(handoff.base_sha, s.main);
-    assert_eq!(handoff.base_ref.as_deref(), Some("release"));
+    assert_eq!(handoff.base_ref, "release");
 }
 
 #[test]

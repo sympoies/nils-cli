@@ -37,7 +37,7 @@ fn delivery_policy(
         assignment_generation: 1,
         surrendered: false,
         coordinator_transfer: None,
-        base_ref: None,
+        base_ref: "main".into(),
     };
     let record = ReviewStateRecord::new(
         "sympoies/nils-cli",
@@ -74,12 +74,17 @@ fn delivery_policy(
     }
     let response = serde_json::json!({"data":{"viewer":{"login":"testuser-gh"},"repository":{"pullRequest":{
         "comments":{"nodes":comments,"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}});
-    let review = serde_json::json!({"id":"REVIEW_1", "databaseId":1,
+    let mut review = serde_json::json!({"id":"REVIEW_1", "databaseId":1,
         "url":"https://github.com/sympoies/nils-cli/pull/123#pullrequestreview-1",
         "author":{"login":"testuser-gh", "__typename":"User", "id":"USER_REVIEWER"},
         "state":native_state.unwrap_or("COMMENTED"),"commit":{"oid":head},
         "submittedAt":"2026-07-20T12:00:02Z",
         "body":"<!-- agent-kit:specialist-review-report:v1 -->\n## Review Report\n\n- Reviewable: PR #123\n- Lens: testing maintainability\n- Lens verdict: pass\n- Scope: assigned source review\n- Evidence reviewed: fixture validation\n\n| Finding | Severity | Confidence | Evidence | Recommendation |\n| --- | --- | ---: | --- | --- |\n| No findings | none | 0.00 | fixture | none |\n"});
+    review["body"] = serde_json::json!(format!(
+        "{}\n<!-- forge-cli:review-handoff:v1 {} -->",
+        review["body"].as_str().unwrap(),
+        record.record_digest
+    ));
     let reviews = serde_json::json!({"data":{"viewer":{"login":"testuser-gh"},"repository":{"pullRequest":{
         "headRefOid":head,"reviews":{"nodes":[review],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}});
     let mut view: serde_json::Value = serde_json::from_str(FULL_PR_VIEW_JSON).unwrap();

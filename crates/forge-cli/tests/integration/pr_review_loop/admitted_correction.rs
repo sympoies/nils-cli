@@ -123,7 +123,7 @@ fn correction_retry_after_same_head_reassignment_is_rejected_before_provider_pos
         assignment_generation: 1,
         surrendered: false,
         coordinator_transfer: None,
-        base_ref: Some("main".into()),
+        base_ref: "main".into(),
     };
     append(
         &mut records,
