@@ -1,8 +1,7 @@
 # Affected-scope merge plan v1
 
-This document retains the published v1 contract and its closed schema. The current
-selector publishes [v2 metadata diagnostics](affected-scope-merge-plan-v2.md);
-trusted v1 base selectors continue to produce v1 plans.
+This document specifies the selection and trusted-input contract of the planner.
+The plan it publishes is the [v2 contract](affected-scope-merge-plan-v2.md).
 
 ## Purpose and boundary
 
@@ -38,7 +37,7 @@ from H, M, or the working directory. That selector loads these files from B:
   patterns.
 - [Extra-input registry](../../scripts/ci/merge-plan-extra-inputs.v1.json):
   versioned non-Cargo inputs and their workspace consumers.
-- [Output schema](../../scripts/ci/merge-plan.schema.v1.json): the v1 plan contract.
+- [Output schema](../../scripts/ci/merge-plan.schema.v2.json): the v2 plan contract.
 
 There is no candidate or working-directory fallback. A base that predates this
 contract yields `PLAN_ERROR/HOLD`; initial rollout must land through the existing
@@ -148,7 +147,7 @@ runtime dependencies automatically.
 
 ## Output and failure contract
 
-Stdout is one canonical JSON object matching `nils-cli.merge-plan.v1`. Objects
+Stdout is one canonical JSON object matching `nils-cli.merge-plan.v2`. Objects
 have sorted keys; package, reason, and change arrays are sorted and deduplicated
 where appropriate. There are no timestamps, command diagnostics, or temporary
 paths. Identical inputs and successful metadata graphs produce identical bytes.

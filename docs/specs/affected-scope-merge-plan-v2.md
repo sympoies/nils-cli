@@ -4,9 +4,9 @@ V2 adds typed metadata failure recovery to the
 [v1 selection and trusted-input contract](affected-scope-merge-plan-v1.md).
 Ordered B/H/M/T binding, trusted-base selector loading, offline/locked
 all-feature metadata, both-tree dependency closure and escalation are unchanged.
-The [v2 schema](../../scripts/ci/merge-plan.schema.v2.json) is separate from the
-unchanged closed v1 schema. The CI consumer accepts both versions and holds
-unknown versions with the same input and digest checks.
+The [v2 schema](../../scripts/ci/merge-plan.schema.v2.json) is the only plan
+schema. The CI consumer accepts only v2 plans and holds any other version with
+the same input and digest checks.
 
 ## Failure diagnostics
 
@@ -39,12 +39,12 @@ or unrecognized explanation does not establish a cache/toolchain root cause.
 
 The launcher still loads its selector and schema from B. A new diagnostic in H
 cannot change a predecessor B's output; detailed live failures become available
-when the new selector is in a later run's accepted base. V1 plans remain
-supported. No schema fallback or candidate-selected planner is introduced.
+when the new selector is in a later run's accepted base. No schema fallback or
+candidate-selected planner is introduced.
 
 The metadata fixture covers each failure class, bounded private-content
-handling, canonical serialization, v1/v2 consumer compatibility and unknown
-version HOLD using mocked tools and fake Cargo. The original selector matrix
+handling, canonical serialization, v2-only consumer acceptance and other-version
+HOLD using mocked tools and fake Cargo. The original selector matrix
 retains its assertions and validates v2 output. CI provisions Python 3.12 and
 its schema fixture dependency for both platforms, then runs the fixture in the
 normal full audit stack.
