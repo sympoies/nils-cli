@@ -361,24 +361,44 @@ fn notice_summary_contract_reaches_native_transport_with_exact_bytes() {
     // Contract pinned to merged design f1cacbf8, not a moving producer registry.
     let corpus: Value = serde_json::from_str(include_str!(
         "../../docs/specs/fixtures/history-row-classes-v1.json"
-    )).unwrap();
+    ))
+    .unwrap();
     for case in corpus["summary_encoding"].as_array().unwrap() {
-        if case.get("expected_body").is_none() { continue; }
+        if case.get("expected_body").is_none() {
+            continue;
+        }
         let fixture = Fixture::new("codex");
         let _capability = fixture.bind_codex();
         let server = Server::start(&fixture, "idle");
-        fs::write(fixture.root().join("notice-body"), case["body"].as_str().unwrap()).unwrap();
+        fs::write(
+            fixture.root().join("notice-body"),
+            case["body"].as_str().unwrap(),
+        )
+        .unwrap();
         let mut extra = vec!["--kind", case["kind"].as_str().unwrap()];
         if let Some(summary) = case["summary"].as_str() {
             extra.extend(["--summary", summary]);
         }
         // The fixture supplies its kind; replace that default for each contract row.
         let output = fixture.notice_kind(&extra);
-        assert_eq!(output.code, 0, "{}: {} {}", case["name"], output.stdout_text(), output.stderr_text());
+        assert_eq!(
+            output.code,
+            0,
+            "{}: {} {}",
+            case["name"],
+            output.stdout_text(),
+            output.stderr_text()
+        );
         let expected = format!(
             "<!-- agent-notice:v1 kind={} source=scheduler id=Example-1 -->\n\n{}",
-            case["kind"].as_str().unwrap(), case["expected_body"].as_str().unwrap()
+            case["kind"].as_str().unwrap(),
+            case["expected_body"].as_str().unwrap()
         );
-        assert_eq!(server.mutations()[0]["params"]["input"][0]["text"], expected, "{}", case["name"]);
+        assert_eq!(
+            server.mutations()[0]["params"]["input"][0]["text"],
+            expected,
+            "{}",
+            case["name"]
+        );
     }
 }

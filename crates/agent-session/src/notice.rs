@@ -2,8 +2,8 @@
 mod envelope;
 pub mod labels;
 mod summary;
-pub(crate) use summary::render_summary;
 pub use envelope::{NoticeEnvelope, NoticeError, ParsedNotice, parse_notice};
+pub(crate) use summary::render_summary;
 
 use std::path::PathBuf;
 
@@ -133,7 +133,8 @@ pub(crate) fn run(context: &CliContext, mut args: NoticeArgs) -> i32 {
         } else {
             // Compatibility fallback for coordinator and monitoring bridge notice CLI integration v1.
             metadata.encode(body)
-        }.map_err(error)?;
+        }
+        .map_err(error)?;
         args.guards.require_idle = true;
         args.guards.require_empty_composer = true;
         args.guards.notice_envelope = true;

@@ -4,7 +4,9 @@ use crate::CliError;
 pub(super) fn validate(summary: &str) -> Result<(), CliError> {
     if !(1..=70).contains(&summary.chars().count())
         || !summary.chars().any(|c| !c.is_whitespace())
-        || summary.chars().any(|c| c <= '\u{1f}' || matches!(c, '\u{7f}' | '\u{85}' | '\u{2028}' | '\u{2029}'))
+        || summary
+            .chars()
+            .any(|c| c <= '\u{1f}' || matches!(c, '\u{7f}' | '\u{85}' | '\u{2028}' | '\u{2029}'))
     {
         return Err(CliError::with_exit_code(
             "notice-summary-invalid",

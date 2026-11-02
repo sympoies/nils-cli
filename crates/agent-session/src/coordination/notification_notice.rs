@@ -78,13 +78,21 @@ mod tests {
     fn mailbox_wake_bytes_match_merged_contract_including_long_counts() {
         let corpus: serde_json::Value = serde_json::from_str(include_str!(
             "../../docs/specs/fixtures/history-row-classes-v1.json"
-        )).unwrap();
+        ))
+        .unwrap();
         for case in corpus["mailbox_byte_invariance"].as_array().unwrap() {
             let mut registry = Registry::default();
             let categories: &[&str] = match case["name"].as_str().unwrap() {
                 "fixed" => &[],
                 "single-count" => &["report"],
-                "all-categories" => &["uncategorized", "report", "progress", "handoff", "decision", "blocker"],
+                "all-categories" => &[
+                    "uncategorized",
+                    "report",
+                    "progress",
+                    "handoff",
+                    "decision",
+                    "blocker",
+                ],
                 name => panic!("unhandled mailbox contract case: {name}"),
             };
             for (index, category) in categories.iter().enumerate() {
@@ -99,12 +107,23 @@ mod tests {
                 })).unwrap());
             }
             let encoded = if categories.is_empty() {
-                NoticeEnvelope::new("mailbox.wake", "agent-session", None).unwrap()
-                    .encode(&crate::notice::render_summary("mailbox.wake", "agent-session message inbox", "")).unwrap()
+                NoticeEnvelope::new("mailbox.wake", "agent-session", None)
+                    .unwrap()
+                    .encode(&crate::notice::render_summary(
+                        "mailbox.wake",
+                        "agent-session message inbox",
+                        "",
+                    ))
+                    .unwrap()
             } else {
                 encode_counts(&registry, "recipient", "incarnation", 100)
             };
-            assert_eq!(encoded.as_bytes(), case["before"].as_str().unwrap().as_bytes(), "{}", case["name"]);
+            assert_eq!(
+                encoded.as_bytes(),
+                case["before"].as_str().unwrap().as_bytes(),
+                "{}",
+                case["name"]
+            );
         }
     }
 }
