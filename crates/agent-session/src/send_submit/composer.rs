@@ -417,6 +417,8 @@ mod hyperlink;
 #[cfg(test)]
 mod corpus;
 #[cfg(test)]
+mod first_row;
+#[cfg(test)]
 mod tests;
 
 pub(crate) mod cleanup;
