@@ -85,3 +85,6 @@ mod notice_start;
 
 #[path = "integration/start_resume.rs"]
 mod start_resume;
+
+#[path = "integration/title.rs"]
+mod title;

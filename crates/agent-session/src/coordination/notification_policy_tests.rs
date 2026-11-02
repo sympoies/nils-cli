@@ -563,6 +563,10 @@ fn notification_policy_remote_refusal_is_terminal_without_erasing_uncertainty() 
 
 #[test]
 fn routine_coalescing_is_opt_in_and_urgent_mail_bypasses_the_window() {
+    // This asserts the plain route, so the notice gate must be off whatever a
+    // concurrent notice test has set.
+    let lock = GlobalStateLock::new();
+    let _gate = EnvGuard::remove(&lock, crate::notice::WRITERS_ENV);
     let (_temp, context) = tests::fixture();
     write_atomic(
         &context.state_dir.join("coordination/notification-policy.json"),
@@ -590,7 +594,8 @@ fn routine_coalescing_is_opt_in_and_urgent_mail_bypasses_the_window() {
         .pop()
         .unwrap();
     let prompt = super::super::notification_prompt(&urgent);
-    assert!(prompt.contains("p=1") && prompt.contains("h=1") && prompt.contains("b=1"));
+    // One progress, one handoff and one blocker message are unread.
+    assert_eq!(prompt, "Mailbox: 3 unread; agent-session message inbox");
     assert!(!prompt.contains("bounded fixture body"));
 }
 
@@ -637,7 +642,11 @@ fn coalescing_window_survives_restart_and_hook_claim_until_ten_minutes() {
         at + 600,
     )
     .unwrap();
-    assert!(super::super::notification_prompt(&next).contains("u=1"));
+    assert_eq!(
+        super::super::notification_prompt(&next),
+        // One report and one uncategorized message are unread.
+        "Mailbox: 2 unread; agent-session message inbox"
+    );
 }
 
 #[test]

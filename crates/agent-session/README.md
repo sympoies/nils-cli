@@ -60,6 +60,8 @@ agent-session list
 agent-session board --state live --since 3d --format json   # who else is working (session board v1)
 agent-session glance <id> --tail 40
 agent-session refresh <id> --format json   # re-read model, effort and title on demand
+agent-session title set <id> "Review the parser" --if-revision 0 --format json
+agent-session title auto <id> --if-revision 1 --format json
 agent-session command <id>
 agent-session attach <id>
 agent-session logs <id>

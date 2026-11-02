@@ -19,6 +19,9 @@ const ASSISTANT_CANARY: &str = "assistant-private-output-canary";
 const PATH_CANARY: &str = "/private/retitle-v3-canary";
 const CREDENTIAL_CANARY: &str = "sk-test-private-retitle-v3-canary";
 
+#[path = "retitle_v3/title_auto.rs"]
+mod title_auto;
+
 struct HttpResponse {
     status: u16,
     body: Value,

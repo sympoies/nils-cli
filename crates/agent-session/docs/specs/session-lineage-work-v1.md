@@ -18,9 +18,10 @@ program and issues it works on** (`work`). Readers such as `agent-session
 list`, the serve session view, the session board, and dispatchers read them
 from the shared record instead of keeping their own registries.
 
-Lineage is descriptive. It never authorizes anything, the same rule as Agent
-Console's dispatcher mark: knowing a session's parent grants no access to
-either session.
+Lineage describes session relationships and grants no general session access.
+The authenticated [title-writer rule](session-display-metadata-v1.md#managed-cli-title-writers)
+uses existing launch parent/root and adoption references for title updates only.
+Knowing a selector or relationship does not authenticate the writer.
 
 ## Session references
 
@@ -341,9 +342,10 @@ existing root-only topology requirement.
   a parented coordinator fails with `role-requires-root`. A malformed identifier
   or non-string value other than `null` fails with HTTP 400
   `role-invalid` before anything is created. The create response's `session` echoes it.
-- Roles and lineage do not grant session permissions. An explicitly enabled
-  forge policy may map the authenticated immutable launch context to a principal;
-  see the shared forge identity policy specification.
+- Roles alone grant no session permissions. The narrow authenticated title-writer
+  rule above uses recorded relationships without changing other session operations.
+  An explicitly enabled forge policy may map the authenticated immutable launch
+  context to a principal; see the shared forge identity policy specification.
 
 ## Forge launch context
 
