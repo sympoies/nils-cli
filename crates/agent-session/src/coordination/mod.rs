@@ -1843,7 +1843,7 @@ pub(crate) fn quota_exceeded(message: &str, quota: &str, count: usize, limit: us
         .or_else(crate::short_hostname)
         .unwrap_or_else(|| "unknown".to_string());
     let message = if mailbox::recipient_quota(quota) {
-        format!("{message}; {}", mailbox::QUOTA_RECOVERY_HINT)
+        format!("{message}; {}", mailbox::quota_recovery_hint())
     } else {
         message.to_string()
     };

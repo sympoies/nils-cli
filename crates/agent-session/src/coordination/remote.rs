@@ -673,7 +673,7 @@ fn relay_error(value: &Value) -> CliError {
     {
         details["recovery"] = super::mailbox::quota_recovery();
         message.push_str("; ");
-        message.push_str(super::mailbox::QUOTA_RECOVERY_HINT);
+        message.push_str(&super::mailbox::quota_recovery_hint());
     }
     CliError::data(code, message, details)
 }
