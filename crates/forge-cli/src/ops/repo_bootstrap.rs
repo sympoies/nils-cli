@@ -32,7 +32,6 @@ use gitlab::GitlabClient;
 
 const GITLAB_PUSH_TOKEN_ENV: &str = "FORGE_CLI_BOOTSTRAP_GITLAB_TOKEN";
 
-const LEGACY_RECEIPT_SCHEMA: &str = "forge-cli.repo-bootstrap.receipt.v1";
 const RECEIPT_SCHEMA: &str = "forge-cli.repo-bootstrap.receipt.v2";
 const MAX_RECEIPT_BYTES: usize = 256 * 1024;
 const MAX_REASON_BYTES: usize = 2_000;
@@ -74,53 +73,6 @@ struct BootstrapReceipt {
     default_branch_set: bool,
     complete: bool,
     reconciled: bool,
-}
-
-// The released v1 receipt had only Forgejo fields. Parse it strictly before
-// upgrading in memory so new provider fields cannot masquerade as v1 state.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LegacyBootstrapReceipt {
-    schema_version: String,
-    provider: String,
-    repository: String,
-    owner_kind: RepoBootstrapOwnerKind,
-    default_branch: String,
-    message: String,
-    reason: String,
-    files: Vec<ReceiptFile>,
-    create_attempted: bool,
-    remote_created: bool,
-    local_sha: Option<String>,
-    push_attempted: bool,
-    default_branch_set: bool,
-    complete: bool,
-    reconciled: bool,
-}
-
-impl From<LegacyBootstrapReceipt> for BootstrapReceipt {
-    fn from(old: LegacyBootstrapReceipt) -> Self {
-        Self {
-            schema_version: RECEIPT_SCHEMA.to_string(),
-            provider: old.provider,
-            host: String::new(),
-            repository: old.repository,
-            owner_kind: old.owner_kind,
-            private: true,
-            existing_empty: false,
-            default_branch: old.default_branch,
-            message: old.message,
-            reason: old.reason,
-            files: old.files,
-            create_attempted: old.create_attempted,
-            remote_created: old.remote_created,
-            local_sha: old.local_sha,
-            push_attempted: old.push_attempted,
-            default_branch_set: old.default_branch_set,
-            complete: old.complete,
-            reconciled: old.reconciled,
-        }
-    }
 }
 
 #[derive(Debug, Serialize)]
@@ -1972,23 +1924,6 @@ fn load_receipt(path: &Path) -> Result<Option<BootstrapReceipt>, ForgeError> {
         .get("schema_version")
         .and_then(serde_json::Value::as_str);
     let receipt = match schema {
-        Some(LEGACY_RECEIPT_SCHEMA) => {
-            let old: LegacyBootstrapReceipt = serde_json::from_value(value).map_err(|error| {
-                validation(
-                    "bootstrap_receipt_invalid",
-                    "v1 bootstrap receipt has invalid fields",
-                    Some(error.to_string()),
-                )
-            })?;
-            if old.provider == "github" || old.schema_version != LEGACY_RECEIPT_SCHEMA {
-                return Err(validation(
-                    "bootstrap_receipt_invalid",
-                    "v1 bootstrap receipt is not a Forgejo receipt",
-                    None,
-                ));
-            }
-            old.into()
-        }
         Some(RECEIPT_SCHEMA) => serde_json::from_value(value).map_err(|error| {
             validation(
                 "bootstrap_receipt_invalid",
@@ -1999,8 +1934,8 @@ fn load_receipt(path: &Path) -> Result<Option<BootstrapReceipt>, ForgeError> {
         _ => {
             return Err(validation(
                 "bootstrap_receipt_invalid",
-                "bootstrap receipt has an unsupported schema",
-                None,
+                "bootstrap receipt has an unsupported schema; keep it, inspect the remote repository, and reconcile with the bootstrap owner before removing it or repeating the command",
+                Some(path.display().to_string()),
             ));
         }
     };
@@ -2802,30 +2737,23 @@ mod tests {
     }
 
     #[test]
-    fn forgejo_v1_receipt_migrates_but_rejects_new_fields() {
+    fn a_v1_receipt_is_rejected_as_an_unsupported_schema() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("receipt.json");
         let mut prior = serde_json::to_value(receipt(Vec::new())).unwrap();
+        prior["schema_version"] = "forge-cli.repo-bootstrap.receipt.v1".into();
         let object = prior.as_object_mut().unwrap();
-        object.insert("schema_version".into(), LEGACY_RECEIPT_SCHEMA.into());
-        object.remove("host");
-        object.remove("private");
-        object.remove("existing_empty");
+        for field in ["host", "private", "existing_empty"] {
+            object.remove(field);
+        }
         fs::write(&path, serde_json::to_vec(&prior).unwrap()).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
 
-        let migrated = load_receipt(&path).unwrap().unwrap();
-        assert_eq!(migrated.schema_version, RECEIPT_SCHEMA);
-        assert_eq!(migrated.provider, "forgejo");
-        assert!(migrated.private);
-        assert_eq!(migrated.host, "");
-
-        prior["host"] = "github.com".into();
-        fs::write(&path, serde_json::to_vec(&prior).unwrap()).unwrap();
-        assert_eq!(
-            load_receipt(&path).unwrap_err().kind(),
-            "bootstrap_receipt_invalid"
-        );
+        let error = load_receipt(&path).unwrap_err();
+        assert_eq!(error.kind(), "bootstrap_receipt_invalid");
+        assert!(error.message().contains("unsupported schema"), "{error:?}");
+        assert!(error.message().contains("reconcile"), "{error:?}");
+        assert_eq!(error.detail(), Some(path.display().to_string().as_str()));
     }
 
     #[test]
