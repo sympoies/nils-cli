@@ -264,12 +264,12 @@ fn refresh_leaves_pinned_and_plain_titles_alone() {
 
     let mut plain = titled("Fix parser", &[]);
     plain["title_state"] = Value::Null;
-    plain["title"] = json!("laoda#480 Fix parser");
+    plain["title"] = json!("tracker#480 Fix parser");
     fixture.seed("codex", &[], plain);
     let result = refresh(&fixture.context, "refresh-fixture").unwrap();
     assert_eq!(changed(&result), Vec::<&str>::new());
     assert_eq!(
         fixture.stored().title.as_deref(),
-        Some("laoda#480 Fix parser")
+        Some("tracker#480 Fix parser")
     );
 }

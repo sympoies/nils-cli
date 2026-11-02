@@ -889,7 +889,7 @@ fn pr_review_rejects_lens_local_path_in_mirror_before_backend_call() {
             "--comment",
             "Status: pass",
             "--lens",
-            "/Users/terry/project/secret.txt",
+            "/Users/example/project/secret.txt",
             "--issue",
             "101",
             "--mirror-issue",
@@ -961,7 +961,7 @@ fn pr_review_rejects_local_paths_before_backend_call() {
             "--decision",
             "comments-only",
             "--comment",
-            "local path: /Users/terry/secret.txt",
+            "local path: /Users/example/secret.txt",
         ],
     );
 
@@ -3588,11 +3588,11 @@ fn pr_review_thread_file_mirror_issue_without_issue_checks_before_reading_thread
 fn pr_review_thread_file_rejects_privacy_guard_violations_before_backend() {
     let cases = [
         (
-            r#"[{"path":"/Users/terry/project/secret.rs","line":42,"body":"Thread body"}]"#,
+            r#"[{"path":"/Users/example/project/secret.rs","line":42,"body":"Thread body"}]"#,
             "local_path_present",
         ),
         (
-            r#"[{"path":"src/lib.rs","line":42,"body":"See /Users/terry/secret.txt"}]"#,
+            r#"[{"path":"src/lib.rs","line":42,"body":"See /Users/example/secret.txt"}]"#,
             "local_path_present",
         ),
         (

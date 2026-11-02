@@ -3661,7 +3661,7 @@ mod tests {
     }
     #[test]
     fn local_daemon_refusal_keeps_diagnostics_and_relay_keeps_only_quota_fields() {
-        let refusal = json!({"ok":false,"error":{"code":"quota-exceeded","message":"federation outbox has too many undelivered messages","details":{"quota":"federation-pending","count":256,"limit":256,"host":"sympoies","side":"source"}}});
+        let refusal = json!({"ok":false,"error":{"code":"quota-exceeded","message":"federation outbox has too many undelivered messages","details":{"quota":"federation-pending","count":256,"limit":256,"host":"host-a","side":"source"}}});
         let local = local_daemon_error(&refusal);
         assert_eq!(local.code(), "quota-exceeded");
         assert_eq!(
@@ -3677,7 +3677,7 @@ mod tests {
         assert_eq!(
             relayed.details(),
             Some(
-                &json!({"quota":"federation-pending","count":256,"limit":256,"host":"sympoies","side":"destination"})
+                &json!({"quota":"federation-pending","count":256,"limit":256,"host":"host-a","side":"destination"})
             )
         );
         let unknown = json!({"error":{"code":"internal-failure","details":{"quota":"x"}}});

@@ -1,5 +1,5 @@
 //! `GET /usage/v1`, `POST /codex/reset/v1` (sympoies/nils-cli#1821), and
-//! `POST /claude/reset/v1` (serenvia/agent-console#651).
+//! `POST /claude/reset/v1` (agent-console#651).
 //!
 //! Both routes replace deployment-side helper services that a console edge
 //! proxies to today, so the acceptance bar is response-shape compatibility with

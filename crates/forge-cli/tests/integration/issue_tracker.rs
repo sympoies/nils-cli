@@ -1006,7 +1006,7 @@ fn show_serializes_the_rows_of_real_trackers() {
             "Track agent-runtime-kit policy parity for DSH as primary harness",
         ),
         (
-            "sympoies-infra-1072",
+            "example-infra-1072",
             "Track private-repo Actions migration to self-hosted runners",
         ),
     ] {

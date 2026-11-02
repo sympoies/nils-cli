@@ -47,10 +47,10 @@ never contains one itself.
 ## Tracker show fixtures
 
 `tracker-show/` holds the `## Phase table` and `## Dependency graph` sections
-of two real program trackers, `sympoies/dsh-runtime-kit#306` and
-`serenvia/sympoies-infra#1072` (private repository names replaced with
+of two real program trackers, `sympoies/dsh-runtime-kit#306` and a private
+infrastructure tracker (private repository names replaced with
 `example-org/`), plus the rows `issue tracker show` must report for each
 (`*.rows.json`, `reference` as written; the test qualifies own-repository
-`#N`). `sympoies-infra-1072` is kept because its rows put free-form text after
+`#N`). `example-infra-1072` is kept because its rows put free-form text after
 the ref (`title: #1080; depends on T1 (PR …)`), which the grammar reads as a
 gate with no reference.

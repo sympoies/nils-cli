@@ -885,12 +885,12 @@ mod tests {
     #[test]
     fn requests_admit_only_machine_and_a_session_object() {
         let session = json!({"agent": "claude"});
-        let with_machine = json!({"machine": "c8", "session": session});
+        let with_machine = json!({"machine": "host-b", "session": session});
         let (machine, lineage, child) = checked_request(&with_machine).expect("with machine");
         assert_eq!(
             (machine, lineage, child),
             (
-                Some("c8"),
+                Some("host-b"),
                 ChildLineage::default(),
                 session.as_object().unwrap()
             )
@@ -916,7 +916,7 @@ mod tests {
             json!({"session": session, "principal": "other"}),
             json!({"machine": 7, "session": session}),
             json!({"machine": "", "session": session}),
-            json!({"machine": "c8"}),
+            json!({"machine": "host-b"}),
             json!({"session": "claude"}),
             json!({"session": session, "no_parent": "yes"}),
             json!({"session": session, "role": "invalid role"}),

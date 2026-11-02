@@ -58,7 +58,7 @@ The JSON shape is:
   "type": "snapshot",
   "stream_id": "opaque-daemon-boot-id",
   "sequence": 42,
-  "machine": "sympoies",
+  "machine": "host-a",
   "observed_at": "2026-07-11T17:00:00Z",
   "sessions": [
     {
@@ -104,7 +104,7 @@ instead:
   "type": "reset",
   "stream_id": "opaque-daemon-boot-id",
   "sequence": 43,
-  "machine": "sympoies",
+  "machine": "host-a",
   "observed_at": "2026-07-11T17:00:00Z",
   "reason": "oversized_snapshot"
 }

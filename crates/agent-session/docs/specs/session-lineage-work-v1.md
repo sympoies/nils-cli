@@ -28,7 +28,7 @@ A session is identified across machines by
 `(machine, session_id, session_created_at)`:
 
 ```json
-{"machine": "sympoies", "session_id": "85a7…", "session_created_at": "2026-10-01T05:25:45.981481421Z"}
+{"machine": "host-a", "session_id": "85a7…", "session_created_at": "2026-10-01T05:25:45.981481421Z"}
 ```
 
 - `machine` is the label of the machine the session runs on, resolved the same
@@ -52,9 +52,9 @@ Written once when the record is created; it does not change afterwards.
 ```json
 "lineage": {
   "schema_version": "agent-session.session-lineage.v1",
-  "machine": "c8",
-  "parent": {"machine": "sympoies", "session_id": "85a7…", "session_created_at": "…", "session_incarnation": "…"},
-  "root":   {"machine": "sympoies", "session_id": "3f1c…", "session_created_at": "…"},
+  "machine": "host-b",
+  "parent": {"machine": "host-a", "session_id": "85a7…", "session_created_at": "…", "session_incarnation": "…"},
+  "root":   {"machine": "host-a", "session_id": "3f1c…", "session_created_at": "…"},
   "depth": 2,
   "starter": {"kind": "session", "via": "console"},
   "budget": null
@@ -169,7 +169,7 @@ separately in `lineage_adoption`:
 
 ```json
 "lineage_adoption": {
-  "adopted_by": {"machine": "sympoies", "session_id": "9c2e…", "session_created_at": "…", "session_incarnation": "…"},
+  "adopted_by": {"machine": "host-a", "session_id": "9c2e…", "session_created_at": "…", "session_incarnation": "…"},
   "revision": 1,
   "updated_at": "…"
 }
@@ -239,7 +239,7 @@ enforce it:
 
 ```json
 "work": {
-  "program": {"provider": "github", "repository": "serenvia/laoda", "number": 44},
+  "program": {"provider": "github", "repository": "example-org/program-tracker", "number": 44},
   "issues": [{"provider": "github", "repository": "sympoies/nils-cli", "number": 2032}],
   "inherited": true,
   "revision": 1

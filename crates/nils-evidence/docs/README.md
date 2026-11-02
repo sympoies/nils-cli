@@ -7,9 +7,8 @@
 - None yet. The command surface, the `skill-usage.rollup.v1` /
   `evidence.catalog.v1` schemas, the migrate flow, and clone-path resolution
   are documented in the crate [`README.md`](../README.md); the archive layout
-  and redaction policy live in the consuming
-  [`agent-evidence-archive`](https://github.com/serenvia/agent-evidence-archive)
-  repo and the agent-runtime-kit `EVIDENCE_ARCHIVE` policy.
+  and redaction policy live in the consuming archive repository and the
+  agent-runtime-kit `EVIDENCE_ARCHIVE` policy.
 
 ## Runbooks
 

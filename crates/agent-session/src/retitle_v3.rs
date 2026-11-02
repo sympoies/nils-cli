@@ -4393,7 +4393,7 @@ mod tests {
                 "turn-image",
                 "user",
                 concat!(
-                    "<image name=[Image #1] path=\"/home/terry/private/screenshot.png\">\n",
+                    "<image name=[Image #1] path=\"/home/example/private/screenshot.png\">\n",
                     "</image>\n",
                     "[Image #1] 現在 auto retitle 會變成這樣也不對",
                 ),
@@ -5054,7 +5054,7 @@ mod tests {
             &[message(
                 "human",
                 "user",
-                "deliver bounded semantic memory /home/terry/private TOKEN=secret RAW_PRIVATE_TAIL_42",
+                "deliver bounded semantic memory /home/example/private TOKEN=secret RAW_PRIVATE_TAIL_42",
                 true,
             )],
         );
@@ -5066,9 +5066,9 @@ mod tests {
             assert!(!String::from_utf8_lossy(&marker).contains(canary));
             assert!(!input.contains(canary));
         }
-        assert!(!String::from_utf8_lossy(&marker).contains("/home/terry/private"));
+        assert!(!String::from_utf8_lossy(&marker).contains("/home/example/private"));
         assert!(!String::from_utf8_lossy(&marker).contains("TOKEN=secret"));
-        assert!(!input.contains("/home/terry/private"));
+        assert!(!input.contains("/home/example/private"));
         assert!(!input.contains("TOKEN=secret"));
     }
 
@@ -5477,7 +5477,7 @@ mod tests {
         );
         assert_eq!(memory.work_references, vec!["#24"]);
         assert_eq!(
-            extract_work_references("See https://github.com/serenvia/agent-console/pull/3"),
+            extract_work_references("See https://github.com/example-org/agent-console/pull/3"),
             vec!["agent-console #3"]
         );
         assert_eq!(
@@ -5594,7 +5594,7 @@ mod tests {
                 "turn-image",
                 "user",
                 concat!(
-                    "<image name=[Image #1] path=\"/home/terry/private/screenshot.png\">\n",
+                    "<image name=[Image #1] path=\"/home/example/private/screenshot.png\">\n",
                     "</image>\n",
                     "[Image #1] 現在 auto retitle 會變成這樣也不對",
                 ),
@@ -5750,9 +5750,9 @@ mod tests {
                 "turn-images",
                 "user",
                 concat!(
-                    "<image name=[Image #1] path=\"/home/terry/private/one.png\">\n",
+                    "<image name=[Image #1] path=\"/home/example/private/one.png\">\n",
                     "</image>\n",
-                    "<image name=[Image #2] path=\"/home/terry/private/two.png\">\n",
+                    "<image name=[Image #2] path=\"/home/example/private/two.png\">\n",
                     "</image>\n",
                     "[Image #1] [Image #2] 現在 retitle 的結果這樣是正常的嗎",
                 ),

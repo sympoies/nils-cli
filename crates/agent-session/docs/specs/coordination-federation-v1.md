@@ -36,8 +36,8 @@ The JSON envelope is `agent-session.remote-message.v1`:
 {
   "schema_version": "agent-session.remote-message.v1",
   "message_id": "a UUID",
-  "from": {"machine": "sympoies", "session_id": "source", "session_incarnation": "launch UUID"},
-  "to": {"machine": "c8", "session_id": "target", "session_incarnation": "launch UUID"},
+  "from": {"machine": "host-a", "session_id": "source", "session_incarnation": "launch UUID"},
+  "to": {"machine": "host-b", "session_id": "target", "session_incarnation": "launch UUID"},
   "body": "peer message text",
   "body_sha256": "lowercase SHA-256 hex",
   "created_at_epoch": 1800000000,

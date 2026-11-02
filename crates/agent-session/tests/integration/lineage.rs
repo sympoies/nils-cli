@@ -132,7 +132,7 @@ fn start_records_the_calling_session_as_parent_and_inherits_its_work() {
         "lineage-root",
         &[
             "--program",
-            "serenvia/laoda#44",
+            "example-org/program-tracker#44",
             "--issue",
             "sympoies/nils-cli#2032",
         ],
@@ -152,7 +152,7 @@ fn start_records_the_calling_session_as_parent_and_inherits_its_work() {
         })
     );
     let root_work = json!({
-        "program": github("serenvia/laoda", 44),
+        "program": github("example-org/program-tracker", 44),
         "issues": [github("sympoies/nils-cli", 2032)],
         "inherited": false,
         "revision": 1,
@@ -185,7 +185,7 @@ fn start_records_the_calling_session_as_parent_and_inherits_its_work() {
     assert_eq!(
         child["work"],
         json!({
-            "program": github("serenvia/laoda", 44),
+            "program": github("example-org/program-tracker", 44),
             "issues": [github("sympoies/nils-cli", 2032)],
             "inherited": true,
             "revision": 1,
@@ -206,7 +206,7 @@ fn start_records_the_calling_session_as_parent_and_inherits_its_work() {
     assert_eq!(
         grandchild["work"],
         json!({
-            "program": github("serenvia/laoda", 44),
+            "program": github("example-org/program-tracker", 44),
             "issues": [github("sympoies/nils-cli", 2040)],
             "inherited": false,
             "revision": 1,
@@ -269,8 +269,8 @@ fn run_records_the_calling_session_as_parent_like_start() {
 
 #[test]
 fn a_child_reuses_the_machine_label_its_parent_was_created_under() {
-    // A daemon started with `serve --machine m4` on a host named otherwise
-    // labels its sessions m4; a start inside one keeps that label.
+    // A daemon started with `serve --machine daemon-label` on a host named otherwise
+    // labels its sessions daemon-label; a start inside one keeps that label.
     let fixture = Fixture::new();
     fixture.started("label-parent", &[], None);
     let path = Path::new(&fixture.state).join("sessions/label-parent/session.json");
@@ -318,7 +318,7 @@ fn start_rejects_free_text_and_too_many_work_references() {
     let fixture = Fixture::new();
     for args in [
         vec!["--issue", "fix the login bug"],
-        vec!["--program", "serenvia/laoda"],
+        vec!["--program", "example-org/program-tracker"],
         vec![
             "--issue", "a/b#1", "--issue", "a/b#2", "--issue", "a/b#3", "--issue", "a/b#4",
             "--issue", "a/b#5",
@@ -499,7 +499,7 @@ fn work_set_replaces_named_dimensions_under_a_revision_fence() {
         "set",
         "work-target",
         "--program",
-        "serenvia/laoda#44",
+        "example-org/program-tracker#44",
         "--if-revision",
         "0",
     ]);
@@ -509,7 +509,7 @@ fn work_set_replaces_named_dimensions_under_a_revision_fence() {
     assert_eq!(
         body["data"]["work"],
         json!({
-            "program": github("serenvia/laoda", 44),
+            "program": github("example-org/program-tracker", 44),
             "issues": [],
             "inherited": false,
             "revision": 1,
@@ -543,7 +543,7 @@ fn work_set_replaces_named_dimensions_under_a_revision_fence() {
     assert_eq!(
         fixture.record("work-target")["work"],
         json!({
-            "program": github("serenvia/laoda", 44),
+            "program": github("example-org/program-tracker", 44),
             "issues": [github("sympoies/nils-cli", 2032), github("sympoies/nils-cli", 2033)],
             "inherited": false,
             "revision": 2,
@@ -584,7 +584,7 @@ fn work_set_replaces_named_dimensions_under_a_revision_fence() {
         "set",
         "work-target",
         "--program",
-        "serenvia/laoda#44",
+        "example-org/program-tracker#44",
         "--if-revision",
         "0",
     ]);

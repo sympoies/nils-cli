@@ -39,7 +39,7 @@ fn config_show_prints_effective_values() {
     let output = run(
         &["config", "show"],
         &[
-            ("CODEX_CLI_MODEL", "m1"),
+            ("CODEX_CLI_MODEL", "model-a"),
             ("CODEX_CLI_REASONING", "low"),
             ("CODEX_CLI_EPHEMERAL_ENABLED", "true"),
             ("CODEX_ALLOW_DANGEROUS_ENABLED", "true"),
@@ -49,14 +49,14 @@ fn config_show_prints_effective_values() {
             ("CODEX_PROMPT_SEGMENT_ENABLED", "true"),
             ("CODEX_AUTO_REFRESH_ENABLED", "true"),
             ("CODEX_AUTO_REFRESH_MIN_DAYS", "9"),
-            ("CODEX_AUTH_REMOTE_SSH", "g14"),
+            ("CODEX_AUTH_REMOTE_SSH", "host-a"),
             ("CODEX_AUTH_REMOTE_NAME", "acct1"),
             ("CODEX_AUTH_REMOTE_REFRESH", "false"),
         ],
     );
     assert_exit(&output, 0);
     let out = stdout(&output);
-    assert!(out.contains("CODEX_CLI_MODEL=m1\n"));
+    assert!(out.contains("CODEX_CLI_MODEL=model-a\n"));
     assert!(out.contains("CODEX_CLI_REASONING=low\n"));
     assert!(out.contains("CODEX_CLI_EPHEMERAL_ENABLED=true\n"));
     assert!(out.contains("CODEX_ALLOW_DANGEROUS_ENABLED=true\n"));
@@ -66,7 +66,7 @@ fn config_show_prints_effective_values() {
     assert!(out.contains("CODEX_PROMPT_SEGMENT_ENABLED=true\n"));
     assert!(out.contains("CODEX_AUTO_REFRESH_ENABLED=true\n"));
     assert!(out.contains("CODEX_AUTO_REFRESH_MIN_DAYS=9\n"));
-    assert!(out.contains("CODEX_AUTH_REMOTE_SSH=g14\n"));
+    assert!(out.contains("CODEX_AUTH_REMOTE_SSH=host-a\n"));
     assert!(out.contains("CODEX_AUTH_REMOTE_NAME=acct1\n"));
     assert!(out.contains("CODEX_AUTH_REMOTE_REFRESH=false\n"));
 }
@@ -182,9 +182,9 @@ fn config_set_ephemeral_prints_export_for_true() {
 
 #[test]
 fn config_set_remote_ssh_prints_export() {
-    let output = run(&["config", "set", "remote-ssh", "g14"], &[]);
+    let output = run(&["config", "set", "remote-ssh", "host-a"], &[]);
     assert_exit(&output, 0);
-    assert_eq!(stdout(&output), "export CODEX_AUTH_REMOTE_SSH='g14'\n");
+    assert_eq!(stdout(&output), "export CODEX_AUTH_REMOTE_SSH='host-a'\n");
 }
 
 #[test]

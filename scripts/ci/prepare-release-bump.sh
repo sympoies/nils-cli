@@ -7,7 +7,7 @@ Usage:
   scripts/ci/prepare-release-bump.sh --version X.Y.Z [options]
 
 Prepares the release version bump as one local commit. It never tags, pushes,
-publishes, or touches a remote; the sympoies-infra release broker owns that.
+publishes, or touches a remote; the private release broker owns that.
 
 Options:
   --version X.Y.Z   Required. Accepts vX.Y.Z and normalizes to X.Y.Z.
