@@ -318,7 +318,7 @@ Errors are written only to stderr. `--error-format json` emits
 
 ```bash
 cargo test -p nils-macos-agent
-bash scripts/ci/completion-freshness-audit.sh --strict
+bash scripts/ci/completion-freshness-audit.sh
 bash scripts/ci/docs-placement-audit.sh --strict
 ```
 

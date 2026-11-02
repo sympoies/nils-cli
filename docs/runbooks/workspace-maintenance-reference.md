@@ -584,8 +584,8 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/publish-order-audit.sh --strict`
 - `bash scripts/ci/third-party-artifacts-audit.sh --strict`
 - `bash scripts/ci/completion-asset-audit.sh --strict`
-- `bash scripts/ci/completion-freshness-audit.sh --strict`
-- `bash scripts/ci/completion-flag-parity-audit.sh --strict`
+- `bash scripts/ci/completion-freshness-audit.sh`
+- `bash scripts/ci/completion-flag-parity-audit.sh`
 - `zsh -f tests/zsh/completion.test.zsh`
 - `cargo fmt --all -- --check`
 - `cargo clippy --all-targets --all-features -- -D warnings`

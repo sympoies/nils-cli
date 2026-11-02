@@ -29,7 +29,7 @@ class QueueDetectionTests(unittest.TestCase):
         self.env['FIXTURE_REPO'] = str(self.repo)
         self.shell(self.helpers + '\nwrite_base_fixture "$FIXTURE_REPO"\n')
         for path in ('scripts/ci/detect-docs-only.sh', 'scripts/ci/lib/doc_classify.py',
-                     'scripts/ci/detect-release-only.sh', '.github/scripts/release-ci-gate.cjs'):
+                     'scripts/ci/detect-release-only.sh', '.github/scripts/release-validation-reuse.cjs'):
             destination = self.repo / path
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes((fixtures.ROOT / path).read_bytes())
