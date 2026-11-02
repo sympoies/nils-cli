@@ -214,6 +214,8 @@ fn matching_tool_results_set_call_status() {
         id: "message-call".to_string(),
         history_turn_id: None,
         prompt_request: None,
+        row_class: None,
+        compaction: None,
         role: "assistant".to_string(),
         text: String::new(),
         timestamp: None,

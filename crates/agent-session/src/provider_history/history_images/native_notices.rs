@@ -81,6 +81,8 @@ impl Bindings {
             id: format!("{}-{offset}", session.id),
             history_turn_id: None,
             prompt_request: None,
+            row_class: None,
+            compaction: None,
             role: "notice".into(),
             text: row.text,
             timestamp: row.timestamp,

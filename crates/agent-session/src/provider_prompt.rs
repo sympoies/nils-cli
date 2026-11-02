@@ -19,6 +19,7 @@ mod claude_source;
 mod query_sources;
 pub(crate) use query_sources::QuerySources;
 mod preview;
+pub(crate) mod row_classes;
 use preview::PreviewMessages;
 pub(crate) use preview::{LastMessage, SessionPreviews};
 
@@ -206,14 +207,14 @@ impl ImageUrlElision {
     }
 }
 
-pub(crate) fn compact_prompt_line(line: &[u8]) -> Option<Vec<u8>> {
+fn compact_display_line(line: &[u8]) -> Option<Vec<u8>> {
     let mut elision = ImageUrlElision::default();
     let mut partial = Vec::new();
     for &byte in line {
         if elision.skip(byte, &partial) {
             continue;
         }
-        if partial.len() >= MAX_PROVIDER_LINE_BYTES {
+        if partial.len() >= row_classes::ADJACENT_BYTES {
             return None;
         }
         partial.push(byte);
@@ -284,6 +285,8 @@ pub struct ProviderPromptTail {
     offset: u64,
     continuity: Vec<u8>,
     partial: Vec<u8>,
+    record_bytes: usize,
+    display_only_partial: bool,
     image_elision: ImageUrlElision,
     goal: GoalPreviewState,
     preview: Option<LastPrompt>,
@@ -354,6 +357,8 @@ impl ProviderPromptTail {
             offset,
             continuity: read_continuity(&mut file, offset)?,
             partial: Vec::new(),
+            record_bytes: 0,
+            display_only_partial: false,
             image_elision: ImageUrlElision::default(),
             goal: GoalPreviewState::default(),
             preview: None,
@@ -479,6 +484,8 @@ impl ProviderPromptTail {
         self.offset = metadata.len();
         self.continuity = read_continuity(file, self.offset)?;
         self.partial.clear();
+        self.record_bytes = 0;
+        self.display_only_partial = false;
         self.image_elision = ImageUrlElision::default();
         self.goal = GoalPreviewState {
             unknown_baseline: true,
@@ -494,6 +501,7 @@ impl ProviderPromptTail {
 
     fn consume(&mut self, bytes: &[u8], events: &mut Vec<ProviderPromptEvent>) {
         for &byte in bytes {
+            self.record_bytes = self.record_bytes.saturating_add(1);
             if byte == b'\n' {
                 if !self.discarding_oversized_line {
                     if self.partial.last() == Some(&b'\r') {
@@ -503,6 +511,11 @@ impl ProviderPromptTail {
                         self.consume_line(line.to_string(), events);
                     }
                 }
+                if self.discarding_oversized_line {
+                    self.messages.skipped_record(self.record_bytes);
+                }
+                self.record_bytes = 0;
+                self.display_only_partial = false;
                 self.partial.clear();
                 self.image_elision = ImageUrlElision::default();
                 self.discarding_oversized_line = false;
@@ -514,7 +527,7 @@ impl ProviderPromptTail {
             if self.image_elision.skip(byte, &self.partial) {
                 continue;
             }
-            if self.partial.len() >= MAX_PROVIDER_LINE_BYTES {
+            if self.partial.len() >= row_classes::ADJACENT_BYTES {
                 self.partial.clear();
                 self.discarding_oversized_line = true;
                 continue;
@@ -525,11 +538,20 @@ impl ProviderPromptTail {
 
     fn consume_line(&mut self, line: String, events: &mut Vec<ProviderPromptEvent>) {
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            self.messages.skipped_record(self.record_bytes);
             return;
         };
-        let projected =
-            self.messages
-                .observe(&value, self.source.provider, &self.source.session_id);
+        let projected = self.messages.observe(
+            &value,
+            self.source.provider,
+            &self.source.session_id,
+            self.record_bytes,
+            true,
+            line.len(),
+        );
+        if self.display_only_partial || line.len() > MAX_PROVIDER_LINE_BYTES {
+            return;
+        }
         match self.source.provider {
             ProviderKind::Codex => {
                 if let Some(prompt) = projected {
@@ -615,6 +637,7 @@ impl ProviderLastPromptTracker {
         let (last_prompt, goal, messages) = read_preview(&source, MAX_LAST_PROMPT_RECOVERY_BYTES);
         tail.goal = goal;
         tail.messages = messages;
+        tail.restore_display_partial().ok()?;
         if validate_source_identity
             && (!source_still_matches(&source)
                 || !opened_file_still_current(&source.path, tail.identity))
@@ -717,7 +740,11 @@ fn parse_codex_prompt_value(value: &Value) -> Option<ParsedPrompt> {
             if payload.get("type").and_then(Value::as_str) != Some("user_message") {
                 return None;
             }
-            let mut prompt = bounded_prompt(payload.get("message").and_then(Value::as_str)?)?;
+            let text = payload.get("message").and_then(Value::as_str)?;
+            if !row_classes::human_text("codex", text) {
+                return None;
+            }
+            let mut prompt = bounded_prompt(text)?;
             prompt.submitted_at = provider_timestamp(value);
             Some(prompt)
         }
@@ -746,6 +773,9 @@ fn parse_codex_response_item_prompt(value: &Value) -> Option<ParsedPrompt> {
         .filter(|text| !text.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n");
+    if !row_classes::human_text("codex", &text) {
+        return None;
+    }
     let mut prompt = bounded_prompt(&text)?;
     prompt.has_images = content
         .iter()
@@ -768,7 +798,11 @@ fn parse_claude_last_prompt_value(value: &Value, session_id: &str) -> Option<Par
     {
         return None;
     }
-    let mut prompt = bounded_prompt(value.get("lastPrompt").and_then(Value::as_str)?)?;
+    let text = value.get("lastPrompt").and_then(Value::as_str)?;
+    if !row_classes::human_text("claude", text) {
+        return None;
+    }
+    let mut prompt = bounded_prompt(text)?;
     prompt.submitted_at = provider_timestamp(value);
     prompt.turn_id = value
         .get("leafUuid")
@@ -787,6 +821,9 @@ fn parse_claude_user_prompt_value(value: &Value, session_id: &str) -> Option<Par
         return None;
     }
     let text = claude_user_message_text(value)?;
+    if !row_classes::human_text("claude", &text) {
+        return None;
+    }
     let mut prompt = bounded_prompt(&text)?;
     prompt.submitted_at = provider_timestamp(value);
     prompt.turn_id = value
@@ -872,11 +909,6 @@ fn parse_claude_history_prompt(line: &str, session_id: &str) -> Option<ParsedPro
             ..prompt
         });
     }
-    // Claude Code records `/compact` twice: as this untagged plain row and as
-    // command markup. The markup row above is the one kept.
-    if prompt.prompt.trim() == "/compact" && value.get("promptSource").is_none() {
-        return None;
-    }
     let head = prompt.prompt.trim_start();
     (!crate::coordination::is_mailbox_reminder_prompt(&prompt.prompt)
         && !head.starts_with(CLAUDE_INTERRUPT_MARKER_PREFIX)
@@ -890,18 +922,46 @@ fn parse_claude_history_prompt(line: &str, session_id: &str) -> Option<ParsedPro
 /// (`<command-name>/goal</command-name>…<command-args>x</command-args>`),
 /// rendered as the user typed it: `/goal x`.
 pub(crate) fn claude_slash_command_text(text: &str) -> Option<String> {
-    let tag = |name: &str| {
-        let (_, rest) = text.split_once(&format!("<{name}>"))?;
-        let (value, _) = rest.split_once(&format!("</{name}>"))?;
-        Some(value.trim())
-    };
-    if !text.trim_start().starts_with("<command-") {
+    let mut rest = text;
+    let mut name = None;
+    let mut args = None;
+    let mut message_seen = false;
+    if !rest.starts_with("<command-") {
         return None;
     }
-    let name = tag("command-name").filter(|name| name.starts_with('/'))?;
-    Some(match tag("command-args").filter(|args| !args.is_empty()) {
+    while !rest.is_empty() {
+        rest = rest.trim_start_matches([' ', '\t', '\r', '\n']);
+        if rest.is_empty() {
+            break;
+        }
+        if let Some(body) = rest.strip_prefix("<command-name>") {
+            if name.is_some() {
+                return None;
+            }
+            let (value, tail) = body.split_once("</command-name>")?;
+            name = Some(value);
+            rest = tail;
+        } else if let Some(body) = rest.strip_prefix("<command-message>") {
+            if message_seen {
+                return None;
+            }
+            let (_, tail) = body.split_once("</command-message>")?;
+            message_seen = true;
+            rest = tail;
+        } else {
+            let body = rest.strip_prefix("<command-args>")?;
+            if args.is_some() {
+                return None;
+            }
+            let (value, tail) = body.split_once("</command-args>")?;
+            args = Some(value);
+            rest = tail;
+        }
+    }
+    let name = name.filter(|name| name.starts_with('/') && !name.contains(char::is_whitespace))?;
+    Some(match args.filter(|args| !args.is_empty()) {
         Some(args) => format!("{name} {args}"),
-        None => name.to_string(),
+        None => name.to_owned(),
     })
 }
 
@@ -924,6 +984,9 @@ fn parse_claude_enqueued_prompt_value(value: &Value, session_id: &str) -> Option
     } else {
         claude_queued_prompt_text(value)?
     };
+    if !row_classes::human_text("claude", &text) {
+        return None;
+    }
     let mut prompt = bounded_prompt(&text)?;
     prompt.submitted_at = provider_timestamp(value);
     Some(prompt)
@@ -1082,26 +1145,41 @@ fn extract_preview(
     };
     let mut fallback: Option<ParsedPrompt> = None;
     let mut messages = PreviewMessages::default();
-    for raw_line in buffer.split(|&byte| byte == b'\n') {
+    for raw_line in buffer.split_inclusive(|&byte| byte == b'\n') {
+        let raw_bytes = raw_line.len();
+        let complete = raw_line.last() == Some(&b'\n');
+        let raw_line = raw_line.strip_suffix(b"\n").unwrap_or(raw_line);
         let raw_line = match raw_line.last() {
             Some(b'\r') => &raw_line[..raw_line.len() - 1],
             _ => raw_line,
         };
-        let Some(compacted) = compact_prompt_line(raw_line) else {
+        let Some(compacted) = compact_display_line(raw_line) else {
+            messages.skipped_record(raw_bytes);
             continue;
         };
         let Ok(line) = std::str::from_utf8(&compacted) else {
             continue;
         };
         if line.is_empty() {
+            messages.skipped_record(raw_bytes);
             continue;
         }
         let Ok(value) = serde_json::from_str::<Value>(line) else {
+            if complete {
+                messages.skipped_record(raw_bytes);
+            }
             continue;
         };
-        let prompt = messages.observe(&value, provider, session_id);
+        let prompt = messages.observe(
+            &value,
+            provider,
+            session_id,
+            raw_bytes,
+            complete,
+            compacted.len(),
+        );
         if let Some(prompt) = prompt.or_else(|| {
-            (provider == ProviderKind::Codex)
+            (provider == ProviderKind::Codex && compacted.len() <= MAX_PROVIDER_LINE_BYTES)
                 .then(|| goal.observe(&value, session_id))
                 .flatten()
         }) {
@@ -2688,3 +2766,7 @@ mod session_model_tests {
 pub(crate) mod native_notice;
 #[cfg(test)]
 mod native_notice_tests;
+
+#[cfg(test)]
+#[path = "provider_prompt/runtime_row_tests.rs"]
+mod runtime_row_tests;

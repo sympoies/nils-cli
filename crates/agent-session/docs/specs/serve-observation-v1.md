@@ -71,17 +71,21 @@ recorded in `sympoies/nils-cli#1409`.
   Stale `last-prompt` markers cannot replace a newer human prompt.
 
   `data.capabilities.last_message: true` advertises an optional `last_message` object:
-  `{ role: "user" | "assistant", text, submitted_at?, truncated }`. It contains the newest eligible
-  user or assistant text in transcript order, from the same incremental tracker and cold window.
+  `{ role: "user" | "assistant" | "notice", text, submitted_at?, truncated, row_class?, compaction? }`.
+  It contains the newest eligible message in transcript order, from the same incremental tracker and cold window.
+  Runtime commands and completed compactions use [History row classes v1](history-row-classes-v1.md),
+  including its exact text, 65,536-scalar bound and compaction metadata. These classes do not update
+  the human `last_prompt` preview or emit human submission events.
   Thinking, tool payloads, internal context, and foreign/sidechain Claude messages are excluded.
-  Both previews use the 16 KiB UTF-8 text cap, remove unsupported control characters (retaining
+  Ordinary previews use the 16 KiB UTF-8 text cap, remove unsupported control characters (retaining
   newline and tab), and apply the same image-wrapper hygiene. Timestamps are included only when
   valid. Goal metadata updates `last_prompt` only. There is no separate `last_message_state`;
   it is omitted during pending/unavailable projections or without eligible text. Consumers can
   fall back to `last_prompt` when it is absent. Neither preview appears on the shared session board.
 
-  Inline string-valued `image_url` content is elided before the 256 KiB line-buffer bound, preserving
-  surrounding user text without retaining image payloads in that buffer. For Codex records containing an
+  Inline string-valued `image_url` content is elided before parsing, preserving surrounding user text
+  without retaining image payloads. Ordinary prompt/message admission retains the 256 KiB record bound;
+  classified display records use the existing 16 MiB provider window. For Codex records containing an
   actual image, paired image name/path wrapper lines are removed from the list preview so they cannot
   hide the user question; submission-event text stays unchanged. If cold recovery starts mid-history, the
   first existing Goal snapshot establishes its comparison baseline without replacing a newer prompt,

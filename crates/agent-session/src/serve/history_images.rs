@@ -115,3 +115,7 @@ mod history_image_regression_tests;
 #[cfg(test)]
 #[path = "mailbox_read_events_route_tests.rs"]
 mod mailbox_read_events_route_tests;
+
+#[cfg(test)]
+#[path = "history_row_classes_tests.rs"]
+mod history_row_classes_tests;
