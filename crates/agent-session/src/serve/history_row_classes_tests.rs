@@ -597,3 +597,78 @@ async fn class_contract_extended_boundary_stays_pending_then_emits_once_incremen
     assert_eq!(live[0]["id"], format!("{}-{anchor}", f.history));
     assert_eq!(live[0]["text"], "completed");
 }
+
+#[tokio::test]
+async fn queued_runtime_commands_do_not_become_first_history_previews() {
+    for markup in [false, true] {
+        for blocks in [false, true] {
+            let command = if markup {
+                "<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>keep focus</command-args>"
+            } else {
+                "/model keep focus"
+            };
+            let prompt = if blocks {
+                json!([{"type":"text","text":command}])
+            } else {
+                json!(command)
+            };
+            let records = [
+                json!({"type":"attachment","sessionId":"synthetic","cwd":"/workspace/fixture","timestamp":"2026-10-01T00:00:00Z","attachment":{"type":"queued_command","commandMode":"prompt","origin":{"kind":"human"},"prompt":prompt}}),
+                user("claude", "first ordinary request"),
+            ];
+            let f = Fixture::new("claude", &[]);
+            // This session begins with a queued command, before any human prompt.
+            fs::write(
+                &f.file,
+                records
+                    .iter()
+                    .map(|row| format!("{row}\n"))
+                    .collect::<String>(),
+            )
+            .unwrap();
+            let rows = f.all(false, false).await;
+            if markup {
+                // Queued command markup is an existing machine-prompt shape.
+                assert_eq!(rows.len(), 1);
+            } else {
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0]["row_class"], "runtime_command");
+                assert_eq!(rows[0]["text"], "/model keep focus");
+            }
+            let human = rows.last().unwrap();
+            assert_eq!(human["text"], "first ordinary request");
+            assert!(human.get("row_class").is_none());
+
+            let response = f
+                .app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/history/sessions")
+                        .header(AUTHORIZATION, format!("Bearer {TOKEN}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body: Value = serde_json::from_slice(
+                &axum::body::to_bytes(response.into_body(), 2 * 1024 * 1024)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            let sessions = body["data"]["sessions"].as_array().unwrap();
+            let session = sessions
+                .iter()
+                .find(|session| session["id"] == f.history)
+                .unwrap();
+            for field in ["first_user_prompt_preview", "prompt_preview"] {
+                assert_eq!(
+                    session[field], "first ordinary request",
+                    "markup={markup}, blocks={blocks}, field={field}"
+                );
+            }
+        }
+    }
+}

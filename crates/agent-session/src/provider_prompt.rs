@@ -896,7 +896,8 @@ fn parse_claude_history_prompt(line: &str, session_id: &str) -> Option<ParsedPro
     let value = serde_json::from_str::<Value>(line).ok()?;
     let prompt = parse_claude_user_prompt_value(&value, session_id).or_else(|| {
         let text = claude_queued_prompt_text(&value)?;
-        if !claude_session_matches(&value, session_id) {
+        if !claude_session_matches(&value, session_id) || !row_classes::human_text("claude", &text)
+        {
             return None;
         }
         let mut prompt = bounded_prompt(&text)?;
