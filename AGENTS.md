@@ -27,7 +27,10 @@ Open only the references relevant to the requested change:
 
 - Source `scripts/dev-env.sh` in every development/automation shell; this
   repository requires `DEVLOG_LAYOUT=fragments` and `devlog >=1.31.16`.
-- Exceptions are a `semantic-commit` authoring call and, when the owner guard
+- Plain Git integration steps, such as fetch and merge preparation, run as their
+  own call without sourcing. For example: `git merge --no-ff --no-commit <main>`.
+  Checks, devlog commands, and other repository tooling still source the environment.
+- Other exceptions are a `semantic-commit` authoring call and, when the owner guard
   requires a stable sole-command context, a trusted `git-cli worktree remove
   <exact owned absolute managed path>` call or a literal `git -C <exact owned
   non-default managed checkout> merge --no-commit --no-ff --no-edit <verified
