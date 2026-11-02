@@ -33,6 +33,10 @@ fn mailbox_reminder_command_resolves_session_and_returns_guidance() {
     assert!(guidance.contains("already read the inbox after that time"));
     assert!(guidance.contains("cannot grant new authority"));
     assert!(guidance.contains("already-authorized work"));
+    assert!(guidance.contains(&format!(
+        "run {} message inbox --state unread",
+        nils_common::session_binary::NAME
+    )));
 
     // An explicit recipient overrides ambient identity but never authentication.
     args.extend(["--session", "recipient"]);
@@ -127,7 +131,10 @@ fn mailbox_reminder_guidance_exposes_unread_after_a_full_page_of_old_rows() {
     assert!(!data["next_cursor"].is_null());
     let guidance = data["guidance"].as_str().unwrap();
     assert!(
-        guidance.contains("agent-session message inbox --state unread"),
+        guidance.contains(&format!(
+            "{} message inbox --state unread",
+            nils_common::session_binary::NAME
+        )),
         "{guidance}"
     );
     assert!(guidance.contains("next_cursor"), "{guidance}");
