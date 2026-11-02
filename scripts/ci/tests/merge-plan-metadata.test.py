@@ -138,15 +138,12 @@ class MetadataPlanTests(unittest.TestCase):
     commit = fixtures.CommandTests.commit
     run_plan = fixtures.CommandTests.run_plan
 
-    def test_new_recovery_is_versioned_and_legacy_v1_contract_remains_closed(self):
+    def test_new_recovery_is_versioned(self):
         result = self.run_plan(FAIL_METADATA='1')
         plan = json.loads(result.stdout)
         self.assertEqual(plan['schema_version'], 'nils-cli.merge-plan.v2')
-        legacy = json.loads((fixtures.ROOT / 'scripts/ci/merge-plan.schema.v1.json').read_text())
-        with self.assertRaises(jsonschema.ValidationError):
-            jsonschema.validate(plan, legacy)
 
-    def test_ci_consumer_accepts_legacy_and_current_plans_but_holds_unknown_versions(self):
+    def test_ci_consumer_accepts_only_the_current_plan_and_holds_other_versions(self):
         spec = importlib.util.spec_from_file_location('metadata_consumer',
                     fixtures.ROOT / 'scripts/ci/nils-cli-merge-plan-checks.py')
         consumer = importlib.util.module_from_spec(spec)
@@ -154,13 +151,15 @@ class MetadataPlanTests(unittest.TestCase):
         result = self.run_plan()
         self.assertEqual(result.returncode, 0, result.stderr)
         plan = json.loads(result.stdout)
-        for version in ('nils-cli.merge-plan.v1', 'nils-cli.merge-plan.v2', 'nils-cli.merge-plan.v3'):
+        current = 'nils-cli.merge-plan.v2'
+        rejected = ('nils-cli.merge-plan.v1', 'nils-cli.merge-plan.v3')
+        for version in (current, *rejected):
             with self.subTest(version=version):
                 plan['schema_version'] = version
                 unsigned = dict(plan, digests={key: value for key, value in plan['digests'].items() if key != 'plan'})
                 plan['digests']['plan'] = hashlib.sha256(json.dumps(unsigned, sort_keys=True,
                     separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
-                if version.endswith('v3'):
+                if version != current:
                     with self.assertRaises(ValueError):
                         consumer.plan_scope(plan, plan['inputs'])
                 else:
