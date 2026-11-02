@@ -59,38 +59,65 @@ pub(in crate::coordination) fn admit(
     }
 }
 
+/// The mailbox quota bounds the total, so the reminder fits one input row.
+const MAX_TOTAL: usize = 256;
+const UNREAD_SUFFIX: &str = " unread; agent-session message inbox";
+
+/// The plain reminder: one total and the inbox action, in a readable line.
+pub(super) fn unread_prompt(total: usize) -> String {
+    format!("Mailbox: {}{UNREAD_SUFFIX}", total.clamp(1, MAX_TOTAL))
+}
+
 /// Bounded metadata-only syntax, recognized without accepting arbitrary commands.
 pub(super) fn is_count_prompt(prompt: &str) -> bool {
-    let Some(body) = prompt.strip_prefix("Mailbox: ") else {
-        return false;
-    };
-    let mut seen = std::collections::BTreeSet::new();
     prompt.len() <= 51
+        && prompt
+            .strip_prefix("Mailbox: ")
+            .and_then(|body| body.strip_suffix(UNREAD_SUFFIX))
+            .is_some_and(|count| {
+                count.parse::<u16>().is_ok_and(|value| {
+                    (1..=MAX_TOTAL as u16).contains(&value) && value.to_string() == count
+                })
+            })
+}
+
+/// The former letter-alias reminder (`Mailbox: b=1 h=2`), read and never
+/// produced. Provider history is external and immutable, so reminders already in
+/// a transcript must still be recognized, and a receipt stored before the
+/// change must be rewritten. Returns the total of its counts.
+pub(super) fn legacy_total(prompt: &str) -> Option<usize> {
+    let body = prompt.strip_prefix("Mailbox: ")?;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut total = 0usize;
+    let valid = prompt.len() <= 51
         && !body.is_empty()
         && body.split(' ').all(|part| {
             let Some((key, count)) = part.split_once('=') else {
                 return false;
             };
-            matches!(key, "p" | "h" | "r" | "b" | "d" | "u")
-                && seen.insert(key)
-                && count
-                    .parse::<u16>()
-                    .is_ok_and(|value| value > 0 && value <= 256 && value.to_string() == count)
-        })
+            let Some(value) = count.parse::<u16>().ok().filter(|value| {
+                *value > 0 && usize::from(*value) <= MAX_TOTAL && value.to_string() == count
+            }) else {
+                return false;
+            };
+            total += usize::from(value);
+            matches!(key, "p" | "h" | "r" | "b" | "d" | "u") && seen.insert(key)
+        });
+    valid.then_some(total)
 }
 
 fn category_counts<'a>(
     messages: impl Iterator<Item = &'a StoredMessage>,
-) -> BTreeMap<(&'static str, &'static str), usize> {
+) -> BTreeMap<&'static str, usize> {
     let mut counts = BTreeMap::new();
     for item in messages {
         let category = match item.category.unwrap_or_default() {
-            MessageCategory::Progress => ("p", "progress"),
-            MessageCategory::Handoff => ("h", "handoff"),
-            MessageCategory::Report => ("r", "report"),
-            MessageCategory::Blocker => ("b", "blocker"),
-            MessageCategory::Decision => ("d", "decision"),
-            MessageCategory::Uncategorized => ("u", "uncategorized"),
+            MessageCategory::Progress => "progress",
+            MessageCategory::Handoff => "handoff",
+            MessageCategory::Report => "report",
+            MessageCategory::Blocker => "blocker",
+            MessageCategory::Decision => "decision",
+            MessageCategory::Uncategorized => "uncategorized",
         };
         *counts.entry(category).or_default() += 1;
     }
@@ -99,27 +126,20 @@ fn category_counts<'a>(
 
 /// Render only unread metadata selected by the owning mailbox transaction.
 ///
-/// The compact form exists for the typed composer reminder, which must stay on
-/// one observable row of a 51-column pane.
+/// One total in a readable line, for the typed composer reminder and the plain
+/// fallbacks, which must stay on one observable row of a 51-column pane.
 pub(super) fn count_prompt<'a>(messages: impl Iterator<Item = &'a StoredMessage>) -> String {
-    format!(
-        "Mailbox: {}",
-        category_counts(messages)
-            .iter()
-            .map(|((kind, _), count)| format!("{kind}={count}"))
-            .collect::<Vec<_>>()
-            .join(" ")
-    )
+    unread_prompt(messages.count())
 }
 
-/// The same counts spelled out, for notice delivery. A notice envelope is
-/// multiline and is not held to the one-row width bound of the compact form.
+/// The counts spelled out by category, for notice delivery. A notice envelope is
+/// multiline and is not held to the one-row width bound of the plain reminder.
 pub(super) fn explained_prompt<'a>(messages: impl Iterator<Item = &'a StoredMessage>) -> String {
     format!(
         "Mailbox: {}; agent-session message inbox",
         category_counts(messages)
             .iter()
-            .map(|((_, name), count)| format!("{count} {name}"))
+            .map(|(name, count)| format!("{count} {name}"))
             .collect::<Vec<_>>()
             .join(", ")
     )

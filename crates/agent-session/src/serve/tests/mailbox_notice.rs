@@ -155,7 +155,7 @@ async fn controller(working: bool, writers: bool, outcome: Outcome) {
     if writers {
         assert_notice(&message);
     } else {
-        assert_eq!(message, "Mailbox: h=1 r=2");
+        assert_eq!(message, "Mailbox: 3 unread; agent-session message inbox");
     }
     if !matches!(outcome, Outcome::Accepted) {
         assert_eq!(notification_fixture(tmp.path())["state"], "attempt_unknown");
