@@ -108,7 +108,8 @@ pub(crate) fn ensure_input_allowed(
             "auth-quarantined",
             "the Claude runtime is quarantined after authentication failure",
             Some(serde_json::json!({"id":record.id,"retryable":false,
-                "stage":"admission","pasted":false,"submitted":false})),
+                "stage":"admission","pasted":false,"submitted":false,
+                "reason":"auth_failed","exit":["restart","switch_account"]})),
         ));
     }
     Ok(())
