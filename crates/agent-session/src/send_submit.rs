@@ -22,8 +22,8 @@ pub(crate) use composer::cleanup::{
 };
 pub(crate) use composer::command_ui_observed;
 pub(crate) use composer::{
-    composer_holds, direct_composer_input, exact_composer_input, known_multiline_cursor_holds,
-    known_multiline_input,
+    Unobserved, composer_holds, direct_composer_observation, exact_composer_input,
+    known_multiline_cursor_holds, known_multiline_input,
 };
 
 /// Leading non-whitespace characters used to find the text again. Short enough

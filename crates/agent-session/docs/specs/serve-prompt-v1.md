@@ -49,6 +49,17 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   the existing exact composer observation limits in [Send v1](send-v1.md).
   It is non-atomic against human keystrokes or provider redraws after the check.
 
+  A `composer-unobservable` refusal also names the observation step that
+  failed, as `observation` in `error.details` for the unkeyed route and in the
+  refused receipt (`error.details.receipt.observation`) for the keyed route.
+  The value is one of `capture-failed` (the terminal capture failed),
+  `pane-unparsable` (the capture holds a sequence the reader rejects),
+  `composer-not-located` (no input region, as when a dialog or picker replaces
+  the composer) or `row-unrecognized` (a region exists but its row does not
+  prove the exact input). It is a fixed word and never carries pane text, a
+  path or raw output. The field is additive and absent for other refusals and
+  for receipts written before it existed; the code and status are unchanged.
+
   A Claude queued-reply hint is empty only when its sole input row is the
   native dim-styled hint and contains no owner text. A second direct reply is
   then admitted. Unstyled literal text matching the hint, or owner input beside

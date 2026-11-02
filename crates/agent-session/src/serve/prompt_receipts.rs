@@ -55,6 +55,9 @@ struct Receipt {
     code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     composer_cleanup: Option<terminal::ComposerCleanup>,
+    /// Which composer observation step failed, when a guard refusal says so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    observation: Option<crate::send_submit::Unobserved>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     confirmation_diagnostic: Option<ConfirmationDiagnostic>,
 }
@@ -68,6 +71,7 @@ impl Receipt {
             outcome: Outcome::Unknown,
             code: Some("structured-prompt-outcome-unknown".into()),
             composer_cleanup: None,
+            observation: None,
             confirmation_diagnostic: Some(ConfirmationDiagnostic::AcceptanceUnobservable),
         }
     }
@@ -547,6 +551,7 @@ async fn classify(response: Response, mut receipt: Receipt) -> ResultRecord {
     {
         receipt.outcome = Outcome::Refused;
         receipt.code = Some(code.to_string());
+        receipt.observation = serde_json::from_value(details["observation"].clone()).ok();
         receipt.confirmation_diagnostic = None;
         ResultRecord {
             receipt,
