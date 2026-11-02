@@ -152,6 +152,13 @@ collapsed into empty input. Codex whitespace-only drafts remain nonempty;
 hyperlink metadata never substitutes for dim proof or hides visible caption
 text.
 
+The screen reader is frozen. It is not widened for a new render form: a pane
+shape it does not recognize stays a typed refusal. A recorded corpus of
+sanitized or derived panes, with escape bytes intact, pins what the reader
+returns for each, and runs in the normal test suite. A case is added only from
+a sanitized real capture or from a named edit of one. The corpus is not proof
+for provider builds it does not hold.
+
 A guarded text-and-key send drops trailing line breaks before it pastes, since a
 submitted prompt ignores them and a pasted break would add a composer row that
 cannot be read back exactly. A line break anywhere else is refused before paste

@@ -1,0 +1,56 @@
+{
+  "provenance": "Claude Code 2.1.296 pane, 80x24, tmux capture-pane -p -e -N (no -T), unauthenticated idle start with no suggestion hint. Sanitized by replacing the working directory and model/plan text; every escape byte is untouched. Entries marked derived change only the named row or line of that capture.",
+  "capture_flags": "capture-pane -p -e -N",
+  "entries": [
+    {
+      "id": "claude-2.1.296-idle-empty",
+      "provider": "claude",
+      "origin": "real capture, sanitized",
+      "capture": "\n\u001b[38;5;174m ▐\u001b[48;5;16m▛███▛█\u001b[39m\u001b[49m   \u001b[1mClaude Code\u001b[0m \u001b[38;5;246mv2.1.296\u001b[39m         \n\u001b[38;5;174m▝▜\u001b[48;5;16m█████\u001b[49m█▀\u001b[39m  \u001b[38;5;246mModel · Plan\u001b[39m \n\u001b[38;5;174m ▝▝   ▝▝ \u001b[39m  \u001b[38;5;246m/…/work\u001b[39m                   \n\n\u001b[38;5;174m▎\u001b[39m \u001b[1mAuto mode is now Claude Code's default permission mode.\u001b[0m                       \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246mAuto mode lets Claude handle permission prompts automatically. Claude checks \u001b[39m \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246meach tool call for risky actions and prompt injection before executing, runs \u001b[39m \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246mthe ones it assesses as lower-risk, and blocks the rest.\u001b[39m                      \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246mhttps://code.claude.com/docs/en/permission-modes\u001b[39m                              \n\n\n\n\n\n\n\n\n\n                                                                                \n\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────\n\u001b[39m❯ \u001b[7m \u001b[0m                 \n\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────\n\u001b[39m  \u001b[38;5;220m⏵⏵ auto mode on\u001b[38;5;246m (shift+tab to cycle) · ← for agents\u001b[39m                           \n",
+      "exact": "",
+      "direct": {
+        "input": ""
+      }
+    },
+    {
+      "id": "claude-2.1.296-typed-draft",
+      "provider": "claude",
+      "origin": "real capture with the composer row replaced",
+      "capture": "\n\u001b[38;5;174m ▐\u001b[48;5;16m▛███▛█\u001b[39m\u001b[49m   \u001b[1mClaude Code\u001b[0m \u001b[38;5;246mv2.1.296\u001b[39m         \n\u001b[38;5;174m▝▜\u001b[48;5;16m█████\u001b[49m█▀\u001b[39m  \u001b[38;5;246mModel · Plan\u001b[39m \n\u001b[38;5;174m ▝▝   ▝▝ \u001b[39m  \u001b[38;5;246m/…/work\u001b[39m                   \n\n\u001b[38;5;174m▎\u001b[39m \u001b[1mAuto mode is now Claude Code's default permission mode.\u001b[0m                       \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246mAuto mode lets Claude handle permission prompts automatically. Claude checks \u001b[39m \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246meach tool call for risky actions and prompt injection before executing, runs \u001b[39m \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246mthe ones it assesses as lower-risk, and blocks the rest.\u001b[39m                      \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246mhttps://code.claude.com/docs/en/permission-modes\u001b[39m                              \n\n\n\n\n\n\n\n\n\n                                                                                \n\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────\n\u001b[39m❯ synthetic draft                    \n\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────\n\u001b[39m  \u001b[38;5;220m⏵⏵ auto mode on\u001b[38;5;246m (shift+tab to cycle) · ← for agents\u001b[39m                           \n",
+      "exact": "synthetic draft",
+      "direct": {
+        "input": "synthetic draft"
+      }
+    },
+    {
+      "id": "claude-2.1.296-paste-placeholder",
+      "provider": "claude",
+      "origin": "real capture with the composer row replaced",
+      "capture": "\n\u001b[38;5;174m ▐\u001b[48;5;16m▛███▛█\u001b[39m\u001b[49m   \u001b[1mClaude Code\u001b[0m \u001b[38;5;246mv2.1.296\u001b[39m         \n\u001b[38;5;174m▝▜\u001b[48;5;16m█████\u001b[49m█▀\u001b[39m  \u001b[38;5;246mModel · Plan\u001b[39m \n\u001b[38;5;174m ▝▝   ▝▝ \u001b[39m  \u001b[38;5;246m/…/work\u001b[39m                   \n\n\u001b[38;5;174m▎\u001b[39m \u001b[1mAuto mode is now Claude Code's default permission mode.\u001b[0m                       \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246mAuto mode lets Claude handle permission prompts automatically. Claude checks \u001b[39m \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246meach tool call for risky actions and prompt injection before executing, runs \u001b[39m \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246mthe ones it assesses as lower-risk, and blocks the rest.\u001b[39m                      \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246mhttps://code.claude.com/docs/en/permission-modes\u001b[39m                              \n\n\n\n\n\n\n\n\n\n                                                                                \n\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────\n\u001b[39m❯ [Pasted text #1 +20 lines]                    \n\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────\n\u001b[39m  \u001b[38;5;220m⏵⏵ auto mode on\u001b[38;5;246m (shift+tab to cycle) · ← for agents\u001b[39m                           \n",
+      "exact": null,
+      "direct": {
+        "observation": "row-unrecognized"
+      }
+    },
+    {
+      "id": "claude-2.1.296-no-input-box",
+      "provider": "claude",
+      "origin": "real capture with the box top border removed",
+      "capture": "\n\u001b[38;5;174m ▐\u001b[48;5;16m▛███▛█\u001b[39m\u001b[49m   \u001b[1mClaude Code\u001b[0m \u001b[38;5;246mv2.1.296\u001b[39m         \n\u001b[38;5;174m▝▜\u001b[48;5;16m█████\u001b[49m█▀\u001b[39m  \u001b[38;5;246mModel · Plan\u001b[39m \n\u001b[38;5;174m ▝▝   ▝▝ \u001b[39m  \u001b[38;5;246m/…/work\u001b[39m                   \n\n\u001b[38;5;174m▎\u001b[39m \u001b[1mAuto mode is now Claude Code's default permission mode.\u001b[0m                       \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246mAuto mode lets Claude handle permission prompts automatically. Claude checks \u001b[39m \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246meach tool call for risky actions and prompt injection before executing, runs \u001b[39m \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246mthe ones it assesses as lower-risk, and blocks the rest.\u001b[39m                      \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246mhttps://code.claude.com/docs/en/permission-modes\u001b[39m                              \n\n\n\n\n\n\n\n\n\n                                                                                \n\u001b[39m❯ \u001b[7m \u001b[0m                 \n\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────\n\u001b[39m  \u001b[38;5;220m⏵⏵ auto mode on\u001b[38;5;246m (shift+tab to cycle) · ← for agents\u001b[39m                           \n",
+      "exact": null,
+      "direct": {
+        "observation": "composer-not-located"
+      }
+    },
+    {
+      "id": "claude-2.1.296-unsupported-style-code",
+      "provider": "claude",
+      "origin": "real capture with one style code replaced",
+      "capture": "\n\u001b[38;5;174m ▐\u001b[48;5;16m▛███▛█\u001b[39m\u001b[49m   \u001b[999mClaude Code\u001b[0m \u001b[38;5;246mv2.1.296\u001b[39m         \n\u001b[38;5;174m▝▜\u001b[48;5;16m█████\u001b[49m█▀\u001b[39m  \u001b[38;5;246mModel · Plan\u001b[39m \n\u001b[38;5;174m ▝▝   ▝▝ \u001b[39m  \u001b[38;5;246m/…/work\u001b[39m                   \n\n\u001b[38;5;174m▎\u001b[39m \u001b[1mAuto mode is now Claude Code's default permission mode.\u001b[0m                       \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246mAuto mode lets Claude handle permission prompts automatically. Claude checks \u001b[39m \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246meach tool call for risky actions and prompt injection before executing, runs \u001b[39m \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246mthe ones it assesses as lower-risk, and blocks the rest.\u001b[39m                      \n\u001b[38;5;174m▎\u001b[39m \u001b[38;5;246mhttps://code.claude.com/docs/en/permission-modes\u001b[39m                              \n\n\n\n\n\n\n\n\n\n                                                                                \n\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────\n\u001b[39m❯ \u001b[7m \u001b[0m                 \n\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────\n\u001b[39m  \u001b[38;5;220m⏵⏵ auto mode on\u001b[38;5;246m (shift+tab to cycle) · ← for agents\u001b[39m                           \n",
+      "exact": null,
+      "direct": {
+        "observation": "pane-unparsable"
+      }
+    }
+  ]
+}
