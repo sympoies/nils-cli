@@ -152,7 +152,10 @@ impl Client {
             .pointer("/thread/status/type")
             .and_then(Value::as_str)
         {
-            Some("idle") => Ok(()),
+            // After an error event, the provider reports a loaded thread that
+            // is not running and has no pending request as `systemError`,
+            // until its next turn starts. That is idle for a guarded send.
+            Some("idle" | "systemError") => Ok(()),
             Some("active") => Err("send-session-not-idle"),
             _ => Err("send-idle-unobservable"),
         }
