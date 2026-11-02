@@ -6,6 +6,10 @@ use pretty_assertions::assert_eq;
 
 impl Fixture {
     fn notice(&self, extra: &[&str]) -> CmdOutput {
+        self.notice_kind(&[&["--kind", "schedule.tick"][..], extra].concat())
+    }
+
+    fn notice_kind(&self, extra: &[&str]) -> CmdOutput {
         fs::write(self.root().join("notice-mode"), "").unwrap();
         let body = self.root().join("notice-body");
         let state = self.root().join("state");
@@ -18,8 +22,6 @@ impl Fixture {
             state.to_str().unwrap(),
             "notice",
             "guarded",
-            "--kind",
-            "schedule.tick",
             "--source",
             "scheduler",
             "--id",
@@ -352,4 +354,31 @@ fn queued_claude_notice_stops_on_transport_refusal_without_claim() {
         "notice-once",
     ]);
     assert_eq!(output.code, 0, "{}", output.stdout_text());
+}
+
+#[test]
+fn notice_summary_contract_reaches_native_transport_with_exact_bytes() {
+    // Contract pinned to merged design f1cacbf8, not a moving producer registry.
+    let corpus: Value = serde_json::from_str(include_str!(
+        "../../docs/specs/fixtures/history-row-classes-v1.json"
+    )).unwrap();
+    for case in corpus["summary_encoding"].as_array().unwrap() {
+        if case.get("expected_body").is_none() { continue; }
+        let fixture = Fixture::new("codex");
+        let _capability = fixture.bind_codex();
+        let server = Server::start(&fixture, "idle");
+        fs::write(fixture.root().join("notice-body"), case["body"].as_str().unwrap()).unwrap();
+        let mut extra = vec!["--kind", case["kind"].as_str().unwrap()];
+        if let Some(summary) = case["summary"].as_str() {
+            extra.extend(["--summary", summary]);
+        }
+        // The fixture supplies its kind; replace that default for each contract row.
+        let output = fixture.notice_kind(&extra);
+        assert_eq!(output.code, 0, "{}: {} {}", case["name"], output.stdout_text(), output.stderr_text());
+        let expected = format!(
+            "<!-- agent-notice:v1 kind={} source=scheduler id=Example-1 -->\n\n{}",
+            case["kind"].as_str().unwrap(), case["expected_body"].as_str().unwrap()
+        );
+        assert_eq!(server.mutations()[0]["params"]["input"][0]["text"], expected, "{}", case["name"]);
+    }
 }

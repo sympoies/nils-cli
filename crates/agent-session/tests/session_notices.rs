@@ -183,3 +183,29 @@ fn encoder_refuses_invalid_metadata_and_ambiguous_bodies() {
         Err(NoticeError::DoubleHeader)
     );
 }
+
+#[test]
+fn invalid_summary_is_refused_before_body_target_or_claim_without_echo() {
+    let corpus: serde_json::Value = serde_json::from_str(include_str!(
+        "../docs/specs/fixtures/history-row-classes-v1.json"
+    )).unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let state = temp.path().join("absent-state");
+    let body = temp.path().join("absent-body");
+    for case in corpus["summary_encoding"].as_array().unwrap().iter()
+        .filter(|case| case["error"] == "notice-summary-invalid") {
+        let output = run_resolved("agent-session", &[
+            "--state-dir", state.to_str().unwrap(), "notice", "missing",
+            "--kind", "schedule.pulse", "--source", "scheduler",
+            "--summary", case["summary"].as_str().unwrap(),
+            "--body-file", body.to_str().unwrap(), "--idempotency-key", "unclaimed",
+            "--format", "json"
+        ], &CmdOptions::new().with_env_remove_prefix("AGENT_SESSION_")
+            .with_env("AGENT_SESSION_NOTICE_WRITERS", "1"));
+        assert_eq!(output.code, 2, "{}: {} {}", case["name"], output.stdout_text(), output.stderr_text());
+        let error = output.stdout_json();
+        assert_eq!(error["error"]["code"], "notice-summary-invalid");
+        assert_eq!(error["error"]["message"], "notice summary must contain 1..70 Unicode scalar values, include non-whitespace text, and contain no controls or line separators");
+        assert!(!state.exists(), "{}", case["name"]);
+    }
+}
