@@ -235,7 +235,7 @@ pub(super) fn create_record_with_lineage(
         Some(title_state) => {
             canonicalize_structured_title_pair(title, title_supplied, title_state)?
         }
-        None => (title, None),
+        None => (crate::session_title::normalize_manual_title(title)?, None),
     };
     let title_slug = title.as_deref().map(slugify);
     let id = resolve_session_id(

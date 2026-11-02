@@ -104,6 +104,8 @@ pub enum Command {
     Account(AccountArgs),
     /// Re-read one session's model, reasoning effort and title from live state.
     Refresh(SessionRefArgs),
+    /// Pin a session title or resume generated topics with authenticated authority.
+    Title(crate::session_title::TitleArgs),
     /// Inspect or ingest metadata-only agent turn lifecycle events.
     Activity(ActivityArgs),
     /// Manage authenticated structured work context and mutation leases.

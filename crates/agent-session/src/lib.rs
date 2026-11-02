@@ -69,6 +69,8 @@ mod serve;
 mod serve_config;
 mod session_account;
 mod session_model;
+mod session_title;
+use session_title::normalize_title;
 mod session_record;
 mod session_views;
 use session_views::{list_sessions, list_sessions_for_serve, visit_session_views};
@@ -306,6 +308,7 @@ fn dispatch(cli: Cli) -> i32 {
         Command::Board(args) => board::run(&context, args),
         Command::Show(args) => session_model::refresh::run_show(&context, args),
         Command::Refresh(args) => session_model::refresh::run(&context, args),
+        Command::Title(args) => session_title::run(&context, args),
         Command::AutoResume(args) => auto_resume::cli::run(&context, args),
         Command::Attach(args) => run_attach(&context, args),
         Command::Logs(args) => run_logs(&context, args),
@@ -5139,24 +5142,6 @@ fn establish_coordination_broker_with_previous(
         },
     )?;
     coordination::activate_ready(context, record)
-}
-
-fn normalize_title(title: Option<String>) -> Result<Option<String>, CliError> {
-    let Some(title) = title else {
-        return Ok(None);
-    };
-    let title = title.trim().to_string();
-    if title.is_empty() {
-        return Ok(None);
-    }
-    if title.chars().count() > 120 {
-        return Err(CliError::usage(
-            "title-too-long",
-            "session title must be 120 characters or fewer",
-            Some(json!({ "max_chars": 120 })),
-        ));
-    }
-    Ok(Some(title))
 }
 
 pub(crate) fn canonicalize_structured_title_pair(
@@ -13082,7 +13067,7 @@ exit 97
     }
 
     #[test]
-    fn create_record_preserves_title_only_input_contract() {
+    fn create_record_normalizes_and_bounds_plain_titles() {
         let tmp = tempfile::TempDir::new().unwrap();
         let context = test_context(tmp.path());
         let padded = create_record(RecordRequest {
@@ -13103,7 +13088,7 @@ exit 97
         .unwrap();
         assert_eq!(
             padded.record.title.as_deref(),
-            Some("  padded title-only input  ")
+            Some("padded title-only input")
         );
         drop(padded);
 
@@ -13122,9 +13107,8 @@ exit 97
             provider_resume: None,
             agent_args: Vec::new(),
             agent_bin: None,
-        })
-        .unwrap();
-        assert_eq!(long.record.title.as_deref(), Some(long_title.as_str()));
+        });
+        assert_eq!(long.err().unwrap().code(), "title-too-long");
     }
 
     #[test]
