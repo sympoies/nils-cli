@@ -47,8 +47,8 @@ Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/publish-order-audit.sh --strict
   - bash scripts/ci/third-party-artifacts-audit.sh --strict
   - bash scripts/ci/completion-asset-audit.sh --strict
-  - bash scripts/ci/completion-freshness-audit.sh --strict
-  - bash scripts/ci/completion-flag-parity-audit.sh --strict
+  - bash scripts/ci/completion-freshness-audit.sh
+  - bash scripts/ci/completion-flag-parity-audit.sh
   - zsh -f tests/zsh/completion.test.zsh
   - cargo fmt --all -- --check
   - cargo clippy --all-targets --all-features -- -D warnings
@@ -253,8 +253,8 @@ run bash scripts/ci/crate-naming-audit.sh
 run bash scripts/ci/publish-order-audit.sh --strict
 run bash scripts/ci/third-party-artifacts-audit.sh --strict
 run bash scripts/ci/completion-asset-audit.sh --strict
-run_os_independent_audit bash scripts/ci/completion-freshness-audit.sh --strict
-run_os_independent_audit bash scripts/ci/completion-flag-parity-audit.sh --strict
+run_os_independent_audit bash scripts/ci/completion-freshness-audit.sh
+run_os_independent_audit bash scripts/ci/completion-flag-parity-audit.sh
 run zsh -f tests/zsh/completion.test.zsh
 run cargo fmt --all -- --check
 run cargo clippy --all-targets --all-features -- -D warnings

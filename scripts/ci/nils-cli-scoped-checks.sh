@@ -103,8 +103,8 @@ while IFS= read -r binary; do
   fi
 done <<< "$completion_bins"
 if (( ${#completion_args[@]} > 0 )); then
-  run bash scripts/ci/completion-freshness-audit.sh --strict --skip-build "${completion_args[@]}"
-  run bash scripts/ci/completion-flag-parity-audit.sh --strict --skip-build "${completion_args[@]}"
+  run bash scripts/ci/completion-freshness-audit.sh --skip-build "${completion_args[@]}"
+  run bash scripts/ci/completion-flag-parity-audit.sh --skip-build "${completion_args[@]}"
 fi
 
 case "${NILS_CLI_TEST_RUNNER:-nextest}" in

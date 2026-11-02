@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Removed options must fail before any build or workspace probe.
+status=0
+output="$(bash "$(dirname "$0")/../completion-freshness-audit.sh" --strict --skip-build --bin nonexistent-test-cli 2>&1)" || status=$?
+if [[ "$status" -ne 2 || "$output" != *"unknown argument: --strict"* ]]; then
+  echo "FAIL: --strict must be rejected before auditing (status=$status): $output" >&2
+  exit 1
+fi
+
 # Self-test for scripts/ci/completion-freshness-audit.sh.
 #
 # Uses a synthetic mini workspace so stale committed completion content is

@@ -353,7 +353,7 @@ else:
         self.candidate()
         result, rows = self.execute()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('completion-flag-parity-audit --strict --skip-build --bin selected-cli', self.audits())
+        self.assertIn('completion-flag-parity-audit --skip-build --bin selected-cli', self.audits())
         builds = [r['args'] for r in rows if r['args'][0] == 'build']
         self.assertEqual(len(builds), 1)
         self.assertNotIn('--workspace', builds[0])

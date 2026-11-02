@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Removed options must fail before any build or workspace probe.
+status=0
+output="$(bash "$(dirname "$0")/../completion-flag-parity-audit.sh" --strict --skip-build --bin nonexistent-test-cli 2>&1)" || status=$?
+if [[ "$status" -ne 2 || "$output" != *"unknown argument: --strict"* ]]; then
+  echo "FAIL: --strict must be rejected before auditing (status=$status): $output" >&2
+  exit 1
+fi
+
 # Self-test for scripts/ci/completion-flag-parity-audit.sh.
 #
 # Uses a synthetic mini workspace with fake binaries so the audit's report
@@ -141,7 +149,7 @@ run_audit() {
   local out_file="$3"
   local code=0
   COMPLETION_PARITY_JOBS="$jobs" \
-    bash "$dir/scripts/ci/completion-flag-parity-audit.sh" --strict >"$out_file" 2>&1 || code=$?
+    bash "$dir/scripts/ci/completion-flag-parity-audit.sh" >"$out_file" 2>&1 || code=$?
   printf '%s' "$code"
 }
 
@@ -302,7 +310,7 @@ run_isolated_audit() {
   local code=0
   (cd "$tmp" && env "$@" PATH="$stub_dir:$PATH" STUB_CARGO_LOG="$dir/cargo.log" \
     COMPLETION_PARITY_JOBS=2 \
-    bash "$dir/scripts/ci/completion-flag-parity-audit.sh" --strict) >"$out_file" 2>&1 || code=$?
+    bash "$dir/scripts/ci/completion-flag-parity-audit.sh") >"$out_file" 2>&1 || code=$?
   printf '%s' "$code"
 }
 
@@ -369,7 +377,7 @@ run_selected_audit() {
   local code=0
   (cd "$tmp" && env PATH="$stub_dir:$PATH" STUB_CARGO_LOG="$dir/cargo.log" \
     COMPLETION_PARITY_JOBS=2 \
-    bash "$dir/scripts/ci/completion-flag-parity-audit.sh" --strict "$@") >"$out_file" 2>&1 || code=$?
+    bash "$dir/scripts/ci/completion-flag-parity-audit.sh" "$@") >"$out_file" 2>&1 || code=$?
   printf '%s' "$code"
 }
 

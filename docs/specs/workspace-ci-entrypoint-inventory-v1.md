@@ -135,7 +135,6 @@ records the keep/delete decision plus the active caller evidence.
 
 | Path | Decision | Active caller evidence |
 | --- | --- | --- |
-| `.github/scripts/release-ci-gate.cjs` | keep | historical receipt compatibility helpers + `scripts/ci/tests/release-ci-gate.test.cjs` |
 | `.github/scripts/release-validation-reuse.cjs` | keep | `.github/workflows/release.yml` authorization/reuse and final validation gate + `scripts/ci/tests/release-ci-gate.test.cjs` |
 | `scripts/ci/lib/cargo-target-dir.sh` | keep | sourced by `scripts/ci/completion-freshness-audit.sh` + `scripts/ci/completion-flag-parity-audit.sh` to locate binaries under `CARGO_TARGET_DIR` / `cargo metadata` `target_directory` |
 | `scripts/ci/lib/doc_classify.py` | keep | imported by `scripts/ci/nils-cli-local-fast.sh` planner + `scripts/ci/detect-docs-only.sh` |

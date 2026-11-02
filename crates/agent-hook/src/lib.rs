@@ -694,13 +694,17 @@ fn run_dispatch(
             );
         }
     };
-    let recovery = degradation::conversation::update(
-        &layout.state_root,
-        &loaded,
-        &prepared,
-        &request,
-        &mut decision,
-    );
+    let recovery = if args.shadow {
+        None
+    } else {
+        degradation::conversation::update(
+            &layout.state_root,
+            &loaded,
+            &prepared,
+            &request,
+            &mut decision,
+        )
+    };
     if args.trace
         && let Err(error) = trace::append(
             &layout.state_root,

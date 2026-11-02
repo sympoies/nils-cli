@@ -4,6 +4,12 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
 
 ## History operations
 
+The proposed [History row classes v1](history-row-classes-v1.md) contract pins
+the next display-only classification of runtime commands, compaction events
+and machine notices, with a public schema fixture for consumer coordination.
+It is design-only; the behavior below describes the currently implemented
+history projection until its implementation slices merge.
+
 ### Provider session history
 
 `GET /history/sessions` returns a bounded, cursor-paged catalog of Codex and Claude provider
