@@ -1,6 +1,6 @@
 use anyhow::Result;
 use nils_common::{git as common_git, process};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -73,7 +73,8 @@ fn run_inherited(options: &CommitOptions) -> Result<i32> {
     let extra_prompt = options.extra.join(" ");
 
     if !command_exists("semantic-commit") {
-        return run_fallback(&git_root, options.push, &extra_prompt);
+        eprintln!("codex-commit-with-scope: missing dependency: semantic-commit");
+        return Ok(1);
     }
 
     {
@@ -281,130 +282,6 @@ fn git_stdout(git_root: &Path, args: &[&str]) -> Result<String, String> {
         .map_err(|_| format!("git {} returned non-UTF-8 output", args.join(" ")))
 }
 
-fn run_fallback(git_root: &Path, push_flag: bool, extra_prompt: &str) -> Result<i32> {
-    let staged = staged_files(git_root);
-    if staged.trim().is_empty() {
-        eprintln!("codex-commit-with-scope: no staged changes (stage files then retry)");
-        return Ok(1);
-    }
-
-    eprintln!("codex-commit-with-scope: semantic-commit not found on PATH (fallback mode)");
-    if !extra_prompt.trim().is_empty() {
-        eprintln!("codex-commit-with-scope: note: extra prompt is ignored in fallback mode");
-    }
-
-    if command_exists("git-scope") {
-        let _ = Command::new("git-scope")
-            .current_dir(git_root)
-            .arg("staged")
-            .status();
-    } else {
-        println!("Staged files:");
-        print!("{staged}");
-    }
-
-    let suggested_scope = suggested_scope_from_staged(&staged);
-
-    let mut commit_type = read_prompt("Type [chore]: ")?;
-    commit_type = commit_type.to_ascii_lowercase();
-    commit_type.retain(|ch| !ch.is_whitespace());
-    if commit_type.is_empty() {
-        commit_type = "chore".to_string();
-    }
-
-    let scope_prompt = if suggested_scope.is_empty() {
-        "Scope (optional): ".to_string()
-    } else {
-        format!("Scope (optional) [{suggested_scope}]: ")
-    };
-    let mut scope = read_prompt(&scope_prompt)?;
-    scope.retain(|ch| !ch.is_whitespace());
-    if scope.is_empty() {
-        scope = suggested_scope;
-    }
-
-    let subject = loop {
-        let raw = read_prompt("Subject: ")?;
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() {
-            break trimmed.to_string();
-        }
-    };
-
-    let header = if scope.is_empty() {
-        format!("{commit_type}: {subject}")
-    } else {
-        format!("{commit_type}({scope}): {subject}")
-    };
-
-    println!();
-    println!("Commit message:");
-    println!("  {header}");
-
-    let confirm = read_prompt("Proceed? [y/N] ")?;
-    if !matches!(confirm.trim().chars().next(), Some('y' | 'Y')) {
-        eprintln!("Aborted.");
-        return Ok(1);
-    }
-
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(git_root)
-        .arg("commit")
-        .arg("-m")
-        .arg(&header)
-        .status()?;
-    if !status.success() {
-        return Ok(1);
-    }
-
-    if push_flag {
-        let status = Command::new("git")
-            .arg("-C")
-            .arg(git_root)
-            .arg("push")
-            .status()?;
-        if !status.success() {
-            return Ok(1);
-        }
-    }
-
-    if command_exists("git-scope") {
-        let _ = Command::new("git-scope")
-            .current_dir(git_root)
-            .arg("commit")
-            .arg("HEAD")
-            .status();
-    } else {
-        let _ = Command::new("git")
-            .arg("-C")
-            .arg(git_root)
-            .arg("show")
-            .arg("-1")
-            .arg("--name-status")
-            .arg("--oneline")
-            .status();
-    }
-
-    Ok(0)
-}
-
-fn suggested_scope_from_staged(staged: &str) -> String {
-    common_git::suggested_scope_from_staged_paths(staged)
-}
-
-fn read_prompt(prompt: &str) -> Result<String> {
-    print!("{prompt}");
-    let _ = io::stdout().flush();
-
-    let mut line = String::new();
-    let bytes = io::stdin().read_line(&mut line)?;
-    if bytes == 0 {
-        return Ok(String::new());
-    }
-    Ok(line.trim_end_matches(&['\r', '\n'][..]).to_string())
-}
-
 fn staged_files(git_root: &Path) -> String {
     common_git::staged_name_only_in(git_root).unwrap_or_default()
 }
@@ -460,27 +337,8 @@ fn command_exists(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_exists, semantic_commit_prompt, suggested_scope_from_staged};
+    use super::{command_exists, semantic_commit_prompt};
     use nils_test_support::{GlobalStateLock, prepend_path};
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn suggested_scope_prefers_single_top_level_directory() {
-        let staged = "src/main.rs\nsrc/lib.rs\n";
-        assert_eq!(suggested_scope_from_staged(staged), "src");
-    }
-
-    #[test]
-    fn suggested_scope_ignores_root_file_when_single_directory_exists() {
-        let staged = "README.md\nsrc/main.rs\n";
-        assert_eq!(suggested_scope_from_staged(staged), "src");
-    }
-
-    #[test]
-    fn suggested_scope_returns_empty_for_multiple_directories() {
-        let staged = "src/main.rs\ncrates/a.rs\n";
-        assert_eq!(suggested_scope_from_staged(staged), "");
-    }
 
     #[test]
     fn semantic_commit_prompt_rejects_invalid_mode() {

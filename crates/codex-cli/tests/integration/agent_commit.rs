@@ -76,7 +76,7 @@ fn init_repo(dir: &Path) {
 }
 
 #[test]
-fn agent_commit_fallback_creates_commit() {
+fn agent_commit_inherited_without_semantic_commit_reports_the_missing_dependency() {
     let _lock = GlobalStateLock::new();
     let dir = tempfile::TempDir::new().expect("tempdir");
     let repo = dir.path().join("repo");
@@ -101,12 +101,13 @@ fn agent_commit_fallback_creates_commit() {
         &["agent", "commit", "--runtime", "inherited"],
         &options,
     );
-    assert_exit(&output, 0);
-    assert!(stderr(&output).contains("fallback mode"));
-
+    assert_exit(&output, 1);
+    assert!(stderr(&output).contains("missing dependency: semantic-commit"));
+    assert!(!stdout(&output).contains("Commit message:"));
     assert_eq!(
-        test_git::git(&repo, &["log", "-1", "--pretty=%s"]).trim(),
-        "chore: my subject"
+        test_git::git(&repo, &["rev-list", "--all", "--count"]).trim(),
+        "0",
+        "nothing may be committed without semantic-commit"
     );
 }
 

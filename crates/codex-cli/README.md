@@ -103,7 +103,7 @@ Agent flag notes:
   `semantic-commit`. If the configured model is rejected
   for a ChatGPT account, message generation retries with `gpt-6-luna`, then
   with the Codex account default if Luna is also rejected.
-  The inherited path retains its compatibility fallback.
+  The inherited path stops with a missing-dependency error when `semantic-commit` is absent.
 - `resume --cd <dir>`: Bypass automatic cwd resolution and resume in `<dir>` (must be an existing directory).
 - `agent run` is separate from the isolated/inherited one-shot prompt modes. It
   deliberately retains project instructions, home instructions, hook
@@ -284,8 +284,8 @@ Auth examples:
 
 - `codex` is required for `agent` commands.
 - `git` is required for `agent commit`.
-- `semantic-commit` is required for isolated `agent commit`; the inherited
-  compatibility path retains the old fallback. `git-scope` remains optional.
+- `semantic-commit` is required for `agent commit` in both runtime modes. `git-scope`
+  remains optional.
 - `ssh` is required for `auth remote pull`.
 - `agent resume` reads local Codex session history under `$CODEX_HOME/sessions` (default `~/.codex/sessions`); the shared resolver lives in
   `nils-provider-resume`.
