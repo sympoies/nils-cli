@@ -31,7 +31,7 @@ const PUBLICATION_BINDING_PREFIX: &str = "<!-- forge-cli:review-handoff:v1 ";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewHandoff {
-    /// Omit the compatibility default to preserve existing ledger digests.
+    /// Source-pass stays omitted to preserve current ledger digests.
     #[serde(default, skip_serializing_if = "ApprovalPolicy::is_source_pass")]
     pub approval_policy: ApprovalPolicy,
     pub coordinator_digest: String,
@@ -44,10 +44,9 @@ pub struct ReviewHandoff {
     pub surrendered: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coordinator_transfer: Option<CoordinatorTransfer>,
-    /// Provider base branch name at assignment; a base-sync carry-over never
-    /// survives a retarget. Absent on records written before it existed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base_ref: Option<String>,
+    /// Required provider base branch at assignment; carry-over never survives
+    /// a retarget, and readers never infer this field from the current provider.
+    pub base_ref: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -180,7 +179,7 @@ pub(crate) fn validate_handoff(h: &ReviewHandoff) -> Result<(), ForgeError> {
         || h.coordinator_digest == h.reviewer_digest
         || !valid_sha(&h.base_sha)
         || !valid_sha(&h.assigned_head)
-        || h.base_ref.as_deref().is_some_and(|r| !valid_base_ref(r))
+        || !valid_base_ref(&h.base_ref)
         || h.review_author.is_empty()
         || h.review_author.len() > 128
         || !h
@@ -260,12 +259,6 @@ fn publication_matches_interval(chain: &review_state::ReviewStateChain, body: &s
         .map(str::trim)
         .filter(|line| line.starts_with(PUBLICATION_BINDING_PREFIX))
         .collect();
-    if markers.is_empty() {
-        // Keep original first-generation reports readable across an upgrade.
-        // Every handover/refresh must prove its own publication, even when a
-        // an older writer started before the new interval was assigned.
-        return latest(chain).is_some_and(|h| h.assignment_generation == 1);
-    }
     markers.len() == 1
         && latest_handoff_digest(chain)
             .is_some_and(|digest| markers[0] == format!("{PUBLICATION_BINDING_PREFIX}{digest} -->"))
@@ -471,7 +464,7 @@ pub(crate) fn ensure_handoff_append(
                 context.provider,
                 &context.host,
                 &next.base_sha,
-                next.base_ref.as_deref().unwrap_or_default(),
+                &next.base_ref,
                 remote,
             )?;
             if transfer.supervisor_digest.as_deref() != Some(actor.as_str())
@@ -812,10 +805,8 @@ fn admit_published<R: BackendRunner>(
         // A sync merge keeps the assigned base branch and moves its tip only
         // forward on the assigned lineage; its base parent is target history.
         let (base, base_ref) = provider_base_scope(runner, ctx, number)?;
-        match handoff.base_ref.as_deref() {
-            None => return Err(refused("base-ref-unrecorded")),
-            Some(recorded) if recorded != base_ref => return Err(refused("base-ref-changed")),
-            Some(_) => {}
+        if handoff.base_ref != base_ref {
+            return Err(refused("base-ref-changed"));
         }
         objects
             .verify_on_target(&handoff.base_sha, &base)
@@ -903,8 +894,13 @@ fn admit_published<R: BackendRunner>(
                 )),
             ));
         }
+        if !publication_matches_interval(chain, &body) {
+            return Err(fail(
+                "awaiting_designated_review",
+                "published review requires exactly one current handoff binding; the designated reviewer must republish through the current forge-cli",
+            ));
+        }
         let pass = pr_review::validate_specialist_review_report(&body).is_ok()
-            && publication_matches_interval(chain, &body)
             && matches!(r.state.as_str(), "APPROVED" | "COMMENTED")
             && r.submitted_at
                 .parse::<jiff::Timestamp>()
@@ -1303,7 +1299,12 @@ pub fn run(
                 assignment_generation: generation,
                 surrendered: false,
                 coordinator_transfer: None,
-                base_ref: base_ref.clone(),
+                base_ref: base_ref.clone().ok_or_else(|| {
+                    fail(
+                        "review_assignment_invalid",
+                        "assignment must record the provider base_ref",
+                    )
+                })?,
             };
             if latest(&chain).is_some_and(|h| {
                 !h.surrendered && h.returned_reason.is_none() && !valid_scope_refresh(h, &next)
@@ -1399,7 +1400,7 @@ pub fn run(
                 h.coordinator_digest = actor;
                 h.base_sha = base.clone();
                 h.assigned_head = head.to_string();
-                h.base_ref = Some(view.base.clone());
+                h.base_ref = view.base.clone();
             } else {
                 if a.coordinator_session.is_some() || a.base_sha.is_some() {
                     return Err(fail(

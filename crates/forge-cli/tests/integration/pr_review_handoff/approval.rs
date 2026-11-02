@@ -239,16 +239,33 @@ fn merge_enforces_strict_policy_even_with_explicit_review_opt_out() {
 }
 
 #[test]
-fn default_policy_preserves_old_handoff_record_digest() {
-    let owner = handoff(None);
-    let bytes = serde_json::to_value(&owner).unwrap();
-    assert!(bytes.get("approval_policy").is_none());
-    let restored: ReviewHandoff = serde_json::from_value(bytes).unwrap();
-    assert_eq!(restored, owner);
-    let original = records(owner, Some(HEAD));
-    let serialized = serde_json::to_vec(&original).unwrap();
-    let decoded: Vec<ReviewStateRecord> = serde_json::from_slice(&serialized).unwrap();
-    assert_eq!(serde_json::to_vec(&decoded).unwrap(), serialized);
+fn both_policy_encodings_preserve_record_bytes_and_digests() {
+    use forge_cli::cli::ApprovalPolicy::{FinalApproval, SourcePass};
+    for policy in [SourcePass, FinalApproval] {
+        let mut owner = handoff(None);
+        owner.approval_policy = policy;
+        let value = serde_json::to_value(&owner).unwrap();
+        if policy == SourcePass {
+            assert!(value.get("approval_policy").is_none());
+        } else {
+            assert_eq!(value["approval_policy"], "final-approval");
+        }
+        assert_eq!(
+            serde_json::from_value::<ReviewHandoff>(value).unwrap(),
+            owner
+        );
+        let original = records(owner, Some(HEAD));
+        let bytes = serde_json::to_vec(&original).unwrap();
+        let decoded: Vec<ReviewStateRecord> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
+        for record in &decoded {
+            assert_eq!(record.compute_digest().unwrap(), record.record_digest);
+        }
+        let bodies: Vec<_> = decoded.iter().map(|r| r.marker().unwrap()).collect();
+        let chain = review_state::parse_chain(bodies.iter().map(String::as_str), "acme/widgets", 7)
+            .unwrap();
+        assert_eq!(chain.records, original);
+    }
 }
 
 #[test]

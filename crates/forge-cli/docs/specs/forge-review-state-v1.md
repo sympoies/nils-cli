@@ -44,6 +44,15 @@ validation rules, and output schema versions.
   from unprivileged actors cannot extend or poison the transaction chain. This
   lets a later authorized session resume the same provider-visible chain
   without a machine-local ledger.
+- Every retained review-loop snapshot requires the fields current writers emit:
+  `findings` and `extensions`, including empty collections, plus `reopen_count`
+  and `threads` on each stored finding. Missing fields return
+  `review_state_conflict` with the field name and a reviewer/steward recovery
+  direction. Validation reads every retained ancestor; a newer current record
+  cannot hide a retired ancestor. Coordinate any owner refresh before the
+  reader cutover; never rewrite retained ledgers. `hard_stop` and
+  `coordinator_transfer` remain optional. Outer `assignment_generation` remains
+  omitted for unassigned and self-run records.
 - Record encoding and comment presentation are separate. Every state comment the
   CLI posts leads with a record-specific plain-English checkpoint sentence,
   followed by the unchanged marker on its own line.
@@ -177,10 +186,11 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
 - Approval policy: `assign` accepts `--approval-policy <policy>` with values
   `source-pass` and `final-approval`. New assignments default to `source-pass`,
   preserving documented COMMENT-only source closure. Omission during handover
-  or refresh preserves the existing policy. Missing policy fields in old
-  records also mean `source-pass`; serialization omits that default so existing
-  record digests and ledgers remain valid. Changing policy requires ordinary
-  surrender/recovery and a fresh assignment interval; a base-only scope refresh
+  or refresh preserves the existing policy. Source-pass records omit
+  `approval_policy`; absence means `source-pass` and serialization keeps it
+  omitted so current record bytes and digests remain stable. Final-approval
+  records explicitly emit `approval_policy: final-approval`. Changing policy
+  requires ordinary surrender/recovery and a fresh assignment interval; a base-only scope refresh
   cannot change it.
 
   Assigned delivery and merge enforce the persisted policy, including explicit
@@ -225,19 +235,20 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   threaded native reports to the admitted handoff record with the opaque marker
   `<!-- forge-cli:review-handoff:v1 <handoff-digest> -->`. This binding is captured
   before publication, so an old-generation report that lands after a handover
-  cannot authorize the new interval even if its timestamp is newer. Generation
-  two and later require exactly one matching binding; existing first-generation
-  reports without a marker remain compatible. The selected report's present
-  marker must match the current handoff in every generation. Reassigned reviewers must publish through
-  a CLI that supplies the binding; timestamps alone no longer admit those reports.
+  cannot authorize the new interval even if its timestamp is newer. Every
+  generation, including generation one, requires exactly one matching binding.
+  Marker-less designated reports return `awaiting_designated_review` and direct
+  the reviewer to republish through the current CLI. Timestamps alone never
+  admit those reports.
 - Base-sync carry-over: when the provider head H' is not the reviewed head H
   of the owned observation, `check` admits the existing designated PASS only
   if all of these hold:
   - H' is a commit with exactly two parents, H first and base commit B second.
   - The provider base branch name equals the `base_ref` that `assign` recorded
-    from the pull request view. A handoff without `base_ref` never carries, so
-    a retarget never carries, even to a branch descending from the assigned
-    base.
+    from the pull request view. Every retained handoff requires `base_ref`;
+    a missing field returns `review_state_conflict` before admission, including
+    carry-over. It is never inferred from the current provider. A retarget never
+    carries, even to a branch descending from the assigned base.
   - The assigned base and B are both ancestors of the current provider base.
     The base tip and branch name come from one provider read.
   - `git merge-tree --write-tree` of H and B is conflict-free, and its tree

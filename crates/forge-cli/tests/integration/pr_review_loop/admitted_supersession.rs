@@ -58,7 +58,7 @@ fn supersession_retry_after_same_head_reassignment_refuses_before_post() {
         assignment_generation: 1,
         surrendered: false,
         coordinator_transfer: None,
-        base_ref: Some("main".into()),
+        base_ref: "main".into(),
     };
     append(
         &mut records,
