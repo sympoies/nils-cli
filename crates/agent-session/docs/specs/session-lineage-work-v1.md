@@ -318,13 +318,13 @@ to.
 
 `SessionRecord.role` is a configured bounded identifier or absent (null).
 It records the explicitly assigned launch role. No account mapping is built in;
-any number of sessions may share a role. The `coordinator` role retains its
-existing root-only topology requirement.
+any number of sessions may share a role. The built-in operator rules require both coordinator roles to have a root
+lineage.
 
 - Written once at start; it never changes and is never inherited: a child of a
   coordinator has no role unless it is started with one.
 - `agent-session start --role ROLE` sets it.
-  A coordinator is a root: the role is accepted only on a start with no
+  By default a coordinator is a root: the role is accepted only on a start with no
   parent. Inside a managed session that means `--no-parent`; a successor
   coordinator is started with `--no-parent --role coordinator`, and its
   predecessor's live children are moved with `lineage adopt --by <successor>`.
@@ -333,12 +333,12 @@ existing root-only topology requirement.
   `start --via-console`.
 - A console start sends `role` as a top-level request key (`machine`,
   `no_parent`, `work`, `role`, `session`) and the daemon relays it as
-  `session.role`, next to `session.lineage`; the daemon route refuses `coordinator`
+  `session.role`, next to `session.lineage`; by default the daemon route refuses either coordinator role
   without `no_parent: true` with `role-requires-root`. A `role` the caller put in
   `session` itself is replaced. The aggregator forwards it in the target
   daemon's `POST /sessions` body.
 - `POST /sessions` accepts an optional `role`, stored verbatim after
-  validation. A coordinator requires a root lineage (none, or `parent: null`);
+  validation. By default a coordinator requires a root lineage (none, or `parent: null`);
   a parented coordinator fails with `role-requires-root`. A malformed identifier
   or non-string value other than `null` fails with HTTP 400
   `role-invalid` before anything is created. The create response's `session` echoes it.
@@ -461,3 +461,7 @@ command and serve create/list projections expose the same fields. Older
 records without these members project `origin.parent: null` and
 `workspace: null`; older readers preserve the additive members through the
 record's unknown-key passthrough. Schema versions remain unchanged.
+
+The [operator rules file](../runbooks/operator-rules.md) owns the configurable
+root requirement for both `coordinator` and `domain-coordinator`. Other lineage
+limits retain their built-in behavior.
