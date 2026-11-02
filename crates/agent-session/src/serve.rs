@@ -1438,8 +1438,8 @@ fn router(state: Arc<ServeState>) -> Router {
             state.machine.clone(),
         ))
         .with_state(state)
+        .merge(crate::cli::operator_rules::routes())
 }
-
 #[derive(Debug)]
 enum ServeTokenError {
     EmptyStdin,

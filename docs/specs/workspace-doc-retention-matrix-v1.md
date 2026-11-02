@@ -80,6 +80,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/agent-session/docs/reports/agent-session-completion-migration-contract.md`
 - `crates/agent-session/docs/runbooks/codex-account-recovery-acceptance.md`
 - `crates/agent-session/docs/runbooks/lifecycle-journal.md`
+- `crates/agent-session/docs/runbooks/operator-rules.md`
 - `crates/agent-session/docs/runbooks/serve-daemon.md`
 - `crates/agent-session/docs/runbooks/session-lifecycle.md`
 - `crates/agent-session/docs/runbooks/work-coordination.md`

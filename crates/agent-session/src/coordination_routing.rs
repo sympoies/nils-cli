@@ -8,6 +8,7 @@ use crate::cli::{self, Command};
 
 pub(crate) fn command_name(command: &Command) -> Option<&'static str> {
     match command {
+        Command::Rules(_) => Some("rules"),
         Command::AutoResume(_) => Some("auto-resume"),
         Command::Title(args) => Some(crate::session_title::name(args)),
         Command::Notice(_) => Some("notice"),
@@ -75,6 +76,7 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
                 root_args.next()?;
             }
             arg if arg.starts_with(b"--state-dir=") || arg.starts_with(b"--host=") => {}
+            b"rules" => return Some("rules"),
             b"auto-resume" => return Some("auto-resume"),
             b"notice" => return Some("notice"),
             b"readiness" => return Some("readiness"),
@@ -132,6 +134,7 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
 
 pub(crate) fn command_format(command: &Command) -> OutputFormat {
     match command {
+        Command::Rules(args) => args.format,
         Command::Workspace(args) => crate::origin::format(args),
         Command::Readiness(args) => args.format,
         Command::Delegation(args) => crate::coordination::delegation::format(args),

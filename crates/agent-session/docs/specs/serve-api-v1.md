@@ -13,6 +13,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 
 | Method and path | Authentication | Canonical contract |
 | --- | --- | --- |
+| `GET /operator-rules` | Open | [Operator rules](../runbooks/operator-rules.md) |
 | `GET /healthz` | Open | [Observation](serve-observation-v1.md) |
 | `GET /board/v1` | Bearer; only with `serve --board` or `AGENT_SESSION_BOARD=1` | [Session board v1](session-board-v1.md#daemon-local-snapshot) |
 | `GET /board/closed/v1` | Bearer; only with `serve --board` or `AGENT_SESSION_BOARD=1` | [Session board v1](session-board-v1.md#closed-session-ledger) |
@@ -203,7 +204,7 @@ the daemon. DSH sessions cannot be created through the serve API.
 ## Trust model
 
 The daemon binds loopback and *refuses* a non-loopback bind unless `--allow-non-loopback` is passed,
-because it drives a remote shell. `GET /healthz`, `GET /sessions`, `GET /usage`, `GET
+because it drives a remote shell. `GET /operator-rules`, `GET /healthz`, `GET /sessions`, `GET /usage`, `GET
 /sessions/{id}/glance`, `GET /sessions/{id}/buffer`, and `GET /sessions/{id}/auto-resume` are
 intentionally open on the bind address. Those routes can expose working directories, recent prompts, pane
 content, provider usage, auto-resume state, and the server-global tmux clipboard. Loopback blocks remote
