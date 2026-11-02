@@ -244,7 +244,7 @@ assert_verdict "extra changed file" false "$extra" \
 
 for policy_path in \
   .github/workflows/ci.yml \
-  .github/scripts/release-ci-gate.cjs \
+  .github/scripts/release-validation-reuse.cjs \
   scripts/ci/detect-release-only.sh \
   scripts/ci/release-only-checks.sh; do
   policy_name="${policy_path//\//-}"

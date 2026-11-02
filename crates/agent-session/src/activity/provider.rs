@@ -17,6 +17,11 @@ pub(super) fn normalize_provider_hook(
     let Some(event_name) = event_name else {
         return Ok(None);
     };
+    // Claude Code tags a hook fired inside a subagent with `agent_id` and never
+    // tags the main thread. A subagent's API failure does not end the main turn.
+    if agent == AgentKind::Claude && event_name == "StopFailure" && raw.get("agent_id").is_some() {
+        return Ok(None);
+    }
     let notification = raw.get("notification_type").and_then(Value::as_str);
     let tool_name = raw.get("tool_name").and_then(Value::as_str);
     if agent == AgentKind::Claude

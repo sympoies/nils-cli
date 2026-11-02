@@ -82,7 +82,12 @@ display-only [mailbox read event](mailbox-read-events-v1.md) recorded by the dae
 and never delivered. Ordinary
 human messages with a valid header retain their user role. Unmarked mailbox
 reminders retain their existing filtering behavior.
-No history is rewritten or retroactively classified from an unmarked prefix.
+
+The proposed [history row class contract](history-row-classes-v1.md) defines
+the narrowly anchored, display-only recognition of stored unmarked text.
+That design is not implemented by the codec described here and rewrites no
+transcript. It explicitly supersedes reminder filtering only in its future
+display projection; native receipt admission stays authoritative.
 
 The language-neutral [fixture corpus](../../tests/fixtures/session-notices-v1.json)
 contains exact JSON strings. Each case has `name`, `input`, and `notice`;
@@ -92,6 +97,10 @@ fixtures and run them without Rust. Rust's `agent_session::notice` exports
 `NoticeEnvelope`, `parse_notice`, `ParsedNotice` and `NoticeError`.
 
 ## CLI and delivery
+
+The [summary writer design](#summary-writer-design) below extends this CLI in
+a later implementation slice. The current command examples use today's body
+input form.
 
 ```bash
 agent-session notice <session> --kind schedule.tick --source scheduler \
@@ -307,6 +316,118 @@ The same flags work with `--prompt` and `--prompt-stdin`, including
 `--via-console`. Encoding occurs before launch; ordinary start prompts remain
 unchanged. These flags classify only the supplied prompt, not native commands.
 Keep `/compact` and other control actions in their existing command paths.
+
+## Shared kind-to-label table
+
+This table is the single design source for both summary rendering (#3228) and
+anchored historical text recognition (#3226). The stored-title column records
+text already present in transcripts; it is not an accepted writer alias.
+A dash in the stored-title column means there is no additional title.
+
+| Kind | Label | Stored title when different |
+| --- | --- | --- |
+| `mailbox` | Mailbox | — |
+| `mailbox.wake` | Mailbox | Mailbox wake |
+| `mailbox.read` | Mailbox read | — |
+| `mailbox.alert` | Mailbox alert | — |
+| `mailbox.bounce` | Mailbox bounce | — |
+| `schedule.patrol` | Patrol | — |
+| `schedule.pulse` | Pulse | — |
+| `schedule.tick` | Schedule | — |
+| `compact.reminder` | Compact reminder | — |
+| `compact.resume` | Compact resume | — |
+| `runtime.resume` | Resume | — |
+| `context.continue` | Continue | — |
+| `dispatch.bootstrap` | Dispatch start | — |
+| `dispatch.role` | Role dispatch | — |
+| `session.handover` | Handover | — |
+| `monitoring.service` | Monitoring | — |
+| `monitoring.mirror` | Monitoring mirror | — |
+| `monitoring.delivery` | Monitoring delivery | — |
+| `role.restart` | Role restart | — |
+| `role.unavailable` | Role unavailable | — |
+
+An unknown valid kind renders its exact kind token as the label. No namespace
+prefix matching, title-casing, sender-selected label or consumer label registry
+is added. Historical title matching yields only `row_class: "notice"`, not
+invented kind/source metadata. In particular, the shared Mailbox label does not
+require choosing between the `mailbox` and `mailbox.wake` kinds for raw text.
+
+## Summary writer design
+
+This section is a design for #3228, not a claim that `--summary` is released.
+The later implementation adds `agent-session notice --summary <TEXT>`.
+`TEXT` must contain 1..70 Unicode scalar values, with at least one non-whitespace
+scalar. Reject CR, LF, U+0085, U+2028 and U+2029 so it occupies one logical line.
+Reject other C0 controls and U+007F as well. A combining mark counts separately;
+a non-BMP character counts once. The bound excludes the label and the separator
+(a colon followed by one ASCII space).
+Do not trim, normalize, split, truncate, strip a sender prefix or wrap a summary.
+
+An invalid summary returns usage failure `notice-summary-invalid` (exit 2),
+before body reading, target/session lookup, idempotency claiming or delivery.
+Its bounded diagnostic describes the rule without echoing the supplied text.
+Over 70 scalars is refused, never shortened. This does not change metadata
+validation, the writer gate or transport-specific envelope size limits.
+
+Render exactly `<Label>: <TEXT>` as the first body line, using the shared table.
+One body source remains required. Given detail bytes `body`, the renderer emits
+`<Label>: <TEXT>` + LF + `body`; the codec then emits the unchanged v1 header,
+LF LF, and that rendered body. Empty detail bytes are permitted with a valid
+summary and emit only `<Label>: <TEXT>` with no added LF. Otherwise the detail
+bytes, including CRLF, leading spaces and final newlines, are untouched. Existing
+parser double-envelope refusal remains; detail text is literal body content.
+
+Summary formatting does not add wire fields or alter parser results for stored
+bodies. No-summary calls do not invoke the renderer during migration.
+
+The two external senders, a coordinator and a monitoring bridge, pass their own
+unprefixed summary and unchanged detail body. Neither keeps its own first-line
+renderer. Stored bodies are read as stored; readers do not require the new
+first-line shape or relabel old bodies. Start-prompt flags are outside this
+notice-command change.
+
+### Mailbox byte invariance
+
+The internal mailbox producer calls the same label/line renderer directly,
+with kind `mailbox.wake`, source `agent-session` and no display id. It passes
+`agent-session message inbox` for a fixed wake, or the existing spelled-out
+count string plus `; agent-session message inbox` for a coalesced wake. It adds
+no detail body or terminal LF. Header, separator and body must be byte-identical
+to their current values. Preserve category order, punctuation and spacing.
+
+Only this internal count producer is exempt from the external CLI's 70-scalar
+summary-input bound: the existing quota-bounded count line can be longer.
+Calling `notice --kind mailbox.wake --summary ...` does not gain that exemption.
+It is not a new flag, delivery path or sender-controlled exception. The fixed
+plain reminder and compact 51-column typed count reminder are untouched.
+The [schema fixture](fixtures/history-row-classes-v1.json) includes exact fixed,
+single-count and all-category wake envelopes, including a line over 70 scalars.
+
+### Sender migration and retirement
+
+The existing body-only writer is a bounded external-sender migration condition,
+not a new writer mode. Until both external senders confirm migration, omitting
+`--summary` leaves all output bytes unchanged. The removal slice makes summary
+mandatory for every `notice` kind in the first release after both confirmations;
+the coordinator assigns that release number. It deletes the no-summary branch
+and its tests, migrates all supported callers, examples and completion assets,
+and refuses omission as `notice-summary-required` (exit 2) before body reading
+or delivery. No kind keeps an alternate writer form.
+
+Owner: the release coordinator, with confirmations from both external sender
+maintainers. Review date: **2026-11-30**. Hard expiry: **2026-12-31**. The
+implementation slice must record the exact transitional occurrence as an
+`external` retention row in `scripts/ci/own-compat-allowlist.toml`, linked to
+[#3228](https://github.com/sympoies/nils-cli/issues/3228), naming the external
+sender CLI integration versions and owner. That row
+expires no later than the hard date and is deleted with the branch. The design
+adds no audit exception before a runtime occurrence exists.
+
+At review, record
+both confirmations, the concrete first-disallowed release and its scheduled
+removal; missing confirmation is escalated to the coordinator before expiry.
+The 2026-11-09 consumer fixture target is independent of this sender review.
 
 ## Rollout and remaining work
 

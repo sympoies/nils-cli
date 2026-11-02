@@ -186,14 +186,14 @@ assert_default_inventory_builds_release_default_bins() {
   fi
   [[ -x "$tmp/install/alpha" ]]
   for retired in plan-issue plan-issue-local plan-tooling plan-archive main-agent agent-docs; do
-    if [[ -e "$tmp/install/$retired" ]]; then
-      echo "FAIL: $FUNCNAME left retired binary $retired"
+    if [[ ! -e "$tmp/install/$retired" ]]; then
+      echo "FAIL: $FUNCNAME removed existing binary $retired"
       exit 1
     fi
   done
   for retired_completion in "$tmp/share/zsh/site-functions/_main-agent" "$tmp/etc/bash_completion.d/main-agent"; do
-    if [[ -e "$retired_completion" ]]; then
-      echo "FAIL: $FUNCNAME left retired completion $retired_completion"
+    if [[ ! -e "$retired_completion" ]]; then
+      echo "FAIL: $FUNCNAME removed existing completion $retired_completion"
       exit 1
     fi
   done
