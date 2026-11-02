@@ -42,9 +42,10 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
 
   Direct structured replies through either route inspect the composer under the
   submission's session-record lock before terminal paste or native dispatch.
-  An observed owner draft returns HTTP 409 `composer-not-empty`, preserving the
-  draft and sending nothing. An unreadable or ambiguous composer returns HTTP
-  409 `composer-unobservable`, also before dispatch. These refusals preserve
+  A fresh observed owner draft returns HTTP 409 `composer-not-empty`, preserving the
+  draft and sending nothing. An unchanged observed draft older than the configured
+  bound follows [saved stale draft admission](stale-drafts-v1.md). An unreadable
+  or ambiguous composer returns HTTP 409 `composer-unobservable`, also before dispatch. These refusals preserve
   account/input control state and automatic recovery settings. The check uses
   the existing exact composer observation limits in [Send v1](send-v1.md).
   It is non-atomic against human keystrokes or provider redraws after the check.
@@ -63,7 +64,7 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   A Claude queued-reply hint is empty only when its sole input row is the
   native dim-styled hint and contains no owner text. A second direct reply is
   then admitted. Unstyled literal text matching the hint, or owner input beside
-  it, remains a draft and returns `composer-not-empty`.
+  it, is treated as owner input under the draft admission policy above.
 
   Codex numbered dialogs do not prove an empty composer and return
   `composer-unobservable`; no keys are sent to select an option. Once the dialog
@@ -72,8 +73,9 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   leave recovery armed. An empty composer behind a working Codex turn remains
   admitted, subject to the existing provider controls.
 
-  An explicit owner clear followed by another submission is the draft recovery path;
-  the reply operation never clears a draft or sends Ctrl+C. Direct replies
+  An explicit owner clear followed by another submission remains available.
+  Stale-draft admission saves the exact observation durably before using the
+  existing cleanup keys; it never submits the draft or sends Ctrl+C. Direct replies
   retain their existing provider acknowledgement and queue confirmation rules
   when the composer is observably empty. Initial creation prompts and internal
   coordination notifications retain their separately owned admission policy.
@@ -195,8 +197,9 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   provider idle, no pending provider ingress and an observably empty composer.
   Its existing record lock and pre-dispatch checks fence admission; Codex uses
   native guarded dispatch and Claude uses guarded pane delivery. A positive
-  busy, pending-ingress or existing-draft observation before delivery returns
-  HTTP 409 `busy`. Unobservable state fails closed with the CLI's stable guard
+  busy or pending-ingress observation before delivery returns HTTP 409 `busy`.
+  An owner draft follows saved stale draft admission; a draft that remains
+  before delivery returns HTTP 409 `busy`. Unobservable state fails closed with the CLI's stable guard
   code. These external provider/UI observations remain non-atomic, as in
   [guarded send](send-v1.md); a later failure after possible paste or native
   dispatch is `unknown`, even if no submission was confirmed.

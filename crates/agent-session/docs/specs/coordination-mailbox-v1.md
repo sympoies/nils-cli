@@ -279,12 +279,15 @@ admitted to the exact recipient incarnation, including remote deliveries and car
 Migrated timestamps are recovered from those records; existing upper bounds and original attempted
 timestamps are retained.
 
-Terminal wakes additionally require an observably empty composer before claiming
-the attempt, then recheck after loading the private buffer and immediately
-before paste. A non-empty or unobservable composer leaves the generation queued
-with `recipient-composer-not-empty` or `recipient-composer-unobservable`; no
-text or key is delivered. The pending wake can be retried once the operator
-clears or submits the draft.
+Terminal wakes observe the composer before claiming the attempt, then recheck
+it after loading the private buffer and immediately before paste. A fresh
+non-empty or unobservable composer leaves the generation queued with
+`recipient-composer-not-empty` or `recipient-composer-unobservable`, without
+injected input. An eligible unchanged stale draft follows
+[saved draft admission](stale-drafts-v1.md): saving and shared cleanup occur
+after the existing quiescence/attempt fence, and only a confirmed empty composer
+proceeds to paste. A bound of 0 preserves refusal. An unobservable pane is never
+stale. The operator can also clear or submit a draft before retrying the wake.
 
 After paste settlement, Enter is pressed only if the composer contains exactly
 the controller's fixed reminder and the recipient is still idle and detached,

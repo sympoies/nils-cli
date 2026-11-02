@@ -3,7 +3,7 @@
 //!
 //! The document is resolved into the same environment variables serve already
 //! reads, so the daemon behaves exactly as if a launcher had exported them.
-//! Non-empty environment variables keep working and take precedence:
+//! Environment variables take precedence according to each input's rules:
 //!
 //! - `retitle`, `codex_account_broker`, and `claude_account_broker` are
 //!   replaced wholesale by `AGENT_SESSION_RETITLE_CONFIG` /
@@ -31,6 +31,7 @@ use serde::Serialize;
 use serde_json::{Map, Number, Value, json};
 
 use crate::CliError;
+mod stale_draft;
 
 pub(crate) const CONFIG_SCHEMA_VERSION: &str = "agent-session.serve-config.v1";
 const ENVELOPE_COMMAND: &str = "serve-config";
@@ -51,6 +52,7 @@ const ROOT_KEYS: &[&str] = &[
     "codex_account_broker",
     "claude_account_broker",
     "auto_resume",
+    "stale_draft_seconds",
     "path",
 ];
 const PATH_KEYS: &[&str] = &["append"];
@@ -160,6 +162,7 @@ struct CheckSummary {
     codex_account_broker: SourceSummary,
     claude_account_broker: SourceSummary,
     auto_resume: SourceSummary,
+    stale_draft: SourceSummary,
     path: PathSummary,
 }
 
@@ -501,6 +504,12 @@ fn resolve(
         }
     };
 
+    let stale_draft_source = stale_draft::resolve(
+        root.get("stale_draft_seconds"),
+        lookup,
+        &mut warnings,
+        &mut assignments,
+    )?;
     let file_profiles = resolve_file_launch_profiles(root.get("launch_profiles"))?;
     let launch_profiles = merge_launch_profiles(
         file_profiles,
@@ -525,6 +534,9 @@ fn resolve(
             },
             auto_resume: SourceSummary {
                 source: auto_resume_source,
+            },
+            stale_draft: SourceSummary {
+                source: stale_draft_source,
             },
             path: PathSummary {
                 append: path_entries.len(),
@@ -933,6 +945,7 @@ fn render_check(format: OutputFormat, resolved: &ResolvedServeConfig) -> i32 {
                 "claude_account_broker: {}",
                 source(summary.claude_account_broker.source)
             );
+            println!("stale_draft: {}", source(summary.stale_draft.source));
             println!("path.append: {}", summary.path.append);
             for warning in &resolved.warnings {
                 let _ = writeln!(io::stderr(), "warning: {warning}");
