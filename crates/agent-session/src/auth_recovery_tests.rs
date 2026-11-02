@@ -3,6 +3,8 @@ use super::*;
 mod failover;
 #[path = "auth_recheck_tests.rs"]
 mod recheck;
+#[path = "auth_subagent_failure_tests.rs"]
+mod subagent_failure;
 use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::assert_eq;
 

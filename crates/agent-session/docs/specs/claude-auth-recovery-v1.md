@@ -28,6 +28,13 @@ HTTP quarantine returns `409 auth-quarantined`. Keyed prompt-v2 attempts retain
 a `refused` receipt with admission proof (`pasted: false`, `submitted: false`);
 repeating the same request key returns that receipt without dispatch.
 
+The refusal details carry a fixed, metadata-only `reason` (`auth_failed`) and
+`exit` list (`restart`, `switch_account`); they never include credential or path
+data. A Claude `StopFailure` that carries `agent_id` fired inside a subagent, so
+it does not end the main turn and is ignored: a subagent-only authentication
+failure neither opens an incident nor quarantines the session. The main thread
+never carries `agent_id`.
+
 Quarantine does not replay or cancel provider tool effects. A later successful
 provider turn can settle an incident through the existing health observation.
 An incident belonging to a replaced runtime does not quarantine an unrelated
