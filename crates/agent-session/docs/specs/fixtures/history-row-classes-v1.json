@@ -1,0 +1,2038 @@
+{
+  "schema_version": "agent-session.history-row-classes.fixture.v1",
+  "status": "design-only",
+  "row_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "History row class projection v1",
+    "type": "object",
+    "required": [
+      "id",
+      "role",
+      "text"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "role": {
+        "enum": [
+          "user",
+          "assistant",
+          "notice",
+          "goal"
+        ]
+      },
+      "text": {
+        "type": "string"
+      },
+      "row_class": {
+        "enum": [
+          "runtime_command",
+          "compaction",
+          "notice"
+        ]
+      },
+      "compaction": {
+        "type": "object",
+        "required": [
+          "summary_truncated"
+        ],
+        "properties": {
+          "summary_truncated": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": true,
+    "allOf": [
+      {
+        "if": {
+          "required": [
+            "row_class"
+          ],
+          "properties": {
+            "row_class": {
+              "const": "compaction"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "compaction"
+          ],
+          "properties": {
+            "role": {
+              "const": "notice"
+            },
+            "text": {
+              "maxLength": 65536
+            }
+          }
+        },
+        "else": {
+          "not": {
+            "required": [
+              "compaction"
+            ]
+          }
+        }
+      },
+      {
+        "if": {
+          "required": [
+            "row_class"
+          ],
+          "properties": {
+            "row_class": {
+              "const": "runtime_command"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "role": {
+              "const": "user"
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "role": {
+              "const": "notice"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "row_class"
+          ]
+        }
+      }
+    ]
+  },
+  "valid_rows": [
+    {
+      "id": "human",
+      "role": "user",
+      "text": "Read the design."
+    },
+    {
+      "id": "assistant",
+      "role": "assistant",
+      "text": "The design is ready."
+    },
+    {
+      "id": "command",
+      "role": "user",
+      "text": "/compact keep focus",
+      "row_class": "runtime_command"
+    },
+    {
+      "id": "compaction",
+      "role": "notice",
+      "text": "Synthetic summary",
+      "row_class": "compaction",
+      "compaction": {
+        "summary_truncated": false
+      }
+    },
+    {
+      "id": "native-notice",
+      "role": "notice",
+      "text": "<!-- agent-notice:v1 kind=schedule.pulse source=scheduler -->\n\nPulse: Check status",
+      "row_class": "notice"
+    },
+    {
+      "id": "mailbox-event",
+      "role": "notice",
+      "text": "Stored mailbox event body",
+      "row_class": "notice"
+    }
+  ],
+  "invalid_rows": [
+    {
+      "id": "unknown",
+      "role": "user",
+      "text": "Ordinary",
+      "row_class": null
+    },
+    {
+      "id": "unknown",
+      "role": "user",
+      "text": "Ordinary",
+      "row_class": "unknown"
+    },
+    {
+      "id": "unknown",
+      "role": "user",
+      "text": "Ordinary",
+      "row_class": "user"
+    },
+    {
+      "id": "empty-class",
+      "role": "user",
+      "text": "Ordinary",
+      "row_class": ""
+    },
+    {
+      "id": "assistant-command",
+      "role": "assistant",
+      "text": "/compact",
+      "row_class": "runtime_command"
+    },
+    {
+      "id": "missing-metadata",
+      "role": "notice",
+      "text": "",
+      "row_class": "compaction"
+    },
+    {
+      "id": "wrong-role",
+      "role": "user",
+      "text": "",
+      "row_class": "compaction",
+      "compaction": {
+        "summary_truncated": false
+      }
+    },
+    {
+      "id": "unclassified-metadata",
+      "role": "user",
+      "text": "",
+      "compaction": {
+        "summary_truncated": false
+      }
+    }
+  ],
+  "runtime_commands": [
+    {
+      "provider": "claude",
+      "input": "/compact",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/compact",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/compact"
+    },
+    {
+      "provider": "claude",
+      "input": "/compact keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/compact keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/compact keep focus"
+    },
+    {
+      "provider": "claude",
+      "input": "/exit",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/exit",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/exit"
+    },
+    {
+      "provider": "claude",
+      "input": "/exit keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/exit keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/exit keep focus"
+    },
+    {
+      "provider": "claude",
+      "input": "/quit",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/quit",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/quit"
+    },
+    {
+      "provider": "claude",
+      "input": "/quit keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/quit keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/quit keep focus"
+    },
+    {
+      "provider": "claude",
+      "input": "/effort",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/effort",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/effort"
+    },
+    {
+      "provider": "claude",
+      "input": "/effort keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/effort keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/effort keep focus"
+    },
+    {
+      "provider": "claude",
+      "input": "/model",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/model",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/model"
+    },
+    {
+      "provider": "claude",
+      "input": "/model keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/model keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/model keep focus"
+    },
+    {
+      "provider": "claude",
+      "input": "/usage",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/usage",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/usage"
+    },
+    {
+      "provider": "claude",
+      "input": "/usage keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/usage keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/usage keep focus"
+    },
+    {
+      "provider": "claude",
+      "input": "/login",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/login",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/login"
+    },
+    {
+      "provider": "claude",
+      "input": "/login keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/login keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/login keep focus"
+    },
+    {
+      "provider": "claude",
+      "input": "/clear",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/clear",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/clear"
+    },
+    {
+      "provider": "claude",
+      "input": "/clear keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/clear keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/clear keep focus"
+    },
+    {
+      "provider": "claude",
+      "input": "/new",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/new",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/new"
+    },
+    {
+      "provider": "claude",
+      "input": "/new keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/new keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/new keep focus"
+    },
+    {
+      "provider": "codex",
+      "input": "/compact",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/compact",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/compact"
+    },
+    {
+      "provider": "codex",
+      "input": "/compact keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/compact keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/compact keep focus"
+    },
+    {
+      "provider": "codex",
+      "input": "/exit",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/exit",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/exit"
+    },
+    {
+      "provider": "codex",
+      "input": "/exit keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/exit keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/exit keep focus"
+    },
+    {
+      "provider": "codex",
+      "input": "/quit",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/quit",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/quit"
+    },
+    {
+      "provider": "codex",
+      "input": "/quit keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/quit keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/quit keep focus"
+    },
+    {
+      "provider": "codex",
+      "input": "/effort",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/effort",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/effort"
+    },
+    {
+      "provider": "codex",
+      "input": "/effort keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/effort keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/effort keep focus"
+    },
+    {
+      "provider": "codex",
+      "input": "/model",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/model",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/model"
+    },
+    {
+      "provider": "codex",
+      "input": "/model keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/model keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/model keep focus"
+    },
+    {
+      "provider": "codex",
+      "input": "/usage",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/usage",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/usage"
+    },
+    {
+      "provider": "codex",
+      "input": "/usage keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/usage keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/usage keep focus"
+    },
+    {
+      "provider": "codex",
+      "input": "/login",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/login",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/login"
+    },
+    {
+      "provider": "codex",
+      "input": "/login keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/login keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/login keep focus"
+    },
+    {
+      "provider": "codex",
+      "input": "/clear",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/clear",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/clear"
+    },
+    {
+      "provider": "codex",
+      "input": "/clear keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/clear keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/clear keep focus"
+    },
+    {
+      "provider": "codex",
+      "input": "/new",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/new",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/new"
+    },
+    {
+      "provider": "codex",
+      "input": "/new keep focus",
+      "expected": {
+        "id": "command",
+        "role": "user",
+        "text": "/new keep focus",
+        "row_class": "runtime_command"
+      },
+      "runtime_input": "/new keep focus"
+    }
+  ],
+  "notice_recognition": [
+    {
+      "name": "title-mailbox-Mailbox",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Mailbox：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Mailbox：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-mailbox.wake-Mailbox",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Mailbox：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Mailbox：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-mailbox.wake-Mailbox wake",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Mailbox wake：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Mailbox wake：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-mailbox.read-Mailbox read",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Mailbox read：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Mailbox read：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-mailbox.alert-Mailbox alert",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Mailbox alert：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Mailbox alert：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-mailbox.bounce-Mailbox bounce",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Mailbox bounce：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Mailbox bounce：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-schedule.patrol-Patrol",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Patrol：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Patrol：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-schedule.pulse-Pulse",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Pulse：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Pulse：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-schedule.tick-Schedule",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Schedule：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Schedule：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-compact.reminder-Compact reminder",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Compact reminder：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Compact reminder：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-compact.resume-Compact resume",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Compact resume：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Compact resume：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-runtime.resume-Resume",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Resume：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Resume：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-context.continue-Continue",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Continue：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Continue：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-dispatch.bootstrap-Dispatch start",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Dispatch start：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Dispatch start：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-dispatch.role-Role dispatch",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Role dispatch：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Role dispatch：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-session.handover-Handover",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Handover：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Handover：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-monitoring.service-Monitoring",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Monitoring：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Monitoring：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-monitoring.mirror-Monitoring mirror",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Monitoring mirror：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Monitoring mirror：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-monitoring.delivery-Monitoring delivery",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Monitoring delivery：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Monitoring delivery：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-role.restart-Role restart",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Role restart：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Role restart：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "title-role.unavailable-Role unavailable",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Role unavailable：Synthetic summary\r\n  detail \n",
+      "expected": {
+        "id": "plain-notice",
+        "role": "user",
+        "text": "※ Role unavailable：Synthetic summary\r\n  detail \n",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "fixed-mailbox",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Mailbox: agent-session message inbox",
+      "expected": {
+        "id": "fixed-mailbox",
+        "role": "user",
+        "text": "Mailbox: agent-session message inbox",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "dated-mailbox",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Mailbox: 2026-11-02T01:02:03Z; agent-session message inbox",
+      "expected": {
+        "id": "dated-mailbox",
+        "role": "user",
+        "text": "Mailbox: 2026-11-02T01:02:03Z; agent-session message inbox",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "compact-count-mailbox",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Mailbox: b=1 h=2 p=3",
+      "expected": {
+        "id": "compact-count-mailbox",
+        "role": "user",
+        "text": "Mailbox: b=1 h=2 p=3",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "explained-count-mailbox",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Mailbox: 1 blocker, 2 handoff, 3 progress; agent-session message inbox",
+      "expected": {
+        "id": "explained-count-mailbox",
+        "role": "user",
+        "text": "Mailbox: 1 blocker, 2 handoff, 3 progress; agent-session message inbox",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "earlier-unread",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Coordination mailbox has unread messages; run agent-session message inbox.",
+      "expected": {
+        "id": "earlier-unread",
+        "role": "user",
+        "text": "Coordination mailbox has unread messages; run agent-session message inbox.",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "earlier-dated-unread",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Coordination mailbox has unread messages (newest queued 2026-11-02T01:02:03Z); run agent-session message inbox.",
+      "expected": {
+        "id": "earlier-dated-unread",
+        "role": "user",
+        "text": "Coordination mailbox has unread messages (newest queued 2026-11-02T01:02:03Z); run agent-session message inbox.",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "earlier-continuation",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "壓縮完成；執行自己角色的 session-start，接著續做。",
+      "expected": {
+        "id": "earlier-continuation",
+        "role": "user",
+        "text": "壓縮完成；執行自己角色的 session-start，接著續做。",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "public-bootstrap",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Dispatch start：Perform the synthetic task.\nDetails follow.",
+      "expected": {
+        "id": "public-bootstrap",
+        "role": "user",
+        "text": "※ Dispatch start：Perform the synthetic task.\nDetails follow.",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "marked-input",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "<!-- agent-notice:v1 kind=schedule.pulse source=scheduler -->\n\nPulse: Synthetic summary",
+      "expected": {
+        "id": "marked-input",
+        "role": "user",
+        "text": "<!-- agent-notice:v1 kind=schedule.pulse source=scheduler -->\n\nPulse: Synthetic summary",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "unknown-marked-kind",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "<!-- agent-notice:v1 kind=example.unknown source=scheduler -->\n\nUnusual body",
+      "expected": {
+        "id": "unknown-marked-kind",
+        "role": "user",
+        "text": "<!-- agent-notice:v1 kind=example.unknown source=scheduler -->\n\nUnusual body",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "instruction-context",
+      "providers": [
+        "codex"
+      ],
+      "content_item_kinds": "absent",
+      "input": "# AGENTS.md instructions for the project\n\n<INSTRUCTIONS>\nUse the project conventions.\n</INSTRUCTIONS>",
+      "expected": {
+        "id": "instruction-context",
+        "role": "user",
+        "text": "# AGENTS.md instructions for the project\n\n<INSTRUCTIONS>\nUse the project conventions.\n</INSTRUCTIONS>",
+        "row_class": "notice"
+      }
+    },
+    {
+      "name": "environment-context",
+      "providers": [
+        "codex"
+      ],
+      "content_item_kinds": "absent",
+      "input": "<environment_context>\n<shell>zsh</shell>\n</environment_context>\n",
+      "expected": {
+        "id": "environment-context",
+        "role": "user",
+        "text": "<environment_context>\n<shell>zsh</shell>\n</environment_context>\n",
+        "row_class": "notice"
+      }
+    }
+  ],
+  "unclassified": [
+    {
+      "name": "unknown-1",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "/custom task",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "/custom task"
+      }
+    },
+    {
+      "name": "unknown-2",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "/compactness is ordinary",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "/compactness is ordinary"
+      }
+    },
+    {
+      "name": "unknown-3",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "/Compact",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "/Compact"
+      }
+    },
+    {
+      "name": "unknown-4",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": " /compact",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": " /compact"
+      }
+    },
+    {
+      "name": "unknown-5",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "/compact\nthen do more",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "/compact\nthen do more"
+      }
+    },
+    {
+      "name": "unknown-6",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Unknown title：Synthetic summary",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "※ Unknown title：Synthetic summary"
+      }
+    },
+    {
+      "name": "unknown-7",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Pulse: Synthetic summary",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "Pulse: Synthetic summary"
+      }
+    },
+    {
+      "name": "unknown-8",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Monitoring: Synthetic summary",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "Monitoring: Synthetic summary"
+      }
+    },
+    {
+      "name": "unknown-9",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Pulse: Synthetic summary",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "※ Pulse: Synthetic summary"
+      }
+    },
+    {
+      "name": "unknown-10",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": " ※ Pulse：Synthetic summary",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": " ※ Pulse：Synthetic summary"
+      }
+    },
+    {
+      "name": "unknown-11",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "※ Pulse：",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "※ Pulse："
+      }
+    },
+    {
+      "name": "unknown-12",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Quoted reminder: Mailbox: agent-session message inbox",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "Quoted reminder: Mailbox: agent-session message inbox"
+      }
+    },
+    {
+      "name": "unknown-13",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "> Mailbox: agent-session message inbox",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "> Mailbox: agent-session message inbox"
+      }
+    },
+    {
+      "name": "unknown-14",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Please inspect:\nMailbox: agent-session message inbox",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "Please inspect:\nMailbox: agent-session message inbox"
+      }
+    },
+    {
+      "name": "unknown-15",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Mailbox: agent-session message inbox and explain it",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "Mailbox: agent-session message inbox and explain it"
+      }
+    },
+    {
+      "name": "unknown-16",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Mailbox: 2026-02-30T01:02:03Z; agent-session message inbox",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "Mailbox: 2026-02-30T01:02:03Z; agent-session message inbox"
+      }
+    },
+    {
+      "name": "unknown-17",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Mailbox: 2026-11-02T01:02:03+00:00; agent-session message inbox",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "Mailbox: 2026-11-02T01:02:03+00:00; agent-session message inbox"
+      }
+    },
+    {
+      "name": "unknown-18",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Mailbox: b=01",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "Mailbox: b=01"
+      }
+    },
+    {
+      "name": "unknown-19",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Mailbox: b=257",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "Mailbox: b=257"
+      }
+    },
+    {
+      "name": "unknown-20",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Mailbox: b=1 b=2",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "Mailbox: b=1 b=2"
+      }
+    },
+    {
+      "name": "unknown-21",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Mailbox: 1 report, 1 blocker; agent-session message inbox",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "Mailbox: 1 report, 1 blocker; agent-session message inbox"
+      }
+    },
+    {
+      "name": "unknown-22",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Coordination mailbox has unread messages in this example.",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "Coordination mailbox has unread messages in this example."
+      }
+    },
+    {
+      "name": "unknown-23",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "<!-- agent-notice:v2 kind=schedule.pulse source=scheduler -->\n\n※ Pulse：Synthetic summary",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "<!-- agent-notice:v2 kind=schedule.pulse source=scheduler -->\n\n※ Pulse：Synthetic summary"
+      }
+    },
+    {
+      "name": "unknown-24",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "<!-- agent-notice:v1 source=scheduler kind=schedule.pulse -->\n\n※ Pulse：Synthetic summary",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "<!-- agent-notice:v1 source=scheduler kind=schedule.pulse -->\n\n※ Pulse：Synthetic summary"
+      }
+    },
+    {
+      "name": "unknown-25",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "```\n※ Pulse：Synthetic summary\n```",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "```\n※ Pulse：Synthetic summary\n```"
+      }
+    },
+    {
+      "name": "unknown-26",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Please read <environment_context>data</environment_context>",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "Please read <environment_context>data</environment_context>"
+      }
+    },
+    {
+      "name": "unknown-27",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "<environment_context>\n<shell>zsh</shell>",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "<environment_context>\n<shell>zsh</shell>"
+      }
+    },
+    {
+      "name": "unknown-28",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "# AGENTS.md instructions for the project\n\n<INSTRUCTIONS>\ntext\n</INSTRUCTIONS>\nextra prose",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "# AGENTS.md instructions for the project\n\n<INSTRUCTIONS>\ntext\n</INSTRUCTIONS>\nextra prose"
+      }
+    },
+    {
+      "name": "unknown-29",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "[unknown-bootstrap]\nPerform the synthetic task.",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "[unknown-bootstrap]\nPerform the synthetic task."
+      }
+    },
+    {
+      "name": "assistant-mentions-command",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "/compact",
+      "expected": {
+        "id": "assistant",
+        "role": "assistant",
+        "text": "/compact"
+      }
+    }
+  ],
+  "metadata_admission": [
+    {
+      "provider": "codex",
+      "content_item_kinds": [
+        "agents_md.instructions"
+      ],
+      "text": "Injected instructions",
+      "expected": []
+    },
+    {
+      "provider": "codex",
+      "content_item_kinds": [
+        "environments.environment_context"
+      ],
+      "text": "Injected environment",
+      "expected": []
+    },
+    {
+      "provider": "codex",
+      "content_item_kinds": [
+        "example.internal"
+      ],
+      "text": "※ Pulse：Synthetic summary",
+      "expected": []
+    },
+    {
+      "provider": "codex",
+      "content_item_kinds": [
+        "user.text"
+      ],
+      "text": "Ordinary",
+      "expected": {
+        "id": "ordinary",
+        "role": "user",
+        "text": "Ordinary"
+      }
+    }
+  ],
+  "compactions": [
+    {
+      "name": "claude-command-and-one-compaction",
+      "provider": "claude",
+      "records": [
+        {
+          "offset": 0,
+          "record": {
+            "type": "user",
+            "message": {
+              "role": "user",
+              "content": "/compact keep focus"
+            }
+          }
+        },
+        {
+          "offset": 160,
+          "record": {
+            "type": "system",
+            "subtype": "compact_boundary"
+          }
+        },
+        {
+          "offset": 240,
+          "record": {
+            "type": "user",
+            "isCompactSummary": true,
+            "isVisibleInTranscriptOnly": true,
+            "message": {
+              "role": "user",
+              "content": "Synthetic compact summary\n"
+            }
+          }
+        },
+        {
+          "offset": 480,
+          "record": {
+            "type": "user",
+            "message": {
+              "role": "user",
+              "content": "<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args>keep focus</command-args>"
+            }
+          }
+        },
+        {
+          "offset": 800,
+          "record": {
+            "type": "user",
+            "message": {
+              "role": "user",
+              "content": "<local-command-stdout>Compacted</local-command-stdout>"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "id": "compaction-at-160",
+          "role": "notice",
+          "text": "Synthetic compact summary\n",
+          "row_class": "compaction",
+          "compaction": {
+            "summary_truncated": false
+          }
+        },
+        {
+          "id": "command-at-480",
+          "role": "user",
+          "text": "/compact keep focus",
+          "row_class": "runtime_command"
+        }
+      ],
+      "expected_offsets": [
+        160,
+        480
+      ],
+      "compaction_event_count": 1,
+      "runtime_command_count": 1
+    },
+    {
+      "name": "codex-summary",
+      "provider": "codex",
+      "record": {
+        "type": "compacted",
+        "payload": {
+          "message": "Synthetic compact summary\n"
+        }
+      },
+      "expected": {
+        "id": "compaction",
+        "role": "notice",
+        "text": "Synthetic compact summary\n",
+        "row_class": "compaction",
+        "compaction": {
+          "summary_truncated": false
+        }
+      }
+    },
+    {
+      "name": "codex-no-summary",
+      "provider": "codex",
+      "record": {
+        "type": "compacted",
+        "payload": {}
+      },
+      "expected": {
+        "id": "compaction",
+        "role": "notice",
+        "text": "",
+        "row_class": "compaction",
+        "compaction": {
+          "summary_truncated": false
+        }
+      }
+    },
+    {
+      "name": "claude-pending-tail",
+      "provider": "claude",
+      "record": {
+        "type": "system",
+        "subtype": "compact_boundary"
+      },
+      "at_eof": true,
+      "expected": []
+    }
+  ],
+  "compaction_summary_bound": {
+    "unit": "Unicode scalar values",
+    "limit": 65536,
+    "at_limit": {
+      "summary_truncated": false,
+      "output_scalars": 65536
+    },
+    "over_limit": {
+      "summary_truncated": true,
+      "output_scalars": 65536
+    },
+    "trim": false
+  },
+  "paging": {
+    "provider": "claude",
+    "case": "claude-command-and-one-compaction",
+    "split_offsets": [
+      160,
+      240,
+      480
+    ],
+    "forward_concatenated": [
+      "compaction-at-160",
+      "command-at-480"
+    ],
+    "latest_then_older_in_chronological_order": [
+      "compaction-at-160",
+      "command-at-480"
+    ],
+    "live_in_chronological_order": [
+      "compaction-at-160",
+      "command-at-480"
+    ],
+    "compaction_parts_v1": [],
+    "card_preview_class": "runtime_command"
+  },
+  "summary_encoding": [
+    {
+      "name": "render-mailbox",
+      "kind": "mailbox",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Mailbox: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-mailbox.wake",
+      "kind": "mailbox.wake",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Mailbox: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-mailbox.read",
+      "kind": "mailbox.read",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Mailbox read: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-mailbox.alert",
+      "kind": "mailbox.alert",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Mailbox alert: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-mailbox.bounce",
+      "kind": "mailbox.bounce",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Mailbox bounce: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-schedule.patrol",
+      "kind": "schedule.patrol",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Patrol: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-schedule.pulse",
+      "kind": "schedule.pulse",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Pulse: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-schedule.tick",
+      "kind": "schedule.tick",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Schedule: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-compact.reminder",
+      "kind": "compact.reminder",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Compact reminder: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-compact.resume",
+      "kind": "compact.resume",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Compact resume: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-runtime.resume",
+      "kind": "runtime.resume",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Resume: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-context.continue",
+      "kind": "context.continue",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Continue: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-dispatch.bootstrap",
+      "kind": "dispatch.bootstrap",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Dispatch start: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-dispatch.role",
+      "kind": "dispatch.role",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Role dispatch: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-session.handover",
+      "kind": "session.handover",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Handover: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-monitoring.service",
+      "kind": "monitoring.service",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Monitoring: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-monitoring.mirror",
+      "kind": "monitoring.mirror",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Monitoring mirror: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-monitoring.delivery",
+      "kind": "monitoring.delivery",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Monitoring delivery: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-role.restart",
+      "kind": "role.restart",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Role restart: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "render-role.unavailable",
+      "kind": "role.unavailable",
+      "summary": "Synthetic summary",
+      "body": "  Details\r\n\n本文\n",
+      "expected_body": "Role unavailable: Synthetic summary\n  Details\r\n\n本文\n"
+    },
+    {
+      "name": "unknown-kind-label",
+      "kind": "example.unknown",
+      "summary": "Synthetic summary",
+      "body": "",
+      "expected_body": "example.unknown: Synthetic summary"
+    },
+    {
+      "name": "summary-70",
+      "kind": "schedule.pulse",
+      "summary": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "body": "",
+      "expected_body": "Pulse: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "summary-non-bmp-70",
+      "kind": "schedule.pulse",
+      "summary": "🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱",
+      "body": "",
+      "expected_body": "Pulse: 🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱"
+    },
+    {
+      "name": "summary-combining-70",
+      "kind": "schedule.pulse",
+      "summary": "ééééééééééééééééééééééééééééééééééé",
+      "body": "",
+      "expected_body": "Pulse: ééééééééééééééééééééééééééééééééééé"
+    },
+    {
+      "name": "summary-spaces-preserved",
+      "kind": "schedule.pulse",
+      "summary": "  Check  ",
+      "body": "\nDetail\n",
+      "expected_body": "Pulse:   Check  \n\nDetail\n"
+    },
+    {
+      "name": "migration-no-summary",
+      "kind": "schedule.pulse",
+      "body": "※ Pulse：Stored body\r\n",
+      "expected_body": "※ Pulse：Stored body\r\n",
+      "phase": "external-sender-migration-only"
+    },
+    {
+      "name": "retired-no-summary",
+      "kind": "schedule.pulse",
+      "body": "Details",
+      "error": "notice-summary-required",
+      "exit": 2,
+      "phase": "first-release-after-both-confirmations"
+    },
+    {
+      "name": "summary-invalid-empty",
+      "kind": "schedule.pulse",
+      "summary": "",
+      "body": "Details",
+      "error": "notice-summary-invalid",
+      "exit": 2,
+      "body_read": false,
+      "target_loaded": false,
+      "claim_created": false,
+      "delivery_attempted": false
+    },
+    {
+      "name": "summary-invalid-spaces",
+      "kind": "schedule.pulse",
+      "summary": "  ",
+      "body": "Details",
+      "error": "notice-summary-invalid",
+      "exit": 2,
+      "body_read": false,
+      "target_loaded": false,
+      "claim_created": false,
+      "delivery_attempted": false
+    },
+    {
+      "name": "summary-invalid-over-70",
+      "kind": "schedule.pulse",
+      "summary": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "body": "Details",
+      "error": "notice-summary-invalid",
+      "exit": 2,
+      "body_read": false,
+      "target_loaded": false,
+      "claim_created": false,
+      "delivery_attempted": false
+    },
+    {
+      "name": "summary-invalid-non-bmp-over-70",
+      "kind": "schedule.pulse",
+      "summary": "🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱",
+      "body": "Details",
+      "error": "notice-summary-invalid",
+      "exit": 2,
+      "body_read": false,
+      "target_loaded": false,
+      "claim_created": false,
+      "delivery_attempted": false
+    },
+    {
+      "name": "summary-invalid-lf",
+      "kind": "schedule.pulse",
+      "summary": "one\ntwo",
+      "body": "Details",
+      "error": "notice-summary-invalid",
+      "exit": 2,
+      "body_read": false,
+      "target_loaded": false,
+      "claim_created": false,
+      "delivery_attempted": false
+    },
+    {
+      "name": "summary-invalid-cr",
+      "kind": "schedule.pulse",
+      "summary": "one\rtwo",
+      "body": "Details",
+      "error": "notice-summary-invalid",
+      "exit": 2,
+      "body_read": false,
+      "target_loaded": false,
+      "claim_created": false,
+      "delivery_attempted": false
+    },
+    {
+      "name": "summary-invalid-nel",
+      "kind": "schedule.pulse",
+      "summary": "onetwo",
+      "body": "Details",
+      "error": "notice-summary-invalid",
+      "exit": 2,
+      "body_read": false,
+      "target_loaded": false,
+      "claim_created": false,
+      "delivery_attempted": false
+    },
+    {
+      "name": "summary-invalid-line-separator",
+      "kind": "schedule.pulse",
+      "summary": "one two",
+      "body": "Details",
+      "error": "notice-summary-invalid",
+      "exit": 2,
+      "body_read": false,
+      "target_loaded": false,
+      "claim_created": false,
+      "delivery_attempted": false
+    },
+    {
+      "name": "summary-invalid-paragraph-separator",
+      "kind": "schedule.pulse",
+      "summary": "one two",
+      "body": "Details",
+      "error": "notice-summary-invalid",
+      "exit": 2,
+      "body_read": false,
+      "target_loaded": false,
+      "claim_created": false,
+      "delivery_attempted": false
+    },
+    {
+      "name": "summary-invalid-tab",
+      "kind": "schedule.pulse",
+      "summary": "one\ttwo",
+      "body": "Details",
+      "error": "notice-summary-invalid",
+      "exit": 2,
+      "body_read": false,
+      "target_loaded": false,
+      "claim_created": false,
+      "delivery_attempted": false
+    },
+    {
+      "name": "summary-invalid-escape",
+      "kind": "schedule.pulse",
+      "summary": "one\u001btwo",
+      "body": "Details",
+      "error": "notice-summary-invalid",
+      "exit": 2,
+      "body_read": false,
+      "target_loaded": false,
+      "claim_created": false,
+      "delivery_attempted": false
+    },
+    {
+      "name": "summary-invalid-delete",
+      "kind": "schedule.pulse",
+      "summary": "onetwo",
+      "body": "Details",
+      "error": "notice-summary-invalid",
+      "exit": 2,
+      "body_read": false,
+      "target_loaded": false,
+      "claim_created": false,
+      "delivery_attempted": false
+    }
+  ],
+  "mailbox_byte_invariance": [
+    {
+      "name": "fixed",
+      "internal_summary": "agent-session message inbox",
+      "detail_body": "",
+      "before": "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: agent-session message inbox",
+      "after": "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: agent-session message inbox",
+      "cli_summary_bound_applies": false
+    },
+    {
+      "name": "single-count",
+      "internal_summary": "1 report; agent-session message inbox",
+      "detail_body": "",
+      "before": "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: 1 report; agent-session message inbox",
+      "after": "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: 1 report; agent-session message inbox",
+      "cli_summary_bound_applies": false
+    },
+    {
+      "name": "all-categories",
+      "internal_summary": "1 blocker, 1 decision, 1 handoff, 1 progress, 1 report, 1 uncategorized; agent-session message inbox",
+      "detail_body": "",
+      "before": "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: 1 blocker, 1 decision, 1 handoff, 1 progress, 1 report, 1 uncategorized; agent-session message inbox",
+      "after": "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: 1 blocker, 1 decision, 1 handoff, 1 progress, 1 report, 1 uncategorized; agent-session message inbox",
+      "cli_summary_bound_applies": false
+    }
+  ],
+  "known_gaps": [
+    "A private producer bootstrap sentinel has no public recognizer and leaves row_class absent."
+  ],
+  "migration": {
+    "consumer_target": "2026-11-09",
+    "review_date": "2026-11-30",
+    "hard_expiry": "2026-12-31",
+    "retirement_release": "first release after both external sender confirmations",
+    "owner": "release coordinator"
+  }
+}

@@ -30,6 +30,9 @@ or integrating a specific subsystem.
   unknown-effect receipts.
 - [Session notices v1](specs/session-notices-v1.md): display-only envelope,
   fixture corpus, guarded notice delivery and writer rollout gate.
+- [History row classes v1 design](specs/history-row-classes-v1.md): proposed
+  runtime-command, compaction and notice classes, shared recognition rules and
+  consumer schema fixture; runtime implementation follows separately.
 - [Mailbox read events v1](specs/mailbox-read-events-v1.md): display-only
   conversation events for mailbox reads and acknowledgements, identity,
   transcript-offset ordering and authorization.
