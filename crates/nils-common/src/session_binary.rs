@@ -18,17 +18,19 @@ pub const NAME: &str = match option_env!("NILS_SESSION_BIN_NAME") {
 
 const _: () = assert!(
     valid_name(NAME),
-    "NILS_SESSION_BIN_NAME must be a non-empty file name without path separators"
+    "NILS_SESSION_BIN_NAME must start with a letter or digit and use only letters, digits, dot, underscore and hyphen"
 );
 
+/// Letters, digits, `.`, `_` and `-`, starting alphanumeric: one literal word in
+/// every shell command string and hook-command matcher that renders the name.
 const fn valid_name(name: &str) -> bool {
     let bytes = name.as_bytes();
-    if bytes.is_empty() {
+    if bytes.is_empty() || !bytes[0].is_ascii_alphanumeric() {
         return false;
     }
     let mut index = 0;
     while index < bytes.len() {
-        if matches!(bytes[index], b'/' | 0) {
+        if !(bytes[index].is_ascii_alphanumeric() || matches!(bytes[index], b'.' | b'_' | b'-')) {
             return false;
         }
         index += 1;
@@ -57,6 +59,25 @@ mod tests {
         assert!(valid_name("agent-session"));
         assert!(!valid_name(""));
         assert!(!valid_name("bin/agent-session"));
+    }
+
+    #[test]
+    fn name_validation_keeps_every_command_renderer_single_word() {
+        for safe in ["agent-session", "renamed_session.v2", "s1"] {
+            assert!(valid_name(safe), "{safe}");
+        }
+        for unsafe_name in [
+            "two words",
+            "quote'name",
+            "semi;colon",
+            "dollar$name",
+            "back`tick",
+            "new\nline",
+            "-leading-dash",
+            "renamed' ; printf injected #",
+        ] {
+            assert!(!valid_name(unsafe_name), "{unsafe_name:?}");
+        }
     }
 
     #[test]
