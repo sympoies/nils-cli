@@ -264,35 +264,6 @@ test_default_path_skips_full_audit_and_runs_locked_check() {
   assert_no_tag_and_one_release_commit "$repo"
 }
 
-test_skip_checks_is_deprecated_alias_of_default() {
-  local tmp repo bin_dir log_file stderr_file
-  tmp="$(mktemp -d)"
-  repo="${tmp}/repo"
-  bin_dir="${tmp}/bin"
-  log_file="${tmp}/mock.log"
-  stderr_file="${tmp}/stderr.log"
-
-  mkdir -p "$repo" "$bin_dir"
-  create_temp_repo "$repo" "v0.6.4"
-  create_mock_cargo "$bin_dir"
-  create_mock_semantic_commit "$bin_dir"
-  create_mock_git_scope "$bin_dir"
-
-  (
-    cd "$repo"
-    env -u RUSTC_WRAPPER \
-      PATH="${bin_dir}:$PATH" \
-      MOCK_LOG="$log_file" \
-      "$entrypoint" --version v0.6.5 --skip-checks
-  ) >"${tmp}/stdout.log" 2>"${stderr_file}"
-
-  assert_contains "$stderr_file" '--skip-checks is a deprecated alias'
-  assert_contains "$log_file" 'cargo:check --workspace --locked'
-  if rg -q 'checks:start' "$log_file"; then
-    fail "--skip-checks unexpectedly ran the full audit stack"
-  fi
-}
-
 test_readme_already_at_target_is_not_warned() {
   local tmp repo bin_dir log_file stderr_file
   tmp="$(mktemp -d)"
@@ -312,7 +283,7 @@ test_readme_already_at_target_is_not_warned() {
     env -u RUSTC_WRAPPER \
       PATH="${bin_dir}:$PATH" \
       MOCK_LOG="$log_file" \
-      "$entrypoint" --version v0.6.5 --skip-checks
+      "$entrypoint" --version v0.6.5
   ) >"${tmp}/stdout.log" 2>"${stderr_file}"
 
   assert_not_contains "$stderr_file" 'warning: README release tag example not updated'
@@ -343,7 +314,7 @@ test_allow_dirty_rejects_non_release_managed_paths() {
     env -u RUSTC_WRAPPER \
       PATH="${bin_dir}:$PATH" \
       MOCK_LOG="$log_file" \
-      "$entrypoint" --version v0.6.5 --skip-checks --allow-dirty \
+      "$entrypoint" --version v0.6.5 --allow-dirty \
       >"${tmp}/stdout.log" 2>"${stderr_file}"
   )
   local rc=$?
@@ -410,9 +381,10 @@ test_release_flags_that_publish_are_rejected() {
   create_mock_git_scope "$bin_dir"
 
   # `--skip-push` and the other `--skip-*` flags used to gate publication; with
-  # no publication path left, none of them is a supported flag.
+  # no publication path left, none of them is a supported flag. `--skip-checks`
+  # was a no-op alias of the default check and is retired the same way.
   for flag in \
-    --skip-push --direct-push --force-tag --from-tap --skip-tap --skip-tap-wait \
+    --skip-checks --skip-push --direct-push --force-tag --from-tap --skip-tap --skip-tap-wait \
     --skip-tap-tag --skip-ci-wait --skip-dev-clean --skip-local-brew-upgrade \
     --ci-gate-main "--release-branch chore/x" "--tap-repo o/r" "--tap-dir /x" \
     "--tap-formula f"; do
@@ -447,7 +419,6 @@ run_all() {
   local tests=(
     test_full_checks_refresh_lockfile_and_disable_bad_wrapper
     test_default_path_skips_full_audit_and_runs_locked_check
-    test_skip_checks_is_deprecated_alias_of_default
     test_readme_already_at_target_is_not_warned
     test_allow_dirty_rejects_non_release_managed_paths
     test_compatibility_fence_precedes_release_mutation

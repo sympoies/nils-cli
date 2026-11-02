@@ -13,7 +13,6 @@ Options:
   --version X.Y.Z   Required. Accepts vX.Y.Z and normalizes to X.Y.Z.
   --full-checks     Run the full local audit stack (scripts/ci/nils-cli-verification.sh)
                     before commit; opt-in (slow). Default runs only the locked cargo check.
-  --skip-checks     Deprecated alias of the default (locked cargo check only).
   --skip-readme     Do not update README release tag examples.
   --prepare-only    Apply the release-managed file transform, then stop before
                     validation and commit. Contract-test helper.
@@ -168,7 +167,6 @@ refresh_third_party_artifacts_if_present() {
 
 version=""
 full_checks=0
-skip_checks=0  # backward-compat alias of the default; tracked for usage notes only
 skip_readme=0
 prepare_only=0
 allow_dirty=0
@@ -184,10 +182,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --full-checks)
       full_checks=1
-      shift
-      ;;
-    --skip-checks)
-      skip_checks=1
       shift
       ;;
     --skip-readme)
@@ -258,10 +252,6 @@ if [[ "$allow_dirty" -eq 0 ]]; then
   fi
 else
   assert_allow_dirty_only_release_managed
-fi
-
-if [[ "$skip_checks" -eq 1 && "$full_checks" -eq 0 ]]; then
-  note "--skip-checks is a deprecated alias of the default (locked cargo check only); ignoring"
 fi
 
 python3 - "$version" <<'PY'
