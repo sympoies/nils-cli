@@ -2,6 +2,7 @@
 use super::*;
 use crate::cli::{MessageAckArgs, MessageReminderArgs, MessageShowArgs};
 use crate::coordination::{self, mailbox, notification};
+use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::assert_eq;
 
 fn authenticated_fixture() -> (tempfile::TempDir, CliContext, PathBuf) {
@@ -63,6 +64,8 @@ fn read_and_ack(context: &CliContext, capability: &Path) {
 }
 
 fn delivered_then_acknowledged(use_hook: bool, compacted: bool) {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let (_dir, context, capability) = authenticated_fixture();
     let candidate = coordination::pending_notifications(&context)
         .unwrap()
@@ -178,6 +181,8 @@ fn discovery_resolves_drained_unknown_attempt_without_transcript_proof() {
 
 #[test]
 fn inspection_distinguishes_queued_submitted_and_resolved_delivery() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let (_dir, context, capability) = authenticated_fixture();
     assert_eq!(
         inspect(&context)["notification"]["delivery_state"],
