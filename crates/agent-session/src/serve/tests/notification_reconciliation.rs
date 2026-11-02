@@ -2,7 +2,16 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[derive(Clone, Copy)]
-enum AttemptPrompt { Notice, MissingNotice, Current, ShortV1, UnversionedShortV1, V1WithCurrentBytes, PriorDated, PriorUndated, UnknownFormat }
+enum AttemptPrompt { Notice, MissingNotice, Current, HistoricalShort, ShortV1, UnversionedShortV1, V1WithCurrentBytes, PriorDated, PriorUndated, UnknownFormat }
+
+#[tokio::test]
+async fn configured_mailbox_name_reconciles_current_and_retained_default_attempts() {
+    for form in [AttemptPrompt::Current, AttemptPrompt::HistoricalShort] {
+        check_attempt(form, "2030-01-01T00:01:40.800000000Z", "prompt_submitted").await;
+    }
+    check_attempt(AttemptPrompt::HistoricalShort, "2030-01-01T00:01:40.600000000Z", "queued").await;
+    check_attempt(AttemptPrompt::HistoricalShort, "", "attempt_unknown").await;
+}
 
 #[tokio::test]
 async fn coordination_notification_reconcile_finds_delivered_prompt_before_later_prompt() {
@@ -103,6 +112,7 @@ async fn check_attempt(form: AttemptPrompt, submitted_at: &str, expected_state: 
         fs::write(path, serde_json::to_vec_pretty(&registry).unwrap()).unwrap();
         let prompt = match form {
             AttemptPrompt::MissingNotice => "unrelated provider input".to_string(),
+            AttemptPrompt::HistoricalShort => "Mailbox: agent-session message inbox".to_string(),
             AttemptPrompt::ShortV1 | AttemptPrompt::UnversionedShortV1 => {
                 let date = jiff::Timestamp::from_second(candidate.queued_at_epoch + 1).unwrap();
                 format!("Mailbox: {date}; agent-session message inbox")
