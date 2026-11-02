@@ -11,8 +11,8 @@
 
 - The upgrade existed only for receipts written by an earlier release; the
   interrupted-create integration fixture now uses a v2 receipt of the same
-  meaning, and a retained v1 receipt must be deleted or re-created by its
-  owner.
+  meaning, and a retained v1 receipt is refused with its path and left for its
+  owner to reconcile against the remote state.
 
 ### Evidence
 

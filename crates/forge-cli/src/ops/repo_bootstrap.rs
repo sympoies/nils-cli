@@ -1934,8 +1934,8 @@ fn load_receipt(path: &Path) -> Result<Option<BootstrapReceipt>, ForgeError> {
         _ => {
             return Err(validation(
                 "bootstrap_receipt_invalid",
-                "bootstrap receipt has an unsupported schema",
-                None,
+                "bootstrap receipt has an unsupported schema; keep it, inspect the remote repository, and reconcile with the bootstrap owner before removing it or repeating the command",
+                Some(path.display().to_string()),
             ));
         }
     };
@@ -2752,6 +2752,8 @@ mod tests {
         let error = load_receipt(&path).unwrap_err();
         assert_eq!(error.kind(), "bootstrap_receipt_invalid");
         assert!(error.message().contains("unsupported schema"), "{error:?}");
+        assert!(error.message().contains("reconcile"), "{error:?}");
+        assert_eq!(error.detail(), Some(path.display().to_string().as_str()));
     }
 
     #[test]
