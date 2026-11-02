@@ -14,6 +14,7 @@ ALLOWLIST = 'scripts/ci/public-boundary-allowlist.tsv'
 GITHUB_TOKEN = 'gh' + 'p_' + 'a' * 36
 AWS_KEY_ID = 'AK' + 'IA' + 'B' * 16
 PEM_HEADER = '-----BEGIN ' + 'RSA PRIVATE KEY-----'
+GENERIC_PEM_HEADER = '-----BEGIN ' + 'PRIVATE KEY-----'
 HOME_PREFIX = '/' + 'home'
 USERS_PREFIX = '/' + 'Users'
 
@@ -48,8 +49,8 @@ class AuditTests(unittest.TestCase):
             with self.subTest(prefix=prefix):
                 result = self.audit({'docs/note.md': f'open {prefix}/synthetic-owner/notes.txt\n'})
                 self.assertEqual(result.returncode, 1, result.stdout)
-                self.assertIn(f'docs/note.md:1: absolute home path {prefix}/synthetic-owner',
-                              result.stdout)
+                self.assertIn(f'docs/note.md:1: absolute home path {prefix}/<user>', result.stdout)
+                self.assertNotIn('synthetic-owner', result.stdout + result.stderr)
 
     def test_listed_placeholder_users_and_non_absolute_forms_pass(self):
         files = {
@@ -63,13 +64,22 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
 
     def test_credential_shapes_fail(self):
-        for label, secret in (('github token', GITHUB_TOKEN), ('aws access key id', AWS_KEY_ID),
-                              ('private key block', PEM_HEADER)):
-            with self.subTest(label=label):
+        for kind, label, secret in (('github', 'github token', GITHUB_TOKEN),
+                                    ('aws', 'aws access key id', AWS_KEY_ID),
+                                    ('typed pem', 'private key block', PEM_HEADER),
+                                    ('generic pem', 'private key block', GENERIC_PEM_HEADER)):
+            with self.subTest(kind=kind):
                 result = self.audit({'src/config.txt': f'x = {secret}\n'})
                 self.assertEqual(result.returncode, 1, result.stdout)
                 self.assertIn(f'src/config.txt:1: committed credential ({label})', result.stdout)
                 self.assertNotIn(secret, result.stdout + result.stderr)
+
+    def test_a_credential_in_a_home_component_is_reported_without_echoing_it(self):
+        result = self.audit({'src/path.txt': f'open {HOME_PREFIX}/{GITHUB_TOKEN}/x\n'})
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn('src/path.txt:1: committed credential (github token)', result.stdout)
+        self.assertIn(f'src/path.txt:1: absolute home path {HOME_PREFIX}/<user>', result.stdout)
+        self.assertNotIn(GITHUB_TOKEN, result.stdout + result.stderr)
 
     def test_credential_exception_applies_to_its_exact_path_only(self):
         files = {'fixtures/scrub.txt': GITHUB_TOKEN + '\n', 'src/other.txt': GITHUB_TOKEN + '\n'}

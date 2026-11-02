@@ -13,6 +13,7 @@ credential-file	crates/agent-session/src/serve_retitle_tests.rs	synthetic token 
 credential-file	crates/agent-session/tests/integration/metadata.rs	synthetic token-shaped label that exercises metadata refusal
 credential-file	crates/agent-workflow-primitives/src/heuristic_inbox.rs	synthetic private-key header that exercises the inbox heuristic
 credential-file	crates/forge-cli/src/backend.rs	synthetic token that exercises output redaction
+credential-file	crates/github-app-cli/src/jwt.rs	throwaway test-only RSA key that exercises JWT signing
 home-user	user	generic placeholder user
 home-user	example	generic placeholder user
 home-user	alice	generic placeholder user

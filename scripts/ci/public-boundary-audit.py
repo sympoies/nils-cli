@@ -29,10 +29,10 @@ CREDENTIALS = (
     ('bitbucket app password', re.compile(START + r'ATBB[A-Za-z0-9]{16,}')),
     ('aws access key id',
      re.compile(START + r'(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|A3T[A-Z0-9])[A-Z0-9]{16}')),
-    ('private key block', re.compile(r'-----BEGIN [A-Z ]+PRIVATE KEY-----')),
+    ('private key block', re.compile(r'-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----')),
 )
 # An absolute path starts here: not glued to a longer path or a variable.
-HOME = re.compile(r'(?<![A-Za-z0-9_.~}$-])(/(?:home|Users)/([A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?))')
+HOME = re.compile(r'(?<![A-Za-z0-9_.~}$-])(/(?:home|Users))/([A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?)')
 
 
 def load_allowlist(root):
@@ -70,7 +70,8 @@ def findings(root, exempt_files, home_users):
                         yield f'{name}:{number}: committed credential ({label})'
             for match in HOME.finditer(line):
                 if match[2] not in home_users:
-                    yield f'{name}:{number}: absolute home path {match[1]}'
+                    # The user component may itself be a credential: report the prefix only.
+                    yield f'{name}:{number}: absolute home path {match[1]}/<user>'
 
 
 def main():
