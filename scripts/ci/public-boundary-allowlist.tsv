@@ -1,0 +1,39 @@
+# kind	value	reason
+# Read by scripts/ci/public-boundary-audit.py. Columns are tab separated.
+# credential-file: exact tracked path; home-user: user component after /home/ or /Users/.
+credential-file	crates/nils-scrub/src/lib.rs	synthetic tokens that exercise the scrub patterns
+credential-file	crates/nils-scrub/src/log.rs	synthetic token that exercises the scrub log
+credential-file	crates/nils-scrub/tests/scrub.rs	synthetic tokens that exercise the scrub patterns
+credential-file	crates/nils-scrub/tests/fixtures/scrub/all-patterns.txt	synthetic scrub input covering every pattern
+credential-file	crates/nils-evidence/tests/migrate.rs	synthetic tokens that exercise evidence redaction
+credential-file	crates/agent-hook/tests/dsh_policy.rs	synthetic tokens that exercise hook policy denials
+credential-file	crates/agent-session/src/retitle.rs	synthetic tokens that exercise title redaction tests
+credential-file	crates/agent-session/src/retitle_v3.rs	synthetic tokens that exercise title redaction tests
+credential-file	crates/agent-session/src/serve_retitle_tests.rs	synthetic token that exercises title redaction tests
+credential-file	crates/agent-session/tests/integration/metadata.rs	synthetic token-shaped label that exercises metadata refusal
+credential-file	crates/agent-workflow-primitives/src/heuristic_inbox.rs	synthetic private-key header that exercises the inbox heuristic
+credential-file	crates/forge-cli/src/backend.rs	synthetic token that exercises output redaction
+credential-file	crates/github-app-cli/src/jwt.rs	throwaway test-only RSA key that exercises JWT signing
+home-user	user	generic placeholder user
+home-user	example	generic placeholder user
+home-user	alice	generic placeholder user
+home-user	alice-work	generic placeholder user
+home-user	bob	generic placeholder user
+home-user	fixture	generic placeholder user
+home-user	dev	generic placeholder user
+home-user	out	generic placeholder user
+home-user	me	generic placeholder user
+home-user	u	generic placeholder user
+home-user	test	generic placeholder user
+home-user	tester	generic placeholder user
+home-user	agent	generic placeholder user
+home-user	agent2	generic placeholder user
+home-user	operator	generic placeholder user
+home-user	other	generic placeholder user
+home-user	someone	generic placeholder user
+home-user	someone-work	generic placeholder user
+home-user	someoneelse	generic placeholder user
+home-user	private-person	generic placeholder user
+home-user	runner	GitHub-hosted runner account, not a person
+home-user	runners	GitHub-hosted runner directory, not a person
+home-user	linuxbrew	Homebrew on Linux prefix, not a person

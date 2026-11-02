@@ -14,6 +14,8 @@ Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/markdownlint-audit.sh --strict
   - bash scripts/ci/cli-output-contract-lint.sh --strict
   - bash scripts/ci/forge-cli-fixture-lint.sh --strict
+  - python3 scripts/ci/public-boundary-audit.py
+  - python3 scripts/ci/tests/public-boundary-audit.test.py
   - bash scripts/ci/tests/node-scope.test.sh
   - bash scripts/ci/tests/install-local-release-binaries.test.sh
   - bash scripts/ci/tests/completion-freshness-audit.test.sh
@@ -63,6 +65,8 @@ Modes:
       - bash scripts/ci/docs-prose-audit.sh --strict
       - bash scripts/ci/markdownlint-audit.sh --strict
       - bash scripts/ci/cli-output-contract-lint.sh --strict
+      - python3 scripts/ci/public-boundary-audit.py
+      - python3 scripts/ci/tests/public-boundary-audit.test.py
     Skip fmt/clippy/workspace tests/zsh completion tests.
 
 Environment:
@@ -196,6 +200,8 @@ run bash scripts/ci/own-compat-audit.sh
 run bash scripts/ci/markdownlint-audit.sh --strict
 run bash scripts/ci/cli-output-contract-lint.sh --strict
 run bash scripts/ci/forge-cli-fixture-lint.sh --strict
+run python3 scripts/ci/public-boundary-audit.py
+run python3 scripts/ci/tests/public-boundary-audit.test.py
 if [[ "$docs_only" -eq 1 ]]; then
   run bash scripts/ci/tests/docs-prose-audit.test.sh
   run bash scripts/ci/docs-prose-audit.sh --strict
