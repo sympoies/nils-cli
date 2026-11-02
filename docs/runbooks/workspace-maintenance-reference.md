@@ -816,8 +816,7 @@ creates one local commit, `chore(release): bump cli versions to X.Y.Z`.
 It never tags, pushes, publishes, or installs.
 
 `--version X.Y.Z` is required and also accepts a leading `v`. `--full-checks`
-opts into the full audit stack; `--skip-checks` is a deprecated alias for the
-default locked check. `--skip-readme` omits the README update. `--allow-dirty`
+opts into the full audit stack. `--skip-readme` omits the README update. `--allow-dirty`
 permits changes only to release-managed paths. `--prepare-only` applies the
 same transform and exits before validation, staging, and commit, so contract
 tests can inspect the resulting release tree.
