@@ -16,7 +16,6 @@ use crate::CliContext;
 const ROUTE: &str = "observation_spool";
 const RECORDED: &str = "recorded";
 const UNAVAILABLE: &str = "unavailable";
-const OWNER_ACTION: &str = "agent-session lineage adopt <CHILD> --by <SESSION>";
 
 /// Outcome of the latest alert attempt for one notification.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -120,6 +119,9 @@ fn event(incident: &AuthIncident, recovery: bool, now: i64) -> Result<Event, Fie
     if recovery {
         Ok(event)
     } else {
-        event.with_recovery_action(OWNER_ACTION)
+        event.with_recovery_action(&format!(
+            "{} lineage adopt <CHILD> --by <SESSION>",
+            crate::command_identity::executable()
+        ))
     }
 }

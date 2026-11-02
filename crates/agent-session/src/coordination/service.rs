@@ -257,7 +257,7 @@ pub(crate) fn recovery(error: CliError) -> CliError {
         }
         "remote-recipient-not-discovered" => (
             "remote-recipient-not-discovered",
-            remote::RECIPIENT_NOT_DISCOVERED_MESSAGE,
+            &*remote::recipient_not_discovered_message(),
         ),
         "remote-messaging-unsupported" => (
             "remote-messaging-unsupported",

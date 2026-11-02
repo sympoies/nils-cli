@@ -12,7 +12,8 @@ pub(super) fn refusal(reason_code: &'static str) -> CliError {
         _ => "preserve-session-and-request-replacement",
     };
     let mut error = unauthorized().with_hint(format!(
-        "{reason_code}: verify the runtime-supplied capability file with `agent-session broker identity`; if authority no longer matches, preserve the session, signed work and unread mailbox and ask the coordinator for a replacement session and sender resend; do not edit authority files or restart a live pane to repair this refusal",
+        "{reason_code}: verify the runtime-supplied capability file with `{} broker identity`; if authority no longer matches, preserve the session, signed work and unread mailbox and ask the coordinator for a replacement session and sender resend; do not edit authority files or restart a live pane to repair this refusal",
+        crate::command_identity::executable(),
     ));
     *error.details_mut() = Some(serde_json::json!({
         "reason_code": reason_code,
