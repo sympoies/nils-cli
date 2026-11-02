@@ -36,8 +36,6 @@ const ACTIVITY_DEGRADED_AUDITED_READ_ONLY: &str = "activity-degraded-audited-rea
 const ACTIVITY_DEGRADED_ADVISORY_OFF: &str = "activity-degraded-advisory-off";
 /// Environment variable that overrides how the activity helper is resolved.
 const HELPER_BIN_ENV: &str = "AGENT_SESSION_BIN";
-/// `PATH`-resolvable name of the activity capability helper.
-const ACTIVITY_HELPER: &str = "agent-session";
 /// Stable classification for a helper that cannot be resolved or executed.
 pub(crate) const ACTIVITY_HELPER_UNRESOLVABLE: &str = "activity-helper-unresolvable";
 
@@ -1728,9 +1726,8 @@ pub(crate) fn locate_activity_helper() -> Option<PathBuf> {
             return Some(candidate);
         }
     }
-    std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|directory| directory.join(ACTIVITY_HELPER))
-        .find_map(|candidate| canonical_executable(&candidate))
+    nils_common::session_binary::locate_on_path(std::env::var_os("PATH").as_deref())
+        .and_then(|candidate| canonical_executable(&candidate))
 }
 
 fn canonical_executable(path: &Path) -> Option<PathBuf> {
@@ -1982,8 +1979,9 @@ pub(crate) fn validate_policy_handlers(
         return Err(HookError::data(
             ACTIVITY_HELPER_UNRESOLVABLE,
             format!(
-                "the {ACTIVITY_HELPER} activity capability helper could not be resolved to an \
-                 executable file through {HELPER_BIN_ENV} or PATH"
+                "the {} activity capability helper could not be resolved to an \
+                 executable file through {HELPER_BIN_ENV} or PATH",
+                nils_common::session_binary::NAME
             ),
         ));
     }
@@ -2273,7 +2271,7 @@ mod tests {
         let bin = helper_root.join("bin");
         fs::create_dir_all(&bin).expect("helper bin");
         fs::create_dir_all(&other).expect("other cwd");
-        let helper = bin.join(ACTIVITY_HELPER);
+        let helper = bin.join(nils_common::session_binary::NAME);
         fs::write(&helper, "#!/bin/sh\nexit 0\n").expect("helper");
         fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).expect("helper mode");
 

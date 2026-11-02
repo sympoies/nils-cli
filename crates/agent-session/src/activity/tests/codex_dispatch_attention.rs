@@ -152,7 +152,7 @@ fn source_guard_rejects_an_unguarded_direct_reporter_added_to_dispatch() {
     let fixture = Fixture::new(&lock);
     let path = fixture.home.join(".codex/config.toml");
     let mut config = fs::read_to_string(&path).unwrap();
-    config.push_str("\n[[hooks.PermissionRequest]]\n[[hooks.PermissionRequest.hooks]]\ntype = \"command\"\ncommand = \"agent-session activity hook --agent codex\"\ntimeout = 5\n");
+    config.push_str(&format!("\n[[hooks.PermissionRequest]]\n[[hooks.PermissionRequest.hooks]]\ntype = \"command\"\ncommand = \"{} activity hook --agent codex\"\ntimeout = 5\n", nils_common::session_binary::NAME));
     fs::write(&path, config).unwrap();
     assert!(!codex_protocol_attention_source_guard_configured());
 }

@@ -2526,9 +2526,8 @@ fn codex_json_only_install_migrates_atomically_to_one_managed_representation() {
     assert!(!json_text.contains("agent-session activity hook"));
     let toml_text = fs::read_to_string(codex.join("config.toml")).expect("config toml");
     assert!(toml_text.contains("agent-hook dispatch --product codex"));
-    assert!(toml_text.contains(
-        "notify = [\"agent-session\", \"activity\", \"notify\", \"--agent\", \"codex\"]"
-    ));
+    let notify = support::codex_notify_argv().join("\", \"");
+    assert!(toml_text.contains(&format!("notify = [\"{notify}\"]")));
 
     write_runtime_handler(&codex.join("hooks"), 0o755);
     let doctor = fixture.run(&["doctor", "--product", "codex", "--format", "json"], None);
@@ -2694,9 +2693,7 @@ fn computer_use_wrapper(base: &[String], previous: &[String]) -> Vec<String> {
 }
 
 fn accumulated_computer_use_chain(base: &[String], pairs: usize) -> Vec<String> {
-    let owned = ["agent-session", "activity", "notify", "--agent", "codex"]
-        .map(str::to_string)
-        .to_vec();
+    let owned = support::codex_notify_argv();
     let mut chain = base.to_vec();
     for _ in 0..pairs {
         let mut composed = owned.clone();
@@ -2781,9 +2778,7 @@ fn codex_computer_use_owned_chain_is_normalized_idempotently() {
     );
     assert_eq!(repaired.code, 0, "stderr={}", repaired.stderr_text());
     assert_eq!(repaired.stdout_json()["data"]["apply_allowed"], true);
-    let owned = ["agent-session", "activity", "notify", "--agent", "codex"]
-        .map(str::to_string)
-        .to_vec();
+    let owned = support::codex_notify_argv();
     assert_eq!(
         read_codex_notify(&config),
         computer_use_wrapper(&base, &owned)
@@ -2836,9 +2831,7 @@ fn codex_computer_use_owned_remove_does_not_require_a_live_helper() {
             helper.to_string_lossy().into_owned(),
             "turn-ended".to_string(),
         ];
-        let owned = ["agent-session", "activity", "notify", "--agent", "codex"]
-            .map(str::to_string)
-            .to_vec();
+        let owned = support::codex_notify_argv();
         write_codex_notify(&config, &computer_use_wrapper(&base, &owned));
 
         let removed = fixture.run(
@@ -2883,9 +2876,7 @@ fn codex_computer_use_owned_audit_rejects_a_symlinked_ancestor() {
         helper.to_string_lossy().into_owned(),
         "turn-ended".to_string(),
     ];
-    let owned = ["agent-session", "activity", "notify", "--agent", "codex"]
-        .map(str::to_string)
-        .to_vec();
+    let owned = support::codex_notify_argv();
     write_codex_notify(&config, &computer_use_wrapper(&base, &owned));
 
     let untrusted = fixture.run(
@@ -3001,9 +2992,7 @@ fn codex_computer_use_owned_audit_rejects_a_shallow_oversized_chain() {
         helper.to_string_lossy().into_owned(),
         "turn-ended".to_string(),
     ];
-    let mut owned = ["agent-session", "activity", "notify", "--agent", "codex"]
-        .map(str::to_string)
-        .to_vec();
+    let mut owned = support::codex_notify_argv();
     owned.push("--forward-notify-argv-json".to_string());
     let oversized_argument = "x".repeat(17 * 1024);
     owned.push(

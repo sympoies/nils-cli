@@ -1,4 +1,5 @@
-//! DSH consumes current and prior fixed reminders without weakening validation.
+//! DSH consumes current and prior fixed reminders without weakening validation,
+//! and names a session binary from another release when its calls fail.
 use super::*;
 use pretty_assertions::assert_eq;
 
@@ -19,6 +20,46 @@ fn managed_dsh_prompt_step_carries_short_dated_mailbox_reminder() {
 #[test]
 fn managed_dsh_prompt_step_carries_short_undated_mailbox_reminder() {
     check_mailbox_reminder("Mailbox: agent-session message inbox");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn a_failing_session_call_names_a_binary_from_another_release() {
+    let fixture = Fixture::new(&operation_policy());
+    let release = fixture.root.join("release");
+    fs::create_dir(&release).expect("release directory");
+    let agent_hook = release.join("agent-hook");
+    install_release_binary(&agent_hook);
+    let companion = release.join(super::support::SESSION_BIN);
+    fs::write(
+        &companion,
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'session 0.1.0'; exit 0; fi\nexit 1\n",
+    )
+    .expect("session fixture");
+    fs::set_permissions(&companion, fs::Permissions::from_mode(0o700)).expect("mode");
+    let capability = fixture.root.join("capability");
+    fs::write(&capability, "capability").expect("capability fixture");
+    let env = [
+        ("AGENT_SESSION_ID", "managed-session"),
+        (
+            "AGENT_SESSION_CAPABILITY_FILE",
+            capability.to_str().expect("path"),
+        ),
+    ];
+
+    let stop = dispatch_with_release_binary_env(
+        &fixture,
+        &agent_hook,
+        &lifecycle_request(&fixture, "agent/turn-stopping", None, None),
+        &env,
+    );
+    assert_eq!(stop["data"]["action"], "block", "stop={stop}");
+    let pair = format!(
+        "agent-hook {} is paired with {} 0.1.0",
+        env!("CARGO_PKG_VERSION"),
+        super::support::SESSION_BIN
+    );
+    assert!(stop.to_string().contains(&pair), "stop={stop}");
 }
 
 fn check_mailbox_reminder(reminder: &str) {
@@ -43,7 +84,7 @@ fn check_mailbox_reminder(reminder: &str) {
         })
         .to_string()
     };
-    let companion = release.join("agent-session");
+    let companion = release.join(super::support::SESSION_BIN);
     fs::write(
         &companion,
         format!(

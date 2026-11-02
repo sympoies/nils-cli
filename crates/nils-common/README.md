@@ -38,6 +38,8 @@ Workspace-level keep/delete ownership decisions are tracked in
   Git identity, dedicated replay-commit authorization/execution, and private metadata audit;
   [contract](docs/specs/forge-identity-policy-v1.md). Replay binds the original branch's remote while detached;
   generic Git preparation continues to refuse raw history replay.
+- `session_binary`: the session binary name every call site shares (`NAME`, `agent-session` unless the workspace is built with
+  `NILS_SESSION_BIN_NAME` set to another file name) and the `PATH` lookup for it.
 - `env`: truthy parsing helpers, env-presence checks, `NO_COLOR` and prompt-segment color toggles, duration parsing, and trimmed non-empty
   env lookup.
 - `shell`: POSIX single-quote escaping (with selectable escape style) and ANSI stripping modes.

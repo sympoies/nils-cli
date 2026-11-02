@@ -8,7 +8,7 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use nils_common::fs::write_atomic;
+use nils_common::{fs::write_atomic, session_binary::NAME as SESSION_BINARY};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use toml_edit::{DocumentMut, Item as TomlItem, Value as TomlValue};
@@ -28,7 +28,7 @@ const AGENT_SESSION_BLOCK_END: &str = "# <<< agent-session:codex-hooks <<<";
 const DISPATCH_TIMEOUT_SECONDS: i64 = 60;
 const PRIOR_DISPATCH_TIMEOUT_SECONDS: i64 = 10;
 const SESSION_COORDINATION_HANDLER: &str = "session-coordination-guard.py";
-const CODEX_NOTIFY_ARGV: [&str; 5] = ["agent-session", "activity", "notify", "--agent", "codex"];
+const CODEX_NOTIFY_ARGV: [&str; 5] = [SESSION_BINARY, "activity", "notify", "--agent", "codex"];
 const CODEX_NOTIFY_FORWARD_FLAG: &str = "--forward-notify-argv-json";
 const CODEX_COMPUTER_USE_NOTIFY_EVENT: &str = "turn-ended";
 const CODEX_COMPUTER_USE_PREVIOUS_NOTIFY_FLAG: &str = "--previous-notify";

@@ -914,7 +914,7 @@ fn dsh_operation_lifecycle_admits_and_completes_one_exact_private_operation() {
     fs::create_dir_all(&release).expect("release directory");
     let agent_hook = release.join("agent-hook");
     install_release_binary(&agent_hook);
-    let agent_session = release.join("agent-session");
+    let agent_session = release.join(support::SESSION_BIN);
     let log = fixture.root.join("agent-session.log");
     let capability = fixture.root.join("session.capability");
     fs::write(&capability, "private-capability\n").expect("capability");
@@ -1079,7 +1079,7 @@ fn certain_operation_denials_reclaim_capacity_before_the_next_admission() {
     fs::create_dir_all(&release).expect("release directory");
     let agent_hook = release.join("agent-hook");
     install_release_binary(&agent_hook);
-    let agent_session = release.join("agent-session");
+    let agent_session = release.join(support::SESSION_BIN);
     let capability = fixture.root.join("session.capability");
     fs::write(&capability, "private-capability\n").expect("capability");
     Fixture::set_private(&capability);
@@ -1195,7 +1195,7 @@ fn dsh_operation_lifecycle_requires_a_claim_only_in_authenticated_enforce_mode()
         let agent_hook = release.join("agent-hook");
         install_release_binary(&agent_hook);
         let helper_log = fixture.root.join("agent-session.log");
-        let agent_session = release.join("agent-session");
+        let agent_session = release.join(support::SESSION_BIN);
         fs::write(
             &agent_session,
             format!(

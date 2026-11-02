@@ -30,6 +30,7 @@ mod paths;
 pub mod policy_parity;
 mod read_only;
 pub mod recovery;
+mod session_binary;
 pub mod session_metadata;
 pub mod setup;
 pub mod stop_completion;

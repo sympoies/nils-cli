@@ -1659,7 +1659,7 @@ fn mailbox_reminder(
         env_value("AGENT_SESSION_CAPABILITY_FILE").filter(|path| Path::new(path).is_absolute())?;
     let state_dir =
         env_value("AGENT_SESSION_STATE_DIR").filter(|path| Path::new(path).is_absolute())?;
-    let executable = trusted_sibling("agent-session").ok()?;
+    let executable = crate::session_binary::trusted_sibling().ok()?;
     let mut command = Command::new(executable);
     sanitize_companion_env(&mut command, &[]);
     command
@@ -5744,7 +5744,7 @@ fn read_lease(path: &Path) -> Result<Option<Lease>, HookError> {
     Ok(Some(lease))
 }
 
-fn trusted_sibling(name: &str) -> Result<PathBuf, HookError> {
+pub(crate) fn trusted_sibling(name: &str) -> Result<PathBuf, HookError> {
     let current = std::env::current_exe()
         .ok()
         .and_then(|path| fs::canonicalize(path).ok())

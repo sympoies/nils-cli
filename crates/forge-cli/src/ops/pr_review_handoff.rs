@@ -564,7 +564,7 @@ fn prove_coordinator_retired(
 ) -> Result<CoordinatorRetirementEvidence, ForgeError> {
     let executable = std::env::var_os("FORGE_CLI_AGENT_SESSION_BIN")
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "agent-session".into());
+        .unwrap_or_else(|| nils_common::session_binary::NAME.into());
     let output = crate::backend::output_with_limits(
         Command::new(executable).args(["board", "--state", "all", "--format", "json"]),
         Some(Duration::from_secs(15)),

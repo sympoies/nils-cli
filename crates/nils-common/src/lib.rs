@@ -43,6 +43,7 @@ pub mod rate_limits;
 pub mod rate_limits_ansi;
 pub mod redact;
 pub mod runtime_compat;
+pub mod session_binary;
 pub mod shell;
 pub mod slug;
 pub mod usage_cache_policy;
