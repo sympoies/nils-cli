@@ -39,6 +39,8 @@ class DevlogPolicy(unittest.TestCase):
                      'forge-cli-fixture-lint.sh', 'docs-prose-audit.sh',
                      'tests/docs-prose-audit.test.sh'):
             self.write('scripts/ci/' + name, '#!/usr/bin/env bash\nexit 0\n')
+        for name in ('public-boundary-audit.py', 'tests/public-boundary-audit.test.py'):
+            self.write('scripts/ci/' + name, 'raise SystemExit(0)\n')
         self.commit('Baseline')
         self.git('switch', '-q', '-c', 'chore/change')
 

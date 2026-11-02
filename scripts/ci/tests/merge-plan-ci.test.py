@@ -140,6 +140,7 @@ class ConsumerExecutionTests(unittest.TestCase):
                  'scripts/ci/merge-plan.schema.v1.json', 'scripts/ci/merge-plan.schema.v2.json',
                  'scripts/ci/nils-cli-scoped-checks.sh', 'scripts/ci/scoped-coverage-ratchet.py',
                  'scripts/ci/assert-import-audit.py', 'scripts/ci/lib/rust_file_size.py',
+                 'scripts/ci/public-boundary-audit.py', 'scripts/ci/public-boundary-allowlist.tsv',
                  'scripts/ci/lib/sibling_bins.py',
                  'scripts/ci/test-env.sh', 'scripts/ci/gate-reports.py')
         for path in paths:
@@ -150,6 +151,7 @@ class ConsumerExecutionTests(unittest.TestCase):
         audit_test = self.repo / 'scripts/ci/tests/assert-import-audit.test.py'
         audit_test.parent.mkdir(parents=True)
         audit_test.write_text('# Audit self-tests run separately against the complete source tree.\n')
+        (audit_test.parent / 'public-boundary-audit.test.py').write_text(audit_test.read_text())
         for name in ('selected', 'consumer', 'untouched', 'unrelated'):
             source = self.repo / f'crates/{name}/src/lib.rs'
             source.parent.mkdir(parents=True)

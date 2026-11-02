@@ -546,6 +546,9 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/markdownlint-audit.sh --strict`
 - `bash scripts/ci/cli-output-contract-lint.sh --strict`
 - `bash scripts/ci/forge-cli-fixture-lint.sh --strict`
+- `python3 scripts/ci/public-boundary-audit.py` (committed credentials and absolute
+  user-home paths; exact exempt paths and placeholder users, each with a reason,
+  live in `scripts/ci/public-boundary-allowlist.tsv`)
 - `bash scripts/ci/own-compat-audit.sh`
 - `bash scripts/ci/tests/node-scope.test.sh`
 - `bash scripts/ci/tests/install-local-release-binaries.test.sh`
@@ -567,6 +570,7 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/tests/own-compat-audit.test.sh`
 - `bash scripts/ci/tests/workspace-test-stale-audit.test.sh`
 - `python3 scripts/ci/tests/assert-import-audit.test.py`
+- `python3 scripts/ci/tests/public-boundary-audit.test.py`
 - `bash scripts/ci/tests/file-size-audit.test.sh`
 - `bash scripts/ci/tests/docs-prose-audit.test.sh`
 - `bash scripts/ci/tests/prepare-private-release-workflow.test.sh`

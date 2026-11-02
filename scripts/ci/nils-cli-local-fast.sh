@@ -569,6 +569,8 @@ require_cmd rg
 run bash scripts/ci/tempdir-leak-audit.sh
 run python3 scripts/ci/assert-import-audit.py
 run python3 scripts/ci/tests/assert-import-audit.test.py
+run python3 scripts/ci/public-boundary-audit.py
+run python3 scripts/ci/tests/public-boundary-audit.test.py
 run python3 scripts/ci/tests/gate-resources.test.py
 run python3 scripts/ci/tests/gate-reports.test.py
 run python3 scripts/ci/tests/devlog-policy.test.py
