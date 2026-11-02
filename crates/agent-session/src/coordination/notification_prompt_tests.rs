@@ -4,30 +4,32 @@ use pretty_assertions::assert_eq;
 
 #[test]
 fn mailbox_reminder_fits_one_row_for_worst_case_date_and_session() {
-    let session = "s".repeat(256);
-    for queued_at in [
-        0,
-        1_790_000_000,
-        jiff::Timestamp::MAX.as_second() - 1,
-        i64::MAX,
-    ] {
-        let prompt = fixed_prompt(&session, queued_at);
-        assert!(
-            prompt.is_ascii(),
-            "visible width must not depend on Unicode"
-        );
-        for provider in ["claude", "codex"] {
-            let capture = narrow_composer(provider, &prompt, 51);
-            assert_eq!(
-                crate::send_submit::exact_composer_input(provider, &capture),
-                Some(prompt.clone()),
-                "{provider}: the fixed wake must remain exactly observable at 51 columns"
+    crate::command_identity::with_name("agent-session", || {
+        let session = "s".repeat(256);
+        for queued_at in [
+            0,
+            1_790_000_000,
+            jiff::Timestamp::MAX.as_second() - 1,
+            i64::MAX,
+        ] {
+            let prompt = fixed_prompt(&session, queued_at);
+            assert!(
+                prompt.is_ascii(),
+                "visible width must not depend on Unicode"
             );
+            for provider in ["claude", "codex"] {
+                let capture = narrow_composer(provider, &prompt, 51);
+                assert_eq!(
+                    crate::send_submit::exact_composer_input(provider, &capture),
+                    Some(prompt.clone()),
+                    "{provider}: the fixed wake must remain exactly observable at 51 columns"
+                );
+            }
+            assert!(!prompt.contains(['\n', '\r']));
+            assert!(prompt.ends_with("agent-session message inbox"));
+            assert!(!prompt.contains(&session));
         }
-        assert!(!prompt.contains(['\n', '\r']));
-        assert!(prompt.ends_with("agent-session message inbox"));
-        assert!(!prompt.contains(&session));
-    }
+    });
 }
 
 // Model visual wrapping without joining unknown draft rows.
