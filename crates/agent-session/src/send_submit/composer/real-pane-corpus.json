@@ -51,6 +51,16 @@
       "direct": {
         "observation": "pane-unparsable"
       }
+    },
+    {
+      "id": "claude-2.1.296-input-on-first-row",
+      "provider": "claude",
+      "origin": "real capture with every row above the input row removed",
+      "capture": "\u001b[39m❯ \u001b[7m \u001b[0m                 \n\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────\n\u001b[39m  \u001b[38;5;220m⏵⏵ auto mode on\u001b[38;5;246m (shift+tab to cycle) · ← for agents\u001b[39m                           \n",
+      "exact": "",
+      "direct": {
+        "input": ""
+      }
     }
   ]
 }

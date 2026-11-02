@@ -264,8 +264,22 @@ pub(crate) fn claude_queue_occurrences(pane: &str, text: &str) -> Option<usize> 
 /// starts it with `❯`. A permission or trust dialog replaces the box, so no
 /// such region exists while one is open.
 fn claude_composer<'a>(lines: &'a [&'a str]) -> Option<(&'a [&'a str], &'a [&'a str])> {
-    let (top, bottom) = claude_box(lines)?;
-    let region = &lines[top + 1..bottom];
+    let (start, bottom) = match claude_box(lines) {
+        Some((top, bottom)) => (top + 1, bottom),
+        // An input row on the first row of the capture has no rule above it in
+        // view. Its one closing rule directly below still bounds the box, unless
+        // a list row (a command autocomplete or picker) follows that rule.
+        None if claude_rules(lines) == [1]
+            && lines[0].trim_start().starts_with('❯')
+            && !lines[2..]
+                .iter()
+                .any(|line| line.trim_start().starts_with('❯')) =>
+        {
+            (0, 1)
+        }
+        None => return None,
+    };
+    let region = &lines[start..bottom];
     let first = region.first()?.trim_start();
     let input = first.strip_prefix('❯')?;
     if starts_with_numbered_choice(input) {

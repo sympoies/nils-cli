@@ -157,6 +157,12 @@ collapsed into empty input. Codex whitespace-only drafts remain nonempty;
 hyperlink metadata never substitutes for dim proof or hides visible caption
 text.
 
+A Claude input row on the first row of the capture has no opening rule in view.
+When its one closing rule is directly below it, that box is read as usual, so a
+suggestion is empty and a draft is a draft. A first-row choice, a multi-row
+input, a dialog footer, or a capture without exactly that one closing rule stays
+unobservable.
+
 The screen reader is frozen. It is not widened for a new render form: a pane
 shape it does not recognize stays a typed refusal. A recorded corpus of
 sanitized or derived panes, with escape bytes intact, pins what the reader

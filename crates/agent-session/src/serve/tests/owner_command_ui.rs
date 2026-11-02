@@ -114,7 +114,21 @@ async fn owner_command_ui_is_dispatched_without_a_model_submission() {
             post_json(uri, Some(TOKEN), request.clone()),
         )
         .await;
-        if dispatched {
+        // The retained frame of this scenario omits the rule above its first row.
+        // A first-row input with its one closing rule below is read as a
+        // composer, so the empty composer left after the command counts as a
+        // submitted prompt, exactly as the same frame with its top rule does.
+        // Before, the missing rule made the pane unreadable and the outcome
+        // unknown; that was an artifact of the retained frame, not a contract.
+        if scenario == "effort-composer-after-escape" {
+            assert_eq!(status, StatusCode::OK, "{scenario}: {first}");
+            assert_eq!(first["data"]["submitted"], true, "{scenario}");
+            assert!(first["data"]["command_dispatched"].is_null(), "{scenario}");
+            assert_eq!(
+                first["data"]["receipt"]["outcome"], "submitted",
+                "{scenario}"
+            );
+        } else if dispatched {
             assert_eq!(status, StatusCode::OK, "{scenario}: {first}");
             assert_eq!(first["data"]["submitted"], false, "{scenario}");
             assert_eq!(first["data"]["command_dispatched"], true, "{scenario}");
