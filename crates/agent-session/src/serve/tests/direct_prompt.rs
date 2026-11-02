@@ -242,6 +242,77 @@ async fn direct_unobservable_composer_refuses_without_dispatch() {
 }
 
 #[tokio::test]
+async fn direct_unobservable_composer_names_the_stage_that_failed_without_pane_text() {
+    let rule = "────────────────────────────";
+    let cases: [(&str, &str, Option<String>, &str); 8] = [
+        ("claude", "capture-failed", None, "capture-failed"),
+        ("codex", "capture-failed", None, "capture-failed"),
+        (
+            "claude",
+            "pane-unparsable",
+            Some("PRIVATE-MARKER \u{1b}[999m".into()),
+            "pane-unparsable",
+        ),
+        (
+            "codex",
+            "pane-unparsable",
+            Some("PRIVATE-MARKER \u{1b}[999m".into()),
+            "pane-unparsable",
+        ),
+        (
+            "claude",
+            "composer-not-located",
+            Some("PRIVATE-MARKER no input box here\n".into()),
+            "composer-not-located",
+        ),
+        (
+            "codex",
+            "composer-not-located",
+            Some("PRIVATE-MARKER no input box here\n".into()),
+            "composer-not-located",
+        ),
+        (
+            "claude",
+            "row-unrecognized",
+            Some(format!(
+                "{rule}\n❯ [Pasted text #1 +20 lines] PRIVATE-MARKER\n{rule}\n"
+            )),
+            "row-unrecognized",
+        ),
+        (
+            "codex",
+            "row-unrecognized",
+            Some("› [Pasted Content 1234 chars] PRIVATE-MARKER\n\n  status".into()),
+            "row-unrecognized",
+        ),
+    ];
+    for (provider, label, pane, expected) in cases {
+        for route in ["prompt", "prompt/v2"] {
+            let fixture = DirectFixture::new(provider);
+            match &pane {
+                None => fs::write(fixture.tmp.path().join("capture-fails"), "").unwrap(),
+                Some(pane) => fs::write(fixture.tmp.path().join("pane-override"), pane).unwrap(),
+            }
+            let (status, result) = fixture.submit(route, fixture.body(route)).await;
+            let case = format!("{provider} {route} {label}: {result}");
+            assert_eq!(status, StatusCode::CONFLICT, "{case}");
+            assert_eq!(result["error"]["code"], "composer-unobservable", "{case}");
+            let details = &result["error"]["details"];
+            if route == "prompt" {
+                assert_eq!(details["stage"], "admission", "{case}");
+                assert_eq!(details["observation"], expected, "{case}");
+                assert_eq!(details["submitted"], false, "{case}");
+            } else {
+                assert_eq!(details["receipt"]["outcome"], "refused", "{case}");
+                assert_eq!(details["receipt"]["observation"], expected, "{case}");
+            }
+            assert!(!result.to_string().contains("PRIVATE-MARKER"), "{case}");
+            assert_eq!(fixture.dispatched.load(Ordering::SeqCst), 0, "{case}");
+        }
+    }
+}
+
+#[tokio::test]
 async fn direct_codex_numbered_dialog_refuses_until_observably_empty() {
     for (provider, pane) in [(
         "codex",

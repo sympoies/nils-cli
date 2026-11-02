@@ -6,6 +6,8 @@ use unicode_width::UnicodeWidthChar;
 
 mod command_ui;
 pub(crate) use command_ui::observed as command_ui_observed;
+mod unobserved;
+pub(crate) use unobserved::Unobserved;
 
 pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
     composer_input(agent, pane, false)
@@ -201,34 +203,49 @@ fn prefix_at_cells(text: &str, cells: usize) -> Option<&str> {
 
 /// Direct replies may follow a queued message when the sole input row is a
 /// native dim-styled queued hint. Literal or adjacent owner input stays a draft.
+pub(crate) fn direct_composer_observation(agent: &str, pane: &str) -> Result<String, Unobserved> {
+    observe_input(agent, pane, true)
+}
+
+#[cfg(test)]
 pub(crate) fn direct_composer_input(agent: &str, pane: &str) -> Option<String> {
-    composer_input(agent, pane, true)
+    direct_composer_observation(agent, pane).ok()
 }
 
 fn composer_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Option<String> {
-    let (plain, dim) = styled_text(pane)?;
+    observe_input(agent, pane, allow_queued_hint).ok()
+}
+
+/// The same classification, naming the first observation step that failed.
+fn observe_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Result<String, Unobserved> {
+    let (plain, dim) = styled_text(pane).ok_or(Unobserved::PaneUnparsable)?;
     let lines: Vec<&str> = plain.lines().collect();
     let (region, footer) = match agent {
         "claude" => claude_composer(&lines),
         "codex" => codex_composer(&lines),
         _ => None,
-    }?;
+    }
+    .ok_or(Unobserved::ComposerNotLocated)?;
     if region.len() != 1
         || footer.iter().any(|line| {
             let lower = line.to_lowercase();
             DIALOG_HINTS.iter().any(|hint| lower.contains(hint))
         })
     {
-        return None;
+        return Err(Unobserved::RowUnrecognized);
     }
     let glyph = if agent == "claude" { '❯' } else { '›' };
-    let after_glyph = region[0].trim_start().strip_prefix(glyph)?;
+    let after_glyph = region[0]
+        .trim_start()
+        .strip_prefix(glyph)
+        .ok_or(Unobserved::RowUnrecognized)?;
     let input = after_glyph
         .strip_prefix([' ', '\u{a0}', '\u{2007}', '\u{202f}'])
         .unwrap_or(after_glyph);
     let row = lines
         .iter()
-        .position(|line| std::ptr::eq(*line, region[0]))?;
+        .position(|line| std::ptr::eq(*line, region[0]))
+        .ok_or(Unobserved::RowUnrecognized)?;
     let offset = lines[..row]
         .iter()
         .map(|line| line.len() + 1)
@@ -263,9 +280,9 @@ fn composer_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Option<St
     let compressed = compact(input);
     if compressed == CLAUDE_QUEUED_HINT {
         if !allow_queued_hint || agent != "claude" {
-            return None;
+            return Err(Unobserved::RowUnrecognized);
         }
-        return Some(if fully_dim {
+        return Ok(if fully_dim {
             String::new()
         } else {
             input.to_string()
@@ -275,20 +292,20 @@ fn composer_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Option<St
         .iter()
         .any(|mark| compressed.contains(mark))
     {
-        return None;
+        return Err(Unobserved::RowUnrecognized);
     }
     // Native suggestions are dynamic, not limited to the startup hint wording.
     // Every hint word must carry dim styling; plain, partially dim and blank
     // drafts retain their text. Never infer emptiness from grey color alone.
     if fully_dim {
-        return Some(String::new());
+        return Ok(String::new());
     }
     if (agent == "codex" && input == "Ask Codex to do anything")
         || (agent == "claude" && input.starts_with("Try \"") && input.ends_with('"'))
     {
-        return None;
+        return Err(Unobserved::RowUnrecognized);
     }
-    Some(input.to_string())
+    Ok(input.to_string())
 }
 
 /// Claude styles each suggestion word separately, so the spaces between words
