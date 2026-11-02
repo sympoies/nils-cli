@@ -188,15 +188,13 @@ pub struct CodexNextAccountView {
 
 pub(crate) type CodexAccountSummary = AccountSummary;
 
-/// One listed account in the v1 wire shape, which also accepts the older
-/// `nickname` and `chatgpt_plan_type` field names.
+/// One listed account in the v1 wire shape.
 #[derive(Deserialize)]
 struct BrokerListedAccount {
-    #[serde(alias = "nickname")]
     account: String,
     #[serde(default)]
     label: Option<String>,
-    #[serde(default, alias = "chatgpt_plan_type")]
+    #[serde(default)]
     plan: Option<String>,
 }
 
@@ -213,20 +211,18 @@ impl From<BrokerListedAccount> for AccountSummary {
 #[derive(Deserialize)]
 struct BrokerResolveResponse {
     schema_version: String,
-    #[serde(alias = "nickname")]
     account: String,
     access_token: String,
     chatgpt_account_id: String,
-    #[serde(default, alias = "chatgpt_plan_type")]
+    #[serde(default)]
     plan: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct BrokerSelectResponse {
     schema_version: String,
-    #[serde(alias = "nickname")]
     account: Option<String>,
-    #[serde(default, alias = "chatgpt_plan_type")]
+    #[serde(default)]
     plan: Option<String>,
 }
 
@@ -2388,6 +2384,30 @@ mod tests {
             selected_account(&load_session_record(&context, &record.id).unwrap()).as_deref(),
             Some("acct1")
         );
+    }
+
+    #[test]
+    fn broker_responses_use_only_the_current_field_names() {
+        let retired_account = serde_json::json!({"nickname": "acct1"});
+        assert!(serde_json::from_value::<BrokerListedAccount>(retired_account).is_err());
+        let retired_plan = serde_json::json!({"account": "acct1", "chatgpt_plan_type": "team"});
+        let listed: BrokerListedAccount = serde_json::from_value(retired_plan).unwrap();
+        assert_eq!(listed.plan, None, "a retired plan key must not be read");
+
+        let resolve = serde_json::json!({
+            "schema_version": "agent-session.codex-auth-broker.v1",
+            "nickname": "acct1",
+            "access_token": "fixture-token",
+            "chatgpt_account_id": "workspace-fixture",
+        });
+        assert!(serde_json::from_value::<BrokerResolveResponse>(resolve).is_err());
+        let select = serde_json::json!({
+            "schema_version": "agent-session.codex-auth-broker.v1",
+            "account": "acct1",
+            "chatgpt_plan_type": "team",
+        });
+        let selected: BrokerSelectResponse = serde_json::from_value(select).unwrap();
+        assert_eq!(selected.plan, None, "a retired plan key must not be read");
     }
 
     #[test]
