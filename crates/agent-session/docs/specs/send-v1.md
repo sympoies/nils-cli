@@ -97,6 +97,11 @@ between its observations and keys. A native atomic provider operation is tracked
 Idle and composer observations support Claude Code and Codex tmux runtimes,
 including supported Codex `codex_app_server` profiles with their managed tmux
 pane. App-server idle is native; composer capture remains a separate signal.
+The provider reports a loaded thread that is not running and has no pending
+request as `idle`, or as `systemError` after an error event until its next turn
+starts; both admit a guarded send. `active` refuses with `send-session-not-idle`,
+and a thread that is not loaded, has no status or reports an unknown status
+refuses with `send-idle-unobservable`.
 Unknown or invalid app-server profiles and other providers or runtime kinds
 fail closed for these checks. Exact composer
 verification supports an unambiguous, single visible input line.

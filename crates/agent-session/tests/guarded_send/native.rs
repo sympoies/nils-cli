@@ -78,6 +78,7 @@ impl Server {
                                     if mode == "history-timeout" && request["params"]["includeTurns"] == true { tokio::time::sleep(std::time::Duration::from_secs(5)).await; }
                                     let calls = observed.lock().unwrap();
                                     let submitted = calls.iter().find(|r| r["method"] == "turn/start");
+                                    let submitted_before = submitted;
                                     let read_count = calls.iter().filter(|r| r["method"] == "thread/read").count();
                                     let claimed = fs::read_dir(&claim_dir).unwrap().any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with("send-key-"));
                                     let busy = mode == "busy" || (mode == "late-busy" && read_count >= 3)
@@ -96,7 +97,7 @@ impl Server {
                                         prefix.extend(turns.as_array().unwrap().iter().cloned());
                                         turns = json!(prefix);
                                     }
-                                    json!({"thread":{"id":if mode == "wrong-thread" {"other-thread"} else {"provider-one"}, "status":{"type":if busy {"active"} else {"idle"}}, "turns":turns}})
+                                    json!({"thread":{"id":if mode == "wrong-thread" {"other-thread"} else {"provider-one"}, "status":{"type":if busy {"active"} else if mode == "system-error" && submitted_before.is_none() {"systemError"} else if mode == "not-loaded" {"notLoaded"} else if mode == "unknown-status" {"futureStatus"} else {"idle"}}, "turns":turns}})
                                 }
                                 "turn/start" => {
                                     if mode.starts_with("hook-lock") {
@@ -235,6 +236,35 @@ fn native_idle_uses_thread_state_and_submits_once_without_paste() {
     );
     fixture.refused(&fixture.send(GUARDS), "send-idempotency-key-used");
     assert_eq!(server.mutations().len(), 1);
+}
+
+#[test]
+fn native_system_error_thread_is_idle_and_submits_once() {
+    let fixture = Fixture::new("codex");
+    let _lease = fixture.bind_codex();
+    let server = Server::start(&fixture, "system-error");
+    fixture.arm_recovery();
+    fs::remove_file(fixture.root().join("state/sessions/guarded/activity.json")).unwrap();
+    let output = fixture.send(GUARDS);
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["data"]["native"]["confirmation"],
+        "input_observed"
+    );
+    assert_eq!(server.mutations().len(), 1);
+}
+
+#[test]
+fn native_unverifiable_thread_status_still_refuses_without_dispatch() {
+    for mode in ["not-loaded", "unknown-status"] {
+        let fixture = Fixture::new("codex");
+        let _lease = fixture.bind_codex();
+        let server = Server::start(&fixture, mode);
+        let recovery = fixture.arm_recovery();
+        fixture.refused(&fixture.send(GUARDS), "send-idle-unobservable");
+        fixture.unchanged_control_state(&recovery);
+        assert!(server.mutations().is_empty(), "{mode}");
+    }
 }
 
 #[test]
