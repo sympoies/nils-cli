@@ -408,7 +408,7 @@ fn usage_v1_falls_back_to_matching_codex_broker_plan() {
             "schema_version":"agent-session.codex-auth-broker.v1",
             "accounts":[
                 {"account":"delta", "plan":"pro"},
-                {"nickname":"charlie", "chatgpt_plan_type":"pro-new_1.0"},
+                {"account":"charlie", "plan":"pro-new_1.0"},
                 {"account":"alpha", "plan":"pro"},
                 {"account":"bravo", "plan":"pro"},
                 {"account":"echo", "plan":"/srv/SECRET-MARKER"},
