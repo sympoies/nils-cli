@@ -186,9 +186,10 @@ pub(crate) struct SavedDraft {
     cleared: bool,
 }
 impl SavedDraft {
-    pub(crate) fn metadata(&self) -> Value {
-        json!({"event":self.event, "draft_id":self.draft_id, "timestamp":self.timestamp,
-            "session_incarnation":self.session_incarnation, "bytes":self.text.len(), "cleared":self.cleared})
+    pub(crate) fn metadata(&self, session_id: &str) -> Value {
+        json!({"event":self.event, "draft_id":self.draft_id, "saved_at":self.timestamp,
+            "session_id":session_id, "session_incarnation":self.session_incarnation,
+            "bytes":self.text.len(), "cleared":self.cleared})
     }
     pub(crate) fn text(self) -> String {
         self.text
@@ -286,13 +287,19 @@ pub(crate) fn clear(admission: &Admission<'_>, text: &str) -> Result<bool, CliEr
     }
     let path = saved_path(&root, &draft.draft_id)?;
     persist(&path, &draft)?;
-    persist(&root.join("latest.json"), &draft.metadata())?;
+    persist(
+        &root.join("latest.json"),
+        &draft.metadata(&admission.record.id),
+    )?;
     if !admission.clear_saved_draft(text) {
         return Ok(false);
     }
     draft.cleared = true;
     persist(&path, &draft)?;
-    persist(&root.join("latest.json"), &draft.metadata())?;
+    persist(
+        &root.join("latest.json"),
+        &draft.metadata(&admission.record.id),
+    )?;
     observe_at(
         admission.context,
         admission.record,
@@ -362,6 +369,7 @@ pub(crate) fn latest(context: &CliContext, id: &str) -> Result<Option<Value>, Cl
     // Board projections never copy arbitrary fields from private storage.
     Ok(Some(
         json!({"event":"stale_draft_stashed", "draft_id":value["draft_id"],
-        "timestamp":value["timestamp"], "bytes":value["bytes"], "cleared":value["cleared"]}),
+        "saved_at":value["saved_at"], "session_id":id,
+        "bytes":value["bytes"], "cleared":value["cleared"]}),
     ))
 }

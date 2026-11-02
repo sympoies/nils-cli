@@ -6,6 +6,9 @@
 - Guarded deliveries can save stale observed drafts in a bounded private
   session store before shared cleanup; authenticated list and byte-exact read
   routes expose saved drafts, and board metadata names the latest event.
+- Inventory entries and the latest board event identify the owning session,
+  save time, draft, and UTF-8 byte length through `session_id`, `saved_at`,
+  `draft_id`, and `bytes`.
 
 ### Why / context
 

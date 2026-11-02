@@ -20,8 +20,12 @@ async fn list(
     match tokio::task::spawn_blocking(move || {
         let _lock = crate::acquire_session_record_lock(&context, &id)?;
         let record = load_session_record(&context, &id)?;
-        drafts::list(&context, &record)
-            .map(|drafts| drafts.into_iter().map(|d| d.metadata()).collect::<Vec<_>>())
+        drafts::list(&context, &record).map(|drafts| {
+            drafts
+                .into_iter()
+                .map(|d| d.metadata(&record.id))
+                .collect::<Vec<_>>()
+        })
     })
     .await
     {

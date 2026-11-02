@@ -53,10 +53,17 @@ Each draft may contain at most 64 KiB of UTF-8 text. A session holds at most
 bound refuses fallback without sending keys. Draft IDs are opaque UUIDs.
 
 - `GET /sessions/{id}/drafts` returns `{ drafts: [...] }` in the usual serve
-  envelope. Entries contain event metadata and byte count, omitting text.
+  envelope. Each entry contains `draft_id`, `saved_at` (the save timestamp),
+  `session_id` (the owning session), and `bytes` (UTF-8 text byte length), plus
+  `event`, `session_incarnation`, and `cleared`. Entries omit text.
+  Public metadata uses `saved_at`; `timestamp` remains internal to saved records.
 - `GET /sessions/{id}/drafts/{draft_id}` returns `text/plain; charset=utf-8`.
   The response body is the original observed text byte-for-byte, including
   leading/trailing spaces and Unicode, without a newline added by the server.
+
+These routes are always installed; their absence means saved-draft retrieval is
+unsupported. There is no feature flag. Setting the fallback bound to 0 leaves
+list and read access available.
 
 Console can list these records and restore the raw read body into its editor.
 Reading or restoring locally does not submit input, mutate the terminal, or

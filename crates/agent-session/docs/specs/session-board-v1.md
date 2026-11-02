@@ -897,7 +897,8 @@ captured at close time. This field never includes ambient environment variables.
 ## Saved draft event
 
 Local live snapshot records optionally carry `stale_draft`, the most recent
-`stale_draft_stashed` event: `draft_id`, `timestamp`, `bytes`, and `cleared`.
+`stale_draft_stashed` event: `draft_id`, `saved_at`, `session_id`, `bytes`, and
+`cleared`. `saved_at` is the save timestamp; `session_id` names the owning session.
 It names the durable draft without exposing its text. See
 [saved stale drafts](stale-drafts-v1.md) for the authenticated list/read path.
 This event does not change the board status vocabulary.

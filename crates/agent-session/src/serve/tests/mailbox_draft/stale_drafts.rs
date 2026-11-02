@@ -57,8 +57,19 @@ async fn stale_draft_is_saved_before_wake_for_both_providers() {
         assert_eq!(status, StatusCode::OK);
         let listed = inventory["data"]["drafts"].as_array().unwrap();
         assert_eq!(listed.len(), 1);
-        assert!(listed[0].get("text").is_none());
-        let id = listed[0]["draft_id"].as_str().unwrap();
+        let id = saved["draft_id"].as_str().unwrap();
+        assert_eq!(
+            listed[0],
+            json!({
+                "event": "stale_draft_stashed",
+                "draft_id": id,
+                "saved_at": saved["timestamp"],
+                "session_id": "beta",
+                "session_incarnation": saved["session_incarnation"],
+                "bytes": draft.len(),
+                "cleared": true
+            })
+        );
         let board = crate::board::snapshot(
             &fixture.state.context,
             &fixture.state.tmux_bin,
@@ -72,8 +83,17 @@ async fn stale_draft_is_saved_before_wake_for_both_providers() {
             .iter()
             .find(|row| row["session_id"] == "beta")
             .unwrap();
-        assert_eq!(row["stale_draft"]["draft_id"], id);
-        assert!(row["stale_draft"].get("text").is_none());
+        assert_eq!(
+            row["stale_draft"],
+            json!({
+                "event": "stale_draft_stashed",
+                "draft_id": id,
+                "saved_at": saved["timestamp"],
+                "session_id": "beta",
+                "bytes": draft.len(),
+                "cleared": true
+            })
+        );
         let route = format!("/sessions/beta/drafts/{id}");
         let response = app.oneshot(get_auth(&route, Some(TOKEN))).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -253,7 +273,7 @@ async fn changed_draft_after_stash_is_never_erased_or_submitted() {
         let record = load_session_record(&fixture.state.context, "beta").unwrap();
         let saved = crate::send_guard::drafts::list(&fixture.state.context, &record).unwrap();
         assert_eq!(saved.len(), 1);
-        assert_eq!(saved[0].metadata()["cleared"], false);
+        assert_eq!(saved[0].metadata(&record.id)["cleared"], false);
     }
 }
 
