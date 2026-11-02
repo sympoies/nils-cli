@@ -253,7 +253,7 @@ Mandatory local repository validation:
 - docs-only fast path (when all changed files are docs):
   - `bash scripts/ci/nils-cli-checks-entrypoint.sh --docs-only`
 - full CI freshness check:
-  - `bash scripts/ci/completion-freshness-audit.sh --strict`
+  - `bash scripts/ci/completion-freshness-audit.sh`
 - for non-doc changes, GitHub required checks enforce full workspace tests and
   coverage `>= 85.00%` per
   `docs/runbooks/workspace-maintenance-reference.md`

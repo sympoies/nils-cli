@@ -26,12 +26,11 @@ declare -A HELP_FAILURES=()
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/ci/completion-flag-parity-audit.sh [--strict] [--bin <name>] [--skip-build]
+  scripts/ci/completion-flag-parity-audit.sh [--bin <name>] [--skip-build]
 
 Audit completion flag parity between --help and bash/zsh completions.
 
 Options:
-  --strict      Compatibility flag. The audit is always strict.
   --bin <name>  Limit the audit to one required binary. Repeatable.
   --skip-build  Never build; fail if a binary to audit is not already built.
   -h, --help    Show this help
@@ -719,15 +718,10 @@ audit_binary() {
 }
 
 main() {
-  local strict=0
   local skip_build=0
   local -a requested_bins=()
   while [[ $# -gt 0 ]]; do
     case "${1:-}" in
-      --strict)
-        strict=1
-        shift
-        ;;
       --bin)
         if [[ $# -lt 2 ]]; then
           echo "error: --bin requires a value" >&2
@@ -755,7 +749,6 @@ main() {
         ;;
     esac
   done
-  : "$strict"
 
   local script_dir
   script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

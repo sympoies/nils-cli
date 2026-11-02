@@ -8,7 +8,7 @@ RUN_CODE=0
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/ci/completion-freshness-audit.sh [--strict] [--bin <name>] [--skip-build] [--root <path>]
+  scripts/ci/completion-freshness-audit.sh [--bin <name>] [--skip-build] [--root <path>]
 
 Regenerates bash/zsh completions for every completion-required binary and
 fails when generated output differs from the committed completion assets.
@@ -16,7 +16,6 @@ Runtime adapter wrappers that load generated completions at shell runtime are
 detected and skipped.
 
 Options:
-  --strict      Compatibility flag. The audit is always strict.
   --bin <name>  Limit the audit to one required binary. Repeatable.
   --skip-build  Do not build workspace binaries before comparing assets.
   --root <path> Use an explicit repository root. Intended for self-tests.
@@ -24,17 +23,12 @@ Options:
 USAGE
 }
 
-strict=0
 skip_build=0
 repo_root_override=""
 declare -a requested_bins=()
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
-    --strict)
-      strict=1
-      shift
-      ;;
     --bin)
       if [[ $# -lt 2 ]]; then
         echo "error: --bin requires a value" >&2
@@ -74,7 +68,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-: "$strict"
 
 if [[ -n "$repo_root_override" ]]; then
   repo_root="$(cd "$repo_root_override" && pwd)"

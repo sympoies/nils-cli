@@ -200,8 +200,8 @@ assert_contains docs/specs/workspace-ci-entrypoint-inventory-v1.md \
   "release_only=true" \
   "CI inventory records the trusted reduced-lane decision"
 assert_contains docs/specs/workspace-ci-entrypoint-inventory-v1.md \
-  ".github/scripts/release-ci-gate.cjs" \
-  "CI inventory owns the shared release gate module"
+  ".github/scripts/release-validation-reuse.cjs" \
+  "CI inventory owns the release validation reuse module"
 assert_contains docs/specs/workspace-ci-entrypoint-inventory-v1.md \
   "scripts/ci/detect-release-only.sh" \
   "CI inventory owns the semantic release detector"
@@ -235,6 +235,11 @@ for prepare_only_file in \
   done
 done
 echo "ok: release bump script is preparation-only"
+
+if [[ -e .github/scripts/release-ci-gate.cjs ]]; then
+  echo "FAIL: unused release CI gate must be removed" >&2
+  exit 1
+fi
 
 echo
 echo "PASS: release-workflow-contract.test.sh"
