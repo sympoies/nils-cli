@@ -23,7 +23,7 @@ const NOTIFICATION_VERSION: &str = "agent-session.notification-generation.v1";
 /// Transcript readers recognize both the current short reminder and prior releases.
 const PROMPT_PREFIX: &str = "Mailbox: ";
 const LEGACY_PROMPT_PREFIX: &str = "Coordination mailbox has unread messages";
-const PROMPT_TEMPLATE: &str = "Mailbox: agent-session message inbox";
+pub(super) const HISTORICAL_SHORT_PROMPT: &str = "Mailbox: agent-session message inbox";
 const REASON_PENDING: &str = "notification-pending";
 const REASON_ATTEMPTING: &str = "notification-attempting";
 const REASON_MIGRATED_UNKNOWN: &str = "migrated-attempt-outcome-unknown";
@@ -186,25 +186,35 @@ impl NotificationCandidate {
 /// Generations and queue times remain in the receipt; reconciliation compares
 /// these exact bytes only after the matching attempt's timestamp.
 pub(crate) fn fixed_prompt(_session_id: &str, _queued_at_epoch: i64) -> String {
-    prompt_template().to_string()
+    prompt_template()
+}
+
+/// Provider history is immutable: recognize its default-name command as well
+/// as the command produced by this build. This does not alias executable names.
+pub(super) fn is_inbox_action(action: &str) -> bool {
+    action
+        .strip_suffix(" message inbox")
+        .is_some_and(|name| name == crate::executable() || name == "agent-session")
 }
 
 /// Whether a transcript prompt is a mailbox reminder this crate injected.
 pub(crate) fn is_mailbox_reminder_prompt(prompt: &str) -> bool {
     let prompt = prompt.trim_start();
     prompt.starts_with(LEGACY_PROMPT_PREFIX)
-        || prompt == PROMPT_TEMPLATE
+        || prompt.strip_prefix(PROMPT_PREFIX).is_some_and(is_inbox_action)
         || coalescing::is_count_prompt(prompt)
         // The one place the former letter form is still read: provider history.
         || coalescing::legacy_total(prompt).is_some()
-        || (prompt.len() <= 60
-            && prompt
+        || prompt
                 .strip_prefix(PROMPT_PREFIX)
-                .and_then(|body| body.strip_suffix("; agent-session message inbox"))
-                .is_some_and(|date| {
-                    date.parse::<jiff::Timestamp>()
+                .and_then(|body| body.split_once("; "))
+                .is_some_and(|(date, action)| {
+                    // Preserve the former 60-byte reminder's date-field bound.
+                    date.len() <= 60 - HISTORICAL_SHORT_PROMPT.len() - "; ".len()
+                        && is_inbox_action(action)
+                        && date.parse::<jiff::Timestamp>()
                         .is_ok_and(|timestamp| timestamp.to_string() == date)
-                }))
+                })
 }
 
 /// Whether the exact recipient incarnation still holds live unread mail. A
@@ -284,8 +294,8 @@ pub(crate) fn claim_hook_reminder(
     })
 }
 
-pub(crate) fn prompt_template() -> &'static str {
-    PROMPT_TEMPLATE
+pub(crate) fn prompt_template() -> String {
+    format!("Mailbox: {} message inbox", crate::executable())
 }
 
 pub(crate) fn normalize_registry(registry: &mut Registry, now: i64) -> bool {
@@ -883,10 +893,12 @@ fn merge_current(current: &mut Option<NotificationReceipt>, candidate: Notificat
 fn normalize_current(receipt: &mut NotificationReceipt, now: i64) {
     receipt.schema_version = NOTIFICATION_VERSION.to_string();
     receipt.notified_generation = receipt.notified_generation.min(receipt.generation);
-    // An unsent receipt written in the former letter form is delivered in the
-    // current text. Sent attempts keep their exact bytes (`attempted_prompt` and
+    // Pending text follows the current count form and executable name. Sent
+    // attempts keep their exact bytes (`attempted_prompt` and
     // `composer_recovery_prompt`), which reconciliation compares.
-    if let Some(total) = receipt.prompt.as_deref().and_then(coalescing::legacy_total) {
+    if let Some(total) = receipt.prompt.as_deref().and_then(|prompt| {
+        coalescing::count_total(prompt).or_else(|| coalescing::legacy_total(prompt))
+    }) {
         receipt.prompt = Some(coalescing::unread_prompt(total));
     }
     receipt.attempted_at = receipt
@@ -1059,21 +1071,25 @@ mod tests {
 
     #[test]
     fn notification_prompt_is_fixed_short_and_contains_no_body() {
-        let prompt = fixed_prompt("target-session", 1_790_000_000);
-        assert_eq!(prompt, "Mailbox: agent-session message inbox");
-        assert_eq!(prompt_template(), "Mailbox: agent-session message inbox");
-        assert!(!prompt.contains("message show"));
-        assert!(!prompt.contains("target-session"));
-        assert!(!prompt.contains("--capability-file"));
+        crate::command_identity::with_name("agent-session", || {
+            let prompt = fixed_prompt("target-session", 1_790_000_000);
+            assert_eq!(prompt, "Mailbox: agent-session message inbox");
+            assert_eq!(prompt_template(), "Mailbox: agent-session message inbox");
+            assert!(!prompt.contains("message show"));
+            assert!(!prompt.contains("target-session"));
+            assert!(!prompt.contains("--capability-file"));
+        });
     }
 
     #[test]
     fn undated_generation_uses_the_short_actionable_prompt() {
-        // Unknown queue times must never invent a date or a recipient id.
-        assert_eq!(
-            fixed_prompt("target-session", 0),
-            "Mailbox: agent-session message inbox"
-        );
+        crate::command_identity::with_name("agent-session", || {
+            // Unknown queue times must never invent a date or a recipient id.
+            assert_eq!(
+                fixed_prompt("target-session", 0),
+                "Mailbox: agent-session message inbox"
+            );
+        });
     }
 
     #[test]
@@ -1146,7 +1162,9 @@ mod tests {
             "../../tests/fixtures/coordination/mailbox-notification-v1.json"
         ))
         .expect("notification fixture");
-        assert_eq!(fixture["prompt_template"], prompt_template());
+        crate::command_identity::with_name("agent-session", || {
+            assert_eq!(fixture["prompt_template"], prompt_template());
+        });
         assert_eq!(
             fixture["states"],
             json!([

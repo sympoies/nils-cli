@@ -61,24 +61,28 @@ pub(in crate::coordination) fn admit(
 
 /// The mailbox quota bounds the total, so the reminder fits one input row.
 const MAX_TOTAL: usize = 256;
-const UNREAD_SUFFIX: &str = " unread; agent-session message inbox";
 
 /// The plain reminder: one total and the inbox action, in a readable line.
 pub(super) fn unread_prompt(total: usize) -> String {
-    format!("Mailbox: {}{UNREAD_SUFFIX}", total.clamp(1, MAX_TOTAL))
+    format!(
+        "Mailbox: {} unread; {} message inbox",
+        total.clamp(1, MAX_TOTAL),
+        crate::executable()
+    )
 }
 
 /// Bounded metadata-only syntax, recognized without accepting arbitrary commands.
 pub(super) fn is_count_prompt(prompt: &str) -> bool {
-    prompt.len() <= 51
-        && prompt
-            .strip_prefix("Mailbox: ")
-            .and_then(|body| body.strip_suffix(UNREAD_SUFFIX))
-            .is_some_and(|count| {
-                count.parse::<u16>().is_ok_and(|value| {
-                    (1..=MAX_TOTAL as u16).contains(&value) && value.to_string() == count
-                })
-            })
+    count_total(prompt).is_some()
+}
+
+pub(super) fn count_total(prompt: &str) -> Option<usize> {
+    let (count, action) = prompt.strip_prefix("Mailbox: ")?.split_once(" unread; ")?;
+    let value = count.parse::<u16>().ok()?;
+    (super::is_inbox_action(action)
+        && (1..=MAX_TOTAL as u16).contains(&value)
+        && value.to_string() == count)
+        .then_some(usize::from(value))
 }
 
 /// The former letter-alias reminder (`Mailbox: b=1 h=2`), read and never
@@ -136,11 +140,12 @@ pub(super) fn count_prompt<'a>(messages: impl Iterator<Item = &'a StoredMessage>
 /// multiline and is not held to the one-row width bound of the plain reminder.
 pub(super) fn explained_prompt<'a>(messages: impl Iterator<Item = &'a StoredMessage>) -> String {
     format!(
-        "Mailbox: {}; agent-session message inbox",
+        "Mailbox: {}; {} message inbox",
         category_counts(messages)
             .iter()
             .map(|(name, count)| format!("{count} {name}"))
             .collect::<Vec<_>>()
-            .join(", ")
+            .join(", "),
+        crate::executable()
     )
 }
