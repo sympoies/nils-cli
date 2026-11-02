@@ -293,12 +293,19 @@ pub(crate) fn reminder(context: &CliContext, args: MessageReminderArgs) -> Resul
         &recipient_incarnation,
         now,
     );
-    let claimed = super::notification::claim_hook_reminder(
-        &mut locked.registry,
-        &record.id,
-        &recipient_incarnation,
-        now,
-    );
+    // A hook may strip the writer environment while the daemon still writes
+    // notices. That is not evidence that its Codex recipient is unsupported:
+    // leave the generation unclaimed for the controller's delivery decision.
+    let claimed = if record.agent == "codex" && !crate::notice::writers_enabled() {
+        None
+    } else {
+        super::notification::claim_hook_reminder(
+            &mut locked.registry,
+            &record.id,
+            &recipient_incarnation,
+            now,
+        )
+    };
     if claimed.is_some() || resolved {
         locked.save()?;
     }

@@ -128,6 +128,13 @@ missing or invalid defers without fallback. Failed or uncertain notice attempts
 remain consumed; absent history never authorizes replay. See
 [session notices](session-notices-v1.md) for the envelope and rollout contract.
 
+The authenticated `message reminder` command reads the invoking hook's writer
+rollout environment. For Codex recipients, a hook without enabled notice writers
+returns `null` without claiming the generation. The controller retains delivery
+and evaluates its own writer gate; a stripped hook environment cannot select a
+plain prompt for a notice-capable receiver. Hook-only recipients retain their
+existing explicit plain reminder route when notice writers are disabled.
+
 For unconfigured recipients on the plain fallback path, the body-free wake is always
 35 ASCII characters, fitting one exactly observable input row in a 51-column
 pane for Claude and Codex:
