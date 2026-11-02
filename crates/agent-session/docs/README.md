@@ -20,6 +20,8 @@ or integrating a specific subsystem.
 - [Serve daemon operations](runbooks/serve-daemon.md): safe startup,
   authentication boundaries, HTTP session creation, restart survival, and the
   versioned `serve --config` file.
+- [Operator rules file](runbooks/operator-rules.md): CLI-wide rule loading,
+  validation, effective sources, and serve reload behavior.
 
 ## Stable contracts
 

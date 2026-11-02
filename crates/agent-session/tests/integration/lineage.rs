@@ -89,7 +89,11 @@ impl Fixture {
             .with_cwd(&self.root)
             .without_ambient_managed_session_env()
             .with_env_remove_many(&["AGENT_SESSION_HOST"])
-            .with_envs(&envs);
+            .with_envs(&envs)
+            .with_env(
+                "AGENT_SESSION_RULES_FILE",
+                &self.root.join("rules.json").to_string_lossy(),
+            );
         run_resolved("agent-session", &argv, &options)
     }
 
@@ -959,3 +963,6 @@ fn session_started_root_keeps_the_launch_initiator_only_with_a_role() {
         json!({"initiator":"operator","role":"coordinator"})
     );
 }
+
+#[path = "lineage/operator_rules.rs"]
+mod operator_rules;

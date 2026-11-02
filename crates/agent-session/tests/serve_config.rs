@@ -89,6 +89,10 @@ impl Fixture {
             .arg("serve")
             .args(args)
             .env("AGENT_SESSION_STATE_DIR", self.state_dir())
+            .env(
+                "AGENT_SESSION_RULES_FILE",
+                self.dir.path().join("operator-rules.json"),
+            )
             .stdin(Stdio::null());
         for key in MANAGED_ENV {
             command.env_remove(key);
@@ -594,16 +598,6 @@ fn text_check_reports_errors_on_stderr_with_the_key() {
         !stderr.contains(&*fixture.dir.path().to_string_lossy()),
         "{stderr}"
     );
-}
-
-#[test]
-fn check_requires_a_config_file() {
-    let fixture = Fixture::new();
-    let output = fixture
-        .command(&["--check"], &[])
-        .output()
-        .expect("run serve --check");
-    assert_eq!(output.status.code(), Some(EXIT_USAGE), "{output:?}");
 }
 
 #[test]

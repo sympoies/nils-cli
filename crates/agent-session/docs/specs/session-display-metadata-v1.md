@@ -7,7 +7,9 @@ lineage, adoption, runtime identity or work references.
 The existing `--role ROLE` launch identifier remains explicit, bounded and
 non-inherited. Display consumers recognize `coordinator`, `domain-coordinator`,
 `steward`, `reviewer`, `tester`, `analyst`, `ideas` and `local-model` independently
-of titles and provider models. Both coordinator roles require a root at launch.
+of titles and provider models. By default both coordinator roles require a root at launch; the
+[operator rules file](../runbooks/operator-rules.md) controls that requirement
+for launch and role updates.
 Unknown display roles must preserve the session and use the consumer's ordinary
 lineage fallback, without guessing a specialist identity.
 

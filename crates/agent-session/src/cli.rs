@@ -1,4 +1,5 @@
 pub mod broker_proof;
+pub(crate) mod operator_rules;
 pub(crate) mod send_key;
 
 use std::path::PathBuf;
@@ -66,6 +67,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Show or validate the shared operator rules file.
+    Rules(operator_rules::RulesArgs),
     /// Start an interactive tmux-backed agent session.
     Start(Box<StartArgs>),
     /// Run a one-shot agent task in a tmux session and write output to a log file.
@@ -1747,9 +1750,8 @@ pub struct ServeArgs {
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub config: Option<PathBuf>,
 
-    /// Validate --config against the current environment and exit without
-    /// serving.
-    #[arg(long, requires = "config")]
+    /// Validate operator rules and, when supplied, --config; exit without serving.
+    #[arg(long)]
     pub check: bool,
 
     /// Output format for --check results and --config errors.
