@@ -10,8 +10,9 @@
 
 ### Why / context
 
-- The broker source history never emitted the older names as response keys, so
-  no installed broker can; the usage fixture that still used them now uses the
+- The searched broker source history never emitted the older names as response
+  keys, so a copy built from that source cannot either (not a claim about every
+  installed producer); the usage fixture that still used them now uses the
   current names, and a test asserts the older names are not read.
 
 ### Evidence
