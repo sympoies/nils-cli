@@ -217,3 +217,75 @@ async fn an_unauthenticated_reader_gets_no_event_text() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// The folded events of one history page, in page order, with their positions.
+fn mailbox_events(page: &Value) -> Vec<(usize, Value)> {
+    page["data"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .filter(|(_, message)| message["mailbox"].is_object())
+        .map(|(position, message)| (position, message.clone()))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_read_then_an_ack_updates_the_same_event_in_place_over_the_route() {
+    use crate::coordination::read_events::store::{self, Action, Source};
+    let temp = tempfile::TempDir::new().unwrap();
+    let (app, history, _) = app(temp.path()).await;
+    let message_id = "44444444-4444-4444-8444-444444444444";
+    let event_id = format!("{history}-{message_id}-mailbox");
+    let source = Source {
+        message_id: message_id.into(),
+        sender: json!({"kind": "session", "machine": "machine-a", "session_id": "sender-1"}),
+        category: "handoff".into(),
+        body: "read then acknowledged\n".into(),
+    };
+    // Between the second and third provider rows, clear of the fixture events.
+    let anchor = (row("user", "first").len() + row("assistant", "second").len()) as u64;
+    let uri = format!("/history/sessions/{history}/messages?limit=100&parts=v1");
+
+    store::record(temp.path(), &history, &source, anchor, Action::Read).unwrap();
+    let (status, read) = get(&app, &uri, Some(TOKEN)).await;
+    assert_eq!(status, StatusCode::OK);
+    let read_events = mailbox_events(&read);
+    let (position, event) = read_events
+        .iter()
+        .find(|(_, event)| event["id"] == event_id)
+        .expect("the read event is on the page");
+    assert_eq!(event["mailbox"]["state"], "read");
+    assert_eq!(event["mailbox"]["revision"], 1);
+
+    store::record(temp.path(), &history, &source, anchor, Action::Acknowledge).unwrap();
+    let (status, acknowledged) = get(&app, &uri, Some(TOKEN)).await;
+    assert_eq!(status, StatusCode::OK);
+    let acknowledged_events = mailbox_events(&acknowledged);
+    assert_eq!(
+        acknowledged_events.len(),
+        read_events.len(),
+        "an ack must not add a row"
+    );
+    let same: Vec<_> = acknowledged_events
+        .iter()
+        .filter(|(_, event)| event["id"] == event_id)
+        .collect();
+    assert_eq!(same.len(), 1, "still exactly one row for the message");
+    let (after_position, after) = same[0];
+    assert_eq!(after_position, position, "the event keeps its position");
+    assert_eq!(after["mailbox"]["state"], "acknowledged");
+    assert_eq!(after["mailbox"]["revision"], 2);
+    assert!(after["mailbox"]["acknowledged_at"].is_string());
+    assert_eq!(
+        acknowledged_events
+            .iter()
+            .map(|(_, event)| event["id"].clone())
+            .collect::<Vec<_>>(),
+        read_events
+            .iter()
+            .map(|(_, event)| event["id"].clone())
+            .collect::<Vec<_>>(),
+        "every event keeps its id and order"
+    );
+}
