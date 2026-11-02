@@ -80,6 +80,81 @@ fn recovered(decision: &Value) -> usize {
 }
 
 #[test]
+fn shadow_dispatch_leaves_conversation_recovery_state_untouched() {
+    for product in ["codex", "claude"] {
+        let fixture = Fixture::new(POLICY);
+        helper(&fixture, true);
+        let helper_path = fixture.root.join("activity-helper");
+        let result = fixture.run_with_env(
+            &[
+                "dispatch",
+                "--product",
+                product,
+                "--shadow",
+                "--format",
+                "json",
+            ],
+            Some(&prompt().to_string()),
+            &[
+                ("AGENT_SESSION_ID", "session-a"),
+                ("AGENT_SESSION_RUNTIME_ID", "runtime-a"),
+                ("AGENT_SESSION_BIN", helper_path.to_str().unwrap()),
+                ("AGENT_SESSION_COORDINATION_MODE", "enforce"),
+            ],
+        );
+        assert_eq!(result.code, 0, "{}", result.stderr_text());
+        assert_eq!(result.stdout_json()["data"]["action"], "allow");
+        assert!(
+            !fixture
+                .state_home
+                .join("agent-hook/conversation-degradation")
+                .exists()
+        );
+    }
+}
+
+#[test]
+fn shadow_dispatch_with_malformed_coordination_leaves_recovery_state_untouched() {
+    let policy = POLICY.replace(
+        "agent-session.activity.v1",
+        "agent-session.semantic-conflict.v1",
+    );
+    for product in ["codex", "claude"] {
+        let fixture = Fixture::new(&policy);
+        coordination(&fixture);
+        fs::write(
+            fixture.session_state.join("coordination/registry.json"),
+            b"{",
+        )
+        .unwrap();
+        let result = fixture.run_with_env(
+            &[
+                "dispatch",
+                "--product",
+                product,
+                "--shadow",
+                "--format",
+                "json",
+            ],
+            Some(&prompt().to_string()),
+            &[
+                ("AGENT_SESSION_ID", "session-a"),
+                ("AGENT_SESSION_RUNTIME_ID", "runtime-a"),
+                ("AGENT_SESSION_COORDINATION_MODE", "enforce"),
+            ],
+        );
+        assert_eq!(result.code, 0, "{}", result.stderr_text());
+        assert_eq!(result.stdout_json()["data"]["action"], "allow");
+        assert!(
+            !fixture
+                .state_home
+                .join("agent-hook/conversation-degradation")
+                .exists()
+        );
+    }
+}
+
+#[test]
 fn activity_degraded_then_healthy_then_healthy_recovers_once_in_the_same_session() {
     for product in ["codex", "claude"] {
         let fixture = Fixture::new(POLICY);
