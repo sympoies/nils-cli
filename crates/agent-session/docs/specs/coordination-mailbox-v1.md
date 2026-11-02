@@ -136,7 +136,7 @@ plain prompt for a notice-capable receiver. Hook-only recipients retain their
 existing explicit plain reminder route when notice writers are disabled.
 
 For unconfigured recipients on the plain fallback path, the body-free wake is always
-35 ASCII characters, fitting one exactly observable input row in a 51-column
+36 ASCII characters, fitting one exactly observable input row in a 51-column
 pane for Claude and Codex:
 
 ```text
@@ -405,13 +405,24 @@ the existing default behavior. Service-origin inputs cannot be silenced by a
 progress/report suppression rule.
 
 On the plain fallback path, configured recipients receive a bounded body-free
-prompt such as `Mailbox: b=1 h=2 p=3`. The aliases are blocker (`b`), decision
-(`d`), handoff (`h`), progress (`p`), report (`r`) and uncategorized (`u`);
-omitted categories have zero messages. Counts fit a 51-column pane at the
-mailbox quota, which is the only reason this form is compact. The notice body
-spells the same counts as `<n> <category>` joined by commas in the order above
-(blocker, decision, handoff, progress, report, uncategorized), then
-`; agent-session message inbox`.
+prompt in one readable line, `Mailbox: <N> unread; agent-session message inbox`,
+where N is the total number of live unread messages from 1 to 256. At the
+mailbox quota it is 48 ASCII characters, which fits a 51-column pane. The
+composer reminder and the plain fallbacks use this text on every route; the
+`agent-hook` recognizer accepts it with a canonical N and nothing else. The
+notice body, used when the writer gate is on, spells the counts as
+`<n> <category>` joined by commas (blocker, decision, handoff, progress, report,
+uncategorized), then `; agent-session message inbox`.
+
+The former letter form, such as `Mailbox: b=1 h=2 p=3`, is no longer produced
+or accepted by any producer or by the hook recognizer. The one place it is still
+read is history: a reminder already in a provider transcript must not read as a
+human prompt. An unsent receipt written in that form is rewritten to the current
+text when it is loaded, using the total of its counts. A sent attempt keeps its
+exact bytes, because reconciliation compares them, so an upgrade never causes a
+resend. Hosts replace the session and hook binaries together and restart the
+service; there is no compatibility window, so a wake can be missed during the
+swap, but mail is not lost.
 
 Exact attempt text is retained for reconciliation; a later generation does not
 acknowledge an older uncertain submission. `message audit` advertises

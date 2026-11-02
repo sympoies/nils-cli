@@ -195,6 +195,8 @@ pub(crate) fn is_mailbox_reminder_prompt(prompt: &str) -> bool {
     prompt.starts_with(LEGACY_PROMPT_PREFIX)
         || prompt == PROMPT_TEMPLATE
         || coalescing::is_count_prompt(prompt)
+        // The one place the former letter form is still read: provider history.
+        || coalescing::legacy_total(prompt).is_some()
         || (prompt.len() <= 60
             && prompt
                 .strip_prefix(PROMPT_PREFIX)
@@ -881,6 +883,12 @@ fn merge_current(current: &mut Option<NotificationReceipt>, candidate: Notificat
 fn normalize_current(receipt: &mut NotificationReceipt, now: i64) {
     receipt.schema_version = NOTIFICATION_VERSION.to_string();
     receipt.notified_generation = receipt.notified_generation.min(receipt.generation);
+    // An unsent receipt written in the former letter form is delivered in the
+    // current text. Sent attempts keep their exact bytes (`attempted_prompt` and
+    // `composer_recovery_prompt`), which reconciliation compares.
+    if let Some(total) = receipt.prompt.as_deref().and_then(coalescing::legacy_total) {
+        receipt.prompt = Some(coalescing::unread_prompt(total));
+    }
     receipt.attempted_at = receipt
         .attempted_at
         .as_deref()
@@ -1497,6 +1505,7 @@ mod tests {
         );
     }
     include!("notification_coalescing_tests.rs");
+    include!("notification_unread_text_tests.rs");
 }
 
 #[cfg(test)]

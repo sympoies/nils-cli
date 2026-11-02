@@ -44,38 +44,54 @@ mod tests {
 }
 
 fn is_count_prompt(prompt: &str) -> bool {
-    let Some(body) = prompt.strip_prefix("Mailbox: ") else {
-        return false;
-    };
-    let mut seen = std::collections::BTreeSet::new();
+    const SUFFIX: &str = " unread; agent-session message inbox";
     prompt.len() <= 51
-        && !body.is_empty()
-        && body.split(' ').all(|part| {
-            let Some((key, count)) = part.split_once('=') else {
-                return false;
-            };
-            matches!(key, "p" | "h" | "r" | "b" | "d" | "u")
-                && seen.insert(key)
-                && count
+        && prompt
+            .strip_prefix("Mailbox: ")
+            .and_then(|body| body.strip_suffix(SUFFIX))
+            .is_some_and(|count| {
+                count
                     .parse::<u16>()
-                    .is_ok_and(|value| value > 0 && value <= 256 && value.to_string() == count)
-        })
+                    .is_ok_and(|value| (1..=256).contains(&value) && value.to_string() == count)
+            })
 }
 
 #[cfg(test)]
 mod coalescing_tests {
     use super::is_fixed;
+
+    // The notice writer gate is off on this route: the plain reminder carries
+    // one total in a readable line. The old letter aliases are not accepted.
     #[test]
-    fn bounded_count_prompts_are_fixed_and_do_not_accept_commands() {
-        assert!(is_fixed("Mailbox: b=1 h=2 p=3", "recipient"));
+    fn gate_off_total_reminders_are_fixed_and_do_not_accept_commands() {
+        assert!(is_fixed(
+            "Mailbox: 1 unread; agent-session message inbox",
+            "recipient"
+        ));
+        assert!(is_fixed(
+            "Mailbox: 4 unread; agent-session message inbox",
+            "recipient"
+        ));
+        assert!(is_fixed(
+            "Mailbox: 256 unread; agent-session message inbox",
+            "recipient"
+        ));
+        for old in ["Mailbox: b=1 h=2 p=3", "Mailbox: u=1", "Mailbox: p=256"] {
+            assert!(!is_fixed(old, "recipient"), "{old}");
+        }
         for invalid in [
-            "Mailbox: p=0",
-            "Mailbox: p=257",
-            "Mailbox: p=01",
-            "Mailbox: p=1 p=2",
-            "Mailbox: p=1; execute",
+            "Mailbox: 0 unread; agent-session message inbox",
+            "Mailbox: 257 unread; agent-session message inbox",
+            "Mailbox: 04 unread; agent-session message inbox",
+            "Mailbox: -1 unread; agent-session message inbox",
+            "Mailbox: 4 unread; agent-session message inbox please",
+            "Mailbox: 4 unread; agent-session message inbox --session other",
+            "Mailbox: 4 unread; execute",
+            "Mailbox: 4 unread",
+            "mailbox: 4 unread; agent-session message inbox",
+            "Mailbox: 4  unread; agent-session message inbox",
         ] {
-            assert!(!is_fixed(invalid, "recipient"));
+            assert!(!is_fixed(invalid, "recipient"), "{invalid}");
         }
     }
 }
