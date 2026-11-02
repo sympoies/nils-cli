@@ -35,8 +35,8 @@ fn configured_executable_name_reaches_help_and_recovery_without_changing_schemas
         assert!(help.contains(&format!("{name} {command}")), "{help}");
     }
     assert_eq!(
-        help.replace(name, "agent-session"),
-        built_help.replace(name, "agent-session")
+        help,
+        built_help.replacen("Usage: agent-session ", &format!("Usage: {name} "), 1)
     );
 
     let output = run(&[
