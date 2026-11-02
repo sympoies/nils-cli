@@ -10,13 +10,14 @@ pub(super) fn encode_counts(
     incarnation: &str,
     now: i64,
 ) -> String {
-    let body = coalescing::explained_prompt(registry.messages.iter().filter(|item| {
+    let summary = coalescing::explained_summary(registry.messages.iter().filter(|item| {
         item.recipient_session_id == session
             && item.recipient_incarnation == incarnation
             && item.state == "unread"
             && !item.notification_suppressed
             && item.expires_at_epoch > now
     }));
+    let body = crate::notice::render_summary("mailbox.wake", &summary, "");
     NoticeEnvelope::new("mailbox.wake", "agent-session", None)
         .expect("fixed mailbox notice metadata")
         .encode(&body)
@@ -99,7 +100,7 @@ mod tests {
             }
             let encoded = if categories.is_empty() {
                 NoticeEnvelope::new("mailbox.wake", "agent-session", None).unwrap()
-                    .encode("Mailbox: agent-session message inbox").unwrap()
+                    .encode(&crate::notice::render_summary("mailbox.wake", "agent-session message inbox", "")).unwrap()
             } else {
                 encode_counts(&registry, "recipient", "incarnation", 100)
             };

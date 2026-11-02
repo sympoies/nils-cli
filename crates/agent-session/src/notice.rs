@@ -1,5 +1,8 @@
 //! Versioned display-only session notices and guarded CLI delivery.
 mod envelope;
+pub mod labels;
+mod summary;
+pub(crate) use summary::render_summary;
 pub use envelope::{NoticeEnvelope, NoticeError, ParsedNotice, parse_notice};
 
 use std::path::PathBuf;
@@ -25,6 +28,9 @@ pub struct NoticeArgs {
     /// Display identifier; independent of the transport idempotency key.
     #[arg(long)]
     pub id: Option<String>,
+    /// One line of 1..70 Unicode scalars, rendered after the kind label.
+    #[arg(long)]
+    pub summary: Option<String>,
     /// UTF-8 body file; bytes are retained exactly.
     #[arg(
         long,
@@ -109,6 +115,9 @@ pub(crate) fn run(context: &CliContext, mut args: NoticeArgs) -> i32 {
         // Validate before reading stdin/body files, loading a record or claiming a key.
         let metadata =
             NoticeEnvelope::new(&args.kind, &args.source, args.id.as_deref()).map_err(error)?;
+        if let Some(summary) = args.summary.as_deref() {
+            summary::validate(summary)?;
+        }
         require_enabled()?;
         if args.queue && args.guards.idempotency_key.is_none() {
             return Err(CliError::usage(
@@ -118,9 +127,13 @@ pub(crate) fn run(context: &CliContext, mut args: NoticeArgs) -> i32 {
             ));
         }
         let body = crate::read_prompt(&None, args.body_file.as_deref(), args.text_stdin)?;
-        let text = metadata
-            .encode(body.as_deref().unwrap_or(""))
-            .map_err(error)?;
+        let body = body.as_deref().unwrap_or("");
+        let text = if let Some(summary) = args.summary.as_deref() {
+            metadata.encode(&render_summary(&args.kind, summary, body))
+        } else {
+            // Compatibility fallback for coordinator and monitoring bridge notice CLI integration v1.
+            metadata.encode(body)
+        }.map_err(error)?;
         args.guards.require_idle = true;
         args.guards.require_empty_composer = true;
         args.guards.notice_envelope = true;
