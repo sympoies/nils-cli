@@ -3,6 +3,7 @@ use super::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+mod client_message;
 pub(crate) mod owner_commands;
 mod reconcile;
 mod store;
@@ -371,6 +372,14 @@ async fn dispatch_observing(
         .as_ref()
         .filter(|resume| resume.provider == "codex")
         .map(|resume| resume.session_id.clone());
+    // Only a claimed request has a durable identity to derive the id from, and
+    // only a record whose full identity is known can be fenced on later.
+    let client_message_id = proof
+        .as_ref()
+        .and(body.request_id.as_deref())
+        .and_then(|request_id| {
+            reconcile::identity(&record).map(|identity| client_message::id(&identity, request_id))
+        });
     let mut args = crate::send::unguarded_args(
         record.id,
         Some(body.text),
@@ -388,6 +397,7 @@ async fn dispatch_observing(
         }),
         require_idle: true,
         require_empty_composer: true,
+        client_message_id,
         ..Default::default()
     };
     let context = state.context.clone();

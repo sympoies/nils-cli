@@ -161,6 +161,7 @@ impl Client {
     pub(crate) fn dispatch(
         &mut self,
         text: &str,
+        client_message_id: Option<&str>,
         on_turn_ack: impl FnOnce(&str),
     ) -> Result<&'static str, DispatchError> {
         let unknown = |_| DispatchError {
@@ -180,13 +181,12 @@ impl Client {
                     acknowledged: false,
                 });
         }
-        let result = self
-            .request(
-                "turn/start",
-                json!({"threadId":self.thread_id,
-            "input":[{"type":"text","text":text,"text_elements":[]}]}),
-            )
-            .map_err(unknown)?;
+        let mut params = json!({"threadId":self.thread_id,
+            "input":[{"type":"text","text":text,"text_elements":[]}]});
+        if let Some(id) = client_message_id {
+            params["clientUserMessageId"] = json!(id);
+        }
+        let result = self.request("turn/start", params).map_err(unknown)?;
         let turn_id = result
             .pointer("/turn/id")
             .and_then(Value::as_str)
@@ -222,6 +222,22 @@ impl Client {
             // Poll observation only. The mutation is never repeated.
             thread::sleep(remaining.min(Duration::from_millis(100)));
         }
+    }
+
+    /// Observe once whether the provider recorded the input sent with
+    /// `client_id` and return its turn; never start or steer a turn.
+    pub(crate) fn find_client_input(
+        &mut self,
+        client_id: &str,
+        matches: impl Fn(&str) -> bool,
+    ) -> Option<String> {
+        let history = self
+            .request(
+                "thread/read",
+                json!({"threadId":self.thread_id,"includeTurns":true}),
+            )
+            .ok()?;
+        confirmation::input_by_client_id(&history, &self.thread_id, client_id, matches)
     }
 
     /// Observe a retained acknowledged turn once; never start or steer a turn.

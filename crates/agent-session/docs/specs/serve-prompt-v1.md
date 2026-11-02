@@ -130,13 +130,23 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   input dispatch. The proof survives daemon restart and is not returned by the
   API. This does not add history waiting to ordinary immediate native input.
 
+  A keyed idle-only native dispatch also sends a provider-visible client message
+  id derived from the dispatch-time session identity (runtime, provider thread,
+  account binding) and the request id. Lookup computes the id from the identity
+  current at lookup, so a changed runtime, thread or account computes a
+  different id and matches nothing. When the acknowledgment was lost and the
+  identity is unchanged, lookup or a repeated POST can find that one user message
+  by its id, and only if its single text part is exactly the claimed prompt. A
+  match changes the receipt to `submitted` without another dispatch. A missing
+  row proves nothing and the receipt stays unknown.
+
   Unknown receipts can include a value-free `confirmation_diagnostic`:
   `native_input_unconfirmed` means a native turn acknowledgment was retained but
   exact input confirmation remains unavailable; `acceptance_unobservable` means
   no recoverable acceptance evidence is available. These values never authorize
-  replay. Older receipts may omit this field. Missing acknowledgments, unrelated
-  or ambiguous input, changed identities and older attempts without retained
-  proof remain unknown. Prompt text is not persisted in receipts or proofs.
+  replay. Older receipts may omit this field. Unrelated or ambiguous input,
+  another or duplicate client message id, changed identities and attempts that
+  sent no id remain unknown. Prompt text is not persisted in receipts or proofs.
 
   Lookup requires bearer authorization:
   `GET /sessions/{id}/prompt/v2/receipts/{request_id}?expected_session_incarnation=launch-id`.

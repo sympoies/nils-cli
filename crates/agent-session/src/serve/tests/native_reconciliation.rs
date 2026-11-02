@@ -10,6 +10,7 @@ struct Provider {
     mutations: Arc<AtomicUsize>,
     acknowledge: Arc<AtomicBool>,
     history_kind: Arc<AtomicUsize>,
+    client_id: Arc<std::sync::Mutex<Option<String>>>,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
     _socket_dir: nils_test_support::tempdir::ScopedTempDir,
@@ -24,9 +25,11 @@ impl Provider {
         let mutations = Arc::new(AtomicUsize::new(0));
         let acknowledge = Arc::new(AtomicBool::new(true));
         let history_kind = Arc::new(AtomicUsize::new(0));
+        let client_id = Arc::new(std::sync::Mutex::new(None));
         let (stop, mut stopped) = tokio::sync::oneshot::channel();
         let (working, shown, writes) = (busy.clone(), visible.clone(), mutations.clone());
         let (acks, history) = (acknowledge.clone(), history_kind.clone());
+        let sent_id = client_id.clone();
         let thread = std::thread::spawn(move || {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -42,6 +45,7 @@ impl Provider {
                         let (working, shown, writes) =
                             (working.clone(), shown.clone(), writes.clone());
                         let (acks, history) = (acks.clone(), history.clone());
+                        let sent_id = sent_id.clone();
                         tokio::spawn(async move {
                             let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
                             while let Some(Ok(ClientMessage::Text(text))) = socket.next().await {
@@ -54,13 +58,16 @@ impl Provider {
                                         assert_eq!(request["params"]["threadId"], "receipt-thread");
                                         assert_eq!(request["params"]["input"][0]["text"], "inspect the workspace");
                                         assert_eq!(writes.fetch_add(1, Ordering::SeqCst), 0);
+                                        *sent_id.lock().unwrap() = request["params"]["clientUserMessageId"]
+                                            .as_str()
+                                            .map(str::to_owned);
                                         if !acks.load(Ordering::SeqCst) { break; }
                                         json!({"turn":{"id":"accepted-turn"}})
                                     }
                                     "thread/read" => json!({"thread":{
                                         "id":"receipt-thread",
                                         "status":{"type":if working.load(Ordering::SeqCst) {"active"} else {"idle"}},
-                                        "turns":if shown.load(Ordering::SeqCst) { turns(history.load(Ordering::SeqCst)) } else {json!([])}
+                                        "turns":if shown.load(Ordering::SeqCst) { turns(history.load(Ordering::SeqCst), sent_id.lock().unwrap().as_deref()) } else {json!([])}
                                     }}),
                                     method => panic!("unexpected native RPC: {method}"),
                                 };
@@ -78,6 +85,7 @@ impl Provider {
             mutations,
             acknowledge,
             history_kind,
+            client_id,
             stop: Some(stop),
             thread: Some(thread),
             _socket_dir: socket_dir,
@@ -85,9 +93,15 @@ impl Provider {
     }
 }
 
-fn turns(kind: usize) -> Value {
-    let input = json!({"type":"userMessage", "content":[{"type":"text",
+fn turns(kind: usize, sent_client_id: Option<&str>) -> Value {
+    let mut input = json!({"type":"userMessage", "content":[{"type":"text",
         "text":if kind == 2 {"unrelated input"} else {"inspect the workspace"}}]});
+    // Kind 5 records the id the daemon sent; kind 6 records a different one.
+    match (kind, sent_client_id) {
+        (5, Some(id)) => input["clientId"] = json!(id),
+        (6, _) => input["clientId"] = json!("another-client-id"),
+        _ => {}
+    }
     let turn = json!({"id":if kind == 1 {"sibling-turn"} else {"accepted-turn"},
         "items":if kind == 4 {json!([input.clone(), input])} else {json!([input])}});
     if kind == 3 {
@@ -533,4 +547,64 @@ async fn duplicate_post_confirms_native_input_and_preserves_a_later_composer_dra
         "later user draft"
     );
     assert_eq!(provider.mutations.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn lost_native_acknowledgement_is_confirmed_only_by_its_own_client_id() {
+    // History kind 5 carries the id the daemon sent; kind 6 carries another id;
+    // kind 0 carries none. Every row has the right text in the right thread.
+    // The last case keeps the original id and text but switches the account
+    // binding in place after dispatch, which keeps the launch and the thread.
+    for (kind, confirmed, switched) in [
+        (5, true, false),
+        (6, false, false),
+        (0, false, false),
+        (5, false, true),
+    ] {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (st, launch, _lease, provider) = native_fixture(tmp.path());
+        provider.busy.store(false, Ordering::SeqCst);
+        provider.acknowledge.store(false, Ordering::SeqCst);
+        let uri = "/sessions/native-receipt/prompt/v2";
+        let mut body = keyed_body(&launch);
+        body["require_idle"] = json!(true);
+        let (_, first) = call(
+            router(st.clone()),
+            post_json(uri, Some(TOKEN), body.clone()),
+        )
+        .await;
+        assert_eq!(
+            first["error"]["details"]["receipt"]["outcome"], "unknown",
+            "kind {kind}: {first}"
+        );
+        assert!(
+            provider.client_id.lock().unwrap().is_some(),
+            "kind {kind}: turn/start carried no clientUserMessageId"
+        );
+        provider.visible.store(true, Ordering::SeqCst);
+        provider.history_kind.store(kind, Ordering::SeqCst);
+        if switched {
+            let path = tmp.path().join("sessions/native-receipt/session.json");
+            let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            record["codex_account_binding"]["revision"] = json!(2);
+            fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
+        }
+        let (status, replay) = call(router(st), post_json(uri, Some(TOKEN), body)).await;
+        if confirmed {
+            assert_eq!(status, StatusCode::OK, "{replay}");
+            assert_eq!(
+                replay["data"]["receipt"]["outcome"], "submitted",
+                "{replay}"
+            );
+            assert!(!replay.to_string().contains("accepted-turn"));
+            assert_private_receipts(tmp.path());
+        } else {
+            assert_eq!(
+                replay["error"]["details"]["receipt"]["outcome"], "unknown",
+                "kind {kind}: {replay}"
+            );
+        }
+        // Confirmation never dispatches again.
+        assert_eq!(provider.mutations.load(Ordering::SeqCst), 1, "kind {kind}");
+    }
 }

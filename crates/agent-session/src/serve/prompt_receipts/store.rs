@@ -301,20 +301,59 @@ pub(super) fn publish_confirmed(
     if !confirmation_is_current(context, result) {
         return Ok(None);
     }
+    let proof = result.native_confirmation.as_ref();
+    publish(
+        context,
+        result,
+        proof.map(|proof| proof.turn_id.clone()),
+        proof.and_then(|proof| proof.history_session_id.clone()),
+    )
+    .map(Some)
+}
+
+/// The payload fingerprint recorded by the durable claim for this receipt.
+pub(super) fn claim_fingerprint(context: &CliContext, receipt: &Receipt) -> Option<String> {
+    let claim = read(&path(context, receipt))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<ClaimRecord>(&bytes).ok())?;
+    (claim.receipt.request_id == receipt.request_id
+        && claim.receipt.session_id == receipt.session_id
+        && claim.receipt.session_incarnation == receipt.session_incarnation)
+        .then_some(claim.fingerprint)
+}
+
+/// Resolve an unknown result whose acknowledgement was lost, after its own
+/// client message id was found in provider history. Only a result that is
+/// still unknown and holds no private proof can be resolved this way.
+pub(super) fn publish_confirmed_by_client_id(
+    context: &CliContext,
+    result: &ResultRecord,
+    history_turn_id: String,
+    history_session_id: Option<String>,
+) -> Result<Option<ResultRecord>, CliError> {
+    let unresolved = lookup(context, &result.receipt)?.is_some_and(|current| {
+        current.receipt.outcome == super::Outcome::Unknown && current.native_confirmation.is_none()
+    });
+    if !unresolved {
+        return Ok(None);
+    }
+    publish(context, result, Some(history_turn_id), history_session_id).map(Some)
+}
+
+fn publish(
+    context: &CliContext,
+    result: &ResultRecord,
+    history_turn_id: Option<String>,
+    history_session_id: Option<String>,
+) -> Result<ResultRecord, CliError> {
     let mut confirmed = result.clone();
     confirmed.receipt.outcome = super::Outcome::Submitted;
     confirmed.receipt.code = None;
     confirmed.receipt.confirmation_diagnostic = None;
     confirmed.status = 200;
     confirmed.queued = false;
-    confirmed.history_turn_id = confirmed
-        .native_confirmation
-        .as_ref()
-        .map(|proof| proof.turn_id.clone());
-    confirmed.history_session_id = confirmed
-        .native_confirmation
-        .as_ref()
-        .and_then(|proof| proof.history_session_id.clone());
+    confirmed.history_turn_id = history_turn_id;
+    confirmed.history_session_id = history_session_id;
     confirmed.native_confirmation = None;
     finish(
         Claim {
@@ -323,7 +362,7 @@ pub(super) fn publish_confirmed(
         },
         &confirmed,
     )?;
-    Ok(Some(confirmed))
+    Ok(confirmed)
 }
 
 #[cfg(test)]
