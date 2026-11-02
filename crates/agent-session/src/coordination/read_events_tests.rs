@@ -209,6 +209,40 @@ fn ack_updates_the_same_event_once_and_an_unread_ack_creates_it() {
 }
 
 #[test]
+fn show_and_ack_leave_the_provider_transcript_bytes_unchanged() {
+    let lock = GlobalStateLock::new();
+    let rig = Rig::new(&lock, true);
+    let before = std::fs::read(&rig.transcript).unwrap();
+
+    let read = rig.deliver("shown then acknowledged");
+    assert_eq!(rig.show(&read), 0);
+    assert_eq!(
+        std::fs::read(&rig.transcript).unwrap(),
+        before,
+        "show must not write to the provider transcript"
+    );
+    assert_eq!(rig.ack(&read, "2", "ack-bytes-read"), 0);
+    assert_eq!(
+        std::fs::read(&rig.transcript).unwrap(),
+        before,
+        "ack must not write to the provider transcript"
+    );
+
+    let unread = rig.deliver("acknowledged without a show");
+    assert_eq!(rig.ack(&unread, "1", "ack-bytes-unread"), 0);
+    assert_eq!(
+        std::fs::read(&rig.transcript).unwrap(),
+        before,
+        "an ack that creates the event must not write to the provider transcript"
+    );
+    assert_eq!(
+        rig.ledger().len(),
+        3,
+        "the events were recorded, so the byte check is not vacuous"
+    );
+}
+
+#[test]
 fn an_unresolvable_transcript_or_an_unauthorized_reader_records_nothing() {
     let lock = GlobalStateLock::new();
     let rig = Rig::new(&lock, false);
