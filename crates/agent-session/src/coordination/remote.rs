@@ -529,7 +529,12 @@ pub(crate) fn client() -> Result<reqwest::blocking::Client, CliError> {
         .build()
         .map_err(|_| unavailable())
 }
-pub(super) const RECIPIENT_NOT_DISCOVERED_MESSAGE: &str = "remote recipient is absent from authorized peer discovery; check the exact --to session ID and --to-machine using `agent-session message peers` (unavailable hosts may be omitted)";
+pub(super) fn recipient_not_discovered_message() -> String {
+    format!(
+        "remote recipient is absent from authorized peer discovery; check the exact --to session ID and --to-machine using `{} message peers` (unavailable hosts may be omitted)",
+        crate::command_identity::executable()
+    )
+}
 
 fn unavailable() -> CliError {
     CliError::runtime(
@@ -943,7 +948,7 @@ where
                 observe_discovery_refusal(context, "recipient-not-discovered");
                 CliError::data(
                     "remote-recipient-not-discovered",
-                    RECIPIENT_NOT_DISCOVERED_MESSAGE,
+                    recipient_not_discovered_message(),
                     None,
                 )
             })?;

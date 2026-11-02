@@ -71,7 +71,8 @@ pub(super) fn run(
                 "inspect by repeating the --service, --service-generation, --credential-file and --owner options with --operation-id {operation} --reconcile"
             ),
             _ => format!(
-                "inspect with agent-session start --via-console --operation-id {operation} --reconcile --format json"
+                "inspect with {} start --via-console --operation-id {operation} --reconcile --format json",
+                crate::command_identity::executable()
             ),
         };
         error.0.hint = Some(format!(

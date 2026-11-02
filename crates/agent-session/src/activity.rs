@@ -3705,7 +3705,7 @@ pub(crate) fn doctor(
                     "profile-launched dsh panes report pre_llm_call as observed start and post_llm_call as authoritative completion through the DSH bridge hook (activity hook --agent dsh); external dsh workers take turn evidence only from their plugin-owned liveness sidecar",
                     "no provider attention correlation exists for dsh panes or external workers",
                     "the dsh-runtime-kit bundle owns the DSH bridge hook and Cordis registration; no files are managed here",
-                    "The launch profile's own launcher installs the bridge hook for dsh panes; use agent-session readiness for the authenticated runtime checkpoint contract",
+                    &*crate::command_identity::dsh_readiness_guidance(),
                 ),
             };
         let audited = version

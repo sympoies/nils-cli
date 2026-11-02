@@ -19,6 +19,7 @@ pub mod codex_account;
 #[doc(hidden)]
 pub mod codex_app_server;
 mod codex_runtime_dir;
+mod command_identity;
 pub mod completion;
 mod contention;
 mod context_usage;
@@ -77,7 +78,6 @@ mod usage;
 #[cfg(test)]
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::env;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -93,8 +93,8 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
-use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::{env, thread};
 
 use clap::Parser;
 use clap::error::ErrorKind;
@@ -125,6 +125,7 @@ use serde_json::{Value, json};
 
 use agent_bin::resolve_agent_bin;
 use cli::{AgentKind, Cli, Command, SpecialKey};
+use command_identity::{SCHEMA_PREFIX as SCHEMA, executable};
 use digest_format::valid_sha256;
 use {display_metadata::SessionTitleStateView, runtime_environment::add_runtime_tmux_environment};
 
@@ -186,7 +187,6 @@ const STARTUP_ARTIFACT_FILES: [&str; 6] = [
 const SESSION_RESUME_FILE: &str = "resume.json";
 const SESSION_LOCKS_DIR: &str = "session-locks";
 const SESSION_DELETE_TOMBSTONES_DIR: &str = "session-delete-tombstones";
-const BINARY: &str = "agent-session";
 const START_COMMAND: &str = "start";
 const CONSOLE_START_COMMAND: &str = "console-start";
 const RUN_COMMAND: &str = "run";
@@ -269,7 +269,7 @@ where
             if let Some(command) = coordination_routing::leaf_from_raw_args(&raw_args) {
                 return render_error(command, format, CliError::usage(code, message, None));
             }
-            return emit_parse_error(BINARY, format, code, &message);
+            return emit_parse_error(SCHEMA, format, code, &message);
         }
     };
 
@@ -12075,7 +12075,7 @@ fn render_single_success<T: Serialize>(
 ) -> i32 {
     match format {
         OutputFormat::Json => {
-            let envelope = Envelope::success(schema_version_for(BINARY, command, 1), result);
+            let envelope = Envelope::success(schema_version_for(SCHEMA, command, 1), result);
             print_json(&envelope)
         }
         OutputFormat::Text => {
@@ -12089,7 +12089,7 @@ fn render_list_success(format: OutputFormat, results: &[SessionView], machine: &
     match format {
         OutputFormat::Json => {
             let envelope = Envelope::success(
-                schema_version_for(BINARY, LIST_COMMAND, 1),
+                schema_version_for(SCHEMA, LIST_COMMAND, 1),
                 board::list_records(results, machine),
             );
             print_json(&envelope)
@@ -12119,7 +12119,7 @@ fn render_error(command: &'static str, format: OutputFormat, err: CliError) -> i
                 envelope_error = envelope_error.with_hint(hint);
             }
             let envelope: Envelope<()> =
-                Envelope::failure(schema_version_for(BINARY, command, 1), envelope_error);
+                Envelope::failure(schema_version_for(SCHEMA, command, 1), envelope_error);
             print_json(&envelope);
         }
         OutputFormat::Text => {
@@ -12153,7 +12153,7 @@ fn render_started_text(result: &SessionView) -> String {
     if let Some(command) = &result.ssh_attach_command {
         text.push_str(&format!("ssh: {command}\n"));
     }
-    text.push_str(&format!("delete: agent-session delete {}\n", result.id));
+    text.push_str(&format!("delete: {} delete {}\n", executable(), result.id));
     text
 }
 

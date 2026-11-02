@@ -179,7 +179,8 @@ fn release_skew(context: &CliContext) -> Vec<ReleaseSkew> {
                 broker_release: release.to_string(),
                 skew: skew.as_str(),
                 recovery_action: format!(
-                    "agent-session broker reconcile --session {}",
+                    "{} broker reconcile --session {}",
+                    crate::command_identity::executable(),
                     broker.session_id
                 ),
             })

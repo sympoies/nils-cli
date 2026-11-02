@@ -904,7 +904,7 @@ fn render_check(format: OutputFormat, resolved: &ResolvedServeConfig) -> i32 {
     match format {
         OutputFormat::Json => {
             let mut envelope = Envelope::success(
-                schema_version_for(crate::BINARY, ENVELOPE_COMMAND, 1),
+                schema_version_for(crate::SCHEMA, ENVELOPE_COMMAND, 1),
                 &resolved.summary,
             );
             envelope.warnings = resolved.warnings.clone();
@@ -951,7 +951,7 @@ fn render_error(format: OutputFormat, error: CliError) -> i32 {
                 envelope_error = envelope_error.with_details(details);
             }
             let envelope: Envelope<()> = Envelope::failure(
-                schema_version_for(crate::BINARY, ENVELOPE_COMMAND, 1),
+                schema_version_for(crate::SCHEMA, ENVELOPE_COMMAND, 1),
                 envelope_error,
             );
             print_json(&envelope);

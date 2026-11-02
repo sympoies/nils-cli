@@ -390,7 +390,11 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
         ready_at: None,
         finished_at: String::new(),
     };
-    let glance = format!("agent-session glance {}", expected.id);
+    let glance = format!(
+        "{} glance {}",
+        crate::command_identity::executable(),
+        expected.id
+    );
     let stop_deadline = Instant::now() + Duration::from_secs(args.stop_timeout);
     while exit_requested && Instant::now() < stop_deadline {
         let current = load_session_record(context, &expected.id).ok();
@@ -455,7 +459,11 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
             glance,
         ));
     }
-    let recovery = format!("agent-session resume {}", record.id);
+    let recovery = format!(
+        "{} resume {}",
+        crate::command_identity::executable(),
+        record.id
+    );
     if let Err(cause) =
         crate::auto_resume::cancel_for_manual_input_locked(context, &record.id, &now())
             .and_then(|()| crate::stop_session_runtime_locked(context, &mut record, &tmux))

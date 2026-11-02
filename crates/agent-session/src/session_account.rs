@@ -232,7 +232,7 @@ pub(crate) fn resume_after_switch_stop(
         if !safely_stopped {
             return cause;
         }
-        let recovery = format!("agent-session resume {id}");
+        let recovery = format!("{} resume {id}", crate::command_identity::executable());
         CliError::data(
             "claude-account-switch-resume-failed",
             "the account switch stopped the session but could not resume it; \

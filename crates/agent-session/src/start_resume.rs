@@ -229,7 +229,7 @@ fn source_account(
             "resume-account-transition-pending",
             "select the bound account explicitly to abandon the pending switch, or resume the existing session to apply it",
             Some(json!({"session_created":false,"safe_to_retry":false})),
-        ).with_hint(format!("run `agent-session resume {}` to retry the queued account", record.id)));
+        ).with_hint(format!("run `{} resume {}` to retry the queued account", crate::command_identity::executable(), record.id)));
     }
     Ok((
         account,
