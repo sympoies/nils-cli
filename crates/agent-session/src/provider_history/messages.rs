@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "messages/mailbox_events.rs"]
+mod mailbox_events;
+
 pub(crate) fn apply_prompt_request_bindings(
     messages: &mut [HistoryMessage],
     bindings: &HashMap<String, PromptRequestBinding>,

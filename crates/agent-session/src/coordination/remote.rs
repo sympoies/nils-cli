@@ -1987,6 +1987,9 @@ fn receive_replay(
 #[cfg(test)]
 #[path = "notification_policy_tests.rs"]
 mod notification_policy_tests;
+#[cfg(test)]
+#[path = "read_events_tests.rs"]
+mod read_events_tests;
 
 #[cfg(test)]
 #[path = "remote_inbox_regressions.rs"]

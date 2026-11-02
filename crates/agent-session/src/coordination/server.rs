@@ -756,7 +756,7 @@ pub(crate) fn message_show(
     token: &str,
 ) -> Result<Value, CliError> {
     let server_capability = authorize(context, id, token)?;
-    mailbox::show(
+    super::read_events::show(
         context,
         cli::MessageShowArgs {
             session: id.to_string(),
@@ -775,7 +775,7 @@ pub(crate) fn ack(
     body: AckBody,
 ) -> Result<Value, CliError> {
     let server_capability = authorize(context, id, token)?;
-    mailbox::ack(
+    super::read_events::ack(
         context,
         cli::MessageAckArgs {
             session: id.to_string(),

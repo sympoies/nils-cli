@@ -32,7 +32,7 @@ async fn history_messages_handler(
     let catalog = state.history_catalog.clone();
     let include_parts = query.parts == Some(HistoryPartsVersion::V1);
     match tokio::task::spawn_blocking(move || {
-        catalog.messages_with_parts(
+        catalog.messages_with_mailbox_events(
             &id,
             query.cursor.as_deref(),
             query.limit.unwrap_or(50),
@@ -111,3 +111,7 @@ mod uploaded_image_tests;
 #[cfg(test)]
 #[path = "history_image_regression_tests.rs"]
 mod history_image_regression_tests;
+
+#[cfg(test)]
+#[path = "mailbox_read_events_route_tests.rs"]
+mod mailbox_read_events_route_tests;
