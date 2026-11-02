@@ -147,12 +147,18 @@ pub(crate) fn run(
     if crate::liveness::coordination_failure_mode().is_some() {
         return Ok(Outcome::not_run());
     }
-    match request.event.as_str() {
+    let mut outcome = match request.event.as_str() {
         "PreToolUse" => pre_tool(request, effect, &identity, run_child),
         "PostToolUse" | "PostToolUseFailure" => post_tool(request, raw, &identity, run_child),
         "Stop" => stop(&identity, run_child),
         _ => Ok(Outcome::not_run()),
+    }?;
+    if matches!(outcome.status, Status::Pending | Status::Unavailable)
+        && let Some(mismatch) = crate::session_binary::release_mismatch()
+    {
+        outcome.message = Some(mismatch);
     }
+    Ok(outcome)
 }
 
 fn identity() -> Result<Option<Identity>, HookError> {
@@ -688,7 +694,7 @@ fn bounded_string(value: &Value, key: &str) -> Result<String, CallFailure> {
 }
 
 fn agent_session_command(identity: &Identity) -> Result<Command, HookError> {
-    let executable = trusted_sibling("agent-session")?;
+    let executable = crate::session_binary::trusted_sibling()?;
     let mut command = Command::new(executable);
     command
         .args(["--state-dir", identity.state_dir.to_string_lossy().as_ref()])
@@ -700,46 +706,6 @@ fn agent_session_command(identity: &Identity) -> Result<Command, HookError> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     Ok(command)
-}
-
-fn trusted_sibling(name: &str) -> Result<PathBuf, HookError> {
-    let current = std::env::current_exe()
-        .ok()
-        .and_then(|path| fs::canonicalize(path).ok())
-        .ok_or_else(|| {
-            HookError::runtime(
-                "operation-lifecycle-helper-unavailable",
-                "agent-hook executable is unavailable",
-            )
-        })?;
-    let candidate = current
-        .parent()
-        .map(|parent| parent.join(name))
-        .and_then(|path| fs::canonicalize(path).ok())
-        .ok_or_else(|| {
-            HookError::runtime(
-                "operation-lifecycle-helper-unavailable",
-                "same-release agent-session is unavailable",
-            )
-        })?;
-    let metadata = fs::metadata(&candidate).map_err(|_| {
-        HookError::runtime(
-            "operation-lifecycle-helper-unavailable",
-            "same-release agent-session is unavailable",
-        )
-    })?;
-    if candidate.parent() != current.parent()
-        || !metadata.is_file()
-        || metadata.uid() != unsafe { libc::geteuid() }
-        || metadata.permissions().mode() & 0o022 != 0
-        || metadata.permissions().mode() & 0o111 == 0
-    {
-        return Err(HookError::data(
-            "operation-lifecycle-helper-untrusted",
-            "same-release agent-session is not an owner-controlled executable",
-        ));
-    }
-    Ok(candidate)
 }
 
 fn operation_targets(

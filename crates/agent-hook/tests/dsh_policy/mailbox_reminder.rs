@@ -1,4 +1,5 @@
-//! DSH consumes current and prior fixed reminders without weakening validation.
+//! DSH consumes current and prior fixed reminders without weakening validation,
+//! and names a session binary from another release when its calls fail.
 use super::*;
 use pretty_assertions::assert_eq;
 
@@ -19,6 +20,82 @@ fn managed_dsh_prompt_step_carries_short_dated_mailbox_reminder() {
 #[test]
 fn managed_dsh_prompt_step_carries_short_undated_mailbox_reminder() {
     check_mailbox_reminder("Mailbox: agent-session message inbox");
+}
+
+/// Stops a managed session whose same-directory session binary fails every
+/// call and reports `peer` as its release; `alias` makes it a symlink to a
+/// sibling file in the same directory.
+#[cfg(target_os = "linux")]
+fn stop_with_failing_session_binary(peer: &str, alias: bool) -> Value {
+    let fixture = Fixture::new(&operation_policy());
+    let release = fixture.root.join("release");
+    fs::create_dir(&release).expect("release directory");
+    let agent_hook = release.join("agent-hook");
+    install_release_binary(&agent_hook);
+    let companion = release.join(if alias {
+        "session-real"
+    } else {
+        super::support::SESSION_BIN
+    });
+    fs::write(
+        &companion,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'session {peer}'; exit 0; fi\nexit 1\n"
+        ),
+    )
+    .expect("session fixture");
+    fs::set_permissions(&companion, fs::Permissions::from_mode(0o700)).expect("mode");
+    if alias {
+        std::os::unix::fs::symlink(&companion, release.join(super::support::SESSION_BIN))
+            .expect("in-directory alias");
+    }
+    let capability = fixture.root.join("capability");
+    fs::write(&capability, "capability").expect("capability fixture");
+    let env = [
+        ("AGENT_SESSION_ID", "managed-session"),
+        (
+            "AGENT_SESSION_CAPABILITY_FILE",
+            capability.to_str().expect("path"),
+        ),
+    ];
+    dispatch_with_release_binary_env(
+        &fixture,
+        &agent_hook,
+        &lifecycle_request(&fixture, "agent/turn-stopping", None, None),
+        &env,
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn assert_pair_named(stop: &Value, peer: &str) {
+    assert_eq!(stop["data"]["action"], "block", "stop={stop}");
+    let pair = format!(
+        "agent-hook {} is paired with {} {peer}",
+        env!("CARGO_PKG_VERSION"),
+        super::support::SESSION_BIN
+    );
+    assert!(stop.to_string().contains(&pair), "stop={stop}");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn a_failing_session_call_names_a_binary_from_another_release() {
+    assert_pair_named(&stop_with_failing_session_binary("0.1.0", false), "0.1.0");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn a_failing_session_call_names_a_binary_from_another_patch_release() {
+    let local = env!("CARGO_PKG_VERSION");
+    let (head, patch) = local.rsplit_once('.').expect("release triple");
+    let peer = format!("{head}.{}", patch.parse::<u64>().expect("patch") + 1);
+    assert_pair_named(&stop_with_failing_session_binary(&peer, false), &peer);
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn the_lifecycle_still_calls_an_in_directory_alias_of_the_session_binary() {
+    assert_pair_named(&stop_with_failing_session_binary("0.1.0", true), "0.1.0");
 }
 
 fn check_mailbox_reminder(reminder: &str) {
@@ -43,7 +120,7 @@ fn check_mailbox_reminder(reminder: &str) {
         })
         .to_string()
     };
-    let companion = release.join("agent-session");
+    let companion = release.join(super::support::SESSION_BIN);
     fs::write(
         &companion,
         format!(

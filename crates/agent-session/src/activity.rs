@@ -3568,7 +3568,7 @@ pub(crate) fn doctor(
             .collect::<BTreeMap<_, _>>()
     });
     let helper_executable =
-        command_resolves_on_path("agent-session", std::env::var_os("PATH").as_deref());
+        nils_common::session_binary::locate_on_path(std::env::var_os("PATH").as_deref()).is_some();
     let mut providers = Vec::new();
     for agent in agents {
         let path = provider_config_path(agent)?;
@@ -3817,16 +3817,6 @@ pub(crate) fn doctor(
     })
 }
 
-fn command_resolves_on_path(command: &str, path: Option<&std::ffi::OsStr>) -> bool {
-    let Some(path) = path else {
-        return false;
-    };
-    std::env::split_paths(path).any(|directory| {
-        fs::metadata(directory.join(command))
-            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-    })
-}
-
 #[derive(Clone, Debug, Default)]
 struct ProviderActivitySummary {
     last_event_at: Option<String>,
@@ -4062,14 +4052,12 @@ fn provider_specs(agent: AgentKind) -> Vec<ProviderSpec> {
 }
 
 fn owned_command(agent: AgentKind, event: Option<&str>) -> String {
+    let name = nils_common::session_binary::NAME;
     match event {
-        Some("PermissionRequest") if agent == AgentKind::Codex => concat!(
-            "sh -c '",
-            "if [ \"${AGENT_SESSION_ATTENTION_AUTHORITY:-hook}\" = protocol ]; ",
-            "then exit 0; fi; exec agent-session activity hook --agent codex'"
-        )
-        .to_string(),
-        _ => format!("agent-session activity hook --agent {}", agent.as_str()),
+        Some("PermissionRequest") if agent == AgentKind::Codex => format!(
+            "sh -c 'if [ \"${{AGENT_SESSION_ATTENTION_AUTHORITY:-hook}}\" = protocol ]; then exit 0; fi; exec {name} activity hook --agent codex'"
+        ),
+        _ => format!("{name} activity hook --agent {}", agent.as_str()),
     }
 }
 

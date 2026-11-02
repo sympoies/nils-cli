@@ -1066,25 +1066,10 @@ fn configured_provider_specs_require_the_owned_timeout() {
     let permission_command = owned_command(AgentKind::Codex, Some("PermissionRequest"));
     assert!(permission_command.contains("AGENT_SESSION_ATTENTION_AUTHORITY"));
     assert!(permission_command.contains("= protocol"));
-    assert!(permission_command.contains("exec agent-session activity hook --agent codex"));
-}
-
-#[test]
-fn helper_resolution_requires_an_executable_on_the_hook_path() {
-    let tmp = tempfile::TempDir::new().expect("tempdir");
-    let helper = tmp.path().join("agent-session");
-    fs::write(&helper, "fixture").expect("helper");
-    fs::set_permissions(&helper, fs::Permissions::from_mode(0o600)).expect("non-executable");
-    assert!(!command_resolves_on_path(
-        "agent-session",
-        Some(tmp.path().as_os_str())
-    ));
-    fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).expect("executable");
-    assert!(command_resolves_on_path(
-        "agent-session",
-        Some(tmp.path().as_os_str())
-    ));
-    assert!(!command_resolves_on_path("agent-session", None));
+    assert!(permission_command.contains(&format!(
+        "exec {} activity hook --agent codex",
+        nils_common::session_binary::NAME
+    )));
 }
 
 #[test]
@@ -1149,7 +1134,10 @@ fn codex_inline_permission_source_guard_rejects_noncanonical_reporters() {
 
     for command in [
         owned_command(AgentKind::Codex, Some("PermissionRequest")),
-        "agent-session activity hook --agent=codex".to_string(),
+        format!(
+            "{} activity hook --agent=codex",
+            nils_common::session_binary::NAME
+        ),
     ] {
         let mut duplicate = canonical.clone();
         duplicate.push_str(&format!(
@@ -1213,7 +1201,7 @@ fn codex_json_permission_source_guard_rejects_noncanonical_reporters() {
         .expect("PermissionRequest handlers")
         .push(json!({
             "type": "command",
-            "command": "agent-session activity hook --agent=codex",
+            "command": format!("{} activity hook --agent=codex", nils_common::session_binary::NAME),
             "timeout": 5
         }));
     fs::write(

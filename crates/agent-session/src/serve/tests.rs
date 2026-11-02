@@ -7645,7 +7645,7 @@ async fn serve_created_capable_codex_session_projects_supported_app_server_runti
                     "PermissionRequest": [{
                         "hooks": [{
                             "type": "command",
-                            "command": "sh -c 'if [ \"${AGENT_SESSION_ATTENTION_AUTHORITY:-hook}\" = protocol ]; then exit 0; fi; exec agent-session activity hook --agent codex'",
+                            "command": format!("sh -c 'if [ \"${{AGENT_SESSION_ATTENTION_AUTHORITY:-hook}}\" = protocol ]; then exit 0; fi; exec {} activity hook --agent codex'", nils_common::session_binary::NAME),
                             "timeout": 5
                         }]
                     }]

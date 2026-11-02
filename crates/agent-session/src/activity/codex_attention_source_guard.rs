@@ -189,7 +189,7 @@ fn codex_permission_reporter_command(command: &str) -> bool {
         .collect::<Vec<_>>();
     words
         .windows(3)
-        .any(|words| words == ["agent-session", "activity", "hook"])
+        .any(|words| words == [nils_common::session_binary::NAME, "activity", "hook"])
         || words
             .windows(2)
             .any(|words| words == ["agent-hook", "dispatch"])

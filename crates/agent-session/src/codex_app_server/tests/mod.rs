@@ -587,7 +587,7 @@ fn configured_0_145_app_server_runtime_keeps_hook_attention_authority() {
                 "PermissionRequest": [{
                     "hooks": [{
                         "type": "command",
-                        "command": "sh -c 'if [ \"${AGENT_SESSION_ATTENTION_AUTHORITY:-hook}\" = protocol ]; then exit 0; fi; exec agent-session activity hook --agent codex'",
+                        "command": format!("sh -c 'if [ \"${{AGENT_SESSION_ATTENTION_AUTHORITY:-hook}}\" = protocol ]; then exit 0; fi; exec {} activity hook --agent codex'", nils_common::session_binary::NAME),
                         "timeout": 5
                     }]
                 }]
@@ -659,12 +659,12 @@ fn configured_0_145_runtime_stays_hook_authority_with_unguarded_permission_hook(
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "sh -c 'if [ \"${AGENT_SESSION_ATTENTION_AUTHORITY:-hook}\" = protocol ]; then exit 0; fi; exec agent-session activity hook --agent codex'",
+                            "command": format!("sh -c 'if [ \"${{AGENT_SESSION_ATTENTION_AUTHORITY:-hook}}\" = protocol ]; then exit 0; fi; exec {} activity hook --agent codex'", nils_common::session_binary::NAME),
                             "timeout": 5
                         },
                         {
                             "type": "command",
-                            "command": "agent-session activity hook --agent codex",
+                            "command": format!("{} activity hook --agent codex", nils_common::session_binary::NAME),
                             "timeout": 5
                         }
                     ]

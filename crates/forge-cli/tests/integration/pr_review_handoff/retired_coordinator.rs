@@ -1,6 +1,8 @@
 //! Retired-coordinator takeover integration coverage.
 use std::process::Command;
 
+use nils_common::session_binary::NAME;
+
 use super::*;
 use pretty_assertions::assert_eq;
 
@@ -16,10 +18,7 @@ fn coordinator_board(stub: StubEnv, state: &str, reason: &str) -> StubEnv {
             "closed_at":if state == "closed" { json!(now) } else { Value::Null },
             "close_reason":reason}]
     }}});
-    let path = stub.write_stub(
-        "agent-session",
-        &format!("#!/bin/sh\ncat <<'JSON'\n{board}\nJSON\n"),
-    );
+    let path = stub.write_stub(NAME, &format!("#!/bin/sh\ncat <<'JSON'\n{board}\nJSON\n"));
     stub.env("FORGE_CLI_AGENT_SESSION_BIN", path.to_string_lossy())
         .env("AGENT_SESSION_ID", "successor-session")
 }
@@ -318,10 +317,8 @@ fn supervisor_takeover_requires_configured_identity_and_fresh_stale_retirement_p
                 "last_terminal_activity_at":activity,
                 "closed_at":Value::Null,"close_reason":Value::Null}]
         }}});
-        let board_stub = stub.write_stub(
-            "agent-session",
-            &format!("#!/bin/sh\ncat <<'JSON'\n{board}\nJSON\n"),
-        );
+        let board_stub =
+            stub.write_stub(NAME, &format!("#!/bin/sh\ncat <<'JSON'\n{board}\nJSON\n"));
         stub.envs.push((
             "FORGE_CLI_AGENT_SESSION_BIN".into(),
             board_stub.to_string_lossy().into_owned(),
@@ -356,6 +353,23 @@ fn supervisor_takeover_requires_configured_identity_and_fresh_stale_retirement_p
             );
         }
     }
+}
+
+#[test]
+fn supervisor_takeover_finds_the_session_binary_on_path_by_its_build_name() {
+    let seeded = records(retired_coordinator_handoff(), None);
+    let tip = &seeded[0].record_digest;
+    let mut stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "stopped", "");
+    stub.envs
+        .retain(|(key, _)| key != "FORGE_CLI_AGENT_SESSION_BIN");
+    let path = format!(
+        "{}:{}",
+        stub.tempdir.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let stub = stub.env("PATH", path);
+    let out = supervisor_takeover_on_remote(&stub, HEAD, OLD, tip, true, true, "origin");
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
 }
 
 #[test]
@@ -713,7 +727,7 @@ fn retired_coordinator_takeover_rechecks_lifecycle_before_posting() {
     let seeded = records(retired_coordinator_handoff(), None);
     let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "closed", "deleted");
     let inner = stub.tempdir.path().join("board-inner");
-    fs::rename(stub.tempdir.path().join("agent-session"), &inner).unwrap();
+    fs::rename(stub.tempdir.path().join(NAME), &inner).unwrap();
     let counter = stub.tempdir.path().join("board-read");
     let script = format!(
         r#"#!/bin/sh
@@ -727,7 +741,7 @@ fi
         counter = counter.display(),
         inner = inner.display()
     );
-    stub.write_stub("agent-session", &script);
+    stub.write_stub(NAME, &script);
     let out = takeover(
         &stub,
         HEAD,
@@ -781,7 +795,7 @@ fn retired_coordinator_takeover_refuses_incomplete_or_stale_board_evidence() {
             "failed" => "#!/bin/sh\necho private-evidence-canary >&2\nexit 1\n".into(),
             _ => format!("#!/bin/sh\ncat <<'JSON'\n{board}\nJSON\n"),
         };
-        stub.write_stub("agent-session", &script);
+        stub.write_stub(NAME, &script);
         let out = takeover(
             &stub,
             HEAD,
@@ -970,10 +984,7 @@ fn retired_coordinator_takeover_binds_the_selected_lifecycle_source() {
                 "closed_at":now,"close_reason":"deleted"
             });
         }
-        stub.write_stub(
-            "agent-session",
-            &format!("#!/bin/sh\ncat <<'JSON'\n{board}\nJSON\n"),
-        );
+        stub.write_stub(NAME, &format!("#!/bin/sh\ncat <<'JSON'\n{board}\nJSON\n"));
         let out = takeover(
             &stub,
             HEAD,

@@ -52,7 +52,7 @@ capability = { id = "agent-session.activity.v1", reason_code = "activity-recorde
 fn working_helper(fixture: &Fixture) -> std::path::PathBuf {
     let directory = fixture.root.join("helper-bin");
     fs::create_dir_all(&directory).expect("helper directory");
-    let helper = directory.join("agent-session");
+    let helper = directory.join(support::SESSION_BIN);
     fs::write(&helper, "#!/bin/sh\nexit 0\n").expect("helper");
     fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).expect("helper mode");
     directory
@@ -162,12 +162,12 @@ fn a_resolvable_helper_override_still_takes_effect() {
     // succeeds. Only honouring the override can produce an allow here.
     let path_dir = fixture.root.join("path-bin");
     fs::create_dir_all(&path_dir).expect("path directory");
-    let failing = path_dir.join("agent-session");
+    let failing = path_dir.join(support::SESSION_BIN);
     fs::write(&failing, "#!/bin/sh\nexit 65\n").expect("failing helper");
     fs::set_permissions(&failing, fs::Permissions::from_mode(0o700)).expect("failing mode");
     let override_dir = fixture.root.join("override-bin");
     fs::create_dir_all(&override_dir).expect("override directory");
-    let pinned = override_dir.join("agent-session");
+    let pinned = override_dir.join(support::SESSION_BIN);
     fs::write(&pinned, "#!/bin/sh\nexit 0\n").expect("pinned helper");
     fs::set_permissions(&pinned, fs::Permissions::from_mode(0o700)).expect("pinned mode");
 
@@ -516,7 +516,7 @@ fn an_inherited_helper_override_does_not_reach_the_process_under_test() {
     let lock = GlobalStateLock::new();
     let fixture = Fixture::new(ACTIVITY_POLICY);
     // Ambient value that resolves, which is what a managed pane supplies.
-    let inherited = working_helper(&fixture).join("agent-session");
+    let inherited = working_helper(&fixture).join(support::SESSION_BIN);
     assert!(inherited.is_file(), "the inherited override must resolve");
     let _guard = EnvGuard::set(
         &lock,
@@ -553,7 +553,7 @@ fn session_model_claude_metadata_is_forwarded_without_private_hook_fields() {
     let helper_dir = working_helper(&fixture);
     let capture = fixture.root.join("model-metadata.json");
     fs::write(
-        helper_dir.join("agent-session"),
+        helper_dir.join(support::SESSION_BIN),
         "#!/bin/sh\nif [ \"$2\" = hook ]; then cat > \"$MODEL_CAPTURE\"; fi\nexit 0\n",
     )
     .unwrap();
@@ -562,7 +562,7 @@ fn session_model_claude_metadata_is_forwarded_without_private_hook_fields() {
         &["dispatch", "--product", "claude", "--format", "json"],
         Some(r#"{"hook_event_name":"SessionStart","session_id":"provider-session-canary","source":"startup","model":"resolved-model","effort":{"level":"high"},"prompt":"prompt-canary","transcript_path":"/private/transcript-canary"}"#),
         &[("AGENT_SESSION_ID", "managed-model-session"), ("AGENT_SESSION_RUNTIME_ID", "managed-model-runtime"),
-          ("AGENT_SESSION_BIN", helper_dir.join("agent-session").to_str().unwrap()),
+          ("AGENT_SESSION_BIN", helper_dir.join(support::SESSION_BIN).to_str().unwrap()),
           ("PATH", &path), ("MODEL_CAPTURE", capture.to_str().unwrap())],
     );
     assert_eq!(dispatched.code, 0, "{}", dispatched.stdout_text());
@@ -593,14 +593,14 @@ fn session_model_optional_timeout_cannot_prevent_mandatory_stop_activity() {
     let fixture = Fixture::new(ACTIVITY_POLICY);
     let helper_dir = working_helper(&fixture);
     let capture = fixture.root.join("mandatory-event.json");
-    fs::write(helper_dir.join("agent-session"), "#!/bin/sh\nif [ \"$2\" = event ]; then cat > \"$MODEL_CAPTURE\"; else sleep 2; exit 17; fi\nexit 0\n").unwrap();
+    fs::write(helper_dir.join(support::SESSION_BIN), "#!/bin/sh\nif [ \"$2\" = event ]; then cat > \"$MODEL_CAPTURE\"; else sleep 2; exit 17; fi\nexit 0\n").unwrap();
     let path = format!("{}:/usr/bin:/bin", helper_dir.display());
     let start = std::time::Instant::now();
     let dispatched = fixture.run_with_env(
         &["dispatch", "--product", "claude", "--format", "json"],
         Some(r#"{"hook_event_name":"Stop","session_id":"primary-session","effort":{"level":"high"}}"#),
         &[("AGENT_SESSION_ID", "managed-model-session"), ("AGENT_SESSION_RUNTIME_ID", "managed-model-runtime"),
-          ("AGENT_SESSION_BIN", helper_dir.join("agent-session").to_str().unwrap()),
+          ("AGENT_SESSION_BIN", helper_dir.join(support::SESSION_BIN).to_str().unwrap()),
           ("PATH", &path), ("MODEL_CAPTURE", capture.to_str().unwrap())],
     );
     assert_eq!(dispatched.code, 0, "{}", dispatched.stdout_text());
@@ -617,7 +617,7 @@ fn claude_resume_session_start_forwards_readiness_without_model_metadata() {
     let helper_dir = working_helper(&fixture);
     let capture = fixture.root.join("resume-readiness.json");
     fs::write(
-        helper_dir.join("agent-session"),
+        helper_dir.join(support::SESSION_BIN),
         "#!/bin/sh\nif [ \"$2\" = hook ]; then cat > \"$MODEL_CAPTURE\"; fi\nexit 0\n",
     )
     .unwrap();
@@ -626,7 +626,7 @@ fn claude_resume_session_start_forwards_readiness_without_model_metadata() {
         &["dispatch", "--product", "claude", "--format", "json"],
         Some(r#"{"hook_event_name":"SessionStart","session_id":"provider-session-canary","source":"resume","transcript_path":"/private/transcript-canary"}"#),
         &[("AGENT_SESSION_ID", "managed-resume-session"), ("AGENT_SESSION_RUNTIME_ID", "managed-resume-runtime"),
-          ("AGENT_SESSION_BIN", helper_dir.join("agent-session").to_str().unwrap()),
+          ("AGENT_SESSION_BIN", helper_dir.join(support::SESSION_BIN).to_str().unwrap()),
           ("PATH", &path), ("MODEL_CAPTURE", capture.to_str().unwrap())],
     );
     assert_eq!(dispatched.code, 0, "{}", dispatched.stdout_text());
@@ -655,7 +655,7 @@ fn claude_resume_session_start_readiness_survives_a_helper_slower_than_display_d
     let capture = fixture.root.join("slow-readiness.json");
     // Buffer stdin first; record only after the old 250ms display deadline.
     fs::write(
-        helper_dir.join("agent-session"),
+        helper_dir.join(support::SESSION_BIN),
         "#!/bin/sh\nif [ \"$2\" = hook ]; then body=$(cat); sleep 0.6; printf '%s' \"$body\" > \"$MODEL_CAPTURE\"; fi\nexit 0\n",
     )
     .unwrap();
@@ -664,7 +664,7 @@ fn claude_resume_session_start_readiness_survives_a_helper_slower_than_display_d
         &["dispatch", "--product", "claude", "--format", "json"],
         Some(r#"{"hook_event_name":"SessionStart","session_id":"provider-session-canary","source":"resume","model":"resumed-model"}"#),
         &[("AGENT_SESSION_ID", "managed-resume-session"), ("AGENT_SESSION_RUNTIME_ID", "managed-resume-runtime"),
-          ("AGENT_SESSION_BIN", helper_dir.join("agent-session").to_str().unwrap()),
+          ("AGENT_SESSION_BIN", helper_dir.join(support::SESSION_BIN).to_str().unwrap()),
           ("PATH", &path), ("MODEL_CAPTURE", capture.to_str().unwrap())],
     );
     assert_eq!(dispatched.code, 0, "{}", dispatched.stdout_text());

@@ -1659,7 +1659,7 @@ fn mailbox_reminder(
         env_value("AGENT_SESSION_CAPABILITY_FILE").filter(|path| Path::new(path).is_absolute())?;
     let state_dir =
         env_value("AGENT_SESSION_STATE_DIR").filter(|path| Path::new(path).is_absolute())?;
-    let executable = trusted_sibling("agent-session").ok()?;
+    let executable = trusted_sibling(nils_common::session_binary::NAME).ok()?;
     let mut command = Command::new(executable);
     sanitize_companion_env(&mut command, &[]);
     command
