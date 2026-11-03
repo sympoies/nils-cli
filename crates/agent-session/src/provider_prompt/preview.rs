@@ -1,4 +1,6 @@
 use super::*;
+mod display_rows;
+use row_classes::{Compaction, RowClass};
 
 /// Response-only previews; never stored in a session record or board entry.
 #[derive(Debug, Default, Serialize)]
@@ -18,6 +20,10 @@ pub(crate) struct LastMessage {
     pub(crate) role: &'static str,
     pub(crate) text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) row_class: Option<RowClass>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) compaction: Option<Compaction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) submitted_at: Option<String>,
     pub(crate) truncated: bool,
 }
@@ -27,6 +33,8 @@ impl LastMessage {
         let prompt = LastPrompt::from(prompt);
         Self {
             role,
+            row_class: None,
+            compaction: None,
             text: prompt.text,
             submitted_at: prompt.submitted_at,
             truncated: prompt.truncated,
@@ -38,6 +46,7 @@ impl LastMessage {
 pub(super) struct PreviewMessages {
     pub(super) last_message: Option<LastMessage>,
     claude_human_seen: bool,
+    pending_compaction: Option<(Option<String>, usize)>,
 }
 
 impl PreviewMessages {
@@ -48,7 +57,15 @@ impl PreviewMessages {
         value: &Value,
         provider: ProviderKind,
         session: &str,
+        raw_bytes: usize,
+        complete: bool,
+        retained_bytes: usize,
     ) -> Option<ParsedPrompt> {
+        if self.observe_display(value, provider, session, raw_bytes, complete)
+            || retained_bytes > MAX_PROVIDER_LINE_BYTES
+        {
+            return None;
+        }
         let prompt = match provider {
             ProviderKind::Codex => parse_codex_prompt_value(value),
             ProviderKind::Claude => {
@@ -150,4 +167,32 @@ pub(super) fn clean_text(text: String) -> String {
     text.chars()
         .filter(|ch| !ch.is_control() || matches!(ch, '\n' | '\t'))
         .collect()
+}
+
+impl ProviderPromptTail {
+    pub(super) fn restore_display_partial(&mut self) -> io::Result<()> {
+        if self.offset == 0 || self.continuity.last() == Some(&b'\n') {
+            return Ok(());
+        }
+        let start = self
+            .offset
+            .saturating_sub(row_classes::ADJACENT_BYTES as u64);
+        let mut file = File::open(&self.source.path)?;
+        file.seek(SeekFrom::Start(start))?;
+        let mut bytes = vec![0; (self.offset - start) as usize];
+        file.read_exact(&mut bytes)?;
+        if bytes.last() == Some(&b'\n') {
+            return Ok(());
+        }
+        let fragment = match bytes.iter().rposition(|byte| *byte == b'\n') {
+            Some(index) => &bytes[index + 1..],
+            None if start == 0 => &bytes,
+            None => return Ok(()),
+        };
+        if !fragment.is_empty() {
+            self.consume(fragment, &mut Vec::new());
+            self.display_only_partial = true;
+        }
+        Ok(())
+    }
 }

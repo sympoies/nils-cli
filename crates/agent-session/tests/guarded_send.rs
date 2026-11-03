@@ -3,6 +3,8 @@
 mod claude_notice;
 #[path = "guarded_send/exit.rs"]
 mod exit;
+#[path = "guarded_send/history_command_bytes.rs"]
+mod history_command_bytes;
 #[path = "guarded_send/live_composer.rs"]
 mod live_composer;
 #[path = "guarded_send/native_composer.rs"]
