@@ -457,7 +457,10 @@ jobs:
         if: inputs.isolation_guard
         run: |
           sudo apt-get update && sudo apt-get install -y lcov
-          genhtml target/coverage/lcov.info --output-directory target/coverage/html
+          # The LCOV source paths point into the macOS runner workspace, which
+          # this checkout lacks, so the report is built without source text.
+          genhtml target/coverage/lcov.info --synthesize-missing \
+            --ignore-errors source --output-directory target/coverage/html
 
       - name: Upload coverage HTML
         if: inputs.isolation_guard
