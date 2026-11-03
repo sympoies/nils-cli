@@ -1,6 +1,10 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+mod resume {
+    include!("mailbox_resume.rs");
+}
+
 #[tokio::test]
 async fn coordination_notification_startup_catchup_uses_one_acknowledged_codex_submission() {
     let _lock = GlobalStateLock::new();
