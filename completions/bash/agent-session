@@ -2854,7 +2854,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__notice)
-            opts="-h --kind --source --id --body-file --text-stdin --queue --expect-runtime --expect-provider-session --require-idle --require-empty-composer --idempotency-key --tmux-bin --format --state-dir --host --help"
+            opts="-h --kind --source --id --summary --body-file --text-stdin --queue --expect-runtime --expect-provider-session --require-idle --require-empty-composer --idempotency-key --tmux-bin --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2869,6 +2869,10 @@ _agent__session() {
                     return 0
                     ;;
                 --id)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --summary)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

@@ -16,7 +16,11 @@ fn configured_mailbox_name_reaches_reminders_and_notice_body() {
     assert_eq!(prompt, format!("Mailbox: 1 unread; {name} message inbox"));
     assert!(is_mailbox_reminder_prompt(&prompt));
     assert_eq!(
-        coalescing::explained_prompt(messages.iter()),
+        crate::notice::render_summary(
+            "mailbox.wake",
+            &coalescing::explained_summary(messages.iter()),
+            "",
+        ),
         format!("Mailbox: 1 uncategorized; {name} message inbox")
     );
 }

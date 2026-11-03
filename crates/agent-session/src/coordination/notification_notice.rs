@@ -10,13 +10,14 @@ pub(super) fn encode_counts(
     incarnation: &str,
     now: i64,
 ) -> String {
-    let body = coalescing::explained_prompt(registry.messages.iter().filter(|item| {
+    let summary = coalescing::explained_summary(registry.messages.iter().filter(|item| {
         item.recipient_session_id == session
             && item.recipient_incarnation == incarnation
             && item.state == "unread"
             && !item.notification_suppressed
             && item.expires_at_epoch > now
     }));
+    let body = crate::notice::render_summary("mailbox.wake", &summary, "");
     NoticeEnvelope::new("mailbox.wake", "agent-session", None)
         .expect("fixed mailbox notice metadata")
         .encode(&body)
@@ -64,5 +65,65 @@ impl NotificationCandidate {
             jiff::Timestamp::now().as_second(),
         ));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    #[test]
+    fn mailbox_wake_bytes_match_merged_contract_including_long_counts() {
+        let corpus: serde_json::Value = serde_json::from_str(include_str!(
+            "../../docs/specs/fixtures/history-row-classes-v1.json"
+        ))
+        .unwrap();
+        for case in corpus["mailbox_byte_invariance"].as_array().unwrap() {
+            let mut registry = Registry::default();
+            let categories: &[&str] = match case["name"].as_str().unwrap() {
+                "fixed" => &[],
+                "single-count" => &["report"],
+                "all-categories" => &[
+                    "uncategorized",
+                    "report",
+                    "progress",
+                    "handoff",
+                    "decision",
+                    "blocker",
+                ],
+                name => panic!("unhandled mailbox contract case: {name}"),
+            };
+            for (index, category) in categories.iter().enumerate() {
+                registry.messages.push(serde_json::from_value(json!({
+                    "schema_version": "agent-session.message.v1", "message_id": format!("message-{index}"),
+                    "sender_session_id": "sender", "sender_incarnation": "sender-incarnation",
+                    "recipient_session_id": "recipient", "recipient_incarnation": "incarnation",
+                    "state": "unread", "revision": 1, "reply_to": null, "reply_depth": 0,
+                    "created_at": "2000-01-01T00:00:00Z", "created_at_epoch": 0,
+                    "expires_at": "2000-01-01T00:02:00Z", "expires_at_epoch": 120,
+                    "category": category, "body_bytes": 0, "body": ""
+                })).unwrap());
+            }
+            let encoded = if categories.is_empty() {
+                NoticeEnvelope::new("mailbox.wake", "agent-session", None)
+                    .unwrap()
+                    .encode(&crate::notice::render_summary(
+                        "mailbox.wake",
+                        "agent-session message inbox",
+                        "",
+                    ))
+                    .unwrap()
+            } else {
+                encode_counts(&registry, "recipient", "incarnation", 100)
+            };
+            assert_eq!(
+                encoded.as_bytes(),
+                case["before"].as_str().unwrap().as_bytes(),
+                "{}",
+                case["name"]
+            );
+        }
     }
 }
