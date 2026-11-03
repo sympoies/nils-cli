@@ -57,6 +57,7 @@ fn read_state(context: &CliContext, record: &SessionRecord, quiet: bool) -> Opti
             if quiet {
                 completion_uncertainty::project(&mut document.state, &now());
                 super::codex_quiet::project(record, &mut document.state, &now());
+                crate::send_guard::response::project(context, record, &mut document.state);
             }
             Some(document.state)
         }

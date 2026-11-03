@@ -173,7 +173,8 @@ the extension. A session with lineage and work looks like this:
 | Doing | `title` | string or null | `SessionView.title`. |
 | Doing | `title_state.activity` | string or null | `SessionView.title_state.activity`. `title_state` is `null` when retitle is disabled or unavailable (`SessionView.title_state` absent); otherwise it contains only `activity`. |
 | Progress | `turn_state` | object or null | `SessionView.turn_state` (the [turn-state contract](../turn-state-contract.md)), projected to the allowlisted fields below. `null` when the session has no turn state. |
-| Progress | `turn_state.phase` | string | `TurnState.phase`: `starting`, `working`, `waiting`, `needs_input`, or `unknown`. |
+| Progress | `turn_state.phase` | string | `TurnState.phase`: `starting`, `working`, `waiting`, `needs_input`, `unresponsive`, or `unknown`. |
+| Progress | `pane_response` | optional object | Latest `agent-session.pane-response.v1` event: `event: pane_unresponsive`, `operation: submit` or `clear`, `session_id`, `session_incarnation`, `started_at`, `observed_at`, and positive `bound_seconds`. Metadata only; retained after status clears. See [composer response observation](stale-drafts-v1.md#unresponsive-pane-observation). |
 | Progress | `turn_state.phase_changed_at` | string | `TurnState.phase_changed_at`. |
 | Progress | `turn_state.diagnostic` | optional object | Bounded reasons `completion_evidence_pending`, `completion_evidence_missing`, or `codex_progress_quiet`. Quiet reasons include `quiet_threshold_seconds: 300`, parseable `quiet_since`, and `quiet_signal` (`current_turn.last_progress_at`, `current_turn.started_at`, or `semantic_event.observed_at`). Completion reasons may include the allowlisted `completion_candidate_reason` enum. Unknown members are excluded. |
 | Progress | `turn_state.current_turn` | object or null | `TurnState.current_turn`, projected to `last_progress_at` and `attention`. |

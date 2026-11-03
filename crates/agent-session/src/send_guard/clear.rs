@@ -268,7 +268,14 @@ impl Admission<'_> {
             "BSpace",
         ]);
         let timeout = self.timeout("cleanup").ok()?;
-        let sent = run_status_with_timeout(command, "tmux send-keys", timeout).is_ok();
+        let sent = super::response::watch(
+            self.context,
+            self.record,
+            self.tmux_bin,
+            super::response::Operation::Clear,
+            || run_status_with_timeout(command, "tmux send-keys", timeout),
+        )
+        .is_ok();
         // Rendering can be transiently unobservable while repeated keys are
         // processed. Poll without issuing more keys; only a post-key read can
         // establish restoration, including when tmux timed out.

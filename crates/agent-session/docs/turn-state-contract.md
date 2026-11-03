@@ -380,7 +380,11 @@ Example:
 }
 ```
 
-Phases are `starting`, `working`, `waiting`, `needs_input`, and `unknown`.
+Phases are `starting`, `working`, `waiting`, `needs_input`, `unresponsive`, and
+`unknown`. `unresponsive` is an observed terminal projection after guarded
+submit or clear keys leave a recognized idle pane unchanged past the configured
+bound. It clears on the next observed pane change. Busy turns and unobservable
+panes are excluded; see [composer response observation](specs/stale-drafts-v1.md#unresponsive-pane-observation).
 Source kinds are `provider_hook`, `console_observation`,
 `terminal_heuristic`, and `runtime`. Last-turn outcomes are `completed`,
 `interrupted`, `failed`, `operator_reconciled`, and `unknown`.
