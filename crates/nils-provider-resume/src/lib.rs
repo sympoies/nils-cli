@@ -553,11 +553,29 @@ pub fn read_codex_resumable_session_meta(path: &Path) -> Option<CodexSessionMeta
     read_codex_session_meta_from_sources(path, &["cli", "vscode"])
 }
 
+/// Read resumable Codex metadata from an already opened file at its current position.
+///
+/// Uses the same bounded header parser and source rules as the path entrypoint,
+/// without reopening a path. Buffering can advance the file past the header;
+/// callers reading the complete transcript afterward must rewind it.
+pub fn read_codex_resumable_session_meta_from_file(
+    file: &mut fs::File,
+) -> Option<CodexSessionMeta> {
+    read_codex_session_meta_from_file(file, &["cli", "vscode"])
+}
+
 fn read_codex_session_meta_from_sources(
     path: &Path,
     accepted_sources: &[&str],
 ) -> Option<CodexSessionMeta> {
-    let file = fs::File::open(path).ok()?;
+    let mut file = fs::File::open(path).ok()?;
+    read_codex_session_meta_from_file(&mut file, accepted_sources)
+}
+
+fn read_codex_session_meta_from_file(
+    file: &mut fs::File,
+    accepted_sources: &[&str],
+) -> Option<CodexSessionMeta> {
     let mut reader = io::BufReader::new(file).take(CODEX_SESSION_META_MAX_LINE_BYTES + 1);
     let mut first_line = Vec::new();
     let read = reader.read_until(b'\n', &mut first_line).ok()?;

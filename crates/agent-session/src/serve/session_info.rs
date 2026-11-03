@@ -7,6 +7,7 @@ pub(super) fn routes() -> Router<Arc<ServeState>> {
         .merge(drafts::routes())
         .route("/sessions/{id}/retitle", post(session_retitle_handler))
         .route("/sessions/{id}/refresh", post(session_refresh_handler))
+        .route("/sessions/{id}/metrics/v1", get(session_metrics_handler))
 }
 
 async fn session_retitle_handler(
@@ -57,3 +58,30 @@ async fn session_refresh_handler(
         Err(_) => join_err(),
     }
 }
+
+async fn session_metrics_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let context = state.context.clone();
+    match tokio::task::spawn_blocking(move || {
+        let record = crate::load_session_record(&context, &id)?;
+        Ok::<_, CliError>(crate::context_usage::session_metrics::collect(
+            &context, &record,
+        ))
+    })
+    .await
+    {
+        Ok(Ok(metrics)) => envelope_ok(json!({"machine": state.machine, "metrics": metrics})),
+        Ok(Err(error)) => envelope_err(error),
+        Err(_) => join_err(),
+    }
+}
+
+#[cfg(test)]
+#[path = "session_metrics_tests.rs"]
+mod session_metrics_tests;

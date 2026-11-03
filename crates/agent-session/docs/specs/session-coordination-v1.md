@@ -76,7 +76,7 @@ six-second monotonic budget, with capped backoff between attempts. TUI manual
 input cancellation uses the same budget for transient session-record locks;
 identity, account authorization and invalid state failures are not retried.
 The launcher-owned broker exit hook retains its two-second lock wait so its
-compatibility fallback fits the graceful termination deadline. No command
+exit cleanup retry fits the graceful termination deadline. No command
 waits indefinitely.
 
 Exhausted lifecycle contention preserves `coordination-lock-timeout` and adds

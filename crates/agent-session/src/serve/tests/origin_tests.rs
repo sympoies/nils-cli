@@ -316,7 +316,7 @@ async fn assert_invalid_create_fields(code: &str, fields: &[Value]) {
 }
 
 #[test]
-fn claude_legacy_switch_retires_the_verified_stop_and_applies_next_account() {
+fn claude_switch_without_broker_identity_retires_the_verified_stop_and_applies_next_account() {
     use crate::coordination::broker::test_support;
     let lock = GlobalStateLock::new();
     let tmp = tempfile::TempDir::new().unwrap();
@@ -349,7 +349,7 @@ fn claude_legacy_switch_retires_the_verified_stop_and_applies_next_account() {
     crate::claude_account::queue_next(&mut record, "beta").unwrap();
     crate::write_session_record(&context, &record).unwrap();
     test_support::seed_live_broker(&context, &record.id, &old, identity);
-    test_support::make_legacy_broker(&context, &record.id, true);
+    test_support::clear_broker_identity(&context, &record.id, true);
     let tmux = resume_tmux(tmp.path(), &tmp.path().join("tmux.log"));
     let script = fs::read_to_string(&tmux).unwrap().replace(
             r#"if [ -n "$heartbeat" ] && [ -n "$incarnation" ]; then"#,

@@ -2019,7 +2019,7 @@ fn protocol_id_is_valid(id: &str) -> bool {
 }
 
 pub(crate) fn usage_snapshot(result: &Value) -> UsageSnapshot {
-    let Some(legacy_snapshot) = result.get("rateLimits").filter(|value| value.is_object()) else {
+    let Some(rate_limits) = result.get("rateLimits").filter(|value| value.is_object()) else {
         return UsageSnapshot {
             authoritative: false,
             has_exhausted_windows: false,
@@ -2030,7 +2030,7 @@ pub(crate) fn usage_snapshot(result: &Value) -> UsageSnapshot {
     let mut exhausted_reset_epochs = Vec::new();
     let mut has_exhausted_windows = false;
     let mut observed_window = false;
-    let mut snapshots = vec![legacy_snapshot];
+    let mut snapshots = vec![rate_limits];
     match result.get("rateLimitsByLimitId") {
         None | Some(Value::Null) => {}
         Some(Value::Object(by_limit_id)) => snapshots.extend(by_limit_id.values()),

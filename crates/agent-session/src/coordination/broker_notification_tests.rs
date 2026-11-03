@@ -201,7 +201,7 @@ fn inspection_counts_remote_unread_mail_but_excludes_other_incarnations_and_expi
 }
 
 #[test]
-fn inspection_distinguishes_drained_mail_from_submitted_prompt_and_sanitizes_legacy_values() {
+fn inspection_distinguishes_drained_mail_from_submitted_prompt_and_sanitizes_invalid_values() {
     let mut stored = receipt("queued", "current");
     stored["last_reason"] = json!("synthetic-private-content");
     for field in [
