@@ -19,6 +19,7 @@ const POST_PASTE_OBSERVATION_RETRY_INTERVAL: Duration = Duration::from_millis(50
 mod clear;
 mod composer;
 pub(crate) mod drafts;
+pub(crate) mod response;
 pub(crate) use composer::require_empty_composer;
 mod key;
 mod observation;

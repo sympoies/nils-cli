@@ -70,8 +70,34 @@ Reading or restoring locally does not submit input, mutate the terminal, or
 consume a saved draft. An explicit later prompt submission uses ordinary
 admission. No server endpoint automatically replays a saved draft.
 
-## Follow-up boundary
+## Unresponsive pane observation
 
-A pane that ignores cleanup or submit keys continues to refuse or retain an
-unknown outcome under existing guards. A new unresponsive-pane status is a
-separate contract change.
+`unresponsive_seconds` in the serve config and
+`AGENT_SESSION_UNRESPONSIVE_SECONDS` set the response bound in positive integer
+seconds. The environment takes precedence. The default is 4 seconds, matching
+the existing submission observation budget: it accommodates the 1.5-second
+Enter observation/retry interval and the 2.5-second cleanup budget. Zero is
+invalid; there are no aliases or additional recovery settings.
+
+Guarded terminal submission and shared composer cleanup record an observation
+before their existing key action. Only a recognized, nonempty composer in an
+idle provider pane starts an observation. Runtime and provider identity fence
+the observation. Private state stores pane digests, never composer text.
+Repeated keys on the same unchanged pane retain the original start time.
+
+On subsequent activity reads, an exactly observable pane that has not changed
+within the bound projects `turn_state.phase = "unresponsive"`, with observed
+terminal-heuristic confidence. The underlying provider activity is preserved.
+A provider turn that is busy, pending provider ingress, an unobservable pane,
+or changed runtime discards the observation and retains normal activity.
+The next observed pane change discards it and restores normal activity without
+a restart. This observation introduces no key retry, restart or other recovery;
+coordinators choose any recovery action. Existing delivery refusals and submit
+outcomes remain in force.
+
+The board's optional `pane_response` field carries the latest metadata-only
+event, schema `agent-session.pane-response.v1`: `event` is
+`pane_unresponsive`; `operation` is `submit` or `clear`; `session_id`,
+`session_incarnation`, `started_at`, `observed_at`, and `bound_seconds` identify
+the observation. The latest event remains available after the status clears.
+Neither pane bytes, composer text, nor private digests enter the event.

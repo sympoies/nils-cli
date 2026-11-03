@@ -12,7 +12,14 @@ pub(crate) fn paste_prompt_file(
     prompt_file: &Path,
     pane_ready_deadline: Duration,
 ) -> Result<PromptDeliveryObservation, CliError> {
-    paste_prompt_file_observing(tmux_bin, record, prompt_file, pane_ready_deadline, None)
+    paste_prompt_file_observing(
+        tmux_bin,
+        record,
+        prompt_file,
+        pane_ready_deadline,
+        None,
+        None,
+    )
 }
 
 fn paste_prompt_file_observing(
@@ -21,6 +28,7 @@ fn paste_prompt_file_observing(
     prompt_file: &Path,
     pane_ready_deadline: Duration,
     before_enter: Option<&mut dyn FnMut(&str)>,
+    response_context: Option<&CliContext>,
 ) -> Result<PromptDeliveryObservation, CliError> {
     let buffer_name = format!("{}-prompt", record.id);
     let target = format!("{}:0.0", record.tmux_session);
@@ -61,7 +69,17 @@ fn paste_prompt_file_observing(
     }
     let mut enter = ProcessCommand::new(tmux_bin);
     enter.arg("send-keys").arg("-t").arg(&target).arg("Enter");
-    run_status(enter, "tmux send-keys")?;
+    if let Some(context) = response_context {
+        send_guard::response::watch(
+            context,
+            record,
+            tmux_bin,
+            send_guard::response::Operation::Submit,
+            || run_status(enter, "tmux send-keys"),
+        )?;
+    } else {
+        run_status(enter, "tmux send-keys")?;
+    }
     Ok(PromptDeliveryObservation {
         schema_version: "agent-session.prompt-delivery-observation.v1",
         composer,
@@ -141,6 +159,7 @@ pub(crate) fn deliver_claude_structured_prompt_locked(
         &staged,
         CLAUDE_STRUCTURED_PROMPT_PANE_READY_DEADLINE,
         image_path.then_some(&mut observe as &mut dyn FnMut(&str)),
+        Some(context),
     );
     let _ = fs::remove_file(&staged);
     delivered?;

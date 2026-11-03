@@ -683,3 +683,6 @@ fn provider_parameters_that_mention_tokens_are_not_secrets() {
 
 #[path = "serve_config/stale_draft.rs"]
 mod stale_draft;
+
+#[path = "serve_config/unresponsive.rs"]
+mod unresponsive;

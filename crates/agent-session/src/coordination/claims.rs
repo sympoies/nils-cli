@@ -1537,7 +1537,7 @@ fn controller_activity_supersedes_lease(
         crate::activity::TurnPhase::Starting
         | crate::activity::TurnPhase::Working
         | crate::activity::TurnPhase::NeedsInput => activity.current_turn.is_some(),
-        crate::activity::TurnPhase::Unknown => false,
+        crate::activity::TurnPhase::Unknown | crate::activity::TurnPhase::Unresponsive => false,
     }
 }
 

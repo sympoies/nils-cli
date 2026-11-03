@@ -30,7 +30,8 @@ fn turn_blocking_reason(context: &CliContext, record: &SessionRecord) -> Option<
         Some(crate::activity::TurnPhase::Working) => Some("turn_busy"),
         Some(crate::activity::TurnPhase::NeedsInput) => Some("turn_needs_input"),
         Some(crate::activity::TurnPhase::Starting) => Some("turn_starting"),
-        Some(crate::activity::TurnPhase::Unknown) | None => Some("turn_state_unavailable"),
+        Some(crate::activity::TurnPhase::Unknown | crate::activity::TurnPhase::Unresponsive)
+        | None => Some("turn_state_unavailable"),
     }
 }
 

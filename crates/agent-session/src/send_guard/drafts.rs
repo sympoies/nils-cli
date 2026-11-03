@@ -72,7 +72,10 @@ fn private_dir(path: &Path) -> Result<(), CliError> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|_| unavailable())
 }
 
-fn read_json<T: serde::de::DeserializeOwned>(path: &Path, limit: u64) -> Result<T, CliError> {
+pub(super) fn read_json<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    limit: u64,
+) -> Result<T, CliError> {
     let file = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
@@ -91,7 +94,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path, limit: u64) -> Result<
     serde_json::from_slice(&bytes).map_err(|_| unavailable())
 }
 
-fn persist(path: &Path, value: &impl Serialize) -> Result<(), CliError> {
+pub(super) fn persist(path: &Path, value: &impl Serialize) -> Result<(), CliError> {
     let bytes = serde_json::to_vec(value).map_err(|_| unavailable())?;
     crate::write_private_file(path, &bytes).map_err(|_| unavailable())?;
     // A saved draft must survive a crash before any deletion keys are issued.

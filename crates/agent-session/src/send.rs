@@ -578,7 +578,7 @@ fn guarded(
             let mut press_enter = || {
                 manual_input.arm(context, &record)?;
                 admission.check(Some(text), "submit")?;
-                send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
+                admission.send_key(SpecialKey::Enter)
             };
             if let Some(probe) = probe {
                 let mut observations = 0;
@@ -623,7 +623,7 @@ fn guarded(
                 manual_input.arm(context, &record)?;
                 admission.check(None, "submit")?;
                 prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
-                send_tmux_key(tmux_bin, &target, SpecialKey::Enter)?;
+                admission.send_key(SpecialKey::Enter)?;
             }
             for key in &args.keys {
                 if *key == SpecialKey::Enter {
@@ -631,7 +631,7 @@ fn guarded(
                 }
                 admission.check(literal, "submit")?;
                 prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
-                send_tmux_key(tmux_bin, &target, *key)?;
+                admission.send_key(*key)?;
             }
             Ok(None)
         }

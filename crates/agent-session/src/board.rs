@@ -127,10 +127,8 @@ fn snapshot_with(
             let view = serde_json::to_value(&view).ok()?;
             let mut projected =
                 project_record(&view, machine, home.as_deref(), federation_configured)?;
-            if let Some(id) = view["id"].as_str()
-                && let Ok(Some(event)) = crate::send_guard::drafts::latest(context, id)
-            {
-                projected["stale_draft"] = event;
+            if let Some(id) = view["id"].as_str() {
+                crate::send_guard::response::project_events(context, id, &mut projected);
             }
             Some(projected)
         });
