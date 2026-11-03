@@ -715,8 +715,10 @@ async fn idle_claude_guard_retries_swallowed_enter_without_residue() {
     let st = state(tmp.path(), Some(TOKEN), guard_tmux(tmp.path(), "swallowed"));
     make_idle(&st.context, "swallowed", &launch);
     fs::write(tmp.path().join("swallow-first"), "").unwrap();
-    // Exercise admission and retry round trips on a slower transport.
-    fs::write(tmp.path().join("transport-delay-ms"), "120").unwrap();
+    // Exercise admission and retry round trips on a slower transport. Every
+    // tmux call pays this delay, and the whole send shares a 15 s guarded
+    // deadline, so a larger delay races that deadline on slower runners.
+    fs::write(tmp.path().join("transport-delay-ms"), "40").unwrap();
     let mut body = keyed_body(&launch);
     body["require_idle"] = json!(true);
     let uri = "/sessions/swallowed/prompt/v2";

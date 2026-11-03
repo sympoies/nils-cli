@@ -11070,7 +11070,7 @@ fn run_output_with_timeout_and_cap_mode(
                 format!("process exceeded {} ms", timeout.as_millis()),
             ));
         }
-        thread::sleep(send_submit::child_poll_pause(started_at));
+        thread::sleep(Duration::from_millis(10));
     }
 }
 

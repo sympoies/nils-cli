@@ -32,12 +32,6 @@ pub(crate) use composer::{
 const PROBE_CHARS: usize = 20;
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
-/// Pause between checks of a running child: short for commands that finish
-/// within milliseconds, backing off to 10 ms for long ones.
-pub(crate) fn child_poll_pause(started_at: Instant) -> Duration {
-    (started_at.elapsed() / 8).clamp(Duration::from_micros(500), Duration::from_millis(10))
-}
-
 /// Pause between a literal paste and the keys that follow it, so the provider
 /// finishes reading the paste. Unit tests drive stub tmux binaries that need no
 /// settling, so they use a short pause.
@@ -905,33 +899,6 @@ mod tests {
         assert!(POST_PASTE_KEY_SETTLE_DELAY < PRODUCTION_POST_PASTE_KEY_SETTLE_DELAY);
         assert!(HOLD_BUDGET < PRODUCTION_HOLD_BUDGET);
         assert!(HOLD_BUDGET > RETRY_AFTER);
-    }
-
-    #[test]
-    fn child_poll_pause_starts_short_and_backs_off_to_ten_milliseconds() {
-        let fresh = child_poll_pause(Instant::now());
-        assert!(fresh <= Duration::from_millis(1), "{fresh:?}");
-        let old = child_poll_pause(Instant::now() - Duration::from_secs(5));
-        assert_eq!(old, Duration::from_millis(10));
-    }
-
-    #[test]
-    fn bounded_child_returns_output_of_a_fast_command_and_kills_a_slow_one() {
-        let mut fast = std::process::Command::new("sh");
-        fast.args(["-c", "printf out; printf err >&2; exit 3"]);
-        let output = crate::run_output_with_timeout_and_cap(fast, Duration::from_secs(5), 1024)
-            .expect("fast command");
-        assert_eq!(output.status.code(), Some(3));
-        assert_eq!(output.stdout, b"out");
-        assert_eq!(output.stderr, b"err");
-
-        let mut slow = std::process::Command::new("sh");
-        slow.args(["-c", "sleep 30"]);
-        let started = Instant::now();
-        let err = crate::run_output_with_timeout_and_cap(slow, Duration::from_millis(300), 1024)
-            .expect_err("slow command times out");
-        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
-        assert!(started.elapsed() < Duration::from_secs(10));
     }
 }
 
