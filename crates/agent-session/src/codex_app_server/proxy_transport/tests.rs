@@ -8,12 +8,19 @@ use tokio_tungstenite::WebSocketStream;
 /// The `plugin/list` response that motivated these tests was 16.8 MB and grows
 /// with a remote catalog, so the relayed size sits just above the old 16 MiB cap.
 const ABOVE_OLD_CAP_BYTES: usize = 17 * 1024 * 1024;
-/// Far beyond any legitimate response, so the proxy refuses to forward it.
-const ABOVE_FORWARD_LIMIT_BYTES: usize = 65 * 1024 * 1024;
+/// The containment tests lower the forwarding limit so the oversized messages
+/// stay small; moving tens of MiB over a Unix socket is slow on macOS.
+const TEST_FORWARD_LIMIT_BYTES: usize = 1024 * 1024;
+const ABOVE_FORWARD_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 
 const _: () = assert!(ABOVE_OLD_CAP_BYTES < MAX_FORWARDED_MESSAGE_BYTES);
-const _: () = assert!(MAX_FORWARDED_MESSAGE_BYTES < ABOVE_FORWARD_LIMIT_BYTES);
-const _: () = assert!(ABOVE_FORWARD_LIMIT_BYTES < HARD_MESSAGE_LIMIT_BYTES);
+const _: () = assert!(TEST_FORWARD_LIMIT_BYTES < ABOVE_FORWARD_LIMIT_BYTES);
+const _: () = assert!(ABOVE_FORWARD_LIMIT_BYTES < MAX_FORWARDED_MESSAGE_BYTES);
+const _: () = assert!(MAX_FORWARDED_MESSAGE_BYTES < HARD_MESSAGE_LIMIT_BYTES);
+
+fn lower_forwarding_limit() {
+    super::FORWARDING_LIMIT_OVERRIDE.with(|limit| limit.set(Some(TEST_FORWARD_LIMIT_BYTES)));
+}
 
 fn text(value: &str) -> Message {
     Message::Text(value.to_string().into())
@@ -221,6 +228,7 @@ async fn proxy_relays_a_server_response_above_the_previous_16_mib_cap() {
 
 #[tokio::test]
 async fn proxy_fails_only_the_request_whose_response_is_oversized() {
+    lower_forwarding_limit();
     let mut fixture = fixture("oversize-response");
     let proxy = spawn_proxy(&fixture);
     let listener = fixture.take_listener();
@@ -276,6 +284,7 @@ async fn proxy_fails_only_the_request_whose_response_is_oversized() {
 
 #[tokio::test]
 async fn proxy_rejects_an_oversized_server_request_and_drops_an_oversized_notification() {
+    lower_forwarding_limit();
     let mut fixture = fixture("oversize-server-initiated");
     let proxy = spawn_proxy(&fixture);
     let listener = fixture.take_listener();
