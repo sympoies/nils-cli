@@ -80,7 +80,15 @@ async function trackNightly({ github, context, core, result, junitDir }) {
   if (issue && (issue.user?.login !== 'github-actions[bot]' || !issue.body.includes(END))) {
     throw new Error('Nightly tracker ownership or section is invalid');
   }
-  const timing = junitDir ? await timingReport({ github, context, junitDir }) : '';
+  // The timing report is advisory: a bad artifact or API error must not block tracking.
+  let timing = '';
+  if (junitDir) {
+    try {
+      timing = await timingReport({ github, context, junitDir });
+    } catch (error) {
+      core.warning(`Lane timing report skipped: ${error.message}`);
+    }
+  }
   if (result === 'success' && (!issue || issue.state === 'closed')) {
     if (timing) await core.summary.addRaw(timing).write();
     return;

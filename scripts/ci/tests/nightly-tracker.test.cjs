@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { trackNightly, MARKER, END } = require('../../../.github/scripts/nightly-tracker.cjs');
 function fixture() {
-  const state = { issues: [], writes: [], runs: [], failed: [], jobs: [], summary: [] };
+  const state = { issues: [], writes: [], runs: [], failed: [], jobs: [], summary: [], warnings: [] };
   const listRuns = () => {};
   const listIssues = () => {};
   const listJobs = () => {};
@@ -41,7 +41,7 @@ function fixture() {
       },
     },
   };
-  const core = { setFailed: message => state.failed.push(message),
+  const core = { setFailed: message => state.failed.push(message), warning: message => state.warnings.push(message),
     summary: { addRaw(text) { state.summary.push(text); return this; }, async write() {} } };
   const context = { repo: { owner: 'example', repo: 'repo' }, runId: 30,
     sha: 'b'.repeat(40), ref: 'refs/heads/main', eventName: 'schedule' };
@@ -153,4 +153,25 @@ test('failed nightly puts the timing report inside the tracker section', async (
   await trackNightly({ ...options, junitDir: dir });
   assert.match(state.writes[0].body, /### Lane timing \(advisory\)[\s\S]*\| macOS \| n\/a/);
   assert.match(state.writes[0].body, new RegExp(`${END}$`));
+});
+test('a malformed JUnit artifact or jobs error skips the timing report without blocking tracking', async () => {
+  for (const kind of ['malformed', 'jobs']) {
+    for (const result of ['success', 'failure']) {
+      const { state, options } = fixture();
+      const dir = junitDir({ 'junit-nextest': { tests: 10, time: 60, slow: 0 } });
+      if (kind === 'malformed') fs.writeFileSync(path.join(dir, 'junit-nextest', 'junit.xml'), '<not-a-report/>');
+      else {
+        const { paginate } = options.github;
+        const listJobs = options.github.rest.actions.listJobsForWorkflowRun;
+        options.github.paginate = async (method, params) => {
+          if (method === listJobs) throw new Error('api down');
+          return paginate(method, params);
+        };
+      }
+      await trackNightly({ ...options, result, junitDir: dir });
+      assert.equal(state.warnings.length, 1);
+      assert.equal(state.writes.length, result === 'failure' ? 1 : 0);
+      if (result === 'failure') assert.doesNotMatch(state.writes[0].body, /Lane timing/);
+    }
+  }
 });

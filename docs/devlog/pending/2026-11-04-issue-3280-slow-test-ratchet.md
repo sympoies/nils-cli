@@ -15,7 +15,7 @@
 
 ### Evidence
 
-- Baseline of 37 tests seeded from the Linux JUnit of a green main run after
+- Baseline of 89 tests of 6 s or more seeded from the Linux JUnit of a green main run after
   the speedup batch. No test time is added or removed by this change.
 
 ### Links
