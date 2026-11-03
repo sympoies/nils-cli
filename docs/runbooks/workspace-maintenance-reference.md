@@ -476,12 +476,12 @@ Notes:
 - Because doctests are not included in nextest, the entrypoint also runs
   `cargo test --workspace --doc` when `NILS_CLI_TEST_RUNNER=nextest`.
 - `NILS_CLI_SKIP_DOCTESTS=1` skips that doc run in both the `nextest` and
-  `llvm-cov` runner modes. CI sets it only on `test_macos` (llvm-cov runner),
-  because the Linux `test` job already runs the same doc tests. It does not
+  `llvm-cov` runner modes. The scoped checks honor it; it does not
   affect the trailing doc run of `--with-coverage`.
-- `NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS=1` skips the stale-test and completion
-  freshness/parity audits, whose result does not depend on the OS. CI sets it
-  only on `test_macos`; the Linux `test` job runs them.
+- `NILS_CLI_NEXTEST_PARTITION=count:M/N` (with `llvm-cov`) runs only that
+  instrumented nextest partition and writes its LCOV report; no audit, script
+  test, fmt, clippy, doc test or floor runs. CI sets it on `test_macos_partition`
+  and merges the reports with `scripts/ci/merge-lcov.py`.
 
 ### 3.4 Full coverage flow (CI gate / explicit local parity)
 
@@ -489,8 +489,10 @@ The full coverage gate is mandatory for nightly, manual full CI and releases
 (total workspace line coverage stays `>= 85.00%`). The shared
 `.github/workflows/full-validation.yml` runs full Linux tests and doctests,
 Linux containment and dependency policy alongside full instrumented macOS
-tests. `test_macos` enforces the floor with `NILS_CLI_TEST_RUNNER=llvm-cov`;
-`coverage` requires its nonempty LCOV and publishes the summary. The final gate
+tests. Two `test_macos_partition` jobs run the instrumented tests
+(`NILS_CLI_TEST_RUNNER=llvm-cov`) and `test_macos` merges their LCOV reports and
+enforces the floor; `coverage` requires the merged nonempty LCOV and publishes
+the summary. The final gate
 requires every lane to succeed. Release builds cannot start before that gate
 passes on the exact tagged SHA.
 

@@ -157,10 +157,19 @@ publishing a conflicting release. Never bypass a failed validation gate.
 | Linux validation | 50 minutes |
 | Linux containment | 25 minutes |
 | Dependency policy | 15 minutes |
-| Full macOS tests and instrumented coverage | 75 minutes |
+| Full macOS test partition (two run in parallel) | 60 minutes |
+| Full macOS coverage merge and floor | 15 minutes |
 | Coverage report / nightly issue update | 10 minutes each |
 | Final full-validation gate | 5 minutes |
 | Release invocation authorization | 35 minutes |
+
+A release queue entry runs the Linux and the two macOS partition jobs in
+parallel before the required `test` job. Before the split, the single macOS job
+took about 60 minutes and set the entry's length. Each partition is expected to
+take about 31 minutes (setup 1.7, instrumented build 5.4, half of the 41.6
+minute test run, no repeated audits), so the Linux `test` job (about 39
+minutes) is the critical path and an entry is expected to take about 43 minutes.
+These expectations are unmeasured until the next release group runs.
 
 The nextest CI profile terminates an individual test after its configured
 10-minute slow-test bound; job limits also catch hung builds or tool installs.
