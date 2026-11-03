@@ -74,6 +74,26 @@ fn containment_classifies_by_json_rpc_shape_and_ignores_messages_within_the_limi
     );
 }
 
+#[test]
+fn production_forwarding_limit_is_the_64_mib_constant() {
+    // The end-to-end tests lower the limit; this pins what production enforces.
+    let prefix = r#"{"id":1,"result":{"catalog":""#;
+    let at_limit = Message::Text(padded_text(prefix, MAX_FORWARDED_MESSAGE_BYTES).into());
+    assert_eq!(super::contain_oversized(&at_limit).unwrap(), None);
+    drop(at_limit);
+
+    let above = Message::Text(padded_text(prefix, MAX_FORWARDED_MESSAGE_BYTES + 1).into());
+    let Some(Oversized::ToTui(Message::Text(reply))) = super::contain_oversized(&above).unwrap()
+    else {
+        panic!("a response above the production limit is answered towards the TUI");
+    };
+    let reply: Value = serde_json::from_str(reply.as_str()).unwrap();
+    assert_eq!(
+        reply["error"]["data"]["limit_bytes"],
+        json!(MAX_FORWARDED_MESSAGE_BYTES)
+    );
+}
+
 struct Fixture {
     _tmp: tempfile::TempDir,
     context: CliContext,
