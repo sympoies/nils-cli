@@ -1,5 +1,6 @@
 use super::*;
 use crate::provider_prompt::claude_queued_prompt_blocks;
+use crate::provider_prompt::parse_history_user_prompt;
 use std::borrow::Cow;
 
 #[path = "messages.rs"]
@@ -229,7 +230,7 @@ pub(super) fn read_messages(
         if text.trim().is_empty() && images.is_empty() && parts.is_empty() {
             continue;
         }
-        let (text, row_class) = row_classes::text(&session.provider, &role, &text);
+        let (text, row_class) = row_classes::text(&session.provider, &role, &text, &value);
         messages.push(HistoryMessage {
             id: format!("{}-{line_offset}", session.id),
             history_turn_id: projected_history_turn_id(&session.provider, &value, &role),
@@ -241,7 +242,7 @@ pub(super) fn read_messages(
             timestamp,
             human_prompt: human_prompt && row_class.is_none(),
             images,
-            parts: include_parts.then_some(if row_class.is_some() {
+            parts: include_parts.then_some(if row_class == Some(RowClass::RuntimeCommand) {
                 Vec::new()
             } else {
                 parts
@@ -365,7 +366,7 @@ pub(super) fn push_incremental_message(
     } else {
         digest_parts(&[base_id.as_bytes(), row_key(&value).as_bytes()])
     };
-    let (text, row_class) = row_classes::text(&session.provider, &role, &text);
+    let (text, row_class) = row_classes::text(&session.provider, &role, &text, &value);
     let id = if row_class.is_some() {
         format!("{}-{line_offset}", session.id)
     } else {
@@ -461,7 +462,7 @@ pub(super) fn push_reverse_message(
     if text.trim().is_empty() && images.is_empty() && parts.is_empty() {
         return;
     }
-    let (text, row_class) = row_classes::text(&session.provider, &role, &text);
+    let (text, row_class) = row_classes::text(&session.provider, &role, &text, &value);
     messages.push(HistoryMessage {
         id: format!("{}-{line_offset}", session.id),
         history_turn_id: projected_history_turn_id(&session.provider, &value, &role),
@@ -473,7 +474,7 @@ pub(super) fn push_reverse_message(
         timestamp,
         human_prompt: human_prompt && row_class.is_none(),
         images,
-        parts: include_parts.then_some(if row_class.is_some() {
+        parts: include_parts.then_some(if row_class == Some(RowClass::RuntimeCommand) {
             Vec::new()
         } else {
             parts
@@ -635,6 +636,7 @@ pub(super) fn normalize_message(
                 && !human_prompt
                 && image_sources(value).is_empty()
                 && !crate::provider_prompt::row_classes::runtime_command("claude", &command)
+                && !crate::provider_prompt::row_classes::notice::matches("claude", &text, value)
             {
                 return None;
             }

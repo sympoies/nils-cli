@@ -22,7 +22,7 @@ use sha2::{Digest, Sha256};
 
 use crate::provider_prompt::{
     ProviderPromptSource, claude_queued_prompt_text, claude_slash_command_text,
-    claude_user_message_text, parse_history_user_prompt, read_last_prompt,
+    claude_user_message_text, history_preview_prompt, read_last_prompt,
 };
 
 const SCAN_MAX_ENTRIES: usize = 10_000;
@@ -1687,7 +1687,7 @@ fn first_prompt(
         let Ok(line) = std::str::from_utf8(&line) else {
             continue;
         };
-        let Some(prompt) = parse_history_user_prompt(provider, provider_session_id, line) else {
+        let Some(prompt) = history_preview_prompt(provider, provider_session_id, line) else {
             continue;
         };
         return Some(truncate_chars(prompt.text.trim(), MAX_PREVIEW_CHARS));

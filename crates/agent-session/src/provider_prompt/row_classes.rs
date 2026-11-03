@@ -1,4 +1,5 @@
 //! Display classification only; these tokens never authorize runtime input.
+pub(crate) mod notice;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -7,6 +8,7 @@ use serde_json::Value;
 pub(crate) enum RowClass {
     RuntimeCommand,
     Compaction,
+    Notice,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

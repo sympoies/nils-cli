@@ -672,3 +672,186 @@ async fn queued_runtime_commands_do_not_become_first_history_previews() {
         }
     }
 }
+
+#[tokio::test]
+async fn unmarked_notices_match_history_paging_and_card() {
+    for provider in ["claude", "codex"] {
+        let mut cases = vec![
+            ("※ Mailbox：body", true),
+            ("※ Unknown：body", false),
+            ("Mailbox：body", false),
+            ("※ Mailbox:body", false),
+            ("prefix ※ Mailbox：body", false),
+            ("※ Mailbox：", false),
+            (
+                "Mailbox: 2026-11-02T01:02:03.5Z; agent-session message inbox",
+                false,
+            ),
+            ("Quoted: Mailbox: agent-session message inbox", false),
+            (
+                "Coordination mailbox has unread messages; run agent-session message inbox.",
+                true,
+            ),
+            ("壓縮完成；執行自己角色的 session-start，接著續做。", true),
+        ];
+        if provider == "codex" {
+            cases.push(("Mailbox: agent-session message inbox", true));
+            cases.push(("Mailbox: b=1 h=2", true));
+            cases.push((
+                "<environment_context>\ncontext\n</environment_context>",
+                true,
+            ));
+            cases.push((
+                "# AGENTS.md instructions for project\n\n<INSTRUCTIONS>\ncontent\n</INSTRUCTIONS>",
+                true,
+            ));
+        }
+        let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+        let fixture_cases = fixture["notice_recognition"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|case| {
+                case["providers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|p| p == provider)
+            })
+            .map(|case| (case["input"].as_str().unwrap(), true));
+        cases.extend(fixture_cases);
+        cases.extend(
+            fixture["unclassified"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .skip(5)
+                .take(24)
+                .filter(|case| provider != "claude" || case["name"] != "unknown-22")
+                .map(|case| (case["input"].as_str().unwrap(), false)),
+        );
+        for (text, notice) in cases {
+            if provider == "claude"
+                && !notice
+                && crate::coordination::is_mailbox_reminder_prompt(text)
+            {
+                continue;
+            }
+            let mut record = user(provider, text);
+            if provider == "claude" {
+                record["version"] = json!("2.1.3");
+            }
+            if provider == "codex" && notice && text.starts_with(['<', '#']) {
+                record["payload"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("internal_chat_message_metadata_passthrough");
+            }
+            let f = Fixture::new(provider, &[record]);
+            let rows = f.all(false, false).await;
+            assert_eq!(rows, f.all(true, false).await);
+            let row = rows
+                .iter()
+                .find(|row| row["text"] == text)
+                .unwrap_or_else(|| panic!("missing {provider}: {text:?}"));
+            let parts = f.all(false, true).await;
+            let with_parts = parts.iter().find(|row| row["text"] == text).unwrap();
+            if provider == "claude" {
+                assert!(
+                    !with_parts["parts"].as_array().unwrap().is_empty(),
+                    "{provider}: {text:?}"
+                );
+            }
+            assert_eq!(row["row_class"] == "notice", notice, "{provider}: {text}");
+            let source = crate::provider_prompt::ProviderPromptSource::for_history(
+                provider,
+                "synthetic",
+                f.file.clone(),
+            )
+            .unwrap();
+            let mut tracker =
+                crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
+            tracker.refresh();
+            let card = serde_json::to_value(tracker.last_message().unwrap()).unwrap();
+            assert_eq!(card["text"], row["text"]);
+            assert_eq!(card["row_class"], row["row_class"]);
+        }
+    }
+}
+
+#[tokio::test]
+async fn notice_preserves_admission_and_stays_out_of_human_previews() {
+    let marked = crate::notice::NoticeEnvelope::new("mailbox", "scheduler", None)
+        .unwrap()
+        .encode("Exact body\n")
+        .unwrap();
+    for provider in ["claude", "codex"] {
+        let mut records = vec![user(provider, &marked), user(provider, "actual human")];
+        if provider == "codex" {
+            records.push(
+                json!({"type":"event_msg","payload":{"type":"user_message","message":marked}}),
+            );
+        } else {
+            records.push(user(provider, &marked));
+        }
+        let f = Fixture::new(provider, &records);
+        if provider == "claude" {
+            let lines = fs::read_to_string(&f.file).unwrap();
+            let mut rows: Vec<Value> = lines
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            rows[0]["message"]["content"] = json!(marked);
+            fs::write(
+                &f.file,
+                rows.iter()
+                    .map(|row| format!("{row}\n"))
+                    .collect::<String>(),
+            )
+            .unwrap();
+        }
+        let rows = f.all(false, false).await;
+        let notice = rows.iter().find(|row| row["text"] == marked).unwrap();
+        assert_eq!(notice["row_class"], "notice");
+        assert_eq!(notice["text"], marked);
+        let response = f
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/history/sessions")
+                    .header(AUTHORIZATION, format!("Bearer {TOKEN}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 2 * 1024 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let session = body["data"]["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == f.history)
+            .unwrap();
+        for field in ["first_user_prompt_preview", "prompt_preview"] {
+            assert_eq!(session[field], "actual human", "{provider}: {field}");
+        }
+        let source = crate::provider_prompt::ProviderPromptSource::for_history(
+            provider,
+            "synthetic",
+            f.file.clone(),
+        )
+        .unwrap();
+        let mut tracker =
+            crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
+        tracker.refresh();
+        let card = serde_json::to_value(tracker.last_message().unwrap()).unwrap();
+        assert_eq!(card["text"], marked);
+        assert_eq!(card["row_class"], "notice");
+    }
+}

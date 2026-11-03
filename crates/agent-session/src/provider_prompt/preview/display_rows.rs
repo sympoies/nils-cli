@@ -88,6 +88,17 @@ impl PreviewMessages {
             });
             return true;
         }
+        if let Some(text) = row_classes::notice::input(provider.as_str(), value, session) {
+            self.last_message = Some(LastMessage {
+                role: "user",
+                text,
+                row_class: Some(RowClass::Notice),
+                compaction: None,
+                submitted_at: provider_timestamp(value),
+                truncated: false,
+            });
+            return true;
+        }
         false
     }
 }
