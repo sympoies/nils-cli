@@ -297,6 +297,7 @@ pub struct ProviderPromptTail {
     /// Claude input enqueued behind a running turn during the current poll.
     /// Read by the submission and queue-only acknowledgement projections.
     claude_enqueued: Vec<String>,
+    codex_notice_submissions: Vec<String>,
     claude_fallback_delay: Duration,
     disabled: bool,
 }
@@ -367,6 +368,7 @@ impl ProviderPromptTail {
             discarding_oversized_line: false,
             pending_claude: VecDeque::new(),
             claude_enqueued: Vec::new(),
+            codex_notice_submissions: Vec::new(),
             claude_fallback_delay,
             disabled: false,
         })
@@ -409,6 +411,7 @@ impl ProviderPromptTail {
             .map(|event| event.prompt)
             .collect::<Vec<_>>();
         prompts.append(&mut self.claude_enqueued);
+        prompts.append(&mut self.codex_notice_submissions);
         Ok(prompts)
     }
 
@@ -420,6 +423,7 @@ impl ProviderPromptTail {
 
     fn poll_status(&mut self) -> io::Result<ProviderPromptPoll> {
         self.claude_enqueued.clear();
+        self.codex_notice_submissions.clear();
         if self.disabled {
             return Ok(ProviderPromptPoll {
                 events: Vec::new(),
@@ -497,6 +501,7 @@ impl ProviderPromptTail {
         self.discarding_oversized_line = false;
         self.pending_claude.clear();
         self.claude_enqueued.clear();
+        self.codex_notice_submissions.clear();
         Ok(())
     }
 
@@ -558,6 +563,16 @@ impl ProviderPromptTail {
                 if let Some(prompt) = projected {
                     self.preview = Some(LastPrompt::from(prompt.clone()));
                     events.push(provider_event(prompt));
+                } else if let Some(text) =
+                    row_classes::notice::input("codex", &value, &self.source.session_id)
+                {
+                    if let Some(prompt) = parse_codex_prompt_value(&value)
+                        && !prompt.truncated
+                        && prompt.prompt == text
+                        && !self.codex_notice_submissions.contains(&text)
+                    {
+                        self.codex_notice_submissions.push(text);
+                    }
                 } else if let Some(prompt) = self.goal.observe(&value, &self.source.session_id) {
                     self.preview = Some(LastPrompt::from(prompt));
                 }

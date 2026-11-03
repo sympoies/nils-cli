@@ -245,3 +245,63 @@ fn foreign_claude_records_cannot_replace_the_current_compaction_card() {
         assert_eq!(warm.last_message().unwrap().text, "current");
     }
 }
+
+#[test]
+fn codex_notice_submission_is_observable_without_a_human_prompt_event() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("synthetic.jsonl");
+    let opening =
+        json!({"type":"event_msg","payload":{"type":"user_message","message":"human prompt"}});
+    fs::write(&path, format!("{opening}\n")).unwrap();
+    let mut submissions = ProviderPromptTail::open_path(
+        ProviderKind::Codex,
+        "synthetic",
+        path.clone(),
+        Duration::ZERO,
+    )
+    .unwrap();
+    let mut human_events = ProviderPromptTail::open_path(
+        ProviderKind::Codex,
+        "synthetic",
+        path.clone(),
+        Duration::ZERO,
+    )
+    .unwrap();
+    let mut card = ProviderLastPromptTracker::open_path(
+        ProviderKind::Codex,
+        "synthetic",
+        path.clone(),
+        Duration::ZERO,
+    )
+    .unwrap();
+    let text = "Mailbox: agent-session message inbox";
+    let rows = [
+        json!({"type":"event_msg","payload":{"type":"user_message","message":text}}),
+        json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":text}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}}}),
+    ];
+    for row in rows {
+        writeln!(
+            fs::OpenOptions::new().append(true).open(&path).unwrap(),
+            "{row}"
+        )
+        .unwrap();
+    }
+    assert_eq!(submissions.poll_submitted_prompts().unwrap(), vec![text]);
+    assert!(submissions.poll_submitted_prompts().unwrap().is_empty());
+    assert!(human_events.poll().unwrap().is_empty());
+    let ProviderLastPromptRefresh::Current(Some(prompt)) = card.refresh() else {
+        panic!("current")
+    };
+    assert_eq!(prompt.text, "human prompt");
+    let display = serde_json::to_value(card.last_message().unwrap()).unwrap();
+    assert_eq!(display["row_class"], "notice");
+    assert_eq!(display["text"], text);
+    let internal = json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":text}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["goal.internal_context"]}}});
+    writeln!(
+        fs::OpenOptions::new().append(true).open(&path).unwrap(),
+        "{internal}"
+    )
+    .unwrap();
+    assert!(submissions.poll_submitted_prompts().unwrap().is_empty());
+    assert!(human_events.poll().unwrap().is_empty());
+}
