@@ -84,6 +84,10 @@ before their existing key action. Only a recognized, nonempty composer in an
 idle provider pane starts an observation. Runtime and provider identity fence
 the observation. Private state stores pane digests, never composer text.
 Repeated keys on the same unchanged pane retain the original start time.
+Per-action observation setup or storage failure discards unavailable evidence
+and preserves the existing key action and its result. Serve startup still
+rejects invalid configuration. Saved user-draft persistence remains mandatory
+before deleting any draft text.
 
 On subsequent activity reads, an exactly observable pane that has not changed
 within the bound projects `turn_state.phase = "unresponsive"`, with observed

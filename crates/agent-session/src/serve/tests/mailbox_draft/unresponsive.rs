@@ -120,3 +120,65 @@ async fn unresponsive_observation_excludes_responsive_unobservable_and_busy_pane
         assert_ne!(phase(&busy), "unresponsive");
     }
 }
+
+#[tokio::test]
+async fn observer_failure_does_not_block_guarded_submit() {
+    let lock = GlobalStateLock::new();
+    for agent in [AgentKind::Claude, AgentKind::Codex] {
+        for fail_write in [false, true] {
+            let fixture = waiting_fixture(agent).await;
+            let _bound = EnvGuard::set(&lock, "AGENT_SESSION_UNRESPONSIVE_SECONDS",
+                if fail_write { "4" } else { "invalid" });
+            if fail_write {
+                fs::create_dir(fixture.temp.path().join("sessions/beta/pane-response.json")).unwrap();
+            }
+            fs::write(fixture.temp.path().join("composer"), "pending prompt").unwrap();
+            let mut args = crate::send::unguarded_args("beta".into(), None,
+                vec![SpecialKey::Enter], false, fixture.state.tmux_bin.clone());
+            args.guards.require_idle = true;
+            crate::send::send_to_session(&fixture.state.context, args)
+                .expect("passive observer failure must not block the existing Enter");
+            assert_eq!(fs::read_to_string(fixture.temp.path().join("submissions"))
+                .unwrap().lines().count(), 1);
+            assert_eq!(fs::read_to_string(fixture.temp.path().join("composer")).unwrap(), "");
+            assert_eq!(phase(&fixture), "waiting");
+            assert!(!fixture.temp.path().join("sessions/beta/pane-response-event.json").exists());
+        }
+    }
+}
+
+#[tokio::test]
+async fn observer_failure_does_not_block_shared_clear() {
+    let lock = GlobalStateLock::new();
+    for agent in [AgentKind::Claude, AgentKind::Codex] {
+        for fail_write in [false, true] {
+            let fixture = waiting_fixture(agent).await;
+            let _bound = EnvGuard::set(&lock, "AGENT_SESSION_UNRESPONSIVE_SECONDS",
+                if fail_write { "4" } else { "invalid" });
+            if fail_write {
+                fs::create_dir(fixture.temp.path().join("sessions/beta/pane-response.json")).unwrap();
+            }
+            let text = "owned prompt";
+            fs::write(fixture.temp.path().join("composer"), text).unwrap();
+            fs::write(fixture.temp.path().join("cursor-x"), (2 + text.len()).to_string()).unwrap();
+            let record = load_session_record(&fixture.state.context, "beta").unwrap();
+            let args = crate::send_guard::GuardArgs { require_empty_composer: true, ..Default::default() };
+            let admission = crate::send_guard::Admission {
+                context: &fixture.state.context, record: &record, args: &args,
+                tmux_bin: &fixture.state.tmux_bin, verify_composer: true,
+                deadline: Instant::now() + Duration::from_secs(10),
+            };
+            let error = admission.report_pasted_input(
+                CliError::runtime("fixture-refusal", "existing guard refusal", None), text, true,
+            );
+            assert_eq!(error.code(), "fixture-refusal");
+            assert_eq!(error.0.details.as_ref().unwrap()["cleared"], true,
+                "passive observer failure must not block the existing cleanup");
+            let calls = fs::read_to_string(fixture.temp.path().join("calls")).unwrap();
+            assert_eq!(calls.matches("\"BSpace\"").count(), 1);
+            assert_eq!(fs::read_to_string(fixture.temp.path().join("composer")).unwrap(), "");
+            assert_eq!(phase(&fixture), "waiting");
+            assert!(!fixture.temp.path().join("sessions/beta/pane-response-event.json").exists());
+        }
+    }
+}

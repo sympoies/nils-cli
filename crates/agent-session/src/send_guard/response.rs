@@ -154,35 +154,41 @@ pub(crate) fn watch<T>(
     operation: Operation,
     action: impl FnOnce() -> Result<T, CliError>,
 ) -> Result<T, CliError> {
-    let seconds = bound()?;
     let Some(_lock) = lock(context, record) else {
         return action();
     };
     let path = session_dir(context, &record.id).join(OBSERVATION);
-    let state = activity::controller_state_for_record(context, record);
-    let evidence = state
-        .as_ref()
-        .filter(|s| idle(context, record, s))
-        .and_then(|_| Some((identity(record)?, pane(tmux_bin, record)?)));
-    if let Some((identity, (pane, false))) = evidence {
-        let previous = drafts::read_json::<Observation>(&path, 4096)
-            .ok()
-            .filter(|p| p.identity == identity && p.pane == pane);
-        let observation = Observation {
-            identity,
-            pane,
-            tmux_bin: tmux_bin.to_owned(),
-            started_at: previous
-                .as_ref()
-                .map(|p| p.started_at.clone())
-                .unwrap_or_else(|| Timestamp::now().to_string()),
-            bound_seconds: seconds,
-            operation,
-            observed_at: previous.and_then(|p| p.observed_at),
-        };
-        drafts::persist(&path, &observation)?;
-    } else {
-        let _ = fs::remove_file(path);
+    let observed = bound().and_then(|seconds| {
+        let state = activity::controller_state_for_record(context, record);
+        let evidence = state
+            .as_ref()
+            .filter(|s| idle(context, record, s))
+            .and_then(|_| Some((identity(record)?, pane(tmux_bin, record)?)));
+        if let Some((identity, (pane, false))) = evidence {
+            let previous = drafts::read_json::<Observation>(&path, 4096)
+                .ok()
+                .filter(|p| p.identity == identity && p.pane == pane);
+            let observation = Observation {
+                identity,
+                pane,
+                tmux_bin: tmux_bin.to_owned(),
+                started_at: previous
+                    .as_ref()
+                    .map(|p| p.started_at.clone())
+                    .unwrap_or_else(|| Timestamp::now().to_string()),
+                bound_seconds: seconds,
+                operation,
+                observed_at: previous.and_then(|p| p.observed_at),
+            };
+            drafts::persist(&path, &observation)
+        } else {
+            let _ = fs::remove_file(&path);
+            Ok(())
+        }
+    });
+    if observed.is_err() {
+        // Passive metadata cannot replace the admitted action or its result.
+        let _ = fs::remove_file(&path);
     }
     action()
 }
