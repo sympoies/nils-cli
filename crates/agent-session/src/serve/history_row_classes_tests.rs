@@ -778,3 +778,80 @@ async fn unmarked_notices_match_history_paging_and_card() {
         }
     }
 }
+
+#[tokio::test]
+async fn notice_preserves_admission_and_stays_out_of_human_previews() {
+    let marked = crate::notice::NoticeEnvelope::new("mailbox", "scheduler", None)
+        .unwrap()
+        .encode("Exact body\n")
+        .unwrap();
+    for provider in ["claude", "codex"] {
+        let mut records = vec![user(provider, &marked), user(provider, "actual human")];
+        if provider == "codex" {
+            records.push(
+                json!({"type":"event_msg","payload":{"type":"user_message","message":marked}}),
+            );
+        } else {
+            records.push(user(provider, &marked));
+        }
+        let f = Fixture::new(provider, &records);
+        if provider == "claude" {
+            let lines = fs::read_to_string(&f.file).unwrap();
+            let mut rows: Vec<Value> = lines
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            rows[0]["message"]["content"] = json!(marked);
+            fs::write(
+                &f.file,
+                rows.iter()
+                    .map(|row| format!("{row}\n"))
+                    .collect::<String>(),
+            )
+            .unwrap();
+        }
+        let rows = f.all(false, false).await;
+        let notice = rows.iter().find(|row| row["text"] == marked).unwrap();
+        assert_eq!(notice["row_class"], "notice");
+        assert_eq!(notice["text"], marked);
+        let response = f
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/history/sessions")
+                    .header(AUTHORIZATION, format!("Bearer {TOKEN}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 2 * 1024 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let session = body["data"]["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == f.history)
+            .unwrap();
+        for field in ["first_user_prompt_preview", "prompt_preview"] {
+            assert_eq!(session[field], "actual human", "{provider}: {field}");
+        }
+        let source = crate::provider_prompt::ProviderPromptSource::for_history(
+            provider,
+            "synthetic",
+            f.file.clone(),
+        )
+        .unwrap();
+        let mut tracker =
+            crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
+        tracker.refresh();
+        let card = serde_json::to_value(tracker.last_message().unwrap()).unwrap();
+        assert_eq!(card["text"], marked);
+        assert_eq!(card["row_class"], "notice");
+    }
+}

@@ -43,7 +43,6 @@ pub(crate) fn human_text(provider: &str, text: &str) -> bool {
         .then(|| super::claude_slash_command_text(text))
         .flatten();
     !runtime_command(provider, projected.as_deref().unwrap_or(text))
-        && !notice::matches("", text, &Value::Null)
 }
 
 pub(crate) fn command_text(provider: &str, value: &Value) -> Option<String> {

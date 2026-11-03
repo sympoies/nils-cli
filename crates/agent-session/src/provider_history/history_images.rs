@@ -1,5 +1,6 @@
 use super::*;
 use crate::provider_prompt::claude_queued_prompt_blocks;
+use crate::provider_prompt::parse_history_user_prompt;
 use std::borrow::Cow;
 
 #[path = "messages.rs"]

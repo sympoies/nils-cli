@@ -121,6 +121,9 @@ pub(crate) fn input(provider: &str, value: &Value, session: &str) -> Option<Stri
                 super::super::claude_queued_prompt_text(value).map(|s| s.into_owned())
             })?
         }
+        "codex" if value["type"] == "event_msg" && value["payload"]["type"] == "user_message" => {
+            value["payload"]["message"].as_str()?.to_owned()
+        }
         "codex"
             if value["type"] == "response_item"
                 && value["payload"]["type"] == "message"
@@ -145,4 +148,14 @@ pub(crate) fn input(provider: &str, value: &Value, session: &str) -> Option<Stri
         _ => return None,
     };
     matches(provider, &text, value).then_some(text)
+}
+
+/// Select human previews without changing provider prompt admission.
+pub(crate) fn human_history_prompt(
+    provider: &str,
+    session: &str,
+    line: &str,
+) -> Option<super::super::LastPrompt> {
+    let prompt = super::super::parse_history_user_prompt(provider, session, line)?;
+    (!matches("", &prompt.text, &Value::Null)).then_some(prompt)
 }

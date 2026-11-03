@@ -22,6 +22,7 @@ mod preview;
 pub(crate) mod row_classes;
 use preview::PreviewMessages;
 pub(crate) use preview::{LastMessage, SessionPreviews};
+pub(crate) use row_classes::notice::human_history_prompt as history_preview_prompt;
 
 #[cfg(test)]
 mod preview_regressions;
