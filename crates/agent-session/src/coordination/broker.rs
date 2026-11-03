@@ -158,7 +158,7 @@ pub(crate) fn capture_previous_runtime(
 ) -> PreviousRuntimeEvidence {
     let status = incarnation(record)
         .ok()
-        .map(|incarnation| legacy_runtime_status(record, &incarnation, tmux_bin))
+        .map(|incarnation| stored_runtime_status(record, &incarnation, tmux_bin))
         .unwrap_or(crate::CoordinationRuntimeStatus::Unknown);
     #[cfg(target_os = "macos")]
     let stopped_broker_identity = crate::persisted_tmux_runtime_identity(record)
@@ -185,7 +185,7 @@ pub(crate) fn capture_previous_runtime(
 
 /// Positive current-boot process evidence wins; Linux retains namespace checks.
 /// Missing, invalid, or incarnation-mismatched persisted evidence stays unknown.
-fn legacy_process_runtime_status(
+fn stored_process_runtime_status(
     record: &SessionRecord,
     expected_incarnation: &str,
 ) -> crate::CoordinationRuntimeStatus {
@@ -216,13 +216,13 @@ fn legacy_process_runtime_status(
 /// Prior-boot evidence proves absence; otherwise a stopped process boundary
 /// also needs the exact managed tmux name absent.
 /// This probe runs before any replacement is launched (or during stop retirement).
-fn legacy_runtime_status(
+fn stored_runtime_status(
     record: &SessionRecord,
     expected_incarnation: &str,
     tmux_bin: &Path,
 ) -> crate::CoordinationRuntimeStatus {
     use crate::CoordinationRuntimeStatus::{Running, Stopped, Unknown};
-    let status = legacy_process_runtime_status(record, expected_incarnation);
+    let status = stored_process_runtime_status(record, expected_incarnation);
     if status != Stopped {
         return status;
     }
@@ -432,7 +432,7 @@ pub(crate) fn provision_with_previous(
                                 .is_some_and(|runtime| runtime.generation == previous.generation)
                     })
                     .map(|prior| {
-                        match legacy_process_runtime_status(&prior.record, &previous.incarnation) {
+                        match stored_process_runtime_status(&prior.record, &previous.incarnation) {
                             crate::CoordinationRuntimeStatus::Stopped => prior.status,
                             status => status,
                         }
@@ -806,7 +806,7 @@ fn expire_stopped_heartbeat(
                 .as_ref()
                 .map(crate::coordination_runtime_status_for_identity)
                 .unwrap_or_else(
-                    || match legacy_process_runtime_status(record, &incarnation) {
+                    || match stored_process_runtime_status(record, &incarnation) {
                         crate::CoordinationRuntimeStatus::Stopped => previous_runtime.status,
                         status => status,
                     },
@@ -1815,7 +1815,7 @@ pub(crate) mod test_support {
         identity
     }
 
-    pub(crate) fn make_legacy_broker(context: &CliContext, session_id: &str, fresh: bool) {
+    pub(crate) fn clear_broker_identity(context: &CliContext, session_id: &str, fresh: bool) {
         let mut locked = lock_registry(context).expect("registry");
         let broker = locked.registry.brokers.get_mut(session_id).expect("broker");
         broker.runtime_identity = None;
@@ -2151,7 +2151,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn generation_two_legacy_broker_capture_ignores_recycled_numeric_selector() {
+    fn generation_two_broker_without_identity_capture_ignores_recycled_numeric_selector() {
         use pretty_assertions::assert_eq;
         for prior_boot in [true, false] {
             let temporary = tempfile::TempDir::new().unwrap();
@@ -2182,7 +2182,7 @@ mod tests {
                 .extra
                 .insert("delete_tmux_identity".to_string(), identity);
             crate::write_session_record(&context, &prior).unwrap();
-            test_support::make_legacy_broker(&context, &prior.id, false);
+            test_support::clear_broker_identity(&context, &prior.id, false);
             let mut locked = lock_registry(&context).unwrap();
             locked
                 .registry
@@ -2231,7 +2231,7 @@ mod tests {
         replacement.runtime.as_mut().unwrap().generation = 2;
 
         // A missing registry identity can use only a proven stopped old record.
-        test_support::make_legacy_broker(&context, "session", false);
+        test_support::clear_broker_identity(&context, "session", false);
         let captured = crate::persisted_tmux_runtime_identity(&prior)
             .unwrap()
             .unwrap();
@@ -2248,7 +2248,7 @@ mod tests {
             "stopped"
         );
         assert_eq!(
-            legacy_runtime_status(&prior, "old", &tmux),
+            stored_runtime_status(&prior, "old", &tmux),
             crate::CoordinationRuntimeStatus::Stopped
         );
         provision_with_previous(
@@ -2260,7 +2260,7 @@ mod tests {
 
         // Even stopped process evidence cannot override a fresh old heartbeat.
         test_support::seed_live_broker(&context, "session", "old", stopped_identity.clone());
-        test_support::make_legacy_broker(&context, "session", true);
+        test_support::clear_broker_identity(&context, "session", true);
         assert_eq!(
             provision_with_previous(
                 &context,
@@ -2271,7 +2271,7 @@ mod tests {
             .code(),
             "session-incarnation-conflict"
         );
-        test_support::make_legacy_broker(&context, "session", false);
+        test_support::clear_broker_identity(&context, "session", false);
 
         let mut live = prior.clone();
         let mut identity = test_support::process_group_identity(unsafe { libc::getpgrp() });

@@ -253,7 +253,7 @@ fn held_launcher_exit_contention_keeps_both_attempts_inside_graceful_budget() {
     let record = record(&context, "exit-contention");
     let held = lock_private_store(&context, REGISTRY_LOCK).unwrap();
     let started = Instant::now();
-    // The held launcher executes a compatibility fallback after a failed exit
+    // The held launcher retries exit cleanup after a failed exit
     // hook. Neither attempt may inherit the control-plane six-second wait.
     for _ in 0..2 {
         let attempt = Instant::now();
