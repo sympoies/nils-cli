@@ -132,6 +132,7 @@ pub(super) fn start_terminal_coordination_notification(
             expected_agent,
             recovery_prompt,
             deadline,
+            false,
         )
         .is_ok()
         {
@@ -140,7 +141,16 @@ pub(super) fn start_terminal_coordination_notification(
             } else {
                 recovery_failure = Some("notification-residual-changed");
             }
-        } else if check_composer(context, tmux_bin, &current, expected_agent, "", deadline).is_ok()
+        } else if check_composer(
+            context,
+            tmux_bin,
+            &current,
+            expected_agent,
+            "",
+            deadline,
+            false,
+        )
+        .is_ok()
         {
             // A prior cleanup may have succeeded just before its final cursor
             // confirmation became unavailable. Empty input is safe to retire.
@@ -150,8 +160,16 @@ pub(super) fn start_terminal_coordination_notification(
         }
     }
     if recovery_failure.is_none() {
-        check_composer(context, tmux_bin, &current, expected_agent, "", deadline)
-            .map_err(TerminalNotificationStartError::Known)?;
+        check_composer(
+            context,
+            tmux_bin,
+            &current,
+            expected_agent,
+            "",
+            deadline,
+            true,
+        )
+        .map_err(TerminalNotificationStartError::Known)?;
     }
 
     let current = load_session_record(context, &candidate.target_session_id)
@@ -275,6 +293,7 @@ fn check_composer(
     expected_agent: AgentKind,
     expected_text: &str,
     deadline: Instant,
+    allow_stale: bool,
 ) -> Result<(), &'static str> {
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining.is_zero() {
@@ -293,9 +312,13 @@ fn check_composer(
     .ok()
     .filter(|output| output.status.success())
     .and_then(|output| String::from_utf8(output.stdout).ok())
-    .and_then(|pane| crate::send_submit::exact_composer_input(&record.agent, &pane))
-    .ok_or("recipient-composer-unobservable")?;
-    if pane != expected_text {
+    .and_then(|pane| crate::send_submit::exact_composer_input(&record.agent, &pane));
+    let stale = allow_stale
+        && expected_text.is_empty()
+        && crate::send_guard::drafts::observe(context, record, pane.as_deref())
+            .map_err(|_| "draft-store-unavailable")?;
+    let pane = pane.ok_or("recipient-composer-unobservable")?;
+    if pane != expected_text && !stale {
         return Err("recipient-composer-not-empty");
     }
     // Provider events can be waiting behind our lifecycle lock while a pane
@@ -337,12 +360,23 @@ fn guarded_input(
         crate::PANE_INPUT_COMMAND_TIMEOUT,
         crate::PasteMode::Raw,
         || {
-            check_composer(context, tmux_bin, record, expected_agent, "", deadline).map_err(
-                |reason| {
-                    refused = Some(reason);
-                    CliError::unavailable(reason, "mailbox wake input is unavailable", None)
-                },
+            check_composer(
+                context,
+                tmux_bin,
+                record,
+                expected_agent,
+                "",
+                deadline,
+                true,
             )
+            .and_then(|()| {
+                crate::send_guard::drafts::clear_pending(context, record, tmux_bin, deadline)
+                    .map_err(|_| "recipient-composer-not-empty")
+            })
+            .map_err(|reason| {
+                refused = Some(reason);
+                CliError::unavailable(reason, "mailbox wake input is unavailable", None)
+            })
         },
     );
     let _ = fs::remove_file(temp);
@@ -363,8 +397,15 @@ fn guarded_input(
     result.map_err(|_| TerminalNotificationStartError::Unknown)?;
     std::thread::sleep(crate::POST_PASTE_KEY_SETTLE_DELAY);
     // Preserve the existing post-paste race guard before the initial Enter.
-    if let Err(reason) = check_composer(context, tmux_bin, record, expected_agent, prompt, deadline)
-    {
+    if let Err(reason) = check_composer(
+        context,
+        tmux_bin,
+        record,
+        expected_agent,
+        prompt,
+        deadline,
+        false,
+    ) {
         if !clear_owned_notification(context, tmux_bin, record, prompt) {
             return Err(TerminalNotificationStartError::UnknownReason(reason));
         }
@@ -405,8 +446,16 @@ fn guarded_input(
         },
         || {
             terminal_notification_waiting(context, record, expected_agent)
-                && check_composer(context, tmux_bin, record, expected_agent, prompt, deadline)
-                    .is_ok()
+                && check_composer(
+                    context,
+                    tmux_bin,
+                    record,
+                    expected_agent,
+                    prompt,
+                    deadline,
+                    false,
+                )
+                .is_ok()
         },
         || crate::send_tmux_key(tmux_bin, &target, SpecialKey::Enter),
     )

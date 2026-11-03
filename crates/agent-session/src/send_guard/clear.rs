@@ -74,11 +74,18 @@ impl Admission<'_> {
             verify_composer: self.verify_composer,
         };
         cleanup
-            .clear(text, observed_paste)
+            .clear(text, observed_paste, false)
             .map_or((None, false), |(input, restored)| (Some(input), restored))
     }
 
-    fn clear(&self, text: &str, observed_paste: bool) -> Option<(String, bool)> {
+    /// Preserve the shared cleanup keys but never remove a prefix or accept
+    /// whitespace-normalized ownership for a saved owner draft.
+    pub(super) fn clear_saved_draft(&self, text: &str) -> bool {
+        self.clear(text, false, true)
+            .is_some_and(|(remaining, cleared)| cleared && remaining.is_empty())
+    }
+
+    fn clear(&self, text: &str, observed_paste: bool, exact_draft: bool) -> Option<(String, bool)> {
         let target = format!("{}:0.0", self.record.tmux_session);
         let observe = |stage: &str| {
             let pane = capture_styled(self.tmux_bin, &target, self.timeout(stage).ok()?)?;
@@ -95,9 +102,14 @@ impl Admission<'_> {
                 return Some((input, true));
             }
         }
-        let exact = send_submit::composer_holds(&self.record.agent, &input, text);
+        let exact = if exact_draft {
+            input == text
+        } else {
+            send_submit::composer_holds(&self.record.agent, &input, text)
+        };
         let suffix = input.strip_prefix(text);
-        let prefix = observed_paste
+        let prefix = !exact_draft
+            && observed_paste
             && self.record.agent == "claude"
             && self.args.require_empty_composer
             && suffix.is_some_and(|suffix| !suffix.is_empty())
@@ -118,16 +130,26 @@ impl Admission<'_> {
             capture_styled(self.tmux_bin, &target, self.timeout("cleanup").ok()?)
                 .and_then(|pane| send_submit::exact_composer_input(&self.record.agent, &pane))
                 .is_some_and(|current| {
-                    send_submit::composer_holds(&self.record.agent, &current, text)
+                    if exact_draft {
+                        current == text
+                    } else {
+                        send_submit::composer_holds(&self.record.agent, &current, text)
+                    }
                 });
-        let forward = !single_row_exact
-            && self.record.agent == "claude"
-            && send_submit::cleanup_cursor_cells(&input).is_some();
+        // An owner draft can have its caret anywhere. Use the same counted
+        // cleanup navigation for saved drafts, including single-row Codex.
+        if exact_draft && send_submit::cleanup_cursor_cells(&input).is_none() {
+            return Some((input, false));
+        }
+        let forward = exact_draft
+            || !single_row_exact
+                && self.record.agent == "claude"
+                && send_submit::cleanup_cursor_cells(&input).is_some();
         if forward {
             let mut home = std::process::Command::new(self.tmux_bin);
             home.args(["send-keys", "-t", &target, "C-a"]);
             run_status_with_timeout(home, "tmux send-keys", self.timeout("cleanup").ok()?).ok()?;
-            let mut endpoint = None;
+            let mut endpoint: Option<(usize, usize)> = None;
             loop {
                 let (pane, coordinates) = super::observation::pane_and_cursor(
                     self.tmux_bin,
@@ -156,10 +178,65 @@ impl Admission<'_> {
                     Some(end) => end == (coordinates.0, coordinates.1),
                 };
                 if at_target {
-                    if endpoint.is_some() {
+                    if let Some(end) = endpoint {
+                        if exact_draft {
+                            // Prove the logical end with a visible cursor change.
+                            // An owner suffix hidden by padding must not be erased.
+                            let last = text.chars().next_back()?.to_string();
+                            let before = (
+                                end.0
+                                    .checked_sub(send_submit::cleanup_cursor_cells(&last)?)?,
+                                end.1,
+                            );
+                            for (keys, expected_cursor) in
+                                [(&["Right", "Left"][..], before), (&["Right"][..], end)]
+                            {
+                                self.identity("cleanup").ok()?;
+                                let mut navigate = std::process::Command::new(self.tmux_bin);
+                                navigate
+                                    .args(["send-keys", "-t", &target, "-N", "1"])
+                                    .args(keys);
+                                run_status_with_timeout(
+                                    navigate,
+                                    "tmux send-keys",
+                                    self.timeout("cleanup").ok()?,
+                                )
+                                .ok()?;
+                                loop {
+                                    let (pane, cursor) = super::observation::pane_and_cursor(
+                                        self.tmux_bin,
+                                        &target,
+                                        self.timeout("cleanup").ok()?,
+                                    )?;
+                                    let current = send_submit::exact_composer_input(
+                                        &self.record.agent,
+                                        &pane,
+                                    )?;
+                                    if current != input {
+                                        return Some((current, false));
+                                    }
+                                    if cursor == expected_cursor {
+                                        break;
+                                    }
+                                    if self.deadline.saturating_duration_since(Instant::now())
+                                        <= CLEAR_POLL
+                                    {
+                                        return Some((current, false));
+                                    }
+                                    thread::sleep(CLEAR_POLL);
+                                }
+                            }
+                        }
                         break;
                     }
-                    endpoint = Some(send_submit::cleanup_prefix_end(&pane, text)?);
+                    endpoint = Some(if exact_draft {
+                        (
+                            coordinates.0 + send_submit::cleanup_cursor_cells(text)?,
+                            coordinates.1,
+                        )
+                    } else {
+                        send_submit::cleanup_prefix_end(&pane, text)?
+                    });
                     let mut right = std::process::Command::new(self.tmux_bin);
                     right.args([
                         "send-keys",

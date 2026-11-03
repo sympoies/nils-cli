@@ -70,7 +70,7 @@ pub(super) async fn submit_structured_prompt_locked(
         }
         codex_quiet::precheck(&lock_context, &current, notification_fence.is_some())?;
         if direct_reply {
-            crate::send_guard::require_empty_composer(&current, &tmux_bin)?;
+            crate::send_guard::require_empty_composer(&lock_context, &current, &tmux_bin)?;
         }
         crate::codex_account::authorize_input_locked(&lock_context, &mut current)?;
         auto_resume::cancel_for_manual_input_locked(
