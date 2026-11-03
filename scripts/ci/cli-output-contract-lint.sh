@@ -76,9 +76,11 @@ fi
 # explicit entry here with justification.
 declare -a JSON_ALLOWED_FILES=()
 
-# Files where camelCase serde renames are intentional (non-CLI-envelope
-# persistent records: AWP, JUnit-compat suite schemas, documented v2 alias).
+# Files where camelCase serde renames are intentional outside CLI envelopes
+# (provider input or persistent records: AWP, JUnit-compat suite schemas).
 declare -a CAMEL_ALLOWED_FILES=(
+  # Claude JSONL input only; this metadata parser never serializes records.
+  "crates/agent-session/src/context_usage/session_metrics/counts.rs"
   "crates/agent-workflow-primitives/src/repo_retro.rs"
   "crates/api-test/src/suite_schema.rs"
   "crates/api-testing-core/src/suite/results.rs"

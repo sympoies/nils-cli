@@ -1,7 +1,9 @@
 //! Provider-confirmed conversation transitions, independent of managed runtime identity.
 use std::{
     collections::BTreeMap,
-    fs, thread,
+    fs,
+    io::Read,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -69,8 +71,37 @@ fn live(
     context: &CliContext,
     record: &SessionRecord,
 ) -> Result<Option<LiveConversation>, CliError> {
-    let bytes = match fs::read(session_dir(context, &record.id).join(LIVE_FILE)) {
-        Ok(bytes) => bytes,
+    let mut bytes = Vec::new();
+    match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(session_dir(context, &record.id).join(LIVE_FILE))
+    {
+        Ok(file) => {
+            if !file.metadata().is_ok_and(|metadata| metadata.is_file()) {
+                return Err(error(
+                    "conversation-observation-invalid",
+                    "live conversation observation is invalid",
+                    record,
+                ));
+            }
+            file.take(16 * 1024 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| {
+                    error(
+                        "conversation-observation-unavailable",
+                        "live conversation observation is unreadable",
+                        record,
+                    )
+                })?;
+            if bytes.len() > 16 * 1024 {
+                return Err(error(
+                    "conversation-observation-invalid",
+                    "live conversation observation is invalid",
+                    record,
+                ));
+            }
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(_) => {
             return Err(error(
@@ -110,6 +141,17 @@ fn live(
         return Ok(None);
     }
     Ok(Some(value))
+}
+
+/// Read-only consistency check; a metrics GET cannot repair a pending native transition.
+pub(crate) fn binding_is_current(context: &CliContext, record: &SessionRecord) -> bool {
+    live(context, record).is_ok_and(|live| {
+        live.is_none_or(|observed| {
+            record.provider_resume.as_ref().is_some_and(|resume| {
+                resume.provider == observed.provider && resume.session_id == observed.session_id
+            })
+        })
+    })
 }
 
 /// Called only for a primary native thread/start response or Claude SessionStart(clear).
