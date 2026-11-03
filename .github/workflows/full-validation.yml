@@ -173,13 +173,6 @@ jobs:
           path: ${{ env.NILS_CLI_REPORT_DIR }}/nextest/performance/junit.xml
           if-no-files-found: warn
 
-      # Re-run representative tests under a poisoned environment and fail if any
-      # sentinel changes. Only the nightly and manual call in ci.yml sets the
-      # input; release validation and the merge queue never run it.
-      - name: Test isolation guard
-        if: inputs.isolation_guard
-        run: bash scripts/ci/test-env-isolation-guard.sh
-
       - name: Full validation marker
         run: true
 
@@ -275,6 +268,70 @@ jobs:
           setsid --wait cargo test -p nils-agent-session --lib \
             tests::delete_kills_a_detached_descendant_inside_a_pinned_tmux_control_group \
             -- --exact --nocapture
+
+  # Re-run representative tests under a poisoned environment and fail if any
+  # sentinel changes. It runs beside `test` so its 10-12 minutes do not share
+  # that job's time limit. Only the nightly and manual call in ci.yml sets the
+  # input; release validation and the merge queue never run it, and the gate
+  # does not expect it there.
+  isolation_guard:
+    name: Test isolation guard
+    if: inputs.isolation_guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Restore the `test` job's main cache; only that job saves it.
+          shared-key: linux-test
+          save-if: false
+
+      - name: Set up Python for schema fixtures
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install schema fixture dependency
+        run: python3 -m pip install 'jsonschema==4.26.0'
+
+      - name: Install zsh + ripgrep + tmux + bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y zsh ripgrep tmux bubblewrap
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      # Keep identical to the copy in the test job.
+      - name: Provision systemd user scopes
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            # Ubuntu 24.04 denies capabilities inside unprivileged user namespaces
+            # by default; this ephemeral runner must exercise bubblewrap itself.
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          uid="$(id -u)"
+          sudo loginctl enable-linger "${USER}"
+          sudo systemctl start "user@${uid}.service"
+          echo "XDG_RUNTIME_DIR=/run/user/${uid}" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus" >> "$GITHUB_ENV"
+          test -S "/run/user/${uid}/systemd/private"
+
+      - name: Test isolation guard
+        run: bash scripts/ci/test-env-isolation-guard.sh
 
   # The instrumented macOS suite runs as two nextest partitions on separate
   # runners. Repository audits, script tests, fmt, clippy and doc tests are not
@@ -497,7 +554,7 @@ jobs:
         run: bash scripts/ci/coverage-summary.sh target/coverage/lcov.info
 
   gate:
-    needs: [test, test_macos, coverage, test_containment, cargo_deny]
+    needs: [test, test_macos, coverage, test_containment, cargo_deny, isolation_guard]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -510,8 +567,9 @@ jobs:
       - name: Require all full-validation lanes
         env:
           EXPECTED_COMMIT: ${{ inputs.commit }}
+          ISOLATION_GUARD: ${{ inputs.isolation_guard }}
           VALIDATION_NEEDS: ${{ toJSON(needs) }}
         run: |
           ACTUAL_COMMIT="$(git rev-parse HEAD)"
           export ACTUAL_COMMIT
-          node -e 'require("./.github/scripts/full-validation-gate.cjs").requireFullValidation({expected: process.env.EXPECTED_COMMIT, actual: process.env.ACTUAL_COMMIT, needs: JSON.parse(process.env.VALIDATION_NEEDS)})'
+          node -e 'require("./.github/scripts/full-validation-gate.cjs").requireFullValidation({expected: process.env.EXPECTED_COMMIT, actual: process.env.ACTUAL_COMMIT, isolationGuard: process.env.ISOLATION_GUARD === "true", needs: JSON.parse(process.env.VALIDATION_NEEDS)})'

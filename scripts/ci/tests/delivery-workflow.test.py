@@ -119,7 +119,7 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn('test -s target/coverage/lcov.info', job(full, 'coverage'))
         gate = job(full, 'gate')
         self.assertIn('if: always()', gate)
-        self.assertIn('needs: [test, test_macos, coverage, test_containment, cargo_deny]', gate)
+        self.assertIn('needs: [test, test_macos, coverage, test_containment, cargo_deny, isolation_guard]', gate)
         self.assertIn('requireFullValidation', gate)
         self.assertIn('toJSON(needs)', gate)
         self.assertIn('git rev-parse HEAD', gate)
