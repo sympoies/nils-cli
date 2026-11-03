@@ -229,9 +229,11 @@ mismatched supplied credentials, otherwise
 `preserve-session-and-request-replacement`. Recovery also specifies
 `preserve_session: true` and `preserve_mailbox: true`.
 
-Use the runtime-supplied capability file with `broker identity` to verify the
-current binding. If it still refuses, preserve the pane, session state, signed
-work and mailbox; ask the coordinator for a replacement session and the sender
+Check the selected capability file is the runtime-supplied file for capability
+refusals. For broker state, inspect `broker status`, including `heartbeat_fresh`
+and `capability_available`. A transient stale heartbeat can be retried once the
+broker reports ready. If authority still cannot be verified, preserve the pane,
+session state, signed work and mailbox; ask the coordinator for a replacement session and the sender
 to resend the continuation. A different session cannot read the original
 session's mailbox. The refusal retains its unread payload under the original
 incarnation until its existing expiry; it does not extend retention. Do not
