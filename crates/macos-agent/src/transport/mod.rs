@@ -336,6 +336,7 @@ impl ProcessGroupChild {
 
     fn wait_bounded(&mut self, timeout: Duration) -> Result<ExitStatus, CliError> {
         let started = Instant::now();
+        let mut polls = 0;
         loop {
             match self
                 .child
@@ -354,7 +355,7 @@ impl ProcessGroupChild {
                     self.terminate_and_reap();
                     return Err(transport_error("SSH MCP transport did not exit cleanly"));
                 }
-                None => thread::sleep(Duration::from_millis(10)),
+                None => crate::process::poll_pause(&mut polls),
             }
         }
     }
@@ -366,6 +367,7 @@ impl ProcessGroupChild {
         // SAFETY: the negative PID addresses the isolated SSH process group.
         let _ = unsafe { libc::kill(-self.pgid, libc::SIGTERM) };
         let started = Instant::now();
+        let mut polls = 0;
         while started.elapsed() < Duration::from_millis(200) {
             if self.child.try_wait().ok().flatten().is_some() {
                 // The leader is reaped, but a TERM-ignoring helper can still
@@ -375,7 +377,7 @@ impl ProcessGroupChild {
                 self.reaped = true;
                 return;
             }
-            thread::sleep(Duration::from_millis(10));
+            crate::process::poll_pause(&mut polls);
         }
         // SAFETY: escalation remains confined to the same process group.
         let _ = unsafe { libc::kill(-self.pgid, libc::SIGKILL) };
