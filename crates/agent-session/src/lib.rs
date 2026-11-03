@@ -211,7 +211,7 @@ const CODEX_RESUME_BACKFILL_MAX_AGE_SECS: u64 = 10 * 60;
 pub const PANE_INPUT_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const PANE_OBSERVATION_COMMAND_TIMEOUT: Duration = Duration::from_secs(1);
 const PANE_OBSERVATION_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
-const POST_PASTE_KEY_SETTLE_DELAY: Duration = Duration::from_millis(500);
+use send_submit::POST_PASTE_KEY_SETTLE_DELAY;
 const PANE_PASTE_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const PANE_PASTE_READY_DEADLINE: Duration = Duration::from_secs(15);
 /// A launch may wait out a slow TUI, but the structured prompt route answers an
@@ -18132,7 +18132,7 @@ exit 42
     fn post_paste_settle_applies_only_between_literal_paste_and_keys() {
         assert_eq!(
             super::post_paste_settle_delay(true, true),
-            Some(std::time::Duration::from_millis(500))
+            Some(super::POST_PASTE_KEY_SETTLE_DELAY)
         );
         assert_eq!(super::post_paste_settle_delay(true, false), None);
         assert_eq!(super::post_paste_settle_delay(false, true), None);

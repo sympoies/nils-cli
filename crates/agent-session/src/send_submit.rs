@@ -31,6 +31,15 @@ pub(crate) use composer::{
 /// not to match a placeholder by accident.
 const PROBE_CHARS: usize = 20;
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Pause between a literal paste and the keys that follow it, so the provider
+/// finishes reading the paste. Unit tests drive stub tmux binaries that need no
+/// settling, so they use a short pause.
+const PRODUCTION_POST_PASTE_KEY_SETTLE_DELAY: Duration = Duration::from_millis(500);
+#[cfg(not(test))]
+pub(crate) const POST_PASTE_KEY_SETTLE_DELAY: Duration = PRODUCTION_POST_PASTE_KEY_SETTLE_DELAY;
+#[cfg(test)]
+pub(crate) const POST_PASTE_KEY_SETTLE_DELAY: Duration = Duration::from_millis(20);
 /// How long the text may stay in the composer after an Enter before that Enter
 /// counts as swallowed.
 const RETRY_AFTER: Duration = Duration::from_millis(1500);
@@ -43,7 +52,14 @@ const MAX_ENTER_PRESSES: u32 = 2;
 /// find it busy wait only five seconds. Guarded terminal delivery supplies a
 /// longer deadline for its repeated identity, idle and exact-composer checks;
 /// native dispatch retains this default.
-pub(crate) const HOLD_BUDGET: Duration = Duration::from_millis(4000);
+///
+/// Unit tests shorten it to just past the swallowed-Enter retry, so the cases
+/// that end unconfirmed do not wait out the full production budget.
+const PRODUCTION_HOLD_BUDGET: Duration = Duration::from_millis(4000);
+#[cfg(not(test))]
+pub(crate) const HOLD_BUDGET: Duration = PRODUCTION_HOLD_BUDGET;
+#[cfg(test)]
+pub(crate) const HOLD_BUDGET: Duration = Duration::from_millis(2500);
 /// Longest single pane read; a read never runs past the hold budget either.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(1);
 /// Shortest time a pane read is given. With less left in the budget the loop
@@ -871,6 +887,18 @@ mod tests {
     fn a_queued_prompt_is_reported_as_queued() {
         let (result, _, _) = scripted(&[CLAUDE_PENDING, CLAUDE_QUEUED], true);
         assert_eq!(result.unwrap().outcome, SubmitOutcome::Queued);
+    }
+
+    #[test]
+    fn production_waits_keep_their_values_while_unit_tests_use_short_ones() {
+        assert_eq!(
+            PRODUCTION_POST_PASTE_KEY_SETTLE_DELAY,
+            Duration::from_millis(500)
+        );
+        assert_eq!(PRODUCTION_HOLD_BUDGET, Duration::from_millis(4000));
+        assert!(POST_PASTE_KEY_SETTLE_DELAY < PRODUCTION_POST_PASTE_KEY_SETTLE_DELAY);
+        assert!(HOLD_BUDGET < PRODUCTION_HOLD_BUDGET);
+        assert!(HOLD_BUDGET > RETRY_AFTER);
     }
 }
 
