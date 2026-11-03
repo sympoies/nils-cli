@@ -48,6 +48,10 @@ pub(crate) struct StoredMessage {
     pub state: String,
     pub revision: u64,
     pub reply_to: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_by_epoch: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_sent_at_epoch: Option<i64>,
     pub reply_depth: u8,
     pub created_at: String,
     pub created_at_epoch: i64,
@@ -124,6 +128,8 @@ pub(super) struct MessageMetadata {
     state: String,
     revision: u64,
     reply_to: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reply_by: Option<String>,
     created_at: String,
     expires_at: String,
     body_bytes: usize,
@@ -177,6 +183,7 @@ fn send_impl(context: &CliContext, args: MessageSendArgs) -> Result<Value, CliEr
         body,
         args.reply_to,
         args.expires_in.as_deref(),
+        args.reply_by.as_deref(),
         args.idempotency_key,
         "message-send",
         &capability_file,
@@ -251,6 +258,7 @@ pub(crate) fn forward(context: &CliContext, args: MessageForwardArgs) -> Result<
         &current,
         &args.to_session,
         body,
+        None,
         None,
         None,
         args.idempotency_key,
@@ -644,6 +652,10 @@ pub(crate) fn reply(context: &CliContext, args: MessageReplyArgs) -> Result<Valu
         && let Some(replay) =
             super::remote::reply_replay(context, &record.id, &sender_incarnation, &args, &body)?
     {
+        if record_reply(&mut locked.registry, Some(&args.message), now_epoch()) || registry_changed
+        {
+            locked.save()?;
+        }
         return Ok(replay);
     }
 
@@ -680,6 +692,7 @@ pub(crate) fn reply(context: &CliContext, args: MessageReplyArgs) -> Result<Valu
         &original.sender_session_id,
         body,
         Some(original.message_id),
+        None,
         None,
         args.idempotency_key,
         "message-reply",
@@ -812,6 +825,7 @@ fn send_authenticated(
     body: String,
     reply_to: Option<String>,
     expires_in: Option<&str>,
+    reply_by: Option<&str>,
     idempotency_key: String,
     operation: &'static str,
     capability_file: &Path,
@@ -830,6 +844,7 @@ fn send_authenticated(
         ));
     }
     let expiry_secs = parse_expiry(expires_in)?;
+    let reply_by_secs = parse_reply_by(reply_by)?;
     let digest = request_digest_override.unwrap_or_else(|| {
         let mut input = json!({
             "sender": sender_session_id,
@@ -839,6 +854,9 @@ fn send_authenticated(
             "expiry_secs": expiry_secs,
             "if_revision": expected_parent_revision,
         });
+        if let Some(seconds) = reply_by_secs {
+            input["reply_by_secs"] = json!(seconds);
+        }
         if let Some(category) = category {
             input["category"] = json!(category);
         }
@@ -1033,6 +1051,8 @@ fn send_authenticated(
         state: "unread".to_string(),
         revision: 1,
         reply_to,
+        reply_by_epoch: reply_by_secs.map(|seconds| now.saturating_add(seconds)),
+        reply_sent_at_epoch: None,
         reply_depth,
         created_at: timestamp(now),
         created_at_epoch: now,
@@ -1057,6 +1077,7 @@ fn send_authenticated(
         .as_object_mut()
         .expect("message metadata serializes as an object")
         .insert("notification".to_string(), json_value(notification)?);
+    record_reply(&mut locked.registry, message.reply_to.as_deref(), now);
     locked.registry.messages.push(message);
     store_receipt(
         &mut locked.registry,
@@ -1256,6 +1277,7 @@ pub(super) fn metadata(message: &StoredMessage) -> MessageMetadata {
         state: message.state.clone(),
         revision: message.revision,
         reply_to: message.reply_to.clone(),
+        reply_by: message.reply_by_epoch.map(timestamp),
         created_at: message.created_at.clone(),
         expires_at: message.expires_at.clone(),
         body_bytes: message.body_bytes,
@@ -1295,6 +1317,39 @@ fn find_recipient_message_mut<'a>(
                 && message.recipient_incarnation == incarnation
         })
         .ok_or_else(message_not_found)
+}
+
+/// Optional current message shape: absence means no reply obligation.
+pub(super) fn parse_reply_by(value: Option<&str>) -> Result<Option<i64>, CliError> {
+    let Some(value) = value else { return Ok(None) };
+    let invalid = || {
+        CliError::usage(
+            "mailbox-reply-by-invalid",
+            "--reply-by must be 1 second to 7 days; use integer seconds or s, m, h, d (for example 1h)",
+            None,
+        )
+    };
+    let seconds = parse_duration(value).map_err(|_| invalid())?;
+    if !(1..=MAX_EXPIRY_SECS as u64).contains(&seconds) {
+        return Err(invalid());
+    }
+    Ok(Some(seconds as i64))
+}
+
+/// Call only after authenticating and admitting the correlated reply.
+pub(super) fn record_reply(registry: &mut Registry, parent: Option<&str>, now: i64) -> bool {
+    let Some(parent) = parent else { return false };
+    if let Some(message) = registry
+        .messages
+        .iter_mut()
+        .find(|m| m.message_id == parent)
+        && message.reply_by_epoch.is_some()
+        && message.reply_sent_at_epoch.is_none()
+    {
+        message.reply_sent_at_epoch = Some(now);
+        return true;
+    }
+    false
 }
 
 pub(crate) fn parse_expiry(value: Option<&str>) -> Result<i64, CliError> {
@@ -1766,6 +1821,8 @@ mod tests {
             state: state.to_string(),
             revision: 0,
             reply_to: None,
+            reply_by_epoch: None,
+            reply_sent_at_epoch: None,
             reply_depth: 0,
             created_at: String::new(),
             created_at_epoch: NOW - 3_600,
@@ -2076,6 +2133,8 @@ mod tests {
             state: "unread".to_string(),
             revision: 1,
             reply_to: None,
+            reply_by_epoch: None,
+            reply_sent_at_epoch: None,
             reply_depth: 0,
             created_at: "time".to_string(),
             created_at_epoch: 0,

@@ -110,7 +110,7 @@ pub(crate) fn deliver_claude_structured_prompt_locked(
         &record,
         "answer the dialog with send --key, then resubmit the prompt",
     )?;
-    send_guard::require_empty_composer(&record, tmux_bin)?;
+    send_guard::require_empty_composer(context, &record, tmux_bin)?;
     codex_account::ensure_input_allowed(&record)?;
     auto_resume::cancel_for_manual_input_locked(
         context,

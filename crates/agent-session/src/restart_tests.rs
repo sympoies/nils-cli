@@ -361,6 +361,7 @@ fn queued_notification(
             capability_file: Some(PathBuf::from(capability)),
             idempotency_key: "restart-fixture-note".to_string(),
             reply_to: None,
+            reply_by: None,
             expires_in: None,
             format: nils_common::cli_contract::OutputFormat::Json,
             category: None,

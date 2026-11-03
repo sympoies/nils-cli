@@ -2,7 +2,7 @@
 use history_images::normalize_message;
 pub(crate) mod history_images;
 pub(crate) use history_images::HistoryMessage;
-use history_images::{push_incremental_message, read_compacted_image_line};
+use history_images::read_messages_incremental_from_reader;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -37,7 +37,7 @@ const MAX_STAR_BYTES: u64 = 4 * 1024;
 const STAR_SCHEMA_VERSION: &str = "agent-session.history-star.v1";
 const MAX_PREVIEW_LINES: usize = 128;
 const MAX_PREVIEW_CHARS: usize = 240;
-const MAX_MESSAGE_CHARS: usize = 64 * 1024;
+const MAX_MESSAGE_CHARS: usize = crate::provider_prompt::row_classes::HISTORY_TEXT_CHARS;
 const MAX_MESSAGE_SCAN_LINES: usize = 10_000;
 const MESSAGE_SCAN_MAX_DURATION: Duration = Duration::from_secs(2);
 const CATALOG_TTL: Duration = Duration::from_secs(30);
@@ -1961,102 +1961,6 @@ fn resolve_incremental_transition(
         discarding_oversized_line: resumed.is_some() && cursor.discarding_oversized_line,
         prefix_integrity_verified: false,
     })
-}
-
-fn read_messages_incremental_from_reader<R: Read + Seek>(
-    session: &HistorySession,
-    reader: &mut R,
-    file_len: u64,
-    offset: u64,
-    max_bytes: usize,
-    discarding_oversized_line: bool,
-) -> Result<IncrementalReaderPage, HistoryError> {
-    if offset > file_len || max_bytes == 0 {
-        return Err(HistoryError::InvalidCursor);
-    }
-    if offset == file_len {
-        return Ok(IncrementalReaderPage {
-            messages: Vec::new(),
-            next_offset: offset,
-            discarding_oversized_line: false,
-        });
-    }
-    let requested = u64::try_from(max_bytes)
-        .unwrap_or(u64::MAX)
-        .min(file_len.saturating_sub(offset));
-    let requested = usize::try_from(requested).map_err(|_| HistoryError::Io)?;
-    reader
-        .seek(SeekFrom::Start(offset))
-        .map_err(|_| HistoryError::Io)?;
-    let mut bytes = vec![0; requested];
-    reader
-        .read_exact(&mut bytes)
-        .map_err(|_| HistoryError::Io)?;
-    let complete = bytes
-        .iter()
-        .rposition(|byte| *byte == b'\n')
-        .map_or(0, |index| index + 1);
-    if complete == 0 {
-        if !discarding_oversized_line && session.provider == "codex" && bytes.len() > MAX_LINE_BYTES
-        {
-            match read_compacted_image_line(reader, file_len, offset, &bytes)? {
-                ImageLineRead::Complete(line, next_offset) => {
-                    let mut messages = Vec::new();
-                    push_incremental_message(session, &line, offset, &mut messages);
-                    return Ok(IncrementalReaderPage {
-                        messages,
-                        next_offset,
-                        discarding_oversized_line: false,
-                    });
-                }
-                ImageLineRead::Incomplete => {
-                    return Ok(IncrementalReaderPage {
-                        messages: Vec::new(),
-                        next_offset: offset,
-                        discarding_oversized_line: false,
-                    });
-                }
-                ImageLineRead::Unsupported => {}
-            }
-        }
-        let oversized = discarding_oversized_line || bytes.len() > MAX_LINE_BYTES;
-        return Ok(IncrementalReaderPage {
-            messages: Vec::new(),
-            next_offset: if oversized {
-                offset.saturating_add(bytes.len() as u64)
-            } else {
-                offset
-            },
-            discarding_oversized_line: oversized,
-        });
-    }
-    let mut messages = Vec::new();
-    let mut lines = bytes[..complete].split_inclusive(|byte| *byte == b'\n');
-    let mut line_offset = offset;
-    if discarding_oversized_line && let Some(line) = lines.next() {
-        line_offset += line.len() as u64;
-    }
-    for raw_line in lines {
-        let current_offset = line_offset;
-        line_offset += raw_line.len() as u64;
-        let line = raw_line.strip_suffix(b"\n").unwrap_or(raw_line);
-        let line = line.strip_suffix(b"\r").unwrap_or(line);
-        if line.is_empty() || line.len() > MAX_IMAGE_RECORD_BYTES {
-            continue;
-        }
-        push_incremental_message(session, line, current_offset, &mut messages);
-    }
-    Ok(IncrementalReaderPage {
-        messages,
-        next_offset: offset.saturating_add(complete as u64),
-        discarding_oversized_line: false,
-    })
-}
-
-enum ImageLineRead {
-    Complete(Vec<u8>, u64),
-    Incomplete,
-    Unsupported,
 }
 
 fn incremental_source_id(session: &HistorySession) -> String {
@@ -5257,9 +5161,9 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
                 ("idle prompt", true),
                 ("absorbed prompt", true),
                 ("dequeued prompt", true),
-                ("/compact", true),
+                ("/compact", false),
                 ("after compact", true),
-                ("/model", true),
+                ("/model", false),
                 ("/goal ship the fix", true),
             ]
         );

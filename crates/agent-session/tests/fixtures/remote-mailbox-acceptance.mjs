@@ -10,6 +10,7 @@ import { createServer } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 import { writeHeartbeat } from './remote-mailbox-heartbeat.mjs';
 import { assertHeartbeatWriterBoundary } from './remote-mailbox-heartbeat.test.mjs';
+import { replyDeadlineAcceptance } from './remote-mailbox-reply-deadline.mjs';
 
 const index = process.argv.indexOf('--agent-session-bin');
 assert(index >= 0 && process.argv[index + 1], 'requires --agent-session-bin exact binary');
@@ -164,12 +165,13 @@ const spoofed=await fetch(alpha.url+`/sessions/${alpha.session}/messages/remote/
 blockRelay=true;const inFlight=await send(alpha,beta,'network-lock');await waitFor(()=>relayBlocked,'relay held in HTTP fixture');
 await cli(alpha,['inbox','--session',alpha.session]);assert(relayBlocked,'network I/O must not hold registry lock: the inbox read must finish while the relay request is still in flight');blockRelay=false;relayReleases.splice(0).forEach(release=>release());await delivered(alpha,inFlight.message_id);checks.push('network-await-holds-no-registry-lock');
 const original=await inspect
-(beta,initial.message_id,'response-loss');assert.equal(original.sender.machine,'alpha');assert.equal(original.sender.session_incarnation,alpha.incarnation);
+(beta,initial.message_id,'response-loss');assert(!Object.hasOwn(initial,'reply_by'));assert(!Object.hasOwn(original,'reply_by'));assert.equal(original.sender.machine,'alpha');assert.equal(original.sender.session_incarnation,alpha.incarnation);
   const replied=await cli(beta,['reply','--session',beta.session,'--message',initial.message_id,'--if-revision',String(original.revision),'--body-file',bodyFile('reply','reply'),'--idempotency-key','reply-0001']);
   await delivered(beta,replied.message_id);const shownReply=await inspect(alpha,replied.message_id,'reply');
   assert.equal(shownReply.reply_to,initial.message_id);assert.equal(JSON.parse(readFileSync(join(alpha.root,'coordination','registry.json'),'utf8')).messages.find(m=>m.message_id===replied.message_id).reply_depth,1);
   const replyReplay=await cli(beta,['reply','--session',beta.session,'--message',initial.message_id,'--if-revision',String(original.revision),'--body-file',bodyFile('reply','reply'),'--idempotency-key','reply-0001']);assert.equal(replyReplay.message_id,replied.message_id);
 checks.push('bidirectional-reply-show-status');
+await replyDeadlineAcceptance({alpha,beta,cli,bodyFile,delivered,inspect,checks});
   // Source -> coordinator -> third recipient: no category loss or source consumption.
   const categoryBody=bodyFile('category-progress','category forwarding body');
   const categorySend=['send','--from',alpha.session,'--to-machine',beta.machine,'--to',beta.session,'--body-file',categoryBody,'--category','progress','--idempotency-key','category-progress-0001'];

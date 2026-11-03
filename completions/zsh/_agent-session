@@ -987,6 +987,7 @@ _arguments "${_arguments_options[@]}" : \
 '--capability-file=[Private capability file; defaults to AGENT_SESSION_CAPABILITY_FILE]:PATH:_files' \
 '--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
 '--reply-to=[]:REPLY_TO:_default' \
+'--reply-by=[Request a reply within 1 second to 7 days (for example 1h)]:DURATION:_default' \
 '--expires-in=[]:DURATION:_default' \
 '--format=[]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \

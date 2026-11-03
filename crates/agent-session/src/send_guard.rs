@@ -18,6 +18,7 @@ const POST_PASTE_OBSERVATION_RETRY_INTERVAL: Duration = Duration::from_millis(50
 
 mod clear;
 mod composer;
+pub(crate) mod drafts;
 pub(crate) use composer::require_empty_composer;
 mod key;
 mod observation;
@@ -115,16 +116,19 @@ impl Admission<'_> {
         self.idle(stage)?;
         if self.args.require_empty_composer || self.verify_composer || pasted_text.is_some() {
             let target = format!("{}:0.0", self.record.tmux_session);
-            let input = self
-                .observe_composer(&target, pasted_text, stage)?
-                .ok_or_else(|| {
-                    self.refusal(
-                        "send-composer-unobservable",
-                        "composer content cannot be observed exactly",
-                        "empty_composer",
-                        stage,
-                    )
-                })?;
+            let observed = self.observe_composer(&target, pasted_text, stage)?;
+            let stale = self.args.require_empty_composer
+                && pasted_text.is_none()
+                && stage == "admission"
+                && drafts::observe(self.context, self.record, observed.as_deref())?;
+            let input = observed.ok_or_else(|| {
+                self.refusal(
+                    "send-composer-unobservable",
+                    "composer content cannot be observed exactly",
+                    "empty_composer",
+                    stage,
+                )
+            })?;
             if let Some(expected) = pasted_text {
                 if !send_submit::composer_holds(&self.record.agent, &input, expected) {
                     return Err(self.refusal(
@@ -134,7 +138,10 @@ impl Admission<'_> {
                         stage,
                     ));
                 }
-            } else if self.args.require_empty_composer && !input.is_empty() {
+            } else if self.args.require_empty_composer
+                && !input.is_empty()
+                && !(stale && drafts::clear(self, &input)?)
+            {
                 return Err(self.refusal(
                     "send-composer-not-empty",
                     "composer contains a draft",

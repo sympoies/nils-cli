@@ -58,6 +58,7 @@ fn local_notification_policy_stores_progress_without_a_generation() {
             )),
             idempotency_key: "local-policy-progress".into(),
             reply_to: None,
+            reply_by: None,
             expires_in: None,
             category: Some(MessageCategory::Progress),
             format: OutputFormat::Json,

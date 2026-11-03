@@ -21,6 +21,7 @@ const MANAGED_ENV: &[&str] = &[
     "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
     "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER",
     "AGENT_SESSION_TOKEN",
+    "AGENT_SESSION_STALE_DRAFT_SECONDS",
 ];
 
 const VALID_TOML: &str = r#"
@@ -679,3 +680,6 @@ fn provider_parameters_that_mention_tokens_are_not_secrets() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert_eq!(envelope(&output)["data"]["retitle"]["source"], "file");
 }
+
+#[path = "serve_config/stale_draft.rs"]
+mod stale_draft;

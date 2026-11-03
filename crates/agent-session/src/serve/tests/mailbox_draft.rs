@@ -75,13 +75,19 @@ elif command == 'send-keys' and args[-1] == 'Delete':
     prompt = (root / 'buffer').read_text()
     if text.startswith(prompt): (root / 'composer').write_text(text[len(prompt):])
 elif command == 'send-keys' and args[-1] == 'C-a': (root / 'cursor-x').write_text('2')
-elif command == 'send-keys' and args[-1] == 'Right': (root / 'cursor-x').write_text(str(int((root / 'cursor-x').read_text()) + int(args[-2])))
+elif command == 'send-keys' and args[-2:] == ['Right', 'Left']:
+    end = 2 + len((root / 'composer').read_text())
+    (root / 'cursor-x').write_text(str(max(2, min(end, int((root / 'cursor-x').read_text()) + 1) - 1)))
+elif command == 'send-keys' and args[-1] == 'Right': (root / 'cursor-x').write_text(str(min(2 + len((root / 'composer').read_text()), int((root / 'cursor-x').read_text()) + int(args[-2]))))
 elif command == 'send-keys' and args[-1] == 'BSpace':
     text = (root / 'composer').read_text()
     count = int(args[-2])
     cursor = int((root / 'cursor-x').read_text()) - 2
     (root / 'composer').write_text(text[:max(0, cursor-count)] + text[cursor:])
 elif command == 'capture-pane':
+    if (root / 'edit-after-stash').exists() and (root / 'sessions/beta/drafts/saved').exists():
+        (root / 'composer').write_text('owner  draft')
+        (root / 'edit-after-stash').unlink()
     if (root / 'capture-unavailable').exists() or ((root / 'capture-unavailable-after-enter').exists() and (root / 'submissions').exists()): sys.exit(1)
     text = (root / 'composer').read_text()
     if (root / 'unknown-layout-after-enter').exists() and (root / 'submissions').exists():
@@ -97,7 +103,8 @@ elif command == 'capture-pane':
     else: print('› ' + text + '\n\n  status')
     if 'display-message' in args:
         x = int((root / 'cursor-x').read_text()) if (root / 'cursor-x').exists() else 2
-        print(f'{x} 1')
+        y = 1 if (root / 'provider').read_text() == 'claude' else 0
+        print(f'{x} {y}')
 elif command != 'delete-buffer': sys.exit(1)
 "#).expect("tmux");
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).expect("permissions");
@@ -802,4 +809,8 @@ async fn mailbox_wake_accepts_verified_runtime_exit_after_enter() {
 
 mod notices {
     include!("mailbox_notice_terminal.rs");
+}
+
+mod stale_drafts {
+    include!("mailbox_draft/stale_drafts.rs");
 }
