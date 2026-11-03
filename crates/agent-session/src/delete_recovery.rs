@@ -1247,18 +1247,12 @@ mod tests {
                 .unwrap_err();
         child.wait().unwrap();
         let error = session_termination_error(&record, reason, SessionTerminationOperation::Delete);
-        assert!(
-            error.0.message.contains(&format!("pid {pid}")),
-            "{}",
-            error.0.message
-        );
+        assert!(error.0.message.contains(&format!("pid {pid}")));
         assert!(
             error
                 .0
                 .message
-                .contains("later cgroup: unknown (no verified mount provenance)"),
-            "{}",
-            error.0.message
+                .contains("later cgroup: unknown (no verified mount provenance)")
         );
     }
 
@@ -1293,20 +1287,52 @@ mod tests {
                 .unwrap_err();
         let _stopped = transition.join().unwrap();
         let error = session_termination_error(&record, reason, SessionTerminationOperation::Delete);
-        assert!(
-            error.0.message.contains("tmux verification: present"),
-            "{}",
-            error.0.message
+        assert!(error.0.message.contains("tmux verification: present"));
+        assert!(error.0.message.contains("later tmux verification: stopped"));
+        assert!(error.0.message.contains("later cgroup: unknown"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn refusal_reports_boundary_stopped_after_earlier_survivor() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = crate::tests::test_context(tmp.path());
+        let id = crate::tests::create_test_record_id(&context, AgentKind::Codex, None, None);
+        let record = load_session_record(&context, &id).unwrap();
+        let tmux = tmp.path().join("tmux-fixture");
+        let stopped = crate::tmux_probe_fixture::install_status(
+            &tmux,
+            crate::tmux_probe_fixture::Status::Stopped,
         );
+        let transition = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            drop(stopped);
+        });
+        let mut child = std::process::Command::new("sleep")
+            .arg("0.4")
+            .spawn()
+            .unwrap();
+        let pid = child.id() as libc::pid_t;
+        let current = crate::read_linux_process_identity(pid).unwrap().unwrap();
+        let identity: crate::TmuxRuntimeIdentity = serde_json::from_value(json!({
+            "session_id": "$91", "pane_id": "%91", "pane_pid": pid,
+            "process_session_id": 2000000000,
+            "process_session_members": [{"pid": pid, "start_time": current.start_time}]
+        }))
+        .unwrap();
+        let reason =
+            crate::verify_stopped_tmux_runtime(&tmux, "fixture", &identity, Duration::from_secs(1))
+                .unwrap_err();
+        transition.join().unwrap();
+        child.wait().unwrap();
+        let error = session_termination_error(&record, reason, SessionTerminationOperation::Delete);
+        assert!(error.0.message.contains(&format!("pid {pid}")));
+        assert!(error.0.message.contains("later session: stopped"));
         assert!(
-            error.0.message.contains("later tmux verification: stopped"),
-            "{}",
-            error.0.message
-        );
-        assert!(
-            error.0.message.contains("later cgroup: unknown"),
-            "{}",
-            error.0.message
+            error
+                .0
+                .message
+                .contains("later tmux verification: unreadable")
         );
     }
 

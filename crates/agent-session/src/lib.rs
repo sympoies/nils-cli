@@ -10507,7 +10507,7 @@ fn verify_stopped_tmux_runtime(
                         None,
                     ));
                 }
-                if process_status == ProcessGroupStatus::Unknown
+                if process_status != ProcessGroupStatus::Running
                     && let Some(latest) = observation
                 {
                     prior = prior.followed_by(latest);
@@ -10516,7 +10516,7 @@ fn verify_stopped_tmux_runtime(
             } else if let (true, Some(mut prior)) =
                 (observed_tmux_stopped, observed_process_running)
             {
-                if process_status == ProcessGroupStatus::Unknown
+                if process_status != ProcessGroupStatus::Running
                     && let Some(latest) = observation
                 {
                     prior = prior.followed_by(latest);

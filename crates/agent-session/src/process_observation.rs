@@ -218,7 +218,13 @@ pub(super) fn session_probe(identity: &TmuxRuntimeIdentity, session: libc::pid_t
         }
     }
     match linux_process_session_members(session) {
-        Ok(members) if members.is_empty() => (ProcessGroupStatus::Stopped, None),
+        Ok(members) if members.is_empty() => result(
+            ProcessGroupStatus::Stopped,
+            "session",
+            "stopped",
+            Some(session),
+            None,
+        ),
         Ok(members) => (
             ProcessGroupStatus::Running,
             Some(
@@ -290,7 +296,7 @@ pub(super) fn cgroup(
         Ok(metadata) => metadata,
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
             return if linux_cgroup_absence_is_trusted(identity, root) {
-                (ProcessGroupStatus::Stopped, None)
+                result(ProcessGroupStatus::Stopped, "cgroup", "stopped", None, None)
             } else {
                 unknown("unknown (no verified mount provenance)")
             };
@@ -308,7 +314,7 @@ pub(super) fn cgroup(
         let (name, value) = line.split_once(' ')?;
         (name == "populated").then_some(value)
     }) {
-        Some("0") => (ProcessGroupStatus::Stopped, None),
+        Some("0") => result(ProcessGroupStatus::Stopped, "cgroup", "stopped", None, None),
         Some("1") => result(ProcessGroupStatus::Running, "cgroup", "present", None, None),
         _ => unknown("events invalid"),
     }
