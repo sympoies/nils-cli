@@ -457,7 +457,15 @@ fn guarded_input(
                 )
                 .is_ok()
         },
-        || crate::send_tmux_key(tmux_bin, &target, SpecialKey::Enter),
+        || {
+            crate::send_guard::response::watch(
+                context,
+                record,
+                tmux_bin,
+                crate::send_guard::response::Operation::Submit,
+                || crate::send_tmux_key(tmux_bin, &target, SpecialKey::Enter),
+            )
+        },
     )
     .map_err(|_| TerminalNotificationStartError::Unknown)?;
     match report.outcome {
