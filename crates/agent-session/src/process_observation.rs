@@ -133,6 +133,7 @@ impl Observation {
         }
         text
     }
+    #[cfg(target_os = "linux")]
     pub(super) fn in_session(mut self, id: libc::pid_t) -> Self {
         self.boundary_id = Some(id);
         self
