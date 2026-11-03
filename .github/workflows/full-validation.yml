@@ -310,6 +310,26 @@ jobs:
       - name: Install zsh + ripgrep + tmux + bubblewrap
         run: sudo apt-get update && sudo apt-get install -y zsh ripgrep tmux bubblewrap
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      # Keep identical to the copy in the test job.
+      - name: Provision systemd user scopes
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            # Ubuntu 24.04 denies capabilities inside unprivileged user namespaces
+            # by default; this ephemeral runner must exercise bubblewrap itself.
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          uid="$(id -u)"
+          sudo loginctl enable-linger "${USER}"
+          sudo systemctl start "user@${uid}.service"
+          echo "XDG_RUNTIME_DIR=/run/user/${uid}" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus" >> "$GITHUB_ENV"
+          test -S "/run/user/${uid}/systemd/private"
+
       - name: Test isolation guard
         run: bash scripts/ci/test-env-isolation-guard.sh
 
