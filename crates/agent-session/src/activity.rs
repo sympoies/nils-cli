@@ -108,15 +108,9 @@ const CODEX_FORWARD_TIMEOUT: Duration = Duration::from_secs(2);
 const CODEX_COMPLETION_RETRY_TIMEOUT: Duration = Duration::from_secs(5);
 const RUNTIME_UNHEALTHY_LOCK_TIMEOUT: Duration = Duration::from_millis(250);
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum TurnPhase {
-    Starting,
-    Working,
-    Waiting,
-    NeedsInput,
-    Unknown,
-}
+#[path = "activity/turn_phase.rs"]
+mod turn_phase;
+pub use turn_phase::TurnPhase;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
