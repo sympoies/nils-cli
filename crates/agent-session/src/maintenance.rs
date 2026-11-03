@@ -1005,21 +1005,29 @@ fn maintenance_failure_error(
 ) -> CliError {
     let kind = match reason {
         SessionTerminationFailure::GracefulShutdownIncomplete
-        | SessionTerminationFailure::StillRunning => "session_still_running",
-        SessionTerminationFailure::ProcessStillRunning => "process_boundary_live",
+        | SessionTerminationFailure::StillRunning
+        | SessionTerminationFailure::ObservedTmuxRunning(_) => "session_still_running",
+        SessionTerminationFailure::ProcessStillRunning
+        | SessionTerminationFailure::ObservedProcessRunning(_) => "process_boundary_live",
         SessionTerminationFailure::RuntimeIdentityChanged
         | SessionTerminationFailure::RuntimeIdentityMismatch
         | SessionTerminationFailure::ProcessSessionMemberCgroupMismatch => {
             "runtime_identity_changed"
         }
         SessionTerminationFailure::RuntimeIdentityUnavailable
-        | SessionTerminationFailure::ProcessIdentityUnavailable => "runtime_identity_unavailable",
+        | SessionTerminationFailure::ProcessIdentityUnavailable
+        | SessionTerminationFailure::ObservedProcessUnavailable(_) => {
+            "runtime_identity_unavailable"
+        }
         SessionTerminationFailure::KillFailed
         | SessionTerminationFailure::KillTimeout
         | SessionTerminationFailure::KillError => "unknown",
         SessionTerminationFailure::VerificationFailed
         | SessionTerminationFailure::TmuxStatusUnavailable
-        | SessionTerminationFailure::ProcessStatusUnavailable => "runtime_identity_unavailable",
+        | SessionTerminationFailure::ProcessStatusUnavailable
+        | SessionTerminationFailure::ObservedProcessStatusUnavailable(_) => {
+            "runtime_identity_unavailable"
+        }
     };
     safe_maintenance_failure(
         &record.id,
@@ -1030,6 +1038,7 @@ fn maintenance_failure_error(
             SessionTerminationFailure::VerificationFailed
                 | SessionTerminationFailure::TmuxStatusUnavailable
                 | SessionTerminationFailure::ProcessStatusUnavailable
+                | SessionTerminationFailure::ObservedProcessStatusUnavailable(_)
         ) && reason.retryable(),
     )
 }

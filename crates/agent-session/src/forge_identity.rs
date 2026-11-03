@@ -7,7 +7,12 @@ use nils_common::forge_identity::{
 use serde_json::{Value, json};
 
 pub(crate) fn error(error: identity::Error) -> CliError {
-    CliError::data(error.code, "forge launch binding refused", None)
+    let message = if error.code == "identity_session_binding_missing" {
+        "session has no forge launch binding"
+    } else {
+        "forge launch binding refused"
+    };
+    CliError::data(error.code, message, None)
 }
 pub(crate) fn context_of(record: &SessionRecord) -> Result<Option<LaunchContext>, CliError> {
     let Some(value) = record
