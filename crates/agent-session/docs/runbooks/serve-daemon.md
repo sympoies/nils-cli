@@ -476,6 +476,7 @@ the JSON-in-environment values above. The extension selects the syntax:
 ```toml
 schema_version = "agent-session.serve-config.v1"
 stale_draft_seconds = 600
+unresponsive_seconds = 4
 
 [path]
 append = ["/opt/tools/bin"]
@@ -551,6 +552,7 @@ whitespace-only variable counts as unset, as it does without a config file.
 | `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER` | `[claude_account_broker] argv` | The environment value replaces the whole table, with a warning. |
 | `AGENT_SESSION_AUTO_RESUME_DEFAULT_POLICY` | `[auto_resume]` | The environment value (`wait_for_reset` or `next_account_then_resume`; anything else leaves the default off) replaces the whole table, with a warning. |
 | `AGENT_SESSION_STALE_DRAFT_SECONDS` | `stale_draft_seconds` | Unsigned seconds; environment wins with a warning. Default 600; 0 disables [stale-draft fallback](../specs/stale-drafts-v1.md). |
+| `AGENT_SESSION_UNRESPONSIVE_SECONDS` | `unresponsive_seconds` | Positive integer seconds; environment wins with a warning. Default 4, matching the existing submit observation budget. See [unresponsive pane observation](../specs/stale-drafts-v1.md#unresponsive-pane-observation). |
 | `PATH` (a launcher's appended entries) | `[path] append` | File entries are appended after the inherited `PATH`, never before it; entries already present are skipped. |
 
 The ordered, first-id-wins launch-profile merge is the same one a launcher

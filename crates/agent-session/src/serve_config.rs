@@ -31,7 +31,7 @@ use serde::Serialize;
 use serde_json::{Map, Number, Value, json};
 
 use crate::CliError;
-mod stale_draft;
+mod composer_bound;
 
 pub(crate) const CONFIG_SCHEMA_VERSION: &str = "agent-session.serve-config.v1";
 const ENVELOPE_COMMAND: &str = "serve-config";
@@ -53,6 +53,7 @@ const ROOT_KEYS: &[&str] = &[
     "claude_account_broker",
     "auto_resume",
     "stale_draft_seconds",
+    "unresponsive_seconds",
     "path",
 ];
 const PATH_KEYS: &[&str] = &["append"];
@@ -163,6 +164,7 @@ struct CheckSummary {
     claude_account_broker: SourceSummary,
     auto_resume: SourceSummary,
     stale_draft: SourceSummary,
+    unresponsive: SourceSummary,
     path: PathSummary,
 }
 
@@ -504,8 +506,20 @@ fn resolve(
         }
     };
 
-    let stale_draft_source = stale_draft::resolve(
+    let stale_draft_source = composer_bound::resolve(
+        "stale_draft_seconds",
+        crate::send_guard::drafts::BOUND_ENV,
+        crate::send_guard::drafts::parse_bound,
         root.get("stale_draft_seconds"),
+        lookup,
+        &mut warnings,
+        &mut assignments,
+    )?;
+    let unresponsive_source = composer_bound::resolve(
+        "unresponsive_seconds",
+        crate::send_guard::response::BOUND_ENV,
+        crate::send_guard::response::parse_bound,
+        root.get("unresponsive_seconds"),
         lookup,
         &mut warnings,
         &mut assignments,
@@ -537,6 +551,9 @@ fn resolve(
             },
             stale_draft: SourceSummary {
                 source: stale_draft_source,
+            },
+            unresponsive: SourceSummary {
+                source: unresponsive_source,
             },
             path: PathSummary {
                 append: path_entries.len(),
@@ -946,6 +963,7 @@ fn render_check(format: OutputFormat, resolved: &ResolvedServeConfig) -> i32 {
                 source(summary.claude_account_broker.source)
             );
             println!("stale_draft: {}", source(summary.stale_draft.source));
+            println!("unresponsive: {}", source(summary.unresponsive.source));
             println!("path.append: {}", summary.path.append);
             for warning in &resolved.warnings {
                 let _ = writeln!(io::stderr(), "warning: {warning}");

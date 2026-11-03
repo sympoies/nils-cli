@@ -80,6 +80,7 @@ elif command == 'send-keys' and args[-2:] == ['Right', 'Left']:
     (root / 'cursor-x').write_text(str(max(2, min(end, int((root / 'cursor-x').read_text()) + 1) - 1)))
 elif command == 'send-keys' and args[-1] == 'Right': (root / 'cursor-x').write_text(str(min(2 + len((root / 'composer').read_text()), int((root / 'cursor-x').read_text()) + int(args[-2]))))
 elif command == 'send-keys' and args[-1] == 'BSpace':
+    if (root / 'ignore-clear').exists(): sys.exit(0)
     text = (root / 'composer').read_text()
     count = int(args[-2])
     cursor = int((root / 'cursor-x').read_text()) - 2
@@ -98,9 +99,10 @@ elif command == 'capture-pane':
             print('unknown pane layout')
             sys.exit(0)
         (root / 'unknown-layout-after-enter').unlink()
+    footer = (root / 'footer').read_text() if (root / 'footer').exists() else 'status'
     if (root / 'provider').read_text() == 'claude':
-        print('────────────────────\n❯\u00a0' + text + '\n────────────────────\n  status')
-    else: print('› ' + text + '\n\n  status')
+        print('────────────────────\n❯\u00a0' + text + '\n────────────────────\n  ' + footer)
+    else: print('› ' + text + '\n\n  ' + footer)
     if 'display-message' in args:
         x = int((root / 'cursor-x').read_text()) if (root / 'cursor-x').exists() else 2
         y = 1 if (root / 'provider').read_text() == 'claude' else 0
@@ -813,4 +815,8 @@ mod notices {
 
 mod stale_drafts {
     include!("mailbox_draft/stale_drafts.rs");
+}
+
+mod unresponsive {
+    include!("mailbox_draft/unresponsive.rs");
 }
