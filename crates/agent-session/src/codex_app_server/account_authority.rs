@@ -1,4 +1,6 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 use super::{
     CONTROL_SUBMIT_TOTAL_TIMEOUT, CliContext, FreshBootstrap, Message, SessionRecord, Value, json,

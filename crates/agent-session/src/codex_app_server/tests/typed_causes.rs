@@ -346,6 +346,9 @@ async fn fresh_thread_start_refuses_unresolved_binding_while_create_owns_record_
     let (mut tui, _) = tokio_tungstenite::client_async("ws://localhost", proxy_stream)
         .await
         .unwrap();
+    // The proxy is up. The initial-binding wait is a 30 s virtual-clock
+    // deadline, so pause time now and let it elapse without real waiting.
+    tokio::time::pause();
     tui.send(Message::Text(
         json!({ "id": 1, "method": "thread/start", "params": {} })
             .to_string()
