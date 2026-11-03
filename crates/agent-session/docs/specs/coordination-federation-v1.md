@@ -47,6 +47,13 @@ The JSON envelope is `agent-session.remote-message.v1`:
 }
 ```
 
+Session-origin v1 and v2 envelopes may include optional `reply_by_epoch`, an
+integer Unix timestamp from 1 to 604800 seconds after `created_at_epoch`, both
+bounds inclusive. The relay preserves it unchanged; delivery never resets the
+deadline. A missing field means no reply deadline. Relay consumers must accept
+the field before a release sends deadlines through them; see the
+[reply deadline contract](coordination-mailbox-v1.md#optional-reply-deadlines).
+
 The destination `POST /coordination/messages/receive/v1` requires both the existing
 operator bearer and a distinct `X-Agent-Session-Relay-Token`. It validates schema,
 body digest, expiry, mailbox quotas, current recipient incarnation and ready

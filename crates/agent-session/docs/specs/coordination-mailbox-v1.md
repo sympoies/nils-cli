@@ -14,7 +14,8 @@ Limits are normative:
 - send rate: 30 messages per sender-recipient pair per minute, burst 10;
 - inbox page: 50 default, 100 maximum;
 - wait: 60 seconds maximum;
-- reply depth: 16 maximum.
+- reply depth: 16 maximum;
+- optional reply deadline: 1 second to 7 days after send.
 
 Message states are `unread`, `read`, `acknowledged`, `expired`, and `deleted`.
 Send, ack, and reply are idempotent. Inbox ordering is `(created_at,
@@ -44,6 +45,48 @@ source path or file contents. Empty, invalid UTF-8, or forbidden-control content
 return `mailbox-body-invalid`, while bodies over 16 KiB return
 `mailbox-body-too-large`. Service submission preserves these codes with
 `retryable: false` recovery metadata.
+
+### Optional reply deadlines
+
+`message send --reply-by <duration>` requests a reply within that duration.
+Use integer seconds or an `s`, `m`, `h`, or `d` suffix (for example `1h`).
+The range is 1 second to 7 days inclusive. Invalid values return usage error
+`mailbox-reply-by-invalid` with the accepted range and an example. The flag
+is independent of message expiry and does not extend its lifetime.
+
+An accepted send stores optional `reply_by_epoch` (Unix seconds), calculated
+once from source send time. Send/inbox/show/wait metadata adds `reply_by`
+(UTC RFC3339) only when a deadline exists. The local HTTP send body and remote
+submission body accept optional `reply_by` with the same duration syntax;
+federation carries the absolute `reply_by_epoch`, so delivery delay never resets
+it. Messages without the flag have no deadline and retain their existing
+behavior and metadata shape. A stored message without `reply_by_epoch` simply
+has no reply deadline.
+
+Relay consumers must accept optional `reply_by_epoch`, validate the same 1-second
+to 7-day range relative to `created_at_epoch`, and forward it unchanged. Relay
+consumer deployment must precede releases that send deadlines through that
+relay. A source/destination fixture with a forwarding relay does not establish
+deployed relay readiness.
+
+An authenticated accepted reply through `reply_to` (including `message reply`)
+records `reply_sent_at_epoch` on the original message. This clears its reply
+obligation durably, even if reply history is subsequently compacted. For remote
+replies, acceptance into the source outbox clears the obligation; delivery
+failures remain visible through the existing source audit. Reading or
+acknowledging a message does not answer it. Forwarding creates a separate
+message and does not transfer or answer the original reply obligation.
+
+After an interrupted registry write, read-only audit recognizes the durable
+accepted outbox reply without sender resubmission. Source writers recover the
+original reply marker before compacting acceptance metadata, preserving
+clearing after compaction.
+
+[`message audit`](mail-audit-v1.md) reports `overdue-reply` on retained destination
+mail strictly after its deadline until a reply is accepted. This includes read,
+acknowledged and expired retained messages. Ordinary retention rules still
+apply. Audit is observational: no automatic nudge, retry, or escalation is
+scheduled for a reply deadline.
 
 ### Same-session resume continuity
 

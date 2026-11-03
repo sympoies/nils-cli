@@ -60,6 +60,10 @@ struct Inbox {
     remote_created_at_epoch: Option<i64>,
     expires_at_epoch: i64,
     #[serde(default)]
+    reply_by_epoch: Option<i64>,
+    #[serde(default)]
+    reply_sent_at_epoch: Option<i64>,
+    #[serde(default)]
     category: Option<MessageCategory>,
     #[serde(default)]
     resume_carry: Option<super::mailbox::ResumeCarry>,
@@ -79,11 +83,15 @@ struct Envelope {
     created_at_epoch: i64,
     expires_at_epoch: i64,
     #[serde(default)]
+    reply_to: Option<String>,
+    #[serde(default)]
     category: Option<MessageCategory>,
 }
 #[derive(Deserialize)]
 struct Outbox {
     envelope: Envelope,
+    #[serde(default)]
+    clears_reply_obligation: bool,
     state: String,
     attempts: u64,
     next_attempt_epoch: i64,
@@ -151,6 +159,10 @@ struct Record {
     sent_at: Option<String>,
     persisted_at: Option<String>,
     expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reply_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replied_at: Option<Option<String>>,
     unread_age_seconds: Option<i64>,
     end_to_end_latency_seconds: Option<i64>,
     mailbox_state: Option<&'static str>,
@@ -354,22 +366,8 @@ fn snapshot_at(
             Ok(c.after)
         })
         .transpose()?;
-    let registry = read::<Registry>(
-        &context.state_dir.join("coordination/registry.json"),
-        nils_common::coordination_projection::MAX_REGISTRY_BYTES,
-    )
-    .and_then(|r| {
-        let Some(r) = r else {
-            return Ok(Registry::default());
-        };
-        if !r.schema_version.is_empty()
-            && super::delegation::registry_version_supported(&r.schema_version)
-        {
-            Ok(r)
-        } else {
-            Err("unsupported")
-        }
-    });
+    // Writers persist reply markers before pruning acceptance metadata. Read
+    // that metadata first, then the registry, to preserve that causal order.
     let journal = read::<Journal>(
         &context
             .state_dir
@@ -395,6 +393,37 @@ fn snapshot_at(
             Err("unsupported")
         }
     });
+    let registry = read::<Registry>(
+        &context.state_dir.join("coordination/registry.json"),
+        nils_common::coordination_projection::MAX_REGISTRY_BYTES,
+    )
+    .and_then(|r| {
+        let Some(r) = r else {
+            return Ok(Registry::default());
+        };
+        if !r.schema_version.is_empty()
+            && super::delegation::registry_version_supported(&r.schema_version)
+        {
+            Ok(r)
+        } else {
+            Err("unsupported")
+        }
+    });
+    let mut accepted_replies = BTreeMap::<String, i64>::new();
+    if let Ok(journal) = &journal {
+        for reply in journal
+            .remote_outbox
+            .iter()
+            .filter(|reply| reply.clears_reply_obligation)
+        {
+            if let Some(parent) = &reply.envelope.reply_to {
+                accepted_replies
+                    .entry(parent.clone())
+                    .and_modify(|at| *at = (*at).min(reply.envelope.created_at_epoch))
+                    .or_insert(reply.envelope.created_at_epoch);
+            }
+        }
+    }
     let partial = registry.is_err() || journal.is_err();
     let receipt_usage = registry
         .as_ref()
@@ -452,6 +481,11 @@ fn snapshot_at(
             }));
             let state = known(&m.state, &["unread", "read", "acknowledged", "expired"]);
             let unread = state == "unread" && m.expires_at_epoch > now;
+            let replied_at = m
+                .reply_sent_at_epoch
+                .into_iter()
+                .chain(accepted_replies.get(&m.message_id).copied())
+                .min();
             let mut row = Record {
                 source: "inbox",
                 message_id: m.message_id.clone(),
@@ -461,6 +495,8 @@ fn snapshot_at(
                 sent_at: time(m.remote_created_at_epoch.or(Some(m.created_at_epoch))),
                 persisted_at: time(Some(m.created_at_epoch)),
                 expires_at: time(Some(m.expires_at_epoch)),
+                reply_by: time(m.reply_by_epoch),
+                replied_at: m.reply_by_epoch.map(|_| time(replied_at)),
                 unread_age_seconds: unread.then(|| age(now, Some(m.created_at_epoch))).flatten(),
                 end_to_end_latency_seconds: m
                     .remote_created_at_epoch
@@ -485,6 +521,9 @@ fn snapshot_at(
                 resume_carry: m.resume_carry.clone(),
                 anomalies: vec![],
             };
+            if m.reply_by_epoch.is_some_and(|deadline| deadline < now) && replied_at.is_none() {
+                row.anomalies.push("overdue-reply");
+            }
             if row
                 .unread_age_seconds
                 .is_some_and(|age| age > query.older_than as i64)
@@ -565,6 +604,8 @@ fn snapshot_at(
                 sent_at: time(o.created_at_epoch),
                 persisted_at: time(o.persisted_at_epoch),
                 expires_at: time(Some(o.expires_at_epoch)),
+                reply_by: None,
+                replied_at: None,
                 unread_age_seconds: None,
                 end_to_end_latency_seconds: o
                     .persisted_at_epoch
@@ -915,3 +956,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "audit_reply_deadline_tests.rs"]
+mod reply_deadline_tests;
