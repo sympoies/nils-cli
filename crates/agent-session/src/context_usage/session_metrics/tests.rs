@@ -386,3 +386,37 @@ fn invalid_oversized_and_nonregular_native_receipts_cannot_authorize_stale_conte
         Metric::unknown(Reason::IdentityChanged)
     );
 }
+
+#[test]
+fn codex_header_uses_verified_descriptor_across_ancestor_swap() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = history(tmp.path(), "codex");
+    let record = record(tmp.path(), "codex");
+    let source = ProviderPromptTail::resolve_source(&record).unwrap();
+    let before = fingerprint(&fs::symlink_metadata(&path).unwrap()).unwrap();
+    let file = File::open(&path).unwrap();
+    assert!(fingerprint(&file.metadata().unwrap()).unwrap() == before);
+
+    // Move only an ancestor: the authoritative file's inode and timestamps
+    // remain intact while reopening the original path yields another header.
+    let directory = path.parent().unwrap();
+    let retained = tmp.path().join("retained-sessions");
+    fs::rename(directory, &retained).unwrap();
+    let substitute = history(tmp.path(), "codex");
+    let replacement = fs::read_to_string(&substitute)
+        .unwrap()
+        .replace("2026-01-01", "2025-01-01");
+    fs::write(&substitute, format!("{replacement}{{}}\n{{}}\n")).unwrap();
+
+    let facts = read_verified_file(&source, &record, file, before, || {
+        fs::remove_dir_all(directory).unwrap();
+        fs::rename(&retained, directory).unwrap();
+    })
+    .unwrap();
+    assert_eq!(facts.counts.lines, Metric::known(1));
+    assert_eq!(
+        facts.created,
+        Some("2026-01-01T00:00:00Z".parse().unwrap()),
+        "header creation must come from the same verified descriptor as the counts"
+    );
+}

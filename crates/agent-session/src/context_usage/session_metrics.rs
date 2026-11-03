@@ -2,6 +2,7 @@
 use std::{
     fs,
     fs::File,
+    io::Seek,
     path::Path,
     time::{Duration, Instant, SystemTime},
 };
@@ -263,7 +264,7 @@ fn read_file(
     use std::os::unix::fs::OpenOptionsExt;
     let path = source.path();
     let before = fingerprint(&fs::symlink_metadata(path).map_err(|_| Reason::SourceUnavailable)?)?;
-    let mut file = fs::OpenOptions::new()
+    let file = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
@@ -271,12 +272,24 @@ fn read_file(
     if fingerprint(&file.metadata().map_err(|_| Reason::SourceUnavailable)?)? != before {
         return Err(Reason::IdentityChanged);
     }
+    read_verified_file(source, record, file, before, after_scan)
+}
+
+fn read_verified_file(
+    source: &ProviderPromptSource,
+    record: &SessionRecord,
+    mut file: File,
+    before: Fingerprint,
+    after_scan: impl FnOnce(),
+) -> Result<FileFacts, Reason> {
+    let path = source.path();
     // Reuse the existing bounded identity/header owners once for this snapshot.
     let resume = record.provider_resume.as_ref().ok_or(Reason::NotBound)?;
     let created = if record.agent == "codex" {
-        let meta = nils_provider_resume::read_codex_resumable_session_meta(path)
+        let meta = nils_provider_resume::read_codex_resumable_session_meta_from_file(&mut file)
             .filter(|meta| meta.session_id == resume.session_id)
             .ok_or(Reason::IdentityChanged)?;
+        file.rewind().map_err(|_| Reason::SourceUnavailable)?;
         Some(Timestamp::try_from(meta.created_at).map_err(|_| Reason::InvalidTimestamp)?)
     } else {
         source.validated_path().ok_or(Reason::IdentityChanged)?;

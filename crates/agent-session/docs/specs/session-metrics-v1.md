@@ -66,7 +66,11 @@ sources are excluded. Incomplete discovery cannot establish uniqueness.
 
 Reject symlinks and nonregular files; compare the opened descriptor and path,
 and compare file identity, size and modification/change timestamps before and
-after reading. Re-read the managed creation, runtime generation, current
+after reading. Codex header facts use that verified descriptor through the shared
+provider header reader, then the descriptor is rewound for the complete count pass.
+The descriptor supplies both header-derived age facts and counts.
+
+Re-read the managed creation, runtime generation, current
 conversation, configuration and profile binding before returning. An unresolved
 native transition produces unknown and a GET never repairs its binding.
 The native observation receipt read is capped at 16 KiB.
