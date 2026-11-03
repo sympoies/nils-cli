@@ -173,6 +173,8 @@ pub(crate) struct Envelope<F = Address> {
     pub created_at_epoch: i64,
     pub expires_at_epoch: i64,
     pub reply_to: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_by_epoch: Option<i64>,
     pub reply_depth: u8,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<crate::cli::MessageCategory>,
@@ -191,6 +193,7 @@ impl<F: Into<Origin>> Envelope<F> {
             created_at_epoch: self.created_at_epoch,
             expires_at_epoch: self.expires_at_epoch,
             reply_to: self.reply_to,
+            reply_by_epoch: self.reply_by_epoch,
             reply_depth: self.reply_depth,
             category: self.category,
             forwarding: self.forwarding,
@@ -249,6 +252,8 @@ impl QuotaRefusal {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Outbox {
     pub envelope: Envelope<Origin>,
+    #[serde(default, skip_serializing_if = "super::notification_policy::is_false")]
+    pub clears_reply_obligation: bool,
     pub request_digest: String,
     pub idempotency_key: String,
     pub state: String,
@@ -275,6 +280,7 @@ impl Outbox {
             sender: self.envelope.from.clone(),
             recipient: self.envelope.to.clone(),
             expires_at_epoch: self.envelope.expires_at_epoch,
+            reply_by_epoch: self.envelope.reply_by_epoch,
             created_at_epoch: Some(self.envelope.created_at_epoch),
             last_attempt_at_epoch: self.last_attempt_at_epoch,
             state_changed_at_epoch: self.state_changed_at_epoch,
@@ -309,6 +315,8 @@ struct Retained {
     recipient: Address,
     expires_at_epoch: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    reply_by_epoch: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     created_at_epoch: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_attempt_at_epoch: Option<i64>,
@@ -329,6 +337,9 @@ struct Retained {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     forwarding: Option<super::forwarding::Provenance>,
 }
+#[path = "remote_reply_obligation.rs"]
+mod reply_obligation;
+
 #[path = "remote_journal_version.rs"]
 mod journal_version;
 
@@ -512,6 +523,8 @@ pub(crate) struct Submit {
     pub idempotency_key: String,
     pub reply_to: Option<String>,
     pub expires_in: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_by: Option<String>,
     pub reply_revision: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_recipient_incarnation: Option<String>,
@@ -782,6 +795,7 @@ where
         body: args.body,
         idempotency_key: args.idempotency_key,
         reply_to: None,
+        reply_by: None,
         expires_in: args.expires_in,
         reply_revision: None,
         expected_recipient_incarnation: args.expected_recipient_incarnation,
@@ -812,6 +826,7 @@ where
     F: Fn() -> Result<(), CliError>,
 {
     authorize()?;
+    let reply_by_secs = super::mailbox::parse_reply_by(args.reply_by.as_deref())?;
     let principal = origin.principal();
     let session = principal.as_str();
     let source_incarnation = origin.generation().to_string();
@@ -832,7 +847,8 @@ where
             || args.category.is_some()
             || args.reply_to.is_some()
             || args.reply_revision.is_some()
-            || args.expires_in.is_some())
+            || args.expires_in.is_some()
+            || args.reply_by.is_some())
     {
         return Err(invalid());
     }
@@ -868,7 +884,10 @@ where
                     None,
                 ));
             }
-            return Ok(projection(&item));
+            let outcome = projection(&item);
+            drop(locked);
+            reply_obligation::replay(context, args.reply_to.as_deref())?;
+            return Ok(outcome);
         }
     }
     let forward_source = if let Some(request) = &args.forward {
@@ -884,126 +903,132 @@ where
     } else {
         None
     };
-    let (destination, reply_depth) = if let Some(parent_id) = args.reply_to.as_deref() {
-        let locked = lock_registry(context)?;
-        let parent = locked
-            .registry
-            .messages
-            .iter()
-            .find(|m| {
-                m.message_id == parent_id
-                    && m.recipient_session_id == session
-                    && m.recipient_incarnation == source_incarnation
-            })
-            .ok_or_else(|| {
-                CliError::data("message-not-found", "reply message does not exist", None)
-            })?;
-        if parent.expires_at_epoch <= now_epoch() || parent.state == "expired" {
-            return Err(CliError::data(
-                "message-expired",
-                "reply message expired",
-                None,
-            ));
-        }
-        if args
-            .reply_revision
-            .is_some_and(|expected| expected != parent.revision)
-        {
-            return Err(CliError::data(
-                "message-revision-conflict",
-                "reply revision changed",
-                None,
-            ));
-        }
-        let sender = sender_address(parent).ok_or_else(invalid)?;
-        if sender.machine != args.to_machine
-            || sender.session_id != args.to_session
-            || parent.reply_depth >= 16
-        {
-            return Err(invalid());
-        }
-        (sender, parent.reply_depth + 1)
-    } else {
-        let discovered = peers_from(config, &origin).inspect_err(|_| {
-            observe_discovery_refusal(context, "peer-discovery-failed");
-        })?;
-        let matching = |peer: &&Value| {
-            peer["machine"] == args.to_machine && peer["session_id"] == args.to_session
-        };
-        let mut peer = discovered["peers"]
-            .as_array()
-            .expect("validated peers")
-            .iter()
-            .filter(matching)
-            .find(|peer| peer["messaging_supported"] == true)
-            .or_else(|| {
-                discovered["peers"]
-                    .as_array()
-                    .expect("validated peers")
-                    .iter()
-                    .find(matching)
-            })
-            .cloned()
-            .ok_or_else(|| {
-                observe_discovery_refusal(context, "recipient-not-discovered");
-                CliError::data(
-                    "remote-recipient-not-discovered",
-                    recipient_not_discovered_message(),
+    let (destination, reply_depth, clears_reply_obligation) =
+        if let Some(parent_id) = args.reply_to.as_deref() {
+            let locked = lock_registry(context)?;
+            let parent = locked
+                .registry
+                .messages
+                .iter()
+                .find(|m| {
+                    m.message_id == parent_id
+                        && m.recipient_session_id == session
+                        && m.recipient_incarnation == source_incarnation
+                })
+                .ok_or_else(|| {
+                    CliError::data("message-not-found", "reply message does not exist", None)
+                })?;
+            if parent.expires_at_epoch <= now_epoch() || parent.state == "expired" {
+                return Err(CliError::data(
+                    "message-expired",
+                    "reply message expired",
                     None,
-                )
+                ));
+            }
+            if args
+                .reply_revision
+                .is_some_and(|expected| expected != parent.revision)
+            {
+                return Err(CliError::data(
+                    "message-revision-conflict",
+                    "reply revision changed",
+                    None,
+                ));
+            }
+            let sender = sender_address(parent).ok_or_else(invalid)?;
+            if sender.machine != args.to_machine
+                || sender.session_id != args.to_session
+                || parent.reply_depth >= 16
+            {
+                return Err(invalid());
+            }
+            (
+                sender,
+                parent.reply_depth + 1,
+                parent.reply_by_epoch.is_some(),
+            )
+        } else {
+            let discovered = peers_from(config, &origin).inspect_err(|_| {
+                observe_discovery_refusal(context, "peer-discovery-failed");
             })?;
-        if peer["messaging_supported"] != true
-            && peer["messaging_unavailable_reason"] == "coordination-unavailable"
-        {
-            observe_discovery_refusal(context, "recipient-coordination-unavailable");
-            let expected = peer["session_incarnation"]
-                .as_str()
-                .ok_or_else(unavailable)?;
-            let refreshed = peers_from(config, &origin)?;
-            let mut exact = refreshed["peers"]
+            let matching = |peer: &&Value| {
+                peer["machine"] == args.to_machine && peer["session_id"] == args.to_session
+            };
+            let mut peer = discovered["peers"]
                 .as_array()
                 .expect("validated peers")
                 .iter()
                 .filter(matching)
-                .filter(|candidate| candidate["session_incarnation"] == expected);
-            peer = exact
-                .clone()
-                .find(|candidate| candidate["messaging_supported"] == true)
-                .or_else(|| exact.next())
+                .find(|peer| peer["messaging_supported"] == true)
+                .or_else(|| {
+                    discovered["peers"]
+                        .as_array()
+                        .expect("validated peers")
+                        .iter()
+                        .find(matching)
+                })
                 .cloned()
-                .ok_or_else(unavailable)?;
+                .ok_or_else(|| {
+                    observe_discovery_refusal(context, "recipient-not-discovered");
+                    CliError::data(
+                        "remote-recipient-not-discovered",
+                        recipient_not_discovered_message(),
+                        None,
+                    )
+                })?;
             if peer["messaging_supported"] != true
                 && peer["messaging_unavailable_reason"] == "coordination-unavailable"
             {
-                return Err(unavailable());
-            }
-        }
-        if peer["messaging_supported"] != true {
-            let reason = match peer["messaging_unavailable_reason"].as_str() {
-                Some("daemon-unsupported") => "recipient-daemon-unsupported",
-                Some("coordination-disabled") => "recipient-coordination-disabled",
-                Some("coordination-unavailable") => "recipient-coordination-unavailable",
-                _ => "recipient-messaging-unsupported",
-            };
-            observe_discovery_refusal(context, reason);
-            return Err(CliError::data(
-                "remote-messaging-unsupported",
-                "discovered remote recipient does not currently support messaging",
-                None,
-            ));
-        }
-        (
-            Address {
-                machine: args.to_machine.clone(),
-                session_id: args.to_session.clone(),
-                session_incarnation: peer["session_incarnation"]
+                observe_discovery_refusal(context, "recipient-coordination-unavailable");
+                let expected = peer["session_incarnation"]
                     .as_str()
-                    .ok_or_else(invalid)?
-                    .into(),
-            },
-            0,
-        )
-    };
+                    .ok_or_else(unavailable)?;
+                let refreshed = peers_from(config, &origin)?;
+                let mut exact = refreshed["peers"]
+                    .as_array()
+                    .expect("validated peers")
+                    .iter()
+                    .filter(matching)
+                    .filter(|candidate| candidate["session_incarnation"] == expected);
+                peer = exact
+                    .clone()
+                    .find(|candidate| candidate["messaging_supported"] == true)
+                    .or_else(|| exact.next())
+                    .cloned()
+                    .ok_or_else(unavailable)?;
+                if peer["messaging_supported"] != true
+                    && peer["messaging_unavailable_reason"] == "coordination-unavailable"
+                {
+                    return Err(unavailable());
+                }
+            }
+            if peer["messaging_supported"] != true {
+                let reason = match peer["messaging_unavailable_reason"].as_str() {
+                    Some("daemon-unsupported") => "recipient-daemon-unsupported",
+                    Some("coordination-disabled") => "recipient-coordination-disabled",
+                    Some("coordination-unavailable") => "recipient-coordination-unavailable",
+                    _ => "recipient-messaging-unsupported",
+                };
+                observe_discovery_refusal(context, reason);
+                return Err(CliError::data(
+                    "remote-messaging-unsupported",
+                    "discovered remote recipient does not currently support messaging",
+                    None,
+                ));
+            }
+            (
+                Address {
+                    machine: args.to_machine.clone(),
+                    session_id: args.to_session.clone(),
+                    session_incarnation: peer["session_incarnation"]
+                        .as_str()
+                        .ok_or_else(invalid)?
+                        .into(),
+                },
+                0,
+                false,
+            )
+        };
     if args
         .expected_recipient_incarnation
         .as_deref()
@@ -1044,6 +1069,7 @@ where
             .map(|source| source.expires_at_epoch)
             .unwrap_or_else(|| now.saturating_add(expiry)),
         reply_to: args.reply_to,
+        reply_by_epoch: reply_by_secs.map(|seconds| now.saturating_add(seconds)),
         reply_depth,
         category: args.category,
         forwarding,
@@ -1129,7 +1155,7 @@ where
             return Err(invalid());
         }
     }
-    let _registry_guard = locked;
+    let mut registry_guard = locked;
     let mut locked = lock_journal(context)?;
     authorize()?;
     if let Some(item) =
@@ -1146,6 +1172,7 @@ where
         }
         return Ok(projection(&item));
     }
+    reply_obligation::recover(&mut registry_guard, &locked.registry)?;
     // Expired entries retain an explicit unknown result; bounded capacity rejects, never evicts live IDs.
     locked.registry.compact(now);
     let destination = envelope.to.machine.clone();
@@ -1184,7 +1211,9 @@ where
     if let Some(refusal) = refusal {
         return Err(journal.quota(refusal, &config.machine, &destination));
     }
+    let reply_to = envelope.reply_to.clone();
     let item = Outbox {
+        clears_reply_obligation,
         envelope,
         request_digest: digest,
         idempotency_key: args.idempotency_key,
@@ -1216,10 +1245,16 @@ where
     }
     authorize()?;
     locked.write(&bytes)?;
+    if super::mailbox::record_reply(&mut registry_guard.registry, reply_to.as_deref(), now) {
+        registry_guard.save()?;
+    }
     Ok(outcome)
 }
 fn projection(item: &Retained) -> Value {
     let mut value = json!({"schema_version":DELIVERY_VERSION,"message_id":item.message_id,"state":item.state,"sender":item.sender.projection(),"recipient":item.recipient,"attempts":item.attempts,"reason":item.reason,"receipt":item.receipt()});
+    if let Some(deadline) = item.reply_by_epoch {
+        value["reply_by"] = json!(timestamp(deadline));
+    }
     if let Some(details) = &item.refusal_details {
         value["refusal_details"] = json!(details);
     }
@@ -1263,7 +1298,7 @@ pub(crate) fn drain_with_notice_state(
     notices: &mut NoticeState,
 ) -> Result<Option<i64>, CliError> {
     let items = {
-        let mut locked = lock_journal(context)?;
+        let mut locked = reply_obligation::lock_recovered(context)?;
         let now = now_epoch();
         if locked.registry.remote_outbox.iter().any(|item| {
             matches!(item.envelope.from, Origin::Service(_))
@@ -1305,7 +1340,7 @@ pub(crate) fn drain_with_notice_state(
                 .map_err(|_| unavailable())
                 .and_then(|response| response_json(response, Responder::Relay))
         };
-        let mut locked = lock_journal(context)?;
+        let mut locked = reply_obligation::lock_recovered(context)?;
         let Some(current) = locked
             .registry
             .remote_outbox
@@ -1509,6 +1544,7 @@ where
         expires_at_epoch: now
             .saturating_add(super::mailbox::parse_expiry(args.expires_in.as_deref())?),
         reply_to: None,
+        reply_by_epoch: None,
         reply_depth: 0,
         category: args.category,
         forwarding: None,
@@ -1565,6 +1601,10 @@ fn receive_admitted(
             .expires_at_epoch
             .saturating_sub(envelope.created_at_epoch)
             > super::mailbox::MAX_EXPIRY_SECS
+        || envelope.reply_by_epoch.is_some_and(|deadline| {
+            !(1..=super::mailbox::MAX_EXPIRY_SECS)
+                .contains(&deadline.saturating_sub(envelope.created_at_epoch))
+        })
         || !envelope.from.valid()
         || (matches!(envelope.from, Origin::Service(_))
             && (envelope.reply_to.is_some() || envelope.reply_depth != 0))
@@ -1684,6 +1724,8 @@ fn receive_admitted(
         state: "unread".into(),
         revision: 1,
         reply_to: envelope.reply_to,
+        reply_by_epoch: envelope.reply_by_epoch,
+        reply_sent_at_epoch: None,
         reply_depth: envelope.reply_depth,
         created_at: timestamp(now),
         created_at_epoch: now,
@@ -1867,52 +1909,10 @@ pub(crate) fn cli_forward(
     )
 }
 
-pub(crate) fn cli_send(
-    context: &CliContext,
-    args: crate::cli::MessageSendArgs,
-) -> Result<Value, CliError> {
-    let body = super::mailbox::read_body(&args.body_file)?;
-    local_request(
-        context,
-        &args.from_session,
-        args.capability_file.as_deref(),
-        &format!("/sessions/{}/messages/remote/v1", args.from_session),
-        Some(with_category(
-            json!({"to_machine":args.to_machine,"to_session":args.to_session,"body":body,"idempotency_key":args.idempotency_key,"reply_to":args.reply_to,"expires_in":args.expires_in,"reply_revision":null}),
-            args.category,
-        )),
-    )
-}
-pub(crate) fn cli_reply(
-    context: &CliContext,
-    args: &crate::cli::MessageReplyArgs,
-    original: &super::mailbox::StoredMessage,
-    body: String,
-) -> Result<Value, CliError> {
-    let sender = sender_address(original).ok_or_else(invalid)?;
-    local_request(
-        context,
-        &args.session,
-        args.capability_file.as_deref(),
-        &format!("/sessions/{}/messages/remote/v1", args.session),
-        Some(with_category(
-            json!({"to_machine":sender.machine,"to_session":sender.session_id,"body":body,"idempotency_key":args.idempotency_key,"reply_to":args.message,"expires_in":null,"reply_revision":args.if_revision}),
-            args.category,
-        )),
-    )
-}
-pub(crate) fn cli_peers(
-    context: &CliContext,
-    args: crate::cli::MessagePeersArgs,
-) -> Result<Value, CliError> {
-    local_request(
-        context,
-        &args.session,
-        args.capability_file.as_deref(),
-        &format!("/sessions/{}/messages/peers/v1", args.session),
-        None,
-    )
-}
+#[path = "remote_cli.rs"]
+mod cli_requests;
+pub(crate) use cli_requests::{cli_peers, cli_reply, cli_send};
+
 pub(crate) fn cli_delivery(
     context: &CliContext,
     args: crate::cli::MessageDeliveryArgs,
@@ -1950,6 +1950,7 @@ pub(crate) fn reply_replay(
         body: body.into(),
         idempotency_key: args.idempotency_key.clone(),
         reply_to: Some(args.message.clone()),
+        reply_by: None,
         expires_in: None,
         reply_revision: Some(args.if_revision),
         expected_recipient_incarnation: None,
@@ -1995,6 +1996,10 @@ mod notification_policy_tests;
 #[cfg(test)]
 #[path = "read_events_tests.rs"]
 mod read_events_tests;
+
+#[cfg(test)]
+#[path = "remote_reply_deadline_tests.rs"]
+mod reply_deadline_tests;
 
 #[cfg(test)]
 #[path = "remote_inbox_regressions.rs"]
@@ -2148,6 +2153,7 @@ mod tests {
                 body: "fixture body".into(),
                 idempotency_key: "duplicate-peer-key".into(),
                 reply_to: None,
+                reply_by: None,
                 expires_in: None,
                 reply_revision: None,
                 expected_recipient_incarnation: Some("supported-incarnation".into()),
@@ -2273,6 +2279,7 @@ mod tests {
                 body: "fixture body".into(),
                 idempotency_key: "discovery-key-0001".into(),
                 reply_to: None,
+                reply_by: None,
                 expires_in: None,
                 reply_revision: None,
                 expected_recipient_incarnation: None,
@@ -2390,6 +2397,7 @@ mod tests {
             created_at_epoch: now_epoch(),
             expires_at_epoch: now_epoch() + 60,
             reply_to: None,
+            reply_by_epoch: None,
             reply_depth: 0,
         }
     }
@@ -2476,6 +2484,7 @@ mod tests {
             });
             let mut locked = lock_journal(&context).unwrap();
             locked.registry.remote_outbox.push(Outbox {
+                clears_reply_obligation: false,
                 envelope: envelope().into_origin(),
                 request_digest: "fixture".into(),
                 idempotency_key: "fixture".into(),
@@ -2807,6 +2816,7 @@ mod tests {
             body: "bounded reply".into(),
             idempotency_key: "depth-key-0001".into(),
             reply_to: Some(parent_id),
+            reply_by: None,
             expires_in: None,
             reply_revision: Some(1),
             expected_recipient_incarnation: None,
@@ -2830,6 +2840,7 @@ mod tests {
         let (_temp, context) = fixture();
         let mut journal = lock_journal(&context).unwrap();
         journal.registry.remote_outbox.push(Outbox {
+            clears_reply_obligation: false,
             envelope: envelope().into_origin(),
             request_digest: "fixture".into(),
             idempotency_key: "fixture".into(),
@@ -2997,6 +3008,7 @@ mod tests {
             body: "fixture body".into(),
             idempotency_key: "fixture-key-0001".into(),
             reply_to: None,
+            reply_by: None,
             expires_in: None,
             reply_revision: None,
             expected_recipient_incarnation: None,
@@ -3014,6 +3026,7 @@ mod tests {
         };
         let mut locked = lock_journal(&context).expect("journal");
         locked.registry.remote_outbox.push(Outbox {
+            clears_reply_obligation: false,
             envelope: message.into_origin(),
             request_digest: digest_bytes(&serde_json::to_vec(&args).expect("digest")),
             idempotency_key: args.idempotency_key.clone(),
@@ -3141,6 +3154,7 @@ mod tests {
         let id = message.message_id.clone();
         let mut locked = lock_journal(&context).expect("journal");
         locked.registry.remote_outbox.push(Outbox {
+            clears_reply_obligation: false,
             envelope: message.into_origin(),
             request_digest: "digest".into(),
             idempotency_key: "expiry-key-0001".into(),
@@ -3249,6 +3263,7 @@ mod tests {
         message.expires_at_epoch = now_epoch() + 86400;
         let delivered = state == "delivered";
         Outbox {
+            clears_reply_obligation: false,
             receipt: delivered.then(|| json!({"schema_version":DELIVERY_VERSION,"message_id":message.message_id,"state":"delivered","recipient":message.to,"persisted_at_epoch":now_epoch()})),
             envelope: message.into_origin(),
             request_digest: format!("digest-{key}"),
@@ -3284,6 +3299,7 @@ mod tests {
             body: "bounded reply".into(),
             idempotency_key: key.into(),
             reply_to: Some(parent_id),
+            reply_by: None,
             expires_in: None,
             reply_revision: Some(1),
         }
@@ -3723,6 +3739,7 @@ mod tests {
     fn service_failed_deliveries_retain_bodies_without_expanding_existing_bounds() {
         for state in ["rejected", "delivery-unknown", "delivered"] {
             let managed = Outbox {
+                clears_reply_obligation: false,
                 envelope: envelope().into_origin(),
                 request_digest: "digest".into(),
                 idempotency_key: "key".into(),
@@ -3807,6 +3824,7 @@ mod tests {
         {
             let mut locked = lock_journal(&context).unwrap();
             locked.registry.remote_outbox.push(Outbox {
+                clears_reply_obligation: false,
                 envelope,
                 request_digest: "digest".into(),
                 idempotency_key: "key".into(),
@@ -3947,6 +3965,7 @@ mod tests {
                 body: "bounded discovery fixture".into(),
                 idempotency_key: "refreshed-duplicate".into(),
                 reply_to: None,
+                reply_by: None,
                 expires_in: None,
                 reply_revision: None,
                 expected_recipient_incarnation: None,

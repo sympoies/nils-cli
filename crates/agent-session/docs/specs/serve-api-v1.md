@@ -57,6 +57,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `POST /sessions/{id}/messages/{message_id}/{ack,reply}/v1` | Bearer + capability | [Coordination HTTP coverage](coordination-interface-v1.md#http-coverage) |
 | `GET /sessions/{id}/messages/{message_id}/wait/v1` | Bearer + capability | [Coordination HTTP coverage](coordination-interface-v1.md#http-coverage) |
 | `GET /sessions/{id}/buffer` | Open | [Observation](serve-observation-v1.md) |
+| `GET /sessions/{id}/drafts` and `GET /sessions/{id}/drafts/{draft_id}` | Bearer | [Saved stale drafts](stale-drafts-v1.md) |
 | `POST /sessions/{id}/{send,prompt,prompt/v2,resume}` | Bearer | [Prompt submission](serve-prompt-v1.md) |
 | `GET /sessions/{id}/prompt/v2/receipts/{request_id}` | Bearer | [Prompt submission](serve-prompt-v1.md) |
 | `POST /sessions/{id}/archive` | Bearer | [History and archive](serve-history-v1.md) |
@@ -252,7 +253,10 @@ usual serve error envelope:
 | `POST /sessions/{id}/console-start/v1` | Current local session capability | `agent-session.console-start.v1`, HTTP 201; see [owned child sessions](session-coordination-v1.md#owned-child-sessions-v1) |
 
 The source submit JSON has `to_machine`, `to_session`, `body`, `idempotency_key`,
-nullable `reply_to`, nullable `expires_in`, nullable `reply_revision`.
+nullable `reply_to`, nullable `expires_in`, nullable `reply_revision`, optional
+`reply_by` (integer duration, 1 second to 7 days, with optional `s`/`m`/`h`/`d`
+suffix). Local message send also accepts optional `reply_by`. See the
+[mailbox reply deadline contract](coordination-mailbox-v1.md#optional-reply-deadlines).
 Federated routes never accept operator authority as a substitute for source
 session capability. Disabled federation rejects remote submission/discovery and
 receipt ingress; retained source delivery status remains queryable locally.

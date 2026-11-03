@@ -13,6 +13,10 @@ mod history_parts;
 mod compact_tests;
 
 mod image_provenance;
+mod incremental;
+mod row_classes;
+use crate::provider_prompt::row_classes::{Compaction, RowClass};
+pub(super) use incremental::read_messages_incremental_from_reader;
 pub(super) mod native_notices;
 #[path = "upload_references.rs"]
 mod upload_references;
@@ -26,6 +30,10 @@ pub(crate) struct HistoryMessage {
     pub(crate) prompt_request: Option<super::PromptRequestBinding>,
     pub(crate) role: String,
     pub(crate) text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) row_class: Option<RowClass>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) compaction: Option<Compaction>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) timestamp: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -157,8 +165,27 @@ pub(super) fn read_messages(
         let Ok(value) = serde_json::from_slice::<Value>(&line) else {
             continue;
         };
-        if line.len() > MAX_LINE_BYTES && image_sources(&value).is_empty() {
+        if line.len() > MAX_LINE_BYTES
+            && image_sources(&value).is_empty()
+            && value["type"] != "compacted"
+            && !crate::provider_prompt::row_classes::claude_boundary(&value)
+        {
             continue;
+        }
+        match row_classes::project(session, &value, line_offset, include_parts) {
+            row_classes::Projection::Row(message) => {
+                messages.push(*message);
+                continue;
+            }
+            row_classes::Projection::Pending => {
+                return Ok(HistoryMessagesPage {
+                    messages,
+                    next_cursor: Some(line_offset.to_string()),
+                    older_cursor: None,
+                });
+            }
+            row_classes::Projection::Hidden => continue,
+            row_classes::Projection::Ordinary => {}
         }
         match notices.project(session, line_offset, &line, &value, include_parts) {
             native_notices::Decision::Notice(message) => {
@@ -202,16 +229,23 @@ pub(super) fn read_messages(
         if text.trim().is_empty() && images.is_empty() && parts.is_empty() {
             continue;
         }
+        let (text, row_class) = row_classes::text(&session.provider, &role, &text);
         messages.push(HistoryMessage {
             id: format!("{}-{line_offset}", session.id),
             history_turn_id: projected_history_turn_id(&session.provider, &value, &role),
             prompt_request: None,
             role,
-            text: truncate_chars(text.trim(), MAX_MESSAGE_CHARS),
+            text,
+            row_class,
+            compaction: None,
             timestamp,
-            human_prompt,
+            human_prompt: human_prompt && row_class.is_none(),
             images,
-            parts: include_parts.then_some(parts),
+            parts: include_parts.then_some(if row_class.is_some() {
+                Vec::new()
+            } else {
+                parts
+            }),
         });
     }
     let next = reader.stream_position().map_err(|_| HistoryError::Io)?;
@@ -222,7 +256,13 @@ pub(super) fn read_messages(
     })
 }
 
-pub(super) fn read_compacted_image_line<R: Read + Seek>(
+pub(super) enum ImageLineRead {
+    Complete(Vec<u8>, u64),
+    Incomplete,
+    Unsupported,
+}
+
+pub(super) fn read_extended_line<R: Read + Seek>(
     reader: &mut R,
     file_len: u64,
     offset: u64,
@@ -257,7 +297,11 @@ pub(super) fn read_compacted_image_line<R: Read + Seek>(
             let Ok(value) = serde_json::from_slice::<Value>(&raw) else {
                 return Ok(ImageLineRead::Unsupported);
             };
-            if image_sources(&value).is_empty() {
+            if image_sources(&value).is_empty()
+                && value["type"] != "compacted"
+                && value["isCompactSummary"] != true
+                && !crate::provider_prompt::row_classes::claude_boundary(&value)
+            {
                 return Ok(ImageLineRead::Unsupported);
             }
             let line = raw;
@@ -275,12 +319,25 @@ pub(super) fn push_incremental_message(
     line: &[u8],
     line_offset: u64,
     messages: &mut Vec<HistoryMessage>,
-) {
+) -> bool {
     let Ok(value) = serde_json::from_slice::<Value>(line) else {
-        return;
+        return false;
     };
-    if line.len() > MAX_LINE_BYTES && image_sources(&value).is_empty() {
-        return;
+    match row_classes::project(session, &value, line_offset, false) {
+        row_classes::Projection::Row(message) => {
+            messages.push(*message);
+            return false;
+        }
+        row_classes::Projection::Pending => return true,
+        row_classes::Projection::Hidden => return false,
+        row_classes::Projection::Ordinary => {}
+    }
+    if line.len() > MAX_LINE_BYTES
+        && image_sources(&value).is_empty()
+        && value["type"] != "compacted"
+        && !crate::provider_prompt::row_classes::claude_boundary(&value)
+    {
+        return false;
     }
     let Some((role, text, timestamp, human_prompt)) = normalize_message(
         &session.provider,
@@ -288,11 +345,11 @@ pub(super) fn push_incremental_message(
         line,
         &value,
     ) else {
-        return;
+        return false;
     };
     let images = descriptors(session, line_offset, &value);
     if text.trim().is_empty() && images.is_empty() {
-        return;
+        return false;
     }
     let base_id = incremental_message_id(
         session,
@@ -308,17 +365,26 @@ pub(super) fn push_incremental_message(
     } else {
         digest_parts(&[base_id.as_bytes(), row_key(&value).as_bytes()])
     };
+    let (text, row_class) = row_classes::text(&session.provider, &role, &text);
+    let id = if row_class.is_some() {
+        format!("{}-{line_offset}", session.id)
+    } else {
+        id
+    };
     messages.push(HistoryMessage {
         id,
         history_turn_id: projected_history_turn_id(&session.provider, &value, &role),
         prompt_request: None,
         role,
-        text: truncate_chars(text.trim(), MAX_MESSAGE_CHARS),
+        text,
+        row_class,
+        compaction: None,
         timestamp,
-        human_prompt,
+        human_prompt: human_prompt && row_class.is_none(),
         images,
         parts: None,
     });
+    false
 }
 
 pub(super) fn push_reverse_message(
@@ -337,8 +403,21 @@ pub(super) fn push_reverse_message(
     let Ok(value) = serde_json::from_slice::<Value>(line) else {
         return;
     };
-    if line.len() > MAX_LINE_BYTES && image_sources(&value).is_empty() {
+    if line.len() > MAX_LINE_BYTES
+        && image_sources(&value).is_empty()
+        && value["type"] != "compacted"
+        && !crate::provider_prompt::row_classes::claude_boundary(&value)
+    {
         return;
+    }
+    match row_classes::project(session, &value, line_offset, include_parts) {
+        row_classes::Projection::Row(message) => {
+            messages.push(*message);
+            return;
+        }
+        row_classes::Projection::Pending => return,
+        row_classes::Projection::Hidden => return,
+        row_classes::Projection::Ordinary => {}
     }
     match notices.project(session, line_offset, line, &value, include_parts) {
         native_notices::Decision::Notice(message) => {
@@ -382,16 +461,23 @@ pub(super) fn push_reverse_message(
     if text.trim().is_empty() && images.is_empty() && parts.is_empty() {
         return;
     }
+    let (text, row_class) = row_classes::text(&session.provider, &role, &text);
     messages.push(HistoryMessage {
         id: format!("{}-{line_offset}", session.id),
         history_turn_id: projected_history_turn_id(&session.provider, &value, &role),
         prompt_request: None,
         role,
-        text: truncate_chars(text.trim(), MAX_MESSAGE_CHARS),
+        text,
+        row_class,
+        compaction: None,
         timestamp,
-        human_prompt,
+        human_prompt: human_prompt && row_class.is_none(),
         images,
-        parts: include_parts.then_some(parts),
+        parts: include_parts.then_some(if row_class.is_some() {
+            Vec::new()
+        } else {
+            parts
+        }),
     });
 }
 
@@ -509,6 +595,11 @@ pub(super) fn normalize_message(
                 role @ ("user" | "assistant") => role,
                 _ => return None,
             };
+            if role == "user"
+                && crate::provider_prompt::row_classes::claude_foreign(value, provider_session_id)
+            {
+                return None;
+            }
             if value.get("isSidechain").and_then(Value::as_bool) == Some(true) {
                 return None;
             }
@@ -526,7 +617,10 @@ pub(super) fn normalize_message(
             // Keep the command-markup echo for each compaction. Its literal
             // input can carry arguments and promptSource, and is separated
             // from the echo by the compact boundary and summary.
-            if role == "user" && text.split_whitespace().next() == Some("/compact") {
+            if role == "user"
+                && crate::provider_prompt::row_classes::runtime_command("claude", &text)
+                && text.split([' ', '\t']).next() == Some("/compact")
+            {
                 return None;
             }
             let human_prompt = role == "user"
@@ -536,7 +630,12 @@ pub(super) fn normalize_message(
                     std::str::from_utf8(raw_line).ok()?,
                 )
                 .is_some();
-            if role == "user" && !human_prompt && image_sources(value).is_empty() {
+            let command = claude_slash_command_text(&text).unwrap_or_else(|| text.clone());
+            if role == "user"
+                && !human_prompt
+                && image_sources(value).is_empty()
+                && !crate::provider_prompt::row_classes::runtime_command("claude", &command)
+            {
                 return None;
             }
             let text = if role == "user" {
@@ -1320,6 +1419,8 @@ mod image_tests {
             id: "message".to_string(),
             history_turn_id: None,
             prompt_request: None,
+            row_class: None,
+            compaction: None,
             role: "user".to_string(),
             text: "text".to_string(),
             timestamp: None,

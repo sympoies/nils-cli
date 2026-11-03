@@ -6,6 +6,7 @@ use serde_json::json;
 use std::path::Path;
 
 pub(crate) fn require_empty_composer(
+    context: &crate::CliContext,
     record: &SessionRecord,
     tmux_bin: &Path,
 ) -> Result<(), CliError> {
@@ -13,6 +14,20 @@ pub(crate) fn require_empty_composer(
     let input = capture_styled(tmux_bin, &target, PANE_OBSERVATION_COMMAND_TIMEOUT)
         .ok_or(Unobserved::CaptureFailed)
         .and_then(|pane| send_submit::direct_composer_observation(&record.agent, &pane));
+    let stale = super::drafts::observe(context, record, input.as_deref().ok())?;
+    if let Ok(text) = &input
+        && !text.is_empty()
+        && stale
+        && super::drafts::clear_observed(
+            context,
+            record,
+            tmux_bin,
+            text,
+            std::time::Instant::now() + crate::send_submit::HOLD_BUDGET,
+        )?
+    {
+        return Ok(());
+    }
     let unobserved = match input.as_deref() {
         Ok("") => return Ok(()),
         Ok(_) => None,

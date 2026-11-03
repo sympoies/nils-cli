@@ -72,6 +72,7 @@ pub(crate) struct SendBody {
     pub body: String,
     pub idempotency_key: String,
     pub reply_to: Option<String>,
+    pub reply_by: Option<String>,
     pub expires_in: Option<String>,
     pub category: Option<cli::MessageCategory>,
 }
@@ -741,6 +742,7 @@ pub(crate) fn send(
                 capability_file: Some(server_capability.path.clone()),
                 idempotency_key: body.idempotency_key,
                 reply_to: body.reply_to,
+                reply_by: body.reply_by,
                 expires_in: body.expires_in,
                 category: body.category,
                 format: nils_common::cli_contract::OutputFormat::Json,

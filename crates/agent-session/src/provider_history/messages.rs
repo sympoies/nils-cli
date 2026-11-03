@@ -8,6 +8,10 @@ pub(crate) fn apply_prompt_request_bindings(
     bindings: &HashMap<String, PromptRequestBinding>,
 ) {
     for message in messages {
+        if message.row_class.is_some() {
+            message.prompt_request = None;
+            continue;
+        }
         message.prompt_request = message
             .history_turn_id
             .as_ref()
