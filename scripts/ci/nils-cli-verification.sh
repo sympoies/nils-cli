@@ -39,6 +39,7 @@ Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/tests/docs-prose-audit.test.sh
   - bash scripts/ci/tests/prepare-private-release-workflow.test.sh
   - bash scripts/ci/tests/prepare-release-bump.test.sh
+  - python3 scripts/ci/tests/merge-lcov.test.py
   - bash scripts/ci/test-stale-audit.sh --strict
   - bash scripts/ci/file-size-audit.sh --strict
   - bash scripts/ci/docs-prose-audit.sh --strict
@@ -82,10 +83,12 @@ Environment:
   NILS_CLI_SKIP_DOCTESTS=1
     With the nextest or llvm-cov runner, skip `cargo test --workspace --doc`.
     For a CI lane whose sibling lane already runs the doc tests.
-  NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS=1
-    Skip the audits whose result does not depend on the OS:
-    test-stale-audit, file-size-audit, completion-freshness-audit, completion-flag-parity-audit.
-    For a CI lane whose sibling lane already runs them.
+  NILS_CLI_NEXTEST_PARTITION=count:M/N
+    With NILS_CLI_TEST_RUNNER=llvm-cov, run only partition M of N of the
+    instrumented nextest run and write its LCOV report to
+    target/coverage/lcov.info. No audit, script test, fmt, clippy, doc test or
+    coverage floor runs: the caller runs those elsewhere and merges the
+    partitions' reports with scripts/ci/merge-lcov.py, which enforces the floor.
 
 Exit codes:
   0  all checks passed
@@ -177,14 +180,6 @@ run() {
   fi
 }
 
-run_os_independent_audit() {
-  if [[ "${NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS:-0}" == "1" ]]; then
-    echo "skip: $* (NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS=1)"
-    return 0
-  fi
-  run "$@"
-}
-
 run_doc_tests() {
   if [[ "${NILS_CLI_SKIP_DOCTESTS:-0}" == "1" ]]; then
     echo "skip: cargo test --workspace --doc (NILS_CLI_SKIP_DOCTESTS=1)"
@@ -192,6 +187,20 @@ run_doc_tests() {
   fi
   run_test cargo test --workspace --doc
 }
+
+if [[ -n "${NILS_CLI_NEXTEST_PARTITION:-}" ]]; then
+  if [[ "$test_runner" != "llvm-cov" ]]; then
+    echo "error: NILS_CLI_NEXTEST_PARTITION requires NILS_CLI_TEST_RUNNER=llvm-cov" >&2
+    exit 2
+  fi
+  run rm -rf target/coverage
+  run mkdir -p target/coverage
+  run_test cargo llvm-cov nextest --profile ci --workspace --no-fail-fast \
+    --partition "$NILS_CLI_NEXTEST_PARTITION" \
+    --lcov --output-path target/coverage/lcov.info
+  echo "ok: nextest partition $NILS_CLI_NEXTEST_PARTITION passed"
+  exit 0
+fi
 
 run python3 scripts/ci/devlog-check.py
 run bash scripts/ci/docs-placement-audit.sh --strict
@@ -211,6 +220,7 @@ fi
 
 run python3 scripts/ci/tests/gate-resources.test.py
 run python3 scripts/ci/tests/gate-reports.test.py
+run python3 scripts/ci/tests/merge-lcov.test.py
 run python3 scripts/ci/assert-import-audit.py
 run python3 scripts/ci/tests/assert-import-audit.test.py
 run python3 scripts/ci/tests/merge-plan-ci.test.py
@@ -245,16 +255,16 @@ run bash scripts/ci/tests/docs-prose-audit.test.sh
 run bash scripts/ci/tests/prepare-private-release-workflow.test.sh
 run python3 scripts/ci/tests/devlog-policy.test.py
 run bash scripts/ci/tests/prepare-release-bump.test.sh
-run_os_independent_audit bash scripts/ci/test-stale-audit.sh --strict
-run_os_independent_audit bash scripts/ci/file-size-audit.sh --strict
-run_os_independent_audit bash scripts/ci/docs-prose-audit.sh --strict
+run bash scripts/ci/test-stale-audit.sh --strict
+run bash scripts/ci/file-size-audit.sh --strict
+run bash scripts/ci/docs-prose-audit.sh --strict
 run bash scripts/ci/workspace-version-lockstep.sh --strict
 run bash scripts/ci/crate-naming-audit.sh
 run bash scripts/ci/publish-order-audit.sh --strict
 run bash scripts/ci/third-party-artifacts-audit.sh --strict
 run bash scripts/ci/completion-asset-audit.sh --strict
-run_os_independent_audit bash scripts/ci/completion-freshness-audit.sh
-run_os_independent_audit bash scripts/ci/completion-flag-parity-audit.sh
+run bash scripts/ci/completion-freshness-audit.sh
+run bash scripts/ci/completion-flag-parity-audit.sh
 run zsh -f tests/zsh/completion.test.zsh
 run cargo fmt --all -- --check
 run cargo clippy --all-targets --all-features -- -D warnings

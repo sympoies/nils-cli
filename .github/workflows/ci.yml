@@ -244,7 +244,11 @@ jobs:
     # runs on 2026-09-28..30 took 21 minutes (19 with a cold cache). Keep the
     # test job limits below the merge queue's 90 minute check timeout and the
     # release PR's 60 minute check wait, so a waiter sees the job fail instead
-    # of reaching its own timeout.
+    # of reaching its own timeout. A release queue entry runs this job after
+    # `full_validation`, whose Linux `test` job (about 39 minutes, run
+    # 41605970286) is the critical path now that macOS tests run as two
+    # partitions (expected about 31 minutes each, not yet measured), so the
+    # entry should take about 43 minutes instead of about an hour.
     timeout-minutes: 50
     permissions:
       contents: read

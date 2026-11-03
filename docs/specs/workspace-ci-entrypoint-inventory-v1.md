@@ -45,8 +45,9 @@ out of scope for this governance inventory; flag it as a follow-up.
 | `test` | full Linux checks/doctests | canonical full checks entrypoint | keep | 50 minutes, nextest; caller event SHA, full audit stack. |
 | `test_containment` | Linux cgroup canary | workflow-local test command and systemd setup | keep | 25 minutes, required by final full gate. |
 | `cargo_deny` | dependency policy | `scripts/ci/cargo-deny-audit.sh` | keep | 15 minutes, required by final full gate. |
-| `test_macos` | instrumented workspace tests | full checks entrypoint, llvm-cov | keep | 75 minutes, 85% workspace floor; skips only OS-independent audits and doctests already covered by Linux. LCOV, HTML and JUnit artifacts retained. |
-| `coverage` | LCOV and summary | `scripts/ci/coverage-summary.sh` | keep | 10 minutes, requires nonempty macOS report. |
+| `test_macos_partition` | instrumented workspace tests, 2 nextest partitions | full checks entrypoint, llvm-cov, `NILS_CLI_NEXTEST_PARTITION` | keep | 60 minutes each; tests only, no audits, fmt, clippy or doctests (Linux `test` and `macos_clippy` run them on the same commit). Uploads partition LCOV and JUnit. |
+| `test_macos` | merge partition LCOV, enforce floor | `scripts/ci/merge-lcov.py` | keep | 15 minutes, ubuntu; 85% workspace floor on merged line data. LCOV artifact retained; HTML report only for nightly and manual runs. |
+| `coverage` | LCOV and summary | `scripts/ci/coverage-summary.sh` | keep | 10 minutes, requires nonempty merged macOS report. |
 | `gate` | exact-commit all-lane guard | `.github/scripts/full-validation-gate.cjs` | keep | 5 minutes, `always()` requires success from every lane; no skipped/cancelled/missing result admits publication. |
 
 ### `.github/workflows/release.yml`
