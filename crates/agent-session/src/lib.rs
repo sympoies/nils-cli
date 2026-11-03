@@ -7539,7 +7539,11 @@ enum SessionTerminationFailure {
     KillTimeout,
     KillError,
     StillRunning,
+    ObservedTmuxRunning(process_observation::Observation),
     ProcessStillRunning,
+    ObservedProcessRunning(process_observation::Observation),
+    ObservedProcessUnavailable(process_observation::Observation),
+    ObservedProcessStatusUnavailable(process_observation::Observation),
     RuntimeIdentityChanged,
     RuntimeIdentityMismatch,
     RuntimeIdentityUnavailable,
@@ -7607,18 +7611,19 @@ impl SessionTerminationFailure {
             Self::KillFailed => "kill-failed",
             Self::KillTimeout => "kill-timeout",
             Self::KillError => "kill-error",
-            Self::StillRunning => "session-still-running",
-            Self::ProcessStillRunning => "process-still-running",
+            Self::StillRunning | Self::ObservedTmuxRunning(_) => "session-still-running",
+            Self::ProcessStillRunning | Self::ObservedProcessRunning(_) => "process-still-running",
             Self::RuntimeIdentityChanged => "runtime-identity-changed",
             Self::RuntimeIdentityMismatch | Self::ProcessSessionMemberCgroupMismatch => {
                 "runtime-identity-mismatch"
             }
-            Self::RuntimeIdentityUnavailable | Self::ProcessIdentityUnavailable => {
-                "runtime-identity-unavailable"
-            }
+            Self::RuntimeIdentityUnavailable
+            | Self::ProcessIdentityUnavailable
+            | Self::ObservedProcessUnavailable(_) => "runtime-identity-unavailable",
             Self::VerificationFailed
             | Self::TmuxStatusUnavailable
-            | Self::ProcessStatusUnavailable => "verification-failed",
+            | Self::ProcessStatusUnavailable
+            | Self::ObservedProcessStatusUnavailable(_) => "verification-failed",
         }
     }
 
@@ -7630,8 +7635,10 @@ impl SessionTerminationFailure {
             Self::KillFailed => "tmux kill-session failed",
             Self::KillTimeout => "tmux kill-session timed out",
             Self::KillError => "tmux kill-session could not be executed",
-            Self::StillRunning => "tmux has-session probe reported a live session",
-            Self::ProcessStillRunning => {
+            Self::StillRunning | Self::ObservedTmuxRunning(_) => {
+                "tmux has-session probe reported a live session"
+            }
+            Self::ProcessStillRunning | Self::ObservedProcessRunning(_) => {
                 "the recorded process boundary liveness probe reported surviving processes"
             }
             Self::RuntimeIdentityChanged => {
@@ -7650,7 +7657,10 @@ impl SessionTerminationFailure {
             Self::TmuxStatusUnavailable => {
                 "tmux has-session probe for the exact managed session name was unavailable"
             }
-            Self::ProcessStatusUnavailable | Self::ProcessIdentityUnavailable => {
+            Self::ProcessStatusUnavailable
+            | Self::ObservedProcessStatusUnavailable(_)
+            | Self::ProcessIdentityUnavailable
+            | Self::ObservedProcessUnavailable(_) => {
                 "the recorded process boundary liveness probe was unavailable"
             }
         }
@@ -7662,6 +7672,7 @@ impl SessionTerminationFailure {
             Self::RuntimeIdentityMismatch
                 | Self::RuntimeIdentityUnavailable
                 | Self::ProcessIdentityUnavailable
+                | Self::ObservedProcessUnavailable(_)
                 | Self::ProcessSessionMemberCgroupMismatch
         )
     }
@@ -7672,9 +7683,9 @@ impl SessionTerminationFailure {
                 "inspect-processes-or-delete-with-leave-processes"
             }
             Self::RuntimeIdentityMismatch => "resolve-runtime-identity-mismatch",
-            Self::RuntimeIdentityUnavailable | Self::ProcessIdentityUnavailable => {
-                "manual-runtime-verification-required"
-            }
+            Self::RuntimeIdentityUnavailable
+            | Self::ProcessIdentityUnavailable
+            | Self::ObservedProcessUnavailable(_) => "manual-runtime-verification-required",
             _ => operation.retry_action(),
         }
     }
@@ -9359,23 +9370,7 @@ pub(crate) fn recorded_runtime_is_from_prior_boot(record: &SessionRecord) -> boo
 }
 
 fn process_runtime_status(identity: &TmuxRuntimeIdentity) -> ProcessGroupStatus {
-    if runtime_is_from_prior_boot(identity) {
-        return ProcessGroupStatus::Stopped;
-    }
-    #[cfg(target_os = "linux")]
-    if let Some(control_group) = identity.control_group.as_ref() {
-        return linux_control_group_runtime_status(identity, control_group);
-    }
-    #[cfg(target_os = "linux")]
-    if let Some(process_session_id) = identity.process_session_id
-        && !identity.process_session_members.is_empty()
-    {
-        return linux_process_runtime_status(identity, process_session_id);
-    }
-    identity
-        .process_group_id
-        .map(process_group_status)
-        .unwrap_or(ProcessGroupStatus::Stopped)
+    process_observation::runtime(identity).0
 }
 
 fn verify_stopped_process_runtime(
@@ -9384,15 +9379,24 @@ fn verify_stopped_process_runtime(
 ) -> Result<(), SessionTerminationFailure> {
     let started_at = Instant::now();
     loop {
-        match process_runtime_status(identity) {
-            ProcessGroupStatus::Stopped => return Ok(()),
-            ProcessGroupStatus::Running if started_at.elapsed() >= verify_timeout => {
-                return Err(SessionTerminationFailure::ProcessStillRunning);
+        match process_observation::runtime(identity) {
+            (ProcessGroupStatus::Stopped, _) => return Ok(()),
+            (ProcessGroupStatus::Running, Some(observation))
+                if started_at.elapsed() >= verify_timeout =>
+            {
+                return Err(SessionTerminationFailure::ObservedProcessRunning(
+                    observation,
+                ));
             }
-            ProcessGroupStatus::Unknown => {
+            (ProcessGroupStatus::Unknown, Some(observation)) => {
+                return Err(SessionTerminationFailure::ObservedProcessUnavailable(
+                    observation,
+                ));
+            }
+            (ProcessGroupStatus::Running, _) => {}
+            (ProcessGroupStatus::Unknown, None) => {
                 return Err(SessionTerminationFailure::ProcessIdentityUnavailable);
             }
-            ProcessGroupStatus::Running => {}
         }
         thread::sleep(
             DELETE_TERMINATION_VERIFY_POLL_INTERVAL
@@ -9555,6 +9559,7 @@ struct LinuxProcessIdentity {
 
 #[cfg(target_os = "linux")]
 mod linux_process_identity;
+mod process_observation;
 #[cfg(target_os = "linux")]
 use linux_process_identity::read_linux_process_identity;
 
@@ -9757,20 +9762,7 @@ fn linux_process_runtime_status(
     identity: &TmuxRuntimeIdentity,
     process_session_id: libc::pid_t,
 ) -> ProcessGroupStatus {
-    for captured in &identity.process_session_members {
-        match read_linux_process_identity(captured.pid) {
-            Ok(Some(current)) if current.start_time == captured.start_time && !current.zombie => {
-                return ProcessGroupStatus::Running;
-            }
-            Ok(Some(_)) | Ok(None) => {}
-            Err(_) => return ProcessGroupStatus::Unknown,
-        }
-    }
-    match linux_process_session_members(process_session_id) {
-        Ok(members) if members.is_empty() => ProcessGroupStatus::Stopped,
-        Ok(_) => ProcessGroupStatus::Running,
-        Err(_) => ProcessGroupStatus::Unknown,
-    }
+    process_observation::session_probe(identity, process_session_id).0
 }
 
 #[cfg(target_os = "linux")]
@@ -9778,69 +9770,16 @@ fn linux_control_group_runtime_status(
     identity: &TmuxRuntimeIdentity,
     control_group: &TmuxControlGroupIdentity,
 ) -> ProcessGroupStatus {
-    linux_control_group_runtime_status_at_root(identity, control_group, Path::new("/sys/fs/cgroup"))
+    process_observation::cgroup(identity, control_group, Path::new("/sys/fs/cgroup")).0
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", test))]
 fn linux_control_group_runtime_status_at_root(
     identity: &TmuxRuntimeIdentity,
     control_group: &TmuxControlGroupIdentity,
     root: &Path,
 ) -> ProcessGroupStatus {
-    if let Some(boot_id) = control_group.boot_id.as_deref() {
-        match linux_boot_id() {
-            Ok(current_boot_id) if current_boot_id == boot_id => {}
-            Ok(_) => return ProcessGroupStatus::Stopped,
-            Err(_) => return ProcessGroupStatus::Unknown,
-        }
-    }
-    for captured in identity
-        .process_session_members
-        .iter()
-        .chain(&identity.control_group_members)
-    {
-        match read_linux_process_identity(captured.pid) {
-            Ok(Some(current)) if current.start_time == captured.start_time && !current.zombie => {
-                return ProcessGroupStatus::Running;
-            }
-            Ok(Some(_)) | Ok(None) => {}
-            Err(_) => return ProcessGroupStatus::Unknown,
-        }
-    }
-    let full_path =
-        match linux_control_group_full_path_at_root(Path::new(&control_group.path), root) {
-            Ok(path) => path,
-            Err(_) => return ProcessGroupStatus::Unknown,
-        };
-    let metadata = match fs::metadata(&full_path) {
-        Ok(metadata) => metadata,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            return if linux_cgroup_absence_is_trusted(identity, root) {
-                ProcessGroupStatus::Stopped
-            } else {
-                ProcessGroupStatus::Unknown
-            };
-        }
-        Err(_) => return ProcessGroupStatus::Unknown,
-    };
-    if !metadata.is_dir() {
-        return ProcessGroupStatus::Unknown;
-    }
-    if metadata.dev() != control_group.device || metadata.ino() != control_group.inode {
-        return ProcessGroupStatus::Unknown;
-    }
-    let events = match fs::read_to_string(full_path.join("cgroup.events")) {
-        Ok(events) => events,
-        Err(_) => return ProcessGroupStatus::Unknown,
-    };
-    match events.lines().find_map(|line| {
-        let (name, value) = line.split_once(' ')?;
-        (name == "populated").then_some(value)
-    }) {
-        Some("0") => ProcessGroupStatus::Stopped,
-        Some("1") => ProcessGroupStatus::Running,
-        _ => ProcessGroupStatus::Unknown,
-    }
+    process_observation::cgroup(identity, control_group, root).0
 }
 
 #[cfg(target_os = "linux")]
@@ -10267,6 +10206,7 @@ fn verify_stopped_pinned_process_runtime(
     let started_at = Instant::now();
     loop {
         let mut any_running = false;
+        let mut observed_identity = None;
         for process in &pinned_runtime.processes {
             let mut poll_fd = libc::pollfd {
                 fd: process.pidfd.as_raw_fd(),
@@ -10291,6 +10231,12 @@ fn verify_stopped_pinned_process_runtime(
             };
             if result == 0 {
                 any_running = true;
+                observed_identity = Some(process_observation::Observation::new(
+                    "identity",
+                    "present",
+                    Some(process.identity.pid),
+                    Some(process.identity.start_time),
+                ));
             } else if io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
                 return Err(SessionTerminationFailure::VerificationFailed);
             }
@@ -10312,7 +10258,9 @@ fn verify_stopped_pinned_process_runtime(
         }
         if started_at.elapsed() >= timeout {
             return Err(if any_running || populated.as_deref() == Some("1") {
-                SessionTerminationFailure::ProcessStillRunning
+                SessionTerminationFailure::ObservedProcessRunning(observed_identity.unwrap_or_else(
+                    || process_observation::Observation::new("cgroup", "present", None, None),
+                ))
             } else {
                 SessionTerminationFailure::VerificationFailed
             });
@@ -10505,9 +10453,9 @@ fn verify_stopped_tmux_runtime(
         return Ok(());
     }
     let started_at = Instant::now();
-    let mut observed_tmux_running = false;
+    let mut observed_tmux_running = None;
     let mut observed_tmux_stopped = false;
-    let mut observed_process_running = false;
+    let mut observed_process_running = None;
     loop {
         // Probe before consulting the clock. The caller's budget may already be
         // spent by an earlier sub-step, and judging an unobserved session on a
@@ -10528,25 +10476,64 @@ fn verify_stopped_tmux_runtime(
                 remaining.min(DELETE_TERMINATION_PROBE_TIMEOUT)
             },
         );
-        let process_status = process_runtime_status(identity);
+        let (process_status, observation) = process_observation::runtime(identity);
         if tmux_status == "stopped" && process_status == ProcessGroupStatus::Stopped {
             return Ok(());
         }
         if tmux_status == "running" {
-            observed_tmux_running = true;
+            observed_tmux_running = Some(process_observation::Observation::new(
+                "tmux verification",
+                "present",
+                None,
+                None,
+            ));
         } else if tmux_status == "stopped" {
             observed_tmux_stopped = true;
         }
         if process_status == ProcessGroupStatus::Running {
-            observed_process_running = true;
+            observed_process_running = observation;
         }
         if started_at.elapsed() >= verify_timeout {
-            return Err(if observed_tmux_running {
-                SessionTerminationFailure::StillRunning
-            } else if observed_tmux_stopped && observed_process_running {
-                SessionTerminationFailure::ProcessStillRunning
+            return Err(if let Some(mut prior) = observed_tmux_running {
+                if tmux_status != "running" {
+                    prior = prior.followed_by(process_observation::Observation::new(
+                        "tmux verification",
+                        if tmux_status == "stopped" {
+                            "stopped"
+                        } else {
+                            "unreadable"
+                        },
+                        None,
+                        None,
+                    ));
+                }
+                if process_status != ProcessGroupStatus::Running
+                    && let Some(latest) = observation
+                {
+                    prior = prior.followed_by(latest);
+                }
+                SessionTerminationFailure::ObservedTmuxRunning(prior)
+            } else if let (true, Some(mut prior)) =
+                (observed_tmux_stopped, observed_process_running)
+            {
+                if process_status != ProcessGroupStatus::Running
+                    && let Some(latest) = observation
+                {
+                    prior = prior.followed_by(latest);
+                }
+                if tmux_status == "unknown" {
+                    prior = prior.followed_by(process_observation::Observation::new(
+                        "tmux verification",
+                        "unreadable",
+                        None,
+                        None,
+                    ));
+                }
+                SessionTerminationFailure::ObservedProcessRunning(prior)
             } else if tmux_status == "unknown" {
                 SessionTerminationFailure::TmuxStatusUnavailable
+            } else if let Some(observation) = observation {
+                SessionTerminationFailure::ObservedProcessStatusUnavailable(observation)
             } else {
                 SessionTerminationFailure::ProcessStatusUnavailable
             });
@@ -13535,36 +13522,6 @@ exit 1
         }
     }
     #[test]
-    fn absent_managed_name_requires_a_stopped_process_boundary() {
-        let _isolation = nils_test_support::isolate_forge_identity();
-        let stub = nils_test_support::StubBinDir::new();
-        let tmux = stub.path().join("tmux");
-        // Exercise a real probe delayed beyond the former 100 ms ceiling.
-        stub.write_exe(
-            "tmux",
-            "#!/bin/sh\nsleep 0.25\nprintf \"can't find session: %s\\n\" \"$3\" >&2\nexit 1\n",
-        );
-
-        let mut pane = TestProcessGroup::spawn();
-        let identity: TmuxRuntimeIdentity = serde_json::from_value(serde_json::json!({
-            "session_id": "$7", "pane_id": "%7", "pane_pid": pane.pid(),
-            "process_group_id": pane.process_group_id
-        }))
-        .unwrap();
-        let result =
-            super::verify_stopped_tmux_runtime(&tmux, "managed-fixture", &identity, Duration::ZERO);
-        assert_eq!(
-            result,
-            Err(super::SessionTerminationFailure::ProcessStillRunning)
-        );
-        pane.stop();
-        assert!(
-            super::verify_stopped_tmux_runtime(&tmux, "managed-fixture", &identity, Duration::ZERO)
-                .is_ok()
-        );
-    }
-
-    #[test]
     fn stopped_runtime_error_names_the_unavailable_probe() {
         let tmp = tempfile::TempDir::new().unwrap();
         let context = test_context(tmp.path());
@@ -13615,10 +13572,10 @@ exit 1
                 Duration::ZERO,
             )
             .unwrap_err();
-            assert_eq!(
+            assert!(matches!(
                 reason,
-                super::SessionTerminationFailure::ProcessStatusUnavailable
-            );
+                super::SessionTerminationFailure::ObservedProcessStatusUnavailable(_)
+            ));
             let error = super::session_termination_error(
                 &record,
                 reason,
@@ -13754,9 +13711,11 @@ exit 0
             &identity,
             Duration::ZERO,
         );
-        assert_eq!(
-            verdict,
-            Err(super::SessionTerminationFailure::StillRunning),
+        assert!(
+            matches!(
+                verdict,
+                Err(super::SessionTerminationFailure::ObservedTmuxRunning(_))
+            ),
             "a live session is still reported as live"
         );
         assert!(
@@ -17350,8 +17309,8 @@ fi
             Duration::from_secs(1),
         )
         .unwrap_err();
-
-        assert_eq!(error, super::SessionTerminationFailure::StillRunning);
+        use super::SessionTerminationFailure::ObservedTmuxRunning;
+        assert!(matches!(error, ObservedTmuxRunning(_)));
         assert!(session_dir(&context, &id).exists());
     }
 

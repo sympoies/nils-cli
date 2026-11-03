@@ -208,6 +208,29 @@ struct ProcessSummary {
     pid: libc::pid_t,
     /// Executable name only: arguments and environment can contain secrets.
     command: String,
+    start_time: Option<u64>,
+    boundary: &'static str,
+    cgroup: Option<String>,
+    observed_at: Option<u64>,
+}
+
+impl ProcessSummary {
+    fn diagnostic(&self) -> String {
+        let start = self
+            .start_time
+            .map_or_else(|| "unknown".to_string(), |value| value.to_string());
+        let observed = self
+            .observed_at
+            .map_or_else(|| "unknown".to_string(), |value| value.to_string());
+        format!(
+            "pid {}, start time {}, boundary {}, cgroup {}, observed at Unix time {}",
+            self.pid,
+            start,
+            self.boundary,
+            self.cgroup.as_deref().unwrap_or("unknown"),
+            observed
+        )
+    }
 }
 
 #[derive(Default)]
@@ -449,10 +472,16 @@ fn delete_if_stopped(
             DELETE_TERMINATION_VERIFY_TIMEOUT,
         ) {
             Ok(()) => {}
-            Err(SessionTerminationFailure::StillRunning) => {
+            Err(
+                SessionTerminationFailure::StillRunning
+                | SessionTerminationFailure::ObservedTmuxRunning(_),
+            ) => {
                 return Err(conditional_state_mismatch(&record, "running"));
             }
-            Err(SessionTerminationFailure::ProcessStillRunning) => {
+            Err(
+                SessionTerminationFailure::ProcessStillRunning
+                | SessionTerminationFailure::ObservedProcessRunning(_),
+            ) => {
                 return Err(conditional_state_mismatch(&record, "working"));
             }
             Err(_) => return Err(conditional_status_unknown(&record)),
@@ -721,6 +750,9 @@ fn termination_error_with_scan(
                 reason,
                 SessionTerminationFailure::VerificationFailed
                     | SessionTerminationFailure::ProcessStillRunning
+                    | SessionTerminationFailure::ObservedProcessRunning(_)
+                    | SessionTerminationFailure::ObservedProcessUnavailable(_)
+                    | SessionTerminationFailure::ObservedProcessStatusUnavailable(_)
                     | SessionTerminationFailure::ProcessIdentityUnavailable
                     | SessionTerminationFailure::RuntimeIdentityUnavailable
                     | SessionTerminationFailure::ProcessStatusUnavailable
@@ -730,9 +762,26 @@ fn termination_error_with_scan(
             details["action"] = json!("inspect-processes-or-delete-with-leave-processes");
         }
     }
+    let observation = match reason {
+        SessionTerminationFailure::ObservedProcessRunning(observation)
+        | SessionTerminationFailure::ObservedTmuxRunning(observation)
+        | SessionTerminationFailure::ObservedProcessUnavailable(observation)
+        | SessionTerminationFailure::ObservedProcessStatusUnavailable(observation) => {
+            format!("; {}", observation.describe())
+        }
+        _ => String::new(),
+    };
+    let marker_observations = scan
+        .processes
+        .iter()
+        .map(|process| format!("; {}", process.diagnostic()))
+        .collect::<String>();
     let error = CliError::runtime(
         "session-termination-failed",
-        format!("{}; session metadata was retained", reason.message()),
+        format!(
+            "{}{observation}{marker_observations}; session metadata was retained",
+            reason.message()
+        ),
         Some(details),
     );
     let recovery_hint = if reason == SessionTerminationFailure::ProcessSessionMemberCgroupMismatch {
@@ -750,7 +799,13 @@ fn termination_error_with_scan(
     let mut hint = scan
         .processes
         .iter()
-        .map(|process| format!("blocking process: {} {}\n", process.pid, process.command))
+        .map(|process| {
+            format!(
+                "blocking process: {} {}\n",
+                process.diagnostic(),
+                process.command
+            )
+        })
         .collect::<String>();
     if !recovery_hint.is_empty() {
         hint.push_str(recovery_hint);
@@ -876,6 +931,7 @@ fn scan_linux_processes(
         let command =
             fs::read_to_string(entry.path().join("comm")).unwrap_or_else(|_| "unknown".into());
         let shared_daemon = shared_daemons::linux_shared_daemon(&entry.path());
+        let cgroup = marker_cgroup_path(&entry.path());
         // Recheck incarnation after reading diagnostics; reused PIDs must not
         // acquire a former process's runtime marker or command.
         if matches!(read_identity(pid), Ok(Some(after)) if after.start_time == before.start_time && !after.zombie)
@@ -890,6 +946,13 @@ fn scan_linux_processes(
                 scan.processes.push(ProcessSummary {
                     pid,
                     command: command_name(&command),
+                    start_time: Some(before.start_time),
+                    boundary: "session-marker/runtime-marker",
+                    cgroup,
+                    observed_at: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .ok()
+                        .map(|time| time.as_secs()),
                 });
             }
         } else {
@@ -899,6 +962,26 @@ fn scan_linux_processes(
     scan.processes.sort_by_key(|process| process.pid);
     scan.shared_daemons.sort_by_key(|process| process.pid);
     scan
+}
+
+#[cfg(target_os = "linux")]
+fn marker_cgroup_path(process: &Path) -> Option<String> {
+    let text = fs::read_to_string(process.join("cgroup")).ok()?;
+    let mut paths = text.lines().filter_map(|line| line.strip_prefix("0::"));
+    let path = paths.next()?;
+    if paths.next().is_some()
+        || !Path::new(path).is_absolute()
+        || Path::new(path).components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )
+        })
+        || path.chars().any(char::is_control)
+    {
+        return None;
+    }
+    Some(path.to_owned())
 }
 
 #[cfg(target_os = "macos")]
@@ -1014,6 +1097,10 @@ fn classify_macos_environment(
                 scan.processes.push(ProcessSummary {
                     pid,
                     command: command_name(command),
+                    start_time: None,
+                    boundary: "session-marker/runtime-marker",
+                    cgroup: None,
+                    observed_at: None,
                 });
             }
         }
@@ -1097,6 +1184,223 @@ fn scan_processes(_: &str, _: &str) -> ProcessScan {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn absent_managed_name_requires_a_stopped_process_boundary() {
+        let _isolation = nils_test_support::isolate_forge_identity();
+        let stub = nils_test_support::StubBinDir::new();
+        let tmux = stub.path().join("tmux");
+        // Exercise a real probe delayed beyond the former 100 ms ceiling.
+        stub.write_exe(
+            "tmux",
+            "#!/bin/sh\nsleep 0.25\nprintf \"can't find session: %s\\n\" \"$3\" >&2\nexit 1\n",
+        );
+
+        let pane = crate::tests::TestProcessGroup::spawn();
+        let identity: crate::TmuxRuntimeIdentity = serde_json::from_value(serde_json::json!({
+            "session_id": "$7", "pane_id": "%7", "pane_pid": pane.pid(),
+            "process_group_id": pane.pid()
+        }))
+        .unwrap();
+        let result =
+            crate::verify_stopped_tmux_runtime(&tmux, "managed-fixture", &identity, Duration::ZERO);
+        assert!(matches!(
+            result,
+            Err(crate::SessionTerminationFailure::ObservedProcessRunning(_))
+        ));
+        drop(pane);
+        assert!(
+            crate::verify_stopped_tmux_runtime(&tmux, "managed-fixture", &identity, Duration::ZERO)
+                .is_ok()
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn refusal_identifies_the_observed_recorded_process() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = crate::tests::test_context(tmp.path());
+        let id = crate::tests::create_test_record_id(&context, AgentKind::Codex, None, None);
+        let record = load_session_record(&context, &id).unwrap();
+        let pid = std::process::id() as libc::pid_t;
+        let current = crate::read_linux_process_identity(pid).unwrap().unwrap();
+        let identity: crate::TmuxRuntimeIdentity = serde_json::from_value(json!({
+            "session_id": "$91", "pane_id": "%91", "pane_pid": pid,
+            "process_session_id": current.session_id,
+            "process_session_members": [{"pid": pid, "start_time": current.start_time}]
+        }))
+        .unwrap();
+        let reason = crate::verify_stopped_process_runtime(&identity, Duration::ZERO).unwrap_err();
+        let error = session_termination_error(&record, reason, SessionTerminationOperation::Delete);
+        let message = error.0.message;
+        assert!(message.contains("identity"), "{message}");
+        assert!(message.contains(&pid.to_string()), "{message}");
+        assert!(
+            message.contains(&current.start_time.to_string()),
+            "{message}"
+        );
+        assert!(message.contains("Unix time"), "{message}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reused_pid_is_not_a_recorded_survivor() {
+        let pid = std::process::id() as libc::pid_t;
+        let current = crate::read_linux_process_identity(pid).unwrap().unwrap();
+        let identity: crate::TmuxRuntimeIdentity = serde_json::from_value(json!({
+            "session_id": "$91", "pane_id": "%91", "pane_pid": pid,
+            "process_session_id": 2000000000,
+            "process_session_members": [{"pid": pid, "start_time": current.start_time + 1}]
+        }))
+        .unwrap();
+        assert!(crate::verify_stopped_process_runtime(&identity, Duration::ZERO).is_ok());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn refusal_names_unverified_cgroup_absence() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = crate::tests::test_context(tmp.path());
+        let id = crate::tests::create_test_record_id(&context, AgentKind::Codex, None, None);
+        let record = load_session_record(&context, &id).unwrap();
+        let identity: crate::TmuxRuntimeIdentity = serde_json::from_value(json!({
+            "session_id": "$91", "pane_id": "%91", "pane_pid": 2000000000,
+            "control_group": {"path": "/nonexistent-fixture", "device": 1, "inode": 1}
+        }))
+        .unwrap();
+        let reason = crate::verify_stopped_process_runtime(&identity, Duration::ZERO).unwrap_err();
+        let error = session_termination_error(&record, reason, SessionTerminationOperation::Delete);
+        assert!(
+            error
+                .0
+                .message
+                .contains("cgroup: unknown (no verified mount provenance)")
+        );
+        assert!(error.0.message.contains("Unix time"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn refusal_reports_later_unreadable_boundary_after_survivor_exits() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = crate::tests::test_context(tmp.path());
+        let id = crate::tests::create_test_record_id(&context, AgentKind::Codex, None, None);
+        let record = load_session_record(&context, &id).unwrap();
+        let stub = nils_test_support::StubBinDir::new();
+        stub.write_exe(
+            "tmux",
+            "#!/bin/sh\necho \"can't find session\" >&2\nexit 1\n",
+        );
+        let tmux = stub.path().join("tmux");
+        let _status = crate::tmux_probe_fixture::install_status(
+            &tmux,
+            crate::tmux_probe_fixture::Status::Stopped,
+        );
+        let mut child = std::process::Command::new("sleep")
+            .arg("0.25")
+            .spawn()
+            .unwrap();
+        let pid = child.id() as libc::pid_t;
+        let current = crate::read_linux_process_identity(pid).unwrap().unwrap();
+        let identity: crate::TmuxRuntimeIdentity = serde_json::from_value(json!({
+            "session_id": "$91", "pane_id": "%91", "pane_pid": pid,
+            "process_session_members": [{"pid": pid, "start_time": current.start_time}],
+            "control_group": {"path": "/nonexistent-fixture", "device": 1, "inode": 1}
+        }))
+        .unwrap();
+        let reason =
+            crate::verify_stopped_tmux_runtime(&tmux, "fixture", &identity, Duration::from_secs(1))
+                .unwrap_err();
+        child.wait().unwrap();
+        let error = session_termination_error(&record, reason, SessionTerminationOperation::Delete);
+        assert!(error.0.message.contains(&format!("pid {pid}")));
+        assert!(
+            error
+                .0
+                .message
+                .contains("later cgroup: unknown (no verified mount provenance)")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn refusal_reports_tmux_stopped_after_earlier_running_observation() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = crate::tests::test_context(tmp.path());
+        let id = crate::tests::create_test_record_id(&context, AgentKind::Codex, None, None);
+        let record = load_session_record(&context, &id).unwrap();
+        let tmux = tmp.path().join("tmux-fixture");
+        let running = crate::tmux_probe_fixture::install_status(
+            &tmux,
+            crate::tmux_probe_fixture::Status::Running,
+        );
+        let tmux_for_thread = tmux.clone();
+        let transition = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            drop(running);
+            crate::tmux_probe_fixture::install_status(
+                &tmux_for_thread,
+                crate::tmux_probe_fixture::Status::Stopped,
+            )
+        });
+        let identity: crate::TmuxRuntimeIdentity = serde_json::from_value(json!({
+            "session_id": "$91", "pane_id": "%91", "pane_pid": 2000000000,
+            "control_group": {"path": "/nonexistent-fixture", "device": 1, "inode": 1}
+        }))
+        .unwrap();
+        let reason =
+            crate::verify_stopped_tmux_runtime(&tmux, "fixture", &identity, Duration::from_secs(1))
+                .unwrap_err();
+        let _stopped = transition.join().unwrap();
+        let error = session_termination_error(&record, reason, SessionTerminationOperation::Delete);
+        assert!(error.0.message.contains("tmux verification: present"));
+        assert!(error.0.message.contains("later tmux verification: stopped"));
+        assert!(error.0.message.contains("later cgroup: unknown"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn refusal_reports_boundary_stopped_after_earlier_survivor() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = crate::tests::test_context(tmp.path());
+        let id = crate::tests::create_test_record_id(&context, AgentKind::Codex, None, None);
+        let record = load_session_record(&context, &id).unwrap();
+        let tmux = tmp.path().join("tmux-fixture");
+        let stopped = crate::tmux_probe_fixture::install_status(
+            &tmux,
+            crate::tmux_probe_fixture::Status::Stopped,
+        );
+        let transition = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            drop(stopped);
+        });
+        let mut child = std::process::Command::new("sleep")
+            .arg("0.4")
+            .spawn()
+            .unwrap();
+        let pid = child.id() as libc::pid_t;
+        let current = crate::read_linux_process_identity(pid).unwrap().unwrap();
+        let identity: crate::TmuxRuntimeIdentity = serde_json::from_value(json!({
+            "session_id": "$91", "pane_id": "%91", "pane_pid": pid,
+            "process_session_id": 2000000000,
+            "process_session_members": [{"pid": pid, "start_time": current.start_time}]
+        }))
+        .unwrap();
+        let reason =
+            crate::verify_stopped_tmux_runtime(&tmux, "fixture", &identity, Duration::from_secs(1))
+                .unwrap_err();
+        transition.join().unwrap();
+        child.wait().unwrap();
+        let error = session_termination_error(&record, reason, SessionTerminationOperation::Delete);
+        assert!(error.0.message.contains(&format!("pid {pid}")));
+        assert!(error.0.message.contains("later session: stopped"));
+        assert!(
+            error
+                .0
+                .message
+                .contains("later tmux verification: unreadable")
+        );
+    }
 
     /// A tmux whose `display-message` still reports a live pane but whose later
     /// probes find nothing, with `has-session` answering as given.
@@ -1333,6 +1637,121 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn marker_only_survivor_refusal_identifies_escaped_scope() {
+        let (tmp, context, mut record) = session_fixture();
+        let recorded: crate::TmuxRuntimeIdentity = serde_json::from_value(json!({
+            "session_id": "$91", "pane_id": "%91", "pane_pid": 42000,
+            "control_group": {"path": "/recorded.scope", "device": 1, "inode": 1}
+        }))
+        .unwrap();
+        crate::persist_tmux_runtime_identity(&mut record, &recorded).unwrap();
+        let pid = 41000;
+        let process = tmp.path().join(pid.to_string());
+        fs::create_dir(&process).unwrap();
+        fs::write(
+            process.join("environ"),
+            format!(
+                "AGENT_SESSION_ID={}\0AGENT_SESSION_RUNTIME_ID={}\0",
+                record.id,
+                record.runtime.as_ref().unwrap().launch_id,
+            ),
+        )
+        .unwrap();
+        fs::write(process.join("comm"), "worker\n").unwrap();
+        fs::write(process.join("cgroup"), "0::/escaped.scope\n").unwrap();
+        let scan = scan_linux_processes(
+            &record.id,
+            &record.runtime.as_ref().unwrap().launch_id,
+            tmp.path(),
+            |observed| {
+                Ok(Some(LinuxProcessIdentity {
+                    pid: observed,
+                    process_group_id: observed,
+                    session_id: observed,
+                    start_time: 12345,
+                    zombie: false,
+                }))
+            },
+        );
+        let directory = session_dir(&context, &record.id);
+        let error = finish_session_delete_with_scan(
+            &context,
+            record.clone(),
+            directory.clone(),
+            SessionRegistryFence::from_record(&record),
+            board::CloseReason::Deleted,
+            scan,
+        )
+        .unwrap_err();
+        assert!(error.0.message.contains("41000") && error.0.message.contains("12345"));
+        assert!(error.0.message.contains("session-marker/runtime-marker"));
+        assert!(error.0.message.contains("/escaped.scope"));
+        assert!(!error.0.message.contains("AGENT_SESSION_ID="));
+        let details = error.0.details.as_ref().unwrap();
+        let survivor = &details["blocking_processes"][0];
+        assert_eq!(survivor["pid"], pid);
+        assert_eq!(survivor["start_time"], 12345);
+        assert_eq!(survivor["boundary"], "session-marker/runtime-marker");
+        assert_eq!(survivor["cgroup"], "/escaped.scope");
+        assert!(survivor["observed_at"].as_u64().is_some());
+        let hint = error.0.hint.unwrap();
+        assert!(hint.contains("41000") && hint.contains("12345"));
+        assert!(hint.contains("session-marker/runtime-marker") && hint.contains("/escaped.scope"));
+        assert!(directory.join("session.json").exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn marker_survivor_with_unreadable_cgroup_still_refuses() {
+        let (tmp, context, record) = session_fixture();
+        let pid = 41001;
+        let process = tmp.path().join(pid.to_string());
+        fs::create_dir(&process).unwrap();
+        fs::write(
+            process.join("environ"),
+            format!(
+                "AGENT_SESSION_ID={}\0AGENT_SESSION_RUNTIME_ID={}\0",
+                record.id,
+                record.runtime.as_ref().unwrap().launch_id,
+            ),
+        )
+        .unwrap();
+        fs::write(process.join("comm"), "worker\n").unwrap();
+        let scan = scan_linux_processes(
+            &record.id,
+            &record.runtime.as_ref().unwrap().launch_id,
+            tmp.path(),
+            |observed| {
+                Ok(Some(LinuxProcessIdentity {
+                    pid: observed,
+                    process_group_id: observed,
+                    session_id: observed,
+                    start_time: 12346,
+                    zombie: false,
+                }))
+            },
+        );
+        let directory = session_dir(&context, &record.id);
+        let error = finish_session_delete_with_scan(
+            &context,
+            record.clone(),
+            directory.clone(),
+            SessionRegistryFence::from_record(&record),
+            board::CloseReason::Deleted,
+            scan,
+        )
+        .unwrap_err();
+        assert!(error.0.message.contains("cgroup unknown"));
+        assert_eq!(
+            error.0.details.unwrap()["blocking_processes"][0]["cgroup"],
+            json!(null)
+        );
+        assert!(error.0.hint.unwrap().contains("cgroup unknown"));
+        assert!(directory.join("session.json").exists());
     }
 
     #[cfg(target_os = "linux")]
