@@ -79,6 +79,8 @@ cross-host board is defined in [Session board v1](docs/specs/session-board-v1.md
 agent-session send <id> --text yes --key enter
 agent-session send <id> --text-stdin --key enter --require-idle \
   --require-empty-composer --expect-runtime <launch-id> --idempotency-key <key>
+agent-session notice <id> --kind schedule.pulse --source scheduler \
+  --summary "Check the scheduled task" --body-file notice.txt --idempotency-key <key>
 agent-session send <id> --key c-c
 agent-session send <id> --key down --key enter   # answer a dialog while blocked
 agent-session send <id> --text "custom answer" --allow-blocked
@@ -99,6 +101,12 @@ prompt submission outcomes, blocked input, clear and rebind, resume, restart,
 verified deletion, startup logs, retained session records, account switching, model
 settings, and secret safety. [Send v1](docs/specs/send-v1.md) defines guarded
 continuation admission and its observation limits.
+
+With the [notice writer rollout gate](docs/specs/session-notices-v1.md#rollout-and-remaining-work)
+enabled, `notice --summary` adds the shared kind label and a one-line summary
+before the exact detail body. Summaries require 1..70 Unicode scalar values and
+non-whitespace text; controls, line separators and longer summaries are refused.
+An empty detail file is permitted with a valid summary.
 
 The local auto-resume command controls daemon-owned recovery for supported
 runtimes without a serve token. See [Serve API v1](docs/specs/serve-api-v1.md)

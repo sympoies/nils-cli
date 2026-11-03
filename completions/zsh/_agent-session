@@ -224,6 +224,7 @@ _arguments "${_arguments_options[@]}" : \
 '--kind=[Generic event kind, for example schedule.tick]:KIND:_default' \
 '--source=[Self-asserted producer label; never a verified identity]:SOURCE:_default' \
 '--id=[Display identifier; independent of the transport idempotency key]:ID:_default' \
+'--summary=[One line of 1..70 Unicode scalars, rendered after the kind label]:SUMMARY:_default' \
 '(--text-stdin)--body-file=[UTF-8 body file; bytes are retained exactly]:BODY_FILE:_files' \
 '--expect-runtime=[Require the active runtime launch id to match before delivery]:INCARNATION:_default' \
 '--expect-provider-session=[Require the persisted provider session id to match before delivery]:SESSION:_default' \

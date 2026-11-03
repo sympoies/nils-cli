@@ -40,6 +40,8 @@ or integrating a specific subsystem.
   transcript-offset ordering and authorization.
 - [Send v1](specs/send-v1.md): submission-time continuation guards, observation
   limits, durable idempotency claims, and refusal codes.
+- [Session metrics v1](specs/session-metrics-v1.md): authenticated bounded
+  retained-transcript growth, completion counts, separate ages and explicit unknowns.
 - [Session context usage v1](specs/session-context-usage-v1.md): optional raw
   context-window facts, provider binding, bounded reads, and freshness.
 - [Session display metadata v1](specs/session-display-metadata-v1.md): explicit

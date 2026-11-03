@@ -15070,7 +15070,7 @@ mod account_switch;
 mod sync_waits;
 
 #[test]
-fn legacy_broker_resume_uses_prior_persisted_identity() {
+fn broker_without_identity_resume_uses_prior_persisted_identity() {
     use crate::coordination::broker::test_support;
     let lock = GlobalStateLock::new();
     for agent in ["claude", "codex"] {
@@ -15111,7 +15111,7 @@ fn legacy_broker_resume_uses_prior_persisted_identity() {
             .insert("delete_tmux_identity".to_string(), identity.clone());
         crate::write_session_record(&context, &record).unwrap();
         test_support::seed_live_broker(&context, &record.id, &old, identity);
-        test_support::make_legacy_broker(&context, &record.id, false);
+        test_support::clear_broker_identity(&context, &record.id, false);
         let tmux = resume_tmux(tmp.path(), &tmp.path().join("tmux.log"));
         let result = crate::resume_session_locked(&context, record, &tmux)
             .expect("a stopped older broker must permit exact provider resume");
@@ -15122,7 +15122,7 @@ fn legacy_broker_resume_uses_prior_persisted_identity() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn generation_two_legacy_broker_resume_ignores_recycled_numeric_selector() {
+fn generation_two_broker_without_identity_resume_ignores_recycled_numeric_selector() {
     use crate::coordination::broker::test_support;
     let _lock = GlobalStateLock::new();
     for prior_boot in [true, false] {
@@ -15165,7 +15165,7 @@ fn generation_two_legacy_broker_resume_ignores_recycled_numeric_selector() {
             .insert("delete_tmux_identity".to_string(), identity.clone());
         crate::write_session_record(&context, &record).unwrap();
         test_support::seed_live_broker(&context, &record.id, &old, identity);
-        test_support::make_legacy_broker(&context, &record.id, false);
+        test_support::clear_broker_identity(&context, &record.id, false);
         let registry_path = tmp.path().join("coordination/registry.json");
         let mut registry: Value =
             serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
@@ -15222,7 +15222,7 @@ fn generation_two_legacy_broker_resume_ignores_recycled_numeric_selector() {
 }
 
 #[test]
-fn legacy_resume_allows_tmux_to_reuse_the_stopped_internal_session_id() {
+fn resume_without_broker_identity_allows_tmux_to_reuse_the_stopped_internal_session_id() {
     use crate::coordination::broker::test_support;
     let lock = GlobalStateLock::new();
     let tmp = tempfile::TempDir::new().unwrap();
@@ -15246,7 +15246,7 @@ fn legacy_resume_allows_tmux_to_reuse_the_stopped_internal_session_id() {
         .insert("delete_tmux_identity".to_string(), identity.clone());
     crate::write_session_record(&context, &record).unwrap();
     test_support::seed_live_broker(&context, &record.id, &old, identity);
-    test_support::make_legacy_broker(&context, &record.id, false);
+    test_support::clear_broker_identity(&context, &record.id, false);
     let tmux = resume_tmux(tmp.path(), &tmp.path().join("tmux.log"));
     let script = fs::read_to_string(&tmux)
         .unwrap()

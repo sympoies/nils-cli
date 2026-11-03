@@ -1,4 +1,5 @@
 //! Bounded context-window facts from provider-owned session transcripts.
+pub(crate) mod session_metrics;
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};

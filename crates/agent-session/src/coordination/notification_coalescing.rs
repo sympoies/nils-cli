@@ -138,9 +138,9 @@ pub(super) fn count_prompt<'a>(messages: impl Iterator<Item = &'a StoredMessage>
 
 /// The counts spelled out by category, for notice delivery. A notice envelope is
 /// multiline and is not held to the one-row width bound of the plain reminder.
-pub(super) fn explained_prompt<'a>(messages: impl Iterator<Item = &'a StoredMessage>) -> String {
+pub(super) fn explained_summary<'a>(messages: impl Iterator<Item = &'a StoredMessage>) -> String {
     format!(
-        "Mailbox: {}; {} message inbox",
+        "{}; {} message inbox",
         category_counts(messages)
             .iter()
             .map(|(name, count)| format!("{count} {name}"))
