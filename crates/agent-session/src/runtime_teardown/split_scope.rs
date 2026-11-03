@@ -817,11 +817,20 @@ pub(crate) fn verify_process_session_stopped(
 ) -> Result<(), SessionTerminationFailure> {
     let started_at = Instant::now();
     loop {
-        if crate::linux_process_session_members(process_session_id)?.is_empty() {
+        let members = crate::linux_process_session_members(process_session_id)?;
+        if members.is_empty() {
             return Ok(());
         }
         if started_at.elapsed() >= timeout {
-            return Err(SessionTerminationFailure::ProcessStillRunning);
+            return Err(SessionTerminationFailure::ObservedProcessRunning(
+                crate::process_observation::Observation::new(
+                    "session",
+                    "present",
+                    Some(members[0].pid),
+                    Some(members[0].start_time),
+                )
+                .in_session(process_session_id),
+            ));
         }
         thread::sleep(
             DELETE_TERMINATION_VERIFY_POLL_INTERVAL

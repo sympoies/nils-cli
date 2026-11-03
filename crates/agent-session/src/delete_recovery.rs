@@ -449,10 +449,16 @@ fn delete_if_stopped(
             DELETE_TERMINATION_VERIFY_TIMEOUT,
         ) {
             Ok(()) => {}
-            Err(SessionTerminationFailure::StillRunning) => {
+            Err(
+                SessionTerminationFailure::StillRunning
+                | SessionTerminationFailure::ObservedTmuxRunning(_),
+            ) => {
                 return Err(conditional_state_mismatch(&record, "running"));
             }
-            Err(SessionTerminationFailure::ProcessStillRunning) => {
+            Err(
+                SessionTerminationFailure::ProcessStillRunning
+                | SessionTerminationFailure::ObservedProcessRunning(_),
+            ) => {
                 return Err(conditional_state_mismatch(&record, "working"));
             }
             Err(_) => return Err(conditional_status_unknown(&record)),
@@ -721,6 +727,9 @@ fn termination_error_with_scan(
                 reason,
                 SessionTerminationFailure::VerificationFailed
                     | SessionTerminationFailure::ProcessStillRunning
+                    | SessionTerminationFailure::ObservedProcessRunning(_)
+                    | SessionTerminationFailure::ObservedProcessUnavailable(_)
+                    | SessionTerminationFailure::ObservedProcessStatusUnavailable(_)
                     | SessionTerminationFailure::ProcessIdentityUnavailable
                     | SessionTerminationFailure::RuntimeIdentityUnavailable
                     | SessionTerminationFailure::ProcessStatusUnavailable
@@ -730,9 +739,21 @@ fn termination_error_with_scan(
             details["action"] = json!("inspect-processes-or-delete-with-leave-processes");
         }
     }
+    let observation = match reason {
+        SessionTerminationFailure::ObservedProcessRunning(observation)
+        | SessionTerminationFailure::ObservedTmuxRunning(observation)
+        | SessionTerminationFailure::ObservedProcessUnavailable(observation)
+        | SessionTerminationFailure::ObservedProcessStatusUnavailable(observation) => {
+            format!("; {}", observation.describe())
+        }
+        _ => String::new(),
+    };
     let error = CliError::runtime(
         "session-termination-failed",
-        format!("{}; session metadata was retained", reason.message()),
+        format!(
+            "{}{observation}; session metadata was retained",
+            reason.message()
+        ),
         Some(details),
     );
     let recovery_hint = if reason == SessionTerminationFailure::ProcessSessionMemberCgroupMismatch {
@@ -1097,6 +1118,197 @@ fn scan_processes(_: &str, _: &str) -> ProcessScan {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn absent_managed_name_requires_a_stopped_process_boundary() {
+        let _isolation = nils_test_support::isolate_forge_identity();
+        let stub = nils_test_support::StubBinDir::new();
+        let tmux = stub.path().join("tmux");
+        // Exercise a real probe delayed beyond the former 100 ms ceiling.
+        stub.write_exe(
+            "tmux",
+            "#!/bin/sh\nsleep 0.25\nprintf \"can't find session: %s\\n\" \"$3\" >&2\nexit 1\n",
+        );
+
+        let pane = crate::tests::TestProcessGroup::spawn();
+        let identity: crate::TmuxRuntimeIdentity = serde_json::from_value(serde_json::json!({
+            "session_id": "$7", "pane_id": "%7", "pane_pid": pane.pid(),
+            "process_group_id": pane.pid()
+        }))
+        .unwrap();
+        let result =
+            crate::verify_stopped_tmux_runtime(&tmux, "managed-fixture", &identity, Duration::ZERO);
+        assert!(matches!(
+            result,
+            Err(crate::SessionTerminationFailure::ObservedProcessRunning(_))
+        ));
+        drop(pane);
+        assert!(
+            crate::verify_stopped_tmux_runtime(&tmux, "managed-fixture", &identity, Duration::ZERO)
+                .is_ok()
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn refusal_identifies_the_observed_recorded_process() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = crate::tests::test_context(tmp.path());
+        let id = crate::tests::create_test_record_id(&context, AgentKind::Codex, None, None);
+        let record = load_session_record(&context, &id).unwrap();
+        let pid = std::process::id() as libc::pid_t;
+        let current = crate::read_linux_process_identity(pid).unwrap().unwrap();
+        let identity: crate::TmuxRuntimeIdentity = serde_json::from_value(json!({
+            "session_id": "$91", "pane_id": "%91", "pane_pid": pid,
+            "process_session_id": current.session_id,
+            "process_session_members": [{"pid": pid, "start_time": current.start_time}]
+        }))
+        .unwrap();
+        let reason = crate::verify_stopped_process_runtime(&identity, Duration::ZERO).unwrap_err();
+        let error = session_termination_error(&record, reason, SessionTerminationOperation::Delete);
+        let message = error.0.message;
+        assert!(message.contains("identity"), "{message}");
+        assert!(message.contains(&pid.to_string()), "{message}");
+        assert!(
+            message.contains(&current.start_time.to_string()),
+            "{message}"
+        );
+        assert!(message.contains("Unix time"), "{message}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reused_pid_is_not_a_recorded_survivor() {
+        let pid = std::process::id() as libc::pid_t;
+        let current = crate::read_linux_process_identity(pid).unwrap().unwrap();
+        let identity: crate::TmuxRuntimeIdentity = serde_json::from_value(json!({
+            "session_id": "$91", "pane_id": "%91", "pane_pid": pid,
+            "process_session_id": 2000000000,
+            "process_session_members": [{"pid": pid, "start_time": current.start_time + 1}]
+        }))
+        .unwrap();
+        assert!(crate::verify_stopped_process_runtime(&identity, Duration::ZERO).is_ok());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn refusal_names_unverified_cgroup_absence() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = crate::tests::test_context(tmp.path());
+        let id = crate::tests::create_test_record_id(&context, AgentKind::Codex, None, None);
+        let record = load_session_record(&context, &id).unwrap();
+        let identity: crate::TmuxRuntimeIdentity = serde_json::from_value(json!({
+            "session_id": "$91", "pane_id": "%91", "pane_pid": 2000000000,
+            "control_group": {"path": "/nonexistent-fixture", "device": 1, "inode": 1}
+        }))
+        .unwrap();
+        let reason = crate::verify_stopped_process_runtime(&identity, Duration::ZERO).unwrap_err();
+        let error = session_termination_error(&record, reason, SessionTerminationOperation::Delete);
+        assert!(
+            error
+                .0
+                .message
+                .contains("cgroup: unknown (no verified mount provenance)")
+        );
+        assert!(error.0.message.contains("Unix time"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn refusal_reports_later_unreadable_boundary_after_survivor_exits() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = crate::tests::test_context(tmp.path());
+        let id = crate::tests::create_test_record_id(&context, AgentKind::Codex, None, None);
+        let record = load_session_record(&context, &id).unwrap();
+        let stub = nils_test_support::StubBinDir::new();
+        stub.write_exe(
+            "tmux",
+            "#!/bin/sh\necho \"can't find session\" >&2\nexit 1\n",
+        );
+        let tmux = stub.path().join("tmux");
+        let _status = crate::tmux_probe_fixture::install_status(
+            &tmux,
+            crate::tmux_probe_fixture::Status::Stopped,
+        );
+        let mut child = std::process::Command::new("sleep")
+            .arg("0.25")
+            .spawn()
+            .unwrap();
+        let pid = child.id() as libc::pid_t;
+        let current = crate::read_linux_process_identity(pid).unwrap().unwrap();
+        let identity: crate::TmuxRuntimeIdentity = serde_json::from_value(json!({
+            "session_id": "$91", "pane_id": "%91", "pane_pid": pid,
+            "process_session_members": [{"pid": pid, "start_time": current.start_time}],
+            "control_group": {"path": "/nonexistent-fixture", "device": 1, "inode": 1}
+        }))
+        .unwrap();
+        let reason =
+            crate::verify_stopped_tmux_runtime(&tmux, "fixture", &identity, Duration::from_secs(1))
+                .unwrap_err();
+        child.wait().unwrap();
+        let error = session_termination_error(&record, reason, SessionTerminationOperation::Delete);
+        assert!(
+            error.0.message.contains(&format!("pid {pid}")),
+            "{}",
+            error.0.message
+        );
+        assert!(
+            error
+                .0
+                .message
+                .contains("later cgroup: unknown (no verified mount provenance)"),
+            "{}",
+            error.0.message
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn refusal_reports_tmux_stopped_after_earlier_running_observation() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = crate::tests::test_context(tmp.path());
+        let id = crate::tests::create_test_record_id(&context, AgentKind::Codex, None, None);
+        let record = load_session_record(&context, &id).unwrap();
+        let tmux = tmp.path().join("tmux-fixture");
+        let running = crate::tmux_probe_fixture::install_status(
+            &tmux,
+            crate::tmux_probe_fixture::Status::Running,
+        );
+        let tmux_for_thread = tmux.clone();
+        let transition = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            drop(running);
+            crate::tmux_probe_fixture::install_status(
+                &tmux_for_thread,
+                crate::tmux_probe_fixture::Status::Stopped,
+            )
+        });
+        let identity: crate::TmuxRuntimeIdentity = serde_json::from_value(json!({
+            "session_id": "$91", "pane_id": "%91", "pane_pid": 2000000000,
+            "control_group": {"path": "/nonexistent-fixture", "device": 1, "inode": 1}
+        }))
+        .unwrap();
+        let reason =
+            crate::verify_stopped_tmux_runtime(&tmux, "fixture", &identity, Duration::from_secs(1))
+                .unwrap_err();
+        let _stopped = transition.join().unwrap();
+        let error = session_termination_error(&record, reason, SessionTerminationOperation::Delete);
+        assert!(
+            error.0.message.contains("tmux verification: present"),
+            "{}",
+            error.0.message
+        );
+        assert!(
+            error.0.message.contains("later tmux verification: stopped"),
+            "{}",
+            error.0.message
+        );
+        assert!(
+            error.0.message.contains("later cgroup: unknown"),
+            "{}",
+            error.0.message
+        );
+    }
 
     /// A tmux whose `display-message` still reports a live pane but whose later
     /// probes find nothing, with `has-session` answering as given.
