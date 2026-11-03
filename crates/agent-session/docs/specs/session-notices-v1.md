@@ -156,9 +156,11 @@ the provider's reported version to it, and a provider row must carry the bound
 version.
 
 The `2.1.317` upper bound passed the module contract checks; a native run on
-that release is pending before merge. The previous bound, `2.1.316`, rests on
-the module contract checks plus a native run on that release, with the same
-hooks, API calls and environment access as on `2.1.314`. The run showed: a gate-enabled fresh launch mounted the
+that release is pending before merge.
+
+The previous bound, `2.1.316`, rests on the module contract checks plus a
+native run on that release, with the same hooks, API calls and environment
+access as on `2.1.314`. The run showed: a gate-enabled fresh launch mounted the
 module, a notice after an ordinary turn was delivered as a plugin-attributed row
 with zero Enter presses and a repeated key was refused, a restart mounted a new
 incarnation and delivered a fresh-key notice, and a gate-off launch recorded
