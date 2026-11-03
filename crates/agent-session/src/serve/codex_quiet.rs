@@ -59,8 +59,15 @@ pub(super) fn eligible(
     else {
         return false;
     };
-    codex_app_server::probe_idle_conversation(context, record, Some(&resume.session_id))
+    if !codex_app_server::probe_idle_conversation(context, record, Some(&resume.session_id))
         .is_ok_and(|thread| thread == resume.session_id)
+    {
+        return false;
+    }
+    // Resume emits no new turn completion. A retained last turn must not keep
+    // startup stuck after the exact bound conversation is observed idle.
+    state.phase != activity::TurnPhase::Starting
+        || activity::settle_starting(context, record, Some(state.revision)).unwrap_or(false)
 }
 
 #[cfg(test)]

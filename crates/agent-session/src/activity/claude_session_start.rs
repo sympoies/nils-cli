@@ -58,7 +58,7 @@ fn observe_session_ready(
     provider_session: &str,
 ) -> Result<(), CliError> {
     let record = load_session_record(context, id)?;
-    let Some(runtime) = record
+    let Some(_) = record
         .runtime
         .as_ref()
         .filter(|runtime| runtime.launch_id == runtime_id)
@@ -71,39 +71,5 @@ fn observe_session_ready(
     {
         return Ok(());
     }
-    let dir = session_dir(context, id);
-    let _lock = acquire_lock(&dir)?;
-    if !matches!(
-        runtime_unhealthy_marker(&dir, runtime_id, runtime.generation),
-        RuntimeUnhealthyStatus::Absent
-    ) {
-        return Ok(());
-    }
-    let path = dir.join(ACTIVITY_FILE);
-    let Ok(mut document) = read_document(&path) else {
-        return Ok(());
-    };
-    if document.runtime_id != runtime_id
-        || document.runtime_generation != runtime.generation
-        || !replay_matches_document(&dir, &document)
-        || document.state.phase != TurnPhase::Starting
-        || document.state.current_turn.is_some()
-        || !document.pending_attention.is_empty()
-        || document.overflow_attention.is_some()
-        || document.pending_journal.is_some()
-        || document.pending_completion.is_some()
-    {
-        return Ok(());
-    }
-    document.state.phase = TurnPhase::Waiting;
-    document.state.phase_changed_at = now();
-    document.state.revision = document.state.revision.saturating_add(1);
-    document.state.source = TurnSource {
-        kind: SourceKind::ProviderHook,
-        provider: Some(record.agent.clone()),
-        confidence: Confidence::Authoritative,
-        extra: Map::new(),
-    };
-    document.state.diagnostic = None;
-    write_document(&path, &mut document)
+    settle_starting(context, &record, None).map(|_| ())
 }
