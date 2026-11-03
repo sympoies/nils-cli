@@ -438,6 +438,12 @@ jobs:
           name: junit-nextest
           path: ${{ env.NILS_CLI_REPORT_DIR }}/nextest/ci/junit.xml
 
+      # Advisory: names new tests of 10 s or more; never fails the job.
+      - name: Slow-test ratchet
+        if: always() && steps.junit-report.outputs.present == 'true'
+        continue-on-error: true
+        run: python3 scripts/ci/slow-test-ratchet.py --junit "$NILS_CLI_REPORT_DIR/nextest/ci/junit.xml" --summary "$GITHUB_STEP_SUMMARY"
+
   # The cgroup containment checks need a systemd user
   # scope and compile their own agent-session targets (~5.5 min). They run
   # beside `test` instead of in front of it. This required Linux check blocks
@@ -594,11 +600,19 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Download nightly JUnit reports
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: junit-nextest*
+          path: ${{ runner.temp }}/nightly-junit
       - name: Update nightly tracking issue
         uses: actions/github-script@v9
         env:
           VALIDATION_RESULT: ${{ needs.full_validation.result }}
+          JUNIT_DIR: ${{ runner.temp }}/nightly-junit
         with:
           script: |
             const { trackNightly } = require('./.github/scripts/nightly-tracker.cjs');
-            await trackNightly({ github, context, core, result: process.env.VALIDATION_RESULT });
+            const junitDir = require('node:fs').existsSync(process.env.JUNIT_DIR) ? process.env.JUNIT_DIR : undefined;
+            await trackNightly({ github, context, core, result: process.env.VALIDATION_RESULT, junitDir });

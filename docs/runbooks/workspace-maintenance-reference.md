@@ -562,6 +562,8 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `node scripts/ci/tests/release-ci-gate.test.cjs`
 - `node scripts/ci/tests/full-validation-gate.test.cjs`
 - `node scripts/ci/tests/nightly-tracker.test.cjs`
+- `python3 scripts/ci/tests/slow-test-ratchet.test.py` and `python3 scripts/ci/slow-test-ratchet.py --check-baseline`
+  (advisory slow-test ratchet; `scripts/ci/slow-test-baseline.tsv` may only shrink)
 - `python3 scripts/ci/tests/delivery-workflow.test.py`
 - `python3 scripts/ci/tests/macos-clippy.test.py` (queue scope and compile/lint-only contract)
 - `bash scripts/ci/tests/dependabot-third-party-workflow-contract.test.sh`
