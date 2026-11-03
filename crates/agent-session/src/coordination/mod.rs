@@ -1805,7 +1805,7 @@ pub fn unauthorized() -> CliError {
         None,
     )
     .with_hint(format!(
-        "this session is not a verified coordination broker incarnation; confirm authority with `{} broker identity` and ensure it was launched under enforced coordination before retrying",
+        "this session is not a verified coordination broker incarnation; check `{} broker status` and ensure the session was launched under enforced coordination before retrying",
         crate::command_identity::executable(),
     ))
 }

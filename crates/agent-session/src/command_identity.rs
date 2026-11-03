@@ -53,7 +53,7 @@ mod tests {
                     .into_inner()
                     .hint
                     .unwrap()
-                    .contains("`session-control broker identity`")
+                    .contains("`session-control broker status`")
             );
             let error = crate::origin::invalid_workspace().into_inner();
             assert_eq!(

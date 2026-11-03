@@ -79,3 +79,33 @@ fn locked_revalidation_checks_rotated_capability_before_runtime_diagnostic() {
         "capability-mismatch"
     );
 }
+
+#[test]
+fn stale_heartbeat_hint_points_to_status() {
+    let error = super::refusal("broker-heartbeat-stale");
+    let hint = error.0.hint.as_deref().unwrap();
+    assert!(hint.contains("broker status"));
+    assert!(hint.contains("heartbeat_fresh"));
+    assert!(hint.contains("capability_available"));
+    assert!(hint.contains("retry"));
+    assert!(!hint.contains("broker identity"));
+}
+
+#[test]
+fn capability_refusals_do_not_recommend_launch_identity() {
+    for reason in [
+        "capability-file-missing",
+        "capability-file-invalid",
+        "capability-mismatch",
+        "broker-identity-unavailable",
+        "runtime-incarnation-mismatch",
+        "broker-not-ready",
+        "broker-capability-unavailable",
+    ] {
+        let error = super::refusal(reason);
+        assert!(
+            !error.0.hint.as_deref().unwrap().contains("broker identity"),
+            "{reason}"
+        );
+    }
+}
