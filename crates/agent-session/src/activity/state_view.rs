@@ -1,6 +1,9 @@
 use super::*;
 #[path = "completion_uncertainty.rs"]
 mod completion_uncertainty;
+#[path = "session_ready.rs"]
+mod session_ready;
+pub(crate) use session_ready::settle_starting;
 
 pub fn state_for_view(context: &CliContext, record: &SessionRecord) -> Option<TurnState> {
     read_state(context, record, true)

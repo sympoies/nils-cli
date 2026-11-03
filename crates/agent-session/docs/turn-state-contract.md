@@ -335,6 +335,12 @@ Quiet is a possibly-idle scheduling hint, not completion or input authority.
 Native notification candidates must recheck the exact bound conversation's
 idle status, without reading turns, before input admission. Busy or unavailable
 providers stay queued; terminal recipients with unknown phase keep their existing refusal.
+This includes a resumed Codex runtime in `starting` with a retained last turn.
+When the native probe verifies the bound conversation idle, an unchanged,
+healthy startup with no open turn, attention, or pending evidence becomes
+authoritative `waiting`. The preceding last turn is preserved; no completion
+event is invented. New activity during the probe prevents this transition.
+There is no time-based startup fallback.
 Guarded terminal wake integration remains owned by #2432.
 
 Controller admission and active-lease renewal omit the quiet presentation
@@ -577,6 +583,7 @@ notification-only waiting signal.
 | --- | --- |
 | new runtime | interrupt an open turn, preserve it as last turn, clear attention, enter authoritative `starting` |
 | primary Claude `SessionStart` with `source: "startup"` or `"resume"` | only from `starting` with no open turn, attention, or pending evidence, in the same runtime and bound provider conversation (raw or runtime-scoped projected id, as `agent-hook` forwards it with `source` regardless of model settings): enter authoritative provider-hook `waiting` |
+| native Codex mailbox probe observes the exact bound conversation idle | only from healthy `starting` with unchanged runtime and activity revision and no open turn, attention, or pending evidence: enter authoritative provider-hook `waiting`, preserving the preceding last turn |
 | `turn_started` | interrupt an older open turn, clear old attention, enter `working` |
 | `attention_requested` | keep current start time, add one opaque pending request, enter `needs_input`; a Claude request for another turn first interrupts the stale open turn |
 | correlated `attention_cleared` | remove only that request, advance monotonic `last_progress_at`, and remain `needs_input` while any remain |
