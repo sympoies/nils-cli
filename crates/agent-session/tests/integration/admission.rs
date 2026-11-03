@@ -65,6 +65,9 @@ impl Fixture {
             .env("AGENT_SESSION_CLAUDE_BIN", &self.provider)
             .env("AGENT_SESSION_TMUX_BIN", &self.tmux)
             .env("AGENT_SESSION_FAKE_TMUX_LOG", &self.log)
+            // The fake provider never shows a composer, so start would
+            // otherwise observe the full default capture window.
+            .env("AGENT_SESSION_CODEX_CAPTURE_TIMEOUT_MS", "25")
             .env("AGENT_SESSION_FAKE_TMUX_ABSENT_AFTER_KILL", "1")
             .env("AGENT_SESSION_FAKE_TMUX_ABSENT_BEFORE_LAUNCH", "1")
             .stdin(Stdio::null());
