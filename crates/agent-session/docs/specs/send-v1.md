@@ -51,8 +51,10 @@ Each option is independent:
   Codex app-server runtimes verify the exact attached, loaded thread is `idle`
   through the native protocol. Outstanding activity attention still refuses,
   including when `--allow-blocked` is present.
-- `--require-empty-composer` requires an observable empty composer. A draft
-  is refused without paste or Enter. `--allow-blocked` cannot override guards.
+- `--require-empty-composer` requires an observable empty composer before paste.
+  A fresh draft is refused without paste or Enter. An eligible stale draft uses
+  [saved draft admission](stale-drafts-v1.md) before delivery; setting the bound
+  to 0 preserves refusal. `--allow-blocked` cannot override guards.
 - `--idempotency-key` accepts 1–256 bytes and claims one delivery attempt for
   the stable managed session, across CLI retries and runtime replacements.
 
@@ -429,3 +431,11 @@ acknowledged turn it is `true` even if subsequent input confirmation fails;
 without an acknowledgement it is `null` (unknown). None of these outcomes
 permits reuse of the claimed key. Existing account and input-gate refusal
 codes also apply.
+
+## Stale draft admission
+
+Guarded admission with `--require-empty-composer` may save an unchanged draft
+older than the configured bound, then clear it through the shared cleanup path
+before delivering input. See [saved stale drafts](stale-drafts-v1.md) for the
+600-second default, disabling value 0, exact observation limits, durable event,
+store bounds and read routes. Unobservable panes retain their refusal.

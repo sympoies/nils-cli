@@ -125,7 +125,14 @@ fn snapshot_with(
     crate::visit_session_views(context, Some(tmux_bin), false, &mut |view| {
         let projected = view.ok().and_then(|view| {
             let view = serde_json::to_value(&view).ok()?;
-            project_record(&view, machine, home.as_deref(), federation_configured)
+            let mut projected =
+                project_record(&view, machine, home.as_deref(), federation_configured)?;
+            if let Some(id) = view["id"].as_str()
+                && let Ok(Some(event)) = crate::send_guard::drafts::latest(context, id)
+            {
+                projected["stale_draft"] = event;
+            }
+            Some(projected)
         });
         match projected {
             Some(record) => records.push(record),

@@ -44,6 +44,11 @@ transcript-body scan.
 Retained DSH provider history is not listed or resumed by the serve API. Remove
 retired DSH launch profiles from the daemon configuration.
 
+Rows optionally carry `row_class: "runtime_command"` or `row_class: "compaction"`
+under [History row classes v1](history-row-classes-v1.md). Compactions retain one
+boundary-anchored row, with the bounded summary in `text` and truncation metadata
+in `compaction`; their separate summary record consumes no visible row.
+
 `GET /history/sessions/{history_id}/messages` resolves the opaque history id inside the daemon and
 returns normalized `user`/`assistant` text messages, verified machine `notice` messages and Codex `goal` creation objectives in bounded
 pages. Injected AGENTS and Goal continuation context are excluded. Claude user messages include prompts
