@@ -85,9 +85,21 @@ fn adjacent_summary(session: &HistorySession, offset: u64) -> Option<String> {
     }
 }
 
-pub(super) fn text(provider: &str, role: &str, text: &str) -> (String, Option<classes::RowClass>) {
+pub(super) fn text(
+    provider: &str,
+    role: &str,
+    text: &str,
+    value: &Value,
+) -> (String, Option<classes::RowClass>) {
     let class = (role == "user" && classes::runtime_command(provider, text))
         .then_some(classes::RowClass::RuntimeCommand);
+    let class = class.or_else(|| {
+        (role == "user" && classes::notice::matches(provider, text, value))
+            .then_some(classes::RowClass::Notice)
+    });
+    if class == Some(classes::RowClass::Notice) {
+        return (text.to_owned(), class);
+    }
     if class.is_some() {
         return (classes::bounded_text(text).0, class);
     }
