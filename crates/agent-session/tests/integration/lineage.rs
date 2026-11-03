@@ -80,6 +80,9 @@ impl Fixture {
         let mut envs = vec![
             ("AGENT_SESSION_FAKE_TMUX_LOG", self.tmux_log.as_str()),
             ("AGENT_SESSION_MACHINE", MACHINE),
+            // The fake agent never shows a composer, so start would otherwise
+            // observe the full default capture window.
+            ("AGENT_SESSION_CODEX_CAPTURE_TIMEOUT_MS", "25"),
         ];
         if let Some((session, runtime)) = caller {
             envs.push(("AGENT_SESSION_ID", session));
@@ -940,6 +943,7 @@ fn session_started_root_keeps_the_launch_initiator_only_with_a_role() {
                 ("AGENT_SESSION_CAPABILITY_FILE", &alpha_cap),
                 ("AGENT_SESSION_MACHINE", "launch-source"),
                 ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log.to_str().unwrap()),
+                ("AGENT_SESSION_CODEX_CAPTURE_TIMEOUT_MS", "25"),
             ],
         );
         assert_eq!(out.code, 0, "{}", out.stdout_text());
