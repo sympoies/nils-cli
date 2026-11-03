@@ -667,8 +667,14 @@ ordinary delete and stopped-only behavior.
 
 A daemon can escape the pane tree or move out of its Linux cgroup while retaining
 `AGENT_SESSION_ID` and `AGENT_SESSION_RUNTIME_ID`. A failed ordinary delete now
-includes `blocking_processes` entries with `pid` and `command` (executable name
-only). Boundary-verification failures report `retryable: false` when associated
+includes `blocking_processes` entries with `pid`, `command` (executable name
+only), `start_time`, `boundary`, `cgroup`, and `observed_at`. On Linux, the
+start time is the verified process start time in kernel ticks, `boundary` is
+`session-marker/runtime-marker` when both markers match, `cgroup` is the
+process's own cgroup v2 path, and `observed_at` is Unix time in seconds.
+Unavailable values are `null` in JSON and `unknown` in the refusal text. On
+macOS, start time, cgroup and observation time are currently unavailable in
+this inventory. Boundary-verification failures report `retryable: false` when associated
 live processes are observed, with an explicit recovery action.
 Stop or relocate those processes deliberately, or acknowledge leaving them behind:
 

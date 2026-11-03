@@ -17309,8 +17309,8 @@ fi
             Duration::from_secs(1),
         )
         .unwrap_err();
-
-        assert_eq!(error, super::SessionTerminationFailure::StillRunning);
+        use super::SessionTerminationFailure::ObservedTmuxRunning;
+        assert!(matches!(error, ObservedTmuxRunning(_)));
         assert!(session_dir(&context, &id).exists());
     }
 
