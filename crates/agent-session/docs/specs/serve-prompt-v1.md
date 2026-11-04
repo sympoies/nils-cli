@@ -66,7 +66,8 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   - `paste-placeholder`: the row shows a paste placeholder.
   - `suggestion-literal-unstyled`: the row holds a suggestion's wording
     without dim styling.
-  - `row-unrecognized`: the row cannot be located.
+  - `row-unrecognized`: the row cannot be located or does not start with the
+    prompt glyph.
 
   The label names the rule that failed. It is a fixed word and never carries
   pane text, a path or raw output. The field is additive and absent for other
