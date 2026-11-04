@@ -347,8 +347,9 @@ The genesis `ledger.jsonl` and each retired successor retain their exact bytes;
 no record is truncated, deleted or rewritten. A successor copies the still-live
 records exactly. Immutable manifests link predecessor manifests, sealed data and
 compact key-index segments by SHA-256; the successor header binds the sealed
-segment and its index. The directory stays owned `0700`; data, index, manifest,
-pointer and lock files stay owned regular `0600` files without symlink reads.
+segment and its index. The directory stays owned `0700`; live data, index,
+manifest, pointer and lock files stay owned regular `0600` files. Retired data,
+including genesis, is sealed `0400`. All reads reject symlinks and wrong owners.
 
 Each compact index permanently retains domain-separated hashes of the managed
 session/caller-key pair and operation identity. Admission checks committed
@@ -368,11 +369,21 @@ A first publication interrupted before that marker contains copies only; the
 next writer completes the marker before writing. Corrupt referenced state fails
 closed, and an unfinished operation can finish against its unchanged claim hash.
 
-All hosts must upgrade agent-session together and quiesce older native writers
-before activating the reviewed release of this layout. The current implementation
-has one selected live segment and does not
-dual-write or fall back to an older path after lifecycle publication. No cleanup,
-installation, migration of live state or release is part of fixture validation.
+After the pointer is durable, the writer seals the retired segment before any
+unique successor write. If interrupted before sealing, the next writer verifies
+the exact published tip and completes its seal; readers reject writable archives.
+The `0400` guard rejects new older-writer opens, but cannot revoke open descriptors.
+
+Every native notice writer sharing one state directory must upgrade together.
+Stop every `serve` daemon and any `agent-session notice` process on the old binary
+for that state directory before the first new-binary write, including queued
+notice writers. Otherwise a retired segment can change and both native notices
+and Claude History reads fail until repair. Independent state directories can
+activate separately. Broker/proxy helpers and provider sessions do not write
+this ledger. Use the reviewed version for archive-aware History reads as well.
+The current implementation selects one live segment, with no dual writes or
+older-path fallback after publication. No live-state migration or release is
+part of fixture validation.
 
 Initial prompts can explicitly use the same encoder:
 

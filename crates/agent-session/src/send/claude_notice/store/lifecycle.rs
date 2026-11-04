@@ -3,6 +3,7 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 mod archive;
+mod sealed;
 
 const POINTER_SCHEMA: &str = "agent-session.claude-notice-store-current.v1";
 const MANIFEST_SCHEMA: &str = "agent-session.claude-notice-store-manifest.v1";
@@ -101,7 +102,7 @@ fn verified(parent: &Path, reference: &Reference, cap: usize) -> io::Result<Vec<
     Ok(bytes)
 }
 
-fn load(parent: &Path, deadline: Instant) -> io::Result<Layout> {
+fn load(parent: &Path, deadline: Instant, finish_pending_seal: bool) -> io::Result<Layout> {
     let initialized = match fs::symlink_metadata(parent.join("layout.json")) {
         Ok(_) => {
             if read_private(parent, "layout.json", 4096)? != LAYOUT_MARKER {
@@ -158,7 +159,7 @@ fn load(parent: &Path, deadline: Instant) -> io::Result<Layout> {
             return Err(invalid());
         }
         // Check sealed bytes before trusting the index that represents them.
-        verified(
+        sealed::verified(
             parent,
             &manifest.archive,
             if manifest.archive.file == "ledger.jsonl" {
@@ -166,6 +167,8 @@ fn load(parent: &Path, deadline: Instant) -> io::Result<Layout> {
             } else {
                 MAX_SEGMENT_BYTES
             },
+            finish_pending_seal && chain.is_empty(),
+            deadline,
         )?;
         if let Some((_, child)) = chain.last()
             && (manifest.generation.checked_add(1) != Some(child.generation)
@@ -296,7 +299,7 @@ pub(super) fn open(state: &Path, write: bool, deadline: Instant) -> io::Result<O
     if (meta.dev(), meta.ino()) != (after.dev(), after.ino()) {
         return Err(invalid());
     }
-    let layout = load(&parent, deadline)?;
+    let layout = load(&parent, deadline, write)?;
     if write && layout.tip.is_some() {
         ensure_marker(&parent, deadline)?;
     }
@@ -417,7 +420,7 @@ pub(super) fn merge_archived(
         } else {
             MAX_SEGMENT_BYTES
         };
-        let bytes = verified(&ledger.parent, &manifest.archive, cap)?;
+        let bytes = sealed::verified(&ledger.parent, &manifest.archive, cap, false, deadline)?;
         let header = ledger
             .storage
             .layout

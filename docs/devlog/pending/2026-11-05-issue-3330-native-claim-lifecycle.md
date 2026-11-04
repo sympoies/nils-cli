@@ -5,8 +5,14 @@
 
 - The native store caps live claims, seals eligible finished records into
   hash-linked immutable segments and keeps permanent compact key indexes.
-- All hosts must upgrade agent-session together and quiesce older writers before
-  activating this layout; older binaries cannot read or write its successors.
+- Retired segments are sealed `0400` after durable pointer publication; live data
+  and metadata remain `0600`, and an interrupted seal completes on writer retry.
+- Release/rollout: all native writers sharing one state directory must upgrade
+  together. Stop/restart every old `serve` daemon and any queued or in-flight
+  `agent-session notice` writer before the first new-binary write. Otherwise
+  retired bytes can change, breaking native notices and Claude History until
+  repair. Independent state directories can activate separately; existing open
+  descriptors still require quiescence, and older binaries cannot read successors.
 
 ### Why / context
 
@@ -20,6 +26,9 @@
   ledger refused admission, archived keys could be reused, and archived proofs
   were omitted. Synthetic lifecycle fixtures now pass; live namespaces remain
   untouched.
+- The older-writer append probe was RED before the read-only seal guard. Recovery
+  fixtures also cover publication interrupted before sealing and unfinished
+  claims finishing in the writable successor.
 
 ### Links
 

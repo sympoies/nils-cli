@@ -151,8 +151,11 @@ pub(super) fn compact(ledger: &mut Ledger, scan: &Scan, deadline: Instant) -> io
         ledger.parent.join("current.json"),
     )?;
     File::open(&ledger.parent)?.sync_all()?;
+    // Never seal the selected live file before its successor is committed.
+    // A writer interrupted here completes this seal when loading the tip.
+    sealed::seal(&ledger.file, &ledger.parent, deadline)?;
     ensure_marker(&ledger.parent, deadline)?;
-    let layout = load(&ledger.parent, deadline)?;
+    let layout = load(&ledger.parent, deadline, true)?;
     let file = private_file(
         &ledger.parent,
         &layout.active,

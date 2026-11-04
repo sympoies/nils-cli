@@ -117,11 +117,17 @@ fn archived_fixture_with_live(
     let keys1 = format!("keys-{first}.txt");
     let keys2 = format!("keys-{second}.txt");
     private_file(&parent.join("ledger.jsonl"), b"");
+    fs::set_permissions(
+        parent.join("ledger.jsonl"),
+        fs::Permissions::from_mode(0o400),
+    )
+    .unwrap();
     private_file(&parent.join(&keys1), b"");
     let (pair, row) = pair(archived);
     let mut old_segment = header(1, b"", b"");
     old_segment.extend(pair);
     private_file(&parent.join(&segment1), &old_segment);
+    fs::set_permissions(parent.join(&segment1), fs::Permissions::from_mode(0o400)).unwrap();
     let m1 = serde_json::to_vec(&json!({"schema_version":MANIFEST_SCHEMA, "generation":1,
         "active":segment1, "predecessor":null, "archive":reference("ledger.jsonl", b""),
         "key_index":reference(&keys1,b""), "first_seen":{}}))
@@ -296,6 +302,10 @@ fn archived_native_attestation_keeps_its_exact_row_binding() {
         b"partial",
     );
     fs::remove_file(parent.join("layout.json")).unwrap();
+    let sealed = parent.join("segment-00000000-0000-4000-8000-000000000001.jsonl");
+    // Publication was durable, but the writer stopped before sealing the tip.
+    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(confirmed(root.path(), Instant::now() + Duration::from_secs(15)).is_err());
     consume(
         &context,
         claim(9000, Some("after-publication")),
@@ -303,6 +313,7 @@ fn archived_native_attestation_keeps_its_exact_row_binding() {
         || Ok(()),
     )
     .unwrap();
+    assert_eq!(fs::metadata(&sealed).unwrap().mode() & 0o777, 0o400);
     assert!(
         parent.join("layout.json").exists(),
         "finish marker before unique successor writes"
@@ -322,14 +333,79 @@ fn archived_native_attestation_keeps_its_exact_row_binding() {
     assert_eq!(sha256(native.text.as_bytes()), proof.claim.envelope_sha256);
     assert_eq!(native.native_uuid, proof.native_uuid);
     // A sealed segment's digest is checked before its proof or key index is trusted.
-    let sealed = parent.join("segment-00000000-0000-4000-8000-000000000001.jsonl");
+    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o600)).unwrap();
     OpenOptions::new()
         .append(true)
-        .open(sealed)
+        .open(&sealed)
         .unwrap()
         .write_all(b" ")
         .unwrap();
+    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o400)).unwrap();
     assert!(confirmed(root.path(), Instant::now() + Duration::from_secs(15)).is_err());
+}
+
+#[test]
+fn retired_segment_refuses_an_older_writer_and_keeps_its_proofs() {
+    let root = tempfile::tempdir().unwrap();
+    let context = context(root.path());
+    let parent = root.path().join("history/claude-notices");
+    let mut bytes = claim_line(&claim(0, None));
+    bytes.push(b'\n');
+    for index in 1..MAX_CLAIMS {
+        bytes.extend(pair(&claim(index, None)).0);
+    }
+    private_file(&parent.join("ledger.jsonl"), &bytes);
+    consume(
+        &context,
+        claim(MAX_CLAIMS + 1, Some("fresh")),
+        Instant::now() + Duration::from_secs(15),
+        || Ok(()),
+    )
+    .unwrap();
+    // Model the prior writer's append-open and exact 0600 admission check.
+    // The metadata check also makes this fixture valid for privileged test users.
+    let append_attempt = (|| -> io::Result<()> {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(parent.join("ledger.jsonl"))?;
+        if file.metadata()?.mode() & 0o777 != 0o600 {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        let terminal = pair(&claim(0, None))
+            .0
+            .split_inclusive(|byte| *byte == b'\n')
+            .nth(1)
+            .unwrap()
+            .to_vec();
+        file.write_all(&terminal)?;
+        file.sync_all()
+    })();
+    assert!(
+        append_attempt.is_err(),
+        "retired bytes reject an older writer"
+    );
+    assert_eq!(fs::read(parent.join("ledger.jsonl")).unwrap(), bytes);
+    assert_eq!(
+        confirmed(root.path(), Instant::now() + Duration::from_secs(15))
+            .unwrap()
+            .len(),
+        MAX_CLAIMS - 1
+    );
+    let unfinished = claim(0, None);
+    finish(
+        &context,
+        &Token {
+            hash: sha256(&claim_line(&unfinished)),
+            claim: unfinished,
+        },
+        None,
+        Reason::Drop,
+        Duration::from_millis(1),
+        Instant::now() + Duration::from_secs(15),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -383,6 +459,11 @@ fn admission_across_many_archive_generations() {
                 keys.push_str(&format!("o{}\n", sha256(claim.op.as_bytes())));
             }
             private_file(&parent.join(&previous_name), &previous);
+            fs::set_permissions(
+                parent.join(&previous_name),
+                fs::Permissions::from_mode(0o400),
+            )
+            .unwrap();
             archive_bytes += previous.len();
             let id = format!("{generation:08x}-0000-4000-8000-000000000000");
             let active = format!("segment-{id}.jsonl");
