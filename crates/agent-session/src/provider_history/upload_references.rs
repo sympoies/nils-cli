@@ -106,6 +106,10 @@ impl HistoryCatalog {
                         break;
                     }
                     content.push(serde_json::json!({"type":"input_image","path":path}));
+                    let attachment_ref = self.owned_attachment_ref(session, path);
+                    let original_name = attachment_ref
+                        .as_ref()
+                        .and_then(|_| self.owned_original_name(session, Path::new(path)));
                     images.push(HistoryImage {
                         id: format!(
                             "{}.{}.u{}-{}.{}",
@@ -116,7 +120,8 @@ impl HistoryCatalog {
                             row_key(value)
                         ),
                         origin: Some(image_provenance::ImageOrigin::UserAttachment),
-                        attachment_ref: self.owned_attachment_ref(session, path),
+                        attachment_ref,
+                        original_name,
                     });
                     consumed = end;
                     changed = true;

@@ -1,7 +1,7 @@
 # History images v1
 
 History message pages add optional `images` descriptors retaining their row-bound
-`id`. Each descriptor may also carry `origin` and `attachment_ref`; the same
+`id`. Each descriptor may also carry `origin`, `attachment_ref`, and `original_name`; the same
 optional values appear on `parts=v1` image parts, whose `ref` remains the image-read
 selector. There are at most 16 descriptors per message. The opaque id is at most 96 ASCII bytes and binds a
 provider transcript segment, byte offset, source selector and source-row digest. It
@@ -52,6 +52,11 @@ The reference is correlation metadata, never read authority or a download target
 A consumer can collapse a tool reread only when its proven matching user attachment
 is already displayed in the current history scope; otherwise the tool image remains
 visible. This adds no image store, copy, arbitrary path scan or authentication surface.
+
+`original_name` is the sanitized original basename from managed-upload metadata.
+It is omitted when ownership or valid metadata cannot be established, and is
+never inferred from the stored filename. Both descriptor and image part carry
+the same value. See [the descriptor fixture](fixtures/history-image-descriptor-v1.json).
 
 ## Authenticated read
 

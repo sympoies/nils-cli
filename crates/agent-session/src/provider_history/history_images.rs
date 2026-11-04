@@ -698,6 +698,8 @@ pub(crate) struct HistoryImage {
     pub(crate) origin: Option<image_provenance::ImageOrigin>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) attachment_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) original_name: Option<String>,
 }
 
 const MAX_IMAGES: usize = 16;
@@ -844,6 +846,7 @@ fn descriptors(session: &HistorySession, offset: u64, value: &Value) -> Vec<Hist
             id: format!("{segment}.{offset}.{index}.{row}"),
             origin: origins.get(index).copied().flatten(),
             attachment_ref: None,
+            original_name: None,
         })
         .collect()
 }
@@ -1044,21 +1047,30 @@ impl HistoryCatalog {
 
     fn image_filename(&self, session: &HistorySession, path: &Path) -> Option<String> {
         if let Ok((root, relative)) = self.attachment_root(session, path) {
-            let metadata = crate::attachment_filename::metadata_path(&relative)?;
-            let mut file = open_beneath(&root, &metadata).ok()?;
-            let info = file.metadata().ok()?;
-            if !info.is_file() || info.len() > 4096 {
-                return None;
-            }
-            let mut bytes = Vec::new();
-            file.by_ref().take(4097).read_to_end(&mut bytes).ok()?;
-            if bytes.len() > 4096 {
-                return None;
-            }
-            let name: String = serde_json::from_slice(&bytes).ok()?;
-            return crate::attachment_filename::sanitize_download_filename(&name);
+            return Self::managed_original_name(&root, &relative);
         }
         crate::attachment_filename::sanitize_download_filename(path.file_name()?.to_str()?)
+    }
+
+    fn managed_original_name(root: &Path, relative: &Path) -> Option<String> {
+        let metadata = crate::attachment_filename::metadata_path(relative)?;
+        let mut file = open_beneath(root, &metadata).ok()?;
+        let info = file.metadata().ok()?;
+        if !info.is_file() || info.len() > 4096 {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        file.by_ref().take(4097).read_to_end(&mut bytes).ok()?;
+        if bytes.len() > 4096 {
+            return None;
+        }
+        let name: String = serde_json::from_slice(&bytes).ok()?;
+        crate::attachment_filename::sanitize_download_filename(&name)
+    }
+
+    fn owned_original_name(&self, session: &HistorySession, path: &Path) -> Option<String> {
+        let (root, relative) = self.attachment_root(session, path).ok()?;
+        Self::managed_original_name(&root, &relative)
     }
 
     fn attachment_root(

@@ -52,6 +52,8 @@ pub(crate) enum HistoryPart {
         #[serde(skip_serializing_if = "Option::is_none")]
         attachment_ref: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        original_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         mime: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         bytes: Option<u64>,
@@ -660,6 +662,7 @@ fn push_image_range(
             image_ref: image.id.clone(),
             origin: image.origin,
             attachment_ref: image.attachment_ref.clone(),
+            original_name: image.original_name.clone(),
             mime,
             bytes,
         });
