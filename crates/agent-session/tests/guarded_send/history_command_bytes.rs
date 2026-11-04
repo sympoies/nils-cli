@@ -2,11 +2,6 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
-/// Each send runs the real binary against its own fixture directory, so the
-/// cases are independent. Running them in small batches keeps the test close to
-/// one send long instead of 38.
-const CONCURRENT_SENDS: usize = 4;
-
 #[test]
 fn runtime_command_input_bytes_are_unchanged() {
     let contract: Value = serde_json::from_str(include_str!(
@@ -30,38 +25,19 @@ fn runtime_command_input_bytes_are_unchanged() {
             "/model\t  keep 🌱 focus  \t".to_owned(),
         ));
     }
-    for batch in cases.chunks(CONCURRENT_SENDS) {
-        std::thread::scope(|scope| {
-            let sends: Vec<_> = batch
-                .iter()
-                .map(|(provider, input)| {
-                    scope.spawn(move || {
-                        let fixture = Fixture::new(provider);
-                        let output = fixture.send_text(Some(input), &[]);
-                        assert_eq!(
-                            output.code,
-                            0,
-                            "{provider}: {input}: {}",
-                            output.stderr_text()
-                        );
-                        assert_eq!(
-                            fs::read(fixture.root().join("buffer")).unwrap(),
-                            input.as_bytes(),
-                            "{provider}: {input}"
-                        );
-                    })
-                })
-                .collect();
-            // Join every send before reporting, so one failure does not hide
-            // another, and name the failing case.
-            let failed: Vec<_> = sends
-                .into_iter()
-                .zip(batch)
-                .filter_map(|(send, (provider, input))| {
-                    send.join().err().map(|_| format!("{provider}: {input:?}"))
-                })
-                .collect();
-            assert!(failed.is_empty(), "cases failed: {failed:#?}");
-        });
-    }
+    crate::cases::for_each_case(&cases, |(provider, input)| {
+        let fixture = Fixture::new(provider);
+        let output = fixture.send_text(Some(input), &[]);
+        assert_eq!(
+            output.code,
+            0,
+            "{provider}: {input}: {}",
+            output.stderr_text()
+        );
+        assert_eq!(
+            fs::read(fixture.root().join("buffer")).unwrap(),
+            input.as_bytes(),
+            "{provider}: {input}"
+        );
+    });
 }

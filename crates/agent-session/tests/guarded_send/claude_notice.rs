@@ -562,38 +562,41 @@ fn claude_notice_supported_native_delivery_is_exact_and_consumed_once() {
 
 #[test]
 fn claude_notice_postclaim_failures_retain_key_and_preserve_unknown_draft() {
-    for mode in [
-        "dropped",
-        "wrong-result",
-        "draft-after",
-        "identity-change",
-        "lost-result",
-    ] {
-        let fixture = super::Fixture::new("claude");
-        let peer = Peer::start(&fixture, mode);
-        let output = send_notice(&fixture, "synthetic\n");
-        let value = fixture.refused(&output, "notice-native-unconfirmed");
-        assert_eq!(value["error"]["details"]["submitted"], Value::Null);
-        assert_eq!(value["error"]["details"]["pasted"], false);
-        fixture.refused(
-            &send_notice(&fixture, "synthetic\n"),
-            "send-idempotency-key-used",
-        );
-        assert_eq!(
-            peer.text.lock().unwrap().len(),
-            1,
-            "{mode}: never release another body"
-        );
-        fixture.no_delivery();
-        assert_eq!(
-            fs::read_to_string(fixture.root().join("composer")).unwrap(),
-            if mode == "draft-after" {
-                "new user draft"
-            } else {
-                ""
-            }
-        );
-    }
+    crate::cases::for_each_case(
+        &[
+            "dropped",
+            "wrong-result",
+            "draft-after",
+            "identity-change",
+            "lost-result",
+        ],
+        |&mode| {
+            let fixture = super::Fixture::new("claude");
+            let peer = Peer::start(&fixture, mode);
+            let output = send_notice(&fixture, "synthetic\n");
+            let value = fixture.refused(&output, "notice-native-unconfirmed");
+            assert_eq!(value["error"]["details"]["submitted"], Value::Null);
+            assert_eq!(value["error"]["details"]["pasted"], false);
+            fixture.refused(
+                &send_notice(&fixture, "synthetic\n"),
+                "send-idempotency-key-used",
+            );
+            assert_eq!(
+                peer.text.lock().unwrap().len(),
+                1,
+                "{mode}: never release another body"
+            );
+            fixture.no_delivery();
+            assert_eq!(
+                fs::read_to_string(fixture.root().join("composer")).unwrap(),
+                if mode == "draft-after" {
+                    "new user draft"
+                } else {
+                    ""
+                }
+            );
+        },
+    );
 }
 
 #[test]
@@ -759,27 +762,33 @@ fn attach_status(root: &Path) -> Option<Value> {
 
 #[test]
 fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
-    for resume in [false, true] {
-        for (gate, version, mounted, reason, observed) in [
-            ("1", "2.1.296", true, "", ""),
-            ("1", "2.1.318", true, "", ""),
-            (
-                "1",
-                "2.1.319",
-                false,
-                "provider-version-unsupported",
-                "2.1.319",
-            ),
-            (
-                "1",
-                "2.1.295",
-                false,
-                "provider-version-unsupported",
-                "2.1.295",
-            ),
-            ("1", "garbled", false, "provider-version-unreadable", ""),
-            ("0", "2.1.296", false, "writers-disabled", ""),
-        ] {
+    let versions = [
+        ("1", "2.1.296", true, "", ""),
+        ("1", "2.1.318", true, "", ""),
+        (
+            "1",
+            "2.1.319",
+            false,
+            "provider-version-unsupported",
+            "2.1.319",
+        ),
+        (
+            "1",
+            "2.1.295",
+            false,
+            "provider-version-unsupported",
+            "2.1.295",
+        ),
+        ("1", "garbled", false, "provider-version-unreadable", ""),
+        ("0", "2.1.296", false, "writers-disabled", ""),
+    ];
+    let cases: Vec<_> = [false, true]
+        .into_iter()
+        .flat_map(|resume| versions.map(|version| (resume, version)))
+        .collect();
+    crate::cases::for_each_case(
+        &cases,
+        |&(resume, (gate, version, mounted, reason, observed))| {
             let temp = tempfile::tempdir_in("/tmp").unwrap();
             let (_, calls) = launch_case(temp.path(), gate, version, resume);
             let case = format!("{gate} {version} resume={resume}");
@@ -787,7 +796,7 @@ fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
             let status = attach_status(temp.path());
             if mounted {
                 assert_eq!(status, None, "{case}");
-                continue;
+                return;
             }
             assert_eq!(
                 status,
@@ -801,8 +810,8 @@ fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
                 })),
                 "{case}"
             );
-        }
-    }
+        },
+    );
 }
 
 fn seed_attach_status(fixture: &super::Fixture, status: Option<Value>) {

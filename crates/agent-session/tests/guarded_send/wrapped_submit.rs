@@ -319,49 +319,53 @@ fn idle_guard_implicitly_admits_an_empty_wrapped_composer() {
 
 #[test]
 fn uncertain_wrapped_rendering_never_submits() {
-    for variant in ["dim", "dialog", "blank-row", "extra-space", "missing-space"] {
-        let (fixture, text) = wrapped_fixture(44, if variant == "extra-space" { " " } else { "" });
-        let path = fixture.root().join("captured-layout");
-        let mut snapshot: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        if variant == "missing-space" {
-            // Remove the omitted separator at the first visual wrap. The
-            // visible rows still match; cursor movement must detect the loss.
-            let first_row = snapshot["pane"].as_str().unwrap().lines().nth(1).unwrap();
-            let boundary = first_row.strip_prefix("❯ ").unwrap().trim_end().len();
-            assert_eq!(&text[boundary..boundary + 1], " ");
-            let actual = format!("{}{}", &text[..boundary], &text[boundary + 1..]);
-            std::fs::write(fixture.root().join("paste-replacement"), &actual).unwrap();
-            snapshot["input"] = actual.into();
-        }
-        let pane = snapshot["pane"].as_str().unwrap();
-        snapshot["pane"] = match variant {
-            "dim" => pane
-                .replace("❯ ", "❯ \x1b[2m")
-                .replace("\n  status", "\x1b[22m\n  status"),
-            "dialog" => format!("{pane}\n  enter to confirm"),
-            "blank-row" => pane.replacen("\n  ", "\n  \n  ", 1),
-            _ => pane.to_string(),
-        }
-        .into();
-        std::fs::write(path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
-        let output = guarded_text(&fixture, &text);
-        details_any(
-            &output,
-            &[
-                "send-composer-unobservable",
-                "send-guard-observation-timeout",
-            ],
-        );
-        assert!(submissions(&fixture).is_empty(), "{variant}");
-        assert!(
-            fixture
-                .calls()
-                .iter()
-                .all(|call| call.last().is_none_or(|key| key != "Enter")),
-            "{variant}"
-        );
-    }
+    crate::cases::for_each_case(
+        &["dim", "dialog", "blank-row", "extra-space", "missing-space"],
+        |&variant| {
+            let (fixture, text) =
+                wrapped_fixture(44, if variant == "extra-space" { " " } else { "" });
+            let path = fixture.root().join("captured-layout");
+            let mut snapshot: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            if variant == "missing-space" {
+                // Remove the omitted separator at the first visual wrap. The
+                // visible rows still match; cursor movement must detect the loss.
+                let first_row = snapshot["pane"].as_str().unwrap().lines().nth(1).unwrap();
+                let boundary = first_row.strip_prefix("❯ ").unwrap().trim_end().len();
+                assert_eq!(&text[boundary..boundary + 1], " ");
+                let actual = format!("{}{}", &text[..boundary], &text[boundary + 1..]);
+                std::fs::write(fixture.root().join("paste-replacement"), &actual).unwrap();
+                snapshot["input"] = actual.into();
+            }
+            let pane = snapshot["pane"].as_str().unwrap();
+            snapshot["pane"] = match variant {
+                "dim" => pane
+                    .replace("❯ ", "❯ \x1b[2m")
+                    .replace("\n  status", "\x1b[22m\n  status"),
+                "dialog" => format!("{pane}\n  enter to confirm"),
+                "blank-row" => pane.replacen("\n  ", "\n  \n  ", 1),
+                _ => pane.to_string(),
+            }
+            .into();
+            std::fs::write(path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+            let output = guarded_text(&fixture, &text);
+            details_any(
+                &output,
+                &[
+                    "send-composer-unobservable",
+                    "send-guard-observation-timeout",
+                ],
+            );
+            assert!(submissions(&fixture).is_empty(), "{variant}");
+            assert!(
+                fixture
+                    .calls()
+                    .iter()
+                    .all(|call| call.last().is_none_or(|key| key != "Enter")),
+                "{variant}"
+            );
+        },
+    );
 }
 
 #[test]

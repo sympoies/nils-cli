@@ -363,9 +363,9 @@ fn notice_summary_contract_reaches_native_transport_with_exact_bytes() {
         "../../docs/specs/fixtures/history-row-classes-v1.json"
     ))
     .unwrap();
-    for case in corpus["summary_encoding"].as_array().unwrap() {
+    crate::cases::for_each_case(corpus["summary_encoding"].as_array().unwrap(), |case| {
         if case.get("expected_body").is_none() {
-            continue;
+            return;
         }
         let fixture = Fixture::new("codex");
         let _capability = fixture.bind_codex();
@@ -400,5 +400,5 @@ fn notice_summary_contract_reaches_native_transport_with_exact_bytes() {
             "{}",
             case["name"]
         );
-    }
+    });
 }
