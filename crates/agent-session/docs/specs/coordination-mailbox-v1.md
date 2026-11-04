@@ -275,26 +275,18 @@ The [schema spec](coordination-schemas-v1.md#message) defines exact derivation.
 The inbox header also explains queue dates, unread filtering, authenticated
 session selection, cursor pagination and `message show` body reads.
 
-Transcript history recognizes only the exact current undated form or a
-canonical timestamp with the exact dated command suffix. Other human `Mailbox:`
-prompts remain visible. The prior `Coordination mailbox has unread messages`
-prefix remains compatible, including dated and undated prior forms.
+Transcript history recognizes only current notice envelopes
+([session notices](session-notices-v1.md)). The retired plain `Mailbox:` forms
+and the earlier `Coordination mailbox has unread messages` sentence are ordinary
+input rows.
 
-New durable attempt receipts retain the additive `attempted_prompt_format`
-value `mailbox-short.v2` for plain fixed reminders, `mailbox-counts.v1` for
-plain counts, or `mailbox-notice.v1` with the exact envelope bytes for notices.
-A notice attempt requires positive observation to resolve; absence leaves it
-parked. A known plain-format attempt uses its exact bytes for both
-submission and absence. Prior `mailbox-short.v1` attempts retain their original
-dated bytes (or undated bytes for invalid queue times); they are never compared
-against the new short form. For unversioned receipts, exact current or prior
-dated/undated bytes after the attempt boundary can confirm submission; their
-absence cannot prove an unknown format absent.
+New durable attempt receipts record `attempted_prompt_format`
+`mailbox-notice.v1` with the exact envelope bytes. A notice attempt requires
+positive observation to resolve; absence leaves it parked. A receipt in a retired
+or unknown format never resolves by observation and never authorizes replay.
 
-Unrecognized formats and
-ambiguous transcript timestamps remain parked. Prefix recognition alone never
-provides submission proof. Losing the additive format field to an older writer
-therefore keeps absence fail-closed rather than requeueing an uncertain attempt.
+Ambiguous transcript timestamps remain parked. Prefix recognition alone never
+provides submission proof.
 
 A generation is deliverable only while the exact recipient incarnation still
 holds live (unexpired) unread mail. Recipients read their inbox at their own
