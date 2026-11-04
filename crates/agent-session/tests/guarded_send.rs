@@ -11,6 +11,8 @@ mod history_command_bytes;
 mod live_composer;
 #[path = "guarded_send/native_composer.rs"]
 mod native_composer;
+#[path = "guarded_send/observation_deadline.rs"]
+mod observation_deadline;
 #[path = "guarded_send/placeholder.rs"]
 mod placeholder;
 #[path = "guarded_send/repair.rs"]

@@ -296,6 +296,18 @@ impl Admission<'_> {
             ));
         }
         let expected_state = crate::display_path(&self.context.state_dir);
+        let unobservable = || {
+            // A failed subprocess may have consumed the remaining observation
+            // budget. Keep that refusal distinct from unavailable identity.
+            self.timeout(stage).err().unwrap_or_else(|| {
+                self.refusal(
+                    "send-identity-unobservable",
+                    "pane runtime identity cannot be observed",
+                    "identity",
+                    stage,
+                )
+            })
+        };
         let cleanup_values = if stage == "cleanup" {
             Some(
                 observation::environment(
@@ -303,14 +315,7 @@ impl Admission<'_> {
                     &current.tmux_session,
                     self.timeout(stage)?,
                 )
-                .ok_or_else(|| {
-                    self.refusal(
-                        "send-identity-unobservable",
-                        "pane runtime identity cannot be observed",
-                        "identity",
-                        stage,
-                    )
-                })?,
+                .ok_or_else(unobservable)?,
             )
         } else {
             None
@@ -332,14 +337,7 @@ impl Admission<'_> {
                     name,
                     self.timeout(stage)?,
                 )
-                .map_err(|_| {
-                    self.refusal(
-                        "send-identity-unobservable",
-                        "pane runtime identity cannot be observed",
-                        "identity",
-                        stage,
-                    )
-                })?
+                .map_err(|_| unobservable())?
             };
             if actual != expected {
                 return Err(self.refusal(
