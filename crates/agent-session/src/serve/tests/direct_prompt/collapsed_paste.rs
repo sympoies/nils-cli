@@ -127,3 +127,28 @@ async fn console_placeholder_is_cleared_after_transient_first_observation() {
     );
     assert!(!fixture.tmp.path().join("submitted").exists());
 }
+
+#[tokio::test]
+async fn console_owned_placeholder_cleanup_tolerates_transport_latency() {
+    for owner_suffix in [false, true] {
+        let fixture = collapsed_fixture(owner_suffix);
+        // Each response is well within the single-command timeout. The whole
+        // ownership proof must also allow for these real subprocess round trips.
+        fs::write(fixture.tmp.path().join("transport-delay-ms"), "80").unwrap();
+        fs::write(fixture.tmp.path().join("stuck"), "").unwrap();
+        let mut body = fixture.body("prompt/v2");
+        body["text"] = json!("first line\nsecond line\nthird line\nlast line");
+        let (status, result) = fixture.submit("prompt/v2", body).await;
+        assert_ne!(status, StatusCode::OK, "{result}");
+        assert_eq!(
+            fs::read_to_string(fixture.tmp.path().join("composer")).unwrap(),
+            if owner_suffix {
+                "[Pasted text #1 +3 lines] owner addition"
+            } else {
+                ""
+            },
+            "{result}"
+        );
+        assert!(!fixture.tmp.path().join("submitted").exists());
+    }
+}

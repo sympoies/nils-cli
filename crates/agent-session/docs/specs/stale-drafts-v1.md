@@ -74,10 +74,11 @@ admission. No server endpoint automatically replays a saved draft.
 
 `unresponsive_seconds` in the serve config and
 `AGENT_SESSION_UNRESPONSIVE_SECONDS` set the response bound in positive integer
-seconds. The environment takes precedence. The default is 4 seconds, matching
-the existing submission observation budget: it accommodates the 1.5-second
-Enter observation/retry interval and the 2.5-second cleanup budget. Zero is
-invalid; there are no aliases or additional recovery settings.
+seconds. The environment takes precedence. The default is 4 seconds. This
+passive observation bound is independent of the fifteen-second terminal send
+and owned opaque-paste cleanup budgets. Ordinary text cleanup retains its
+2.5-second budget. Zero is invalid; there are no aliases or additional recovery
+settings.
 
 Guarded terminal submission and shared composer cleanup record an observation
 before their existing key action. Only a recognized, nonempty composer in an

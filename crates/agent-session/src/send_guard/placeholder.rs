@@ -61,7 +61,10 @@ impl Admission<'_> {
                     .as_deref()
                     .is_none_or(|input| input.starts_with("[Pasted text #")))
         {
-            let deadline = Instant::now() + Duration::from_millis(2500);
+            // A complete atomic-token proof needs four pairs of stable cursor
+            // observations, each with an identity read, plus guarded navigation.
+            // Use the terminal budget even when the submit budget has expired.
+            let deadline = Instant::now() + crate::send::guarded_hold_budget(self.record, false);
             let label = label
                 .map(str::to_owned)
                 .or_else(|| observe(self.record, self.tmux_bin, deadline));
@@ -308,9 +311,9 @@ impl Navigation<'_> {
     }
     fn cursor(&self, label: &str, expected: Option<(usize, usize)>) -> Option<(usize, usize)> {
         let target = format!("{}:0.0", self.record.tmux_session);
-        let until = (Instant::now()
-            + crate::POST_PASTE_KEY_SETTLE_DELAY.max(Duration::from_millis(500)))
-        .min(self.deadline);
+        // Allow a stale first read and two complete, identity-fenced cursor
+        // observations. Subprocess time counts as well as renderer settling.
+        let until = (Instant::now() + Duration::from_secs(2)).min(self.deadline);
         let mut stable = 0;
         loop {
             if !self.identity() {
