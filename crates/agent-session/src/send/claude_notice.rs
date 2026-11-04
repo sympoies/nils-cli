@@ -14,6 +14,7 @@ pub(crate) mod attach;
 mod bridge;
 #[cfg(test)]
 mod module_contract;
+mod refusal;
 pub(crate) mod runtime;
 pub(crate) mod store;
 pub(crate) mod version;
@@ -46,7 +47,7 @@ impl Launch {
             generation: record
                 .runtime
                 .as_ref()
-                .ok_or_else(runtime::unavailable)?
+                .ok_or_else(|| refusal::unavailable("runtime-missing"))?
                 .generation,
             profile: crate::session_agent_profile(record).map(str::to_string),
         })
@@ -112,7 +113,7 @@ pub(super) fn deliver(
         crate::provider_prompt::native_notice::Baseline::capture(&record).map_err(|error| {
             match error {
                 CaptureError::NoTranscript => runtime::baseline_unavailable(&record),
-                CaptureError::Unavailable => runtime::unavailable(),
+                CaptureError::Unavailable => refusal::unavailable("baseline-unprovable"),
             }
         })?;
     let dir = runtime::module_dir(&context.state_dir, &record)?;
@@ -121,35 +122,25 @@ pub(super) fn deliver(
         if error.kind() == std::io::ErrorKind::WouldBlock {
             CliError::runtime("send-session-not-idle", "another native notice is in progress",
                 Some(json!({"id":record.id,"guard":"idle","stage":"admission","atomic":false,"pasted":false,"submitted":false})))
-        } else { runtime::unavailable() }
+        } else { refusal::unavailable("listener-open") }
     })?;
     let consumed = Cell::new(false);
     let mut token = None;
     let mut stage = "admission";
     let mut failure_reason = store::Reason::Guard;
     let result = (|| {
-        let connection = listener
-            .receive(deadline)
-            .map_err(|_| runtime::unavailable())?;
-        let request: bridge::Authorize = connection.parse().map_err(|_| runtime::unavailable())?;
-        if connection.path != "/authorize"
-            || request.schema_version != "agent-session.claude-notice-authorize.v1"
-            || request.op != op
-            || request.binding != ready.binding
-            || request.nonce != bootstrap.nonce
-            || !request.terminal
-            || !request.box_empty
-            || request.cursor != 0
-        {
-            return Err(runtime::unavailable());
-        }
+        let connection = listener.receive(deadline).map_err(refusal::receive)?;
+        let request: bridge::Authorize = connection
+            .parse()
+            .map_err(|_| refusal::unavailable("authorization-payload"))?;
+        refusal::authorize(&connection.path, &request, &op, &bootstrap, &ready)?;
         // A live, exact native request is necessary before consuming any key.
         admission.check_key()?;
         admission.check(None, "admission")?;
-        if runtime::readiness(context, &record)
-            .is_none_or(|(boot, now)| boot.nonce != bootstrap.nonce || now.binding != ready.binding)
-        {
-            return Err(runtime::unavailable());
+        let (boot, now) = runtime::readiness(context, &record)
+            .ok_or_else(|| refusal::unavailable("readiness-unavailable"))?;
+        if boot.nonce != bootstrap.nonce || now.binding != ready.binding {
+            return Err(refusal::unavailable("readiness-changed"));
         }
         let claim = store::Claim::new(
             op.clone(),
@@ -159,10 +150,19 @@ pub(super) fn deliver(
             baseline.stamp.clone(),
             deadline.saturating_duration_since(attempt.started),
         );
-        token = Some(store::consume(context, claim, deadline, || {
-            consumed.set(true);
-            admission.claim_key()
-        })?);
+        token = Some(
+            store::consume(context, claim, deadline, || {
+                consumed.set(true);
+                admission.claim_key()
+            })
+            .map_err(|error| {
+                if error.code() == "notice-native-unavailable" {
+                    refusal::unavailable("claim-unavailable")
+                } else {
+                    error
+                }
+            })?,
+        );
         stage = "claimed";
         admission.check(None, "claimed")?;
         let mut prepared = false;

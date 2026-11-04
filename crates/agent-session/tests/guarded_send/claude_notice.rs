@@ -3,6 +3,9 @@ use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
 use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+
+#[path = "claude_notice/refusals.rs"]
+mod refusals;
 use std::fs;
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
@@ -651,10 +654,11 @@ fn claude_notice_ledger_reserves_unfinished_pairs_and_refuses_partial_data() {
         );
         fs::write(&ledger, &bytes).unwrap();
         fs::set_permissions(&ledger, fs::Permissions::from_mode(0o600)).unwrap();
-        fixture.refused(
+        let error = fixture.refused(
             &send_notice(&fixture, "synthetic\n"),
             "notice-native-unavailable",
         );
+        assert_eq!(error["error"]["details"]["reason"], "claim-unavailable");
         assert_eq!(
             fs::read(&ledger).unwrap(),
             bytes.as_bytes(),
@@ -890,10 +894,11 @@ fn claude_notice_unprovable_transcript_lookup_keeps_the_generic_unavailable_code
         }
         // Waiting for a turn cannot fix an ambiguous or unprovable lookup, so
         // only a clean not-found may claim the transcript does not exist yet.
-        fixture.refused(
+        let error = fixture.refused(
             &send_notice(&fixture, "synthetic\n"),
             "notice-native-unavailable",
         );
+        assert_eq!(error["error"]["details"]["reason"], "baseline-unprovable");
         assert!(peer.text.lock().unwrap().is_empty(), "{case}");
         fixture.no_delivery();
     }

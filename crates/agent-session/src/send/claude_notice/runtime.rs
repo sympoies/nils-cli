@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::attach::{self, Reason};
+use super::refusal::unavailable as refused;
 use super::version::{self, Version};
 use super::{Binding, Launch, PLUGIN, sha256};
 use crate::{CliContext, CliError, SessionRecord};
@@ -65,12 +66,12 @@ pub(crate) fn private_dir(path: &Path) -> Result<(), CliError> {
     match DirBuilder::new().mode(0o700).create(path) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(_) => return Err(unavailable()),
+        Err(_) => return Err(refused("private-directory-create")),
     }
-    let meta = fs::symlink_metadata(path).map_err(|_| unavailable())?;
+    let meta = fs::symlink_metadata(path).map_err(|_| refused("private-directory-inspect"))?;
     // SAFETY: geteuid has no preconditions.
     if !meta.is_dir() || meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o777 != 0o700 {
-        return Err(unavailable());
+        return Err(refused("private-directory-invalid"));
     }
     Ok(())
 }
@@ -82,18 +83,21 @@ pub(super) fn write_new(path: &Path, bytes: &[u8]) -> Result<(), CliError> {
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)
-        .map_err(|_| unavailable())?;
-    file.write_all(bytes).map_err(|_| unavailable())
+        .map_err(|_| refused("private-file-create"))?;
+    file.write_all(bytes)
+        .map_err(|_| refused("private-file-write"))
 }
 
 pub(crate) fn private_read(path: &Path, cap: usize) -> Result<Vec<u8>, CliError> {
-    let before = fs::symlink_metadata(path).map_err(|_| unavailable())?;
+    let before = fs::symlink_metadata(path).map_err(|_| refused("private-file-inspect"))?;
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)
-        .map_err(|_| unavailable())?;
-    let meta = file.metadata().map_err(|_| unavailable())?;
+        .map_err(|_| refused("private-file-open"))?;
+    let meta = file
+        .metadata()
+        .map_err(|_| refused("private-file-metadata"))?;
     // SAFETY: geteuid has no preconditions.
     if !meta.is_file()
         || meta.uid() != unsafe { libc::geteuid() }
@@ -101,14 +105,14 @@ pub(crate) fn private_read(path: &Path, cap: usize) -> Result<Vec<u8>, CliError>
         || meta.len() > cap as u64
         || (meta.dev(), meta.ino()) != (before.dev(), before.ino())
     {
-        return Err(unavailable());
+        return Err(refused("private-file-invalid"));
     }
     let mut bytes = Vec::new();
     file.take(cap as u64 + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_| unavailable())?;
+        .map_err(|_| refused("private-file-read"))?;
     if bytes.len() > cap {
-        return Err(unavailable());
+        return Err(refused("private-file-grew"));
     }
     Ok(bytes)
 }
@@ -125,7 +129,7 @@ pub(crate) fn module_dir(state: &Path, record: &SessionRecord) -> Result<PathBuf
         || launch.incarnation == "."
         || launch.incarnation == ".."
     {
-        return Err(unavailable());
+        return Err(refused("incarnation-invalid"));
     }
     Ok(state
         .join("sessions")
@@ -135,13 +139,14 @@ pub(crate) fn module_dir(state: &Path, record: &SessionRecord) -> Result<PathBuf
 }
 
 fn socket_path(state: &Path, record: &SessionRecord) -> Result<PathBuf, CliError> {
-    let root = crate::codex_runtime_dir::runtime_root(state).map_err(|_| unavailable())?;
+    let root = crate::codex_runtime_dir::runtime_root(state)
+        .map_err(|_| refused("socket-runtime-root"))?;
     private_dir(&root)?;
     let parent = root.join("agent-session");
     private_dir(&parent)?;
     let path = parent.join(socket_name(state, record)?);
     if path.as_os_str().as_encoded_bytes().len() > 96 {
-        return Err(unavailable());
+        return Err(refused("socket-path-too-long"));
     }
     Ok(path)
 }
@@ -201,7 +206,10 @@ pub(crate) fn prepare_launch(
     }
     let launch = Launch::from_record(record)?;
     let dir = module_dir(state, record)?;
-    private_dir(dir.parent().ok_or_else(unavailable)?)?;
+    private_dir(
+        dir.parent()
+            .ok_or_else(|| refused("module-parent-missing"))?,
+    )?;
     private_dir(&dir)?;
     private_dir(&dir.join(".claude-plugin"))?;
     private_dir(&dir.join("hooks"))?;
@@ -218,12 +226,12 @@ pub(crate) fn prepare_launch(
         ),
     };
     for (path, bytes) in [
-        (".claude-plugin/plugin.json", serde_json::to_vec(&json!({"name":PLUGIN,"version":"1.0.0","description":"Managed native session notices"})).map_err(|_| unavailable())?),
+        (".claude-plugin/plugin.json", serde_json::to_vec(&json!({"name":PLUGIN,"version":"1.0.0","description":"Managed native session notices"})).map_err(|_| refused("module-manifest-serialize"))?),
         ("hooks/hooks.json", b"{\"modules\":[\"./register.js\"]}".to_vec()),
         ("hooks/register.js", MODULE.as_bytes().to_vec()),
-        ("bootstrap.json", serde_json::to_vec(&bootstrap).map_err(|_| unavailable())?),
-        ("ready.json", serde_json::to_vec(&json!({"schema_version":READY_SCHEMA,"state":"unavailable"})).map_err(|_| unavailable())?),
-        ("offer.json", serde_json::to_vec(&json!({"schema_version":OFFER_SCHEMA,"state":"idle"})).map_err(|_| unavailable())?),
+        ("bootstrap.json", serde_json::to_vec(&bootstrap).map_err(|_| refused("bootstrap-serialize"))?),
+        ("ready.json", serde_json::to_vec(&json!({"schema_version":READY_SCHEMA,"state":"unavailable"})).map_err(|_| refused("readiness-serialize"))?),
+        ("offer.json", serde_json::to_vec(&json!({"schema_version":OFFER_SCHEMA,"state":"idle"})).map_err(|_| refused("offer-serialize"))?),
     ] { write_new(&dir.join(path), &bytes)?; }
     Ok(Some(dir))
 }
@@ -281,3 +289,7 @@ pub(crate) fn readiness(
     }
     Some((bootstrap, ready))
 }
+
+#[cfg(test)]
+#[path = "runtime_refusals.rs"]
+mod refusal_tests;
