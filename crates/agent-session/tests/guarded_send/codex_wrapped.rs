@@ -179,60 +179,63 @@ fn codex_captured_wrap_requires_empty_admission_and_rejects_an_appended_draft() 
 
 #[test]
 fn codex_captured_wrap_requires_matching_layout_and_logical_cursor_path() {
-    for variant in [
-        "indent",
-        "dim",
-        "dialog",
-        "blank",
-        "home",
-        "missing-space",
-        "extra-space",
-    ] {
-        let (fixture, text, mut snapshot) = captured("codex ascii");
-        let pane = snapshot["pane"].as_str().unwrap();
-        snapshot["pane"] = match variant {
-            "indent" => pane.replacen("\n  beta", "\n beta", 1),
-            "dim" => pane.replace("alpha", "\x1b[2malpha\x1b[22m"),
-            "dialog" => format!("{pane}\n  enter to confirm"),
-            "blank" => pane.replacen("\n  beta", "\n\n  beta", 1),
-            _ => pane.to_string(),
-        }
-        .into();
-        if variant == "home" {
-            snapshot["start"] = json!([2, 2]);
-        }
-        if matches!(variant, "missing-space" | "extra-space") {
-            // Identical visible rows can hide a different logical separator.
-            let boundary = snapshot["pane"].as_str().unwrap().lines().nth(1).unwrap();
-            let boundary = boundary.split("\x1b[0m ").nth(1).unwrap().len();
-            assert_eq!(&text[boundary..boundary + 1], " ");
-            let actual = if variant == "missing-space" {
-                format!("{}{}", &text[..boundary], &text[boundary + 1..])
-            } else {
-                format!("{} {}", &text[..boundary], &text[boundary..])
-            };
-            fs::write(fixture.root().join("paste-replacement"), &actual).unwrap();
-            snapshot["input"] = actual.into();
-        }
-        save(&fixture, &snapshot);
-        let output = guarded_text(&fixture, &text);
-        let receipt = details_any(
-            &output,
-            &[
-                "send-composer-unobservable",
-                "send-guard-observation-timeout",
-            ],
-        );
-        assert_eq!(receipt["submitted"], false, "{variant}");
-        assert!(submissions(&fixture).is_empty(), "{variant}");
-        assert!(
-            fixture
-                .calls()
-                .iter()
-                .all(|call| call.last().is_none_or(|key| key != "Enter")),
-            "{variant}"
-        );
-    }
+    crate::cases::for_each_case(
+        &[
+            "indent",
+            "dim",
+            "dialog",
+            "blank",
+            "home",
+            "missing-space",
+            "extra-space",
+        ],
+        |&variant| {
+            let (fixture, text, mut snapshot) = captured("codex ascii");
+            let pane = snapshot["pane"].as_str().unwrap();
+            snapshot["pane"] = match variant {
+                "indent" => pane.replacen("\n  beta", "\n beta", 1),
+                "dim" => pane.replace("alpha", "\x1b[2malpha\x1b[22m"),
+                "dialog" => format!("{pane}\n  enter to confirm"),
+                "blank" => pane.replacen("\n  beta", "\n\n  beta", 1),
+                _ => pane.to_string(),
+            }
+            .into();
+            if variant == "home" {
+                snapshot["start"] = json!([2, 2]);
+            }
+            if matches!(variant, "missing-space" | "extra-space") {
+                // Identical visible rows can hide a different logical separator.
+                let boundary = snapshot["pane"].as_str().unwrap().lines().nth(1).unwrap();
+                let boundary = boundary.split("\x1b[0m ").nth(1).unwrap().len();
+                assert_eq!(&text[boundary..boundary + 1], " ");
+                let actual = if variant == "missing-space" {
+                    format!("{}{}", &text[..boundary], &text[boundary + 1..])
+                } else {
+                    format!("{} {}", &text[..boundary], &text[boundary..])
+                };
+                fs::write(fixture.root().join("paste-replacement"), &actual).unwrap();
+                snapshot["input"] = actual.into();
+            }
+            save(&fixture, &snapshot);
+            let output = guarded_text(&fixture, &text);
+            let receipt = details_any(
+                &output,
+                &[
+                    "send-composer-unobservable",
+                    "send-guard-observation-timeout",
+                ],
+            );
+            assert_eq!(receipt["submitted"], false, "{variant}");
+            assert!(submissions(&fixture).is_empty(), "{variant}");
+            assert!(
+                fixture
+                    .calls()
+                    .iter()
+                    .all(|call| call.last().is_none_or(|key| key != "Enter")),
+                "{variant}"
+            );
+        },
+    );
 }
 
 #[path = "claude_trailing.rs"]
