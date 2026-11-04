@@ -148,7 +148,7 @@ fn notification_policy_suppressed_mail_remains_readable_acknowledgeable_and_repl
     .unwrap();
     assert_eq!(shown["notification_suppressed"], true);
     assert_eq!(shown["body"]["text"], envelope.body);
-    assert_eq!(shown["body"]["classification"], "untrusted_peer_data");
+    assert_eq!(shown["body"]["classification"], "peer_message");
     let ack = |revision| {
         super::super::mailbox::ack(
             &context,
@@ -213,6 +213,7 @@ fn notification_policy_mixed_generations_ignore_suppressed_unread_mail() {
     );
     assert!(
         super::super::notification::claim_hook_reminder(
+            &context,
             &mut locked.registry,
             "recipient",
             "recipient-incarnation",
@@ -635,6 +636,7 @@ fn coalescing_window_survives_restart_and_hook_claim_until_ten_minutes() {
     let at = receipt.routine_last_submitted_at_epoch;
     assert!(
         super::super::notification::claim_hook_reminder(
+            &context,
             &mut registry,
             "recipient",
             "recipient-incarnation",
@@ -643,6 +645,7 @@ fn coalescing_window_survives_restart_and_hook_claim_until_ten_minutes() {
         .is_none()
     );
     let next = super::super::notification::claim_hook_reminder(
+        &context,
         &mut registry,
         "recipient",
         "recipient-incarnation",

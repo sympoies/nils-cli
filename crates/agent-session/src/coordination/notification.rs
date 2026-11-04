@@ -245,6 +245,7 @@ pub(crate) fn has_live_unread(
 /// submitted in one step, so neither serve nor a repeated hook call announces
 /// it again; a later send advances the generation.
 pub(crate) fn claim_hook_reminder(
+    context: &CliContext,
     registry: &mut Registry,
     target_session_id: &str,
     target_incarnation: &str,
@@ -254,8 +255,15 @@ pub(crate) fn claim_hook_reminder(
     if !has_live_unread(registry, target_session_id, target_incarnation, now) {
         return None;
     }
-    let notice_prompt = crate::notice::writers_enabled()
-        .then(|| notice::encode_counts(registry, target_session_id, target_incarnation, now));
+    let notice_prompt = crate::notice::writers_enabled().then(|| {
+        notice::encode_counts(
+            context,
+            registry,
+            target_session_id,
+            target_incarnation,
+            now,
+        )
+    });
     let receipt = registry
         .notifications
         .get_mut(&receipt_key(target_session_id, target_incarnation))?;

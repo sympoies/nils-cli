@@ -5,19 +5,33 @@ use crate::{CliError, SessionRecord, notice::NoticeEnvelope};
 pub(super) const FORMAT: &str = "mailbox-notice.v1";
 
 pub(super) fn encode_counts(
+    context: &CliContext,
     registry: &Registry,
     session: &str,
     incarnation: &str,
     now: i64,
 ) -> String {
-    let summary = coalescing::explained_summary(registry.messages.iter().filter(|item| {
-        item.recipient_session_id == session
-            && item.recipient_incarnation == incarnation
-            && item.state == "unread"
-            && !item.notification_suppressed
-            && item.expires_at_epoch > now
-    }));
-    let body = crate::notice::render_summary("mailbox.wake", &summary, "");
+    let messages: Vec<_> = registry
+        .messages
+        .iter()
+        .filter(|item| {
+            item.recipient_session_id == session
+                && item.recipient_incarnation == incarnation
+                && item.state == "unread"
+                && !item.notification_suppressed
+                && item.expires_at_epoch > now
+        })
+        .collect();
+    let summary = coalescing::explained_summary(messages.iter().copied());
+    let relations = crate::load_session_record(context, session)
+        .ok()
+        .map(|record| super::super::mailbox_sender_relation::SenderRelations::new(context, &record))
+        .unwrap_or_default();
+    let body = crate::notice::render_summary(
+        "mailbox.wake",
+        &summary,
+        &relations.notice_guidance(&messages),
+    );
     NoticeEnvelope::new("mailbox.wake", "agent-session", None)
         .expect("fixed mailbox notice metadata")
         .encode(&body)
@@ -59,6 +73,7 @@ impl NotificationCandidate {
         }
         let locked = super::super::lock_registry_observational(context)?;
         self.prompt = Some(encode_counts(
+            context,
             &locked.registry,
             &self.target_session_id,
             &self.target_incarnation,
@@ -75,11 +90,16 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn mailbox_wake_bytes_match_merged_contract_including_long_counts() {
+    fn mailbox_wake_preserves_summary_bytes_including_long_counts() {
         let corpus: serde_json::Value = serde_json::from_str(include_str!(
             "../../docs/specs/fixtures/history-row-classes-v1.json"
         ))
         .unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let context = CliContext {
+            state_dir: temp.path().into(),
+            host: None,
+        };
         for case in corpus["mailbox_byte_invariance"].as_array().unwrap() {
             let mut registry = Registry::default();
             let categories: &[&str] = match case["name"].as_str().unwrap() {
@@ -116,10 +136,15 @@ mod tests {
                     ))
                     .unwrap()
             } else {
-                encode_counts(&registry, "recipient", "incarnation", 100)
+                encode_counts(&context, &registry, "recipient", "incarnation", 100)
             };
             assert_eq!(
-                encoded.as_bytes(),
+                encoded
+                    .lines()
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .as_bytes(),
                 case["before"].as_str().unwrap().as_bytes(),
                 "{}",
                 case["name"]

@@ -215,6 +215,7 @@ fn same_generation_unknown_outcome_does_not_authorize_a_duplicate_wake() {
     let mut locked = lock_registry(&context).unwrap();
     assert!(
         notification::claim_hook_reminder(
+            &context,
             &mut locked.registry,
             "recipient",
             "recipient-incarnation",
@@ -231,6 +232,7 @@ fn drained_remote_mail_suppresses_serve_and_hook_delivery_after_compaction() {
     receive(&context, "destination", envelope.clone()).unwrap();
     let mut locked = lock_registry(&context).unwrap();
     let attempted = notification::claim_hook_reminder(
+        &context,
         &mut locked.registry,
         "recipient",
         "recipient-incarnation",
@@ -287,6 +289,7 @@ fn drained_remote_mail_suppresses_serve_and_hook_delivery_after_compaction() {
     assert!(notification::deliverable_candidates(&mut locked.registry, now_epoch()).is_empty());
     assert!(
         notification::claim_hook_reminder(
+            &context,
             &mut locked.registry,
             "recipient",
             "recipient-incarnation",

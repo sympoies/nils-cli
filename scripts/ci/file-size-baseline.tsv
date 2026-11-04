@@ -20,7 +20,7 @@ crates/agent-session/src/retitle_v3.rs	test	3647
 crates/agent-session/src/serve.rs	impl	10431
 crates/agent-session/src/serve/tests.rs	test	22260
 crates/agent-session/tests/integration/cli.rs	test	11929
-crates/agent-session/tests/integration/coordination.rs	test	4924
+crates/agent-session/tests/integration/coordination.rs	test	4918
 crates/agent-workflow-primitives/src/heuristic_inbox.rs	impl	4085
 crates/agent-workflow-primitives/src/repo_retro.rs	impl	2487
 crates/agent-workflow-primitives/src/review_specialists.rs	impl	2736

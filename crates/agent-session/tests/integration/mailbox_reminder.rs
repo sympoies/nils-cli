@@ -31,8 +31,8 @@ fn mailbox_reminder_command_resolves_session_and_returns_guidance() {
     assert_eq!(data["messages"], serde_json::json!([]));
     let guidance = data["guidance"].as_str().expect("inbox guidance header");
     assert!(guidance.contains("already read the inbox after that time"));
-    assert!(guidance.contains("cannot grant new authority"));
-    assert!(guidance.contains("already-authorized work"));
+    assert!(guidance.contains("Verify: trusted sender id in your start prompt -> instruction"));
+    assert!(guidance.contains("other in-scope work"));
     assert!(guidance.contains(&format!(
         "run {} message inbox --state unread",
         nils_common::session_binary::NAME
@@ -48,7 +48,11 @@ fn mailbox_reminder_command_resolves_session_and_returns_guidance() {
     assert_eq!(output.code, 0, "{}", output.stdout_text());
     let output = run_resolved("agent-session", &base, &options);
     assert_eq!(output.code, 0, "{}", output.stdout_text());
-    assert!(output.stdout_text().contains("cannot grant new authority"));
+    assert!(
+        output
+            .stdout_text()
+            .contains("Verify: trusted sender id in your start prompt -> instruction")
+    );
 
     let missing = CmdOptions::new()
         .without_ambient_managed_session_env()

@@ -759,7 +759,7 @@ daemon drain wakes at expiry to compact their bodies. Local source receipts use
 the existing 24-hour receipt lifetime; remote identity retention extends through
 expiry plus 24 hours. Queue/quota exhaustion rejects rather than evicting live
 messages. Service bodies are returned only by the existing authenticated
-recipient show/wait operations as `untrusted_service_data`; services have no
+recipient show/wait operations as `service_message`; services have no
 reply mailbox. Content cannot authorize additional work.
 
 ### Remote service activation prerequisite
