@@ -70,6 +70,25 @@ class DeliveryTests(unittest.TestCase):
         for event in ('pull_request', 'merge_group'):
             self.assertIn('--ci-merge-plan', fixture.dispatch('test', event))
 
+    def test_capacity_diagnostics_reach_both_strict_gates(self):
+        linux = job(workflow('ci.yml'), 'test')
+        gate = job(workflow('full-validation.yml'), 'gate')
+        diagnostic = '      - name: Diagnose unacquired macOS runner\n'
+        for body, condition in ((linux, "github.event_name == 'merge_group' && needs.macos_clippy.result != 'success'"),
+                                (gate, "needs.test_macos.result != 'success'")):
+            step = body.split(diagnostic, 1)[1].split('\n      - name:', 1)[0]
+            self.assertIn(f'if: {condition}', step)
+            self.assertIn("require('./.github/scripts/macos-runner-capacity.cjs').reportMacosCapacity({github, context, core})", step)
+            self.assertIn('actions: read', body)
+            self.assertRegex(body, r'checks: (read|write)')
+        self.assertLess(linux.index('name: Checkout'), linux.index(diagnostic))
+        self.assertLess(linux.index(diagnostic), linux.index('name: Require macOS queue compile and Clippy'))
+        self.assertIn('id: macos_capacity', gate)
+        self.assertIn("MACOS_JOBS: ${{ steps.macos_capacity.outputs.jobs || '[]' }}", gate)
+        self.assertIn('macosJobs: JSON.parse(process.env.MACOS_JOBS)', gate)
+        for filename in ('ci.yml', 'release.yml'):
+            self.assertIn('actions: read', job(workflow(filename), 'full_validation'))
+
     def test_release_build_depends_on_full_validation_of_authorized_sha(self):
         release = workflow('release.yml')
         verify = job(release, 'verify_ci')
