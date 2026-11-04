@@ -6,6 +6,8 @@
 - Inbox and body views expose parent, ancestor or peer with neutral message
   classifications. Multiline wakes include relation labels and verification
   steps; bounded plain wakes direct recipients to the inbox.
+- Inbox verification steps appear once in the header. Remote-encoded claims
+  of local senders remain peers, without dispatcher wording.
 
 ### Why / context
 
@@ -18,6 +20,8 @@
 - Five synthetic regressions executed before production edits and failed on
   absent relation fields or guidance. Focused and local-fast results are
   recorded in the delivery PR.
+- A separate local-identity spoof regression failed before repair; direct wait
+  coverage verifies body relation and full guidance.
 
 ### Links
 

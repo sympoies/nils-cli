@@ -292,20 +292,25 @@ acknowledges message bodies.
 Inbox rows and body-returning show/wait results expose `sender_relation` and
 `guidance`. The relation is `parent` for the recipient's recorded direct parent,
 `ancestor` for a higher session on the same lineage chain, and `peer` otherwise.
-It labels the authenticated sender, not a forwarded original sender. Services,
+It labels the immediate sender, not a forwarded original sender. Services,
 unknown senders and missing or unreadable lineage yield `peer`.
 
 Derivation uses the recipient's recorded `lineage.parent`, `lineage.root` and
 `depth`, with at most 64 parent steps. Local records must match the complete
 machine/session/creation-time reference, root and decreasing depth; session ID
-prefixes never match. Federation uses the authenticated full machine/session
-address, so an identical ID on another machine is a different sender. At a
-remote boundary only the recorded parent and root are known; undiscovered
+prefixes never match. Federation uses the full machine/session address carried
+by the ingress envelope, so an identical ID on another machine is a different
+sender. The shared ingress credential authenticates ingress admission; the
+machine name is the sender's claim. A remote-encoded sender claiming the
+recipient's own machine yields `peer`; actual local senders are not remote-encoded.
+At a remote boundary only the recorded parent and root are known; undiscovered
 intermediate remote ancestors yield `peer`. No remote lookup is made.
 
-Every relation carries the [verification guidance](coordination-mailbox-v1.md#recipient-guidance).
-Parent/ancestor messages additionally name their dispatch relation and the
-recipient's recorded prompt file when available. This descriptive projection
+The inbox header carries the [verification guidance](coordination-mailbox-v1.md#recipient-guidance)
+once; row `guidance` contains only the dispatcher sentence for parent/ancestor,
+or an empty string for peers. Standalone show/wait and notices carry the full
+guidance. Parent/ancestor guidance names the recipient's recorded prompt file
+when available. This descriptive projection
 changes neither authentication, delivery nor command admission; relation alone
 grants no authority.
 

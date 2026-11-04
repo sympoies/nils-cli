@@ -509,7 +509,10 @@ pub(crate) fn inbox(context: &CliContext, mut args: MessageInboxArgs) -> Result<
     let relations = super::mailbox_sender_relation::SenderRelations::new(context, &record);
     let rows: Vec<_> = page
         .into_iter()
-        .map(|message| related_metadata(message, &relations))
+        .map(|message| RelatedMetadata {
+            metadata: metadata(message),
+            relation: relations.inbox_view(message),
+        })
         .collect();
     let warning = quota_warning(&locked.registry, &record.id, now);
     locked.save()?;

@@ -102,6 +102,13 @@ impl SenderRelations {
 
     fn relation(&self, message: &StoredMessage) -> Relation {
         let remote = super::remote::sender_address(message);
+        // Ingress machine names are claimed; real local senders are not remote-encoded.
+        if remote
+            .as_ref()
+            .is_some_and(|address| address.machine == self.machine)
+        {
+            return Relation::Peer;
+        }
         let (machine, id) = remote.as_ref().map_or(
             (self.machine.as_str(), message.sender_session_id.as_str()),
             |address| (address.machine.as_str(), address.session_id.as_str()),
@@ -125,6 +132,18 @@ impl SenderRelations {
         }
     }
 
+    pub(super) fn inbox_view(&self, message: &StoredMessage) -> View {
+        let sender_relation = self.relation(message);
+        View {
+            sender_relation,
+            guidance: if sender_relation == Relation::Peer {
+                String::new()
+            } else {
+                self.dispatcher_guidance()
+            },
+        }
+    }
+
     pub(super) fn notice_guidance(&self, messages: &[&StoredMessage]) -> String {
         let mut relations: BTreeSet<_> = messages.iter().map(|m| self.relation(m)).collect();
         if relations.is_empty() {
@@ -144,14 +163,22 @@ impl SenderRelations {
     fn guidance(&self, dispatching: bool) -> String {
         let mut guidance = VERIFY_GUIDANCE.to_string();
         if dispatching {
-            guidance.push_str("\nFrom your dispatching session: a follow-up within the scope of your start prompt");
-            if let Some(path) = &self.prompt_file {
-                guidance.push_str(&format!(
-                    "; re-read it at {path} if it is no longer in context"
-                ));
-            }
-            guidance.push('.');
+            guidance.push('\n');
+            guidance.push_str(&self.dispatcher_guidance());
         }
+        guidance
+    }
+
+    fn dispatcher_guidance(&self) -> String {
+        let mut guidance =
+            "From your dispatching session: a follow-up within the scope of your start prompt"
+                .to_string();
+        if let Some(path) = &self.prompt_file {
+            guidance.push_str(&format!(
+                "; re-read it at {path} if it is no longer in context"
+            ));
+        }
+        guidance.push('.');
         guidance
     }
 }

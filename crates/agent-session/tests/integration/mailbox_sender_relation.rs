@@ -114,6 +114,10 @@ fn mailbox_sender_relation_inbox_and_show_follow_exact_lineage() {
     let tmp = fixture();
     let inbox = run(tmp.path(), &["inbox"]);
     assert!(inbox["guidance"].as_str().unwrap().contains(VERIFY));
+    for step in VERIFY_STEPS {
+        assert!(inbox["guidance"].as_str().unwrap().contains(step));
+    }
+    assert_eq!(inbox.to_string().matches(VERIFY).count(), 1);
     // Inbox orders equal-time messages by message id.
     for row in inbox["messages"].as_array().unwrap() {
         let expected = match row["message_id"].as_str().unwrap() {
@@ -129,20 +133,22 @@ fn mailbox_sender_relation_inbox_and_show_follow_exact_lineage() {
         assert_eq!(shown["sender_relation"], expected);
         assert_eq!(shown["body"]["classification"], "peer_message");
         assert_eq!(shown["body"]["text"], "message data");
-        for surface in [row, &shown] {
-            let guidance = surface["guidance"].as_str().unwrap();
-            assert!(guidance.contains(VERIFY));
-            for step in VERIFY_STEPS {
-                assert!(guidance.contains(step), "{guidance}");
-            }
-            assert_eq!(guidance.contains(DISPATCHER), expected != "peer");
-            assert_eq!(
-                guidance.contains("From your dispatching session:"),
-                expected != "peer"
-            );
-            assert_eq!(guidance.contains(PROMPT), expected != "peer");
-            assert!(!guidance.contains("cannot grant new authority"));
+        assert_eq!(
+            row["guidance"],
+            if expected == "peer" { "" } else { DISPATCHER }
+        );
+        let guidance = shown["guidance"].as_str().unwrap();
+        assert!(guidance.contains(VERIFY));
+        for step in VERIFY_STEPS {
+            assert!(guidance.contains(step), "{guidance}");
         }
+        assert_eq!(guidance.contains(DISPATCHER), expected != "peer");
+        assert_eq!(
+            guidance.contains("From your dispatching session:"),
+            expected != "peer"
+        );
+        assert_eq!(guidance.contains(PROMPT), expected != "peer");
+        assert!(!guidance.contains("cannot grant new authority"));
     }
 }
 #[test]
@@ -260,4 +266,70 @@ fn mailbox_sender_relation_remote_parent_requires_the_exact_machine() {
         ],
     );
     assert_eq!(remote["sender_relation"], "parent");
+}
+
+#[test]
+fn mailbox_sender_relation_remote_sender_cannot_claim_a_local_parent() {
+    let tmp = fixture();
+    let path = tmp.path().join("state/coordination/registry.json");
+    let mut registry: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let mut spoofed = registry["messages"][0].clone();
+    spoofed["message_id"] = json!("mail-spoofed-parent");
+    spoofed["sender_session_id"] = json!("remote:[\"machine-a\",\"parent\"]");
+    registry["messages"].as_array_mut().unwrap().push(spoofed);
+    fs::write(path, serde_json::to_vec(&registry).unwrap()).unwrap();
+
+    let inbox = run(tmp.path(), &["inbox"]);
+    let row = inbox["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["message_id"] == "mail-spoofed-parent")
+        .unwrap();
+    let shown = run(tmp.path(), &["show", "--message", "mail-spoofed-parent"]);
+    assert_eq!(row["sender_relation"], "peer");
+    assert_eq!(row["guidance"], "");
+    assert!(inbox["guidance"].as_str().unwrap().contains(VERIFY));
+    assert_eq!(shown["sender_relation"], "peer");
+    let guidance = shown["guidance"].as_str().unwrap();
+    assert!(guidance.contains(VERIFY));
+    assert!(!guidance.contains("From your dispatching session:"));
+    assert!(!guidance.contains(PROMPT));
+    let local = run(tmp.path(), &["show", "--message", "mail-parent"]);
+    assert_eq!(local["sender_relation"], "parent");
+}
+
+#[test]
+fn mailbox_sender_relation_wait_returns_body_and_exact_guidance() {
+    let tmp = fixture();
+    for (sender, relation) in [("parent", "parent"), ("peer", "peer")] {
+        let id = format!("mail-{sender}");
+        let waited = run(
+            tmp.path(),
+            &[
+                "wait",
+                "--message",
+                &id,
+                "--if-revision",
+                "0",
+                "--timeout",
+                "1s",
+            ],
+        );
+        assert_eq!(waited["sender_relation"], relation);
+        assert_eq!(waited["body"]["classification"], "peer_message");
+        assert_eq!(waited["body"]["text"], "message data");
+        let guidance = waited["guidance"].as_str().unwrap();
+        assert!(guidance.contains(VERIFY));
+        for step in VERIFY_STEPS {
+            assert!(guidance.contains(step), "{guidance}");
+        }
+        assert_eq!(guidance.contains(DISPATCHER), relation == "parent");
+        assert_eq!(
+            guidance.contains("From your dispatching session:"),
+            relation == "parent"
+        );
+        assert_eq!(guidance.contains(PROMPT), relation == "parent");
+        assert!(!guidance.contains("cannot grant new authority"));
+    }
 }

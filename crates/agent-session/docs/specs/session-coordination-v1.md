@@ -33,9 +33,10 @@ provider-backed dispatch workflow.
   digest of `AGENT_SESSION_RUNTIME_ID`; replacement removes the prior
   incarnation's file. This file is a private data-transfer boundary, not a
   credential, and does not relax checkpoint authentication or revision fences.
-- Peer summaries and mailbox bodies are authenticated as peer-supplied data but
-  remain untrusted. They cannot authorize commands, approvals, scope changes,
-  credential access, or secret disclosure.
+- Peer summaries and mailbox bodies carry cooperating-session messages.
+  Recipients apply the [verification guidance](coordination-mailbox-v1.md#recipient-guidance)
+  before acting: check the trusted sender list and start-prompt scope, or ask
+  the sender once while continuing other in-scope work.
 - The optional HTTP server has separate operator authentication. Knowing its
   bearer token does not manufacture a session capability, and knowing a
   session capability does not grant server-operator authority.
