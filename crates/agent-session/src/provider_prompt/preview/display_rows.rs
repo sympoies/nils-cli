@@ -77,6 +77,7 @@ impl PreviewMessages {
                     && row_classes::claude_compact_echo(value).is_some()
                 {
                     self.last_message = Some(message);
+                    self.compact_echo_bytes = Some(scanned);
                     return true;
                 }
                 if scanned >= row_classes::ADJACENT_BYTES
@@ -92,6 +93,7 @@ impl PreviewMessages {
                 let scanned = scanned.saturating_add(raw_bytes);
                 if scanned <= row_classes::ADJACENT_BYTES {
                     if row_classes::claude_compact_echo(value).is_some() {
+                        self.compact_echo_bytes = Some(scanned);
                         return true;
                     }
                     if !row_classes::claude_logical_record(value) {
@@ -107,6 +109,7 @@ impl PreviewMessages {
                     && row_classes::claude_compact_echo(value).is_some()
                 {
                     self.compaction(timestamp, "");
+                    self.compact_echo_bytes = Some(scanned);
                     return true;
                 } else if let Some(summary) = row_classes::claude_summary(value) {
                     if trigger == CompactionTrigger::Manual {

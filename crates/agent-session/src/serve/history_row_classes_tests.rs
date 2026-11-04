@@ -1130,3 +1130,92 @@ async fn automatic_compaction_does_not_borrow_a_later_compact_command() {
         "runtime_command"
     );
 }
+
+#[tokio::test]
+async fn compact_pair_repeated_echo_is_hidden_in_history_and_card() {
+    use std::io::Write;
+    let f = Fixture::new(
+        "claude",
+        &[
+            json!({"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual"}}),
+            json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+            command("claude", "/compact keep focus"),
+        ],
+    );
+    let before = f.page("limit=3").await;
+    let cursor = before["next_cursor"].as_str().unwrap().to_owned();
+    let expected_plain = before["messages"].as_array().unwrap().clone();
+    let expected_parts = f.all(false, true).await;
+    assert_eq!(
+        expected_plain
+            .iter()
+            .map(|row| row["text"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["human opening", "/compact keep focus", "summary"]
+    );
+    let source = crate::provider_prompt::ProviderPromptSource::for_history(
+        "claude",
+        "synthetic",
+        f.file.clone(),
+    )
+    .unwrap();
+    let mut tracker =
+        crate::provider_prompt::ProviderLastPromptTracker::open_source(source.clone()).unwrap();
+    tracker.refresh();
+    let expected_card = tracker.last_message().unwrap();
+    writeln!(
+        fs::OpenOptions::new().append(true).open(&f.file).unwrap(),
+        "{}",
+        command("claude", "/compact keep focus")
+    )
+    .unwrap();
+
+    for (parts, expected) in [(false, expected_plain), (true, expected_parts)] {
+        assert_eq!(f.all(false, parts).await, expected);
+        assert_eq!(f.all(true, parts).await, expected);
+    }
+    assert_eq!(
+        f.page(&format!("cursor={cursor}&limit=1")).await["messages"],
+        json!([])
+    );
+    tracker.refresh();
+    assert_eq!(tracker.last_message().as_ref(), Some(&expected_card));
+    let mut cold = crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
+    cold.refresh();
+    assert_eq!(cold.last_message().as_ref(), Some(&expected_card));
+}
+
+#[tokio::test]
+async fn compact_pair_suppression_keeps_distinct_invocations() {
+    let pair = vec![
+        json!({"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual"}}),
+        json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+        command("claude", "/compact keep focus"),
+        command("claude", "/compact keep focus"),
+    ];
+    for separate_boundary in [false, true] {
+        let mut records = pair.clone();
+        if separate_boundary {
+            records.extend(pair.clone());
+        } else {
+            records.push(user("claude", "after"));
+            records.push(command("claude", "/compact keep focus"));
+        }
+        let f = Fixture::new("claude", &records);
+        let rows = f.all(false, true).await;
+        assert_eq!(rows, f.all(true, true).await);
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row["row_class"] == "runtime_command")
+                .map(|row| row["text"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["/compact keep focus", "/compact keep focus"]
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row["row_class"] == "compaction")
+                .count(),
+            if separate_boundary { 2 } else { 1 }
+        );
+    }
+}

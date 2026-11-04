@@ -64,7 +64,7 @@ pub(super) fn project(
         Err(_) => return None,
     };
     if pair.echo_offset != offset {
-        return None;
+        return Some(Projection::Hidden);
     }
     let mut row = compaction(session, &boundary, anchor, parts, &pair.summary);
     row.paging_offset = offset;
@@ -135,6 +135,7 @@ fn preceding_boundary(session: &HistorySession, offset: u64) -> Option<(u64, Val
     let mut bytes = Vec::new();
     file.take(offset - start).read_to_end(&mut bytes).ok()?;
     let mut end = offset;
+    let mut summary_seen = false;
     for line in bytes.split_inclusive(|byte| *byte == b'\n').rev() {
         end -= line.len() as u64;
         if end == start && start > 0 {
@@ -149,7 +150,14 @@ fn preceding_boundary(session: &HistorySession, offset: u64) -> Option<(u64, Val
         if classes::claude_boundary(&value) {
             return Some((end, value));
         }
-        if classes::claude_summary(&value).is_none() && classes::claude_logical_record(&value) {
+        if classes::claude_summary(&value).is_some() {
+            summary_seen = true;
+            continue;
+        }
+        if !summary_seen && classes::claude_compact_echo(&value).is_some() {
+            continue;
+        }
+        if classes::claude_logical_record(&value) {
             break;
         }
     }

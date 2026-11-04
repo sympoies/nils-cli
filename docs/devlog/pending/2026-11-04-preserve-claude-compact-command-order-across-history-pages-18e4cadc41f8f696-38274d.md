@@ -5,6 +5,8 @@
 
 - Claude compact pairs retain stable row identities while paging and card
   previews show the command before its compaction.
+- Repeated echoes attached to one pair produce one command; separate
+  compactions and unattached commands remain distinct invocations.
 
 ### Why / context
 

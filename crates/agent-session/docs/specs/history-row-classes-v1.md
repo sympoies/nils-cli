@@ -84,6 +84,12 @@ row is distinct from the single compaction event below: requesting compaction
 and completing a context replacement are different facts. Do not manufacture a
 compaction event for an unsuccessful command.
 
+Multiple compact command-markup echoes following one nonautomatic boundary and
+summary belong to that same invocation until the next non-echo logical record
+or boundary. Retain the first echo's command identity and suppress the later
+echoes. A separate compaction or a command not attached to that pair remains a
+separate invocation, even when its command text is identical.
+
 ## Compaction summary and paging
 
 Expose exactly one `row_class: "compaction"` row per provider compaction.
@@ -143,7 +149,11 @@ unpaired compaction. Card previews wait for the same manual association.
 
 Automatic, missing and unknown triggers keep immediate summary publication at
 idle EOF. Missing/unknown trigger metadata cannot promise causal order across a
-late echo append; restart such a traversal after the pair completes.
+late echo append. A live poller can receive the compaction before the echo, then
+receive that same compaction id again when the echo arrives, without receiving
+the command in that ongoing cursor traversal. Restart after the pair completes
+to read the command followed by its compaction. Claude Code 2.1.296 boundaries
+include the trigger metadata.
 
 The transcript trigger shape was checked in Claude Code 2.1.296; the official
 [SDK boundary reference](https://code.claude.com/docs/en/agent-sdk/typescript#sdkcompactboundarymessage)
