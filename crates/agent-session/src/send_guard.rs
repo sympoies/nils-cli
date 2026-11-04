@@ -25,6 +25,7 @@ mod key;
 mod observation;
 mod ownership;
 mod pasted;
+pub(crate) mod placeholder;
 mod text;
 
 #[derive(Clone, Debug, Default, Args)]
@@ -204,8 +205,25 @@ impl Admission<'_> {
                     Some(input)
                 })
             } else {
-                capture_styled(self.tmux_bin, target, timeout)
-                    .and_then(|pane| observation.pasted_composer_input(&pane, pasted_text, stage))
+                let pane = capture_styled(self.tmux_bin, target, timeout);
+                if pasted_text.is_none()
+                    && self.record.agent == "claude"
+                    && pane.as_deref().is_some_and(|pane| {
+                        send_submit::direct_composer_observation("claude", pane)
+                            == Err(send_submit::Unobserved::PastePlaceholder)
+                    })
+                {
+                    let mut error = self.refusal(
+                        "send-composer-unobservable",
+                        "composer contains a paste placeholder",
+                        "empty_composer",
+                        stage,
+                    );
+                    error.0.details.as_mut().expect("guard details")["observation"] =
+                        json!("paste-placeholder");
+                    return Err(error);
+                }
+                pane.and_then(|pane| observation.pasted_composer_input(&pane, pasted_text, stage))
             };
             if input.is_some() || !retryable {
                 return Ok(input);

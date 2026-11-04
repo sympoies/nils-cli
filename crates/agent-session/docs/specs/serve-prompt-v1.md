@@ -86,6 +86,14 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   leave recovery armed. An empty composer behind a working Codex turn remains
   admitted, subject to the existing provider controls.
 
+  A request-bound Claude paste stays inside bounded composer confirmation after
+  admission, including a transient first post-paste capture. A lone opaque paste
+  marker uses the same send-local logical-end proof and verified cleanup as
+  [Send v1](send-v1.md#claude-submitted-paste-ownership). Unconfirmed owned markers
+  are cleared only after that proof; mixed owner input remains untouched. Normal
+  direct prompts retain their provider acknowledgement and image-label handling.
+  Initial creation prompts retain their separate accepted-before-render contract.
+
   An explicit owner clear followed by another submission remains available.
   Stale-draft admission saves the exact observation durably before using the
   existing cleanup keys; it never submits the draft or sends Ctrl+C. Direct replies

@@ -30,6 +30,13 @@ impl Admission<'_> {
         pasted: Option<&str>,
         stage: &str,
     ) -> Option<String> {
+        if self.record.agent == "claude"
+            && self.args.require_empty_composer
+            && let Some(text) = pasted
+            && let Some(label) = send_submit::claude_paste_placeholder(pane)
+        {
+            return self.prove_placeholder(&label).then(|| text.to_owned());
+        }
         if self.args.notice_envelope
             && let Some(input) = pasted
                 .and_then(|text| send_submit::known_multiline_input(&self.record.agent, pane, text))

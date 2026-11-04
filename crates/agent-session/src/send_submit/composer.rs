@@ -5,6 +5,7 @@ use super::{
 use unicode_width::UnicodeWidthChar;
 
 mod command_ui;
+pub(super) mod placeholder;
 pub(crate) use command_ui::observed as command_ui_observed;
 mod unobserved;
 pub(crate) use unobserved::Unobserved;

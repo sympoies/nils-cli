@@ -9,6 +9,8 @@ mod history_command_bytes;
 mod live_composer;
 #[path = "guarded_send/native_composer.rs"]
 mod native_composer;
+#[path = "guarded_send/placeholder.rs"]
+mod placeholder;
 #[path = "guarded_send/repair.rs"]
 mod repair;
 use std::fs;
@@ -99,10 +101,25 @@ def print_cursor():
         started = float((root / f'slow-right-start-{right_count}').read_text())
         delay = int((root / 'slow-right-observation-ms').read_text()) / 1000
         if time.monotonic() - started < delay: x, y = 3, 1
+    if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()):
+        label = (root / 'collapsed-label').read_text()
+        x, y = (2 if cursor == 0 else 2 + len(label) + cell_width(text[len(label):][:cursor - 1])), 1
     print(x, y)
 
 if command == 'capture-pane' and 'display-message' in args: atexit.register(print_cursor)
 def append_draft_after_capture():
+    if (root / 'collapse-after-exact').exists() and (root / 'paste-completed').exists() and not (root / 'collapsed-label').exists():
+        count_path = root / 'collapse-capture-count'
+        count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+        count_path.write_text(str(count))
+        if count < 2: return
+        label = '[Pasted text #1]'
+        (root / 'composer').write_text(label)
+        (root / 'collapsed-label').write_text(label)
+        (root / 'cursor').write_text('1')
+        p = root / 'state/sessions/guarded/activity.json'
+        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
+        p.write_text(json.dumps(d))
     if (root / 'replace-after-paste').exists(): return
     if (root / 'draft-after-exact').exists() and (root / 'paste-completed').exists() and not (root / 'draft-injected').exists():
         with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text() if (root / 'draft-text').exists() else ' user addition')
@@ -150,6 +167,12 @@ elif command == 'paste-buffer':
     if (root / 'late-render').exists(): (root / 'late').write_text((root / 'buffer').read_text())
     else:
         with (root / 'composer').open('a') as out: out.write((root / 'buffer').read_text())
+    if (root / 'collapse-paste').exists():
+        count = len(re.findall(r'\r\n|\r|\n', (root / 'buffer').read_text()))
+        label = '[Pasted text #1' + (f' +{count} lines' if count else '') + ']'
+        (root / 'composer').write_text(label)
+        (root / 'collapsed-label').write_text(label)
+        (root / 'cursor').write_text('1')
     if (root / 'fail-capture-after-paste').exists(): (root / 'capture-fails').touch()
     if (root / 'inject-draft').exists() and not (root / 'draft-after-exact').exists():
         with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text() if (root / 'draft-text').exists() else ' user addition')
@@ -165,12 +188,15 @@ elif command == 'display-message':
 elif command == 'send-keys' and args[-2:] == ['Right', 'Left']:
     cursor = int((root / 'cursor').read_text())
     count = int(args[args.index('-N') + 1])
-    length = len((root / 'composer').read_text())
+    text = (root / 'composer').read_text()
+    length = 1 + len(text) - len((root / 'collapsed-label').read_text()) if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()) else len(text)
     (root / 'cursor').write_text(str(max(0, min(length, cursor + count) - count)))
 elif command == 'send-keys' and args[-1] == 'Right':
     cursor = int((root / 'cursor').read_text())
     count = int(args[args.index('-N') + 1])
-    (root / 'cursor').write_text(str(min(len((root / 'composer').read_text()), cursor + count)))
+    text = (root / 'composer').read_text()
+    length = 1 + len(text) - len((root / 'collapsed-label').read_text()) if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()) else len(text)
+    (root / 'cursor').write_text(str(min(length, cursor + count)))
     (root / 'right-sent').touch()
     if (root / 'slow-right-observation-ms').exists():
         count_path = root / 'slow-right-count'
@@ -188,6 +214,7 @@ elif command == 'send-keys' and args[-1] == 'Right':
         (root / 'right-draft-injected').touch()
 elif command == 'send-keys' and args[-1] == 'C-a':
     (root / 'cursor').write_text('0')
+    if (root / 'draft-on-clear-home').exists() and (root / 'entered').exists(): (root / 'composer').write_text('replacement draft')
     if (root / 'draft-on-home').exists(): (root / 'composer').write_text('replacement draft')
     if (root / 'replace-on-home').exists(): (root / 'runtime-replaced').touch()
 elif command == 'send-keys' and args[-1] in ('BSpace', 'DC'):
@@ -199,7 +226,11 @@ elif command == 'send-keys' and args[-1] in ('BSpace', 'DC'):
         count = int(args[args.index('-N') + 1]) if '-N' in args else 1
         text = (root / 'composer').read_text()
         cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
-        if args[-1] == 'DC': text = text[:cursor] + text[cursor + count:]
+        if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()) and cursor > 0:
+            label = (root / 'collapsed-label').read_text()
+            units = [label] + list(text[len(label):])
+            text = ''.join(units[:max(0, cursor - count)] + units[cursor:])
+        elif args[-1] == 'DC': text = text[:cursor] + text[cursor + count:]
         else: text = text[:max(0, cursor - count)] + text[cursor:]
         (root / 'composer').write_text(text)
         if (root / 'redraw-after-delete').exists(): (root / 'redraw-pending').touch()

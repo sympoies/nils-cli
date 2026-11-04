@@ -20,11 +20,21 @@ impl Admission<'_> {
     /// draft is preserved. Every outcome includes a fresh input observation.
     pub(crate) fn report_pasted_input(
         &self,
-        mut error: CliError,
+        error: CliError,
         text: &str,
         observed_paste: bool,
     ) -> CliError {
-        let (remaining, cleared) = self.clear_pasted(text, observed_paste);
+        let result = self.clear_pasted(text, observed_paste);
+        self.report_cleared_input(error, text, observed_paste, result)
+    }
+
+    pub(super) fn report_cleared_input(
+        &self,
+        mut error: CliError,
+        text: &str,
+        observed_paste: bool,
+        (remaining, cleared): (Option<String>, bool),
+    ) -> CliError {
         let remaining_input = match remaining.as_deref() {
             Some("") => "empty",
             Some(input) if send_submit::composer_holds(&self.record.agent, input, text) => {
@@ -64,7 +74,7 @@ impl Admission<'_> {
         error
     }
 
-    fn clear_pasted(&self, text: &str, observed_paste: bool) -> (Option<String>, bool) {
+    pub(super) fn clear_pasted(&self, text: &str, observed_paste: bool) -> (Option<String>, bool) {
         let cleanup = Admission {
             deadline: Instant::now() + CLEAR_BUDGET,
             context: self.context,
