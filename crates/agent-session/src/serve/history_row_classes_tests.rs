@@ -925,38 +925,208 @@ async fn codex_compaction_keeps_file_order() {
 
 #[tokio::test]
 async fn compact_post_summary_echo_only_keeps_order_and_identity() {
-    let f = Fixture::new("claude", &[
-        json!({"type":"system","subtype":"compact_boundary"}),
-        json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
-        command("claude", "/compact keep focus"),
-        user("claude", "after"),
-    ]);
+    let f = Fixture::new(
+        "claude",
+        &[
+            json!({"type":"system","subtype":"compact_boundary"}),
+            json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+            command("claude", "/compact keep focus"),
+            user("claude", "after"),
+        ],
+    );
     for parts in [false, true] {
         let rows = f.all(false, parts).await;
         assert_eq!(rows, f.all(true, parts).await);
-        assert_eq!(rows.iter().map(|r| r["text"].as_str().unwrap()).collect::<Vec<_>>(),
-            vec!["human opening", "/compact keep focus", "summary", "after"]);
+        assert_eq!(
+            rows.iter()
+                .map(|r| r["text"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["human opening", "/compact keep focus", "summary", "after"]
+        );
         let contents = fs::read_to_string(&f.file).unwrap();
-        let offsets = contents.split_inclusive('\n').scan(0usize, |offset, line| {
-            let start = *offset; *offset += line.len(); Some(start)
-        }).collect::<Vec<_>>();
+        let offsets = contents
+            .split_inclusive('\n')
+            .scan(0usize, |offset, line| {
+                let start = *offset;
+                *offset += line.len();
+                Some(start)
+            })
+            .collect::<Vec<_>>();
         assert_eq!(rows[1]["id"], format!("{}-{}", f.history, offsets[3]));
         assert_eq!(rows[2]["id"], format!("{}-{}", f.history, offsets[1]));
+        // A reverse cursor issued before the ordering fix at the echo remains
+        // a valid byte boundary. Restart paging to reconcile an upgrade mid-pair.
+        let old_cursor_page = f
+            .page(&format!(
+                "direction=older&cursor={}&limit=1{}",
+                offsets[3],
+                if parts { "&parts=v1" } else { "" }
+            ))
+            .await;
+        assert_eq!(old_cursor_page["messages"][0], rows[1]);
     }
 }
 
 #[test]
 fn compact_post_summary_echo_keeps_compaction_card_preview() {
-    let f = Fixture::new("claude", &[
-        json!({"type":"system","subtype":"compact_boundary"}),
-        json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
-        command("claude", "/compact"),
-    ]);
+    use std::io::Write;
+    let f = Fixture::new(
+        "claude",
+        &[
+            json!({"type":"system","subtype":"compact_boundary"}),
+            json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+        ],
+    );
     let source = crate::provider_prompt::ProviderPromptSource::for_history(
-        "claude", "synthetic", f.file.clone()).unwrap();
-    let mut tracker = crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
+        "claude",
+        "synthetic",
+        f.file.clone(),
+    )
+    .unwrap();
+    let mut tracker =
+        crate::provider_prompt::ProviderLastPromptTracker::open_source(source.clone()).unwrap();
+    tracker.refresh();
+    writeln!(
+        fs::OpenOptions::new().append(true).open(&f.file).unwrap(),
+        "{}",
+        command("claude", "/compact")
+    )
+    .unwrap();
     tracker.refresh();
     let card = serde_json::to_value(tracker.last_message().unwrap()).unwrap();
     assert_eq!(card["row_class"], "compaction");
     assert_eq!(card["text"], "summary");
+    let mut cold = crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
+    cold.refresh();
+    assert_eq!(cold.last_message(), tracker.last_message());
+}
+
+#[tokio::test]
+async fn manual_compact_polling_waits_for_the_echo_without_losing_either_row() {
+    use std::io::Write;
+    let f = Fixture::new(
+        "claude",
+        &[
+            user("claude", "/compact"),
+            json!({"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","preTokens":1000}}),
+            json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+        ],
+    );
+    let source = crate::provider_prompt::ProviderPromptSource::for_history(
+        "claude",
+        "synthetic",
+        f.file.clone(),
+    )
+    .unwrap();
+    let mut tracker =
+        crate::provider_prompt::ProviderLastPromptTracker::open_source(source.clone()).unwrap();
+    tracker.refresh();
+    assert_eq!(tracker.last_message().unwrap().text, "human opening");
+    let first = f.page("limit=1").await;
+    let cursor = first["next_cursor"].as_str().unwrap();
+    let pending = f.page(&format!("cursor={cursor}&limit=1")).await;
+    assert_eq!(pending["messages"], json!([]));
+    let cursor = pending["next_cursor"].as_str().unwrap();
+    let echo = command("claude", "/compact").to_string();
+    let mut file = fs::OpenOptions::new().append(true).open(&f.file).unwrap();
+    file.write_all(echo.as_bytes()).unwrap();
+    tracker.refresh();
+    assert_eq!(tracker.last_message().unwrap().text, "human opening");
+    assert_eq!(
+        f.page(&format!("cursor={cursor}&limit=1")).await["messages"],
+        json!([])
+    );
+    file.write_all(b"\n").unwrap();
+    tracker.refresh();
+    assert_eq!(tracker.last_message().unwrap().text, "summary");
+    let mut cold = crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
+    cold.refresh();
+    assert_eq!(cold.last_message(), tracker.last_message());
+    let command = f.page(&format!("cursor={cursor}&limit=1")).await;
+    assert_eq!(command["messages"][0]["row_class"], "runtime_command");
+    let compaction = f
+        .page(&format!(
+            "cursor={}&limit=1",
+            command["next_cursor"].as_str().unwrap()
+        ))
+        .await;
+    assert_eq!(compaction["messages"][0]["row_class"], "compaction");
+    assert_eq!(compaction["messages"][0]["text"], "summary");
+    let end = f
+        .page(&format!(
+            "cursor={}&limit=1",
+            compaction["next_cursor"].as_str().unwrap()
+        ))
+        .await;
+    assert_eq!(end["messages"], json!([]));
+    assert_eq!(f.all(false, true).await, f.all(true, true).await);
+}
+
+#[tokio::test]
+async fn nonmanual_compaction_at_idle_eof_still_publishes_immediately() {
+    for trigger in [json!("auto"), json!("unknown"), Value::Null] {
+        let f = Fixture::new(
+            "claude",
+            &[
+                json!({"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":trigger}}),
+                json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+            ],
+        );
+        let page = f.page("direction=latest&limit=1").await;
+        assert_eq!(page["messages"][0]["row_class"], "compaction");
+        assert_eq!(page["messages"][0]["text"], "summary");
+    }
+}
+
+#[tokio::test]
+async fn manual_compaction_without_an_echo_resolves_at_the_next_message() {
+    let f = Fixture::new(
+        "claude",
+        &[
+            json!({"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual"}}),
+            json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+            user("claude", "after"),
+        ],
+    );
+    let rows = f.all(false, false).await;
+    assert_eq!(rows, f.all(true, false).await);
+    assert_eq!(
+        rows.iter()
+            .map(|row| row["text"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["human opening", "summary", "after"]
+    );
+}
+
+#[tokio::test]
+async fn automatic_compaction_does_not_borrow_a_later_compact_command() {
+    let f = Fixture::new(
+        "claude",
+        &[
+            json!({"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"auto"}}),
+            json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"automatic summary"}}),
+            command("claude", "/compact"),
+        ],
+    );
+    let rows = f.all(false, true).await;
+    assert_eq!(rows, f.all(true, true).await);
+    assert_eq!(
+        rows.iter()
+            .map(|row| row["text"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["human opening", "automatic summary", "/compact"]
+    );
+    let source = crate::provider_prompt::ProviderPromptSource::for_history(
+        "claude",
+        "synthetic",
+        f.file.clone(),
+    )
+    .unwrap();
+    let mut tracker =
+        crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
+    tracker.refresh();
+    assert_eq!(
+        serde_json::to_value(tracker.last_message().unwrap()).unwrap()["row_class"],
+        "runtime_command"
+    );
 }

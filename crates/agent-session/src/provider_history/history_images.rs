@@ -26,6 +26,8 @@ mod upload_references;
 pub(crate) struct HistoryMessage {
     pub(crate) id: String,
     #[serde(skip)]
+    pub(crate) paging_offset: u64,
+    #[serde(skip)]
     pub(crate) history_turn_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) prompt_request: Option<super::PromptRequestBinding>,
@@ -233,6 +235,7 @@ pub(super) fn read_messages(
         let (text, row_class) = row_classes::text(&session.provider, &role, &text, &value);
         messages.push(HistoryMessage {
             id: format!("{}-{line_offset}", session.id),
+            paging_offset: line_offset,
             history_turn_id: projected_history_turn_id(&session.provider, &value, &role),
             prompt_request: None,
             role,
@@ -374,6 +377,7 @@ pub(super) fn push_incremental_message(
     };
     messages.push(HistoryMessage {
         id,
+        paging_offset: line_offset,
         history_turn_id: projected_history_turn_id(&session.provider, &value, &role),
         prompt_request: None,
         role,
@@ -465,6 +469,7 @@ pub(super) fn push_reverse_message(
     let (text, row_class) = row_classes::text(&session.provider, &role, &text, &value);
     messages.push(HistoryMessage {
         id: format!("{}-{line_offset}", session.id),
+        paging_offset: line_offset,
         history_turn_id: projected_history_turn_id(&session.provider, &value, &role),
         prompt_request: None,
         role,
@@ -1380,14 +1385,7 @@ pub(super) fn read_messages_reverse_from_reader<R: Read + Seek>(
     }
 
     for message in &messages {
-        let Some(offset) = message
-            .id
-            .rsplit('-')
-            .next()
-            .and_then(|value| value.parse().ok())
-        else {
-            continue;
-        };
+        let offset = message.paging_offset;
         oldest_offset = Some(oldest_offset.map_or(offset, |current: u64| current.min(offset)));
     }
     messages.reverse();
@@ -1419,6 +1417,7 @@ mod image_tests {
     fn parts_query_serializes_empty_array_while_legacy_shape_omits_field() {
         let message = HistoryMessage {
             id: "message".to_string(),
+            paging_offset: 0,
             history_turn_id: None,
             prompt_request: None,
             row_class: None,

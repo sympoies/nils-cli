@@ -1,6 +1,6 @@
 use super::*;
 mod display_rows;
-use row_classes::{Compaction, RowClass};
+use row_classes::{Compaction, CompactionTrigger, RowClass};
 
 /// Response-only previews; never stored in a session record or board entry.
 #[derive(Debug, Default, Serialize)]
@@ -46,7 +46,9 @@ impl LastMessage {
 pub(super) struct PreviewMessages {
     pub(super) last_message: Option<LastMessage>,
     claude_human_seen: bool,
-    pending_compaction: Option<(Option<String>, usize)>,
+    pending_compaction: Option<(Option<String>, usize, CompactionTrigger)>,
+    pending_manual_compaction: Option<(LastMessage, usize)>,
+    compact_echo_bytes: Option<usize>,
 }
 
 impl PreviewMessages {
