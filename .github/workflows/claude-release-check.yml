@@ -2,7 +2,7 @@ name: Claude Code release check
 
 on:
   schedule:
-    - cron: "17 4 * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 # Serialize discovery, version-keyed issues and immutable candidate branches.
