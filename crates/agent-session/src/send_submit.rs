@@ -337,11 +337,15 @@ fn codex_composer<'a>(lines: &'a [&'a str]) -> Option<(&'a [&'a str], &'a [&'a s
 }
 
 /// Provider selection lists draw their cursor as the composer glyph followed by
-/// `1.`, `2.` …; such a line is a choice, not typed input.
+/// `1.`, `2.` … and a space; such a line is a choice, not typed input. A line
+/// that only starts like a number, such as a version, is not a choice.
 fn starts_with_numbered_choice(after_glyph: &str) -> bool {
     let rest = after_glyph.trim_start_matches([' ', '\u{a0}', '\u{2007}', '\u{202f}']);
     let digits = rest.chars().take_while(char::is_ascii_digit).count();
-    digits > 0 && rest[digits..].starts_with('.')
+    digits > 0
+        && rest[digits..].strip_prefix('.').is_some_and(|tail| {
+            tail.is_empty() || tail.starts_with([' ', '\u{a0}', '\u{2007}', '\u{202f}'])
+        })
 }
 
 /// Press the submitting Enter, then watch the composer until it proves the
