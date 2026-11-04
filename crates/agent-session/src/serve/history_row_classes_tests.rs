@@ -855,3 +855,108 @@ async fn notice_preserves_admission_and_stays_out_of_human_previews() {
         assert_eq!(card["row_class"], "notice");
     }
 }
+
+#[tokio::test]
+async fn compact_command_precedes_its_boundary_in_both_paging_directions() {
+    let records = vec![
+        user("claude", "/compact keep focus"),
+        json!({"type":"system","subtype":"compact_boundary","timestamp":"2026-10-01T00:00:37Z"}),
+        json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+        command("claude", "/compact keep focus"),
+        user("claude", "after"),
+    ];
+    let preview_fixture = Fixture::new("claude", &records[..4]);
+    let source = crate::provider_prompt::ProviderPromptSource::for_history(
+        "claude",
+        "synthetic",
+        preview_fixture.file.clone(),
+    )
+    .unwrap();
+    let mut tracker =
+        crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
+    tracker.refresh();
+    let card = serde_json::to_value(tracker.last_message().unwrap()).unwrap();
+    let f = Fixture::new("claude", &records);
+    let rows = f.all(false, false).await;
+    assert_eq!(rows, f.all(true, false).await);
+    let visible = rows
+        .iter()
+        .map(|row| (row["row_class"].as_str(), row["text"].as_str().unwrap()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        visible,
+        vec![
+            (None, "human opening"),
+            (Some("runtime_command"), "/compact keep focus"),
+            (Some("compaction"), "summary"),
+            (None, "after")
+        ]
+    );
+    assert_eq!(card["row_class"], "compaction");
+}
+
+#[tokio::test]
+async fn codex_compaction_keeps_file_order() {
+    let f = Fixture::new(
+        "codex",
+        &[
+            user("codex", "before"),
+            json!({"type":"compacted","payload":{"message":"summary"}}),
+            command("codex", "/compact"),
+            user("codex", "after"),
+        ],
+    );
+    let rows = f.all(false, false).await;
+    assert_eq!(rows, f.all(true, false).await);
+    let visible = rows
+        .iter()
+        .map(|row| (row["row_class"].as_str(), row["text"].as_str().unwrap()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        visible,
+        vec![
+            (None, "before"),
+            (Some("compaction"), "summary"),
+            (Some("runtime_command"), "/compact"),
+            (None, "after")
+        ]
+    );
+}
+
+#[tokio::test]
+async fn compact_post_summary_echo_only_keeps_order_and_identity() {
+    let f = Fixture::new("claude", &[
+        json!({"type":"system","subtype":"compact_boundary"}),
+        json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+        command("claude", "/compact keep focus"),
+        user("claude", "after"),
+    ]);
+    for parts in [false, true] {
+        let rows = f.all(false, parts).await;
+        assert_eq!(rows, f.all(true, parts).await);
+        assert_eq!(rows.iter().map(|r| r["text"].as_str().unwrap()).collect::<Vec<_>>(),
+            vec!["human opening", "/compact keep focus", "summary", "after"]);
+        let contents = fs::read_to_string(&f.file).unwrap();
+        let offsets = contents.split_inclusive('\n').scan(0usize, |offset, line| {
+            let start = *offset; *offset += line.len(); Some(start)
+        }).collect::<Vec<_>>();
+        assert_eq!(rows[1]["id"], format!("{}-{}", f.history, offsets[3]));
+        assert_eq!(rows[2]["id"], format!("{}-{}", f.history, offsets[1]));
+    }
+}
+
+#[test]
+fn compact_post_summary_echo_keeps_compaction_card_preview() {
+    let f = Fixture::new("claude", &[
+        json!({"type":"system","subtype":"compact_boundary"}),
+        json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+        command("claude", "/compact"),
+    ]);
+    let source = crate::provider_prompt::ProviderPromptSource::for_history(
+        "claude", "synthetic", f.file.clone()).unwrap();
+    let mut tracker = crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
+    tracker.refresh();
+    let card = serde_json::to_value(tracker.last_message().unwrap()).unwrap();
+    assert_eq!(card["row_class"], "compaction");
+    assert_eq!(card["text"], "summary");
+}
