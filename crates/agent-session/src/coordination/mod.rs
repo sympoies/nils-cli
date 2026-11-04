@@ -13,6 +13,7 @@ pub(crate) mod delete;
 mod forwarding;
 mod heartbeat_state;
 pub mod mailbox;
+mod mailbox_sender_relation;
 mod mailbox_wait;
 mod notification;
 mod notification_policy;

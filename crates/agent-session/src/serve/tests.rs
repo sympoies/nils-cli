@@ -21455,7 +21455,7 @@ async fn coordination_message_routes_keep_body_out_of_send_and_inbox() {
     assert_eq!(status, StatusCode::OK, "{shown}");
     assert_eq!(
         shown["data"]["coordination"]["body"]["classification"],
-        "untrusted_peer_data"
+        "peer_message"
     );
     assert_eq!(shown["data"]["coordination"]["body"]["text"], canary);
 }

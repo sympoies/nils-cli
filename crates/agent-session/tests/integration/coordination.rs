@@ -2969,10 +2969,7 @@ fn mailbox_is_private_bounded_and_recipient_authenticated() {
         ],
     );
     assert_eq!(shown.code, 0, "stderr={}", shown.stderr_text());
-    assert_eq!(
-        data(&shown)["body"]["classification"],
-        "untrusted_peer_data"
-    );
+    assert_eq!(data(&shown)["body"]["classification"], "peer_message");
     assert_eq!(data(&shown)["body"]["text"], body_canary);
 
     let registry = state_dir.join("coordination/registry.json");
@@ -4867,10 +4864,7 @@ fn message_categories_filter_and_forward_preserve_source_and_independent_ack() {
         data(&shown)["body"]["text"],
         "Category forwarding body canary"
     );
-    assert_eq!(
-        data(&shown)["body"]["classification"],
-        "untrusted_peer_data"
-    );
+    assert_eq!(data(&shown)["body"]["classification"], "peer_message");
     let looped = call(&[
         "forward",
         "--session",

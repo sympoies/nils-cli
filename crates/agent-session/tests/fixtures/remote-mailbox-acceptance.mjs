@@ -58,7 +58,7 @@ function bodyFile(label,text){const path=join(root,label+'.txt');privateWrite(pa
 async function status(host,id){return cli(host,['delivery','--session',host.session,'--message',id]);}
 async function delivered(host,id){return waitFor(async()=>{const value=await status(host,id);return value.state==='delivered'?value:false;},'persisted delivery');}
 async function send(source,target,label){return cli(source,['send','--from',source.session,'--to-machine',target.machine,'--to',target.session,'--body-file',bodyFile(label,label),'--idempotency-key',label]);}
-async function inspect(target,id,text){const value=await cli(target,['show','--session',target.session,'--message',id]);assert.equal(value.body.text,text);assert.equal(value.body.classification,'untrusted_peer_data');return value;}
+async function inspect(target,id,text){const value=await cli(target,['show','--session',target.session,'--message',id]);assert.equal(value.body.text,text);assert.equal(value.body.classification,'peer_message');return value;}
 try {
   assertHeartbeatWriterBoundary();
   hosts.forEach(seed);

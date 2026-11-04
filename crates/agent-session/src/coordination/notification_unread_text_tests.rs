@@ -127,7 +127,13 @@ fn plain_reminder_states_the_total_in_one_readable_line_with_the_notice_gate_off
     let receipt = registry.notifications.values().next().unwrap();
     assert_eq!(receipt.prompt.as_deref(), Some(expected.as_str()));
     // The gate-off hook fallback delivers the same bytes and records them.
-    let candidate = claim_hook_reminder(&mut registry, "target", "incarnation", 200).unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let context = CliContext {
+        state_dir: temp.path().into(),
+        host: None,
+    };
+    let candidate =
+        claim_hook_reminder(&context, &mut registry, "target", "incarnation", 200).unwrap();
     assert_eq!(candidate.prompt.as_deref(), Some(expected.as_str()));
     let receipt = registry.notifications.values().next().unwrap();
     assert_eq!(receipt.attempted_prompt.as_deref(), Some(expected.as_str()));
