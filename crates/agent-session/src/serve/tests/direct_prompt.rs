@@ -244,7 +244,7 @@ async fn direct_unobservable_composer_refuses_without_dispatch() {
 #[tokio::test]
 async fn direct_unobservable_composer_names_the_stage_that_failed_without_pane_text() {
     let rule = "────────────────────────────";
-    let cases: [(&str, &str, Option<String>, &str); 8] = [
+    let cases: [(&str, &str, Option<String>, &str); 11] = [
         ("claude", "capture-failed", None, "capture-failed"),
         ("codex", "capture-failed", None, "capture-failed"),
         (
@@ -277,13 +277,35 @@ async fn direct_unobservable_composer_names_the_stage_that_failed_without_pane_t
             Some(format!(
                 "{rule}\n❯ [Pasted text #1 +20 lines] PRIVATE-MARKER\n{rule}\n"
             )),
-            "row-unrecognized",
+            "paste-placeholder",
         ),
         (
             "codex",
             "row-unrecognized",
             Some("› [Pasted Content 1234 chars] PRIVATE-MARKER\n\n  status".into()),
-            "row-unrecognized",
+            "paste-placeholder",
+        ),
+        (
+            "claude",
+            "footer-dialog-hint",
+            Some(format!(
+                "{rule}\n❯ \n{rule}\n  PRIVATE-MARKER · Enter to confirm · Esc to cancel"
+            )),
+            "footer-dialog-hint",
+        ),
+        (
+            "claude",
+            "adjacent-owner-input",
+            Some(format!("{rule}\n❯ \n  PRIVATE-MARKER\n{rule}\n  status")),
+            "region-not-single-row",
+        ),
+        (
+            "claude",
+            "unstyled-suggestion-literal",
+            Some(format!(
+                "{rule}\n❯ Try \"PRIVATE-MARKER\"\n{rule}\n  status"
+            )),
+            "suggestion-literal-unstyled",
         ),
     ];
     for (provider, label, pane, expected) in cases {
