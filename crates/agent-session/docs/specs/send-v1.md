@@ -100,6 +100,12 @@ pane or unknown runtime status alone does not confirm submission. If a turn
 starts or the composer changes after paste, it refuses without Enter. It
 then attempts to remove only the text it pasted and verifies the result.
 
+Claude plain text-and-Enter sends also use the fifteen-second terminal budget,
+including the cursor proof for an owned opaque paste and confirmation after
+Enter. Owned opaque-paste cleanup has a fresh fifteen-second budget, with up
+to two seconds per cursor position to obtain two stable observations. Pane and
+identity observations retain their one-second command cap and identity fences.
+
 An exact paste can be removed; with Claude, a provable countable-cell paste
 prefix can also be removed when admission required an empty composer and an earlier
 post-paste observation saw exactly the pasted text before the conflicting edit.

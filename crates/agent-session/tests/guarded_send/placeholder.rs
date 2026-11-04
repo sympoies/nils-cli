@@ -4,6 +4,35 @@ use pretty_assertions::assert_eq;
 const PLACEHOLDER: &str = "[Pasted text #1]";
 
 #[test]
+fn plain_owned_placeholder_submission_tolerates_transport_latency() {
+    let fixture = Fixture::new("claude");
+    fs::write(fixture.root().join("collapse-paste"), "").unwrap();
+    let model = fixture.root().join("tmux-model");
+    let script = fs::read_to_string(&model).unwrap().replace(
+        "args = sys.argv[1:]",
+        "time.sleep(0.08)\nargs = sys.argv[1:]",
+    );
+    fs::write(model, script).unwrap();
+    let output = fixture.send_text(Some(&"x".repeat(801)), &[]);
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["data"]["submission"]["outcome"],
+        "submitted"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root().join("composer")).unwrap(),
+        ""
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root().join("submissions"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn collapsed_paste_is_submitted_by_the_send_that_admitted_empty_input() {
     for guards in [
         &[][..],

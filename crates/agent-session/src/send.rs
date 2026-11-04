@@ -339,7 +339,7 @@ fn confirm_prompt_submission(
             record,
             text,
             tmux_bin,
-            hold_started + send_submit::HOLD_BUDGET,
+            hold_started + guarded_hold_budget(record, false),
             press_enter,
         );
     }

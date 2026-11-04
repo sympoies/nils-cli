@@ -127,6 +127,20 @@ fn preclaim_receive_timeout_and_protocol_failures_have_distinct_reasons() {
                 stream
                     .write_all(b"GET /authorize HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}")
                     .unwrap();
+                // Keep the read side alive until rejection. Dropping a socket
+                // with unread bytes can reset it on macOS before the server
+                // parses the malformed header, testing transport failure instead.
+                stream.shutdown(std::net::Shutdown::Write).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(10)))
+                    .unwrap();
+                let mut response = Vec::new();
+                match stream.read_to_end(&mut response) {
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+                    Err(error) => panic!("protocol rejection was not received: {error}"),
+                }
+                assert!(response.is_empty(), "malformed request received a response");
             }
         });
         let result = fixture.refused(
