@@ -10,6 +10,7 @@ fi
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 source scripts/ci/test-env.sh
+source scripts/ci/lib/ci-build-guard.sh
 
 run() {
   echo "+ $*"
@@ -24,6 +25,9 @@ for package in "$@"; do
   fi
   package_args+=(-p "$package")
 done
+
+ci_disk_report "job start"
+trap ci_disk_report_on_failure EXIT
 
 # These non-compiling audits retain workspace contracts without building every
 # unrelated binary. Scripts, shared fixtures, and unmapped completions escalate
@@ -72,7 +76,8 @@ while IFS= read -r sibling; do
     build_args+=(-p "$sibling")
   fi
 done <<< "$sibling_names"
-run cargo build "${build_args[@]}" --bins --all-features
+run ci_build_with_linker_retry cargo build "${build_args[@]}" --bins --all-features
+ci_disk_report "after build"
 
 # Source-only CLI changes can invalidate generated assets without triggering
 # FULL. Cover selected required binaries using the existing freshness and flag
@@ -109,6 +114,9 @@ fi
 
 case "${NILS_CLI_TEST_RUNNER:-nextest}" in
   nextest)
+    # Build apart from the run so a linker crash is retried without ever
+    # re-running tests; the run below reuses the same build.
+    run ci_build_with_linker_retry cargo nextest run --profile ci "${package_args[@]}" --all-features --no-run
     run_test cargo nextest run --profile ci "${package_args[@]}" --all-features
     ;;
   llvm-cov)

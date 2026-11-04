@@ -26,7 +26,7 @@ class DevlogPolicy(unittest.TestCase):
         self.git('config', 'commit.gpgsign', 'false')
         self.write('docs/devlog/README.md', '# Development log\n\n## Months\n\n- [2020-01](2020-01.md)\n')
         self.write('docs/devlog/2020-01.md', '# Development log - 2020-01\n')
-        for path in (VERIFY, 'scripts/ci/test-env.sh', 'scripts/ci/lib/node-scope.sh',
+        for path in (VERIFY, 'scripts/ci/test-env.sh', 'scripts/ci/lib/node-scope.sh', 'scripts/ci/lib/ci-build-guard.sh',
                      'scripts/ci/devlog-check.py', 'scripts/ci/nils-cli-local-fast.sh',
                      'scripts/ci/lib/doc_classify.py', 'scripts/ci/lib/sibling_bins.py',
                      'scripts/dev-env.sh',

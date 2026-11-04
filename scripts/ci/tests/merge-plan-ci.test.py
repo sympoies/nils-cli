@@ -141,7 +141,7 @@ class ConsumerExecutionTests(unittest.TestCase):
                  'scripts/ci/nils-cli-scoped-checks.sh', 'scripts/ci/scoped-coverage-ratchet.py',
                  'scripts/ci/assert-import-audit.py', 'scripts/ci/lib/rust_file_size.py',
                  'scripts/ci/public-boundary-audit.py', 'scripts/ci/public-boundary-allowlist.tsv',
-                 'scripts/ci/lib/sibling_bins.py',
+                 'scripts/ci/lib/sibling_bins.py', 'scripts/ci/lib/ci-build-guard.sh',
                  'scripts/ci/test-env.sh', 'scripts/ci/gate-reports.py')
         for path in paths:
             dest = self.repo / path
@@ -303,7 +303,8 @@ else:
             self.assertEqual([command[i + 1] for i, arg in enumerate(command) if arg == '-p'],
                              ['consumer', 'selected'])
         self.assertEqual(next(c for c in calls if c[0] == 'clippy')[-2:], ['-D', 'warnings'])
-        self.assertTrue(all(not r['identity_present'] for r in rows if r['args'][0] in ('nextest', 'test')))
+        self.assertTrue(all(not r['identity_present'] for r in rows
+                            if r['args'][0] in ('nextest', 'test') and '--no-run' not in r['args']))
 
     def test_bin_only_selected_package_skips_doctests(self):
         self.selected_binary()

@@ -169,6 +169,7 @@ fi
 
 source "$repo_root/scripts/ci/test-env.sh"
 source "$repo_root/scripts/ci/lib/node-scope.sh"
+source "$repo_root/scripts/ci/lib/ci-build-guard.sh"
 
 run() {
   local -a cmd=( "$@" )
@@ -220,7 +221,11 @@ if [[ "$docs_only" -eq 1 ]]; then
   exit 0
 fi
 
+ci_disk_report "job start"
+trap ci_disk_report_on_failure EXIT
+
 run python3 scripts/ci/tests/gate-resources.test.py
+run bash scripts/ci/tests/ci-build-guard.test.sh
 run python3 scripts/ci/tests/gate-reports.test.py
 run python3 scripts/ci/tests/merge-lcov.test.py
 run python3 scripts/ci/assert-import-audit.py
@@ -273,6 +278,10 @@ run zsh -f tests/zsh/completion.test.zsh
 run cargo fmt --all -- --check
 run cargo clippy --all-targets --all-features -- -D warnings
 if [[ "$test_runner" == "nextest" ]]; then
+  # Build apart from the run so a linker crash is retried without ever
+  # re-running tests; the run below reuses the same build.
+  run ci_build_with_linker_retry cargo nextest run --profile ci --workspace --no-run
+  ci_disk_report "after build"
   run_test cargo nextest run --profile ci --workspace
   run_doc_tests
 elif [[ "$test_runner" == "llvm-cov" ]]; then
