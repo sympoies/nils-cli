@@ -18,6 +18,13 @@ const MAX_BYTES: usize = 8 * 1024 * 1024;
 const MAX_RECORD: usize = 4096;
 const MAX_CLAIMS: usize = MAX_BYTES / (2 * MAX_RECORD);
 
+mod lifecycle;
+mod records;
+
+#[cfg(test)]
+#[path = "store/lifecycle_tests.rs"]
+mod lifecycle_tests;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Claim {
@@ -94,6 +101,7 @@ pub(crate) struct Token {
 struct Ledger {
     file: File,
     parent: PathBuf,
+    storage: lifecycle::Storage,
 }
 
 impl Drop for Ledger {
@@ -244,109 +252,16 @@ struct Scan {
 
 impl Ledger {
     fn open(state: &Path, write: bool, deadline: Instant) -> io::Result<Option<Self>> {
-        let parent = state.join("history/claude-notices");
-        if write {
-            fs::create_dir_all(state.join("history"))?;
-            runtime::private_dir(&parent).map_err(|_| invalid())?;
-        } else if !parent.exists() {
-            return Ok(None);
-        }
-        let dir = fs::symlink_metadata(&parent)?;
-        // SAFETY: geteuid has no preconditions.
-        if !dir.is_dir() || dir.uid() != unsafe { libc::geteuid() } || dir.mode() & 0o777 != 0o700 {
-            return Err(invalid());
-        }
-        let path = parent.join("ledger.jsonl");
-        let mut options = OpenOptions::new();
-        options.read(true).custom_flags(libc::O_NOFOLLOW);
-        if write {
-            options.append(true).create(true).mode(0o600);
-        }
-        let file = match options.open(&path) {
-            Ok(file) => file,
-            Err(error) if !write && error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        let meta = file.metadata()?;
-        // SAFETY: geteuid has no preconditions.
-        if !meta.is_file()
-            || meta.uid() != unsafe { libc::geteuid() }
-            || meta.mode() & 0o777 != 0o600
-            || meta.len() > MAX_BYTES as u64
-        {
-            return Err(invalid());
-        }
-        let operation = if write { libc::LOCK_EX } else { libc::LOCK_SH };
-        loop {
-            if Instant::now() >= deadline {
-                return Err(io::ErrorKind::TimedOut.into());
-            }
-            // SAFETY: file owns the descriptor for the entire lock lifetime.
-            if unsafe { libc::flock(file.as_raw_fd(), operation | libc::LOCK_NB) } == 0 {
-                break;
-            }
-            let error = io::Error::last_os_error();
-            if error.kind() != io::ErrorKind::WouldBlock {
-                return Err(error);
-            }
-            std::thread::sleep(
-                Duration::from_millis(2).min(deadline.saturating_duration_since(Instant::now())),
-            );
-        }
-        let after = fs::symlink_metadata(path)?;
-        if (meta.dev(), meta.ino()) != (after.dev(), after.ino()) {
-            return Err(invalid());
-        }
-        Ok(Some(Self { file, parent }))
+        lifecycle::open(state, write, deadline)
     }
 
     fn scan(&mut self, deadline: Instant) -> io::Result<Scan> {
         self.file.seek(SeekFrom::Start(0))?;
         let mut bytes = Vec::new();
         (&self.file)
-            .take(MAX_BYTES as u64 + 1)
+            .take(lifecycle::segment_limit(self) as u64 + 1)
             .read_to_end(&mut bytes)?;
-        if bytes.len() > MAX_BYTES || bytes.last().is_some_and(|byte| *byte != b'\n') {
-            return Err(invalid());
-        }
-        let mut claims = HashMap::new();
-        let mut terminals = HashMap::new();
-        for (index, line) in bytes.split_inclusive(|byte| *byte == b'\n').enumerate() {
-            if index >= MAX_CLAIMS * 2 || line.len() > MAX_RECORD || Instant::now() >= deadline {
-                return Err(invalid());
-            }
-            let payload = &line[..line.len() - 1];
-            let mut value: serde_json::Value = serde_json::from_slice(payload)?;
-            let kind = value
-                .as_object_mut()
-                .ok_or_else(invalid)?
-                .remove("kind")
-                .ok_or_else(invalid)?;
-            match kind.as_str() {
-                Some("claim") => {
-                    let claim: Claim = serde_json::from_value(value)?;
-                    if !claim.valid()
-                        || claims.len() >= MAX_CLAIMS
-                        || claims.contains_key(&claim.op)
-                    {
-                        return Err(invalid());
-                    }
-                    claims.insert(claim.op.clone(), (claim, sha256(payload)));
-                }
-                Some("terminal") => {
-                    let terminal: Terminal = serde_json::from_value(value)?;
-                    let (claim, hash) = claims.get(&terminal.op).ok_or_else(invalid)?;
-                    if terminal.claim_sha256 != *hash
-                        || !terminal.valid(claim)
-                        || terminals.insert(terminal.op.clone(), terminal).is_some()
-                    {
-                        return Err(invalid());
-                    }
-                }
-                _ => return Err(invalid()),
-            }
-        }
-        Ok(Scan { claims, terminals })
+        records::scan(&bytes, deadline, lifecycle::expected_header(self).as_ref())
     }
 
     fn append<T: Serialize>(
@@ -365,7 +280,8 @@ impl Ledger {
             .insert("kind".into(), kind.into());
         let payload = serde_json::to_vec(&value)?;
         if payload.len() + 1 > MAX_RECORD
-            || self.file.metadata()?.len() + payload.len() as u64 + 1 > MAX_BYTES as u64
+            || self.file.metadata()?.len() + payload.len() as u64 + 1
+                > lifecycle::segment_limit(self) as u64
         {
             return Err(invalid());
         }
@@ -392,10 +308,29 @@ pub(crate) fn consume(
     let mut ledger = Ledger::open(&context.state_dir, true, deadline)
         .map_err(error)?
         .ok_or_else(runtime::unavailable)?;
-    let scan = ledger.scan(deadline).map_err(error)?;
-    // Every claim permanently reserves two full slots, including unfinished
-    // operations in other sessions; current file length is not free capacity.
-    if scan.claims.len() >= MAX_CLAIMS || scan.claims.contains_key(&claim.op) {
+    let mut scan = ledger.scan(deadline).map_err(error)?;
+    if lifecycle::key_used(&ledger, &scan, &claim) {
+        return Err(CliError::runtime(
+            "send-idempotency-key-used",
+            "idempotency key was already claimed for this session",
+            Some(
+                serde_json::json!({"id":claim.binding.launch.session_id,"guard":"idempotency_key","atomic":false}),
+            ),
+        ));
+    }
+    if lifecycle::operation_used(&ledger, &scan, &claim) {
+        return Err(runtime::unavailable());
+    }
+    if scan.claims.len() >= MAX_CLAIMS {
+        lifecycle::compact(&mut ledger, &scan, deadline).map_err(error)?;
+        scan = ledger.scan(deadline).map_err(error)?;
+        if scan.claims.len() >= MAX_CLAIMS {
+            return Err(super::refusal::unavailable("claim-ledger-full"));
+        }
+    }
+    // Archive/index work shares the original budget and must finish before the
+    // durable caller key is consumed, including an empty successor segment.
+    if Instant::now() >= deadline {
         return Err(runtime::unavailable());
     }
     claim_key()?;
@@ -454,7 +389,8 @@ pub(crate) fn confirmed(state: &Path, deadline: Instant) -> io::Result<Vec<Confi
     let Some(mut ledger) = Ledger::open(state, false, deadline)? else {
         return Ok(Vec::new());
     };
-    let scan = ledger.scan(deadline)?;
+    let mut scan = ledger.scan(deadline)?;
+    lifecycle::merge_archived(&ledger, &mut scan, deadline)?;
     Ok(scan
         .terminals
         .values()

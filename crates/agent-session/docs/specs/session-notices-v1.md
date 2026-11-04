@@ -296,6 +296,7 @@ no notice text, request values, nonce, provider binding or filesystem path.
 | `authorization-surface`, `authorization-composer-not-empty`, `authorization-cursor` | The provider cannot attest an empty terminal composer at cursor zero. |
 | `readiness-unavailable`, `readiness-changed` | Readiness is unavailable or differs when rechecked before claim. |
 | `claim-unavailable` | The native ledger cannot admit the claim. |
+| `claim-ledger-full` | The live claim cap remains full after eligible finished claims are archived. |
 
 Runtime setup and private-file access use operation-specific labels under
 `private-directory-*`, `private-file-*`, `socket-*`, plus `incarnation-invalid`,
@@ -324,13 +325,54 @@ the provider session id and a working directory) returns
 `notice-native-unavailable`, because waiting for a turn cannot be assumed to fix
 it.
 
-Private notice attestations live outside managed session directories so history
-survives session deletion/archive. The initial ledger bound is 8 MiB, 4 KiB per
-record including its delimiter, with two full slots reserved for every attempt
-across sessions (at most 1,024 attempts). Unfinished attempts retain both slots.
-Capacity, corruption or unavailable storage refuses new authorization; there is
-no automatic eviction, expiry, rotation or repair. The existing caller-key
-deduplication lifetime described in [send v1](send-v1.md) is unchanged.
+### Native claim lifecycle
+
+Private attestations live outside managed session directories so history survives
+session deletion/archive. The live ledger permits 1,024 claims, reserving two
+4-KiB record slots per claim in an 8-MiB data budget. Successor segments add one
+bounded header slot. Unfinished and `unknown` claims remain live. At capacity,
+a writer seals age-eligible submitted/dropped claims before admitting another
+claim. If none can leave the live set, `claim-ledger-full` refuses before key
+consumption; neither that reason nor storage failure permits plain input.
+
+Finished claims become eligible after one hour. A valid terminal timestamp is
+used when available. For an undated/invalid/future timestamp, a sweep persists
+a conservative first-observed time; eligibility starts one hour after that
+observation. Later sweeps retain that time. Archival runs only when admission
+would exceed the live cap, under the original send deadline and a stable private
+`store.lock`; readers take its shared lock. No background process is required.
+
+The archive is an append-only set of sealed segments in `history/claude-notices`.
+The genesis `ledger.jsonl` and each retired successor retain their exact bytes;
+no record is truncated, deleted or rewritten. A successor copies the still-live
+records exactly. Immutable manifests link predecessor manifests, sealed data and
+compact key-index segments by SHA-256; the successor header binds the sealed
+segment and its index. The directory stays owned `0700`; data, index, manifest,
+pointer and lock files stay owned regular `0600` files without symlink reads.
+
+Each compact index permanently retains domain-separated hashes of the managed
+session/caller-key pair and operation identity. Admission checks committed
+indexes and live claims before consuming a key. Archival, session deletion or a
+new runtime cannot make a retained key reusable. Attestation reads verify the
+archive hashes, merge identical retained copies only, and keep the exact
+claim/terminal/physical-provider-row checks. A conflicting or altered copy is
+refused; this lifecycle adds no text-based notice classification.
+
+Successor data, index and immutable manifest files are fsynced before an atomic
+`current.json` publication. Unreferenced preparation files confer no claim or
+key authority and remain untouched after interruption. Before publication, the
+prior committed segment remains authoritative; afterward, all referenced
+objects are durable. A durable `layout.json` marker precedes any unique record
+in the successor, so missing committed metadata cannot select the genesis path.
+A first publication interrupted before that marker contains copies only; the
+next writer completes the marker before writing. Corrupt referenced state fails
+closed, and an unfinished operation can finish against its unchanged claim hash.
+
+All hosts must upgrade agent-session together and quiesce older native writers
+before activating the reviewed release of this layout. The current implementation
+has one selected live segment and does not
+dual-write or fall back to an older path after lifecycle publication. No cleanup,
+installation, migration of live state or release is part of fixture validation.
 
 Initial prompts can explicitly use the same encoder:
 
