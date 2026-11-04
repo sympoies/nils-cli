@@ -10,7 +10,8 @@
 
 ## Runbooks
 
-- None yet. Add documents under `docs/runbooks/` and register them here.
+- [Governed HTTPS transport](runbooks/governed-https-transport.md): select,
+  inspect, verify, and reverse a repository's transport choice.
 
 ## Reports
 

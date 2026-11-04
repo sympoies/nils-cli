@@ -31,3 +31,6 @@ pub mod utils;
 mod worktree;
 #[path = "integration/worktree_build_dir.rs"]
 mod worktree_build_dir;
+
+#[path = "integration/transport.rs"]
+mod transport;
