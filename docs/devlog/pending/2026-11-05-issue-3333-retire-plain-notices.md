@@ -9,6 +9,10 @@
   nothing. The obsolete terminal fallback and its composer recovery path are
   removed. Codex context-frame recognition remains.
 
+- Hook-only wakes remain supported. The hook accepts current mailbox wake
+  envelopes and forwards the explicit writer gate to its companion; retired
+  plain replies are rejected.
+
 ### Why / context
 
 - The maintainer retired the plain formats so producers and consumers share one
@@ -16,11 +20,15 @@
   update their installed daemon to adopt the reclassification. Unread mail
   remains available through explicit inbox reads.
 
+- Deploy matching agent-session and agent-hook binaries together. Consumers
+  must also repin the shared history-row fixture with this release.
+
 ### Evidence
 
 - Four focused regression checks failed for the intended classification,
   producer and gate-off gaps before production edits; final scoped validation
-  is recorded in the linked PR.
+  is recorded in the linked PR. Hook boundary tests also failed before the
+  envelope reader and writer-gate forwarding changed.
 
 ### Links
 

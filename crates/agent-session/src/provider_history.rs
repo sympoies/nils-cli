@@ -4991,7 +4991,6 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             })
             .to_string()
         };
-        let mailbox = "Coordination mailbox has unread messages; run agent-session message inbox --session s --state unread --limit 50 --format json.";
         let lines = [
             serde_json::json!({"sessionId": "claude-id", "cwd": "/work/claude", "type": "user", "promptSource": "typed", "message": {"role": "user", "content": "first"}}).to_string(),
             queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": "queued human"}), false),
@@ -5002,10 +5001,8 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "isMeta": true, "prompt": "meta prompt"}), false),
             queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": "<task-notification>\n<task-id>t</task-id>"}), false),
             queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": "<cross-session-message from=\"x\">hi</cross-session-message>"}), false),
-            queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": mailbox}), false),
             queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": "sidechain prompt"}), true),
             queued(serde_json::json!({"type": "hook_success", "content": "hook output"}), false),
-            serde_json::json!({"sessionId": "claude-id", "cwd": "/work/claude", "type": "user", "promptSource": "typed", "message": {"role": "user", "content": mailbox}}).to_string(),
             serde_json::json!({"sessionId": "claude-id", "cwd": "/work/claude", "type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "answer"}]}}).to_string(),
         ];
         fs::write(root.join("claude-id.jsonl"), lines.join("\n") + "\n").unwrap();

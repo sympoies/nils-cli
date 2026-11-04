@@ -158,6 +158,13 @@ elif command != 'delete-buffer': sys.exit(1)
         }
     }
 
+    fn check_draft(&self) -> Result<(), CliError> {
+        let record = load_session_record(&self.state.context, "beta")?;
+        crate::send_guard::require_empty_composer(
+            &self.state.context, &record, &self.state.tmux_bin,
+        )
+    }
+
     fn assert_no_input(&self, draft: &str) {
         assert_eq!(
             fs::read_to_string(self.temp.path().join("composer")).unwrap(),
@@ -181,4 +188,12 @@ elif command != 'delete-buffer': sys.exit(1)
 
 mod notices {
     include!("mailbox_notice_terminal.rs");
+}
+
+mod stale_drafts {
+    include!("mailbox_draft/stale_drafts.rs");
+}
+
+mod unresponsive {
+    include!("mailbox_draft/unresponsive.rs");
 }
