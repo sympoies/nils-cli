@@ -1,5 +1,8 @@
-//! Composer observations for fixtures whose delivery uses the native channel.
+//! Composer observations for delivery fixtures.
 use super::*;
+
+#[path = "prompt_composer/recording.rs"]
+pub(super) mod recording;
 
 pub(super) fn empty_composer_tmux(dir: &Path) -> PathBuf {
     let bin = minimal_tmux(dir);

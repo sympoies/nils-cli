@@ -9581,7 +9581,7 @@ async fn structured_prompt_admits_a_blocked_codex_app_server_session() {
 #[tokio::test]
 async fn send_admits_literal_text_while_the_agent_is_working() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let (tmux, journal) = recording_tmux(tmp.path());
+    let (tmux, journal) = prompt_composer::recording::tmux(tmp.path());
     seed_claude_prompt_session(tmp.path(), "busy");
     let st = state(tmp.path(), Some(TOKEN), tmux);
     let record = load_session_record(&st.context, "busy").unwrap();
