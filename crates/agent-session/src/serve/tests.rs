@@ -2420,39 +2420,6 @@ async fn websocket_subscription_rejects_heuristic_same_cwd_codex_backfill() {
     server.abort();
 }
 
-/// #2027: a reminder typed into a busy Claude turn is logged as a
-/// `queue-operation` enqueue. That is the submission; reading it as unknown
-/// requeues the reminder and types it again every few seconds.
-#[test]
-fn terminal_notification_observes_a_claude_queue_enqueue() {
-    let tmp = tempfile::TempDir::new().expect("tempdir");
-    let transcript = tmp.path().join("claude.jsonl");
-    std::fs::write(&transcript, "").expect("baseline");
-    let tail = ProviderPromptTail::open_path(
-        ProviderKind::Claude,
-        "provider-beta",
-        transcript.clone(),
-        Duration::ZERO,
-    )
-    .expect("tail");
-    let prompt = "Coordination mailbox has unread messages; run it.";
-    std::fs::write(
-        &transcript,
-        format!(
-            "{}\n",
-            json!({
-                "type": "queue-operation",
-                "operation": "enqueue",
-                "timestamp": "2099-01-01T00:00:00Z",
-                "sessionId": "provider-beta",
-                "content": prompt
-            })
-        ),
-    )
-    .expect("append enqueue");
-    assert!(observe_terminal_coordination_prompt(tail, prompt));
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn provider_prompt_loop_drops_events_when_control_queue_is_saturated() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
@@ -21463,6 +21430,7 @@ async fn coordination_message_routes_keep_body_out_of_send_and_inbox() {
 #[tokio::test]
 async fn coordination_notification_working_codex_uses_safe_in_turn_checkpoint() {
     let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let codex_home = tmp.path().join("codex-home");
     let transcript = codex_home.join("sessions/2030/01/active.jsonl");
@@ -21834,23 +21802,10 @@ async fn coordination_notification_working_codex_uses_safe_in_turn_checkpoint() 
     reconcile_coordination_notifications(state.clone()).await;
     assert_eq!(
         notification_fixture(tmp.path())["state"],
-        "queued",
-        "an absent transcript observation permits a bounded retry"
+        "attempt_unknown",
+        "absence never authorizes notice replay"
     );
 
-    let drain = tokio::spawn(drain_coordination_notifications(state.clone()));
-    let command = tokio::time::timeout(Duration::from_secs(60), commands.recv())
-        .await
-        .expect("reconciled steer retry")
-        .expect("steer retry command");
-    let codex_app_server::ControlCommand::Steer { response, .. } = command else {
-        panic!("reconciled active notification must use turn/steer");
-    };
-    response
-        .send(Err("steer acknowledgement lost".to_string()))
-        .expect("lose steer acknowledgement");
-    drain.await.expect("ambiguous steer drain");
-    assert_eq!(notification_fixture(tmp.path())["state"], "attempt_unknown");
     write_codex_notification_transcript(
         &transcript,
         provider_id,
@@ -21980,14 +21935,14 @@ async fn coordination_notification_reconcile_rejects_stale_same_second_generatio
     reconcile_coordination_notifications(state.clone()).await;
 
     let notification = notification_fixture(tmp.path());
-    assert_eq!(notification["state"], "queued");
+    assert_eq!(notification["state"], "attempt_unknown");
     assert_eq!(notification["generation"], 2);
     assert_eq!(notification["notified_generation"], 1);
     assert_eq!(
         crate::coordination::pending_notifications(&state.context)
-            .expect("requeued notification")
+            .expect("parked notification")
             .len(),
-        1
+        0
     );
 }
 
@@ -21997,10 +21952,6 @@ mod notification_reconciliation {
 
 mod terminal_mailbox {
     include!("tests/terminal_mailbox.rs");
-}
-
-mod claude_mailbox {
-    include!("tests/claude_mailbox.rs");
 }
 
 mod provider_prompt_source {

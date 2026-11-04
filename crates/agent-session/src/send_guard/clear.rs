@@ -14,20 +14,6 @@ const CLEAR_POLL: Duration = Duration::from_millis(100);
 const CLEAR_SETTLE: Duration = Duration::from_millis(300);
 
 impl Admission<'_> {
-    /// Report a failure that happened after the send pasted `text`. The text is
-    /// removed only when its ownership is observable: an exact match or a
-    /// countable-cell prefix of a line admitted with an empty composer. An appended
-    /// draft is preserved. Every outcome includes a fresh input observation.
-    pub(crate) fn report_pasted_input(
-        &self,
-        error: CliError,
-        text: &str,
-        observed_paste: bool,
-    ) -> CliError {
-        let result = self.clear_pasted(text, observed_paste);
-        self.report_cleared_input(error, text, observed_paste, result)
-    }
-
     pub(super) fn report_cleared_input(
         &self,
         mut error: CliError,

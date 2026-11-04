@@ -600,7 +600,7 @@ fn routine_coalescing_is_opt_in_and_urgent_mail_bypasses_the_window() {
     assert_eq!(
         prompt,
         format!(
-            "Mailbox: 3 unread; {} message inbox",
+            "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: 3 unread; {} message inbox",
             nils_common::session_binary::NAME
         )
     );
@@ -656,7 +656,7 @@ fn coalescing_window_survives_restart_and_hook_claim_until_ten_minutes() {
         super::super::notification_prompt(&next),
         // One report and one uncategorized message are unread.
         format!(
-            "Mailbox: 2 unread; {} message inbox",
+            "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: 2 unread; {} message inbox",
             nils_common::session_binary::NAME
         )
     );

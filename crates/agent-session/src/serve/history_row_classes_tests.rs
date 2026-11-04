@@ -677,7 +677,7 @@ async fn queued_runtime_commands_do_not_become_first_history_previews() {
 async fn unmarked_notices_match_history_paging_and_card() {
     for provider in ["claude", "codex"] {
         let mut cases = vec![
-            ("※ Mailbox：body", true),
+            ("※ Mailbox：body", false),
             ("※ Unknown：body", false),
             ("Mailbox：body", false),
             ("※ Mailbox:body", false),
@@ -690,13 +690,13 @@ async fn unmarked_notices_match_history_paging_and_card() {
             ("Quoted: Mailbox: agent-session message inbox", false),
             (
                 "Coordination mailbox has unread messages; run agent-session message inbox.",
-                true,
+                false,
             ),
-            ("壓縮完成；執行自己角色的 session-start，接著續做。", true),
+            ("壓縮完成；執行自己角色的 session-start，接著續做。", false),
         ];
         if provider == "codex" {
-            cases.push(("Mailbox: agent-session message inbox", true));
-            cases.push(("Mailbox: b=1 h=2", true));
+            cases.push(("Mailbox: agent-session message inbox", false));
+            cases.push(("Mailbox: b=1 h=2", false));
             cases.push((
                 "<environment_context>\ncontext\n</environment_context>",
                 true,
@@ -718,7 +718,12 @@ async fn unmarked_notices_match_history_paging_and_card() {
                     .iter()
                     .any(|p| p == provider)
             })
-            .map(|case| (case["input"].as_str().unwrap(), true));
+            .map(|case| {
+                (
+                    case["input"].as_str().unwrap(),
+                    case["expected"]["row_class"] == "notice",
+                )
+            });
         cases.extend(fixture_cases);
         cases.extend(
             fixture["unclassified"]
@@ -773,7 +778,12 @@ async fn unmarked_notices_match_history_paging_and_card() {
                 crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
             tracker.refresh();
             let card = serde_json::to_value(tracker.last_message().unwrap()).unwrap();
-            assert_eq!(card["text"], row["text"]);
+            let expected = if notice {
+                text.to_owned()
+            } else {
+                text.replace("\r\n", "\n")
+            };
+            assert_eq!(card["text"], expected);
             assert_eq!(card["row_class"], row["row_class"]);
         }
     }

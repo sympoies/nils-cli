@@ -22,31 +22,15 @@ fn bind_transcript(fixture: &WakeFixture) {
 }
 
 #[tokio::test]
-async fn mailbox_notice_unsupported_claude_keeps_existing_terminal_fallback() {
+async fn mailbox_notice_unsupported_claude_sends_nothing() {
     let lock = GlobalStateLock::new();
     let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let fixture = WakeFixture::new(AgentKind::Claude).await;
     bind_transcript(&fixture);
-    let _budget = HoldBudgetGuard::widen(Duration::from_secs(30));
     drain_coordination_notifications(fixture.state.clone()).await;
-    let submitted: Vec<String> = fs::read_to_string(fixture.temp.path().join("submissions"))
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert_eq!(submitted, ["Mailbox: agent-session message inbox"]);
-    assert_eq!(
-        notification_fixture(fixture.temp.path())["state"],
-        "prompt_submitted"
-    );
-    drain_coordination_notifications(fixture.state.clone()).await;
-    assert_eq!(
-        fs::read_to_string(fixture.temp.path().join("submissions"))
-            .unwrap()
-            .lines()
-            .count(),
-        1
-    );
+    fixture.assert_no_input("");
+    assert_eq!(notification_fixture(fixture.temp.path())["state"], "queued");
+    assert_eq!(notification_fixture(fixture.temp.path())["notified_generation"], 0);
 }
 
 #[tokio::test]

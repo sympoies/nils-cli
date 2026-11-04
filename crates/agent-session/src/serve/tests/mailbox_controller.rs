@@ -7,7 +7,8 @@ mod resume {
 
 #[tokio::test]
 async fn coordination_notification_startup_catchup_uses_one_acknowledged_codex_submission() {
-    let _lock = GlobalStateLock::new();
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let tmp = tempfile::TempDir::new().expect("tempdir");
     seed_session_with_runtime(tmp.path(), "alpha", "codex", "hs-codex-alpha");
     let launch_id = seed_codex_app_server_session(tmp.path(), "beta");
@@ -214,7 +215,8 @@ async fn coordination_notification_startup_catchup_uses_one_acknowledged_codex_s
 
 #[tokio::test]
 async fn coordination_notification_skips_a_mailbox_the_recipient_already_drained() {
-    let _lock = GlobalStateLock::new();
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let tmp = tempfile::TempDir::new().expect("tempdir");
     seed_session_with_runtime(tmp.path(), "alpha", "codex", "hs-codex-alpha");
     let launch_id = seed_codex_app_server_session(tmp.path(), "beta");
@@ -296,7 +298,7 @@ async fn coordination_notification_skips_a_mailbox_the_recipient_already_drained
 
     send_notification_fixture(&state, &alpha_capability, "drained-mailbox-0002").await;
     let expected_prompt = fixture_notification_prompt(tmp.path());
-    assert_eq!(expected_prompt, "Mailbox: agent-session message inbox");
+    assert!(crate::notice::parse_notice(&expected_prompt).is_some());
     let responder = tokio::spawn(async move {
         let Some(codex_app_server::ControlCommand::Prompt { message, response }) =
             commands.recv().await

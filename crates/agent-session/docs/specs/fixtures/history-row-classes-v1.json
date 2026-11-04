@@ -609,6 +609,19 @@
   ],
   "notice_recognition": [
     {
+      "name": "total-unread-mailbox",
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "input": "Mailbox: 4 unread; agent-session message inbox",
+      "expected": {
+        "id": "fixed-mailbox",
+        "role": "user",
+        "text": "Mailbox: 4 unread; agent-session message inbox"
+      }
+    },
+    {
       "name": "title-mailbox-Mailbox",
       "providers": [
         "claude",
@@ -618,8 +631,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Mailbox：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Mailbox：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -632,8 +644,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Mailbox：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Mailbox：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -646,8 +657,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Mailbox wake：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Mailbox wake：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -660,8 +670,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Mailbox read：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Mailbox read：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -674,8 +683,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Mailbox alert：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Mailbox alert：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -688,8 +696,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Mailbox bounce：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Mailbox bounce：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -702,8 +709,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Patrol：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Patrol：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -716,8 +722,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Pulse：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Pulse：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -730,8 +735,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Schedule：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Schedule：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -744,8 +748,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Compact reminder：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Compact reminder：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -758,8 +761,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Compact resume：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Compact resume：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -772,8 +774,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Resume：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Resume：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -786,8 +787,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Continue：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Continue：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -800,8 +800,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Dispatch start：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Dispatch start：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -814,8 +813,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Role dispatch：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Role dispatch：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -828,8 +826,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Handover：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Handover：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -842,8 +839,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Monitoring：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Monitoring：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -856,8 +852,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Monitoring mirror：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Monitoring mirror：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -870,8 +865,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Monitoring delivery：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Monitoring delivery：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -884,8 +878,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Role restart：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Role restart：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -898,8 +891,7 @@
       "expected": {
         "id": "plain-notice",
         "role": "user",
-        "text": "※ Role unavailable：Synthetic summary\r\n  detail \n",
-        "row_class": "notice"
+        "text": "※ Role unavailable：Synthetic summary\r\n  detail \n"
       }
     },
     {
@@ -912,8 +904,7 @@
       "expected": {
         "id": "fixed-mailbox",
         "role": "user",
-        "text": "Mailbox: agent-session message inbox",
-        "row_class": "notice"
+        "text": "Mailbox: agent-session message inbox"
       }
     },
     {
@@ -926,8 +917,7 @@
       "expected": {
         "id": "dated-mailbox",
         "role": "user",
-        "text": "Mailbox: 2026-11-02T01:02:03Z; agent-session message inbox",
-        "row_class": "notice"
+        "text": "Mailbox: 2026-11-02T01:02:03Z; agent-session message inbox"
       }
     },
     {
@@ -940,8 +930,7 @@
       "expected": {
         "id": "compact-count-mailbox",
         "role": "user",
-        "text": "Mailbox: b=1 h=2 p=3",
-        "row_class": "notice"
+        "text": "Mailbox: b=1 h=2 p=3"
       }
     },
     {
@@ -954,8 +943,7 @@
       "expected": {
         "id": "explained-count-mailbox",
         "role": "user",
-        "text": "Mailbox: 1 blocker, 2 handoff, 3 progress; agent-session message inbox",
-        "row_class": "notice"
+        "text": "Mailbox: 1 blocker, 2 handoff, 3 progress; agent-session message inbox"
       }
     },
     {
@@ -968,8 +956,7 @@
       "expected": {
         "id": "earlier-unread",
         "role": "user",
-        "text": "Coordination mailbox has unread messages; run agent-session message inbox.",
-        "row_class": "notice"
+        "text": "Coordination mailbox has unread messages; run agent-session message inbox."
       }
     },
     {
@@ -982,8 +969,7 @@
       "expected": {
         "id": "earlier-dated-unread",
         "role": "user",
-        "text": "Coordination mailbox has unread messages (newest queued 2026-11-02T01:02:03Z); run agent-session message inbox.",
-        "row_class": "notice"
+        "text": "Coordination mailbox has unread messages (newest queued 2026-11-02T01:02:03Z); run agent-session message inbox."
       }
     },
     {
@@ -996,8 +982,7 @@
       "expected": {
         "id": "earlier-continuation",
         "role": "user",
-        "text": "壓縮完成；執行自己角色的 session-start，接著續做。",
-        "row_class": "notice"
+        "text": "壓縮完成；執行自己角色的 session-start，接著續做。"
       }
     },
     {
@@ -1010,8 +995,7 @@
       "expected": {
         "id": "public-bootstrap",
         "role": "user",
-        "text": "※ Dispatch start：Perform the synthetic task.\nDetails follow.",
-        "row_class": "notice"
+        "text": "※ Dispatch start：Perform the synthetic task.\nDetails follow."
       }
     },
     {
@@ -2028,6 +2012,12 @@
   "known_gaps": [
     "A private producer bootstrap sentinel has no public recognizer and leaves row_class absent."
   ],
+  "retired_forms": {
+    "classification": "ordinary provider input; row_class absent",
+    "writer_gate_off": "send nothing",
+    "unsupported_transport": "send nothing",
+    "codex_context_frames": "retained provider context"
+  },
   "migration": {
     "consumer_target": "2026-11-09",
     "review_date": "2026-11-30",

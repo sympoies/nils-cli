@@ -92,7 +92,9 @@ fn history_notice_bytes_survive_existing_provider_admission() {
         let prompt = parse_history_user_prompt(provider, "synthetic", &value.to_string()).unwrap();
         assert_eq!(prompt.text.as_bytes(), marked.as_bytes());
     }
-    assert!(parse_history_user_prompt("claude", "synthetic", &claude(body).to_string()).is_none());
+    let plain =
+        parse_history_user_prompt("claude", "synthetic", &claude(body).to_string()).unwrap();
+    assert_eq!(plain.text, body);
     for field in [
         "isMeta",
         "isCompactSummary",
