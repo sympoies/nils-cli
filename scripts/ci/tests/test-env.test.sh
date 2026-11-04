@@ -68,7 +68,13 @@ if [[ "$(uname -s)" == Linux ]]; then
     : > "$CARGO_STUB_LOG"
     nextest_run
     # The build runs first on the normal TMPDIR, then the tests on tmpfs.
-    [[ "$(sed -n 1p "$CARGO_STUB_LOG")" == *"--no-run TMPDIR=unset" ]]
+    [[ "$(sed -n 1p "$CARGO_STUB_LOG")" == *"--no-run"*"TMPDIR=unset" ]]
+    # --no-run precedes any `--` so it never reaches the test binaries.
+    : > "$CARGO_STUB_LOG"
+    run_test cargo nextest run --profile ci -- --exact 2>/dev/null
+    [[ "$(sed -n 1p "$CARGO_STUB_LOG")" == *"--no-run"*" -- --exact TMPDIR=unset" ]]
+    : > "$CARGO_STUB_LOG"
+    nextest_run
     [[ "$(sed -n 2p "$CARGO_STUB_LOG")" == *"--tool-config-file"*"TMPDIR=$work/shm/nils-cli-test-tmp."* ]]
     [[ "$(wc -l < "$CARGO_STUB_LOG")" -eq 2 ]]
     [[ -z "$(ls -A "$work/shm")" ]]

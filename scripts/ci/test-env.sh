@@ -57,7 +57,14 @@ run_test() (
   # Only nextest test processes use tmpfs. Compile and link, which handle large
   # files, and doc tests keep the normal TMPDIR; tmpfs pages count as memory.
   if (( nextest_run && ! no_run )) && test_env_would_use_tmpfs; then
-    run "$@" --no-run || exit "$?"
+    local build_args=() index=0
+    for argument in "$@"; do
+      [[ "$argument" == -- ]] && break
+      index=$((index + 1))
+    done
+    build_args=("${@:1:index}" --no-run "${@:index+1}")
+    run python3 "$(dirname "${BASH_SOURCE[0]}")/gate-reports.py" "${build_args[@]}" ||
+      exit "$?"
   fi
   if (( nextest_run && ! no_run )) && test_env_use_tmpfs; then
     local shm="${NILS_CLI_TEST_TMPFS_DIR:-/dev/shm}"
