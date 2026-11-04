@@ -116,6 +116,26 @@ async fn owned_upload_metadata_correlates_user_tool_and_paged_reads_for_both_pro
         assert_ne!(messages[0]["images"][1]["attachment_ref"], reference);
         assert!(messages[0]["images"][1]["attachment_ref"].is_string());
         assert!(messages[1]["images"][1].get("attachment_ref").is_none());
+        for (message, count) in [(&messages[0], 2), (&messages[1], 1)] {
+            let images = message["images"].as_array().unwrap();
+            let parts: Vec<_> = message["parts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|part| part["kind"] == "image")
+                .collect();
+            for (index, image) in images.iter().enumerate() {
+                assert_eq!(
+                    image.get("original_name"),
+                    parts[index].get("original_name")
+                );
+                if index < count {
+                    assert_eq!(image["original_name"], "same.png");
+                } else {
+                    assert!(image.get("original_name").is_none());
+                }
+            }
+        }
         assert_ne!(
             messages[0]["images"][0]["id"],
             messages[1]["images"][0]["id"]

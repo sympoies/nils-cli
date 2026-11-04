@@ -133,6 +133,9 @@ impl HistoryCatalog {
                 image.attachment_ref = path
                     .to_str()
                     .and_then(|path| self.owned_attachment_ref(session, path));
+                if image.attachment_ref.is_some() {
+                    image.original_name = self.owned_original_name(session, &path);
+                }
             }
         }
         for part in message.parts.iter_mut().flatten() {
@@ -140,12 +143,14 @@ impl HistoryCatalog {
                 image_ref,
                 origin,
                 attachment_ref,
+                original_name,
                 ..
             } = part
                 && let Some(image) = message.images.iter().find(|image| &image.id == image_ref)
             {
                 *origin = image.origin;
                 *attachment_ref = image.attachment_ref.clone();
+                *original_name = image.original_name.clone();
             }
         }
         // Correlation adds bytes after the initial parts projection.

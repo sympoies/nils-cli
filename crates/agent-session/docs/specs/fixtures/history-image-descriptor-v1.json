@@ -1,0 +1,4 @@
+{
+  "images": [{"id": "opaque-image", "origin": "user_attachment", "attachment_ref": "upload-opaque", "original_name": "photo 1.png"}],
+  "parts": [{"kind": "image", "id": "message-1", "ref": "opaque-image", "origin": "user_attachment", "attachment_ref": "upload-opaque", "original_name": "photo 1.png"}]
+}

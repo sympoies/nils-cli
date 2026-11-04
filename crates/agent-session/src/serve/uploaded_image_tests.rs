@@ -335,6 +335,49 @@ async fn quoted_upload_history_keeps_structured_and_markdown_images_and_image_on
     assert_eq!(messages[1]["parts"][0]["kind"], "image");
 }
 
+#[tokio::test]
+async fn upload_original_names_are_safe_and_match_history_parts_on_reload() {
+    let fixture = Fixture::new();
+    let named = fixture.upload("own", "photo%201.png", &fixture.png).await;
+    let missing = fixture.upload("own", "missing.png", &fixture.png).await;
+    let unsafe_name = fixture.upload("own", "unsafe.png", &fixture.png).await;
+    let metadata = |path: &Path| crate::attachment_filename::metadata_path(path).unwrap();
+    fs::remove_file(metadata(&missing)).unwrap();
+    fs::write(
+        metadata(&unsafe_name),
+        serde_json::to_vec("../private\\safe\r\n.png").unwrap(),
+    )
+    .unwrap();
+    fixture.append(json!([{"type":"input_text","text":format!("\"{}\" \"{}\" \"{}\"", named.display(), missing.display(), unsafe_name.display())}]));
+    for _ in 0..2 {
+        let page = fixture.refresh().await;
+        let message = &page["data"]["messages"][0];
+        let images = message["images"].as_array().unwrap();
+        let parts: Vec<_> = message["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|part| part["kind"] == "image")
+            .collect();
+        assert_eq!(images[0]["original_name"], "photo 1.png");
+        assert!(images[1].get("original_name").is_none());
+        assert_eq!(images[2]["original_name"], "safe.png");
+        for (image, part) in images.iter().zip(parts) {
+            assert_eq!(image.get("original_name"), part.get("original_name"));
+        }
+        assert!(!serde_json::to_string(message).unwrap().contains("private"));
+    }
+    let page = fixture
+        .state
+        .history_catalog
+        .messages(&fixture.history, None, 50, HistoryMessageDirection::Forward)
+        .unwrap();
+    assert_eq!(
+        page.messages[0].images[0].original_name.as_deref(),
+        Some("photo 1.png")
+    );
+}
+
 #[path = "download_filename_tests.rs"]
 mod download_filename_tests;
 
