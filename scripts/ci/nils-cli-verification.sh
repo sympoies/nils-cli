@@ -246,6 +246,7 @@ run bash scripts/ci/tests/detect-docs-only.test.sh
 run bash scripts/ci/tests/detect-release-only.test.sh
 run node_scoped node scripts/ci/tests/release-ci-gate.test.cjs
 run node_scoped node scripts/ci/tests/full-validation-gate.test.cjs
+run node_scoped node scripts/ci/tests/macos-runner-capacity.test.cjs
 run node_scoped node scripts/ci/tests/nightly-tracker.test.cjs
 run python3 scripts/ci/tests/delivery-workflow.test.py
 run python3 scripts/ci/tests/macos-clippy.test.py

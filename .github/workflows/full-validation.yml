@@ -558,18 +558,30 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: read
+      contents: read
     steps:
       - name: Checkout exact validated commit
         uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Diagnose unacquired macOS runner
+        id: macos_capacity
+        if: needs.test_macos.result != 'success'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            await require('./.github/scripts/macos-runner-capacity.cjs').reportMacosCapacity({github, context, core});
       - name: Require all full-validation lanes
         env:
           EXPECTED_COMMIT: ${{ inputs.commit }}
           ISOLATION_GUARD: ${{ inputs.isolation_guard }}
           VALIDATION_NEEDS: ${{ toJSON(needs) }}
+          MACOS_JOBS: ${{ steps.macos_capacity.outputs.jobs || '[]' }}
         run: |
           ACTUAL_COMMIT="$(git rev-parse HEAD)"
           export ACTUAL_COMMIT
-          node -e 'require("./.github/scripts/full-validation-gate.cjs").requireFullValidation({expected: process.env.EXPECTED_COMMIT, actual: process.env.ACTUAL_COMMIT, isolationGuard: process.env.ISOLATION_GUARD === "true", needs: JSON.parse(process.env.VALIDATION_NEEDS)})'
+          node -e 'require("./.github/scripts/full-validation-gate.cjs").requireFullValidation({expected: process.env.EXPECTED_COMMIT, actual: process.env.ACTUAL_COMMIT, isolationGuard: process.env.ISOLATION_GUARD === "true", needs: JSON.parse(process.env.VALIDATION_NEEDS), macosJobs: JSON.parse(process.env.MACOS_JOBS)})'

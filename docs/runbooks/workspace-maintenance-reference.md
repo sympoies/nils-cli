@@ -515,6 +515,19 @@ in the [delivery flow](delivery-and-releases.md). Full macOS has 75 minutes.
 See [the CI consumption contract](../specs/affected-scope-ci-consumption-v1.md)
 for candidate bindings and receipts.
 
+Hosted macOS acquisition failures remain gate failures. Before rejecting an
+unsuccessful macOS lane, the Linux queue check and full-validation gate inspect
+the current run attempt through read-only Actions and Checks APIs. They report
+`hosted runner capacity (not acquired)` only for a cancelled expected macOS job
+with no steps, `runner_id=0`, an empty runner name, and GitHub's exact failure
+annotation: `The job was not acquired by Runner of type hosted even after multiple attempts`.
+Queue timestamps alone are not proof that a runner executed a job. Real test
+failures, timeouts, ordinary cancellations, and unavailable evidence retain
+their failing status. Both macOS lanes stay on hosted Apple Silicon runners;
+there is no automatic retry, alternate architecture, or validation exemption.
+After a capacity-only failure, the maintainer can re-enqueue the merge group
+when hosted capacity recovers. See [the capacity analysis in #3332](https://github.com/sympoies/nils-cli/issues/3332).
+
 Normal local development does not need to run coverage before opening a PR:
 
 ```bash

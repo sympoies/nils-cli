@@ -55,6 +55,7 @@ jobs:
     needs: verify_ci
     uses: ./.github/workflows/full-validation.yml
     permissions:
+      actions: read
       contents: read
       checks: write
     with:

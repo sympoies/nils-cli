@@ -251,12 +251,26 @@ jobs:
     # entry should take about 43 minutes instead of about an hour.
     timeout-minutes: 50
     permissions:
+      actions: read
       contents: read
       checks: write
     steps:
       - name: Configure gate reports
         shell: bash
         run: echo "NILS_CLI_REPORT_DIR=$RUNNER_TEMP/nils-cli-reports" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Diagnose unacquired macOS runner
+        if: github.event_name == 'merge_group' && needs.macos_clippy.result != 'success'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            await require('./.github/scripts/macos-runner-capacity.cjs').reportMacosCapacity({github, context, core});
 
       - name: Require change detection
         env:
@@ -288,11 +302,6 @@ jobs:
             echo 'error: release queue full validation did not succeed' >&2
             exit 1
           fi
-
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -579,6 +588,7 @@ jobs:
     if: always() && ((github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.changes.outputs.release_candidate == 'true') || ((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'))
     uses: ./.github/workflows/full-validation.yml
     permissions:
+      actions: read
       contents: read
       checks: write
     with:
