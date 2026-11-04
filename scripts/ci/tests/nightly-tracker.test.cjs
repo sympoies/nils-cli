@@ -1,11 +1,15 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { trackNightly, MARKER, END } = require('../../../.github/scripts/nightly-tracker.cjs');
 function fixture() {
-  const state = { issues: [], writes: [], runs: [], failed: [] };
+  const state = { issues: [], writes: [], runs: [], failed: [], jobs: [], summary: [], warnings: [] };
   const listRuns = () => {};
   const listIssues = () => {};
+  const listJobs = () => {};
   const github = {
     paginate: async (method, params) => {
       if (method === listRuns) {
@@ -14,12 +18,13 @@ function fixture() {
         assert.equal(params.workflow_id, 'ci.yml');
         return state.runs;
       }
+      if (method === listJobs) return state.jobs;
       assert.equal(method, listIssues);
       assert.equal(params.state, 'all');
       return state.issues;
     },
     rest: {
-      actions: { listWorkflowRuns: listRuns, getWorkflowRun: async () => ({ data: {
+      actions: { listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs, getWorkflowRun: async () => ({ data: {
         id: 30, created_at: '2026-10-20T05:00:00Z', head_sha: 'b'.repeat(40),
       } }) },
       issues: {
@@ -36,8 +41,8 @@ function fixture() {
       },
     },
   };
-  const core = { setFailed: message => state.failed.push(message),
-    summary: { addRaw() { return this; }, async write() {} } };
+  const core = { setFailed: message => state.failed.push(message), warning: message => state.warnings.push(message),
+    summary: { addRaw(text) { state.summary.push(text); return this; }, async write() {} } };
   const context = { repo: { owner: 'example', repo: 'repo' }, runId: 30,
     sha: 'b'.repeat(40), ref: 'refs/heads/main', eventName: 'schedule' };
   return { state, options: { github, core, context, result: 'failure' } };
@@ -107,4 +112,66 @@ test('future, foreign and non-schedule green runs cannot supply the range baseli
   state.runs = [run, { ...run, event: 'workflow_dispatch', created_at: '2026-10-19T05:00:00Z' }, { ...run, repository: { full_name: 'other/repo' }, created_at: '2026-10-19T05:00:00Z' }];
   await trackNightly(options);
   assert.match(state.writes[0].body, /No previous green nightly/);
+});
+
+function junitDir(lanes) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'junit-'));
+  for (const [name, { tests, time, slow }] of Object.entries(lanes)) {
+    fs.mkdirSync(path.join(dir, name));
+    const cases = [...Array(slow)].map(() => '<testcase name="s" classname="c" time="2.0"></testcase>').join('') +
+      '<testcase name="f" classname="c" time="0.1"></testcase>';
+    fs.writeFileSync(path.join(dir, name, 'junit.xml'),
+      `<testsuites name="nextest-run" tests="${tests}" time="${time}"><testsuite name="c">${cases}</testsuite></testsuites>`);
+  }
+  return dir;
+}
+const step = (name, seconds) => ({ name, started_at: '2026-10-20T05:00:00Z',
+  completed_at: new Date(Date.parse('2026-10-20T05:00:00Z') + seconds * 1000).toISOString() });
+test('green nightly reports per-platform timing and flags only the lane over budget', async () => {
+  const { state, options } = fixture();
+  state.jobs = [
+    { name: 'full_validation / test', steps: [step('Nils CLI checks (includes audits)', 2000)] },
+    { name: 'full_validation / test_macos_partition (1/2)', steps: [step('Nextest partition (instrumented)', 2000)] },
+    { name: 'full_validation / test_macos_partition (2/2)', steps: [step('Nextest partition (instrumented)', 1900)] },
+  ];
+  const dir = junitDir({
+    'junit-nextest': { tests: 2700, time: 1600, slow: 3 },
+    'junit-nextest-macos-1': { tests: 1300, time: 1500, slow: 1 },
+    'junit-nextest-macos-2': { tests: 1400, time: 1450, slow: 2 },
+  });
+  await trackNightly({ ...options, result: 'success', junitDir: dir });
+  assert.deepEqual(state.writes, []);
+  const [report] = state.summary;
+  assert.match(report, /\| Linux \| 2700 \| 26\.7 min \| 6\.7 min \| 3 \|/);
+  assert.match(report, /\| macOS \| 2700 \| 25\.0 min \| 8\.3 min \| 3 \|/);
+  assert.match(report, /Budget breach: Linux nextest wall 26\.7 min exceeds 25 min/);
+  assert.doesNotMatch(report, /Budget breach: macOS/);
+});
+test('failed nightly puts the timing report inside the tracker section', async () => {
+  const { state, options } = fixture();
+  const dir = junitDir({ 'junit-nextest': { tests: 10, time: 60, slow: 0 } });
+  await trackNightly({ ...options, junitDir: dir });
+  assert.match(state.writes[0].body, /### Lane timing \(advisory\)[\s\S]*\| macOS \| n\/a/);
+  assert.match(state.writes[0].body, new RegExp(`${END}$`));
+});
+test('a malformed JUnit artifact or jobs error skips the timing report without blocking tracking', async () => {
+  for (const kind of ['malformed', 'jobs']) {
+    for (const result of ['success', 'failure']) {
+      const { state, options } = fixture();
+      const dir = junitDir({ 'junit-nextest': { tests: 10, time: 60, slow: 0 } });
+      if (kind === 'malformed') fs.writeFileSync(path.join(dir, 'junit-nextest', 'junit.xml'), '<not-a-report/>');
+      else {
+        const { paginate } = options.github;
+        const listJobs = options.github.rest.actions.listJobsForWorkflowRun;
+        options.github.paginate = async (method, params) => {
+          if (method === listJobs) throw new Error('api down');
+          return paginate(method, params);
+        };
+      }
+      await trackNightly({ ...options, result, junitDir: dir });
+      assert.equal(state.warnings.length, 1);
+      assert.equal(state.writes.length, result === 'failure' ? 1 : 0);
+      if (result === 'failure') assert.doesNotMatch(state.writes[0].body, /Lane timing/);
+    }
+  }
 });
