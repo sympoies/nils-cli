@@ -4,6 +4,9 @@ use pretty_assertions::assert_eq;
 #[tokio::test]
 async fn stale_draft_is_saved_before_wake_for_both_providers() {
     let _lock = GlobalStateLock::new();
+    // Each provider starts the wake twice and the second start stashes the draft,
+    // pastes and confirms; a slow runner must not expire the lock-hold budget.
+    let _budget = HoldBudgetGuard::widen(Duration::from_secs(30));
     for agent in [AgentKind::Claude, AgentKind::Codex] {
         let fixture = WakeFixture::new(agent).await;
         let draft = "  café  owner draft\u{a0}";
