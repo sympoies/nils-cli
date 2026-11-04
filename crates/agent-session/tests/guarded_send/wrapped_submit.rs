@@ -298,22 +298,22 @@ fn runtime_replacement_stops_cursor_proof_before_more_keys() {
 }
 
 #[test]
-fn wrapped_text_without_empty_composer_admission_never_submits() {
+fn idle_guard_implicitly_admits_an_empty_wrapped_composer() {
     let (fixture, text) = wrapped_fixture(44, "");
     let output = fixture.send_text(Some(&text), &["--require-idle"]);
-    details_any(
-        &output,
-        &[
-            "send-composer-unobservable",
-            "send-guard-observation-timeout",
-        ],
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(
+        submissions(&fixture),
+        [serde_json::to_string(&text).unwrap()]
     );
-    assert!(submissions(&fixture).is_empty());
-    assert!(
+    assert_eq!(composer(&fixture), "");
+    assert_eq!(
         fixture
             .calls()
             .iter()
-            .all(|call| call.last().is_none_or(|key| key != "Enter"))
+            .filter(|call| call[0] == "send-keys" && call.last().unwrap() == "Enter")
+            .count(),
+        1
     );
 }
 
