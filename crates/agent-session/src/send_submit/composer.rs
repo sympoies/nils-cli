@@ -226,13 +226,14 @@ fn observe_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Result<Str
         _ => None,
     }
     .ok_or(Unobserved::ComposerNotLocated)?;
-    if region.len() != 1
-        || footer.iter().any(|line| {
-            let lower = line.to_lowercase();
-            DIALOG_HINTS.iter().any(|hint| lower.contains(hint))
-        })
-    {
-        return Err(Unobserved::RowUnrecognized);
+    if region.len() != 1 {
+        return Err(Unobserved::RegionNotSingleRow);
+    }
+    if footer.iter().any(|line| {
+        let lower = line.to_lowercase();
+        DIALOG_HINTS.iter().any(|hint| lower.contains(hint))
+    }) {
+        return Err(Unobserved::FooterDialogHint);
     }
     let glyph = if agent == "claude" { '❯' } else { '›' };
     let after_glyph = region[0]
@@ -280,7 +281,7 @@ fn observe_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Result<Str
     let compressed = compact(input);
     if compressed == CLAUDE_QUEUED_HINT {
         if !allow_queued_hint || agent != "claude" {
-            return Err(Unobserved::RowUnrecognized);
+            return Err(Unobserved::QueuedHintNotAdmitted);
         }
         return Ok(if fully_dim {
             String::new()
@@ -292,7 +293,7 @@ fn observe_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Result<Str
         .iter()
         .any(|mark| compressed.contains(mark))
     {
-        return Err(Unobserved::RowUnrecognized);
+        return Err(Unobserved::PastePlaceholder);
     }
     // Native suggestions are dynamic, not limited to the startup hint wording.
     // Every hint word must carry dim styling; plain, partially dim and blank
@@ -303,7 +304,7 @@ fn observe_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Result<Str
     if (agent == "codex" && input == "Ask Codex to do anything")
         || (agent == "claude" && input.starts_with("Try \"") && input.ends_with('"'))
     {
-        return Err(Unobserved::RowUnrecognized);
+        return Err(Unobserved::SuggestionLiteralUnstyled);
     }
     Ok(input.to_string())
 }
