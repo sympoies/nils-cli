@@ -227,3 +227,22 @@ fn placeholder_collapsing_after_exact_paste_is_cleared_on_refusal() {
     );
     assert!(!fixture.root().join("submissions").exists());
 }
+
+#[test]
+fn whitespace_only_plain_send_preserves_the_unverified_receipt() {
+    let fixture = Fixture::new("claude");
+    let output = fixture.send_text(Some(" "), &[]);
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["data"]["submission"]["outcome"],
+        "unverified"
+    );
+    assert_eq!(
+        fixture
+            .calls()
+            .iter()
+            .filter(|call| call.last().is_some_and(|key| key == "Enter"))
+            .count(),
+        1
+    );
+}

@@ -99,7 +99,15 @@ fn submit(
         deadline,
     };
     let target = format!("{}:0.0", record.tmux_session);
-    let probe = send_submit::probe(label.unwrap_or(text)).expect("nonempty prompt probe");
+    let represented = label.unwrap_or(text);
+    // Whitespace has no text probe. Only an actual opaque marker can establish
+    // pending input; ordinary whitespace keeps its single-Enter receipt.
+    let probe_text = if represented.chars().all(char::is_whitespace) {
+        "[Pasted text #1]"
+    } else {
+        represented
+    };
+    let probe = send_submit::probe(probe_text).expect("nonempty text or paste marker probe");
     let known = RefCell::new(label.map(str::to_owned));
     let changed = Cell::new(false);
     let result = send_submit::submit_and_confirm(
