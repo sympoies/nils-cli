@@ -21,6 +21,7 @@ pub(crate) use composer::cleanup::{
     prefix_end as cleanup_prefix_end,
 };
 pub(crate) use composer::command_ui_observed;
+pub(crate) use composer::placeholder::{claude_paste_placeholder, has_claude_paste_placeholder};
 pub(crate) use composer::{
     Unobserved, composer_holds, direct_composer_observation, exact_composer_input,
     known_multiline_cursor_holds, known_multiline_input,

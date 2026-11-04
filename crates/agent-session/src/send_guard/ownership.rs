@@ -7,7 +7,7 @@ use std::{
 };
 
 impl Admission<'_> {
-    pub(crate) fn settle_paste(&self, text: &str) -> bool {
+    pub(crate) fn settle_paste(&self, text: &str, placeholder: &mut Option<String>) -> bool {
         if self.args.notice_envelope {
             thread::sleep(POST_PASTE_KEY_SETTLE_DELAY);
             return false;
@@ -29,8 +29,12 @@ impl Admission<'_> {
                 timeout.min(until.saturating_duration_since(Instant::now())),
             )
             .and_then(|pane| {
+                *placeholder = send_submit::claude_paste_placeholder(&pane);
                 send_submit::cleanup_composer_input(&self.record.agent, &pane, Some(text))
             });
+            if placeholder.is_some() {
+                break;
+            }
             if let Some(input) = input {
                 if send_submit::composer_holds(&self.record.agent, &input, text) {
                     seen = true;

@@ -450,3 +450,6 @@ async fn direct_claude_owner_draft_beside_queued_hint_refuses() {
         }
     }
 }
+
+#[path = "direct_prompt/collapsed_paste.rs"]
+mod collapsed_paste;
