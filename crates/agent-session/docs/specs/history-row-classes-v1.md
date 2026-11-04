@@ -84,6 +84,12 @@ row is distinct from the single compaction event below: requesting compaction
 and completing a context replacement are different facts. Do not manufacture a
 compaction event for an unsuccessful command.
 
+Multiple compact command-markup echoes following one nonautomatic boundary and
+summary belong to that same invocation until the next non-echo logical record
+or boundary. Retain the first echo's command identity and suppress the later
+echoes. A separate compaction or a command not attached to that pair remains a
+separate invocation, even when its command text is identical.
+
 ## Compaction summary and paging
 
 Expose exactly one `row_class: "compaction"` row per provider compaction.
@@ -105,8 +111,20 @@ summary-derived cursor. `compaction` is absent on every other class.
 
 Forward, latest/older, live transcript and card-preview projections use the same
 classifier. Normalized ids, classes, text and compaction metadata must agree.
-A summary on another raw line does not consume a second visible row or move the
-event.
+A summary on another raw line does not consume a second visible row. A Claude
+boundary/summary followed by its adjacent compact command echo projects the
+command first, then the compaction. The command keeps its echo-based id and
+timestamp; the compaction keeps its boundary-based id and timestamp. Paging uses
+the boundary position for the command and the echo position for the compaction,
+independently of row identity, so pages of size one retain both rows once. Literal
+duplicate suppression remains unchanged; other rows keep file order. Card
+previews retain the compaction when that adjacent echo arrives.
+
+The cursor grammar remains a decimal byte offset. A traversal spanning the
+ordering upgrade can repeat or miss a command/compaction at one pair boundary
+when an old reverse cursor points to the echo. That offset remains valid; it
+now excludes the compaction at the echo position and includes the command at
+the earlier boundary position. Restart the traversal for an exact result.
 
 The Claude summary must be the next complete logical provider record
 after its boundary; intervening bookkeeping records may be skipped, but another
@@ -121,6 +139,26 @@ or following non-summary record is complete, so later pages do not return a
 second version of the same event. A Claude boundary alone at EOF remains pending;
 a complete Codex `compacted` record can be returned immediately even without
 a summary. No full-transcript scan is required.
+
+For Claude Code transcript boundaries with `compactMetadata.trigger: "manual"`,
+publication waits further for a complete command echo or a following complete
+logical record. Forward polling keeps its cursor at the pending boundary,
+including while the echo lacks its final newline; when it completes, the command
+precedes the compaction exactly once. A following non-echo message releases an
+unpaired compaction. Card previews wait for the same manual association.
+
+Automatic, missing and unknown triggers keep immediate summary publication at
+idle EOF. Missing/unknown trigger metadata cannot promise causal order across a
+late echo append. A live poller can receive the compaction before the echo, then
+receive that same compaction id again when the echo arrives, without receiving
+the command in that ongoing cursor traversal. Restart after the pair completes
+to read the command followed by its compaction. Claude Code 2.1.296 boundaries
+include the trigger metadata.
+
+The transcript trigger shape was checked in Claude Code 2.1.296; the official
+[SDK boundary reference](https://code.claude.com/docs/en/agent-sdk/typescript#sdkcompactboundarymessage)
+also defines manual/auto triggers, under the stream adapter's separate
+`compact_metadata` field.
 
 ## Notice recognition
 

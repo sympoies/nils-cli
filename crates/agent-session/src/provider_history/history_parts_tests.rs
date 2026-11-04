@@ -212,6 +212,7 @@ fn typed_parts_are_bounded_per_message() {
 fn matching_tool_results_set_call_status() {
     let mut messages = vec![super::super::HistoryMessage {
         id: "message-call".to_string(),
+        paging_offset: 0,
         history_turn_id: None,
         prompt_request: None,
         row_class: None,

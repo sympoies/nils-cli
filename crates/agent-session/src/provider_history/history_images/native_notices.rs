@@ -79,6 +79,7 @@ impl Bindings {
         }
         Decision::Notice(Box::new(HistoryMessage {
             id: format!("{}-{offset}", session.id),
+            paging_offset: offset,
             history_turn_id: None,
             prompt_request: None,
             row_class: None,

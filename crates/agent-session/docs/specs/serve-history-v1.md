@@ -95,7 +95,12 @@ Queue bookkeeping (`queue-operation`) never adds a message, so a queued prompt a
 default `direction=forward` uses `next_cursor` as before. `direction=latest` accepts no cursor, reads one
 at-most-16-MiB window from the selected transcript tail, and returns the latest page in chronological
 order. `direction=older` requires the prior `older_cursor`, reads only bytes before that line boundary,
-and returns the preceding chronological page plus a new optional `older_cursor`. Reverse reads retain the
+and returns the preceding chronological page plus a new optional `older_cursor`.
+Claude compact pairs use physical paging positions independently of their stable
+row ids: command at the boundary, compaction at the echo. Bounded adjacent context
+can extend beyond a requested cursor to resolve that pair. See the
+[ordering and upgrade-boundary contract](history-row-classes-v1.md#compaction-summary-and-paging).
+Reverse reads retain the
 10,000-line and two-second message limits. The browser receives neither provider transcript paths nor raw
 provider JSONL records.
 

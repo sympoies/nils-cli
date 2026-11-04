@@ -25,6 +25,25 @@ const CODEX_COMMANDS: &[&str] = &[
 pub(crate) const HISTORY_TEXT_CHARS: usize = 65_536;
 pub(crate) const ADJACENT_BYTES: usize = 16 * 1024 * 1024;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CompactionTrigger {
+    Manual,
+    Auto,
+    Unknown,
+}
+
+pub(crate) fn claude_compaction_trigger(value: &Value) -> CompactionTrigger {
+    // Claude Code 2.1.296 transcript metadata, distinct from the SDK adapter.
+    match value
+        .pointer("/compactMetadata/trigger")
+        .and_then(Value::as_str)
+    {
+        Some("manual") => CompactionTrigger::Manual,
+        Some("auto") => CompactionTrigger::Auto,
+        _ => CompactionTrigger::Unknown,
+    }
+}
+
 pub(crate) fn runtime_command(provider: &str, text: &str) -> bool {
     if text.contains(['\n', '\r', '\u{85}', '\u{2028}', '\u{2029}']) {
         return false;
@@ -102,6 +121,11 @@ pub(crate) fn claude_foreign(value: &Value, session: &str) -> bool {
         .or_else(|| value.get("session_id"))
         .and_then(Value::as_str)
         .is_some_and(|id| id != session)
+}
+
+pub(crate) fn claude_compact_echo(value: &Value) -> Option<String> {
+    let text = command_text("claude", value)?;
+    (text.split([' ', '\t']).next() == Some("/compact")).then_some(text)
 }
 
 pub(crate) fn claude_boundary(value: &Value) -> bool {
