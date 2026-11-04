@@ -38,34 +38,70 @@ run_test bash -eu -c '
   run_test test -z "${!FORGE_IDENTITY_@}"
 ' bash "$repo_root/scripts/ci/test-env.sh"
 
-# Linux CI moves test temp directories to tmpfs only when it has room, and the
-# local gate and a caller-chosen TMPDIR are left alone.
-shm_fixture="$(mktemp -d)"
-trap 'rm -rf "$shm_fixture"' EXIT
-child_tmpdir='printf "%s" "${TMPDIR:-unset}"'
-export NILS_CLI_TEST_TMPFS_DIR="$shm_fixture"
+# Linux CI moves the temp directory of nextest test runs to tmpfs only when it
+# has room; builds, other commands, the local gate and a caller-chosen TMPDIR
+# are left alone. A stub cargo records how it was invoked.
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+mkdir "$work/bin" "$work/shm"
+cat > "$work/bin/cargo" <<'STUB'
+#!/usr/bin/env bash
+echo "$* TMPDIR=${TMPDIR:-unset}" >> "$CARGO_STUB_LOG"
+[[ -z "${CARGO_STUB_EXIT:-}" ]] || exit "$CARGO_STUB_EXIT"
+STUB
+chmod +x "$work/bin/cargo"
+export PATH="$work/bin:$PATH" CARGO_STUB_LOG="$work/log"
+export NILS_CLI_TEST_TMPFS_DIR="$work/shm" NILS_CLI_REPORT_DIR="$work/reports"
+nextest_run() { run_test cargo nextest run --profile ci -p fixture 2>"$work/err"; }
+
 (
   unset TMPDIR GITHUB_ACTIONS
-  [[ "$(run_test bash -c "$child_tmpdir")" == unset ]]
+  : > "$CARGO_STUB_LOG"
+  nextest_run
+  [[ "$(wc -l < "$CARGO_STUB_LOG")" -eq 1 ]]
+  grep -q 'TMPDIR=unset$' "$CARGO_STUB_LOG"
 )
-(
-  unset TMPDIR
-  export GITHUB_ACTIONS=true
-  if [[ "$(uname -s)" == Linux ]]; then
-    seen="$(run_test bash -c "$child_tmpdir" 2>/dev/null)"
-    [[ "$seen" == "$shm_fixture"/nils-cli-test-tmp.* ]]
-    [[ -z "$(ls -A "$shm_fixture")" ]]
-    log="$(NILS_CLI_TEST_TMPFS_MIN_FREE_KIB=999999999999 run_test bash -c "$child_tmpdir" 2>&1)"
-    [[ "$log" == *"keeping the default TMPDIR"*"need 999999999999"*unset ]]
+if [[ "$(uname -s)" == Linux ]]; then
+  (
+    unset TMPDIR
+    export GITHUB_ACTIONS=true
+    : > "$CARGO_STUB_LOG"
+    nextest_run
+    # The build runs first on the normal TMPDIR, then the tests on tmpfs.
+    [[ "$(sed -n 1p "$CARGO_STUB_LOG")" == *"--no-run TMPDIR=unset" ]]
+    [[ "$(sed -n 2p "$CARGO_STUB_LOG")" == *"--tool-config-file"*"TMPDIR=$work/shm/nils-cli-test-tmp."* ]]
+    [[ "$(wc -l < "$CARGO_STUB_LOG")" -eq 2 ]]
+    [[ -z "$(ls -A "$work/shm")" ]]
+    # Other commands keep the normal TMPDIR.
+    : > "$CARGO_STUB_LOG"
+    run_test cargo test --workspace --doc
+    [[ "$(cat "$CARGO_STUB_LOG")" == "test --workspace --doc TMPDIR=unset" ]]
+    # Not enough free space: logged fallback, no failure, no redirect.
+    : > "$CARGO_STUB_LOG"
+    NILS_CLI_TEST_TMPFS_MIN_FREE_KIB=999999999999 nextest_run
+    grep -q "keeping the default TMPDIR.*need 999999999999" "$work/err"
+    ! grep -q "$work/shm" "$CARGO_STUB_LOG"
+    # A sampler that dies at once (a full tmpfs, a failing df) must not turn a
+    # passing run into a failure or leak the directory.
+    (
+      test_env_sample_tmpfs_peak() { exit 1; }
+      : > "$CARGO_STUB_LOG"
+      nextest_run
+      [[ -z "$(ls -A "$work/shm")" ]]
+    )
+    # A failing test run keeps its status and still cleans up.
     status=0
-    run_test bash -c 'exit 17' 2>/dev/null || status=$?
+    CARGO_STUB_EXIT=17 nextest_run || status=$?
     [[ "$status" -eq 17 ]]
-    [[ -z "$(ls -A "$shm_fixture")" ]]
-  fi
-)
+    [[ -z "$(ls -A "$work/shm")" ]]
+  )
+fi
 (
   export GITHUB_ACTIONS=true TMPDIR=/caller/chosen
-  [[ "$(run_test bash -c "$child_tmpdir")" == /caller/chosen ]]
+  : > "$CARGO_STUB_LOG"
+  nextest_run
+  [[ "$(wc -l < "$CARGO_STUB_LOG")" -eq 1 ]]
+  grep -q 'TMPDIR=/caller/chosen$' "$CARGO_STUB_LOG"
 )
 
 echo "ok: test identity environment isolation"

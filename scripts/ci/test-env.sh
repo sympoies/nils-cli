@@ -10,9 +10,12 @@
 # back to the existing TMPDIR, with a logged reason, when that does not hold.
 # `/dev/shm` is outside every git work tree, as docs/specs/test-temp-directory-
 # policy.md requires. The local gate and macOS never take this path.
+test_env_would_use_tmpfs() {
+  [[ -z "${TMPDIR:-}" && "${GITHUB_ACTIONS:-}" == true && "$(uname -s)" == Linux ]]
+}
+
 test_env_use_tmpfs() {
-  [[ -z "${TMPDIR:-}" && "${GITHUB_ACTIONS:-}" == true && "$(uname -s)" == Linux ]] ||
-    return 1
+  test_env_would_use_tmpfs || return 1
   local shm="${NILS_CLI_TEST_TMPFS_DIR:-/dev/shm}"
   local min_free="${NILS_CLI_TEST_TMPFS_MIN_FREE_KIB:-2097152}"
   local free
@@ -30,10 +33,11 @@ test_env_use_tmpfs() {
   echo "test-env: TMPDIR=$TMPDIR (tmpfs, $free KiB free, minimum $min_free KiB)" >&2
 }
 
-# Print the largest `used` KiB seen on the tmpfs while the test command ran.
+# Record the largest `used` KiB seen on the tmpfs while the test command ran.
+# Sampling every 0.5 s makes this a lower bound: shorter bursts can be missed.
 test_env_sample_tmpfs_peak() {
   local shm="$1" peak=0 used
-  while sleep 2; do
+  while sleep 0.5; do
     used="$(df -Pk "$shm" | awk 'NR == 2 { print $3 }')"
     [[ "$used" =~ ^[0-9]+$ ]] && (( used > peak )) && peak="$used"
     echo "$peak" > "$TMPDIR.peak-used-kib"
@@ -45,13 +49,22 @@ run_test() (
   for test_identity_key in "${!FORGE_IDENTITY_@}"; do
     unset "$test_identity_key"
   done
-  local status=0 sampler=""
-  if test_env_use_tmpfs; then
+  local status=0 sampler="" argument no_run=0 nextest_run=0
+  for argument in "$@"; do
+    [[ "$argument" == --no-run ]] && no_run=1
+  done
+  [[ "${1##*/}" == cargo && "${2:-}" == nextest && "${3:-}" == run ]] && nextest_run=1
+  # Only nextest test processes use tmpfs. Compile and link, which handle large
+  # files, and doc tests keep the normal TMPDIR; tmpfs pages count as memory.
+  if (( nextest_run && ! no_run )) && test_env_would_use_tmpfs; then
+    run "$@" --no-run || exit "$?"
+  fi
+  if (( nextest_run && ! no_run )) && test_env_use_tmpfs; then
     local shm="${NILS_CLI_TEST_TMPFS_DIR:-/dev/shm}"
     test_env_sample_tmpfs_peak "$shm" &
     sampler=$!
     # shellcheck disable=SC2064
-    trap "kill $sampler 2>/dev/null; [[ -f \"$TMPDIR.peak-used-kib\" ]] && echo \"test-env: peak \$(cat \"$TMPDIR.peak-used-kib\") KiB used on $shm\" >&2; rm -rf \"$TMPDIR\" \"$TMPDIR.peak-used-kib\"" EXIT
+    trap "set +e; kill $sampler 2>/dev/null; [[ -f \"$TMPDIR.peak-used-kib\" ]] && echo \"test-env: peak \$(cat \"$TMPDIR.peak-used-kib\") KiB used on $shm\" >&2; rm -rf \"$TMPDIR\" \"$TMPDIR.peak-used-kib\"" EXIT
   fi
   if [[ "${1##*/}" == cargo && ( "${2:-}" == nextest ||
         ( "${2:-}" == llvm-cov && "${3:-}" == nextest ) ) ]]; then

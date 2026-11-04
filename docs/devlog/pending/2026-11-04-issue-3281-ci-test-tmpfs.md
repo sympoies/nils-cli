@@ -3,9 +3,9 @@
 
 ### Result
 
-- On GitHub Linux runners the test step sets TMPDIR to a fresh directory under
-  /dev/shm when it is writable with at least 2 GiB free, and logs the reason
-  when it falls back.
+- On GitHub Linux runners, nextest test processes run with TMPDIR set to a
+  fresh directory under /dev/shm when it is writable with at least 2 GiB free;
+  builds keep the normal TMPDIR, and a fallback logs its reason.
 
 ### Why / context
 

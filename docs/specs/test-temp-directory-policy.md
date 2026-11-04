@@ -183,9 +183,11 @@ outside this repository's scope but is the one option that does not fight the te
 suite.
 
 On GitHub Linux runners `scripts/ci/test-env.sh` points `TMPDIR` at a fresh
-directory under `/dev/shm`, which is outside every work tree, when `/dev/shm` is
-writable and has at least 2 GiB free; otherwise it keeps the default and logs
-why. State writes fsync each file and its directory, so on a real disk they
+directory under `/dev/shm`, which is outside every work tree, for the test
+processes of a `cargo nextest run` (the build runs first on the normal
+`TMPDIR`), when `/dev/shm` is writable and has at least 2 GiB free; otherwise it
+keeps the default and logs why. It also logs the peak `/dev/shm` use, sampled
+every 0.5 s, so the figure is a lower bound. State writes fsync each file and its directory, so on a real disk they
 dominate the state-heavy `nils-agent-session` tests. The local gate, macOS, and
 the leak probe's private `TMPDIR` are unchanged.
 
