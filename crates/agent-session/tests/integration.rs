@@ -90,3 +90,6 @@ mod start_resume;
 
 #[path = "integration/title.rs"]
 mod title;
+
+#[path = "integration/mailbox_sender_relation.rs"]
+mod mailbox_sender_relation;
