@@ -140,9 +140,11 @@ logical record. Forward polling keeps its cursor at the pending boundary,
 including while the echo lacks its final newline; when it completes, the command
 precedes the compaction exactly once. A following non-echo message releases an
 unpaired compaction. Card previews wait for the same manual association.
+
 Automatic, missing and unknown triggers keep immediate summary publication at
 idle EOF. Missing/unknown trigger metadata cannot promise causal order across a
 late echo append; restart such a traversal after the pair completes.
+
 The transcript trigger shape was checked in Claude Code 2.1.296; the official
 [SDK boundary reference](https://code.claude.com/docs/en/agent-sdk/typescript#sdkcompactboundarymessage)
 also defines manual/auto triggers, under the stream adapter's separate
