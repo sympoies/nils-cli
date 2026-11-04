@@ -279,6 +279,30 @@ one original local budget; an already authorized provider call may execute or
 complete later. No remote cancellation or atomic composer guarantee is implied.
 The route never clears a new or unknown human draft.
 
+Pre-claim `notice-native-unavailable` errors carry a stable `error.details.reason`
+and include that reason in the text error. The reason contains only a fixed label:
+no notice text, request values, nonce, provider binding or filesystem path.
+
+| Reason | Refusal |
+| --- | --- |
+| `baseline-unprovable` | The provider transcript cannot be safely baselined. |
+| `listener-open` | The native endpoint could not be opened or its offer published. |
+| `authorization-timeout` | The authorization exchange exhausted the original send budget. |
+| `authorization-connection` | The authorization connection failed or closed early. |
+| `authorization-protocol` | The incoming HTTP/JSON exchange is invalid. |
+| `authorization-payload` | The authorization body does not match its required shape. |
+| `authorization-path`, `authorization-schema`, `authorization-operation` | The request path, schema or operation does not match. |
+| `authorization-binding`, `authorization-nonce` | The request does not match the offered identity or nonce. |
+| `authorization-surface`, `authorization-composer-not-empty`, `authorization-cursor` | The provider cannot attest an empty terminal composer at cursor zero. |
+| `readiness-unavailable`, `readiness-changed` | Readiness is unavailable or differs when rechecked before claim. |
+| `claim-unavailable` | The native ledger cannot admit the claim. |
+
+Runtime setup and private-file access use operation-specific labels under
+`private-directory-*`, `private-file-*`, `socket-*`, plus `incarnation-invalid`,
+`runtime-missing`, `module-parent-missing` and `*-serialize`. These diagnostics do
+not relax file ownership/mode checks or authorize retry. After consumption, the
+existing `notice-native-unconfirmed` result and retained claim remain authoritative.
+
 The native route needs a pre-send provider transcript baseline to prove that the
 confirming row is new. A session whose bound provider conversation is
 proven to have no transcript yet, typically before its first ordinary provider
