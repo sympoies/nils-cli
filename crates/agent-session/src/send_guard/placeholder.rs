@@ -133,7 +133,11 @@ fn submit(
             pane
         },
         |timeout| crate::send::recorded_tmux_runtime_stopped(tmux, record, timeout),
-        || known.borrow().is_some() && !changed.get(),
+        || {
+            !changed.get()
+                && crate::activity::state_for_view(context, record)
+                    .is_none_or(|turn| turn.phase != crate::activity::TurnPhase::NeedsInput)
+        },
         || {
             let pane = capture_styled(tmux, &target, navigation.remaining()).ok_or_else(|| {
                 CliError::runtime(
