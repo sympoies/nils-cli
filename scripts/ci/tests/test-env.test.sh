@@ -38,4 +38,34 @@ run_test bash -eu -c '
   run_test test -z "${!FORGE_IDENTITY_@}"
 ' bash "$repo_root/scripts/ci/test-env.sh"
 
+# Linux CI moves test temp directories to tmpfs only when it has room, and the
+# local gate and a caller-chosen TMPDIR are left alone.
+shm_fixture="$(mktemp -d)"
+trap 'rm -rf "$shm_fixture"' EXIT
+child_tmpdir='printf "%s" "${TMPDIR:-unset}"'
+export NILS_CLI_TEST_TMPFS_DIR="$shm_fixture"
+(
+  unset TMPDIR GITHUB_ACTIONS
+  [[ "$(run_test bash -c "$child_tmpdir")" == unset ]]
+)
+(
+  unset TMPDIR
+  export GITHUB_ACTIONS=true
+  if [[ "$(uname -s)" == Linux ]]; then
+    seen="$(run_test bash -c "$child_tmpdir" 2>/dev/null)"
+    [[ "$seen" == "$shm_fixture"/nils-cli-test-tmp.* ]]
+    [[ -z "$(ls -A "$shm_fixture")" ]]
+    log="$(NILS_CLI_TEST_TMPFS_MIN_FREE_KIB=999999999999 run_test bash -c "$child_tmpdir" 2>&1)"
+    [[ "$log" == *"keeping the default TMPDIR"*"need 999999999999"*unset ]]
+    status=0
+    run_test bash -c 'exit 17' 2>/dev/null || status=$?
+    [[ "$status" -eq 17 ]]
+    [[ -z "$(ls -A "$shm_fixture")" ]]
+  fi
+)
+(
+  export GITHUB_ACTIONS=true TMPDIR=/caller/chosen
+  [[ "$(run_test bash -c "$child_tmpdir")" == /caller/chosen ]]
+)
+
 echo "ok: test identity environment isolation"

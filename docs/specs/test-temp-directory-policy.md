@@ -182,6 +182,13 @@ system temp directory at the host level (a `tmpfiles.d` rule for `/tmp/.tmp*`) i
 outside this repository's scope but is the one option that does not fight the test
 suite.
 
+On GitHub Linux runners `scripts/ci/test-env.sh` points `TMPDIR` at a fresh
+directory under `/dev/shm`, which is outside every work tree, when `/dev/shm` is
+writable and has at least 2 GiB free; otherwise it keeps the default and logs
+why. State writes fsync each file and its directory, so on a real disk they
+dominate the state-heavy `nils-agent-session` tests. The local gate, macOS, and
+the leak probe's private `TMPDIR` are unchanged.
+
 ## Enforcement
 
 - `scripts/ci/tempdir-leak-audit.sh` fails the build on class 1. Escape hatch:
