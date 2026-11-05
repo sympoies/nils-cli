@@ -712,11 +712,9 @@ fn service_start_options_require_service_identity_and_refuse_resume() {
         without("--credential-file"),
         without("--service-generation"),
     ];
-    for extra in [vec!["--resume", "prior"]] {
-        let mut args = complete.to_vec();
-        args.extend(extra);
-        cases.push(args);
-    }
+    let mut args = complete.to_vec();
+    args.extend(["--resume", "prior"]);
+    cases.push(args);
     for args in cases {
         // Each is refused by the parser, before any credential or daemon is touched.
         let output = fixture.start_via_console(&args, false);
