@@ -234,7 +234,7 @@ async fn runtime_commands_follow_the_pinned_fixture_through_http_paging() {
 }
 
 #[tokio::test]
-async fn one_and_two_compactions_keep_boundary_identity_and_summary_in_every_direction() {
+async fn one_and_two_compactions_keep_ordered_identity_and_summary_in_every_direction() {
     for provider in ["claude", "codex"] {
         for count in [1, 2] {
             let mut records = Vec::new();
@@ -283,7 +283,11 @@ async fn one_and_two_compactions_keep_boundary_identity_and_summary_in_every_dir
                     Some((offset, line))
                 })
                 .filter(|(_, line)| {
-                    line.contains("compact_boundary") || line.contains("\"compacted\"")
+                    if provider == "claude" {
+                        line.contains("<command-name>")
+                    } else {
+                        line.contains("\"compacted\"")
+                    }
                 })
                 .map(|(offset, _)| format!("{}-{offset}", f.history))
                 .collect::<Vec<_>>();
@@ -962,8 +966,8 @@ async fn compact_post_summary_echo_only_keeps_order_and_identity() {
                 Some(start)
             })
             .collect::<Vec<_>>();
-        assert_eq!(rows[1]["id"], format!("{}-{}", f.history, offsets[3]));
-        assert_eq!(rows[2]["id"], format!("{}-{}", f.history, offsets[1]));
+        assert_eq!(rows[1]["id"], format!("{}-{}", f.history, offsets[1]));
+        assert_eq!(rows[2]["id"], format!("{}-{}", f.history, offsets[3]));
         // A reverse cursor issued before the ordering fix at the echo remains
         // a valid byte boundary. Restart paging to reconcile an upgrade mid-pair.
         let old_cursor_page = f
@@ -1227,5 +1231,52 @@ async fn compact_pair_suppression_keeps_distinct_invocations() {
                 .count(),
             if separate_boundary { 2 } else { 1 }
         );
+    }
+}
+
+#[tokio::test]
+async fn claude_2_1_317_compact_caveat_keeps_order_and_monotonic_ids() {
+    let f = Fixture::new(
+        "claude",
+        &[
+            json!({"type":"user","uuid":"input","isMeta":false,"timestamp":"2026-10-01T00:00:01Z","message":{"role":"user","content":"/compact"}}),
+            json!({"type":"system","uuid":"boundary","parentUuid":"input","subtype":"compact_boundary","compactMetadata":{"trigger":"manual"},"timestamp":"2026-10-01T00:00:13Z"}),
+            json!({"type":"user","uuid":"summary","parentUuid":"boundary","isCompactSummary":true,"isVisibleInTranscriptOnly":true,"timestamp":"2026-10-01T00:00:13Z","message":{"role":"user","content":"summary"}}),
+            json!({"type":"user","uuid":"caveat","parentUuid":"summary","isMeta":true,"timestamp":"2026-10-01T00:00:01.006Z","message":{"role":"user","content":"<local-command-caveat>Local command</local-command-caveat>"}}),
+            json!({"type":"user","uuid":"echo","parentUuid":"caveat","isMeta":false,"timestamp":"2026-10-01T00:00:01.006Z","message":{"role":"user","content":"<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>"}}),
+            json!({"type":"user","parentUuid":"echo","message":{"role":"user","content":"<local-command-stdout>done</local-command-stdout>"}}),
+            json!({"type":"attachment","attachment":{"type":"fixture"}}),
+        ],
+    );
+    for parts in [false, true] {
+        let rows = f.all(false, parts).await;
+        assert_eq!(rows, f.all(true, parts).await);
+        assert_eq!(rows, f.all(false, parts).await);
+        let pair: Vec<_> = rows
+            .iter()
+            .filter(|r| {
+                matches!(
+                    r["row_class"].as_str(),
+                    Some("runtime_command" | "compaction")
+                )
+            })
+            .collect();
+        assert_eq!(
+            pair.iter()
+                .map(|r| r["row_class"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["runtime_command", "compaction"]
+        );
+        let offset = |r: &Value| {
+            r["id"]
+                .as_str()
+                .unwrap()
+                .rsplit('-')
+                .next()
+                .unwrap()
+                .parse::<u64>()
+                .unwrap()
+        };
+        assert!(offset(pair[0]) < offset(pair[1]));
     }
 }

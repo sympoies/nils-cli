@@ -34,7 +34,7 @@ pub(super) fn project(
         };
         let text = classes::claude_compact_echo(&pair.echo)?;
         return Some(Projection::Row(Box::new(HistoryMessage {
-            id: format!("{}-{}", session.id, pair.echo_offset),
+            id: format!("{}-{offset}", session.id),
             paging_offset: offset,
             role: "user".into(),
             text: classes::bounded_text(&text).0,
@@ -66,7 +66,7 @@ pub(super) fn project(
     if pair.echo_offset != offset {
         return Some(Projection::Hidden);
     }
-    let mut row = compaction(session, &boundary, anchor, parts, &pair.summary);
+    let mut row = compaction(session, &boundary, offset, parts, &pair.summary);
     row.paging_offset = offset;
     Some(Projection::Row(Box::new(row)))
 }
