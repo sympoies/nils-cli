@@ -12,6 +12,7 @@ pub(crate) fn command_name(command: &Command) -> Option<&'static str> {
         Command::AutoResume(_) => Some("auto-resume"),
         Command::Title(args) => Some(crate::session_title::name(args)),
         Command::Notice(_) => Some("notice"),
+        Command::NoticeStore(_) => Some("notice-store.audit"),
         Command::Workspace(_) => Some("workspace-set"),
         Command::Readiness(_) => Some("readiness"),
         Command::Delegation(args) => Some(crate::coordination::delegation::name(args)),
@@ -79,6 +80,7 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             b"rules" => return Some("rules"),
             b"auto-resume" => return Some("auto-resume"),
             b"notice" => return Some("notice"),
+            b"notice-store" => return Some("notice-store.audit"),
             b"readiness" => return Some("readiness"),
             _ => break,
         }
@@ -149,6 +151,7 @@ pub(crate) fn command_format(command: &Command) -> OutputFormat {
         Command::Diagnose(args) => args.format,
         Command::Send(args) => args.format,
         Command::Notice(args) => args.format,
+        Command::NoticeStore(args) => args.format(),
         Command::Glance(args) => args.format,
         Command::Resume(args) => args.format,
         Command::Restart(args) => args.format,

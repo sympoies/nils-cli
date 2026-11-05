@@ -274,7 +274,6 @@ where
             return emit_parse_error(SCHEMA, format, code, &message);
         }
     };
-
     dispatch(cli)
 }
 
@@ -316,6 +315,7 @@ fn dispatch(cli: Cli) -> i32 {
         Command::Diagnose(args) => diagnose::run_diagnose(&context, args),
         Command::Send(args) => send::run(&context, args),
         Command::Notice(args) => notice::run(&context, args),
+        Command::NoticeStore(args) => send::claude_notice::store::audit::run(&context, args),
         Command::Glance(args) => run_glance(&context, args),
         Command::Resume(args) => run_resume(&context, args),
         Command::Restart(args) => restart::run(&context, args),

@@ -62,6 +62,7 @@ pub(super) fn scan(
     Ok(Scan { claims, terminals })
 }
 
+#[cfg(test)]
 pub(super) fn merge(target: &mut Scan, source: Scan) -> io::Result<()> {
     for (op, claim) in source.claims {
         if let Some(existing) = target.claims.get(&op) {

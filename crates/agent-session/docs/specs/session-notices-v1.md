@@ -297,6 +297,7 @@ no notice text, request values, nonce, provider binding or filesystem path.
 | `readiness-unavailable`, `readiness-changed` | Readiness is unavailable or differs when rechecked before claim. |
 | `claim-unavailable` | The native ledger cannot admit the claim. |
 | `claim-ledger-full` | The live claim cap remains full after eligible finished claims are archived. |
+| `claim-checkpoint-initialized` | The automatic one-time archive verification and checkpoint publication completed after this send's original deadline. The caller key was not consumed; a new request can use the completed checkpoint. |
 
 Runtime setup and private-file access use operation-specific labels under
 `private-directory-*`, `private-file-*`, `socket-*`, plus `incarnation-invalid`,
@@ -352,12 +353,13 @@ manifest, pointer and lock files stay owned regular `0600` files. Retired data,
 including genesis, is sealed `0400`. All reads reject symlinks and wrong owners.
 
 Each compact index permanently retains domain-separated hashes of the managed
-session/caller-key pair and operation identity. Admission checks committed
-indexes and live claims before consuming a key. Archival, session deletion or a
-new runtime cannot make a retained key reusable. Attestation reads verify the
-archive hashes, merge identical retained copies only, and keep the exact
-claim/terminal/physical-provider-row checks. A conflicting or altered copy is
-refused; this lifecycle adds no text-based notice classification.
+session/caller-key pair and operation identity. The authenticated checkpoint
+indexes these reservations and exact row attestations. Admission checks its
+search paths and live claims before consuming a key. Archival, session deletion
+or a new runtime cannot make a retained key reusable. History looks up the
+requested history identity and physical row offset, merging identical copies
+and rejecting ambiguous bindings. Exact claim/terminal/provider-row checks
+remain; this lifecycle adds no text-based notice classification.
 
 Successor data, index and immutable manifest files are fsynced before an atomic
 `current.json` publication. Unreferenced preparation files confer no claim or
@@ -366,8 +368,10 @@ prior committed segment remains authoritative; afterward, all referenced
 objects are durable. A durable `layout.json` marker precedes any unique record
 in the successor, so missing committed metadata cannot select the genesis path.
 A first publication interrupted before that marker contains copies only; the
-next writer completes the marker before writing. Corrupt referenced state fails
-closed, and an unfinished operation can finish against its unchanged claim hash.
+next writer completes the marker before writing. Missing or corrupt selected
+metadata, live state or accessed authenticated index pages fail closed before
+key consumption. An unfinished operation can finish against its unchanged claim
+hash. Full validation of checkpointed historical originals is described below.
 
 After the pointer is durable, the writer seals the retired segment before any
 unique successor write. If interrupted before sealing, the next writer verifies
@@ -384,6 +388,89 @@ this ledger. Use the reviewed version for archive-aware History reads as well.
 The current implementation selects one live segment, with no dual writes or
 older-path fallback after publication. No live-state migration or release is
 part of fixture validation.
+
+### Indexed archive checkpoint and full audit
+
+The first new writer automatically verifies the entire existing manifest chain,
+archive hashes, records and key indexes under `store.lock`, then constructs an
+additive `checkpoint.json` and private `index-<uuid>.bin`. Existing archive bytes
+are never rewritten. This one-time import has a separate one-hour limit so it
+can finish even when the initiating send expires. After publication an expired
+send refuses with `claim-checkpoint-initialized` before the key callback; later
+requests use the completed index. History refuses an archived store until its
+first writer has completed the import, or the explicit audit has initialized it.
+Ordinary unarchived live ledgers remain readable during upgrade.
+
+The owned `0600` checkpoint authenticates the current manifest reference and the
+root of an append-only SHA-256 search tree. Each edge binds a page's offset,
+length and digest. Pages are at most 16 KiB, searches have a hard 32-page depth
+limit, and sorted authenticated keys prove absence as well as presence. Normal
+admission uses two reservation searches plus the bounded live ledger; History
+uses a proof search for each physical row it visits, rather than loading all
+proofs for the state directory or even all proofs for one history. No process
+cache or warm daemon is necessary for these bounds.
+
+A rotation batches at most the live claim cap into new immutable pages. It
+fsyncs those pages before atomically publishing the checkpoint root. If stopped
+after `current.json` advanced but before that root changed, a writer verifies
+the single successor generation against the prior checkpoint and recovers it;
+readers refuse the incomplete publication. Unreferenced tail pages confer no
+authority. A missing committed checkpoint is never rebuilt over the indexed
+layout marker. That new marker also makes prior writers refuse the directory;
+all writers sharing it must quiesce and upgrade together before the first import.
+
+Independent prepared-file flushes overlap in small scoped groups (at most three
+files), and all of them finish before the existing publication/directory
+barriers. A completed in-process rotation reuses its already verified live
+scan; interrupted-publication recovery independently verifies the published
+archive bytes and key index. No durability barrier is removed.
+
+Normal calls validate the checkpoint, current manifest, live segment and every
+accessed search/proof page. They **do not rescan checkpointed historical
+originals or unvisited index pages**. Therefore corruption or removal in those
+unvisited originals is detected by the explicit full audit, rather than by every
+notice or History request. This is the integrity/performance trade-off of the
+checkpoint: checking every original file on every call would still grow with
+the number of small archive generations. Original attestations remain fully
+verifiable against the retained chain.
+
+Run the full audit after a storage incident, when verifying retained provenance,
+or before treating a copied/restored store as verified:
+
+```bash
+agent-session --state-dir <state-directory> notice-store audit --format json
+```
+
+The audit verifies all original references and records, every reachable index
+page, equality of indexed reservations/proofs with those originals, and the live
+segment. Initial checkpoint construction verifies the complete original
+provenance before building the index. Existing
+corruption refuses with `notice-store-audit-failed`; the command never discards
+or repairs altered originals or an inconsistent committed checkpoint. Its
+`--timeout-seconds` defaults to 3,600 and accepts 1..86,400; the automatic first
+import can finish outside that initiating deadline, just as for other writers.
+Audit cost and initial
+import cost grow with retained provenance and are separate from normal send and
+History deadlines.
+
+Explicit synthetic scale measurements live in the ignored
+`admission_and_history_scale_measurement` test. Invoke it separately through the
+repository resource gate; it covers 10k, 100k and 1M archived claims at both 1,000
+and 20 claims per generation, with a nearly full live ledger. The targets are
+100 ms warm and 500 ms cold for ordinary pre-callback admission work and a
+History page.
+
+Rotation-triggering admission has a separate 500 ms bound warm
+and cold, including its durability barriers. The existing native send budget
+is 15 seconds: the rotation ceiling consumes at most 3.34% of a full budget,
+leaving at least 14.5 seconds for other phases. Prior phases share that budget;
+any shorter remaining deadline still refuses before key consumption. No
+deadline or durability barrier is relaxed to meet the measurements.
+
+Cold measurements use fixture-local Linux page-cache eviction advice, without
+dropping the shared host's caches; they do not claim an uncached filesystem
+metadata or device-cache worst case. The PR records observations and one-time
+import costs, separately from these targets.
 
 Initial prompts can explicitly use the same encoder:
 

@@ -96,6 +96,7 @@ impl HistoryCatalog {
                 deadline,
             ),
         }?;
+        notices.check()?;
         self.project_upload_references(session, &mut page.messages, include_parts);
         if self.session_state_dir.is_some() {
             let bindings = self.prompt_request_bindings(&session.provider_session_id);

@@ -93,6 +93,8 @@ pub enum Command {
     Send(SendArgs),
     /// Submit a display-only notice through guarded native delivery.
     Notice(crate::notice::NoticeArgs),
+    /// Verify retained native notice archives and the authenticated checkpoint.
+    NoticeStore(crate::send::claude_notice::store::audit::Args),
     /// Capture the recent pane tail plus live status as a dashboard glance.
     Glance(GlanceArgs),
     /// Recreate a missing tmux runtime from exact provider resume metadata.

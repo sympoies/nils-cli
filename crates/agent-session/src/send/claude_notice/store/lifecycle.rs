@@ -3,7 +3,10 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 mod archive;
+pub(super) mod checkpoint;
 mod sealed;
+
+pub(super) const CHECKPOINT_INITIALIZED: &str = "notice checkpoint initialized after deadline";
 
 const POINTER_SCHEMA: &str = "agent-session.claude-notice-store-current.v1";
 const MANIFEST_SCHEMA: &str = "agent-session.claude-notice-store-manifest.v1";
@@ -13,7 +16,7 @@ const MAX_MANIFEST: usize = 256 * 1024;
 const MAX_INDEX: usize = MAX_CLAIMS * 132;
 pub(super) const MAX_SEGMENT_BYTES: usize = MAX_BYTES + MAX_RECORD;
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Reference {
     file: String,
@@ -66,6 +69,8 @@ struct Layout {
     tip: Option<Reference>,
     chain: Vec<(Reference, Manifest)>,
     keys: BTreeSet<String>,
+    index: Option<pages::Index>,
+    index_name: Option<String>,
 }
 
 pub(super) struct Storage {
@@ -79,7 +84,7 @@ fn named(file: &str, prefix: &str, suffix: &str) -> bool {
         .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok() && !id.contains(['/', '\\']))
 }
 
-fn check_time(deadline: Instant) -> io::Result<()> {
+pub(super) fn check_time(deadline: Instant) -> io::Result<()> {
     if Instant::now() >= deadline {
         Err(io::ErrorKind::TimedOut.into())
     } else {
@@ -102,10 +107,15 @@ fn verified(parent: &Path, reference: &Reference, cap: usize) -> io::Result<Vec<
     Ok(bytes)
 }
 
-fn load(parent: &Path, deadline: Instant, finish_pending_seal: bool) -> io::Result<Layout> {
+fn load_verified(
+    parent: &Path,
+    deadline: Instant,
+    finish_pending_seal: bool,
+) -> io::Result<Layout> {
     let initialized = match fs::symlink_metadata(parent.join("layout.json")) {
         Ok(_) => {
-            if read_private(parent, "layout.json", 4096)? != LAYOUT_MARKER {
+            let marker = read_private(parent, "layout.json", 4096)?;
+            if marker != LAYOUT_MARKER && marker != checkpoint::MARKER {
                 return Err(invalid());
             }
             true
@@ -115,7 +125,7 @@ fn load(parent: &Path, deadline: Instant, finish_pending_seal: bool) -> io::Resu
     };
     let pointer = match fs::symlink_metadata(parent.join("current.json")) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            if initialized {
+            if initialized && !checkpoint::empty(parent)? {
                 return Err(invalid());
             }
             return Ok(Layout {
@@ -123,6 +133,8 @@ fn load(parent: &Path, deadline: Instant, finish_pending_seal: bool) -> io::Resu
                 tip: None,
                 chain: Vec::new(),
                 keys: BTreeSet::new(),
+                index: None,
+                index_name: None,
             });
         }
         Err(e) => return Err(e),
@@ -205,6 +217,8 @@ fn load(parent: &Path, deadline: Instant, finish_pending_seal: bool) -> io::Resu
         tip: Some(tip),
         chain,
         keys,
+        index: None,
+        index_name: None,
     })
 }
 
@@ -299,10 +313,7 @@ pub(super) fn open(state: &Path, write: bool, deadline: Instant) -> io::Result<O
     if (meta.dev(), meta.ino()) != (after.dev(), after.ino()) {
         return Err(invalid());
     }
-    let layout = load(&parent, deadline, write)?;
-    if write && layout.tip.is_some() {
-        ensure_marker(&parent, deadline)?;
-    }
+    let layout = checkpoint::load(&parent, deadline, write)?;
     let cap = if layout.tip.is_some() {
         MAX_SEGMENT_BYTES
     } else {
@@ -323,35 +334,6 @@ pub(super) fn open(state: &Path, write: bool, deadline: Instant) -> io::Result<O
             _gate: gate,
         },
     }))
-}
-
-/// Must be durable before any unique record enters the selected successor.
-/// If first publication crashed before this marker, the pointer and prepared
-/// segments contain copies only; a writer can finish this metadata step.
-fn ensure_marker(parent: &Path, deadline: Instant) -> io::Result<()> {
-    match fs::symlink_metadata(parent.join("layout.json")) {
-        Ok(_) => {
-            if read_private(parent, "layout.json", 4096)? != LAYOUT_MARKER {
-                return Err(invalid());
-            }
-        }
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            check_time(deadline)?;
-            let temporary = format!("layout-{}.tmp", uuid::Uuid::new_v4());
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .custom_flags(libc::O_NOFOLLOW)
-                .open(parent.join(&temporary))?;
-            file.write_all(LAYOUT_MARKER)?;
-            file.sync_all()?;
-            fs::rename(parent.join(&temporary), parent.join("layout.json"))?;
-            File::open(parent)?.sync_all()?;
-        }
-        Err(e) => return Err(e),
-    }
-    check_time(deadline)
 }
 
 pub(super) fn expected_header(ledger: &Ledger) -> Option<Header> {
@@ -385,35 +367,49 @@ fn key_id(claim: &Claim) -> Option<String> {
     ))
 }
 
-pub(super) fn key_used(ledger: &Ledger, scan: &Scan, claim: &Claim) -> bool {
-    key_id(claim).is_some_and(|key| {
-        ledger.storage.layout.keys.contains(&key)
-            || scan
-                .claims
-                .values()
-                .any(|(other, _)| key_id(other).as_ref() == Some(&key))
-    })
+pub(super) fn key_used(
+    ledger: &Ledger,
+    scan: &Scan,
+    claim: &Claim,
+    deadline: Instant,
+) -> io::Result<bool> {
+    let Some(key) = key_id(claim) else {
+        return Ok(false);
+    };
+    Ok(checkpoint::get(ledger, &key, deadline)?.is_some()
+        || scan
+            .claims
+            .values()
+            .any(|(other, _)| key_id(other).as_ref() == Some(&key)))
 }
 
-pub(super) fn operation_used(ledger: &Ledger, scan: &Scan, claim: &Claim) -> bool {
-    scan.claims.contains_key(&claim.op)
-        || ledger
-            .storage
-            .layout
-            .keys
-            .contains(&format!("o{}", sha256(claim.op.as_bytes())))
+pub(super) fn operation_used(
+    ledger: &Ledger,
+    scan: &Scan,
+    claim: &Claim,
+    deadline: Instant,
+) -> io::Result<bool> {
+    Ok(scan.claims.contains_key(&claim.op)
+        || checkpoint::get(
+            ledger,
+            &format!("o{}", sha256(claim.op.as_bytes())),
+            deadline,
+        )?
+        .is_some())
 }
 
 pub(super) fn compact(ledger: &mut Ledger, scan: &Scan, deadline: Instant) -> io::Result<()> {
     archive::compact(ledger, scan, deadline)
 }
 
+#[cfg(test)]
 pub(super) fn merge_archived(
     ledger: &Ledger,
     target: &mut Scan,
     deadline: Instant,
 ) -> io::Result<()> {
-    for (index, (_, manifest)) in ledger.storage.layout.chain.iter().enumerate() {
+    let layout = load_verified(&ledger.parent, deadline, false)?;
+    for (index, (_, manifest)) in layout.chain.iter().enumerate() {
         check_time(deadline)?;
         let cap = if manifest.archive.file == "ledger.jsonl" {
             MAX_BYTES
@@ -421,9 +417,7 @@ pub(super) fn merge_archived(
             MAX_SEGMENT_BYTES
         };
         let bytes = sealed::verified(&ledger.parent, &manifest.archive, cap, false, deadline)?;
-        let header = ledger
-            .storage
-            .layout
+        let header = layout
             .chain
             .get(index + 1)
             .map(|(_, m)| Header::from_manifest(m));
