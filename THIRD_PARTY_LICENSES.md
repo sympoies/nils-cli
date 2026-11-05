@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `adaae934ac11462e5fc124d54d84454d65fc86347786ac689fd89eed765a616d`
+- Cargo.lock SHA256: `97abe3a0587aca84e6b0652c2c2d88d8e721eab8b74ef5a7678ff5769a7d77a6`
 - Third-party crates (`source != null`): 493
 - Workspace crates (`source == null`, excluded below): 42
 
@@ -186,7 +186,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | getrandom | 0.4.3 | MIT OR Apache-2.0 | crates.io |
 | gif | 0.14.2 | MIT OR Apache-2.0 | crates.io |
 | git2 | 0.21.0 | MIT OR Apache-2.0 | crates.io |
-| graphql-tools | 0.5.10 | MIT | crates.io |
+| graphql-tools | 0.5.11 | MIT | crates.io |
 | harfrust | 0.12.0 | MIT | crates.io |
 | hashbrown | 0.12.3 | MIT OR Apache-2.0 | crates.io |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 | crates.io |

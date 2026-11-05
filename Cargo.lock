@@ -1245,9 +1245,9 @@ dependencies = [
 
 [[package]]
 name = "graphql-tools"
-version = "0.5.10"
+version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0924e06efad8aeb6d80cddf26fb3bab46a2013a9b9bfd192b457ce244c4a0bf7"
+checksum = "10061477ad11e2ae5684d282eaffd6c3e2b54df69af0367bcb87b1ff1005ae42"
 dependencies = [
  "combine",
  "itoa",
