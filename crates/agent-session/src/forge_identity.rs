@@ -86,6 +86,7 @@ pub(crate) fn projection(
         parent: lineage.parent.as_ref().map(reference),
         initiator: launch.initiator,
         role: launch.role,
+        attested_role: launch.attested_role,
     };
     binding.validate().map_err(error)?;
     Ok(json!(binding))

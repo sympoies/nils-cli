@@ -302,6 +302,7 @@ pub(crate) fn role_from_request(value: Option<&str>) -> Result<Option<String>, C
             if LaunchContext {
                 initiator: "operator".into(),
                 role: Some(role.into()),
+                attested_role: None,
             }
             .validate()
             .is_ok() =>
@@ -431,6 +432,7 @@ impl LineageSeed {
             forge_context: crate::forge_identity::context_of(parent)?.map(|context| {
                 LaunchContext {
                     role: None,
+                    attested_role: None,
                     ..context
                 }
             }),
@@ -637,6 +639,7 @@ pub(crate) fn resolve_cli_start(
         let mut initial = root();
         initial.seed.set_forge_context(Some(LaunchContext {
             role: None,
+            attested_role: None,
             ..launch
         }));
         return Ok((initial, None));

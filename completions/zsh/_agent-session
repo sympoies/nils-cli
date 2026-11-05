@@ -85,6 +85,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '(--id --tmux-bin --agent-bin --paste-delay-ms --coordination-mode)--via-console[Start the session through Agent Console, owned by the Console owner of the managed session this command runs in. Requires AGENT_SESSION_ID, its capability, and a daemon with federation configured]' \
 '(--prompt --prompt-file --prompt-stdin --env)--reconcile[Inspect a prior Console start operation without creating a session]' \
 '--no-parent[Start a new root session\: do not record the managed session this command runs in as the parent]' \
+'(--resume)--attest-role[Operator-only attestation of this session'\''s role; never inherited by children]' \
 '--no-inherit-work[Do not inherit the parent session'\''s program and issues]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \

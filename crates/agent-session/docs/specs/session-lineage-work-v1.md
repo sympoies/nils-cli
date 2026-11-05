@@ -361,6 +361,39 @@ role therefore always comes from a non-session launcher, which consumers may
 treat as the human-launch shape. Adoption and resume do not replace this launch
 context.
 
+A trusted non-session operator launcher may additionally pass `--attest-role`
+with both `--forge-initiator ID` and `--role ROLE`. This records `attested_role`
+in the immutable launch context for that session alone. The optional field must
+exactly match `role`; absent provenance grants no attested role. It is omitted
+on existing bindings and on ordinary launches. Managed callers receive
+`role-attestation-forbidden` before any session is created, including with
+`--no-parent`. Resume cannot request new attestation. Adoption, display metadata,
+and resume preserve the original provenance.
+
+Every managed child launch clears `attested_role`, including local children,
+console children, and `--no-parent` roots that retain an initiator. A child may
+choose the same ordinary role, but that label is not operator attestation.
+The trusted launcher must explicitly attest each replacement supervisor session;
+its stable role name can then survive session restarts in a consumer policy.
+
+For example, the launcher requests `agent-session start --agent codex
+--forge-initiator operator --role steward --attest-role` for each supervisor
+replacement. The launcher must run in operator context; forwarding these flags
+from a managed session or through generic HTTP does not attest the role.
+Consumers must not infer this attestation for already-running sessions.
+
+This is a same-OS-user trusted-launcher boundary, not isolation from arbitrary
+code that can modify the private registry or impersonate the operator launcher.
+A same-user process that removes its managed environment or replaces the broker
+executable is outside this guarantee.
+
+The authenticated attestation audit tuple is `initiator` (the configured
+operator-launcher identity), `session_created_at` (when the immutable attestation
+was created), `attested_role` (which role), and `session_id` with
+`session_incarnation` (which acting session/runtime). Attestation is created only
+with a new session, so no separate retroactive timestamp or identity is inferred.
+The stored record retains the same initiator, creation time, role and session ID.
+
 Generic HTTP `POST /sessions` refuses any `lineage.forge_context` with HTTP 400
 `identity_session_binding_untrusted` before creating a record. HTTP authentication
 does not verify the asserted initiator or role. Local operator launches and
@@ -376,7 +409,9 @@ without context remain valid but cannot satisfy a required forge binding.
 metadata-only authenticated projection, with envelope
 `cli.agent-session.broker-identity.v1` and data schema
 `agent-session.forge-binding.v1`. It returns exact current session/incarnation,
-creation time, original root/parent references, initiator and role. Capability,
+creation time, original root/parent references, initiator, role, and optional
+`attested_role`. Consumers requiring a privileged role must check `attested_role`,
+not the ordinary role, board labels, titles, or environment assertions. Capability,
 registry readiness and heartbeat are required. A managed caller's session and
 runtime must agree. The command does not renew registry state or modify session
 records; it returns no forge credentials. This contract assumes a trusted

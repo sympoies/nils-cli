@@ -15,6 +15,17 @@ pub(super) fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
     if let Err(error) = launch_env::from_flags(&args.launch_env) {
         return render_error(START_COMMAND, format, error);
     }
+    if args.attest_role && non_empty_env("AGENT_SESSION_ID").is_some() {
+        return render_error(
+            START_COMMAND,
+            format,
+            CliError::data(
+                "role-attestation-forbidden",
+                "only a non-session operator launcher may attest a role",
+                None,
+            ),
+        );
+    }
     if args.forge_initiator.is_some() && non_empty_env("AGENT_SESSION_ID").is_some() {
         return render_error(
             START_COMMAND,
@@ -77,6 +88,7 @@ pub(super) fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
         let context = nils_common::forge_identity::session::LaunchContext {
             initiator: initiator.clone(),
             role: args.role.clone(),
+            attested_role: args.attest_role.then(|| args.role.clone()).flatten(),
         };
         if let Err(err) = context.validate() {
             return render_error(START_COMMAND, format, forge_identity::error(err));
