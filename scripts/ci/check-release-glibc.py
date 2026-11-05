@@ -24,6 +24,11 @@ def check_binaries(binaries):
             failed = True
             continue
         versions = set(re.findall(r"\bGLIBC_(\d+(?:\.\d+)+)\b", result.stdout))
+        # These GNU release targets dynamically link libc; an empty scan is not proof.
+        if not versions:
+            print(f"error: {binary}: no GLIBC_ requirements found", file=sys.stderr)
+            failed = True
+            continue
         newer = sorted(
             (version for version in versions if tuple(map(int, version.split("."))) > baseline),
             key=lambda version: tuple(map(int, version.split("."))),

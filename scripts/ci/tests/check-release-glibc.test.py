@@ -31,15 +31,21 @@ class ReleaseGlibcTests(unittest.TestCase):
             [], 0, "\n".join(f"Name: {version}  Flags: none" for version in versions), "",
         )
 
-    def test_accepts_baseline_older_and_static_binaries(self):
+    def test_accepts_baseline_and_older_versions(self):
         code, stdout, stderr = self.check([
             self.output(["GLIBC_2.2.5", "GLIBC_2.9", "GLIBC_2.39", "GCC_4.2.0"]),
-            self.output([]),
-        ], ["baseline-bin", "static-bin"])
+        ], ["baseline-bin"])
         self.assertEqual(code, 0)
         self.assertIn("ok: baseline-bin", stdout)
-        self.assertIn("ok: static-bin", stdout)
         self.assertEqual(stderr, "")
+
+    def test_rejects_missing_glibc_requirements(self):
+        code, _, stderr = self.check([
+            self.output([]), self.output(["GLIBCXX_3.4.0"]),
+        ], ["empty-bin", "non-glibc-bin"])
+        self.assertEqual(code, 1)
+        self.assertIn("empty-bin: no GLIBC_ requirements found", stderr)
+        self.assertIn("non-glibc-bin: no GLIBC_ requirements found", stderr)
 
     def test_reports_all_offending_binaries_and_numeric_versions(self):
         code, _, stderr = self.check([
