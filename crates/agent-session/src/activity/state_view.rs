@@ -58,6 +58,7 @@ fn read_state(context: &CliContext, record: &SessionRecord, quiet: bool) -> Opti
                 &mut document,
             );
             if quiet {
+                session_ready::project_unverified(record, &mut document.state, &now());
                 completion_uncertainty::project(&mut document.state, &now());
                 super::codex_quiet::project(record, &mut document.state, &now());
                 crate::send_guard::response::project(context, record, &mut document.state);

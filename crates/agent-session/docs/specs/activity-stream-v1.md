@@ -206,6 +206,8 @@ timestamp), and `quiet_signal` (`current_turn.last_progress_at` or
 omitted if incomplete or outside the bounds. Completion diagnostics may also
 include the closed `completion_candidate_reason` enum from the
 [turn-state contract](../turn-state-contract.md); other fields are excluded.
+`codex_startup_idle_unverified` is retained as a reason-only diagnostic when
+managed Codex startup has no verified idle evidence after 30 seconds.
 Quiet metadata is diagnostic
 uncertainty and never proves completion, clears attention, or authorizes input.
 

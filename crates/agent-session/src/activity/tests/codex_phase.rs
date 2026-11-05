@@ -254,6 +254,7 @@ fn nonprovider_progress_cannot_extend_the_provider_quiet_clock() {
     assert_eq!(view.phase, TurnPhase::Working);
     assert_eq!(view.source.confidence, Confidence::Inferred);
     assert!(codex_notification_maybe_idle(&view));
+    assert!(codex_notification_maybe_idle(&view));
     assert_eq!(
         view.current_turn.unwrap().last_progress_at.as_deref(),
         Some("2000-01-01T00:01:00Z")
@@ -270,4 +271,52 @@ fn never_turned_codex_is_a_notification_probe_candidate() {
     assert!(state.current_turn.is_none());
     assert!(state.last_turn.is_none());
     assert!(codex_notification_maybe_idle(&state));
+}
+
+#[test]
+fn codex_startup_without_idle_evidence_reports_a_named_condition() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (context, mut created) = test_session(&tmp);
+    created.record.runtime.as_mut().unwrap().kind = "codex_app_server".into();
+    let clock = super::test_clock::TestClock::freeze();
+    activate_runtime(&context, &created.record).unwrap();
+    let path = session_dir(&context, &created.record.id).join(ACTIVITY_FILE);
+    clock.advance(Duration::from_secs(29));
+    assert_eq!(
+        state_for_view(&context, &created.record).unwrap().phase,
+        TurnPhase::Starting
+    );
+    clock.advance(Duration::from_secs(1));
+    let raw = fs::read(&path).unwrap();
+    let view = state_for_view(&context, &created.record).unwrap();
+    assert_eq!(view.phase, TurnPhase::Unknown);
+    assert_eq!(
+        view.diagnostic.as_ref().unwrap().reason,
+        "codex_startup_idle_unverified"
+    );
+    assert_eq!(view.source.confidence, Confidence::Inferred);
+    assert!(codex_notification_maybe_idle(&view));
+    let diagnostic = serde_json::to_value(&view.diagnostic).unwrap();
+    assert_eq!(
+        diagnostic_for_board(diagnostic.as_object().unwrap()).unwrap()["reason"],
+        "codex_startup_idle_unverified"
+    );
+    assert_eq!(
+        stream_diagnostic::project(view.diagnostic.as_ref().unwrap())
+            .unwrap()
+            .reason,
+        "codex_startup_idle_unverified"
+    );
+    assert_eq!(
+        controller_state_for_record(&context, &created.record)
+            .unwrap()
+            .phase,
+        TurnPhase::Starting
+    );
+    assert_eq!(fs::read(&path).unwrap(), raw);
+    assert!(settle_starting(&context, &created.record, Some(view.revision)).unwrap());
+    let ready = state_for_view(&context, &created.record).unwrap();
+    assert_eq!(ready.phase, TurnPhase::Waiting);
+    assert!(ready.diagnostic.is_none());
+    assert!(ready.last_turn.is_none());
 }
