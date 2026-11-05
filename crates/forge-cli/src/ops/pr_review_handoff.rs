@@ -23,6 +23,7 @@ mod surrender;
 mod test_integrity;
 use crate::cli::ApprovalPolicy;
 use approval::{Admission, PublishedApproval};
+pub use policy::SupervisorAttestation;
 use policy::{require_supervisor, trusted_supervisor_policy};
 
 const SCHEMA: &str = "pr.review-handoff";
@@ -58,6 +59,8 @@ pub struct CoordinatorTransfer {
     pub reason: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supervisor_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supervisor_attestation: Option<SupervisorAttestation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retirement_evidence: Option<CoordinatorRetirementEvidence>,
 }
@@ -167,6 +170,9 @@ pub(crate) fn validate_handoff(h: &ReviewHandoff) -> Result<(), ForgeError> {
                 || t.supervisor_digest
                     .as_deref()
                     .is_some_and(|d| !digest_valid(d) || d != t.new_coordinator_digest)
+                || t.supervisor_attestation
+                    .as_ref()
+                    .is_some_and(|a| t.supervisor_digest.is_none() || !a.valid())
                 || t.retirement_evidence.as_ref().is_some_and(|e| {
                     !digest_valid(&e.machine_digest)
                         || !matches!(e.session_status.as_str(), "stopped" | "deleted")
@@ -468,7 +474,7 @@ pub(crate) fn ensure_handoff_append(
                 remote,
             )?;
             if transfer.supervisor_digest.as_deref() != Some(actor.as_str())
-                || !supervisors.contains(&actor)
+                || require_supervisor(&supervisors, &actor)? != transfer.supervisor_attestation
                 || evidence.stale_after_seconds != configured_stale_after.as_secs()
             {
                 return Err(fail(
@@ -1357,7 +1363,7 @@ pub fn run(
                     &view.base,
                     &global.remote,
                 )?;
-                require_supervisor(&supervisors, &actor)?;
+                let supervisor_attestation = require_supervisor(&supervisors, &actor)?;
                 if let Some(coordinator_selector) = a.coordinator_session.as_deref() {
                     require_canonical_session_uuid(coordinator_selector)?;
                     if session_digest(coordinator_selector)? != h.coordinator_digest {
@@ -1395,6 +1401,7 @@ pub fn run(
                     lifecycle_source_digest: retirement_evidence.machine_digest.clone(),
                     reason: a.reason.clone(),
                     supervisor_digest: Some(actor.clone()),
+                    supervisor_attestation,
                     retirement_evidence: Some(retirement_evidence),
                 });
                 h.coordinator_digest = actor;

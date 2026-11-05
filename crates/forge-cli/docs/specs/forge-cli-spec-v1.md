@@ -1330,12 +1330,22 @@ Disabling this feature never disables the existing unresolved-thread gate.
 Read `.forge-cli.toml` at the exact provider base; require the selected remote host/repository
 and base-ref commit to match, and reject invalid explicit `stale_after`.
 `supervisors` is an empty-by-default allow-list of `sha256:` digests for
-canonical agent-session UUIDs. `stale_after` defaults to `2h` (range `60s` to
+canonical agent-session UUIDs or `role:<attested-role>` entries. Role entries
+match only the authenticated broker binding's operator-attested `attested_role`,
+not ordinary launch roles or board labels. The trusted operator launcher requests
+`--attest-role` for each replacement supervisor; managed children cannot inherit
+or self-assign this provenance. Digest-only policies need no migration and do
+not require a role binding.
+
+`stale_after` defaults to `2h` (range `60s` to
 `30d`). Takeover requires `--reason coordinator-retired` and a fresh board
 proving the coordinator stopped or deleted on one host, with terminal activity
 older than the threshold. Missing, unreadable, recent, or ambiguous proof
 refuses takeover. The ledger records proof and supervisor digests while
-preserving history and incrementing the assignment generation.
+preserving history and incrementing the assignment generation. Role takeover
+also retains the attested role and a digest of the complete authenticated
+session/incarnation binding; the CLI reauthenticates it before ledger append.
+See the [recovery runbook](../runbooks/retired-coordinator-recovery.md).
 For `pr merge --dry-run` and the merge-capable `pr deliver --dry-run`, the
 resolved policy is additive output under `data.review_convergence`; the same
 GitHub-only provider check runs before the dry/live split.
