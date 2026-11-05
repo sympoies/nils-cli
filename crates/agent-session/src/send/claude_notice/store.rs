@@ -18,8 +18,12 @@ const MAX_BYTES: usize = 8 * 1024 * 1024;
 const MAX_RECORD: usize = 4096;
 const MAX_CLAIMS: usize = MAX_BYTES / (2 * MAX_RECORD);
 
+pub(crate) mod audit;
 mod lifecycle;
+mod pages;
+mod reader;
 mod records;
+pub(crate) use reader::Reader;
 
 #[cfg(test)]
 #[path = "store/lifecycle_tests.rs"]
@@ -84,7 +88,7 @@ pub(crate) enum Reason {
     HistoryUnavailable,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct Confirmed {
     pub(crate) claim: Claim,
     pub(crate) native_uuid: String,
@@ -116,8 +120,12 @@ impl Drop for Ledger {
 fn invalid() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "notice ledger unavailable")
 }
-fn error(_: impl std::fmt::Display) -> CliError {
-    runtime::unavailable()
+fn error(error: io::Error) -> CliError {
+    if error.to_string() == lifecycle::CHECKPOINT_INITIALIZED {
+        super::refusal::unavailable("claim-checkpoint-initialized")
+    } else {
+        runtime::unavailable()
+    }
 }
 
 pub(crate) fn hash_valid(hash: &str) -> bool {
@@ -309,7 +317,7 @@ pub(crate) fn consume(
         .map_err(error)?
         .ok_or_else(runtime::unavailable)?;
     let mut scan = ledger.scan(deadline).map_err(error)?;
-    if lifecycle::key_used(&ledger, &scan, &claim) {
+    if lifecycle::key_used(&ledger, &scan, &claim, deadline).map_err(error)? {
         return Err(CliError::runtime(
             "send-idempotency-key-used",
             "idempotency key was already claimed for this session",
@@ -318,7 +326,7 @@ pub(crate) fn consume(
             ),
         ));
     }
-    if lifecycle::operation_used(&ledger, &scan, &claim) {
+    if lifecycle::operation_used(&ledger, &scan, &claim, deadline).map_err(error)? {
         return Err(runtime::unavailable());
     }
     if scan.claims.len() >= MAX_CLAIMS {
@@ -385,7 +393,8 @@ pub(crate) fn finish(
     Ok(())
 }
 
-pub(crate) fn confirmed(state: &Path, deadline: Instant) -> io::Result<Vec<Confirmed>> {
+#[cfg(test)]
+fn confirmed(state: &Path, deadline: Instant) -> io::Result<Vec<Confirmed>> {
     let Some(mut ledger) = Ledger::open(state, false, deadline)? else {
         return Ok(Vec::new());
     };

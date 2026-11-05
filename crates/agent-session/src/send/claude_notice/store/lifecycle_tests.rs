@@ -7,6 +7,9 @@ use serde_json::{Value, json};
 use std::cell::Cell;
 use std::os::unix::fs::PermissionsExt;
 
+#[path = "bounded_tests.rs"]
+mod bounded_tests;
+
 const POINTER_SCHEMA: &str = "agent-session.claude-notice-store-current.v1";
 const MANIFEST_SCHEMA: &str = "agent-session.claude-notice-store-manifest.v1";
 const SEGMENT_SCHEMA: &str = "agent-session.claude-notice-segment.v1";
@@ -67,14 +70,14 @@ fn claim_line(claim: &Claim) -> Vec<u8> {
 fn pair(claim: &Claim) -> (Vec<u8>, Value) {
     let raw = claim_line(claim);
     let text = "<!-- agent-notice:v1 kind=mailbox source=synthetic -->\n\nfixture\n";
-    let row = json!({"type":"user", "sessionId":"provider-one", "uuid":claim.op,
+    let row = json!({"type":"user", "sessionId":claim.binding.provider_session_id, "uuid":claim.op,
         "version":"2.1.317", "promptSource":"system", "isSidechain":false,
         "timestamp":"2000-01-01T00:00:00Z", "cwd":"/workspace/project",
         "origin":{"kind":"plugin", "name":"agent-session-claude-notice", "asUser":true},
         "message":{"role":"user", "content":text}});
     let terminal = json!({"schema_version":SCHEMA, "kind":"terminal", "op":claim.op,
         "claim_sha256":sha256(&raw), "state":"submitted", "native_uuid":claim.op,
-        "row_offset":4, "row_payload_sha256":sha256(&serde_json::to_vec(&row).unwrap()),
+        "row_offset":claim.baseline.eof + 4, "row_payload_sha256":sha256(&serde_json::to_vec(&row).unwrap()),
         "envelope_sha256":claim.envelope_sha256, "timestamp":"2000-01-01T00:00:00Z",
         "confirmation_elapsed_ms":1});
     let mut bytes = raw;

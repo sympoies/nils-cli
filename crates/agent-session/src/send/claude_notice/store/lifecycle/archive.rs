@@ -3,7 +3,23 @@ use super::*;
 
 const TERMINAL_AGE_SECONDS: i64 = 60 * 60;
 
-fn write_immutable(parent: &Path, name: &str, bytes: &[u8], deadline: Instant) -> io::Result<()> {
+pub(super) fn write_immutable(
+    parent: &Path,
+    name: &str,
+    bytes: &[u8],
+    deadline: Instant,
+) -> io::Result<()> {
+    let file = prepare_immutable(parent, name, bytes, deadline)?;
+    file.sync_all()?;
+    check_time(deadline)
+}
+
+pub(super) fn prepare_immutable(
+    parent: &Path,
+    name: &str,
+    bytes: &[u8],
+    deadline: Instant,
+) -> io::Result<File> {
     check_time(deadline)?;
     let mut file = OpenOptions::new()
         .write(true)
@@ -12,7 +28,27 @@ fn write_immutable(parent: &Path, name: &str, bytes: &[u8], deadline: Instant) -
         .custom_flags(libc::O_NOFOLLOW)
         .open(parent.join(name))?;
     file.write_all(bytes)?;
-    file.sync_all()?;
+    check_time(deadline)?;
+    Ok(file)
+}
+
+/// All independent file flushes and the directory barrier complete before
+/// publication. Overlapping these flushes does not remove a durability barrier.
+pub(super) fn sync_files(files: &[&File], deadline: Instant) -> io::Result<()> {
+    std::thread::scope(|scope| {
+        let mut jobs = Vec::new();
+        for file in files {
+            jobs.push(
+                std::thread::Builder::new()
+                    .name("notice-sync".into())
+                    .spawn_scoped(scope, move || file.sync_all())?,
+            );
+        }
+        for job in jobs {
+            job.join().map_err(|_| invalid())??;
+        }
+        Ok::<(), io::Error>(())
+    })?;
     check_time(deadline)
 }
 
@@ -127,9 +163,11 @@ pub(super) fn compact(ledger: &mut Ledger, scan: &Scan, deadline: Instant) -> io
         return Err(invalid());
     }
     // Everything referenced is durable before the pointer can expose it.
-    write_immutable(&ledger.parent, &index_name, &index, deadline)?;
-    write_immutable(&ledger.parent, &active, &successor, deadline)?;
-    write_immutable(&ledger.parent, &manifest_name, &manifest_bytes, deadline)?;
+    let index_file = prepare_immutable(&ledger.parent, &index_name, &index, deadline)?;
+    let active_file = prepare_immutable(&ledger.parent, &active, &successor, deadline)?;
+    let manifest_file =
+        prepare_immutable(&ledger.parent, &manifest_name, &manifest_bytes, deadline)?;
+    sync_files(&[&index_file, &active_file, &manifest_file], deadline)?;
     File::open(&ledger.parent)?.sync_all()?;
     let pointer = Pointer {
         schema_version: POINTER_SCHEMA.into(),
@@ -154,8 +192,7 @@ pub(super) fn compact(ledger: &mut Ledger, scan: &Scan, deadline: Instant) -> io
     // Never seal the selected live file before its successor is committed.
     // A writer interrupted here completes this seal when loading the tip.
     sealed::seal(&ledger.file, &ledger.parent, deadline)?;
-    ensure_marker(&ledger.parent, deadline)?;
-    let layout = load(&ledger.parent, deadline, true)?;
+    let layout = checkpoint::advance(ledger, pointer.manifest, manifest, scan, deadline)?;
     let file = private_file(
         &ledger.parent,
         &layout.active,

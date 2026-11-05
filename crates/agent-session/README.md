@@ -81,6 +81,7 @@ agent-session send <id> --text-stdin --key enter --require-idle \
   --require-empty-composer --expect-runtime <launch-id> --idempotency-key <key>
 agent-session notice <id> --kind schedule.pulse --source scheduler \
   --summary "Check the scheduled task" --body-file notice.txt --idempotency-key <key>
+agent-session --state-dir <state-directory> notice-store audit --format json
 agent-session send <id> --key c-c
 agent-session send <id> --key down --key enter   # answer a dialog while blocked
 agent-session send <id> --text "custom answer" --allow-blocked

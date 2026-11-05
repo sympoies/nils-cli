@@ -243,6 +243,37 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ':session -- Session id or unambiguous prefix:_default' \
 && ret=0
 ;;
+(notice-store)
+_arguments "${_arguments_options[@]}" : \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_agent-session__subcmd__notice-store_commands" \
+"*::: :->notice-store" \
+&& ret=0
+
+    case $state in
+    (notice-store)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agent-session-notice-store-command-$line[1]:"
+        case $line[1] in
+            (audit)
+_arguments "${_arguments_options[@]}" : \
+'--timeout-seconds=[Verification deadline in seconds; automatic first import may finish after it]:TIMEOUT_SECONDS:_default' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (glance)
 _arguments "${_arguments_options[@]}" : \
 '--tail=[Number of pane lines to capture for the glance tail]:TAIL:_default' \
@@ -1393,6 +1424,7 @@ _agent-session_commands() {
 'diagnose:Print the redacted control-plane diagnostic bundle' \
 'send:Send input (literal text and/or special keys) to a live session' \
 'notice:Submit a display-only notice through guarded native delivery' \
+'notice-store:Verify retained native notice archives and the authenticated checkpoint' \
 'glance:Capture the recent pane tail plus live status as a dashboard glance' \
 'resume:Recreate a missing tmux runtime from exact provider resume metadata' \
 'restart:Relaunch a running session in place on the installed provider binary' \
@@ -1729,6 +1761,18 @@ _agent-session__subcmd__metadata__subcmd__show_commands() {
 _agent-session__subcmd__notice_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session notice commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__notice-store_commands] )) ||
+_agent-session__subcmd__notice-store_commands() {
+    local commands; commands=(
+'audit:Verify every retained archive and every reachable checkpoint page' \
+    )
+    _describe -t commands 'agent-session notice-store commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__notice-store__subcmd__audit_commands] )) ||
+_agent-session__subcmd__notice-store__subcmd__audit_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session notice-store audit commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__readiness_commands] )) ||
 _agent-session__subcmd__readiness_commands() {
