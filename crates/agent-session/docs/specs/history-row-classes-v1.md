@@ -86,7 +86,7 @@ compaction event for an unsuccessful command.
 
 Multiple compact command-markup echoes following one nonautomatic boundary and
 summary belong to that same invocation until the next non-echo logical record
-or boundary. Retain the first echo's command identity and suppress the later
+or boundary. Use the first echo for the command content and suppress later
 echoes. A separate compaction or a command not attached to that pair remains a
 separate invocation, even when its command text is identical.
 
@@ -101,7 +101,8 @@ supplies `text`. Missing summaries yield the empty string, not invented prose.
 An unrelated continuation notice has class `notice`, not `compaction`.
 
 The compaction row uses the existing history-id/physical-offset row-id format,
-anchored at the boundary or `compacted` record, and that record's timestamp when
+anchored at the boundary or `compacted` record, except for a paired Claude
+command and compaction as described below. Use that record's timestamp when
 available. It adds `compaction: {"summary_truncated": false}`. Retain the first
 65,536 Unicode scalar values of the provider summary without trimming; set
 `summary_truncated: true` only when more summary text exists. This is the
@@ -113,10 +114,11 @@ Forward, latest/older, live transcript and card-preview projections use the same
 classifier. Normalized ids, classes, text and compaction metadata must agree.
 A summary on another raw line does not consume a second visible row. A Claude
 boundary/summary followed by its adjacent compact command echo projects the
-command first, then the compaction. The command keeps its echo-based id and
-timestamp; the compaction keeps its boundary-based id and timestamp. Paging uses
-the boundary position for the command and the echo position for the compaction,
-independently of row identity, so pages of size one retain both rows once. Literal
+command first, then the compaction. The command uses the boundary offset for its
+id and the echo timestamp; the compaction uses the echo offset for its id and the
+boundary timestamp. Paging uses those same positions, so pages of size one retain
+both rows once. Claude Code 2.1.317 local-command metadata caveats between the
+summary and echo do not end the association. Literal
 duplicate suppression remains unchanged; other rows keep file order. Card
 previews retain the compaction when that adjacent echo arrives.
 

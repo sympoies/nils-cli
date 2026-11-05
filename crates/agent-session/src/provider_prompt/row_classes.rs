@@ -155,6 +155,12 @@ pub(crate) fn claude_summary(value: &Value) -> Option<String> {
 
 pub(crate) fn claude_logical_record(value: &Value) -> bool {
     value["isSidechain"] != true
+        && !(value["type"] == "user"
+            && value["isMeta"] == true
+            && value
+                .pointer("/message/content")
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.starts_with("<local-command-caveat>")))
         && (matches!(
             value["type"].as_str(),
             Some("user" | "assistant" | "attachment")
