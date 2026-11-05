@@ -1041,13 +1041,23 @@ fn ceiling_extension_requires_fresh_exact_approval_and_preserves_history() {
         status: ReviewFindingStatus::Open,
         threads: vec![],
     }];
-    for valid_approval in [false, true] {
+    for case in [
+        "unauthorized",
+        "valid",
+        "wrong-digest",
+        "wrong-field",
+        "wrong-increment",
+        "off-ceiling",
+    ] {
         let mut previous = None;
         let mut records: Vec<ReviewStateRecord> = Vec::new();
         for head in ["head-1", "head-2", "head-3"] {
-            let state = review_state::observe_review_loop(previous.as_ref(), head, &rows)
+            let mut state = review_state::observe_review_loop(previous.as_ref(), head, &rows)
                 .unwrap()
                 .state;
+            if head == "head-3" && case == "off-ceiling" {
+                state.budget.max_no_progress_rounds += 1;
+            }
             let record = ReviewStateRecord::new(
                 "acme/widgets",
                 7,
@@ -1097,7 +1107,7 @@ fn ceiling_extension_requires_fresh_exact_approval_and_preserves_history() {
         let mut after_records = records.clone();
         after_records.push(extension);
         let after = page(&after_records);
-        let approval = serde_json::json!({"html_url":"https://github.com/acme/widgets/pull/7#issuecomment-21","issue_url":"https://api.github.com/repos/acme/widgets/issues/7","user":{"login":"maintainer"},"author_association":if valid_approval { "MEMBER" } else { "NONE" },"created_at":"2026-07-20T12:00:02Z","body":marker}).to_string();
+        let approval = serde_json::json!({"html_url":"https://github.com/acme/widgets/pull/7#issuecomment-21","issue_url":"https://api.github.com/repos/acme/widgets/issues/7","user":{"login":"maintainer"},"author_association":if case == "unauthorized" { "NONE" } else { "MEMBER" },"created_at":"2026-07-20T12:00:02Z","body":marker}).to_string();
         let stub = StubEnv::new();
         let posts = stub.tempdir.path().join("posted");
         let script = gh_stub_with_head(&stub, "head-3").replace("esac\necho \"stub: unscripted gh args: $*\" >&2", &format!(r#"  "api graphql")
@@ -1140,18 +1150,26 @@ echo "stub: unscripted gh args: $*" >&2"#, posts=posts.display()));
                 "--expected-state",
                 &tip,
                 "--proposal-digest",
-                &proposal,
+                if case == "wrong-digest" {
+                    "sha256:wrong"
+                } else {
+                    &proposal
+                },
                 "--stop-code",
                 "review_no_progress",
                 "--budget-field",
-                "max_no_progress_rounds",
+                if case == "wrong-field" {
+                    "max_repair_rounds"
+                } else {
+                    "max_no_progress_rounds"
+                },
                 "--increment",
-                "1",
+                if case == "wrong-increment" { "2" } else { "1" },
                 "--approval-comment",
                 "21",
             ],
         );
-        if valid_approval {
+        if case == "valid" {
             assert_eq!(out.code, 0, "{} {}", out.stderr, out.stdout);
             let envelope = parse_envelope(&out.stdout);
             assert_eq!(
@@ -1165,9 +1183,99 @@ echo "stub: unscripted gh args: $*" >&2"#, posts=posts.display()));
             assert_ne!(out.code, 0);
             assert_eq!(
                 parse_envelope(&out.stdout)["error"]["code"],
-                "review_extension_approval_invalid"
+                if case == "unauthorized" {
+                    "review_extension_approval_invalid"
+                } else {
+                    "review_extension_invalid"
+                }
             );
             assert!(!posts.exists());
         }
+    }
+}
+
+#[test]
+fn inspect_omits_ceiling_proposal_when_ceiling_conditions_do_not_hold() {
+    use forge_cli::ops::review_state::{
+        self, ReviewFindingObservation, ReviewFindingStatus, ReviewLoopHardStop,
+        ReviewStatePayload, ReviewStateRecord,
+    };
+    for case in ["below-ceiling", "no-open-blocking", "durable-stop"] {
+        let rows = vec![ReviewFindingObservation {
+            fingerprint: "correctness:review-loop:guard".into(),
+            root_cause_fingerprint: None,
+            blocking: true,
+            status: ReviewFindingStatus::Open,
+            threads: vec![],
+        }];
+        let mut records: Vec<ReviewStateRecord> = vec![];
+        let mut previous = None;
+        for head in ["head-1", "head-2", "head-3"] {
+            let mut state = review_state::observe_review_loop(previous.as_ref(), head, &rows)
+                .unwrap()
+                .state;
+            if head == "head-3" {
+                match case {
+                    "below-ceiling" => state.budget.max_no_progress_rounds += 1,
+                    "no-open-blocking" => {
+                        state.findings.values_mut().next().unwrap().blocking = false
+                    }
+                    "durable-stop" => {
+                        state.hard_stop = Some(ReviewLoopHardStop {
+                            code: "review_no_progress".into(),
+                            budget_field: "max_no_progress_rounds".into(),
+                            increment: 1,
+                            proposal_digest: "sha256:proposal".into(),
+                            attempted_head_sha: head.into(),
+                            observation_digest: "sha256:observation".into(),
+                            extension_applied: false,
+                        })
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            let record = ReviewStateRecord::new(
+                "acme/widgets",
+                7,
+                head,
+                records.len() as u64,
+                records.last().map(|r| r.record_digest.clone()),
+                ReviewStatePayload::ReviewLoop {
+                    state: state.clone(),
+                },
+            )
+            .unwrap();
+            previous = Some(state);
+            records.push(record);
+        }
+        let stub = StubEnv::new();
+        let bodies: Vec<_> = records.iter().map(|r| r.marker().unwrap()).collect();
+        let script = gh_stub_with_ledger(&stub, "head-3", &bodies);
+        let stub = stub.gh_stub(&script);
+        let out = run_forge_cli(
+            &stub,
+            &[
+                "--provider",
+                "github",
+                "--repo",
+                "acme/widgets",
+                "--format",
+                "json",
+                "pr",
+                "review-loop",
+                "inspect",
+                "7",
+            ],
+        );
+        assert_eq!(out.code, 0, "{case}: {} {}", out.stdout, out.stderr);
+        assert!(
+            parse_envelope(&out.stdout)["data"]
+                .get("ceiling_proposal")
+                .is_none(),
+            "{case}: {}",
+            out.stdout
+        );
+        let calls = fs::read_to_string(stub.tempdir.path().join("gh-args.log")).unwrap();
+        assert!(!calls.contains("--method POST"), "{case}: {calls}");
     }
 }
