@@ -152,7 +152,11 @@ async fn resumed_codex_busy_or_loading_without_turn_end_defers_wake() {
             drain_coordination_notifications(fixture.state.clone()).await;
             assert_eq!(notification_fixture(fixture.temp.path())["notified_generation"], 0);
             assert!(fixture.commands.try_recv().is_err());
-            assert_eq!(activity::state_for_view(&fixture.state.context, &fixture.record).unwrap().phase,
+            // This generation's fixture start predates the observation window.
+            let published = activity::state_for_view(&fixture.state.context, &fixture.record).unwrap();
+            assert_eq!(published.phase, activity::TurnPhase::Unknown);
+            assert_eq!(published.diagnostic.as_ref().unwrap().reason, "codex_startup_idle_unverified");
+            assert_eq!(activity::controller_state_for_record(&fixture.state.context, &fixture.record).unwrap().phase,
                 activity::TurnPhase::Starting);
         }
     }

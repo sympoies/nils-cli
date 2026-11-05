@@ -424,12 +424,19 @@ Optional `diagnostic.reason` values are producer-owned allowlisted codes:
 `completion_evidence_pending`, `attention_authority_mismatch`,
 `provider_projection_unavailable`, `runtime_activity_unhealthy`,
 `activity_state_unavailable`, `interrupted_suspected`, `codex_progress_quiet`,
-and `completion_evidence_missing`. Quiet diagnostics include only bounded
+`codex_startup_idle_unverified`, and `completion_evidence_missing`. Quiet diagnostics include only bounded
 `quiet_threshold_seconds`, `quiet_since`, and `quiet_signal` fields described
 above, plus the optional allowlisted `completion_candidate_reason`. They never
 prove completion, clear attention, or authorize input.
 Free-form provider or runtime errors never cross the session-view or stream
 boundary.
+
+A managed Codex runtime still in `starting` after 30 seconds without verified
+primary-thread idle evidence projects `unknown` with inferred confidence and
+`diagnostic.reason: codex_startup_idle_unverified`. This read-only condition is
+also retained by board and activity-stream projections. It preserves the
+startup timestamp, revision and durable history; a later provider idle
+observation may still settle startup. Age never proves readiness.
 
 Optional `shadow_observation` is ordinarily diagnostics-only. It contains
 `observer_version`, a bounded `rule_id`, daemon `observed_at`, one of
@@ -587,6 +594,7 @@ notification-only waiting signal.
 | --- | --- |
 | new runtime | interrupt an open turn, preserve it as last turn, clear attention, enter authoritative `starting` |
 | primary Claude `SessionStart` with `source: "startup"` or `"resume"` | only from `starting` with no open turn, attention, or pending evidence, in the same runtime and bound provider conversation (raw or runtime-scoped projected id, as `agent-hook` forwards it with `source` regardless of model settings): enter authoritative provider-hook `waiting` |
+| primary Codex `thread/start` response reports `thread.status.type: "idle"` | after the proxy binds the exact primary thread and before forwarding the response: settle healthy, unchanged `starting` to authoritative provider-hook `waiting`, with no fabricated turn or completion; absent or active status does not settle |
 | native Codex mailbox probe observes the exact bound conversation idle | only from healthy `starting` with unchanged runtime and activity revision and no open turn, attention, or pending evidence: enter authoritative provider-hook `waiting`, preserving the preceding last turn |
 | `turn_started` | interrupt an older open turn, clear old attention, enter `working` |
 | `attention_requested` | keep current start time, add one opaque pending request, enter `needs_input`; a Claude request for another turn first interrupts the stale open turn |

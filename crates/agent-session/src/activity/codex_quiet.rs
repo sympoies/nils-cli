@@ -41,7 +41,10 @@ fn metadata_fields(reason: &str, fields: &Map<String, Value>) -> Option<QuietMet
 
 pub(crate) fn diagnostic_for_board(fields: &Map<String, Value>) -> Option<Value> {
     let reason = fields.get("reason")?.as_str()?;
-    let mut value = if reason == "completion_evidence_pending" {
+    let mut value = if matches!(
+        reason,
+        "completion_evidence_pending" | "codex_startup_idle_unverified"
+    ) {
         json!({})
     } else {
         serde_json::to_value(metadata_fields(reason, fields)?).ok()?
@@ -56,7 +59,12 @@ pub(crate) fn diagnostic_for_board(fields: &Map<String, Value>) -> Option<Value>
 /// Startup and age are probe candidates, never completion or input authorization.
 pub(crate) fn notification_maybe_idle(state: &TurnState) -> bool {
     state.phase == TurnPhase::Waiting
-        || (state.phase == TurnPhase::Starting && state.current_turn.is_none())
+        || (state.current_turn.is_none()
+            && (state.phase == TurnPhase::Starting
+                || (state.phase == TurnPhase::Unknown
+                    && state.diagnostic.as_ref().is_some_and(|diagnostic| {
+                        diagnostic.reason == "codex_startup_idle_unverified"
+                    }))))
         || (matches!(state.phase, TurnPhase::Working | TurnPhase::Unknown)
             && state.source.confidence == Confidence::Inferred
             && state.diagnostic.as_ref().is_some_and(|diagnostic| {
