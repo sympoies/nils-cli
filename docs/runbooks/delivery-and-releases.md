@@ -114,6 +114,22 @@ Do not require removed checks before their producers are restored.
 
 ## Release flow
 
+Before opening a version-bump PR, the release owner must:
+
+1. Record the current `main` commit as the intended release base.
+2. Confirm a successful scheduled full CI run on that exact commit, or dispatch
+   the `CI` workflow on `main` and wait for full validation to pass. Check that
+   both macOS partitions and the full-validation gate succeeded for that commit.
+3. Recheck `main` before opening the PR. If it advanced, repeat the validation
+   for the new base. Investigate a failed run before preparing the release.
+
+The additional full run costs about 55 hosted macOS runner minutes per release
+based on scheduled run 41835167531, with a 120-minute maximum from the two job
+timeouts. A matching green nightly avoids that additional run. This is an owner
+checklist: the release broker opens the PR outside this repository, so the
+preparation workflow cannot enforce the check at PR creation. The release queue
+still validates its combined candidate independently.
+
 Version preparation makes a reviewed version-bump PR. The authorized release
 broker owns stable `vMAJOR.MINOR.PATCH` tags and release publication; maintainers
 must not tag or publish from an ordinary delivery session.

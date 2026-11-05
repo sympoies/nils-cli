@@ -5,11 +5,14 @@
 
 - Documented the existing scheduled macOS regression path and its daily runner
   budget.
+- Added an exact-base full-validation checklist before opening a release PR.
 
 ### Why / context
 
 - The existing nightly full validation already runs both partitions and tracks
   failures without adding per-merge runner cost.
+- Same-day releases can precede the next nightly; checking the release base
+  catches those regressions before the release queue.
 
 ### Evidence
 
