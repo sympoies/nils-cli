@@ -1,13 +1,15 @@
 use super::*;
 use pretty_assertions::{assert_eq, assert_ne};
 
+fn run(dir: &Path, args: &[&str]) -> CmdOutput {
+    run_with_env(dir, args, &[("AGENT_SESSION_NOTICE_WRITERS", "1")])
+}
+
 #[test]
 fn message_reminder_claims_each_live_unread_generation_once() {
     // DSH sessions have no serve prompt route; their policy hook claims the
     // fixed reminder through this command at a safe model-step boundary
     // (sympoies/nils-cli#2011).
-    let lock = nils_test_support::GlobalStateLock::new();
-    let _writers = nils_test_support::EnvGuard::set(&lock, "AGENT_SESSION_NOTICE_WRITERS", "1");
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");
     fs::create_dir(&state_dir).expect("state");
@@ -185,8 +187,6 @@ fn message_reminder_claims_each_live_unread_generation_once() {
 
 #[test]
 fn message_reminder_gives_up_under_lock_contention_without_claiming() {
-    let lock = nils_test_support::GlobalStateLock::new();
-    let _writers = nils_test_support::EnvGuard::set(&lock, "AGENT_SESSION_NOTICE_WRITERS", "1");
     // The hook that runs `message reminder` has a 5 s child deadline. The
     // claim must finish well inside it or give up unclaimed, so a reminder is
     // never persisted as delivered by a child the hook already abandoned.
