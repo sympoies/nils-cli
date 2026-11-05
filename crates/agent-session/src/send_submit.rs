@@ -20,12 +20,12 @@ pub(crate) use composer::cleanup::{
     input as cleanup_composer_input, matched_layout as wrapped_composer_layout,
     prefix_end as cleanup_prefix_end,
 };
-pub(crate) use composer::command_ui_observed;
 pub(crate) use composer::placeholder::{claude_paste_placeholder, has_claude_paste_placeholder};
 pub(crate) use composer::{
     Unobserved, composer_holds, direct_composer_observation, exact_composer_input,
     known_multiline_cursor_holds, known_multiline_input,
 };
+pub(crate) use composer::{codex_notice_cursor_path, command_ui_observed};
 
 /// Leading non-whitespace characters used to find the text again. Short enough
 /// to stay ahead of any provider rewriting further into a long text, long enough

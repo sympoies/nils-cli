@@ -73,7 +73,7 @@ def print_cursor():
         prefix = text[:cursor]
         logical_rows = prefix.split('\n')
         active_row = logical_rows[-1]
-        x, y = 2 + cell_width(active_row), len(logical_rows)
+        x, y = 2 + cell_width(active_row), len(logical_rows) - (1 if provider == 'codex' else 0)
         if (root / 'wrap-80').exists() and cell_width(active_row) > 78:
             chunks = [active_row[i:i + 78] for i in range(0, len(active_row), 78)]
             if (root / 'word-wrap').exists(): chunks = textwrap.wrap(active_row, width=78, drop_whitespace=False)
@@ -190,13 +190,13 @@ elif command == 'paste-buffer':
 elif command == 'display-message':
     print_cursor()
 elif command == 'send-keys' and args[-2:] == ['Right', 'Left']:
-    cursor = int((root / 'cursor').read_text())
+    cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len((root / 'composer').read_text())
     count = int(args[args.index('-N') + 1])
     text = (root / 'composer').read_text()
     length = 1 + len(text) - len((root / 'collapsed-label').read_text()) if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()) else len(text)
     (root / 'cursor').write_text(str(max(0, min(length, cursor + count) - count)))
 elif command == 'send-keys' and args[-1] == 'Right':
-    cursor = int((root / 'cursor').read_text())
+    cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len((root / 'composer').read_text())
     count = int(args[args.index('-N') + 1])
     text = (root / 'composer').read_text()
     length = 1 + len(text) - len((root / 'collapsed-label').read_text()) if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()) else len(text)
@@ -216,6 +216,10 @@ elif command == 'send-keys' and args[-1] == 'Right':
         with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text())
         (root / 'captured-layout').write_text((root / 'right-layout').read_text())
         (root / 'right-draft-injected').touch()
+elif command == 'send-keys' and args[-1] == 'Left':
+    cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len((root / 'composer').read_text())
+    count = int(args[args.index('-N') + 1])
+    (root / 'cursor').write_text(str(max(0, cursor - count)))
 elif command == 'send-keys' and args[-1] == 'C-a':
     (root / 'cursor').write_text('0')
     if (root / 'draft-on-clear-home').exists() and (root / 'entered').exists(): (root / 'composer').write_text('replacement draft')
@@ -352,6 +356,9 @@ elif command == 'capture-pane':
             print(top + '\n❯\u00a0' + pad(shown) + '\n' + rows + '────────────────────────────\n  ' + footer)
     else:
         shown = occupied + padding if text else ('\x1b[2mAsk Codex to do anything\x1b[22m' if '-e' in args else 'Ask Codex to do anything')
+        if (root / 'notice-mode').exists() and text:
+            logical_rows = shown.split('\n')
+            shown = logical_rows[0] + ''.join('\n' + ('  ' + row if row.strip(' ') else ' ') for row in logical_rows[1:])
         print('› ' + shown + '\n' + rows + '\n  ' + footer)
 "#;
         // The model is a Python process per call; its shell fast path answers

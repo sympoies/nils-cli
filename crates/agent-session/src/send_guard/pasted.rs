@@ -41,6 +41,11 @@ impl Admission<'_> {
             && let Some(input) = pasted
                 .and_then(|text| send_submit::known_multiline_input(&self.record.agent, pane, text))
         {
+            if self.record.agent == "codex"
+                && pasted.is_some_and(|text| send_submit::composer_holds("codex", &input, text))
+            {
+                return self.codex_notice_input(pasted?, stage);
+            }
             return Some(input);
         }
         if let Some(input) = send_submit::exact_composer_input(&self.record.agent, pane) {

@@ -17,6 +17,7 @@ const POST_PASTE_OBSERVATION_RETRY_WINDOW: Duration = Duration::from_millis(500)
 const POST_PASTE_OBSERVATION_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 
 mod clear;
+mod codex_notice;
 mod composer;
 pub(crate) mod drafts;
 pub(crate) mod response;

@@ -4,6 +4,8 @@ use super::{
 };
 use unicode_width::UnicodeWidthChar;
 
+mod codex_notice;
+pub(crate) use codex_notice::codex_notice_cursor_path;
 mod command_ui;
 pub(super) mod placeholder;
 pub(crate) use command_ui::observed as command_ui_observed;
@@ -16,6 +18,8 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
 
 /// Match a known multiline notice only in a logical capture where tmux has
 /// joined soft-wrapped rows. Unknown drafts are never inferred from a prefix.
+/// Codex blank rows are candidates only: the guard must also prove their
+/// logical cursor path before treating them as owned input.
 pub(crate) fn known_multiline_input(agent: &str, pane: &str, expected: &str) -> Option<String> {
     crate::notice::parse_notice(expected)?;
     let visual = expected.replace("\r\n", "\n");
@@ -74,6 +78,16 @@ pub(crate) fn known_multiline_input(agent: &str, pane: &str, expected: &str) -> 
     let mut logical_rows = Vec::with_capacity(observed_rows.len());
     for (index, observed) in observed_rows.iter().enumerate() {
         let wanted = expected_rows.get(index).copied();
+        if agent == "codex"
+            && index > 0
+            && observed.chars().all(|ch| ch == ' ')
+            && wanted.is_some_and(|row| row.chars().all(|ch| ch == ' '))
+        {
+            // Codex 0.162.1 leaves a layout cell on blank rows, including
+            // whitespace-only drafts. Only cursor checkpoints prove the bytes.
+            logical_rows.push(wanted?.to_owned());
+            continue;
+        }
         if index > 0 && observed.is_empty() {
             logical_rows.push(String::new());
             continue;
