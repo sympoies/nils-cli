@@ -13,13 +13,13 @@ impl HistoryCatalog {
         let Some(id) = query.map(str::trim) else {
             return Ok(None);
         };
-        if provider.is_some_and(|provider| provider != "claude")
-            || uuid::Uuid::parse_str(id).is_err()
-            || id.len() != 36
-        {
+        if provider.is_some_and(|provider| provider != "claude") || id.len() != 36 {
             return Ok(None);
         }
-        let deadline = Instant::now() + SCAN_MAX_DURATION;
+        let Ok(id) = uuid::Uuid::parse_str(id) else {
+            return Ok(None);
+        };
+        let id = id.hyphenated().to_string();
         let mut sessions = Vec::new();
         let mut seen = HashSet::new();
         let mut truncated = false;
@@ -33,10 +33,6 @@ impl HistoryCatalog {
                 continue;
             };
             for project in projects.flatten() {
-                if Instant::now() >= deadline {
-                    truncated = true;
-                    break;
-                }
                 if !project.file_type().is_ok_and(|kind| kind.is_dir()) {
                     continue;
                 }
@@ -48,13 +44,13 @@ impl HistoryCatalog {
                 if !seen.insert(physical) {
                     continue;
                 }
-                let Some(mut session) = inspect_history_file(
+                let deadline = Instant::now() + SCAN_MAX_DURATION;
+                let Some(mut session) = inspect_exact_history_file(
                     source,
                     &path,
                     deadline,
                     &mut stamps,
                     &mut truncated,
-                    false,
                 ) else {
                     continue;
                 };
@@ -77,9 +73,6 @@ impl HistoryCatalog {
                     session.starred_at = Some(star.starred_at);
                 }
                 sessions.push(session);
-            }
-            if truncated {
-                break;
             }
         }
         if sessions.is_empty() && provider.is_none() && !truncated {
@@ -211,4 +204,43 @@ pub(super) fn inspect_history_file(
             String::new()
         },
     })
+}
+
+fn inspect_exact_history_file(
+    source: &HistorySource,
+    path: &Path,
+    deadline: Instant,
+    stamps: &mut IncrementalCatalogStampCache,
+    truncated: &mut bool,
+) -> Option<HistorySession> {
+    let session = inspect_history_file(source, path, deadline, stamps, truncated, false);
+    if session.is_none() && Instant::now() >= deadline {
+        *truncated = true;
+    }
+    session
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::*;
+
+    #[test]
+    fn expired_inspection_reports_truncation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = HistorySource {
+            provider: "claude".into(),
+            agent_profile: None,
+            root: tmp.path().to_path_buf(),
+        };
+        let mut truncated = false;
+        let result = inspect_exact_history_file(
+            &source,
+            &tmp.path().join("missing.jsonl"),
+            Instant::now() - Duration::from_secs(1),
+            &mut IncrementalCatalogStampCache::default(),
+            &mut truncated,
+        );
+        assert!(result.is_none());
+        assert!(truncated);
+    }
 }

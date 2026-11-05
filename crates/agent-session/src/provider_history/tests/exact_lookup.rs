@@ -8,7 +8,7 @@ fn exact_claude_id_survives_catalog_limit() {
     fs::create_dir_all(&crowded).unwrap();
     fs::create_dir_all(&project).unwrap();
     for n in 0..=SCAN_MAX_ENTRIES {
-        fs::write(crowded.join(format!("{n}.txt")), "").unwrap();
+        fs::create_dir(crowded.join(format!("{n}"))).unwrap();
     }
     let id = "12345678-1234-1234-1234-123456789abc";
     fs::write(project.join(format!("{id}.jsonl")), format!("{{\"sessionId\":\"{id}\",\"cwd\":\"/work/repo\",\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"hello\"}}}}\n")).unwrap();
@@ -88,4 +88,61 @@ fn exact_claude_lookup_with_many_transcripts() {
             assert!(!page.truncated);
         }
     }
+}
+
+#[test]
+fn exact_claude_lookup_accepts_uppercase_with_provider_filter() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("projects/repo");
+    fs::create_dir_all(&project).unwrap();
+    let id = "12345678-1234-1234-1234-123456789abc";
+    fs::write(
+        project.join(format!("{id}.jsonl")),
+        format!("{{\"sessionId\":\"{id}\",\"cwd\":\"/work/repo\"}}\n"),
+    )
+    .unwrap();
+    let catalog = HistoryCatalog::new(
+        vec![HistorySource {
+            provider: "claude".into(),
+            agent_profile: None,
+            root: tmp.path().join("projects"),
+        }],
+        tmp.path().join("archives"),
+        tmp.path().join("stars"),
+    );
+    let page = catalog
+        .list("test", Some(&id.to_uppercase()), Some("claude"), None, 50)
+        .unwrap();
+    assert_eq!(page.sessions.len(), 1);
+}
+
+#[test]
+fn exact_claude_list_rejects_symlinked_project_and_transcript() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("projects");
+    let outside = tmp.path().join("outside");
+    fs::create_dir_all(root.join("real")).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    let id = "12345678-1234-1234-1234-123456789abc";
+    let target = outside.join(format!("{id}.jsonl"));
+    fs::write(
+        &target,
+        format!("{{\"sessionId\":\"{id}\",\"cwd\":\"/work\"}}\n"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&target, root.join("real").join(format!("{id}.jsonl"))).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("linked")).unwrap();
+    let catalog = HistoryCatalog::new(
+        vec![HistorySource {
+            provider: "claude".into(),
+            agent_profile: None,
+            root,
+        }],
+        tmp.path().join("archives"),
+        tmp.path().join("stars"),
+    );
+    let page = catalog
+        .list("test", Some(id), Some("claude"), None, 50)
+        .unwrap();
+    assert!(page.sessions.is_empty());
 }
