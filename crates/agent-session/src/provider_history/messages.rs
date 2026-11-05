@@ -38,11 +38,21 @@ impl HistoryCatalog {
         direction: HistoryMessageDirection,
         include_parts: bool,
     ) -> Result<HistoryMessagesPage, HistoryError> {
-        let snapshot = self.snapshot();
-        let session = snapshot
-            .sessions
-            .iter()
-            .find(|session| session.id == history_id)
+        let direct = self.direct_session(history_id);
+        let snapshot = if direct.is_none() {
+            Some(self.snapshot())
+        } else {
+            None
+        };
+        let session = direct
+            .as_ref()
+            .or_else(|| {
+                snapshot
+                    .as_ref()?
+                    .sessions
+                    .iter()
+                    .find(|session| session.id == history_id)
+            })
             .ok_or(HistoryError::NotFound)?;
         if session.provider == "dsh" {
             let source = self
