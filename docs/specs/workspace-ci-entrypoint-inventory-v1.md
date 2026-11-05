@@ -44,11 +44,12 @@ out of scope for this governance inventory; flag it as a follow-up.
 | --- | --- | --- | --- | --- |
 | `test` | full Linux checks/doctests | canonical full checks entrypoint | keep | 50 minutes, nextest; caller event SHA, full audit stack. |
 | `test_containment` | Linux cgroup canary | workflow-local test command and systemd setup | keep | 25 minutes, required by final full gate. |
+| `isolation_guard` | poisoned-environment test isolation | workflow-local guard command | keep | 25 minutes; runs on nightly and manual validation, not release-candidate validation. |
 | `cargo_deny` | dependency policy | `scripts/ci/cargo-deny-audit.sh` | keep | 15 minutes, required by final full gate. |
 | `test_macos_partition` | instrumented workspace tests, 2 nextest partitions | full checks entrypoint, llvm-cov, `NILS_CLI_NEXTEST_PARTITION` | keep | 60 minutes each; tests only, no audits, fmt, clippy or doctests (Linux `test` and `macos_clippy` run them on the same commit). Uploads partition LCOV and JUnit. |
 | `test_macos` | merge partition LCOV, enforce floor | `scripts/ci/merge-lcov.py` | keep | 15 minutes, ubuntu; 85% workspace floor on merged line data. LCOV artifact retained; HTML report only for nightly and manual runs. |
 | `coverage` | LCOV and summary | `scripts/ci/coverage-summary.sh` | keep | 10 minutes, requires nonempty merged macOS report. |
-| `gate` | exact-commit all-lane guard | `.github/scripts/full-validation-gate.cjs` | keep | 5 minutes, `always()` requires success from every lane; no skipped/cancelled/missing result admits publication. |
+| `gate` | exact-commit all-lane guard | `.github/scripts/full-validation-gate.cjs` | keep | 5 minutes, `always()` requires success from every required lane. It requires `isolation_guard` only when enabled; a skipped, cancelled, or missing required lane fails. |
 
 ### `.github/workflows/release.yml`
 
@@ -110,7 +111,7 @@ records the keep/delete decision plus the active caller evidence.
 | `scripts/ci/completion-freshness-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step |
 | `scripts/ci/completion-flag-parity-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step |
 | `scripts/ci/coverage-badge.sh` | keep | `.github/workflows/ci.yml` `coverage_badge` job |
-| `scripts/ci/coverage-summary.sh` | keep | `.github/workflows/ci.yml` `coverage` job + `docs/runbooks/workspace-maintenance-reference.md` coverage flow |
+| `scripts/ci/coverage-summary.sh` | keep | `.github/workflows/full-validation.yml` `coverage` job + `docs/runbooks/workspace-maintenance-reference.md` coverage flow |
 | `scripts/ci/crate-naming-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step |
 | `scripts/ci/detect-docs-only.sh` | keep | `.github/workflows/ci.yml` `changes` job + `scripts/ci/tests/detect-docs-only.test.sh` |
 | `scripts/ci/detect-release-only.sh` | keep | exact-base policy loaded by `.github/workflows/ci.yml` + `scripts/ci/release-only-checks.sh` + `scripts/ci/tests/detect-release-only.test.sh` |
