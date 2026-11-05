@@ -92,19 +92,45 @@ impl HistoryCatalog {
                     .insert(session.id.clone(), session.clone());
             }
         }
+        let exact_ids: HashSet<_> = sessions.iter().map(|session| session.id.clone()).collect();
+        let snapshot = self.snapshot();
+        sessions.extend(
+            snapshot
+                .sessions
+                .iter()
+                .filter(|session| !exact_ids.contains(&session.id))
+                .cloned(),
+        );
         apply_title_overrides(&mut sessions, titles);
-        let mut page = paginate_snapshot(
-            CatalogSnapshot {
-                sessions,
-                incremental_segments: BTreeMap::new(),
-                truncated,
-            },
-            machine,
-            query,
-            provider,
-            cursor,
-            limit,
-        )?;
+        sessions.retain(|session| {
+            provider.is_none_or(|value| value == session.provider)
+                && matches_metadata(session, machine, query)
+        });
+        sessions.sort_by(|left, right| {
+            exact_ids
+                .contains(&right.id)
+                .cmp(&exact_ids.contains(&left.id))
+                .then_with(|| compare_list_keys(&list_key(left), &list_key(right)))
+        });
+        if let Some(cursor) = cursor.map(parse_list_cursor).transpose()? {
+            let cursor_is_exact = exact_ids.contains(&cursor.id);
+            sessions.retain(|session| {
+                let is_exact = exact_ids.contains(&session.id);
+                (cursor_is_exact && !is_exact)
+                    || (cursor_is_exact == is_exact && session_is_after_cursor(session, &cursor))
+            });
+        }
+        let limit = limit.clamp(1, 100);
+        let has_more = sessions.len() > limit;
+        sessions.truncate(limit);
+        let next_cursor = has_more
+            .then(|| sessions.last().map(encode_list_cursor))
+            .flatten();
+        let mut page = HistoryPage {
+            sessions,
+            next_cursor,
+            truncated: snapshot.truncated,
+        };
         enrich_latest_prompt_previews(&mut page.sessions, &mut HashMap::new());
         Ok(Some(page))
     }

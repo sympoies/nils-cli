@@ -32,7 +32,7 @@ fn exact_claude_id_survives_catalog_limit() {
     let page = catalog.list("test", Some(id), None, None, 50).unwrap();
     assert_eq!(page.sessions.len(), 1);
     assert_eq!(page.sessions[0].provider_session_id, id);
-    assert!(!page.truncated);
+    assert!(page.truncated);
     let messages = catalog
         .messages(
             &page.sessions[0].id,
@@ -85,7 +85,6 @@ fn exact_claude_lookup_with_many_transcripts() {
                 .unwrap();
             eprintln!("{} transcripts: {:?}", n + 2, start.elapsed());
             assert_eq!(page.sessions.len(), 1);
-            assert!(!page.truncated);
         }
     }
 }
@@ -145,4 +144,46 @@ fn exact_claude_list_rejects_symlinked_project_and_transcript() {
         .list("test", Some(id), Some("claude"), None, 50)
         .unwrap();
     assert!(page.sessions.is_empty());
+}
+
+#[test]
+fn full_id_search_includes_mentions_after_exact_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("projects/repo");
+    fs::create_dir_all(&project).unwrap();
+    let id = "12345678-1234-1234-1234-123456789abc";
+    let mention = "87654321-4321-4321-4321-cba987654321";
+    for (session, prompt) in [(id, "hello".to_string()), (mention, format!("see {id}"))] {
+        fs::write(project.join(format!("{session}.jsonl")), format!("{{\"sessionId\":\"{session}\",\"cwd\":\"/work/repo\",\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"{prompt}\"}}}}\n")).unwrap();
+    }
+    write_star(
+        &tmp.path().join("stars"),
+        &stable_history_id("claude", None, mention),
+        "2026-01-01T00:00:00Z",
+    )
+    .unwrap();
+    let catalog = HistoryCatalog::new(
+        vec![HistorySource {
+            provider: "claude".into(),
+            agent_profile: None,
+            root: tmp.path().join("projects"),
+        }],
+        tmp.path().join("archives"),
+        tmp.path().join("stars"),
+    );
+    let page = catalog.list("test", Some(id), None, None, 50).unwrap();
+    let ids: Vec<_> = page
+        .sessions
+        .iter()
+        .map(|s| s.provider_session_id.as_str())
+        .collect();
+    assert_eq!(ids, vec![id, mention]);
+    assert!(!page.truncated);
+    let first = catalog.list("test", Some(id), None, None, 1).unwrap();
+    assert_eq!(first.sessions[0].provider_session_id, id);
+    let second = catalog
+        .list("test", Some(id), None, first.next_cursor.as_deref(), 1)
+        .unwrap();
+    assert_eq!(second.sessions[0].provider_session_id, mention);
+    assert!(second.next_cursor.is_none());
 }
