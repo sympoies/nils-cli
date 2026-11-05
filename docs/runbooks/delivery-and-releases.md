@@ -164,12 +164,14 @@ publishing a conflicting release. Never bypass a failed validation gate.
 | Release invocation authorization | 35 minutes |
 
 A release queue entry runs the Linux and the two macOS partition jobs in
-parallel before the required `test` job. Before the split, the single macOS job
-took about 60 minutes and set the entry's length. Each partition is expected to
-take about 31 minutes (setup 1.7, instrumented build 5.4, half of the 41.6
-minute test run, no repeated audits), so the Linux `test` job (about 39
-minutes) is the critical path and an entry is expected to take about 43 minutes.
-These expectations are unmeasured until the next release group runs.
+parallel before the required `test` job. In the [v1.40.8 version PR merge-group
+run](https://github.com/sympoies/nils-cli/actions/runs/41797597406), the entry
+took 31.4 minutes end to end. The Linux full-validation `test` job was the
+critical path at 28.5 minutes; the macOS partitions took 26.1 and 17.7 minutes,
+and the required `test` job added about 2 minutes. The Linux job's 50-minute
+timeout left about 21.5 minutes of margin; the release PR's 60-minute check
+wait left about 28.6 minutes. Before the split, the single macOS job took
+about 60 minutes and set the entry's length.
 
 The nextest CI profile terminates an individual test after its configured
 10-minute slow-test bound; job limits also catch hung builds or tool installs.
