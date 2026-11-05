@@ -48,12 +48,6 @@ pub(crate) fn append_review_state_payload<R: BackendRunner>(
         ));
     }
     if let review_state::ReviewStatePayload::ReviewHandoff { handoff } = &payload {
-        super::super::pr_review_handoff::ensure_handoff_append(
-            &before.chain,
-            handoff,
-            ctx,
-            policy_remote.unwrap_or("origin"),
-        )?;
         // Assignment and recovery bind a new interval to the provider scope;
         // surrender deliberately retains the old scope for recovery.
         if !handoff.surrendered {
@@ -77,6 +71,14 @@ pub(crate) fn append_review_state_payload<R: BackendRunner>(
                 ));
             }
         }
+        // Remote scope reads can outlive the supervisor's runtime incarnation.
+        // Check ownership after them, immediately before constructing the append.
+        super::super::pr_review_handoff::ensure_handoff_append(
+            &before.chain,
+            handoff,
+            ctx,
+            policy_remote.unwrap_or("origin"),
+        )?;
     } else {
         super::super::pr_review_handoff::ensure_payload_writer(&before.chain, &payload)?;
     }

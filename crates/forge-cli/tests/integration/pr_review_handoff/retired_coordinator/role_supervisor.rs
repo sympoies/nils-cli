@@ -214,3 +214,89 @@ fi
             .contains("--method POST")
     );
 }
+
+#[test]
+fn supervisor_role_rechecks_incarnation_after_final_provider_scope() {
+    let seeded = records(retired_coordinator_handoff(), None);
+    let stub = broker(
+        coordinator_board(
+            writable_ledger(fixture(HEAD, &seeded, vec![]), &seeded),
+            "stopped",
+            "",
+        ),
+        binding("successor-session", Some("steward")),
+    );
+    let first = json!({"ok":true,"schema_version":"cli.agent-session.broker-identity.v1",
+        "data":binding("successor-session", Some("steward"))});
+    let mut replacement = binding("successor-session", Some("steward"));
+    replacement["session_incarnation"] = json!("replacement-runtime");
+    let second = json!({"ok":true,"schema_version":"cli.agent-session.broker-identity.v1",
+        "data":replacement});
+    let revoked = stub.tempdir.path().join("supervisor-revoked");
+    let identity_reads = stub.tempdir.path().join("identity-reads");
+    stub.write_stub(
+        "identity-broker",
+        &format!(
+            r#"#!/bin/sh
+printf 'identity\n' >> '{identity_reads}'
+if [ -e '{revoked}' ]; then
+cat <<'JSON'
+{second}
+JSON
+else
+cat <<'JSON'
+{first}
+JSON
+fi
+"#,
+            identity_reads = identity_reads.display(),
+            revoked = revoked.display()
+        ),
+    );
+    let inner = stub.tempdir.path().join("gh-before-revocation");
+    fs::rename(stub.tempdir.path().join("gh"), &inner).unwrap();
+    let base_read = stub.tempdir.path().join("base-first-read");
+    let script = format!(
+        r#"#!/bin/sh
+case "$1 $2" in
+  "api repos/acme/widgets/pulls/7")
+    if [ -e '{base_read}' ]; then
+      touch '{revoked}'
+    else
+      touch '{base_read}'
+    fi ;;
+esac
+exec '{inner}' "$@"
+"#,
+        base_read = base_read.display(),
+        revoked = revoked.display(),
+        inner = inner.display()
+    );
+    let stub = stub.gh_stub(&script);
+    let ledger_path = stub.tempdir.path().join("ledger.json");
+    let ledger_before = fs::read(&ledger_path).unwrap();
+    let out = recover(&stub, &seeded[0].record_digest, false);
+    assert!(
+        revoked.exists(),
+        "final provider read must rotate the runtime"
+    );
+    let ledger: Vec<String> =
+        serde_json::from_str(&fs::read_to_string(stub.tempdir.path().join("ledger.json")).unwrap())
+            .unwrap();
+    let posted = ledger.len() > seeded.len();
+    let identities = fs::read_to_string(identity_reads).unwrap().lines().count();
+    assert_eq!(
+        out.code, 65,
+        "posted={posted}, identity_reads={identities}, stdout={} stderr={}",
+        out.stdout, out.stderr
+    );
+    assert!(
+        !posted,
+        "a stale supervisor must not append after the final scope read"
+    );
+    assert_eq!(
+        fs::read(ledger_path).unwrap(),
+        ledger_before,
+        "refusal must leave the ledger unchanged"
+    );
+}

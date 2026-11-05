@@ -473,15 +473,6 @@ pub(crate) fn ensure_handoff_append(
                 &next.base_ref,
                 remote,
             )?;
-            if transfer.supervisor_digest.as_deref() != Some(actor.as_str())
-                || require_supervisor(&supervisors, &actor)? != transfer.supervisor_attestation
-                || evidence.stale_after_seconds != configured_stale_after.as_secs()
-            {
-                return Err(fail(
-                    "review_writer_conflict",
-                    "only a repository-configured handoff supervisor may take over",
-                ));
-            }
             let current = prove_coordinator_retired(
                 old,
                 Some(&evidence.machine_digest),
@@ -491,6 +482,16 @@ pub(crate) fn ensure_handoff_append(
                 return Err(fail(
                     "review_coordinator_unproven",
                     "retirement evidence changed before ledger append",
+                ));
+            }
+            // Authenticate last so lifecycle reads cannot outlive the binding.
+            if transfer.supervisor_digest.as_deref() != Some(actor.as_str())
+                || require_supervisor(&supervisors, &actor)? != transfer.supervisor_attestation
+                || evidence.stale_after_seconds != configured_stale_after.as_secs()
+            {
+                return Err(fail(
+                    "review_writer_conflict",
+                    "only a repository-configured handoff supervisor may take over",
                 ));
             }
             return Ok(());
