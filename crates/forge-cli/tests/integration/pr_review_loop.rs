@@ -948,3 +948,226 @@ fn designated_assignment_cannot_observe_without_explicit_handoff() {
             .contains("--method POST")
     );
 }
+
+#[test]
+fn ceiling_inspect_explains_the_supported_next_step_without_writing() {
+    use forge_cli::ops::review_state::{
+        ReviewFindingObservation, ReviewFindingStatus, ReviewStatePayload, ReviewStateRecord,
+        observe_review_loop, render_state_comment_body,
+    };
+    let rows = vec![ReviewFindingObservation {
+        fingerprint: "correctness:review-loop:ceiling".into(),
+        root_cause_fingerprint: None,
+        blocking: true,
+        status: ReviewFindingStatus::Open,
+        threads: vec![],
+    }];
+    let mut previous = None;
+    let mut records: Vec<ReviewStateRecord> = Vec::new();
+    for head in ["head-1", "head-2", "head-3"] {
+        let state = observe_review_loop(previous.as_ref(), head, &rows)
+            .unwrap()
+            .state;
+        let record = ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            head,
+            records.len() as u64,
+            records.last().map(|r| r.record_digest.clone()),
+            ReviewStatePayload::ReviewLoop {
+                state: state.clone(),
+            },
+        )
+        .unwrap();
+        previous = Some(state);
+        records.push(record);
+    }
+    let stub = StubEnv::new();
+    let bodies: Vec<_> = records
+        .iter()
+        .map(|record| render_state_comment_body(record, None).unwrap())
+        .collect();
+    let body = gh_stub_with_ledger(&stub, "head-3", &bodies);
+    let stub = stub.gh_stub(&body);
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "review-loop",
+            "inspect",
+            "7",
+        ],
+    );
+    assert_eq!(out.code, 0, "{} {}", out.stderr, out.stdout);
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["data"]["state"]["no_progress_rounds"], 2);
+    let proposal = forge_cli::ops::review_state::extension_proposal_digest(
+        &records.last().unwrap().record_digest,
+        "review_no_progress",
+        "max_no_progress_rounds",
+        1,
+    )
+    .unwrap();
+    assert_eq!(
+        envelope["data"]["ceiling_proposal"]["proposal_digest"],
+        proposal
+    );
+    assert_eq!(
+        envelope["data"]["ceiling_proposal"]["approval_marker"],
+        format!(
+            "<!-- forge-cli:review-loop-extension:v1 proposal={proposal} field=max_no_progress_rounds increment=1 -->"
+        )
+    );
+    assert_eq!(envelope["data"]["appended"], false);
+    let calls = fs::read_to_string(stub.tempdir.path().join("gh-args.log")).unwrap();
+    assert!(!calls.contains("--method POST"), "{calls}");
+}
+
+#[test]
+fn ceiling_extension_requires_fresh_exact_approval_and_preserves_history() {
+    use forge_cli::ops::review_state::{
+        self, ReviewFindingObservation, ReviewFindingStatus, ReviewStatePayload, ReviewStateRecord,
+    };
+    let rows = vec![ReviewFindingObservation {
+        fingerprint: "correctness:review-loop:ceiling".into(),
+        root_cause_fingerprint: None,
+        blocking: true,
+        status: ReviewFindingStatus::Open,
+        threads: vec![],
+    }];
+    for valid_approval in [false, true] {
+        let mut previous = None;
+        let mut records: Vec<ReviewStateRecord> = Vec::new();
+        for head in ["head-1", "head-2", "head-3"] {
+            let state = review_state::observe_review_loop(previous.as_ref(), head, &rows)
+                .unwrap()
+                .state;
+            let record = ReviewStateRecord::new(
+                "acme/widgets",
+                7,
+                head,
+                records.len() as u64,
+                records.last().map(|r| r.record_digest.clone()),
+                ReviewStatePayload::ReviewLoop {
+                    state: state.clone(),
+                },
+            )
+            .unwrap();
+            previous = Some(state);
+            records.push(record);
+        }
+        let tip = records.last().unwrap().record_digest.clone();
+        let proposal = review_state::extension_proposal_digest(
+            &tip,
+            "review_no_progress",
+            "max_no_progress_rounds",
+            1,
+        )
+        .unwrap();
+        let marker = format!(
+            "<!-- forge-cli:review-loop-extension:v1 proposal={proposal} field=max_no_progress_rounds increment=1 -->"
+        );
+        let mut extended = previous.unwrap();
+        extended.budget.max_no_progress_rounds += 1;
+        extended.extensions.push(review_state::ReviewLoopExtension {
+            proposal_digest: proposal.clone(),
+            approval_reference: "https://github.com/acme/widgets/pull/7#issuecomment-21".into(),
+            budget_field: "max_no_progress_rounds".into(),
+            increment: 1,
+        });
+        let extension = ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            "head-3",
+            3,
+            Some(tip.clone()),
+            ReviewStatePayload::ReviewLoop { state: extended },
+        )
+        .unwrap();
+        let page = |rows: &[ReviewStateRecord]| {
+            serde_json::json!({"data":{"viewer":{"login":"forge-bot"},"repository":{"pullRequest":{"comments":{"nodes":rows.iter().map(|r|serde_json::json!({"author":{"login":"forge-bot"},"authorAssociation":"OWNER","body":r.marker().unwrap(),"createdAt":"2026-07-20T12:00:01Z"})).collect::<Vec<_>>(),"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}).to_string()
+        };
+        let before = page(&records);
+        let mut after_records = records.clone();
+        after_records.push(extension);
+        let after = page(&after_records);
+        let approval = serde_json::json!({"html_url":"https://github.com/acme/widgets/pull/7#issuecomment-21","issue_url":"https://api.github.com/repos/acme/widgets/issues/7","user":{"login":"maintainer"},"author_association":if valid_approval { "MEMBER" } else { "NONE" },"created_at":"2026-07-20T12:00:02Z","body":marker}).to_string();
+        let stub = StubEnv::new();
+        let posts = stub.tempdir.path().join("posted");
+        let script = gh_stub_with_head(&stub, "head-3").replace("esac\necho \"stub: unscripted gh args: $*\" >&2", &format!(r#"  "api graphql")
+    if [ -f "{posts}" ]; then
+      cat <<'AFTER'
+{after}
+AFTER
+    else
+      cat <<'BEFORE'
+{before}
+BEFORE
+    fi
+    exit 0 ;;
+  "api repos/acme/widgets/issues/comments/21")
+    cat <<'APPROVAL'
+{approval}
+APPROVAL
+    exit 0 ;;
+esac
+case "$1" in
+  api) echo post >> "{posts}"; echo "https://github.com/acme/widgets/pull/7#issuecomment-22"; exit 0 ;;
+esac
+echo "stub: unscripted gh args: $*" >&2"#, posts=posts.display()));
+        let stub = stub.gh_stub(&script);
+        let out = run_forge_cli(
+            &stub,
+            &[
+                "--provider",
+                "github",
+                "--repo",
+                "acme/widgets",
+                "--format",
+                "json",
+                "pr",
+                "review-loop",
+                "extend",
+                "7",
+                "--expected-head",
+                "head-3",
+                "--expected-state",
+                &tip,
+                "--proposal-digest",
+                &proposal,
+                "--stop-code",
+                "review_no_progress",
+                "--budget-field",
+                "max_no_progress_rounds",
+                "--increment",
+                "1",
+                "--approval-comment",
+                "21",
+            ],
+        );
+        if valid_approval {
+            assert_eq!(out.code, 0, "{} {}", out.stderr, out.stdout);
+            let envelope = parse_envelope(&out.stdout);
+            assert_eq!(
+                envelope["data"]["state"]["budget"]["max_no_progress_rounds"],
+                3
+            );
+            assert_eq!(envelope["data"]["state"]["no_progress_rounds"], 2);
+            assert_eq!(envelope["data"]["generation"], 3);
+            assert_eq!(fs::read_to_string(posts).unwrap(), "post\n");
+        } else {
+            assert_ne!(out.code, 0);
+            assert_eq!(
+                parse_envelope(&out.stdout)["error"]["code"],
+                "review_extension_approval_invalid"
+            );
+            assert!(!posts.exists());
+        }
+    }
+}
