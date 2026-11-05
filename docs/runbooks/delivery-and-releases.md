@@ -23,6 +23,21 @@ on `main`, using [`full-validation.yml`](../../.github/workflows/full-validation
 Scheduled and manual full runs share one concurrency group; newer PR pushes
 cancel their superseded run, while merge-group runs remain independent.
 
+The daily full run is the automatic post-merge macOS regression check: both
+test partitions run on the scheduled `main` commit, and a failed partition
+fails full validation and opens or reopens the nightly tracker. The target is
+the next daily run after a merge, subject to GitHub schedule and runner delays;
+the schedule is not a hard deadline. Check the tracker and scheduled run when
+the expected run is missing or delayed.
+
+Budget 120 hosted macOS runner minutes per day for the scheduled partitions
+(two jobs, each limited to 60 minutes), excluding optional manual and release
+runs. The successful scheduled run 41835167531 used about 55 runner minutes
+across its two partitions. Running full partitions on every affected merge
+group would multiply that cost with queue traffic; manual PR dispatch alone
+would not provide automatic detection. The existing nightly path adds no
+runner jobs and covers every workspace crate.
+
 The planner loads accepted policy from the immutable base, binds the source
 head, combined candidate and tested tree, and records selected packages,
 fallback reasons and results in `merge-validation-linux`. Unavailable planning
