@@ -37,7 +37,7 @@ jobs:
       # with release.yml; release-workflow-contract.test.sh enforces it.
       matrix:
         include:
-          - runs_on: ubuntu-latest
+          - runs_on: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           - runs_on: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
