@@ -661,7 +661,14 @@ fn claude_notice_ledger_reserves_unfinished_pairs_and_refuses_partial_data() {
             &send_notice(&fixture, "synthetic\n"),
             "notice-native-unavailable",
         );
-        assert_eq!(error["error"]["details"]["reason"], "claim-unavailable");
+        assert_eq!(
+            error["error"]["details"]["reason"],
+            if partial {
+                "claim-unavailable"
+            } else {
+                "claim-ledger-full"
+            }
+        );
         assert_eq!(
             fs::read(&ledger).unwrap(),
             bytes.as_bytes(),

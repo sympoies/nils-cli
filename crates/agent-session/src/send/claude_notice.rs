@@ -156,7 +156,12 @@ pub(super) fn deliver(
                 admission.claim_key()
             })
             .map_err(|error| {
-                if error.code() == "notice-native-unavailable" {
+                if error.code() == "notice-native-unavailable"
+                    && error
+                        .details()
+                        .and_then(|details| details.get("reason"))
+                        .is_none()
+                {
                     refusal::unavailable("claim-unavailable")
                 } else {
                     error
