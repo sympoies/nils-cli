@@ -14178,8 +14178,8 @@ exit 0
     #[cfg(target_os = "linux")]
     struct TestTmuxServer {
         bin: PathBuf,
+        _socket_dir: nils_test_support::tempdir::ScopedTempDir,
     }
-
     #[cfg(target_os = "linux")]
     impl Drop for TestTmuxServer {
         fn drop(&mut self) {
@@ -14190,10 +14190,8 @@ exit 0
                 .status();
         }
     }
-
     #[cfg(target_os = "linux")]
     struct TestPidGuard(libc::pid_t);
-
     #[cfg(target_os = "linux")]
     impl Drop for TestPidGuard {
         fn drop(&mut self) {
@@ -14205,7 +14203,6 @@ exit 0
             }
         }
     }
-
     #[cfg(target_os = "linux")]
     #[test]
     fn process_session_descendant_helper() {
@@ -14517,7 +14514,7 @@ exit 0
             Some("delete-cgroup-detached-descendant"),
         );
         let record = load_session_record(&context, &id).unwrap();
-        let socket = format!("nils-delete-cgroup-{}", unsafe { libc::getpid() });
+        let (socket_dir, socket) = nils_test_support::short_socket_path("tmux.sock");
         let scope = format!("tmux-spawn-6302a262-c059-4ec9-9b93-{:012x}", unsafe {
             libc::getpid()
         });
@@ -14527,21 +14524,22 @@ exit 0
         fs::write(
             &wrapper,
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nif [ -f {} ] && {{ [ \"$1\" = has-session ] || [ \"$1\" = display-message ]; }}; then printf '%s\\n' \"can't find session: stopped\" >&2; exit 1; fi\nif [ \"$1\" = new-session ]; then exec {} --user --scope --quiet --collect --unit {} -- {} -f /dev/null -L {} \"$@\"; fi\nexec {} -f /dev/null -L {} \"$@\"\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nif [ -f {} ] && {{ [ \"$1\" = has-session ] || [ \"$1\" = display-message ]; }}; then printf '%s\\n' \"can't find session: stopped\" >&2; exit 1; fi\nif [ \"$1\" = new-session ]; then exec {} --user --scope --quiet --collect --unit {} -- {} -f /dev/null -S {} \"$@\"; fi\nexec {} -f /dev/null -S {} \"$@\"\n",
                 shell_words::quote(&super::display_path(&wrapper_calls)),
                 shell_words::quote(&super::display_path(&force_stopped)),
                 shell_words::quote(&super::display_path(&systemd_run)),
                 shell_words::quote(&scope),
                 shell_words::quote(&super::display_path(&tmux)),
-                shell_words::quote(&socket),
+                shell_words::quote(&super::display_path(&socket)),
                 shell_words::quote(&super::display_path(&tmux)),
-                shell_words::quote(&socket),
+                shell_words::quote(&super::display_path(&socket)),
             ),
         )
         .unwrap();
         fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
         let _tmux_server = TestTmuxServer {
             bin: wrapper.clone(),
+            _socket_dir: socket_dir,
         };
         let descendant_trigger_path = tmp.path().join("detached-descendant.trigger");
         let descendant_pid_path = tmp.path().join("detached-descendant.pid");
@@ -14893,6 +14891,8 @@ exit 0
             }
             thread::sleep(Duration::from_millis(10));
         }
+        drop(_tmux_server);
+        assert!(!socket.exists(), "isolated socket leaked");
     }
 
     #[cfg(target_os = "linux")]

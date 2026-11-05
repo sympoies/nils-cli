@@ -123,6 +123,7 @@ fn projected_provider_identifier(
 
 #[path = "tmux_fixture.rs"]
 mod tmux_fixture;
+use tmux_fixture::RealTmuxServer;
 pub(super) use tmux_fixture::fake_tmux;
 
 fn prewarm_fake_tmux(bin: &Path, log: &Path) -> std::process::Output {
@@ -11570,102 +11571,6 @@ while True:
             composer += char
     render()
 "#;
-
-/// A private tmux server (its own `-L` socket, no user config) for one test.
-struct RealTmuxServer {
-    wrapper: PathBuf,
-}
-
-impl RealTmuxServer {
-    fn start(dir: &Path) -> Option<Self> {
-        for tool in ["tmux", "python3"] {
-            let present = Command::new("sh")
-                .arg("-c")
-                .arg(format!("command -v {tool}"))
-                .stdout(Stdio::null())
-                .status()
-                .is_ok_and(|status| status.success());
-            if !present {
-                eprintln!("skipping real-tmux send test: {tool} is unavailable");
-                return None;
-            }
-        }
-        let wrapper = dir.join("real-tmux");
-        let socket = format!(
-            "nils-send-{}-{}",
-            std::process::id(),
-            dir.file_name()?.to_string_lossy()
-        );
-        write_executable(
-            &wrapper,
-            &format!("#!/bin/sh\nexec tmux -f /dev/null -L '{socket}' \"$@\"\n"),
-        );
-        // A sibling test forking while the script was open for writing makes
-        // exec fail with ETXTBSY until that child execs. Run it once, retrying,
-        // so neither this test nor agent-session hits that window later.
-        nils_test_support::cmd::retry_executable_file_busy(|| {
-            Command::new(&wrapper)
-                .arg("-V")
-                .stdout(Stdio::null())
-                .status()
-        })
-        .expect("run tmux wrapper");
-        Some(Self { wrapper })
-    }
-
-    fn launch(&self, dir: &Path, name: &str, layout: &str, behavior: &str) -> PathBuf {
-        let script = dir.join("fake-composer.py");
-        fs::write(&script, FAKE_COMPOSER_TUI).expect("write fake composer");
-        let log = dir.join(format!("{name}.submissions"));
-        let status = Command::new(&self.wrapper)
-            .args([
-                "new-session",
-                "-d",
-                "-s",
-                name,
-                "-x",
-                "100",
-                "-y",
-                "40",
-                "--",
-            ])
-            .arg("python3")
-            .arg(&script)
-            .args([layout, behavior])
-            .arg(&log)
-            .status()
-            .expect("start tmux session");
-        assert!(status.success(), "tmux new-session failed");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !self.pane(name).contains("100% left") && !self.pane(name).contains("\u{2500}") {
-            assert!(
-                Instant::now() < deadline,
-                "fake composer never drew: {}",
-                self.pane(name)
-            );
-            thread::sleep(Duration::from_millis(50));
-        }
-        log
-    }
-
-    fn pane(&self, name: &str) -> String {
-        let output = Command::new(&self.wrapper)
-            .args(["capture-pane", "-p", "-t", name])
-            .output()
-            .expect("capture pane");
-        String::from_utf8_lossy(&output.stdout).into_owned()
-    }
-}
-
-impl Drop for RealTmuxServer {
-    fn drop(&mut self) {
-        let _ = Command::new(&self.wrapper)
-            .arg("kill-server")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-}
 
 fn submissions(log: &Path) -> Vec<String> {
     fs::read_to_string(log)
