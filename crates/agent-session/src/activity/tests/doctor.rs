@@ -102,9 +102,10 @@ impl ClaudeRegistrationFixture {
             ),
             EnvGuard::set(
                 lock,
-                "AGENT_HOOK_BIN",
-                dispatcher.to_str().expect("agent-hook binary path"),
+                "AGENT_RUNTIME_TRUSTED_CLI_ROOT",
+                dispatcher.parent().unwrap().to_str().unwrap(),
             ),
+            EnvGuard::remove(lock, "AGENT_SESSION_BIN"),
         ];
         let code = agent_hook::run_with_args([
             "agent-hook",
@@ -161,7 +162,9 @@ fn setup_envelope() -> Value {
 }
 
 fn setup_stub(root: &std::path::Path, envelope: &Value, exit_code: i32) -> PathBuf {
-    let path = root.join(format!("agent-hook-setup-stub-{exit_code}"));
+    let directory = root.join(format!("agent-hook-setup-stub-{exit_code}"));
+    fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("agent-hook");
     let output = serde_json::to_string(envelope).expect("setup envelope JSON");
     fs::write(
         &path,
@@ -307,8 +310,8 @@ fn claude_setup_evidence_must_have_valid_schema_digests_groups_and_exit_status()
         let stub = setup_stub(root, &envelope, 0);
         let _binary = EnvGuard::set(
             &lock,
-            "AGENT_HOOK_BIN",
-            stub.to_str().expect("setup stub path"),
+            "AGENT_RUNTIME_TRUSTED_CLI_ROOT",
+            stub.parent().unwrap().to_str().unwrap(),
         );
         let error = agent_hook_claude_readiness(&fixture.settings_path())
             .err()
@@ -320,8 +323,8 @@ fn claude_setup_evidence_must_have_valid_schema_digests_groups_and_exit_status()
     let stub = setup_stub(root, &envelope, 7);
     let _binary = EnvGuard::set(
         &lock,
-        "AGENT_HOOK_BIN",
-        stub.to_str().expect("setup stub path"),
+        "AGENT_RUNTIME_TRUSTED_CLI_ROOT",
+        stub.parent().unwrap().to_str().unwrap(),
     );
     let error = agent_hook_claude_readiness(&fixture.settings_path())
         .err()
@@ -339,8 +342,8 @@ fn claude_setup_nonconverged_status_cannot_report_configured() {
     let stub = setup_stub(root, &envelope, 0);
     let _binary = EnvGuard::set(
         &lock,
-        "AGENT_HOOK_BIN",
-        stub.to_str().expect("setup stub path"),
+        "AGENT_RUNTIME_TRUSTED_CLI_ROOT",
+        stub.parent().unwrap().to_str().unwrap(),
     );
 
     let readiness = agent_hook_claude_readiness(&fixture.settings_path())

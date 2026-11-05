@@ -127,12 +127,20 @@ default directory under `HOME`; Codex uses `$HOME/.codex` and Claude writes
 
 For Codex, `config.toml` and compatibility `hooks.json` are one transaction.
 The managed `config.toml` representation also owns the authoritative
-`agent-session activity notify --agent codex` argv: a safe singular user
+selector-backed `agent-session activity notify --agent codex` argv: a safe singular user
 notifier is composed by direct argv, and remove restores it byte-for-byte.
 An exact Computer Use `turn-ended --previous-notify <JSON argv>` wrapper is
 treated as composed only when its bounded chain reaches that exact owned argv
 and the helper is the executable regular file at the fixed path below the
 active Codex config root, with no symlink in any relative path component.
+
+Ingress and notification entrypoints select the executable at execution time:
+an executable `AGENT_SESSION_BIN` selects its same-release companion for
+dispatch and fails closed if it is unavailable. Otherwise,
+`AGENT_RUNTIME_TRUSTED_CLI_ROOT` supplies ordered roots, or the standard managed
+roots are used. Default-root links must stay in their approved
+location or the corresponding Homebrew package. Provider configuration does
+not need to be rewritten when the selected runtime changes.
 
 Alternating Computer Use/agent-session wrapper growth is drift: preview does
 not authorize mutation, and an exact reviewed plan digest is required to

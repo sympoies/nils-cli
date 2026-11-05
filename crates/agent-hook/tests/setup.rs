@@ -240,7 +240,7 @@ fn codex_removal_preview_digest_is_fresh_and_restores_from_a_new_setup_preview()
     assert_eq!(restored.code, 0, "stderr={}", restored.stderr_text());
     let restored = fs::read_to_string(&config).expect("restored config");
     assert!(restored.contains("keep-user-hook"));
-    assert!(restored.contains("agent-hook dispatch --product codex"));
+    assert!(restored.contains("dispatch' '--product' 'codex'"));
 }
 
 #[test]
@@ -358,7 +358,7 @@ fn claude_removal_preview_digest_preserves_unrelated_hooks_and_restores() {
     assert_eq!(restored.code, 0, "stderr={}", restored.stderr_text());
     let restored = fs::read_to_string(&settings).expect("restored settings");
     assert!(restored.contains("keep-user-hook"));
-    assert!(restored.contains("agent-hook dispatch --product claude"));
+    assert!(restored.contains("dispatch' '--product' 'claude'"));
 }
 
 #[test]
@@ -410,9 +410,7 @@ statusMessage = "agent-runtime-kit: Admit managed session mutation"
         1
     );
     assert_eq!(
-        installed
-            .matches("agent-hook dispatch --product codex")
-            .count(),
+        installed.matches("dispatch' '--product' 'codex'").count(),
         2
     );
 
@@ -505,9 +503,7 @@ timeout = 7
     assert!(installed.contains("keep-user-hook"));
     assert!(!installed.contains("session-coordination-guard.py"));
     assert_eq!(
-        installed
-            .matches("agent-hook dispatch --product codex")
-            .count(),
+        installed.matches("dispatch' '--product' 'codex'").count(),
         1
     );
     assert!(installed.contains("timeout = 60"));
@@ -866,7 +862,7 @@ fn claude_setup_preserves_unrelated_hooks_and_migrates_grouped_compatibility_han
     let text = value.to_string();
     assert!(text.contains("keep-user-hook"));
     assert!(!text.contains("session-start-healthcheck.sh"));
-    assert!(text.contains("agent-hook dispatch --product claude"));
+    assert!(text.contains("dispatch' '--product' 'claude'"));
     assert!(text.contains("Write|Edit|NotebookEdit|MultiEdit|apply_patch"));
 
     let removed = fixture.run(
@@ -942,10 +938,7 @@ fn claude_setup_upgrades_the_exact_prior_owned_ingress_without_duplicates() {
     let value: serde_json::Value =
         serde_json::from_slice(&fs::read(&settings).expect("settings")).expect("JSON");
     let text = value.to_string();
-    assert_eq!(
-        text.matches("agent-hook dispatch --product claude").count(),
-        2
-    );
+    assert_eq!(text.matches("dispatch' '--product' 'claude'").count(), 2);
     assert_eq!(text.matches(r#""timeout":60"#).count(), 2);
     assert!(text.contains("keep-user-hook"));
 
@@ -989,10 +982,7 @@ fn codex_setup_preserves_comments_and_renders_session_start() {
     assert!(text.contains("# keep-comment"));
     assert!(text.contains("[[hooks.SessionStart]]"));
     assert!(text.contains("matcher = \"Write|Edit|NotebookEdit|MultiEdit|apply_patch\""));
-    assert_eq!(
-        text.matches("agent-hook dispatch --product codex").count(),
-        2
-    );
+    assert_eq!(text.matches("dispatch' '--product' 'codex'").count(), 2);
 
     let repeated = fixture.run(
         &["setup", "--product", "codex", "--apply", "--format", "json"],
@@ -1114,7 +1104,7 @@ trust_level = "trusted"
     );
     assert!(repaired.contains("[projects.\"/foreign/project\"]\ntrust_level = \"trusted\""));
     assert!(repaired.contains("command = \"keep-user-hook\""));
-    assert!(repaired.contains("agent-hook dispatch --product codex"));
+    assert!(repaired.contains("dispatch' '--product' 'codex'"));
 
     let repeated = fixture.run(
         &["setup", "--product", "codex", "--apply", "--format", "json"],
@@ -2145,12 +2135,7 @@ fn claude_setup_preserves_group_and_handler_metadata_as_unrelated() {
     assert!(first.contains("keep-group"));
     assert!(first.contains("keep-handler"));
     assert!(first.contains("session-start-healthcheck.sh"));
-    assert_eq!(
-        first
-            .matches("agent-hook dispatch --product claude")
-            .count(),
-        2
-    );
+    assert_eq!(first.matches("dispatch' '--product' 'claude'").count(), 2);
 
     let repeated = fixture.run(
         &[
@@ -2525,9 +2510,11 @@ fn codex_json_only_install_migrates_atomically_to_one_managed_representation() {
     assert!(json_text.contains("keep-user-hook"));
     assert!(!json_text.contains("agent-session activity hook"));
     let toml_text = fs::read_to_string(codex.join("config.toml")).expect("config toml");
-    assert!(toml_text.contains("agent-hook dispatch --product codex"));
-    let notify = support::codex_notify_argv().join("\", \"");
-    assert!(toml_text.contains(&format!("notify = [\"{notify}\"]")));
+    assert!(toml_text.contains("dispatch' '--product' 'codex'"));
+    assert_eq!(
+        read_codex_notify(&codex.join("config.toml")),
+        support::codex_notify_argv()
+    );
 
     write_runtime_handler(&codex.join("hooks"), 0o755);
     let doctor = fixture.run(&["doctor", "--product", "codex", "--format", "json"], None);
@@ -2693,7 +2680,15 @@ fn computer_use_wrapper(base: &[String], previous: &[String]) -> Vec<String> {
 }
 
 fn accumulated_computer_use_chain(base: &[String], pairs: usize) -> Vec<String> {
-    let owned = support::codex_notify_argv();
+    let owned = [
+        support::SESSION_BIN,
+        "activity",
+        "notify",
+        "--agent",
+        "codex",
+    ]
+    .map(str::to_string)
+    .to_vec();
     let mut chain = base.to_vec();
     for _ in 0..pairs {
         let mut composed = owned.clone();

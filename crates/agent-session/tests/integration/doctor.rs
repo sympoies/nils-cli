@@ -9,6 +9,18 @@ fn write_executable(path: &Path, body: &str) {
     fs::set_permissions(path, permissions).expect("chmod executable");
 }
 
+pub(super) fn owned_notify_toml() -> String {
+    let mut document = toml_edit::DocumentMut::new();
+    let mut array = toml_edit::Array::new();
+    array.extend(
+        nils_common::provider_entrypoint::argv(false, &["activity", "notify", "--agent", "codex"])
+            .iter()
+            .map(String::as_str),
+    );
+    document["notify"] = toml_edit::value(array);
+    document.to_string()
+}
+
 #[test]
 fn codex_activity_doctor_recognizes_audited_computer_use_owned_notify() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
@@ -22,7 +34,8 @@ fn codex_activity_doctor_recognizes_audited_computer_use_owned_notify() {
     fs::create_dir_all(helper.parent().expect("Computer Use helper parent"))
         .expect("Computer Use helper directory");
     write_executable(&helper, "#!/usr/bin/env sh\nexit 0\n");
-    let owned = ["agent-session", "activity", "notify", "--agent", "codex"];
+    let owned =
+        nils_common::provider_entrypoint::argv(false, &["activity", "notify", "--agent", "codex"]);
     let notify = [
         helper.to_string_lossy().into_owned(),
         "turn-ended".to_string(),
