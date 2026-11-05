@@ -1,3 +1,4 @@
+// Synthetic export rehearsal: this comment changes no behavior.
 use std::io::{self, Write};
 
 use clap::{CommandFactory, ValueEnum};
