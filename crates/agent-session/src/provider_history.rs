@@ -1,6 +1,8 @@
 #[cfg(test)]
 use history_images::normalize_message;
+mod exact_lookup;
 pub(crate) mod history_images;
+use exact_lookup::inspect_history_file;
 pub(crate) use history_images::HistoryMessage;
 use history_images::read_messages_incremental_from_reader;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -302,6 +304,7 @@ struct CatalogCache {
     refreshed_at: Option<Instant>,
     snapshot: Option<Arc<CatalogSnapshot>>,
     latest_prompt_previews: HashMap<PathBuf, LatestPromptCacheEntry>,
+    direct_sessions: HashMap<String, HistorySession>,
 }
 
 #[derive(Debug, Default)]
@@ -489,6 +492,11 @@ impl HistoryCatalog {
         limit: usize,
         managed_titles: &BTreeMap<String, String>,
     ) -> Result<HistoryPage, HistoryError> {
+        if let Some(page) =
+            self.exact_claude_page(machine, query, provider, cursor, limit, managed_titles)?
+        {
+            return Ok(page);
+        }
         let mut snapshot = (*self.snapshot()).clone();
         apply_title_overrides(&mut snapshot.sessions, managed_titles);
         let mut page = paginate_snapshot(snapshot, machine, query, provider, cursor, limit)?;
@@ -1109,9 +1117,14 @@ fn scan_catalog(
             if !seen_transcripts.insert(physical) {
                 continue;
             }
-            let Some(mut session) =
-                inspect_history_file(source, &path, deadline, &mut catalog_stamps, &mut truncated)
-            else {
+            let Some(mut session) = inspect_history_file(
+                source,
+                &path,
+                deadline,
+                &mut catalog_stamps,
+                &mut truncated,
+                true,
+            ) else {
                 continue;
             };
             let archive = archives.get(&session.id);
@@ -1540,9 +1553,14 @@ fn find_session(sources: &[HistorySource], history_id: &str) -> Option<HistorySe
                 truncated = true;
                 break;
             }
-            let Some(session) =
-                inspect_history_file(source, &path, deadline, &mut catalog_stamps, &mut truncated)
-            else {
+            let Some(session) = inspect_history_file(
+                source,
+                &path,
+                deadline,
+                &mut catalog_stamps,
+                &mut truncated,
+                true,
+            ) else {
                 continue;
             };
             if session.id == history_id {
@@ -1596,72 +1614,6 @@ fn collect_jsonl(
             output.push(entry.path());
         }
     }
-}
-
-fn inspect_history_file(
-    source: &HistorySource,
-    path: &Path,
-    deadline: Instant,
-    catalog_stamps: &mut IncrementalCatalogStampCache,
-    truncated: &mut bool,
-) -> Option<HistorySession> {
-    if Instant::now() >= deadline {
-        return None;
-    }
-    let metadata = fs::metadata(path).ok()?;
-    let updated_at = format_system_time(metadata.modified().ok()?);
-    let (provider_session_id, cwd, created_at, provider_version) = match source.provider.as_str() {
-        "codex" => {
-            let meta = nils_provider_resume::read_codex_resumable_session_meta(path)?;
-            (
-                meta.session_id,
-                meta.cwd,
-                format_system_time(meta.created_at),
-                history_images::provider_version(path, "codex"),
-            )
-        }
-        "claude" => {
-            let id = path.file_stem()?.to_str()?.to_string();
-            let cwd = nils_provider_resume::read_claude_session_cwd(path, &id)?;
-            (id, cwd, updated_at.clone(), None)
-        }
-        _ => return None,
-    };
-    let id = stable_history_id(
-        &source.provider,
-        source.agent_profile.as_deref(),
-        &provider_session_id,
-    );
-    let first_user_prompt_preview =
-        first_prompt(path, &source.provider, &provider_session_id, deadline);
-    Some(HistorySession {
-        archived_title_mode: Default::default(),
-        id,
-        provider: source.provider.clone(),
-        provider_version,
-        provider_session_id,
-        agent_profile: source.agent_profile.clone(),
-        title: None,
-        prompt_preview: first_user_prompt_preview.clone(),
-        first_user_prompt_preview,
-        last_user_prompt_preview: None,
-        repo_name: repo_name(&cwd),
-        cwd,
-        created_at,
-        updated_at,
-        archived_at: None,
-        starred_at: None,
-        resumable: true,
-        archived_session_id: None,
-        archived_title_state: None,
-        transcript_path: path.to_path_buf(),
-        incremental_catalog_stamp: incremental_catalog_stamp(
-            path,
-            catalog_stamps,
-            deadline,
-            truncated,
-        ),
-    })
 }
 
 fn first_prompt(
@@ -2589,6 +2541,8 @@ fn truncate_chars(value: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[path = "exact_lookup.rs"]
+    mod exact_lookup;
     #[path = "native_notice_paging.rs"]
     mod native_notice_paging;
     use super::*;
