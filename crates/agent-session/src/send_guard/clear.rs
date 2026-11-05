@@ -84,6 +84,9 @@ impl Admission<'_> {
     fn clear(&self, text: &str, observed_paste: bool, exact_draft: bool) -> Option<(String, bool)> {
         let target = format!("{}:0.0", self.record.tmux_session);
         let observe = |stage: &str| {
+            if self.record.agent == "codex" && self.args.notice_envelope {
+                return self.codex_notice_input(text, stage);
+            }
             let pane = capture_styled(self.tmux_bin, &target, self.timeout(stage).ok()?)?;
             send_submit::cleanup_composer_input(&self.record.agent, &pane, Some(text))
         };
@@ -254,13 +257,18 @@ impl Admission<'_> {
         }
         self.identity("cleanup").ok()?;
         // One repeated-key command keeps long pastes inside the cleanup budget.
+        let characters = if self.record.agent == "codex" && self.args.notice_envelope {
+            text.replace("\r\n", "\n").chars().count()
+        } else {
+            text.chars().count()
+        };
         let mut command = std::process::Command::new(self.tmux_bin);
         command.args([
             "send-keys",
             "-t",
             &target,
             "-N",
-            &text.chars().count().to_string(),
+            &characters.to_string(),
             "BSpace",
         ]);
         let timeout = self.timeout("cleanup").ok()?;

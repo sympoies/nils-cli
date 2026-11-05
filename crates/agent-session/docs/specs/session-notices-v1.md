@@ -118,7 +118,13 @@ authentication, blocked-state, durable key, receipt and unknown-outcome rules.
 ### Terminal delivery and queue mode
 
 Codex terminal sessions use the verified terminal composer path; the complete
-envelope must be observable before Enter. `--queue` waits while the target
+envelope must be observable before Enter. Codex's blank composer rows can
+hide typed spaces behind layout cells. Display matching supplies a candidate;
+bounded cursor observations must also prove its logical length and row
+boundaries before Enter or removal of an owned paste. An unproved candidate
+remains unobservable, and readable owner additions are preserved.
+
+`--queue` waits while the target
 reports busy and retries only a preclaim busy admission refusal. Other failures
 stop the request, including the unsupported Claude transport refusal once idle.
 The durable idempotency claim is made by the guarded send path when delivery

@@ -140,11 +140,14 @@ fn notice_terminal_delivers_the_envelope_through_guarded_input() {
     assert_eq!(submissions, [envelope]);
     let calls = fixture.calls();
     assert!(calls.iter().any(|call| call[0] == "paste-buffer"));
-    assert!(
+    assert_eq!(
         calls
             .iter()
-            .any(|call| call[0] == "send-keys" && call.last().is_some_and(|key| key == "Enter"))
+            .filter(|call| call[0] == "send-keys" && call.last().is_some_and(|key| key == "Enter"))
+            .count(),
+        1
     );
+    fixture.refused(&fixture.notice(&[]), "send-idempotency-key-used");
 }
 
 #[test]
@@ -402,3 +405,6 @@ fn notice_summary_contract_reaches_native_transport_with_exact_bytes() {
         );
     });
 }
+
+#[path = "codex_notice.rs"]
+mod codex_notice;
