@@ -1,83 +1,21 @@
-//! One-row reminders and compatibility with prior transcript prefixes.
-use super::{fixed_prompt, is_mailbox_reminder_prompt};
-use pretty_assertions::assert_eq;
+//! Retired reminders are ordinary stored input.
+use super::is_mailbox_reminder_prompt;
 
 #[test]
-fn mailbox_reminder_fits_one_row_for_worst_case_date_and_session() {
-    crate::command_identity::with_name("agent-session", || {
-        let session = "s".repeat(256);
-        for queued_at in [
-            0,
-            1_790_000_000,
-            jiff::Timestamp::MAX.as_second() - 1,
-            i64::MAX,
-        ] {
-            let prompt = fixed_prompt(&session, queued_at);
-            assert!(
-                prompt.is_ascii(),
-                "visible width must not depend on Unicode"
-            );
-            for provider in ["claude", "codex"] {
-                let capture = narrow_composer(provider, &prompt, 51);
-                assert_eq!(
-                    crate::send_submit::exact_composer_input(provider, &capture),
-                    Some(prompt.clone()),
-                    "{provider}: the fixed wake must remain exactly observable at 51 columns"
-                );
-            }
-            assert!(!prompt.contains(['\n', '\r']));
-            assert!(prompt.ends_with("agent-session message inbox"));
-            assert!(!prompt.contains(&session));
-        }
-    });
-}
-
-// Model visual wrapping without joining unknown draft rows.
-fn narrow_composer(provider: &str, prompt: &str, columns: usize) -> String {
-    let rows = prompt
-        .as_bytes()
-        .chunks(columns - 2)
-        .map(|row| std::str::from_utf8(row).unwrap())
-        .collect::<Vec<_>>()
-        .join("\n  ");
-    if provider == "claude" {
-        let rule = "─".repeat(columns);
-        format!("{rule}\n❯ {rows}\n{rule}\n  status\n")
-    } else {
-        format!("› {rows}\n\n  status\n")
-    }
-}
-
-#[test]
-fn dated_mailbox_wrap_remains_unobservable_to_exact_parser() {
-    let dated = "Mailbox: 2026-09-21T14:13:21Z; agent-session message inbox";
-    for provider in ["claude", "codex"] {
-        assert_eq!(
-            crate::send_submit::exact_composer_input(
-                provider,
-                &narrow_composer(provider, dated, 51)
-            ),
-            None,
-            "wrapped input must not authorize Enter"
-        );
-    }
-}
-
-#[test]
-fn mailbox_reminder_recognizes_new_and_legacy_transcript_prefixes() {
+fn mailbox_reminder_rejects_retired_transcript_prefixes() {
     for prompt in [
         "Mailbox: 2026-09-21T14:13:21Z; agent-session message inbox",
         "Mailbox: agent-session message inbox",
         "Coordination mailbox has unread messages (newest queued 2026-09-21T14:13:21Z); run old command",
         "Coordination mailbox has unread messages; run old command",
     ] {
-        assert!(is_mailbox_reminder_prompt(prompt), "{prompt}");
+        assert!(!is_mailbox_reminder_prompt(prompt), "{prompt}");
     }
     assert!(!is_mailbox_reminder_prompt("Explain mailbox behavior"));
 }
 
 #[test]
-fn mailbox_reminder_history_hides_new_and_legacy_typed_and_queued_rows() {
+fn mailbox_reminder_history_preserves_retired_typed_and_queued_rows() {
     for prompt in [
         "Mailbox: 2026-09-21T14:13:21Z; agent-session message inbox",
         "Mailbox: agent-session message inbox",
@@ -94,7 +32,7 @@ fn mailbox_reminder_history_hides_new_and_legacy_typed_and_queued_rows() {
                     "fixture",
                     &row.to_string()
                 )
-                .is_none()
+                .is_some()
             );
         }
     }

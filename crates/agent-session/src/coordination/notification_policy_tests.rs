@@ -600,7 +600,7 @@ fn routine_coalescing_is_opt_in_and_urgent_mail_bypasses_the_window() {
     assert_eq!(
         prompt,
         format!(
-            "Mailbox: 3 unread; {} message inbox",
+            "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: 3 unread; {} message inbox",
             nils_common::session_binary::NAME
         )
     );
@@ -609,10 +609,9 @@ fn routine_coalescing_is_opt_in_and_urgent_mail_bypasses_the_window() {
 
 #[test]
 fn coalescing_window_survives_restart_and_hook_claim_until_ten_minutes() {
-    // This asserts the plain route, so the notice gate must be off whatever a
-    // concurrent notice test has set.
+    // Hook claims use the current notice writer contract.
     let lock = GlobalStateLock::new();
-    let _gate = EnvGuard::remove(&lock, crate::notice::WRITERS_ENV);
+    let _gate = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let (_temp, context) = tests::fixture();
     write_atomic(&context.state_dir.join("coordination/notification-policy.json"), &serde_json::to_vec(&json!({
         "schema_version":"agent-session.notification-policy.v1", "recipients":[{"session_id":"recipient", "suppress_categories":[], "routine_interval_seconds":600}]
@@ -652,14 +651,14 @@ fn coalescing_window_survives_restart_and_hook_claim_until_ten_minutes() {
         at + 600,
     )
     .unwrap();
-    assert_eq!(
-        super::super::notification_prompt(&next),
-        // One report and one uncategorized message are unread.
-        format!(
-            "Mailbox: 2 unread; {} message inbox",
-            nils_common::session_binary::NAME
-        )
+    let prompt = super::super::notification_prompt(&next);
+    let notice = crate::notice::parse_notice(&prompt).unwrap();
+    let summary = format!(
+        "Mailbox: 1 report, 1 uncategorized; {} message inbox",
+        nils_common::session_binary::NAME
     );
+    assert_eq!(notice.metadata.kind(), "mailbox.wake");
+    assert_eq!(notice.body.lines().next(), Some(summary.as_str()));
 }
 
 #[test]

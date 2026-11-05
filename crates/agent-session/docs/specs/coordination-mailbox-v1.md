@@ -160,36 +160,25 @@ envelope with coalesced live unread counts spelled out with the inbox action,
 such as `Mailbox: 1 handoff, 2 report; agent-session message inbox`. The
 Claude module, Codex app-server and hook claim never type into the composer.
 Codex terminal types the multiline envelope through the guarded composer path,
-which joins wrapped rows. None of them is held to the one-row 51-column bound
-below.
+which joins wrapped rows. The multiline envelope uses the notice delivery guards.
 
 Controller and hook delivery share the same generation claim. Supported
 terminal recipients use guarded notice delivery; Codex retains its start/steer
-semantics. Only a known unsupported notice receiver or a disabled writer gate
-uses the existing plain reminder. An installed module whose readiness is
-missing or invalid defers without fallback. Failed or uncertain notice attempts
-remain consumed; absent history never authorizes replay. See
-[session notices](session-notices-v1.md) for the envelope and rollout contract.
+semantics. A disabled writer gate or unsupported notice route sends nothing.
+An installed module whose readiness is missing or invalid defers without
+fallback. Failed or uncertain notice attempts remain consumed; absent history
+never authorizes replay. See [session notices](session-notices-v1.md).
 
 The authenticated `message reminder` command reads the invoking hook's writer
-rollout environment. For Codex recipients, a hook without enabled notice writers
-returns `null` without claiming the generation. The controller retains delivery
-and evaluates its own writer gate; a stripped hook environment cannot select a
-plain prompt for a notice-capable receiver. Hook-only recipients retain their
-existing explicit plain reminder route when notice writers are disabled.
+environment. Every hook recipient gets `null` without a claim when writers are
+off. With writers enabled, hook-only recipients receive the current
+`mailbox.wake` envelope; `agent-hook` preserves that explicit gate and validates
+the companion schema, recipient and envelope. Hook-only wakes remain supported.
+A stripped hook environment cannot select another format or claim a generation.
 
-For unconfigured recipients on the plain fallback path, the body-free wake is always
-36 ASCII characters, fitting one exactly observable input row in a 51-column
-pane for Claude and Codex:
-
-```text
-Mailbox: agent-session message inbox
-```
-
-Generation and queue-time fences remain in durable receipts rather than wake
-text. An extra inbox check is harmless if the recipient already drained the
-mailbox; unread metadata is authoritative. Panes too narrow to observe even
-this prompt still defer without bypassing composer guards.
+Plain fixed, dated and count reminders are retired. Generation and queue-time
+fences remain in durable receipts. Unread metadata is authoritative, and mail
+remains readable through an explicit inbox read when no notice is sent.
 
 `message inbox` resolves an omitted `--session` from `AGENT_SESSION_ID` and still
 requires the matching recipient capability. An explicit `--session` takes
@@ -243,9 +232,9 @@ uses the existing [continuity contract](#same-session-resume-continuity).
 
 ### Recipient guidance
 
-The bounded plain wake stays unchanged at 51 columns: there is no room for a
-relation label. Read full guidance from `message inbox`. Both JSON and text
-inboxes include a common `guidance` header with the verification steps once.
+Mailbox notice bodies contain a bounded count summary and generic verification
+guidance. Read full guidance from `message inbox`. Both JSON and text inboxes
+include a common `guidance` header with the verification steps once.
 Each inbox row adds `sender_relation` and a `guidance` string containing only
 the dispatcher sentence for parent/ancestor, or an empty string for peers.
 Body-returning show/wait results include the relation and full guidance.
@@ -286,26 +275,18 @@ The [schema spec](coordination-schemas-v1.md#message) defines exact derivation.
 The inbox header also explains queue dates, unread filtering, authenticated
 session selection, cursor pagination and `message show` body reads.
 
-Transcript history recognizes only the exact current undated form or a
-canonical timestamp with the exact dated command suffix. Other human `Mailbox:`
-prompts remain visible. The prior `Coordination mailbox has unread messages`
-prefix remains compatible, including dated and undated prior forms.
+Transcript history recognizes only current notice envelopes
+([session notices](session-notices-v1.md)). The retired plain `Mailbox:` forms
+and the earlier `Coordination mailbox has unread messages` sentence are ordinary
+input rows.
 
-New durable attempt receipts retain the additive `attempted_prompt_format`
-value `mailbox-short.v2` for plain fixed reminders, `mailbox-counts.v1` for
-plain counts, or `mailbox-notice.v1` with the exact envelope bytes for notices.
-A notice attempt requires positive observation to resolve; absence leaves it
-parked. A known plain-format attempt uses its exact bytes for both
-submission and absence. Prior `mailbox-short.v1` attempts retain their original
-dated bytes (or undated bytes for invalid queue times); they are never compared
-against the new short form. For unversioned receipts, exact current or prior
-dated/undated bytes after the attempt boundary can confirm submission; their
-absence cannot prove an unknown format absent.
+New durable attempt receipts record `attempted_prompt_format`
+`mailbox-notice.v1` with the exact envelope bytes. A notice attempt requires
+positive observation to resolve; absence leaves it parked. A receipt in a retired
+or unknown format never resolves by observation and never authorizes replay.
 
-Unrecognized formats and
-ambiguous transcript timestamps remain parked. Prefix recognition alone never
-provides submission proof. Losing the additive format field to an older writer
-therefore keeps absence fail-closed rather than requeueing an uncertain attempt.
+Ambiguous transcript timestamps remain parked. Prefix recognition alone never
+provides submission proof.
 
 A generation is deliverable only while the exact recipient incarnation still
 holds live (unexpired) unread mail. Recipients read their inbox at their own
@@ -491,15 +472,12 @@ authenticated service-origin messages bypass this window. Other recipients keep
 the existing default behavior. Service-origin inputs cannot be silenced by a
 progress/report suppression rule.
 
-On the plain fallback path, configured recipients receive a bounded body-free
-prompt in one readable line, `Mailbox: <N> unread; agent-session message inbox`,
-where N is the total number of live unread messages from 1 to 256. At the
-mailbox quota it is 48 ASCII characters, which fits a 51-column pane. The
-composer reminder and the plain fallbacks use this text on every route; the
-`agent-hook` recognizer accepts it with a canonical N and nothing else. The
-notice body, used when the writer gate is on, spells the counts as
+Configured recipients receive current `mailbox.wake` envelopes when writers
+are enabled and the route supports notices. The body spells the unread counts as
 `<n> <category>` joined by commas (blocker, decision, handoff, progress, report,
-uncategorized), then `; agent-session message inbox`.
+uncategorized), then `; agent-session message inbox`. The hook validates this
+current envelope and rejects all retired plain forms. Disabled writers and
+unsupported notice routes send nothing; the unread mailbox remains available.
 
 The former letter form, such as `Mailbox: b=1 h=2 p=3`, is no longer produced
 or accepted by any producer or by the hook recognizer. The one place it is still

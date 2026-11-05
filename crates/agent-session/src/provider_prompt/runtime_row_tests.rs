@@ -274,7 +274,11 @@ fn codex_notice_submission_is_observable_without_a_human_prompt_event() {
         Duration::ZERO,
     )
     .unwrap();
-    let text = "Mailbox: agent-session message inbox";
+    let encoded = crate::notice::NoticeEnvelope::new("mailbox.wake", "agent-session", None)
+        .unwrap()
+        .encode("Mailbox: agent-session message inbox")
+        .unwrap();
+    let text = encoded.as_str();
     let rows = [
         json!({"type":"event_msg","payload":{"type":"user_message","message":text}}),
         json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":text}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}}}),

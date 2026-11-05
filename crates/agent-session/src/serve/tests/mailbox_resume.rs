@@ -111,7 +111,8 @@ impl Drop for ResumedFixture {
 
 #[tokio::test]
 async fn resumed_codex_without_turn_end_delivers_one_wake_after_observed_idle() {
-    let _lock = GlobalStateLock::new();
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let mut fixture = ResumedFixture::new("idle").await;
     let state = fixture.state.clone();
     let drain = tokio::spawn(async move { drain_coordination_notifications(state).await });
@@ -121,7 +122,8 @@ async fn resumed_codex_without_turn_end_delivers_one_wake_after_observed_idle() 
             let Some(codex_app_server::ControlCommand::Prompt { message, response }) = result else {
                 panic!("expected one wake");
             };
-            assert_eq!(message, "Mailbox: agent-session message inbox");
+            assert!(crate::notice::parse_notice(&message).is_some());
+            assert!(!message.contains("notification reconciliation fixture"));
             response.send(Ok("wake-turn".into())).unwrap();
         }
         () = async { while !drain.is_finished() { tokio::task::yield_now().await; } } => {}
@@ -141,7 +143,8 @@ async fn resumed_codex_without_turn_end_delivers_one_wake_after_observed_idle() 
 
 #[tokio::test]
 async fn resumed_codex_busy_or_loading_without_turn_end_defers_wake() {
-    let _lock = GlobalStateLock::new();
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     for status in ["active", "loading", "pending"] {
         let mut fixture = ResumedFixture::new(status).await;
         for _ in 0..2 {

@@ -196,8 +196,6 @@ const COORDINATION_WAIT_WORKER_LIMIT: usize = 16;
 const COORDINATION_NOTIFICATION_CONCURRENCY: usize = 8;
 const COORDINATION_NOTIFICATION_RETRY: i64 = 1;
 const CLAUDE_NOTIFICATION_STOP_DEBOUNCE: Duration = activity::CLAUDE_NOTIFICATION_STOP_DEBOUNCE;
-const CLAUDE_NOTIFICATION_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(5);
-const CLAUDE_NOTIFICATION_OBSERVATION_POLL: Duration = Duration::from_millis(100);
 const RESET_AT_KEYS: &[&str] = &["reset_at", "resetAt", "resets_at", "resetsAt"];
 const RESET_AT_EPOCH_KEYS: &[&str] = &[
     "reset_at_epoch",
@@ -7175,12 +7173,6 @@ fn coordination_notification_provider_unsupported(record: &crate::SessionRecord)
 
 mod terminal_notification;
 use terminal_notification::dispatch_coordination_notification;
-#[cfg(test)]
-use terminal_notification::{
-    TerminalNotificationStartError, dispatch_terminal_coordination_notification,
-    start_terminal_coordination_notification,
-};
-
 fn terminal_notification_waiting(
     context: &CliContext,
     record: &SessionRecord,
@@ -7224,21 +7216,6 @@ fn tmux_session_attached(tmux_bin: &Path, tmux_session: &str) -> Result<bool, ()
         .parse::<u64>()
         .map_err(|_| ())?;
     Ok(attached != 0)
-}
-
-fn observe_terminal_coordination_prompt(mut tail: ProviderPromptTail, prompt: &str) -> bool {
-    let deadline = Instant::now() + CLAUDE_NOTIFICATION_OBSERVATION_TIMEOUT;
-    loop {
-        match tail.poll_submitted_prompts() {
-            Ok(prompts) if prompts.iter().any(|submitted| submitted == prompt) => return true,
-            Ok(_) => {}
-            Err(_) => return false,
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(CLAUDE_NOTIFICATION_OBSERVATION_POLL);
-    }
 }
 
 async fn update_notification_deferred(

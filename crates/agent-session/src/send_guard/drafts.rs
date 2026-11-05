@@ -334,34 +334,6 @@ pub(crate) fn clear_observed(
     )
 }
 
-/// Called only after the mailbox's existing quiescence fence and attachment,
-/// identity and activity admission, immediately before its paste.
-pub(crate) fn clear_pending(
-    context: &CliContext,
-    record: &SessionRecord,
-    tmux_bin: &Path,
-    deadline: Instant,
-) -> Result<(), CliError> {
-    let target = format!("{}:0.0", record.tmux_session);
-    let input = super::capture_styled(tmux_bin, &target, crate::PANE_OBSERVATION_COMMAND_TIMEOUT)
-        .and_then(|pane| crate::send_submit::exact_composer_input(&record.agent, &pane));
-    let stale = observe(context, record, input.as_deref())?;
-    if input.as_deref() == Some("") {
-        return Ok(());
-    }
-    if let Some(input) = input
-        && stale
-        && clear_observed(context, record, tmux_bin, &input, deadline)?
-    {
-        return Ok(());
-    }
-    Err(CliError::data(
-        "composer-not-empty",
-        "composer does not permit guarded input",
-        None,
-    ))
-}
-
 pub(crate) fn latest(context: &CliContext, id: &str) -> Result<Option<Value>, CliError> {
     crate::validate_id(id)?;
     let path = session_dir(context, id).join("drafts/latest.json");

@@ -19,16 +19,19 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   projected turn fence back to the matching raw active turn id; raw ids never enter session documents or
   API projections. Notice-capable recipients receive the canonical `mailbox.wake`
   envelope under the existing writer gate, with coalesced unread counts.
-  Explicitly unsupported recipients retain the plain reminder; failed/uncertain
+  Disabled writers and unsupported notice routes send nothing; failed/uncertain
   notice attempts never fall back or repeat. Long-running work observes the body-free reminder at the provider's next model
-  checkpoint. Both paths retain the exact incarnation and no-claim/no-operation generation fence.
+  checkpoint. Controller and hook delivery retain the exact incarnation and
+  no-claim/no-operation generation fence.
 
-  Terminal-backed Codex and Claude runtimes use the same notification-generation CAS plus exact
-  incarnation, idle-turn, live-runtime, and detached-session rechecks before one fixed body-free prompt
-  and a single Enter. The terminal attempt boundary additionally requires an authoritative broker with no
-  active claim or active/uncertain operation. Its durable per-session `attempting` state fences new claim
-  and operation admission through submission without holding the global coordination registry lock across
-  terminal I/O. Transcript observation determines acknowledged versus unknown outcome.
+  Supported terminal-backed runtimes use the same notification-generation CAS
+  with exact incarnation, idle-turn, live-runtime and detached-session rechecks.
+  Native Claude dispatch uses its notice module; Codex terminal dispatch uses the
+  guarded multiline envelope. Admission requires an authoritative broker with no
+  active claim or active/uncertain operation. The durable per-session attempt
+  fences new claim and operation admission without holding the global registry
+  lock across I/O. Acknowledgement or exact positive notice observation resolves
+  an attempt; absent history keeps uncertainty parked.
 - A daemon configured with `[auto_resume] default_enabled = true` (or
   `AGENT_SESSION_AUTO_RESUME_DEFAULT_POLICY`; see the
   [serve daemon runbook](../runbooks/serve-daemon.md#configuration-file))

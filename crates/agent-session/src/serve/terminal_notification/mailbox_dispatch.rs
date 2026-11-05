@@ -61,8 +61,7 @@ pub(in crate::serve) async fn dispatch_coordination_notification(
         return;
     }
     if record.agent == AgentKind::Claude.as_str() {
-        dispatch_terminal_coordination_notification(state, record, candidate, AgentKind::Claude)
-            .await;
+        super::native_notice::dispatch(state, record, candidate).await;
         return;
     }
     let turn = activity::state_for_view(&state.context, &record);
@@ -98,8 +97,7 @@ pub(in crate::serve) async fn dispatch_coordination_notification(
         return;
     }
     if !codex_app_server::runtime_is_supported(&record) {
-        dispatch_terminal_coordination_notification(state, record, candidate, AgentKind::Codex)
-            .await;
+        super::native_notice::dispatch(state, record, candidate).await;
         return;
     }
 
@@ -281,94 +279,4 @@ async fn dispatch_codex_in_turn_coordination_checkpoint(
         })
         .await;
     }
-}
-
-pub(in crate::serve) async fn dispatch_terminal_coordination_notification(
-    state: Arc<ServeState>,
-    record: SessionRecord,
-    candidate: crate::coordination::NotificationCandidate,
-    expected_agent: AgentKind,
-) {
-    if candidate.is_notice() {
-        super::native_notice::dispatch(state, record, candidate).await;
-        return;
-    }
-    let Some(source) = ProviderPromptTail::resolve_source(&record) else {
-        update_notification_deferred(
-            &state,
-            &candidate,
-            "provider-observation-unavailable",
-            COORDINATION_NOTIFICATION_RETRY,
-        )
-        .await;
-        return;
-    };
-    let Some(tail) = ProviderPromptTail::open_source_at_eof(source) else {
-        update_notification_deferred(
-            &state,
-            &candidate,
-            "provider-observation-unavailable",
-            COORDINATION_NOTIFICATION_RETRY,
-        )
-        .await;
-        return;
-    };
-    let prompt = crate::coordination::notification_prompt(&candidate);
-    let context = state.context.clone();
-    let tmux = state.tmux_bin.clone();
-    let start_candidate = candidate.clone();
-    let start_prompt = prompt.clone();
-    let started = tokio::task::spawn_blocking(move || {
-        start_terminal_coordination_notification(
-            &context,
-            &tmux,
-            &start_candidate,
-            &start_prompt,
-            tail,
-            expected_agent,
-        )
-    })
-    .await;
-    let tail = match started {
-        Ok(Ok(tail)) => tail,
-        Ok(Err(TerminalNotificationStartError::Known(reason))) => {
-            update_notification_deferred(
-                &state,
-                &candidate,
-                reason,
-                COORDINATION_NOTIFICATION_RETRY,
-            )
-            .await;
-            return;
-        }
-        Ok(Err(TerminalNotificationStartError::UnknownReason(reason))) => {
-            terminal_notification::mark_unknown_after_paste(&state, candidate, reason).await;
-            return;
-        }
-        Ok(Err(TerminalNotificationStartError::Unknown)) | Err(_) => {
-            terminal_notification::mark_unknown(&state, candidate, "submission-outcome-unknown")
-                .await;
-            return;
-        }
-    };
-
-    let observed_prompt = prompt.clone();
-    let observed = tokio::task::spawn_blocking(move || {
-        observe_terminal_coordination_prompt(tail, &observed_prompt)
-    })
-    .await
-    .unwrap_or(false);
-    let context = state.context.clone();
-    let _ = tokio::task::spawn_blocking(move || {
-        if observed {
-            crate::coordination::mark_notification_submitted(&context, &candidate)
-        } else {
-            crate::coordination::mark_notification_unknown(
-                &context,
-                &candidate,
-                "submission-outcome-unknown",
-            )
-        }
-    })
-    .await;
 }

@@ -404,6 +404,7 @@ impl ProviderPromptTail {
     /// Prompts the provider accepted during this poll: the prompt events plus,
     /// for Claude, input enqueued behind a running turn, which reaches the
     /// transcript as a `user` record only once the turn takes it.
+    #[cfg(test)]
     pub(crate) fn poll_submitted_prompts(&mut self) -> io::Result<Vec<String>> {
         let mut prompts = self
             .poll()?

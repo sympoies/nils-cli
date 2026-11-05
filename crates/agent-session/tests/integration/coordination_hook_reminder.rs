@@ -6,6 +6,8 @@ fn message_reminder_claims_each_live_unread_generation_once() {
     // DSH sessions have no serve prompt route; their policy hook claims the
     // fixed reminder through this command at a safe model-step boundary
     // (sympoies/nils-cli#2011).
+    let lock = nils_test_support::GlobalStateLock::new();
+    let _writers = nils_test_support::EnvGuard::set(&lock, "AGENT_SESSION_NOTICE_WRITERS", "1");
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");
     fs::create_dir(&state_dir).expect("state");
@@ -98,9 +100,20 @@ fn message_reminder_claims_each_live_unread_generation_once() {
         .as_str()
         .expect("reminder text")
         .to_string();
-    assert!(text.starts_with("Mailbox: "), "{text}");
-    assert!(text.ends_with("agent-session message inbox"));
-    assert!(text.is_ascii() && text.len() <= 60);
+    assert!(
+        text.starts_with(
+            "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: "
+        ),
+        "{text}"
+    );
+    let body = text.split_once("\n\n").unwrap().1;
+    assert!(
+        body.lines()
+            .next()
+            .unwrap()
+            .ends_with("agent-session message inbox")
+    );
+    assert!(text.is_ascii());
     assert!(!text.contains("beta"));
     assert!(!first.stdout_text().contains("REMINDER-BODY-CANARY"));
     assert_eq!(data(&first)["generation"], 1);
@@ -172,6 +185,8 @@ fn message_reminder_claims_each_live_unread_generation_once() {
 
 #[test]
 fn message_reminder_gives_up_under_lock_contention_without_claiming() {
+    let lock = nils_test_support::GlobalStateLock::new();
+    let _writers = nils_test_support::EnvGuard::set(&lock, "AGENT_SESSION_NOTICE_WRITERS", "1");
     // The hook that runs `message reminder` has a 5 s child deadline. The
     // claim must finish well inside it or give up unclaimed, so a reminder is
     // never persisted as delivered by a child the hook already abandoned.

@@ -80,14 +80,14 @@ summaries or sidechain records that would otherwise be excluded. Only an exact
 producer-receipt-backed native notice gets the separate machine role, apart from the
 display-only [mailbox read event](mailbox-read-events-v1.md) recorded by the daemon
 and never delivered. Ordinary
-human messages with a valid header retain their user role. Unmarked mailbox
-reminders retain their existing filtering behavior.
+human messages with a valid header retain their user role. Retired unmarked
+mailbox reminders are ordinary rows and use ordinary prompt filtering.
 
-The proposed [history row class contract](history-row-classes-v1.md) defines
-the narrowly anchored, display-only recognition of stored unmarked text.
-That design is not implemented by the codec described here and rewrites no
-transcript. It explicitly supersedes reminder filtering only in its future
-display projection; native receipt admission stays authoritative.
+The [history row class contract](history-row-classes-v1.md) defines display-only
+classification after provider admission. Legacy plain notice forms have no row
+class; current envelopes, admitted daemon events and the documented Codex
+context frames retain their classification. Neither classification nor this
+codec rewrites transcripts. Native receipt admission stays authoritative.
 
 The language-neutral [fixture corpus](../../tests/fixtures/session-notices-v1.json)
 contains exact JSON strings. Each case has `name`, `input`, and `notice`;
@@ -426,8 +426,8 @@ to their current values. Preserve category order, punctuation and spacing.
 Only this internal count producer is exempt from the external CLI's 70-scalar
 summary-input bound: the existing quota-bounded count line can be longer.
 Calling `notice --kind mailbox.wake --summary ...` does not gain that exemption.
-It is not a new flag, delivery path or sender-controlled exception. The fixed
-plain reminder and compact 51-column typed count reminder are untouched.
+It is not a new flag, delivery path or sender-controlled exception. Plain fixed
+and count reminders are retired; only the encoded envelope is a mailbox wake.
 The [schema fixture](fixtures/history-row-classes-v1.json) includes exact fixed,
 single-count and all-category wake envelopes, including a line over 70 scalars.
 
@@ -477,13 +477,13 @@ notice text. Supported terminal recipients use guarded notice delivery,
 including the existing native Claude module. This preserves the mailbox's
 single generation/incarnation claim across controller and hook paths.
 
-The mailbox keeps its existing plain reminder only when the writer gate is
-off or the receiver is known to lack notice support. Missing readiness on an
-installed module is uncertain and defers; a failed or uncertain notice attempt
-never authorizes a plain fallback or a second attempt. Attempt receipts retain
+The mailbox sends nothing when the writer gate is off or the receiver lacks
+notice support. Unread mail remains available through explicit inbox reads.
+Missing readiness on an installed module is uncertain and defers; a failed or
+uncertain notice attempt never authorizes a plain fallback or a second attempt. Attempt receipts retain
 the exact envelope and `mailbox-notice.v1` format; positive observation can
-resolve an uncertain notice, while absence keeps it parked. Historical prompt
-attempts retain their original interpretation. No mailbox producer shells out
+resolve an uncertain notice, while absence keeps it parked. Retired prompt formats are not recognized or replayed; retained attempt bytes
+are evidence only. No mailbox producer shells out
 to `notice`. Auto-resume integration remains separate.
 
 Readers must accept and validate the separate notice role before native writers

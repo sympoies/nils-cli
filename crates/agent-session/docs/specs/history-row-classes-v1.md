@@ -164,7 +164,7 @@ also defines manual/auto triggers, under the stream adapter's separate
 
 The sole kind-to-label table is in
 [Session notices v1](session-notices-v1.md#shared-kind-to-label-table).
-The summary renderer and the history recognizer use that same table.
+The summary renderer uses that table; unmarked titles do not classify history rows.
 There must not be a separate consumer title list or private producer registry
 in the daemon. Recognize only logical input or an already-admitted daemon
 notice, after exact provider-wrapper handling, before human preview selection.
@@ -178,13 +178,6 @@ titles have no class. Recognizing text does not admit excluded provider rows.
 
 | Form | Exact recognition rule | Kind used for table lookup |
 | --- | --- | --- |
-| Stored notice title | At byte zero, `※` + ASCII space + an exact current or stored title from the shared table + `：`; at least one body character follows. No indentation, ASCII colon, partial title or interior-line match. Subsequent body lines are preserved. | The matched table row |
-| Fixed mailbox line | Entire input is `Mailbox: agent-session message inbox`. | `mailbox.wake` |
-| Dated mailbox line | Entire input is `Mailbox: <UTC>; agent-session message inbox`; `<UTC>` is canonical second-precision `YYYY-MM-DDTHH:MM:SSZ` and a valid date. | `mailbox.wake` |
-| Compact count line | Entire input is `Mailbox:` + ASCII space + space-separated unique `b`, `d`, `h`, `p`, `r`, `u` keys with `=<count>`; each count is canonical decimal 1..256; total at most 51 ASCII bytes. Key order is unrestricted. | `mailbox.wake` |
-| Explained count line | Entire input is `Mailbox: <count> <category>[, <count> <category>…]; agent-session message inbox`; categories are unique and ordered blocker, decision, handoff, progress, report, uncategorized; each count is canonical decimal 1..256. | `mailbox.wake` |
-| Earlier unread sentence | Entire input is `Coordination mailbox has unread messages; run agent-session message inbox.` or the same with ASCII space + `(newest queued <UTC>)` immediately before the semicolon. `<UTC>` follows the dated-line rule. | `mailbox.wake` |
-| Earlier compaction continuation | Entire input is `壓縮完成；執行自己角色的 session-start，接著續做。` | `compact.resume` |
 | Codex instruction frame without kinds | Entire input is `# AGENTS.md instructions for <title>` + LF LF + `<INSTRUCTIONS>` + LF + nonempty content + LF + `</INSTRUCTIONS>`, optionally final LF; `<title>` is a nonempty single line. | No envelope kind is invented |
 | Codex environment frame without kinds | Entire input is `<environment_context>` + LF + nonempty content + LF + `</environment_context>`, optionally final LF. | No envelope kind is invented |
 
@@ -196,18 +189,29 @@ class from these rules.
 
 The earlier bootstrap form containing a private producer sentinel is a known
 gap: this public contract neither publishes nor recognizes it. It remains an
-ordinary unclassified prompt. A public anchored `※ Dispatch start：` input and
-a valid `dispatch.bootstrap` envelope are recognized. There is no configurable
+ordinary unclassified prompt. A valid `dispatch.bootstrap` envelope is
+recognized; an unmarked `※ Dispatch start：` input is retired like every other
+stored-title form. There is no configurable
 private-form hook. This is an explicit scope decision for #3226, not permission
 to guess at bootstrap-like prose.
 
-These rules read already stored provider input and known plain-text outcomes;
-they add no writer, send retry, unmarked delivery mode or alias. Classifying a
-plain row changes only its class; it preserves all logical text bytes, including
-line endings, indentation inside the body and trailing whitespace. A known
-title without the exact shape, a quoted reminder, an unknown `※` title and
-arbitrary `Monitoring: …` text have no class. Consumers never repeat these
-recognizers themselves.
+The legacy plain-text forms are retired: `※ <title>：` stored-title rows,
+fixed and dated `Mailbox:` lines, compact letter counts, total unread counts,
+explained category counts, the earlier coordination unread sentence (with or
+without its queue date), and the earlier compaction continuation sentence.
+They have no `row_class` and render as ordinary provider rows, including when
+already stored. History rows retain their logical text bytes; ordinary prompt
+preview normalization applies. Consumers must
+repin the fixture when adopting this change and never repeat text matching.
+
+The Codex instruction and environment frames remain recognized as provider
+context, independently of notice formats. Envelopes, admitted daemon notice
+events, runtime commands and provider compaction metadata retain their rules.
+
+Mailbox producers emit only current notice envelopes through supported routes.
+When the writer gate is off or a route cannot deliver a notice, they send
+nothing; unread mail remains available to explicit inbox reads and a queued
+generation is not claimed by a disabled hook. There is no plain-text fallback.
 
 ## Fixture pin and implementation acceptance
 

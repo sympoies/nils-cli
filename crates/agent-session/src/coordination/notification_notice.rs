@@ -1,5 +1,5 @@
-//! Mailbox notice bytes share generation ownership with plain reminder attempts.
-use super::{CliContext, NotificationCandidate, Registry, coalescing, observation};
+//! Current mailbox notice bytes share generation and delivery ownership.
+use super::{CliContext, NotificationCandidate, Registry, coalescing};
 use crate::{CliError, SessionRecord, notice::NoticeEnvelope};
 
 pub(super) const FORMAT: &str = "mailbox-notice.v1";
@@ -38,12 +38,11 @@ pub(super) fn encode_counts(
         .expect("nonempty count reminder")
 }
 
-pub(super) fn attempt_format(prompt: Option<&str>) -> &'static str {
-    match prompt {
-        Some(text) if crate::notice::parse_notice(text).is_some() => FORMAT,
-        Some(_) => "mailbox-counts.v1",
-        None => observation::PROMPT_FORMAT,
-    }
+pub(super) fn encode_summary(summary: &str) -> String {
+    NoticeEnvelope::new("mailbox.wake", "agent-session", None)
+        .expect("fixed mailbox notice metadata")
+        .encode(&crate::notice::render_summary("mailbox.wake", summary, ""))
+        .expect("nonempty mailbox reminder")
 }
 
 impl NotificationCandidate {
@@ -61,14 +60,15 @@ impl NotificationCandidate {
         record: &SessionRecord,
     ) -> Result<(), CliError> {
         if !crate::notice::writers_enabled() {
-            return Ok(());
+            return Err(CliError::unavailable(
+                "notice-writers-disabled",
+                "notice writers are disabled",
+                None,
+            ));
         }
         if record.agent == "claude"
             && crate::send::claude_notice::runtime::readiness(context, record).is_none()
         {
-            if crate::send::claude_notice::attach::known_unsupported(context, record) {
-                return Ok(());
-            }
             return Err(crate::send::claude_notice::runtime::unavailable());
         }
         let locked = super::super::lock_registry_observational(context)?;

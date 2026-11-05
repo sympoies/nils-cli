@@ -103,6 +103,14 @@ async fn controller(working: bool, writers: bool, outcome: Outcome) {
             handle,
         },
     );
+    if !writers {
+        drain_coordination_notifications(state.clone()).await;
+        assert!(commands.try_recv().is_err(), "disabled writers send nothing");
+        assert!(claim(&state)["reminder"].is_null());
+        assert_eq!(notification_fixture(tmp.path())["state"], "queued");
+        assert_eq!(notification_fixture(tmp.path())["notified_generation"], 0);
+        return;
+    }
     let responder = tokio::spawn(async move {
         let command = commands.recv().await.unwrap();
         let message = match command {
@@ -160,11 +168,7 @@ async fn controller(working: bool, writers: bool, outcome: Outcome) {
         claim(&state)["reminder"].is_null(),
         "controller attempt must exclude hook delivery"
     );
-    if writers {
-        assert_notice(&message);
-    } else {
-        assert_eq!(message, "Mailbox: 3 unread; agent-session message inbox");
-    }
+    assert_notice(&message);
     if !matches!(outcome, Outcome::Accepted) {
         assert_eq!(notification_fixture(tmp.path())["state"], "attempt_unknown");
     }
@@ -230,7 +234,7 @@ fn claim(state: &ServeState) -> Value {
 }
 
 #[tokio::test]
-async fn mailbox_notice_rollout_off_preserves_explicit_prompt_route() {
+async fn mailbox_notice_rollout_off_sends_nothing() {
     for working in [false, true] {
         controller(working, false, Outcome::Accepted).await;
     }
