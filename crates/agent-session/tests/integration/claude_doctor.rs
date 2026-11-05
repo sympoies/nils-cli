@@ -136,7 +136,11 @@ impl ClaudeDoctorFixture {
         let codex_home = self.codex_home.to_string_lossy().into_owned();
         let config_home = self.config_home.to_string_lossy().into_owned();
         let state_home = self.state_home.to_string_lossy().into_owned();
-        let agent_hook = agent_hook.to_string_lossy().into_owned();
+        let agent_hook_root = agent_hook
+            .parent()
+            .expect("hook directory")
+            .to_string_lossy()
+            .into_owned();
         super::cli::run(
             &self.root,
             &[
@@ -148,7 +152,7 @@ impl ClaudeDoctorFixture {
                 ("CODEX_HOME", codex_home.as_str()),
                 ("XDG_CONFIG_HOME", config_home.as_str()),
                 ("XDG_STATE_HOME", state_home.as_str()),
-                ("AGENT_HOOK_BIN", agent_hook.as_str()),
+                ("AGENT_RUNTIME_TRUSTED_CLI_ROOT", agent_hook_root.as_str()),
             ],
         )
     }
