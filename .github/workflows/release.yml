@@ -202,6 +202,12 @@ jobs:
             exit 1
           fi
 
+      - name: Check Linux glibc requirements
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python3 scripts/ci/check-release-glibc.py "dist/nils-cli-${{ github.ref_name }}-${{ matrix.target }}/bin/"*
+
       - name: Audit release tarball third-party artifacts
         shell: bash
         run: |
