@@ -58,6 +58,14 @@ pub(crate) enum HistoryPart {
         #[serde(skip_serializing_if = "Option::is_none")]
         bytes: Option<u64>,
     },
+    File {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        original_name: Option<String>,
+        bytes: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mime: Option<String>,
+    },
     Question {
         id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -198,7 +206,7 @@ pub(super) fn bound_parts(parts: Vec<HistoryPart>) -> Vec<HistoryPart> {
                     *text = truncate(text, max_chars);
                 }
             }
-            HistoryPart::Image { .. } | HistoryPart::Notice { .. } => {}
+            HistoryPart::Image { .. } | HistoryPart::File { .. } | HistoryPart::Notice { .. } => {}
         }
         let encoded_len = serde_json::to_vec(&part).map_or(usize::MAX, |bytes| bytes.len());
         if used.saturating_add(separator).saturating_add(encoded_len) <= MAX_PART_BYTES_PER_MESSAGE

@@ -109,7 +109,7 @@ list projection.
 
 Clients may opt into typed transcript parts with `?parts=v1` on the messages route. Each message then
 adds an ordered `parts` array, including an empty array when no typed part is available. Parts include
-visible `text`, `tool_call`, `tool_result`, `image`, `question`, and recognized `notice` records. Every
+visible `text`, `tool_call`, `tool_result`, `image`, `file`, `question`, and recognized `notice` records. Every
 part carries the provider item `id` and its timestamp when available. Tool input and result summaries
 are capped at 2,048 characters and redact path-like values and sensitive input fields. Typed output is
 capped at 64 KiB per message. `tool_call.status` is `unknown` when a matching result is not found in
@@ -184,3 +184,24 @@ key or value fails with HTTP 400 `invalid-query`. On success
 `GET /sessions` advertises additive `history`, `archive`, `group_archive`, and
 `history_star` capabilities. Older daemons omit them and do not serve these
 routes.
+
+## Managed file parts
+
+With `parts=v1`, quoted absolute paths in supported user prompts may also produce
+`file` parts for non-raster managed uploads owned by the history session. Each
+part has a row-bound `id` and `bytes` (the regular file size). `original_name`
+is the sanitized original basename when valid upload metadata exists; `mime`
+is inferred from recognized file extensions (`text/plain` for `.txt`,
+`application/pdf` for `.pdf`) and omitted otherwise. `original_name` is omitted
+when metadata is absent or invalid. The
+quoted path remains in the text part. File parts follow the other parts in source
+order; they are display metadata, not download authority. See the
+[file part fixture](fixtures/history-file-part-v1.json).
+
+The same session ownership, no-follow open and 8 MiB size boundary used for
+image uploads applies. Paths with raster image extensions stay on the existing image path.
+Foreign-session uploads, outside paths, symlinks,
+non-regular files and oversized files have no file part. Raster image handling
+is unchanged. Descriptors are recomputed on each history read and remain stable
+while the transcript and upload are retained. The usual parts count and byte
+limits apply.
