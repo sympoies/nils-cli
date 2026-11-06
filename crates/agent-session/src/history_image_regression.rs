@@ -101,7 +101,7 @@ fn claude_history_images_keep_paging_and_resolve_nested_embedded_sources() {
         assert_eq!(image.bytes, b"\x89PNG\r\n\x1a\n");
         assert!(matches!(
             catalog.image("unrelated-history", &message.images[0].id),
-            Err(history_images::ImageReadError::Deleted)
+            Err(history_images::ImageReadError::Unavailable)
         ));
     }
 }

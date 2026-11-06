@@ -98,7 +98,10 @@ Errors use the ordinary JSON `ok: false` envelope:
 | 404 | `history-image-deleted` | Image deleted |
 | 422 | `history-image-unavailable` | Image unavailable |
 
-Missing history, transcript, referenced file, or stale row ids are deleted.
+An unresolved history or direct-session segment is unavailable; a missing transcript or
+referenced file, or a stale row id in a resolved session, is deleted. Fresh
+exact-id sessions use the same guarded direct lookup as message reads, without
+waiting for a catalog refresh.
 A managed attachment whose session has no matching live provider identity or
 matching archive original session id is also deleted (404).
 Malformed ids, non-HTTP URL schemes, unsupported data, excessive size, forbidden paths,
