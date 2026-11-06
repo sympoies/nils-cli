@@ -1,7 +1,8 @@
 # History images v1
 
 History message pages add optional `images` descriptors retaining their row-bound
-`id`. Each descriptor may also carry `origin`, `attachment_ref`, and `original_name`; the same
+`id`. Each descriptor may also carry `origin`, `attachment_ref`, `original_name`,
+and `upload_path`; the same
 optional values appear on `parts=v1` image parts, whose `ref` remains the image-read
 selector. There are at most 16 descriptors per message. The opaque id is at most 96 ASCII bytes and binds a
 provider transcript segment, byte offset, source selector and source-row digest. It
@@ -57,6 +58,28 @@ visible. This adds no image store, copy, arbitrary path scan or authentication s
 It is omitted when ownership or valid metadata cannot be established, and is
 never inferred from the stored filename. Both descriptor and image part carry
 the same value. See [the descriptor fixture](fixtures/history-image-descriptor-v1.json).
+
+`upload_path` is an optional JSON string containing the exact stored absolute
+path returned by the upload, without shell quoting, escaping beyond JSON, basename
+substitution, or path reconstruction. Spaces and quoting-sensitive characters are
+preserved. It is bound to the descriptor's row selector (`id`, or `ref` on the
+image part); both carry the identical value across repeated reads and pagination.
+The spelling and representation are frozen by the descriptor fixture above.
+
+Only `origin: "user_attachment"` images whose file source passes the existing
+same-session managed-upload ownership, descriptor-relative no-follow, regular-file,
+size, extension and raster checks carry `upload_path`. Foreign-session uploads,
+paths outside managed attachment directories, symlinks (including parent
+components), embedded images, URLs, tool-result images and unknown provenance omit
+it. A relative source with no exact absolute upload path also omits it; the
+producer does not reconstruct the field from a working directory. Missing
+original-name metadata does not prevent a proven upload path; the
+existing original-name sanitizer and metadata read boundary are unchanged.
+
+This field is copy/display metadata on authenticated history responses, never
+image-read authority. Consumers must retain session/history ownership checks and
+use the opaque authenticated selector route for image bytes. It adds no path-based
+read route and does not broaden any existing file-read boundary.
 
 ## Authenticated read
 

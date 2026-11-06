@@ -181,6 +181,7 @@ impl HistoryCatalog {
                             row_key(value)
                         ),
                         origin: Some(image_provenance::ImageOrigin::UserAttachment),
+                        upload_path: attachment_ref.as_ref().map(|_| path.to_owned()),
                         attachment_ref,
                         original_name,
                     });
