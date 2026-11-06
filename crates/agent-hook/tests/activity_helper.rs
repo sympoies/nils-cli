@@ -235,6 +235,10 @@ fn a_completely_unresolvable_helper_degrades_instead_of_deadlocking() {
         ("AGENT_SESSION_ID", "managed-session"),
         ("AGENT_SESSION_RUNTIME_ID", "managed-runtime"),
         ("PATH", empty_dir.to_str().expect("empty dir")),
+        (
+            "AGENT_RUNTIME_TRUSTED_CLI_ROOT",
+            empty_dir.to_str().expect("empty dir"),
+        ),
     ];
 
     let prompt = fixture.run_with_env(
