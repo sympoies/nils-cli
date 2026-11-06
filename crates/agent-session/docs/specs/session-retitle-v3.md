@@ -660,8 +660,9 @@ paths and token-shaped values before any retained summary is formed.
 - Source segments: at most eight.
 - Durable receipts: at most eight, without evicting non-terminal work.
 - Provider attempts per unchanged input: one primary plus one fallback.
-- Fresh usable-memory daemon work: p95 at most 250 ms, excluding HTTP/client
-  transport and any separately admitted asynchronous refresh.
+- Fresh usable-memory daemon work target: p95 at most 250 ms, excluding HTTP/client
+  transport and any separately admitted asynchronous refresh. The default suite
+  does not enforce this timing target.
 
 Fresh-memory latency, marker size, provider input size, and operation lookup are
 bounded independently of transcript bytes and record count. The routine
