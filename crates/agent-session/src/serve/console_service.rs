@@ -71,9 +71,9 @@ async fn service_console_start_handler(
     // even if the HTTP client disconnects.
     let Ok(permit) = CONSOLE_START_WORKERS.try_acquire() else {
         return envelope_err(CliError::unavailable(
-            "console-start-unavailable",
+            "console-start-busy",
             "service console start workers are busy",
-            None,
+            Some(json!({"retryable": true, "recovery": {"safe_to_retry": true}})),
         ));
     };
     let owner = state.clone();
@@ -200,5 +200,35 @@ async fn service_mailbox_handler(
         }
         Ok(Err(error)) => envelope_err(service::recovery(error)),
         Err(_) => join_err(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::extract::ConnectInfo;
+
+    #[tokio::test]
+    async fn busy_refusal_is_retryable_without_creating_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = super::super::tests::state(tmp.path(), None, PathBuf::from("tmux"));
+        let permits = CONSOLE_START_WORKERS.acquire_many(8).await.unwrap();
+        let mut request = axum::http::Request::builder()
+            .header(AUTHORIZATION, "Bearer test-token")
+            .body(Body::from("{}"))
+            .unwrap();
+        request.extensions_mut().insert(ConnectInfo(
+            "127.0.0.1:1234".parse::<SocketAddr>().unwrap(),
+        ));
+        let response = service_console_start_handler(State(state), request).await;
+        drop(permits);
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["code"], "console-start-busy");
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["error"]["details"]["retryable"], true);
+        assert_eq!(body["error"]["details"]["recovery"]["safe_to_retry"], true);
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 0);
     }
 }
