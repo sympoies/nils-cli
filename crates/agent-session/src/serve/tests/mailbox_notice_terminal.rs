@@ -54,6 +54,42 @@ async fn gate_off_deferral_records_the_detail_a_stored_reason_lacks_once() {
     assert_eq!(fs::metadata(registry_path).unwrap().ino(), before);
 }
 
+#[tokio::test]
+async fn mailbox_notice_terminal_wakes_an_idle_recipient_holding_only_its_own_claim() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let fixture = WakeFixture::new(AgentKind::Codex).await;
+    let registry_path = fixture.temp.path().join("coordination/registry.json");
+    let mut registry: Value = serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
+    registry["claims"].as_array_mut().unwrap().push(json!({
+        "schema_version": "agent-session.work-context.v1",
+        "session_id": "beta",
+        "session_incarnation": fixture.candidate.target_incarnation,
+        "claim_id": "terminal-recipient-claim",
+        "revision": 1,
+        "state": "active",
+        "intent": "implementation",
+        "tier": "issue",
+        "repositories": [],
+        "worktrees": [],
+        "provider_refs": [],
+        "plan_refs": [],
+        "scopes": [],
+        "summary": "terminal recipient claim fixture",
+        "updated_at": "2030-01-01T00:00:00Z",
+        "expires_at": "9999-12-31T23:59:59Z",
+        "expires_at_epoch": i64::MAX
+    }));
+    fs::write(&registry_path, serde_json::to_vec(&registry).unwrap()).unwrap();
+    crate::serve::terminal_notification::dispatch_coordination_notification(
+        fixture.state.clone(), fixture.candidate.clone(),
+    ).await;
+    // The fixture pane never echoes the notice into a transcript, so the outcome
+    // stays unknown; what matters is that the claim did not stop the attempt.
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["attempted_generation"], 1, "{receipt}");
+}
+
 fn bind_transcript(fixture: &WakeFixture) {
     let provider_root = fixture.temp.path().join("profile-config");
     let projects = provider_root.join("projects/project-27");

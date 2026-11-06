@@ -125,17 +125,28 @@ recipient-generation evidence, not proof that one message was read/executed.
 Notification timestamp zero/missing means `null`; the query never fabricates a
 migration time or rewrites the stored receipt.
 
-`reason_detail` names which branch recorded a `provider-not-ready` deferral and is
-`null` for every other reason. Its values are `notice-writers-disabled` (the
-serve process has notice writers off), `notice-runtime-unavailable` (the Claude
-notice runtime is not ready), `notice-not-prepared` (the wake notice could not
-be prepared for another reason), `prompt-control-unavailable` (no structured
-prompt control for the Codex runtime), `prompt-submission-refused` (the
-structured prompt submission was refused; a stable refusal code from a fixed
-list of known codes follows as `prompt-submission-refused:<code>`, and any
-other code is reported as plain `prompt-submission-refused`), and
-`notice-attempt-not-admitted` (the guarded notice send did not admit the
-attempt). It is a closed set and carries no message or runtime content.
+`reason_detail` is `null` unless the last reason recorded one. It is a closed
+set and carries no message or runtime content.
+
+For `recipient-coordination-not-quiescent` it names the blocking condition:
+`active-claim` (the in-turn route only), `active-operation`,
+`uncertain-operation`, `broker-not-authoritative`, `auth-quarantined`, or
+`restart-fenced`.
+
+For `provider-not-ready` it names the branch that deferred:
+
+- `notice-writers-disabled`: the serve process has notice writers off.
+- `notice-runtime-unavailable`: the Claude notice runtime is not ready.
+- `notice-not-prepared`: the wake notice could not be prepared for another
+  reason.
+- `prompt-control-unavailable`: no structured prompt control for the Codex
+  runtime.
+- `prompt-submission-refused`: the structured prompt submission was refused.
+  A stable refusal code from a fixed list of known codes follows as
+  `prompt-submission-refused:<code>`; any other code is reported as plain
+  `prompt-submission-refused`.
+- `notice-attempt-not-admitted`: the guarded notice send did not admit the
+  attempt.
 
 ## Classification and joining
 

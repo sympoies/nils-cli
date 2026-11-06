@@ -331,10 +331,15 @@ prompt for the provider's next in-turn model checkpoint instead of waiting for t
 idle.
 
 Both paths count only the matching acknowledged turn id and require the same exact incarnation,
-authoritative broker, no active claim, and no active or uncertain operation before their generation CAS.
-Terminal-backed Codex and Claude use the controller-owned private-buffer paste plus a separate Enter
-after exact-incarnation, authoritative-idle, detached, live-runtime, authoritative-broker, no-claim, and
-no-operation checks. The short `queued -> attempting` CAS is a per-session submission fence: claim and
+authoritative broker, no active or uncertain operation, no auth quarantine, and no restart fence before
+their generation CAS. The in-turn `turn/steer` path additionally requires no active claim. An idle
+recipient that holds only its own claim, such as the issue-tier claim a dispatched author sets, is woken:
+a claim says what the recipient works on, not that it is busy. Terminal-backed Codex and Claude use the
+controller-owned private-buffer paste plus a separate Enter after exact-incarnation, authoritative-idle,
+detached, live-runtime, authoritative-broker, and no-operation checks. A wake the idle structured route
+defers because the recipient is not quiescent is recorded as `recipient-coordination-not-quiescent` with
+the blocking condition as its detail, never as `provider-not-ready`. The short `queued -> attempting` CAS is a
+per-session submission fence: claim and
 operation admission returns `coordination-notification-submission-in-progress` with typed retry guidance
 until the submission boundary completes.
 

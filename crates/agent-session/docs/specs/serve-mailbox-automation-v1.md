@@ -22,13 +22,14 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   Disabled writers and unsupported notice routes send nothing; failed/uncertain
   notice attempts never fall back or repeat. Long-running work observes the body-free reminder at the provider's next model
   checkpoint. Controller and hook delivery retain the exact incarnation and
-  no-claim/no-operation generation fence.
+  no-operation generation fence. The in-turn path also defers while the recipient
+  holds an active claim; an idle recipient holding only its own claim is woken.
 
   Supported terminal-backed runtimes use the same notification-generation CAS
   with exact incarnation, idle-turn, live-runtime and detached-session rechecks.
   Native Claude dispatch uses its notice module; Codex terminal dispatch uses the
   guarded multiline envelope. Admission requires an authoritative broker with no
-  active claim or active/uncertain operation. The durable per-session attempt
+  active/uncertain operation; the recipient's own claim does not defer it. The durable per-session attempt
   fences new claim and operation admission without holding the global registry
   lock across I/O. Acknowledgement or exact positive notice observation resolves
   an attempt; absent history keeps uncertainty parked.
