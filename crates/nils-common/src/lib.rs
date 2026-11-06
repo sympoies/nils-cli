@@ -33,6 +33,7 @@ pub mod execution_effect;
 pub mod forge_identity;
 pub mod fs;
 pub mod git;
+pub mod mailbox_notice;
 pub mod markdown;
 pub mod observation;
 pub mod process;
