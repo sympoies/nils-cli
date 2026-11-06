@@ -5,6 +5,59 @@ use pretty_assertions::assert_eq;
 use sha2::{Digest, Sha256};
 use std::os::unix::fs::PermissionsExt;
 
+#[test]
+fn direct_activity_hook_selects_runtime_executable() {
+    let temp = tempfile::tempdir().unwrap();
+    let selected = temp.path().join("selected");
+    let poison = temp.path().join("poison");
+    fs::create_dir_all(&selected).unwrap();
+    fs::create_dir_all(&poison).unwrap();
+    for (directory, label) in [(&selected, "selected"), (&poison, "poison")] {
+        let binary = directory.join(nils_common::session_binary::NAME);
+        fs::write(
+            &binary,
+            format!("#!/bin/sh\nprintf '%s\\n' '{label}' \"$@\" > \"$RECORD\"\n"),
+        )
+        .unwrap();
+        fs::set_permissions(binary, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let record = temp.path().join("record");
+    let status = std::process::Command::new("/bin/sh")
+        .args(["-c", &owned_command(AgentKind::Codex, Some("Stop"))])
+        .env(
+            "PATH",
+            format!("{}:{}:/usr/bin:/bin", poison.display(), selected.display()),
+        )
+        .env(
+            "AGENT_SESSION_BIN",
+            selected.join(nils_common::session_binary::NAME),
+        )
+        .env("RECORD", &record)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert_eq!(
+        fs::read_to_string(record).unwrap(),
+        "selected\nactivity\nhook\n--agent\ncodex\n"
+    );
+    let guarded_record = temp.path().join("guarded-record");
+    let status = std::process::Command::new("/bin/sh")
+        .args([
+            "-c",
+            &owned_command(AgentKind::Codex, Some("PermissionRequest")),
+        ])
+        .env("AGENT_SESSION_ATTENTION_AUTHORITY", "protocol")
+        .env(
+            "AGENT_SESSION_BIN",
+            selected.join(nils_common::session_binary::NAME),
+        )
+        .env("RECORD", &guarded_record)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert!(!guarded_record.exists());
+}
+
 const POLICY: &str = r#"schema_version = "agent-hook.policy.v1"
 bundle_id = "fixture-policy"
 version = "2026.10.11.1"

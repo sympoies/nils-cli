@@ -11,6 +11,7 @@ pub(super) struct Attempt<'a> {
     pub(super) started: Instant,
     pub(super) acknowledged: &'a mut dyn FnMut(&SessionRecord, &str),
     pub(super) terminal_command: bool,
+    pub(super) recovery: Option<auto_resume::notice::Recovery>,
 }
 
 pub(super) fn deliver(

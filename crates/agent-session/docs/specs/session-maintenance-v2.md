@@ -112,6 +112,18 @@ removal remains limited to the conditions above. Probe failures identify the
 tmux `has-session` probe or recorded process-boundary liveness probe. No
 replacement numeric target is signaled and no boot proof is fabricated.
 
+When no cgroup is recorded, the marker inventory retains the shared per-user
+daemons `gpg-agent`, `dirmngr`, and `keyboxd` if reparented to init (launchd on
+macOS). It records their name and PID as `shared-daemon-retained`; they do not
+block deletion and are not signaled by this inventory. Other marked processes
+remain blockers. Cgroup-backed teardown and population checks are unchanged.
+The resolved executable must be under a system binary or library directory,
+`/usr/local`, `/opt/homebrew`, `/opt/local`, `/home/linuxbrew/.linuxbrew`, or
+`/nix/store`,
+and outside the session worktree, state directory, and temporary directories.
+A same-user process that can write a package prefix can still spoof a daemon,
+consistent with the existing same-OS-user trust boundary.
+
 If either condition stops holding between preview and action, the request
 returns `maintenance-preview-stale` and nothing moves.
 

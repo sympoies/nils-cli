@@ -1,7 +1,8 @@
 # History images v1
 
 History message pages add optional `images` descriptors retaining their row-bound
-`id`. Each descriptor may also carry `origin`, `attachment_ref`, and `original_name`; the same
+`id`. Each descriptor may also carry `origin`, `attachment_ref`, `original_name`,
+and `upload_path`; the same
 optional values appear on `parts=v1` image parts, whose `ref` remains the image-read
 selector. There are at most 16 descriptors per message. The opaque id is at most 96 ASCII bytes and binds a
 provider transcript segment, byte offset, source selector and source-row digest. It
@@ -58,6 +59,31 @@ It is omitted when ownership or valid metadata cannot be established, and is
 never inferred from the stored filename. Both descriptor and image part carry
 the same value. See [the descriptor fixture](fixtures/history-image-descriptor-v1.json).
 
+`upload_path` is an optional JSON string containing the exact stored absolute
+path returned by the upload, without shell quoting, escaping beyond JSON, basename
+substitution, or path reconstruction. Spaces and quoting-sensitive characters are
+preserved. The stored spelling must already be normalized: doubled separators
+and `.` or `..` components omit the field. The producer never normalizes or
+reconstructs the path value. It is bound to the descriptor's row selector (`id`,
+or `ref` on the image part); both carry the identical value across repeated reads
+and pagination.
+The spelling and representation are frozen by the descriptor fixture above.
+
+Only `origin: "user_attachment"` images whose file source passes the existing
+same-session managed-upload ownership, descriptor-relative no-follow, regular-file,
+size, extension and raster checks carry `upload_path`. Foreign-session uploads,
+paths outside managed attachment directories, symlinks (including parent
+components), embedded images, URLs, tool-result images and unknown provenance omit
+it. A relative source with no exact absolute upload path also omits it; the
+producer does not reconstruct the field from a working directory. Missing
+original-name metadata does not prevent a proven upload path; the
+existing original-name sanitizer and metadata read boundary are unchanged.
+
+This field is copy/display metadata on authenticated history responses, never
+image-read authority. Consumers must retain session/history ownership checks and
+use the opaque authenticated selector route for image bytes. It adds no path-based
+read route and does not broaden any existing file-read boundary.
+
 ## Authenticated read
 
 `GET /history/sessions/{history_id}/images/{image_id}` requires the server bearer,
@@ -101,14 +127,27 @@ Errors use the ordinary JSON `ok: false` envelope:
 Missing history, transcript, referenced file, or stale row ids are deleted.
 A managed attachment whose session has no matching live provider identity or
 matching archive original session id is also deleted (404).
-Malformed ids, remote URLs, unsupported data, excessive size, forbidden paths,
+Malformed ids, non-HTTP URL schemes, unsupported data, excessive size, forbidden paths,
 symlinks and unreadable/invalid images are unavailable. Infrastructure failures
 remain ordinary server errors; clients can show unavailable and allow retry.
+
 For a local file outside both allowed roots, the 422 envelope retains
 `history-image-unavailable` and adds `error.reason: "outside-allowed-roots"` with
 a message explaining the working-directory/owned-attachment boundary. It does not
 include the refused path. Consumers can display this reason with the image
 basename from the original Markdown instead of an unexplained placeholder.
+
+For an `http` or `https` URL source the image selector is still emitted, but the
+server never fetches it (no proxying and no external request). The 422 envelope
+retains `history-image-unavailable` and adds `error.reason: "remote-url-not-fetched"`
+and `error.source_origin`, the lower-cased `scheme://host` only (for example
+`https://example.com`). Credentials, port, path, query and fragment are never
+included, so the envelope carries no full external URL; clients take the link from
+the row text they already hold. The host must be ASCII letters, digits, hyphens and
+dots (at most 253 bytes) or a bracketed IPv6 literal, and a backslash ends the
+authority; otherwise `source_origin` is omitted and the reason is still returned.
+These two field names are frozen.
+
 These states are observations at read time, not promises of permanent storage.
 
 ## File boundary and retention

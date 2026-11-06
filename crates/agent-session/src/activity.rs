@@ -38,7 +38,7 @@ mod codex_quiet;
 mod registration;
 use registration::{
     agent_hook_claude_readiness, agent_hook_codex_configured, codex_notification_config_path,
-    provider_config_path,
+    owned_command, provider_config_path,
 };
 #[path = "activity/completion_admission.rs"]
 mod completion_admission;
@@ -4042,16 +4042,6 @@ fn provider_specs(agent: AgentKind) -> Vec<ProviderSpec> {
         // dsh-runtime-kit bridge hook from their launcher, and external workers
         // report through their liveness sidecar.
         AgentKind::Claude | AgentKind::Dsh => Vec::new(),
-    }
-}
-
-fn owned_command(agent: AgentKind, event: Option<&str>) -> String {
-    let name = nils_common::session_binary::NAME;
-    match event {
-        Some("PermissionRequest") if agent == AgentKind::Codex => format!(
-            "sh -c 'if [ \"${{AGENT_SESSION_ATTENTION_AUTHORITY:-hook}}\" = protocol ]; then exit 0; fi; exec {name} activity hook --agent codex'"
-        ),
-        _ => format!("{name} activity hook --agent {}", agent.as_str()),
     }
 }
 

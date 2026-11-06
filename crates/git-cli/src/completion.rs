@@ -77,6 +77,7 @@ fn build_command_model() -> Command {
         .subcommand(build_commit_group())
         .subcommand(build_branch_group())
         .subcommand(build_worktree_group())
+        .subcommand(crate::transport::command_model())
         .subcommand(build_ci_group())
         .subcommand(build_open_group())
         .subcommand(build_summary_group())

@@ -15,3 +15,11 @@ mod provider_runtime_contract;
 #[cfg(unix)]
 #[path = "integration/forge_identity_remote.rs"]
 mod forge_identity_remote;
+
+#[cfg(unix)]
+#[path = "integration/forge_identity_https.rs"]
+mod forge_identity_https;
+
+#[cfg(unix)]
+#[path = "integration/forge_identity_children.rs"]
+mod forge_identity_children;

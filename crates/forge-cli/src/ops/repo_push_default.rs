@@ -1214,6 +1214,20 @@ mod tests {
         let _principal = EnvGuard::set(&lock, "FORGE_IDENTITY_PRINCIPAL", "contributor");
         const CANARY: &str = "FIXTURE_BOUNDED_GIT_SECRET_71";
         let _secret = EnvGuard::set(&lock, "FIXTURE_ACCOUNT_A_CREDENTIAL", CANARY);
+        let git_config = home.path().join("gitconfig");
+        fs::write(&git_config, "[credential]\nhelper=\n").unwrap();
+        nils_test_support::git::git(
+            repo.path(),
+            &[
+                "config",
+                "--file",
+                git_config.to_str().unwrap(),
+                "--add",
+                "credential.helper",
+                "!f() { test \"$1\" = get || exit 0; cat >/dev/null; printf 'username=fixture\\npassword=%s\\n' \"$FIXTURE_ACCOUNT_A_CREDENTIAL\"; }; f",
+            ],
+        );
+        let _git_config = EnvGuard::set(&lock, "GIT_CONFIG_GLOBAL", git_config.to_str().unwrap());
         let executable = bins.path().join("bounded-git");
         let _exe = EnvGuard::set(&lock, ENV_GIT_BIN, executable.to_str().unwrap());
         let executed = home.path().join("executed");

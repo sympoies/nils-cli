@@ -111,6 +111,7 @@ pub(in crate::serve) async fn dispatch_coordination_notification(
             candidate: candidate.clone(),
         }),
         false,
+        None,
     )
     .await;
     let context = state.context.clone();

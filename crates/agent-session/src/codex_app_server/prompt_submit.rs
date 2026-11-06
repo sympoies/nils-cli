@@ -50,6 +50,7 @@ impl ControlHandle {
     pub(crate) async fn submit_prompt(
         &self,
         message: &str,
+        client_message_id: Option<&str>,
     ) -> Result<String, PromptSubmissionFailure> {
         let (response, receive) = oneshot::channel();
         let deadline = tokio::time::Instant::now() + CONTROL_SUBMIT_TOTAL_TIMEOUT;
@@ -57,6 +58,7 @@ impl ControlHandle {
             deadline,
             self.sender.send(ControlCommand::Prompt {
                 message: message.to_string(),
+                client_message_id: client_message_id.map(str::to_owned),
                 response,
             }),
         )
@@ -294,7 +296,7 @@ mod tests {
     #[tokio::test]
     async fn control_response_channel_close_is_not_confirmed() {
         let (handle, mut commands, _ready) = super::super::starting_control_channel();
-        let submit = tokio::spawn(async move { handle.submit_prompt("fixture").await });
+        let submit = tokio::spawn(async move { handle.submit_prompt("fixture", None).await });
         let ControlCommand::Prompt { response, .. } = commands.recv().await.unwrap() else {
             panic!("expected a prompt command");
         };
@@ -309,7 +311,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn control_response_channel_timeout_is_not_confirmed() {
         let (handle, mut commands, _ready) = super::super::starting_control_channel();
-        let submit = tokio::spawn(async move { handle.submit_prompt("fixture").await });
+        let submit = tokio::spawn(async move { handle.submit_prompt("fixture", None).await });
         let ControlCommand::Prompt { response, .. } = commands.recv().await.unwrap() else {
             panic!("expected a prompt command");
         };

@@ -23,6 +23,7 @@ cargo run -p nils-forge-cli -- completion zsh
 cargo run -p nils-forge-cli -- label audit --catalog labels.yaml --format json
 cargo run -p nils-forge-cli -- pr deliver --kind feature --dry-run --format json
 cargo run -p nils-forge-cli -- pr review 123 --decision comments-only --comment-file review.md --mirror-issue --issue 456 --format json
+cargo run -p nils-forge-cli -- pr review edit 123 --review 456 --body-file review.md --format json
 cargo run -p nils-forge-cli -- pr review validate --comment-file review.md --thread-file review-threads.json --format json
 cargo run -p nils-forge-cli -- pr review validate --specialist-report --comment-file review.md --thread-file review-threads.json --format json
 cargo run -p nils-forge-cli -- pr review validate 123 --check-diff --comment-file review.md --thread-file review-threads.json --format json
@@ -112,11 +113,14 @@ and the existing private Forgejo creation flow. Supply `--provider`,
 `--repo namespace/name`, `--owner-kind`, a safe
 `--default-branch`, one or more regular repository-root `--file` inputs, a
 Semantic Commit `--message`, and a regular `--reason-file` recording the
-operator's authorization. The default visibility is private; public GitHub
+operator's authorization.
+
+The default visibility is private; public GitHub
 or GitLab repositories require `--visibility public`. For GitLab, use
 `--owner-kind org` for a group or subgroup and `--owner-kind user` for the
 authenticated user's namespace. Bind a self-managed instance with
-`--host gitlab.example.com`. Forgejo remains private only.
+`--host gitlab.example.com`. Forgejo remains private only. Explicit `--file` inputs are staged even when Git
+ignore rules match them.
 
 ```sh
 forge-cli --provider github --repo OWNER/REPO --dry-run repo bootstrap \
@@ -137,13 +141,22 @@ Omit `--existing-empty` to create a new empty repository; include it only when
 adopting a repository that already exists and has no refs. The CLI records an
 exact-input receipt before creation or push, verifies the local signature and
 zero-parent ancestry, reads back the exact remote branch and provider signature,
-reads GitHub and GitLab API status from the HTTP response header,
+
+The CLI reads GitHub and GitLab API status from the HTTP response header,
 rejects additional GitLab branches or tags, and never retries an ambiguous first push. Receipts use schema v2; any other schema is
 rejected as unsupported with the receipt path, and the owner reconciles it against the
 remote state before removing it. If interrupted, inspect the receipt
 reported in the error and repeat the same command with `--resume`. If an
 attempted push has no remote branch, resume stops for manual reconciliation. A completed
-matching receipt is idempotent. Nested paths belong in a normal managed
+matching receipt is idempotent.
+
+To abandon an incomplete receipt, repeat the
+bootstrap command with `--abandon` instead of `--resume`. The receipt and local
+checkout are archived under the bootstrap state directory; an existing archive
+must be retained or moved before another abandonment. This operation never
+deletes the remote. Inspect it first: an empty remote must be removed or reused
+by the operator (with `--existing-empty` where supported). A push may have
+already populated it. Nested paths belong in a normal managed
 worktree and PR after the initial branch exists.
 
 `repo push-default` is a narrow, policy-driven exception to PR delivery. It
@@ -588,13 +601,18 @@ It requires a current-head published review and a reviewer-owned closed ledger;
 mailbox verdicts never replace provider evidence. See the
 [handoff contract](docs/specs/forge-cli-spec-v1.md#pr-review-handoff-assign--inspect--check--surrender--recover)
 for assignment, writer fencing, generation-bound surrender/recovery, and privacy boundaries.
+
 A repository-configured handoff supervisor can recover a retired coordinator
 with `--reason coordinator-retired`, `--base-sha`, `--expected-head`, and
 `--expected-state`. `--coordinator-session` is optional; the stored coordinator
 digest can identify its registry row. The target base branch's
 `[review_handoff].supervisors` allow-list, a fresh stopped/deleted status, and
-stale terminal-activity evidence are required. The transfer preserves findings
-and keeps review verdicts reviewer-owned.
+stale terminal-activity evidence are required. The allow-list accepts session
+digests or stable `role:<attested-role>` entries authenticated by the session
+broker. Only operator-attested roles grant supervisor authority; ordinary role
+labels do not. See the [recovery runbook](docs/runbooks/retired-coordinator-recovery.md).
+
+The transfer preserves findings and keeps review verdicts reviewer-owned.
 
 When an automated review App configured in the user-global config still blocks
 a head the designated reviewer has passed, `pr review-dismiss <id> --review-id <id> --expected-head

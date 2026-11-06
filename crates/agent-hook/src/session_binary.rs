@@ -6,8 +6,10 @@
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+#[cfg(any(target_os = "linux", test))]
 use std::process::{Command, Stdio};
 
+#[cfg(any(target_os = "linux", test))]
 use nils_common::runtime_compat::{ReleaseSkew, classify_release};
 use nils_common::session_binary::NAME;
 
@@ -84,10 +86,12 @@ fn sibling_in(current: &Path, name: &str) -> Result<PathBuf, HookError> {
 ///
 /// Called only after a session call has failed, so the healthy path spawns
 /// nothing. An unreadable or unparsable release never claims a mismatch.
+#[cfg(target_os = "linux")]
 pub(crate) fn release_mismatch() -> Option<String> {
     release_mismatch_for(&trusted_sibling().ok()?, env!("CARGO_PKG_VERSION"))
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn release_mismatch_for(binary: &Path, local: &str) -> Option<String> {
     let output = Command::new(binary)
         .arg("--version")

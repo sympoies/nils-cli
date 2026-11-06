@@ -464,6 +464,9 @@ impl HistoryCatalog {
         {
             return Ok(session);
         }
+        if let Some(session) = self.fresh_direct_session(history_id) {
+            return Ok(session);
+        }
         if snapshot.truncated || dsh_unavailable {
             Err(HistoryError::Io)
         } else {
@@ -546,16 +549,12 @@ impl HistoryCatalog {
         history_id: &str,
         starred_at: Option<&str>,
     ) -> Result<Option<String>, HistoryError> {
-        let snapshot = self.snapshot();
-        let session = snapshot
-            .sessions
-            .iter()
-            .find(|session| session.id == history_id)
-            .ok_or(HistoryError::NotFound)?;
+        let id = self.star_target(history_id)?;
         let stored = match starred_at {
-            Some(starred_at) => write_star(&self.stars_root, &session.id, starred_at)
-                .map(|record| Some(record.starred_at)),
-            None => remove_star(&self.stars_root, &session.id).map(|()| None),
+            Some(starred_at) => {
+                write_star(&self.stars_root, &id, starred_at).map(|record| Some(record.starred_at))
+            }
+            None => remove_star(&self.stars_root, &id).map(|()| None),
         };
         self.invalidate();
         stored

@@ -114,7 +114,7 @@ use nils_common::git::parse_git_remote_url;
 // `provider_prompt` module via `crate::` are re-exported at crate scope.
 use nils_provider_resume::{
     CODEX_RESUME_SCAN_MAX_DEPTH, ClaudeResumeScanBudget, CodexResumeScanBudget, ResumeIdError,
-    ResumeProvider, ResumeResolveError, collect_claude_provider_resume_matches,
+    ResumeProvider, ResumeResolveError, collect_claude_named_resume_matches,
     collect_codex_provider_resume_matches, normalize_resume_id, resolve_resume_source,
     resolve_resume_source_in_config_dir,
 };
@@ -3044,7 +3044,7 @@ pub(crate) fn resolve_provider_transcript_path_from_roots(
         }
         AgentKind::Claude => {
             let mut budget = ClaudeResumeScanBudget::from_env();
-            collect_claude_provider_resume_matches(
+            collect_claude_named_resume_matches(
                 claude_root?,
                 session_id,
                 &mut matches,
@@ -4148,35 +4148,7 @@ fn send_input_serialized_with_title_guard(
     )
 }
 
-/// Submit the product-owned continuation while `auto_resume::tick` holds the
-/// session record lock. Reloading here prevents a stale scheduler record from
-/// targeting a restarted or recreated runtime.
-pub(crate) fn send_auto_resume_input(
-    context: &CliContext,
-    expected: &SessionRecord,
-    text: &str,
-    tmux_bin: &Path,
-) -> Result<(), CliError> {
-    let mut current = load_session_record(context, &expected.id)?;
-    ensure_same_session_identity(expected, &current)?;
-    if live_status(tmux_bin, &current.tmux_session) != "running" {
-        return Err(CliError::runtime(
-            "session-not-running",
-            format!("session is not running: {}", current.id),
-            Some(json!({ "id": current.id })),
-        ));
-    }
-    codex_account::authorize_input_locked(context, &mut current)?;
-    send_input_unlocked(
-        context,
-        &current,
-        Some(text),
-        &[SpecialKey::Enter],
-        tmux_bin,
-        None,
-        PasteMode::Raw,
-    )
-}
+pub(crate) use send::daemon_notice::send_auto_resume_input;
 
 struct ManualInputSection {
     record_lock: Option<SessionRecordLock>,

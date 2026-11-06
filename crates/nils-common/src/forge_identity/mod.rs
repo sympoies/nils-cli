@@ -1,6 +1,7 @@
 //! Optional, metadata-only forge identity policy shared by managed API and Git runners.
 //! Configured sessions resolve the principal from authenticated immutable launch context.
 mod git;
+mod https;
 mod policy;
 mod probe;
 mod replay;
@@ -191,14 +192,23 @@ impl LoadedPolicy {
                     .map(|s| s.trim().to_string())
             }
         }
-        .filter(|v| {
-            !v.is_empty()
-                && v.len() <= 16384
-                && !v
-                    .bytes()
-                    .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
-        })
         .ok_or(Error::new("identity_credential_missing"))?;
+        self.verify_token(selection, gh, token)
+    }
+    fn verify_token(
+        &self,
+        selection: &Selection,
+        gh: &std::ffi::OsStr,
+        token: String,
+    ) -> Result<Authorization> {
+        if token.is_empty()
+            || token.len() > 16384
+            || token
+                .bytes()
+                .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
+        {
+            return Err(Error::new("identity_credential_missing"));
+        }
         let mut auth = Authorization {
             selection: selection.clone(),
             actor: String::new(),

@@ -22,6 +22,7 @@ pub mod ops;
 pub mod provider;
 pub mod provider_registry;
 pub mod rate_limit;
+mod repo_bootstrap_args;
 pub mod tracker;
 pub mod validations;
 

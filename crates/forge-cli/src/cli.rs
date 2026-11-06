@@ -31,7 +31,7 @@ mod comment;
 pub use comment::*;
 
 mod review_loop;
-pub use review_loop::PrReviewLoopObserveArgs;
+pub use review_loop::{PrReviewCommand, PrReviewEditArgs, PrReviewLoopObserveArgs};
 
 mod search;
 pub use search::{
@@ -447,33 +447,7 @@ pub struct RepoPushDefaultArgs {
 }
 
 /// `repo bootstrap` arguments for a signed empty repository on GitHub, GitLab, or Forgejo.
-#[derive(Args, Debug, Clone)]
-pub struct RepoBootstrapArgs {
-    /// Whether the owner is the authenticated user or an organization/group.
-    #[arg(long = "owner-kind", value_enum)]
-    pub owner_kind: RepoBootstrapOwnerKind,
-    /// GitHub/GitLab repository visibility (Forgejo bootstrap remains private).
-    #[arg(long, value_enum, default_value = "private")]
-    pub visibility: RepoBootstrapVisibility,
-    /// Adopt an existing empty GitHub/GitLab repository instead of creating one.
-    #[arg(long = "existing-empty", action = ArgAction::SetTrue)]
-    pub existing_empty: bool,
-    /// Exact branch name to create and establish as the remote default.
-    #[arg(long = "default-branch", value_name = "BRANCH")]
-    pub default_branch: String,
-    /// Regular file to copy into the repository root. Repeat for multiple files.
-    #[arg(long = "file", value_name = "PATH", required = true)]
-    pub files: Vec<PathBuf>,
-    /// Semantic Commit message for the signed zero-parent root commit.
-    #[arg(long, value_name = "TEXT")]
-    pub message: String,
-    /// UTF-8 file describing the user's explicit bootstrap authorization.
-    #[arg(long = "reason-file", value_name = "PATH")]
-    pub reason_file: PathBuf,
-    /// Resume an existing durable bootstrap receipt after exact read-back.
-    #[arg(long, action = ArgAction::SetTrue)]
-    pub resume: bool,
-}
+pub use crate::repo_bootstrap_args::RepoBootstrapArgs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, serde::Serialize, serde::Deserialize)]
 #[clap(rename_all = "lower")]
@@ -728,13 +702,6 @@ impl PrReviewDecision {
             Self::RequestChanges => "REQUEST_CHANGES",
         }
     }
-}
-
-/// `pr review` subcommands that do not post provider-visible review activity.
-#[derive(Subcommand, Debug, Clone)]
-pub enum PrReviewCommand {
-    /// Validate review summary and thread specs before posting.
-    Validate(PrReviewValidateArgs),
 }
 
 /// `pr review validate` arguments.
@@ -2101,7 +2068,7 @@ pub(crate) fn dispatch_parsed(cli: Cli) -> i32 {
         }
         Some(Command::Repo(RepoArgs {
             command: Some(RepoCommand::Bootstrap(args)),
-        })) => ops::repo_bootstrap::run(&global, args, format),
+        })) => ops::repo_bootstrap_abandon::dispatch(&global, args, format),
         Some(Command::Repo(RepoArgs {
             command: Some(RepoCommand::PushDefault(args)),
         })) => ops::repo_push_default::run(&global, args, format),

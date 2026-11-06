@@ -476,17 +476,34 @@ fn relay_create(
         ));
     }
     let error = &body["error"];
-    if error["code"] == UNAVAILABLE_CODE {
+    let created_id = error["details"]["created_session_id"]
+        .as_str()
+        .filter(|id| {
+            !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        });
+    if error["code"] == UNAVAILABLE_CODE
+        || (error["code"] == "create-outcome-unknown" && created_id.is_some())
+    {
         let message = bounded_line(&error["message"]).unwrap_or(
             "the console aggregator reported an unavailable start; inspect Console before retrying",
         );
-        return Err(unavailable(
+        let mut failure = unavailable(
             "aggregator_response",
             "upstream_unavailable",
             message,
             false,
             false,
-        ));
+        );
+        // A lost start answer does not erase creation evidence. Persist this
+        // allowlisted id in the operation receipt so reconciliation can return it.
+        if let Some(id) = created_id {
+            failure.details_mut().as_mut().unwrap()["created_session_id"] = json!(id);
+        }
+        return Err(failure);
     }
     let mut failure = start_failure::forward(error)
         .unwrap_or_else(|| forwarded(error["code"].as_str(), &error["message"]));
@@ -720,7 +737,17 @@ fn cli_request(
             });
     }
     let error = &body["error"];
-    let mut failure = if error["code"] == UNAVAILABLE_CODE {
+    let mut failure = if error["code"] == "console-start-busy"
+        && status.as_u16() == 503
+        && error["details"]["retryable"] == true
+        && error["details"]["recovery"]["safe_to_retry"] == true
+    {
+        CliError::unavailable(
+            "console-start-busy",
+            "service console start workers are busy",
+            Some(json!({"retryable": true, "recovery": {"safe_to_retry": true}})),
+        )
+    } else if error["code"] == UNAVAILABLE_CODE {
         unavailable_from_details(&error["message"], &error["details"])
     } else {
         start_failure::forward(error)
