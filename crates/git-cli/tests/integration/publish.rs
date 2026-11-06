@@ -618,23 +618,44 @@ fn sync_default_dry_run_reports_the_plan_without_moving_the_ref() {
     let harness = GitCliHarness::new();
     let (repo, remote) = repo_with_published_main();
     let previous = rev_parse(repo.path(), "HEAD");
-    let advanced = advance_remote_main(&remote);
+    advance_remote_main(&remote);
+    let help = harness.run(repo.path(), &["sync-default", "--help"]);
+    assert!(help.stdout_text().contains("--dry-run skips fetch"));
 
     let output = harness.run(
         repo.path(),
         &["sync-default", "--dry-run", "--format", "json"],
     );
     assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
-
+    assert_eq!(rev_parse(repo.path(), "refs/remotes/origin/main"), previous);
     let json = parse_json(&output);
     assert_eq!(json["data"]["dry_run"], true);
-    assert_eq!(json["data"]["strategy"], "merge-ff-only");
-    assert_eq!(json["data"]["new_head"], advanced);
-    assert_eq!(
-        rev_parse(repo.path(), "refs/heads/main"),
-        previous,
-        "a dry run moves nothing"
+    assert_eq!(json["data"]["fetched"], false);
+    assert_eq!(json["data"]["remote_ref"], "refs/remotes/origin/main");
+    assert_eq!(json["data"]["new_head"], previous);
+    assert_eq!(rev_parse(repo.path(), "refs/heads/main"), previous);
+
+    let text = harness.run(repo.path(), &["sync-default", "--dry-run"]);
+    assert_eq!(text.code, 0, "stderr: {}", text.stderr_text());
+    assert!(text.stdout_text().contains("refs/remotes/origin/main"));
+    assert!(text.stdout_text().contains("fetched=false"));
+
+    git(repo.path(), &["fetch", "origin", "main"]);
+    let cached = rev_parse(repo.path(), "refs/remotes/origin/main");
+    let text = harness.run(repo.path(), &["sync-default", "--dry-run"]);
+    assert_eq!(text.code, 0, "stderr: {}", text.stderr_text());
+    assert!(text.stdout_text().contains("Would fast-forward"));
+    assert!(text.stdout_text().contains("refs/remotes/origin/main"));
+    assert!(text.stdout_text().contains("fetched=false"));
+    assert_ne!(cached, previous);
+    let output = harness.run(
+        repo.path(),
+        &["sync-default", "--dry-run", "--format", "json"],
     );
+    let json = parse_json(&output);
+    assert_eq!(json["data"]["strategy"], "merge-ff-only");
+    assert_eq!(json["data"]["new_head"], cached);
+    assert_eq!(rev_parse(repo.path(), "refs/heads/main"), previous);
 }
 
 #[test]
