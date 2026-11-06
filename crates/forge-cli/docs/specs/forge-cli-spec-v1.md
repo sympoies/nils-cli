@@ -1423,7 +1423,8 @@ On GitLab, `--parent <issue-or-mr-iid>` is required for the parent-scoped notes
 endpoint; it is not accepted on GitHub. The body file uses the comment content
 guards; `-` reads standard input. Provider permission failures retain their
 backend diagnostics. The success envelope includes the edited `body`, `id`,
-`provider`, and, on GitLab, parent `number`.
+`provider`, and, on GitLab, parent `number`. GitLab may normalize the stored
+body, so its returned body can differ from the bytes sent.
 
 ## Provider detection
 

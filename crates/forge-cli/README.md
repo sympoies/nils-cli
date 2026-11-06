@@ -629,3 +629,4 @@ Use `forge-cli issue comment-edit <comment-id> --body-file <path>` or
 `forge-cli pr comment-edit <comment-id> --body-file <path>` to replace a
 timeline comment. For GitLab, also pass `--parent <issue-or-mr-iid>`. The
 provider enforces edit permissions and the response includes the edited body.
+GitLab may normalize the body before saving it.

@@ -116,7 +116,7 @@ pub fn run(
             None,
         )
     })?;
-    if edited.id != args.comment_id || edited.body != body {
+    if edited.id != args.comment_id || (ctx.provider == Provider::GitHub && edited.body != body) {
         return Err(write::invalid(
             op,
             "comment_response_mismatch",

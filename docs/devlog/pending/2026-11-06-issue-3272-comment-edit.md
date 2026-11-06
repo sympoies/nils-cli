@@ -8,7 +8,8 @@
 ### Why / context
 
 - GitLab requires the parent IID for its REST note endpoint; GitHub addresses
-  timeline comments directly by ID.
+  timeline comments directly by ID. GitLab may normalize the saved body, so
+  its response is returned without comparing it to the request.
 
 ### Evidence
 

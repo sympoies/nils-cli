@@ -17,7 +17,8 @@ else:
     parent = 'issues' if os.environ['FAKE_KIND'] == 'issue' else 'merge_requests'
     assert f'projects/acme%2Fwidgets/{parent}/7/notes/91' in args, args
     body = json.load(open(args[args.index('--input') + 1]))['body']
-    print(json.dumps({'id': 91, 'body': body}))
+    assert body == 'Unicode café\nsecond line\n\n', repr(body)
+    print(json.dumps({'id': 91, 'body': body.replace('\r', '').rstrip()}))
 "##;
 
 #[test]
@@ -57,7 +58,12 @@ fn edits_preserve_body_and_provider_refusals() {
                 "{provider} {kind}: {} {}",
                 out.stdout, out.stderr
             );
-            assert_eq!(parse_envelope(&out.stdout)["data"]["body"], body);
+            let returned_body = if provider == "gitlab" {
+                "Unicode café\nsecond line"
+            } else {
+                body
+            };
+            assert_eq!(parse_envelope(&out.stdout)["data"]["body"], returned_body);
             let refused = stub.env("FAKE_REFUSE", "1");
             let out = run_forge_cli(&refused, &args);
             assert_ne!(out.code, 0);
