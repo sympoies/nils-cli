@@ -100,8 +100,22 @@ impl Default for ChildLineage {
     }
 }
 
+#[cfg(test)]
+static CLIENT_BUILDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 pub(super) fn client() -> Result<reqwest::blocking::Client, CliError> {
-    reqwest::blocking::Client::builder()
+    // Keep the system roots loaded at first use until the process restarts.
+    static CLIENT: std::sync::Mutex<Option<reqwest::blocking::Client>> =
+        std::sync::Mutex::new(None);
+    let mut client = CLIENT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(client) = client.as_ref() {
+        return Ok(client.clone());
+    }
+    #[cfg(test)]
+    CLIENT_BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let built = reqwest::blocking::Client::builder()
         .timeout(REQUEST_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -113,7 +127,9 @@ pub(super) fn client() -> Result<reqwest::blocking::Client, CliError> {
                 true,
                 true,
             )
-        })
+        })?;
+    *client = Some(built.clone());
+    Ok(built)
 }
 
 /// A bounded, single-line, non-empty diagnostic string, or `None`.
@@ -1021,5 +1037,41 @@ mod tests {
                 "{code:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod client_reuse_tests {
+    #[test]
+    fn repeated_console_requests_build_client_once() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for _ in 0..8 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0; 4096];
+                assert!(stream.read(&mut request).unwrap() > 0);
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .unwrap();
+            }
+        });
+        for _ in 0..8 {
+            assert!(
+                super::client()
+                    .unwrap()
+                    .get(format!("http://{address}/"))
+                    .send()
+                    .unwrap()
+                    .status()
+                    .is_success()
+            );
+        }
+        server.join().unwrap();
+        assert_eq!(
+            super::CLIENT_BUILDS.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 }
