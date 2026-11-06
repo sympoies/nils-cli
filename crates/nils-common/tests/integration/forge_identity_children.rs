@@ -61,15 +61,34 @@ fn pinned_https_children_cannot_observe_token_and_local_transport_succeeds() {
     let _principal = EnvGuard::set(&lock, "FORGE_IDENTITY_PRINCIPAL", "contributor");
     let hook_marker = home.path().join("hook-observed");
     let monitor_marker = home.path().join("monitor-observed");
+    let alternate_marker = home.path().join("alternate-refs-observed");
     let hook = repo.path().join(".git/hooks/pre-push");
     let monitor = home.path().join("fsmonitor");
-    for (script, marker) in [(&hook, &hook_marker), (&monitor, &monitor_marker)] {
+    let alternate = home.path().join("alternate-refs");
+    for (script, marker) in [
+        (&hook, &hook_marker),
+        (&monitor, &monitor_marker),
+        (&alternate, &alternate_marker),
+    ] {
         fs::write(script, format!("#!/bin/sh\nif test \"$FORGE_IDENTITY_TOKEN\" = FIXTURE_CHILD_CANARY; then printf observed > '{}'; fi\nexit 0\n", marker.display())).unwrap();
         fs::set_permissions(script, fs::Permissions::from_mode(0o755)).unwrap();
     }
     git(
         repo.path(),
         &["config", "core.fsmonitor", monitor.to_str().unwrap()],
+    );
+    fs::write(
+        repo.path().join(".git/objects/info/alternates"),
+        format!("{}\n", remote.join("objects").display()),
+    )
+    .unwrap();
+    git(
+        repo.path(),
+        &[
+            "config",
+            "core.alternateRefsCommand",
+            alternate.to_str().unwrap(),
+        ],
     );
     let expected_head = git(repo.path(), &["rev-parse", "HEAD"]);
     for operation in ["push", "fetch"] {
@@ -131,6 +150,10 @@ fn pinned_https_children_cannot_observe_token_and_local_transport_succeeds() {
         (hook_marker.exists(), monitor_marker.exists()),
         (false, false),
         "pinned token reached a hook or fsmonitor"
+    );
+    assert!(
+        !alternate_marker.exists(),
+        "pinned token reached core.alternateRefsCommand"
     );
     assert_eq!(
         git(
