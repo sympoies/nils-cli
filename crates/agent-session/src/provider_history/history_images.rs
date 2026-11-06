@@ -16,8 +16,10 @@ mod compact_tests;
 mod image_provenance;
 mod incremental;
 mod row_classes;
+mod upload_ownership;
 use crate::provider_prompt::row_classes::{Compaction, RowClass};
 pub(super) use incremental::read_messages_incremental_from_reader;
+use upload_ownership::UploadOwnership;
 pub(super) mod native_notices;
 #[path = "upload_references.rs"]
 mod upload_references;
@@ -1087,51 +1089,12 @@ impl HistoryCatalog {
         crate::attachment_filename::sanitize_download_filename(&name)
     }
 
-    fn owned_original_name(&self, session: &HistorySession, path: &Path) -> Option<String> {
-        let (root, relative) = self.attachment_root(session, path).ok()?;
-        Self::managed_original_name(&root, &relative)
-    }
-
     fn attachment_root(
         &self,
         session: &HistorySession,
         path: &Path,
     ) -> Result<(PathBuf, PathBuf), ImageReadError> {
-        let state = self
-            .archives_root
-            .parent()
-            .and_then(Path::parent)
-            .ok_or(ImageReadError::Unavailable)?;
-        let relative = path
-            .strip_prefix(state)
-            .map_err(|_| ImageReadError::Unavailable)?;
-        let parts: Vec<_> = relative.components().collect();
-        if parts.len() != 4
-            || parts[0].as_os_str() != "sessions"
-            || parts[2].as_os_str() != "attachments"
-        {
-            return Err(ImageReadError::Unavailable);
-        }
-        let id = parts[1]
-            .as_os_str()
-            .to_str()
-            .ok_or(ImageReadError::Unavailable)?;
-        let archived = read_archive(&self.archives_root, &session.id)
-            .and_then(|a| a.session_id)
-            .is_some_and(|s| s == id);
-        let context = crate::CliContext::resolve(Some(state.to_path_buf()), None)
-            .map_err(|_| ImageReadError::Unavailable)?;
-        let live = crate::load_session_record(&context, id)
-            .ok()
-            .is_some_and(|r| {
-                r.provider_resume.is_some_and(|p| {
-                    p.provider == session.provider && p.session_id == session.provider_session_id
-                })
-            });
-        if !archived && !live {
-            return Err(ImageReadError::Deleted);
-        }
-        Ok((state.to_path_buf(), relative.to_path_buf()))
+        UploadOwnership::new(self, session).attachment_root(path)
     }
 }
 

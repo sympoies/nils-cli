@@ -95,23 +95,19 @@ pub(super) fn stored_upload_path(name: &str) -> Option<String> {
     Some(name.to_owned())
 }
 
-impl HistoryCatalog {
-    pub(super) fn owned_attachment_ref(
-        &self,
-        session: &HistorySession,
-        name: &str,
-    ) -> Option<String> {
+impl UploadOwnership<'_> {
+    pub(super) fn owned_attachment_ref(&mut self, name: &str) -> Option<String> {
         use std::os::unix::fs::MetadataExt;
         let name = name.strip_prefix("file://").unwrap_or(name);
         // Ownership, no-follow opens, size, extension and raster checks run
         // before minting metadata, even if cwd contains the upload directory.
-        let file = self.upload_file(session, name).ok()?;
+        let file = self.upload_file(name).ok()?;
         let metadata = file.metadata().ok()?;
         // Hash opened file identity, never paths, content or display names.
         // Equivalent supported paths correlate; newly allocated uploads do not,
         // even when an old upload path is reused.
         let hash = digest_parts(&[
-            session.id.as_bytes(),
+            self.session.id.as_bytes(),
             &metadata.dev().to_le_bytes(),
             &metadata.ino().to_le_bytes(),
             &metadata.ctime().to_le_bytes(),
@@ -119,12 +115,15 @@ impl HistoryCatalog {
         ]);
         Some(format!("upload-{}", &hash[7..]))
     }
+}
 
+impl HistoryCatalog {
     pub(super) fn correlate_image_uploads(
         &self,
         session: &HistorySession,
         value: &Value,
         message: &mut HistoryMessage,
+        ownership: &mut UploadOwnership<'_>,
     ) {
         let sources = image_sources(value);
         for image in &mut message.images {
@@ -145,9 +144,9 @@ impl HistoryCatalog {
                 };
                 image.attachment_ref = path
                     .to_str()
-                    .and_then(|path| self.owned_attachment_ref(session, path));
+                    .and_then(|path| ownership.owned_attachment_ref(path));
                 if image.attachment_ref.is_some() {
-                    image.original_name = self.owned_original_name(session, &path);
+                    image.original_name = ownership.owned_original_name(&path);
                     // Copy metadata only from a proven absolute user source;
                     // cwd resolution and tool correlation do not supply it.
                     if matches!(image.origin, Some(ImageOrigin::UserAttachment))

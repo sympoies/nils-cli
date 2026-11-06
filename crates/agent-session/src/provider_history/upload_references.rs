@@ -10,6 +10,7 @@ impl HistoryCatalog {
         include_parts: bool,
     ) {
         if matches!(session.provider.as_str(), "codex" | "claude") {
+            let mut ownership = UploadOwnership::new(self, session);
             for message in messages.iter_mut().filter(|message| {
                 !message.images.is_empty()
                     || (message.role == "user" && message.text.contains(['\'', '"']))
@@ -39,7 +40,7 @@ impl HistoryCatalog {
                 if message.role == "user"
                     && message.text.contains(['\'', '"'])
                     && let Some((projected, images)) =
-                        self.upload_projection(session, offset, &value)
+                        self.upload_projection(session, offset, &value, &mut ownership)
                     && let Some((_, text, _, _)) = normalize_message(
                         &session.provider,
                         &session.provider_session_id,
@@ -63,9 +64,9 @@ impl HistoryCatalog {
                         );
                     }
                 }
-                self.correlate_image_uploads(session, &value, message);
+                self.correlate_image_uploads(session, &value, message, &mut ownership);
                 if include_parts && message.role == "user" {
-                    self.project_files(session, &value, message);
+                    self.project_files(&value, message, &mut ownership);
                 }
             }
         }
@@ -74,8 +75,13 @@ impl HistoryCatalog {
         }
     }
 
-    fn project_files(&self, session: &HistorySession, value: &Value, message: &mut HistoryMessage) {
-        let Some(blocks) = upload_content(&session.provider, value) else {
+    fn project_files(
+        &self,
+        value: &Value,
+        message: &mut HistoryMessage,
+        ownership: &mut UploadOwnership<'_>,
+    ) {
+        let Some(blocks) = upload_content(&ownership.session.provider, value) else {
             return;
         };
         let Some(parts) = message.parts.as_mut() else {
@@ -104,7 +110,7 @@ impl HistoryCatalog {
                 if ["png", "jpg", "jpeg", "gif", "webp"].contains(&ext.as_str()) {
                     continue;
                 }
-                let Ok((root, relative)) = self.attachment_root(session, path) else {
+                let Ok((root, relative)) = ownership.attachment_root(path) else {
                     continue;
                 };
                 let Ok(file) = open_beneath(&root, &relative) else {
@@ -123,7 +129,7 @@ impl HistoryCatalog {
                 };
                 parts.push(history_parts::HistoryPart::File {
                     id: format!("{}.file-{}-{}", message.id, block_index, start),
-                    original_name: self.owned_original_name(session, path),
+                    original_name: ownership.owned_original_name(path),
                     bytes: metadata.len(),
                     mime: mime.map(str::to_owned),
                 });
@@ -137,6 +143,7 @@ impl HistoryCatalog {
         session: &HistorySession,
         offset: u64,
         value: &Value,
+        ownership: &mut UploadOwnership<'_>,
     ) -> Option<(Value, Vec<HistoryImage>)> {
         let blocks = upload_content(&session.provider, value)?;
         let original = descriptors(session, offset, value);
@@ -152,7 +159,7 @@ impl HistoryCatalog {
             {
                 let mut consumed = 0;
                 for (start, end, path) in quoted_paths(text) {
-                    if images.len() >= MAX_IMAGES || self.upload_file(session, path).is_err() {
+                    if images.len() >= MAX_IMAGES || ownership.upload_file(path).is_err() {
                         continue;
                     }
                     append_original(
@@ -167,10 +174,10 @@ impl HistoryCatalog {
                         break;
                     }
                     content.push(serde_json::json!({"type":"input_image","path":path}));
-                    let attachment_ref = self.owned_attachment_ref(session, path);
+                    let attachment_ref = ownership.owned_attachment_ref(path);
                     let original_name = attachment_ref
                         .as_ref()
-                        .and_then(|_| self.owned_original_name(session, Path::new(path)));
+                        .and_then(|_| ownership.owned_original_name(Path::new(path)));
                     images.push(HistoryImage {
                         id: format!(
                             "{}.{}.u{}-{}.{}",
@@ -262,7 +269,7 @@ impl HistoryCatalog {
             .find(|(position, _, _)| *position == start)
             .map(|(_, _, path)| path)
             .ok_or(ImageReadError::Deleted)?;
-        let file = self.upload_file(session, path)?;
+        let file = UploadOwnership::new(self, session).upload_file(path)?;
         let mut bytes = Vec::new();
         file.take(MAX_IMAGE_BYTES + 1)
             .read_to_end(&mut bytes)
@@ -277,13 +284,11 @@ impl HistoryCatalog {
             filename: self.image_filename(session, Path::new(path)),
         })
     }
+}
 
-    pub(super) fn upload_file(
-        &self,
-        session: &HistorySession,
-        name: &str,
-    ) -> Result<fs::File, ImageReadError> {
-        if !matches!(session.provider.as_str(), "codex" | "claude") {
+impl UploadOwnership<'_> {
+    pub(super) fn upload_file(&mut self, name: &str) -> Result<fs::File, ImageReadError> {
+        if !matches!(self.session.provider.as_str(), "codex" | "claude") {
             return Err(ImageReadError::Unavailable);
         }
         let path = Path::new(name);
@@ -303,7 +308,7 @@ impl HistoryCatalog {
             return Err(ImageReadError::Unavailable);
         }
         // Always use the managed attachment boundary, even when cwd is an ancestor.
-        let (root, relative) = self.attachment_root(session, path)?;
+        let (root, relative) = self.attachment_root(path)?;
         let mut file = open_beneath(&root, &relative)?;
         let metadata = file.metadata().map_err(image_io_error)?;
         if !metadata.is_file() || metadata.len() > MAX_IMAGE_BYTES {
