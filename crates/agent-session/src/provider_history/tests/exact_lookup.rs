@@ -239,3 +239,114 @@ fn full_id_search_includes_mentions_after_exact_once() {
     assert_eq!(second.sessions[0].provider_session_id, mention);
     assert!(second.next_cursor.is_none());
 }
+
+#[test]
+fn fresh_exact_session_image_matches_refreshed_catalog() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("projects");
+    let project = root.join("repo");
+    fs::create_dir_all(&project).unwrap();
+    let source = HistorySource {
+        provider: "claude".into(),
+        agent_profile: None,
+        root,
+    };
+    let catalog = HistoryCatalog::new(
+        vec![source.clone()],
+        tmp.path().join("archives"),
+        tmp.path().join("stars"),
+    );
+    catalog.snapshot();
+    let id = "12345678-1234-1234-1234-123456789abc";
+    let row = serde_json::json!({"sessionId": id, "cwd": "/work/repo", "type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "![image](https://example.invalid/image.png)"}]}});
+    fs::write(project.join(format!("{id}.jsonl")), format!("{row}\n")).unwrap();
+    let page = catalog
+        .list("test", Some(id), Some("claude"), None, 50)
+        .unwrap();
+    let history_id = &page.sessions[0].id;
+    let messages = catalog
+        .messages(history_id, None, 10, HistoryMessageDirection::Forward)
+        .unwrap();
+    let image_id = &messages.messages[0].images[0].id;
+    let refreshed = HistoryCatalog::new(
+        vec![source],
+        tmp.path().join("archives"),
+        tmp.path().join("stars"),
+    );
+    assert_eq!(
+        refreshed.image(history_id, image_id).err(),
+        Some(history_images::ImageReadError::RemoteUrlNotFetched(Some(
+            "https://example.invalid".into()
+        )))
+    );
+    assert_eq!(
+        catalog.image(history_id, image_id).err(),
+        refreshed.image(history_id, image_id).err()
+    );
+    assert_eq!(
+        catalog.image("unknown", image_id).err(),
+        Some(history_images::ImageReadError::Unavailable)
+    );
+    fs::remove_file(project.join(format!("{id}.jsonl"))).unwrap();
+    std::os::unix::fs::symlink(
+        tmp.path().join("outside.jsonl"),
+        project.join(format!("{id}.jsonl")),
+    )
+    .unwrap();
+    assert_eq!(
+        catalog.image(history_id, image_id).err(),
+        Some(history_images::ImageReadError::Unavailable)
+    );
+}
+
+#[test]
+fn direct_session_keeps_catalog_segment_images_resolvable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let roots = [tmp.path().join("first"), tmp.path().join("second")];
+    for root in &roots {
+        fs::create_dir_all(root.join("repo")).unwrap();
+    }
+    let id = "12345678-1234-1234-1234-123456789abc";
+    let row = serde_json::json!({"sessionId": id, "cwd": "/work/repo", "type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "![image](https://example.invalid/image.png)"}]}});
+    fs::write(
+        roots[0].join("repo").join(format!("{id}.jsonl")),
+        format!("{row}\n"),
+    )
+    .unwrap();
+    let sources = roots
+        .iter()
+        .map(|root| HistorySource {
+            provider: "claude".into(),
+            agent_profile: None,
+            root: root.clone(),
+        })
+        .collect();
+    let catalog = HistoryCatalog::new(
+        sources,
+        tmp.path().join("archives"),
+        tmp.path().join("stars"),
+    );
+    let history_id = stable_history_id("claude", None, id);
+    let messages = catalog
+        .messages(&history_id, None, 10, HistoryMessageDirection::Forward)
+        .unwrap();
+    let image_id = &messages.messages[0].images[0].id;
+    fs::write(
+        roots[1].join("repo").join(format!("{id}.jsonl")),
+        format!("{row}\n"),
+    )
+    .unwrap();
+    catalog
+        .list("test", Some(id), Some("claude"), None, 50)
+        .unwrap();
+    assert_eq!(
+        catalog.direct_session(&history_id).unwrap().transcript_path,
+        roots[1].join("repo").join(format!("{id}.jsonl"))
+    );
+    assert_eq!(
+        catalog.image(&history_id, image_id).err(),
+        Some(history_images::ImageReadError::RemoteUrlNotFetched(Some(
+            "https://example.invalid".into()
+        )))
+    );
+}

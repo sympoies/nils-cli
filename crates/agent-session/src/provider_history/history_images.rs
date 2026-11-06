@@ -928,15 +928,26 @@ impl HistoryCatalog {
                     .ok_or(ImageReadError::Unavailable)?,
             )
         };
-        let snapshot = self.snapshot();
-        let sessions = snapshot
-            .incremental_segments
-            .get(history_id)
-            .ok_or(ImageReadError::Deleted)?;
-        let session = sessions
-            .iter()
-            .find(|s| segment_key(s) == parts[0])
-            .ok_or(ImageReadError::Deleted)?;
+        let direct = self.direct_session(history_id);
+        let matched_direct = direct
+            .as_ref()
+            .filter(|session| segment_key(session) == parts[0]);
+        let snapshot = matched_direct.is_none().then(|| self.snapshot());
+        let session = if let Some(session) = matched_direct {
+            session
+        } else {
+            snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.incremental_segments.get(history_id))
+                .ok_or(ImageReadError::Unavailable)?
+                .iter()
+                .find(|s| segment_key(s) == parts[0])
+                .ok_or(if direct.is_some() {
+                    ImageReadError::Unavailable
+                } else {
+                    ImageReadError::Deleted
+                })?
+        };
         let mut file = fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
