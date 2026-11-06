@@ -114,7 +114,7 @@ use nils_common::git::parse_git_remote_url;
 // `provider_prompt` module via `crate::` are re-exported at crate scope.
 use nils_provider_resume::{
     CODEX_RESUME_SCAN_MAX_DEPTH, ClaudeResumeScanBudget, CodexResumeScanBudget, ResumeIdError,
-    ResumeProvider, ResumeResolveError, collect_claude_provider_resume_matches,
+    ResumeProvider, ResumeResolveError, collect_claude_named_resume_matches,
     collect_codex_provider_resume_matches, normalize_resume_id, resolve_resume_source,
     resolve_resume_source_in_config_dir,
 };
@@ -3044,7 +3044,7 @@ pub(crate) fn resolve_provider_transcript_path_from_roots(
         }
         AgentKind::Claude => {
             let mut budget = ClaudeResumeScanBudget::from_env();
-            collect_claude_provider_resume_matches(
+            collect_claude_named_resume_matches(
                 claude_root?,
                 session_id,
                 &mut matches,
