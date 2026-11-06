@@ -9,8 +9,77 @@ pub struct RetainedDaemon {
     pub(super) reason: &'static str,
 }
 
+#[derive(Clone)]
+pub(super) struct DaemonPaths {
+    roots: Vec<std::path::PathBuf>,
+    excluded: Vec<std::path::PathBuf>,
+}
+
+impl DaemonPaths {
+    pub(super) fn for_session(cwd: &std::path::Path, state: &std::path::Path) -> Option<Self> {
+        let roots = [
+            "/bin",
+            "/sbin",
+            "/usr/bin",
+            "/usr/sbin",
+            "/usr/lib",
+            "/usr/libexec",
+            "/usr/local",
+            "/opt/homebrew",
+            "/opt/local",
+            "/home/linuxbrew/.linuxbrew",
+            "/nix/store",
+        ]
+        .iter()
+        .filter_map(|root| std::fs::canonicalize(root).ok())
+        .collect();
+        let cwd = std::fs::canonicalize(cwd).ok()?;
+        let worktree = cwd
+            .ancestors()
+            .find(|path| path.join(".git").exists())
+            .unwrap_or(&cwd)
+            .to_path_buf();
+        let mut excluded = vec![
+            worktree,
+            std::fs::canonicalize(state).ok()?,
+            std::fs::canonicalize(std::env::temp_dir()).ok()?,
+        ];
+        excluded.extend(
+            ["/tmp", "/var/tmp"]
+                .iter()
+                .filter_map(|path| std::fs::canonicalize(path).ok()),
+        );
+        Some(Self { roots, excluded })
+    }
+
+    fn allows(&self, path: &std::path::Path) -> bool {
+        self.roots.iter().any(|root| path.starts_with(root))
+            && !self.excluded.iter().any(|root| path.starts_with(root))
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture(root: &std::path::Path) -> Self {
+        Self {
+            roots: vec![std::fs::canonicalize(root).unwrap()],
+            excluded: Vec::new(),
+        }
+    }
+}
+
+pub(super) fn gnupg_executable(
+    path: &std::path::Path,
+    policy: Option<&DaemonPaths>,
+) -> Option<String> {
+    let path = std::fs::canonicalize(path).ok()?;
+    let name = path.file_name()?.to_str()?;
+    (is_gnupg(name) && policy?.allows(&path)).then(|| name.to_owned())
+}
+
 #[cfg(target_os = "linux")]
-pub(super) fn linux_shared_daemon(process: &std::path::Path, allow_gnupg: bool) -> Option<String> {
+pub(super) fn linux_shared_daemon(
+    process: &std::path::Path,
+    policy: Option<&DaemonPaths>,
+) -> Option<String> {
     // Use the executable, never the mutable/truncated comm field. Keep this
     // allowlist deliberately small: a new daemon needs its own server contract.
     let executable = std::fs::read_link(process.join("exe")).ok()?;
@@ -21,8 +90,8 @@ pub(super) fn linux_shared_daemon(process: &std::path::Path, allow_gnupg: bool) 
     if parent != "1" {
         return None;
     }
-    if allow_gnupg && is_gnupg(name) {
-        return Some(name.to_owned());
+    if is_gnupg(name) {
+        return gnupg_executable(&process.join("exe"), policy);
     }
     if name != "sccache" {
         return None;
@@ -54,16 +123,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gnupg_exemption_requires_marker_only_boundary() {
+    fn renamed_copy_outside_package_location_is_not_exempt() {
         let temp = tempfile::tempdir().unwrap();
-        let process = temp.path();
-        std::os::unix::fs::symlink("/usr/bin/dirmngr", process.join("exe")).unwrap();
-        std::fs::write(process.join("stat"), "123 (dirmngr) S 1 0 0").unwrap();
-        assert_eq!(
-            linux_shared_daemon(process, true).as_deref(),
-            Some("dirmngr")
-        );
-        assert!(linux_shared_daemon(process, false).is_none());
+        let package = temp.path().join("package");
+        std::fs::create_dir(&package).unwrap();
+        let renamed = temp.path().join("dirmngr");
+        std::fs::write(&renamed, b"fixture").unwrap();
+        let link = package.join("dirmngr");
+        std::os::unix::fs::symlink(&renamed, &link).unwrap();
+        let policy = DaemonPaths::fixture(&package);
+        assert!(gnupg_executable(&renamed, Some(&policy)).is_none());
+        assert!(gnupg_executable(&link, Some(&policy)).is_none());
+        let copy = package.join("keyboxd");
+        std::fs::write(&copy, b"fixture").unwrap();
+        let mut policy = policy;
+        policy.excluded.push(package.clone());
+        assert!(gnupg_executable(&copy, Some(&policy)).is_none());
     }
 
     #[test]
@@ -77,7 +152,7 @@ mod tests {
             let original = process.join(file);
             let hidden = process.join(format!("{file}.hidden"));
             std::fs::rename(&original, &hidden).unwrap();
-            assert!(linux_shared_daemon(process, true).is_none());
+            assert!(linux_shared_daemon(process, None).is_none());
             std::fs::rename(&hidden, &original).unwrap();
         }
     }
