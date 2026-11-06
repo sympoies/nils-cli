@@ -65,8 +65,9 @@ async fn keyed_codex_history_binding_uses_rebound_provider_conversation() {
     ready.send_replace(true);
 
     let responder = tokio::spawn(async move {
-        let Some(codex_app_server::ControlCommand::Prompt { message, response }) =
-            commands.recv().await
+        let Some(codex_app_server::ControlCommand::Prompt {
+            message, response, ..
+        }) = commands.recv().await
         else {
             panic!("missing accepted Codex prompt")
         };

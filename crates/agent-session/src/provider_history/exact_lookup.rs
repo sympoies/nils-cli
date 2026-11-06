@@ -54,16 +54,7 @@ impl HistoryCatalog {
                 ) else {
                     continue;
                 };
-                if let Some(archive) = read_archive(&self.archives_root, &session.id) {
-                    session.agent_profile = archive.agent_profile;
-                    session.title = archive.title;
-                    session.archived_session_id = archive.session_id;
-                    session.archived_title_state = archive.title_state;
-                    session.archived_title_mode = archive.title_mode;
-                    session.cwd = archive.cwd;
-                    session.repo_name = repo_name(&session.cwd);
-                    session.archived_at = Some(archive.archived_at);
-                }
+                self.overlay_archive(&mut session);
                 let star_path = self.stars_root.join(format!("{}.json", session.id));
                 if fs::metadata(&star_path).is_ok_and(|meta| meta.len() <= MAX_STAR_BYTES)
                     && let Ok(bytes) = fs::read(star_path)
@@ -133,6 +124,59 @@ impl HistoryCatalog {
         };
         enrich_latest_prompt_previews(&mut page.sessions, &mut HashMap::new());
         Ok(Some(page))
+    }
+
+    /// The history id a star targets: a session found by exact id (possibly
+    /// beyond the catalog scan limit) or one in the catalog snapshot. An id
+    /// that names neither is not found, so no orphan record is written.
+    pub(super) fn star_target(&self, history_id: &str) -> Result<String, HistoryError> {
+        if let Some(session) = self.direct_session(history_id) {
+            return Ok(session.id);
+        }
+        self.snapshot()
+            .sessions
+            .iter()
+            .find(|session| session.id == history_id)
+            .map(|session| session.id.clone())
+            .ok_or(HistoryError::NotFound)
+    }
+
+    /// Re-inspect a session found by exact id from its transcript, under the
+    /// same ownership and file-type guards as `direct_session`, so resume does
+    /// not launch from stale cached metadata.
+    pub(super) fn fresh_direct_session(&self, id: &str) -> Option<HistorySession> {
+        let cached = self.direct_session(id)?;
+        let root = cached.transcript_path.parent()?.parent()?;
+        let source = self
+            .sources
+            .iter()
+            .find(|source| source.provider == "claude" && source.root == root)?;
+        let session = inspect_history_file(
+            source,
+            &cached.transcript_path,
+            Instant::now() + SCAN_MAX_DURATION,
+            &mut IncrementalCatalogStampCache::default(),
+            &mut false,
+            false,
+        )?;
+        let mut session = (session.id == id).then_some(session)?;
+        self.overlay_archive(&mut session);
+        Some(session)
+    }
+
+    /// Apply the saved archive record, so a session found by exact id keeps the
+    /// managed id and title state that a catalog scan would restore.
+    fn overlay_archive(&self, session: &mut HistorySession) {
+        if let Some(archive) = read_archive(&self.archives_root, &session.id) {
+            session.agent_profile = archive.agent_profile;
+            session.title = archive.title;
+            session.archived_session_id = archive.session_id;
+            session.archived_title_state = archive.title_state;
+            session.archived_title_mode = archive.title_mode;
+            session.cwd = archive.cwd;
+            session.repo_name = repo_name(&session.cwd);
+            session.archived_at = Some(archive.archived_at);
+        }
     }
 
     pub(super) fn direct_session(&self, id: &str) -> Option<HistorySession> {

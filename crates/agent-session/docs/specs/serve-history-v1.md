@@ -69,6 +69,15 @@ system rows remain excluded; invalid, unknown, conflicting or changed proof is
 not downgraded to a user or assistant message. Ordinary human messages with a
 notice header remain user messages.
 
+Codex machine notices use the same bounded attestation owner. Their additive
+proof joins a preclaimed baseline, full runtime/provider/account binding and
+provider client id to a unique physical response row and its id-bearing event.
+The closed slice and rejection rules are defined in
+[session notices](session-notices-v1.md#daemon-continuations-and-machine-history).
+The response row retains its original id and offset; the event is not a
+replacement display row. Acknowledgment or matching text alone grants no role.
+An unconfirmed attempt stays consumed/unknown and cannot authorize replay.
+
 Notice `text` is the complete exact envelope, including header, blank line,
 trailing spaces and final LF. It is not trimmed or truncated. Message id,
 timestamp, chronological row order and physical-offset cursor semantics retain
@@ -139,6 +148,14 @@ is resolved against the catalog first, and an id that names no history session i
 a not-found rather than a stored record. The response carries `history_id` and
 `starred_at`, which is null once the star is cleared. Clearing a star that was
 never set is a success, so a repeated toggle from two clients settles.
+
+A Claude session listed by an exact session-id query can lie beyond the catalog
+scan limit. Star, resume and messages resolve such a row through the same direct
+session lookup that listed it: the transcript must still be a regular file in a
+real project directory under a configured Claude source, and resume re-reads its
+metadata from that transcript. A row that fails those checks, or was never listed
+by exact id, resolves only through the bounded catalog. Sessions inside the scan
+limit resolve exactly as before.
 
 `POST /history/sessions/{history_id}/resume` accepts no body. The daemon scans
 the owning provider source again, recomputes the opaque history identity, and

@@ -325,6 +325,7 @@ async fn dispatch_observing(
             id,
             body.text,
             Some(body.expected_session_incarnation),
+            body.request_id,
         )
         .await;
     }
@@ -578,4 +579,12 @@ async fn classify(response: Response, mut receipt: Receipt) -> ResultRecord {
         }
         result
     }
+}
+
+/// Reuse the full identity and keyed correlation owner on both native routes.
+pub(crate) fn client_message_id(record: &SessionRecord, request_id: &str) -> Option<String> {
+    reconcile::identity(record).map(|identity| client_message::id(&identity, request_id))
+}
+pub(crate) fn native_identity(record: &SessionRecord) -> Option<String> {
+    reconcile::identity(record)
 }
