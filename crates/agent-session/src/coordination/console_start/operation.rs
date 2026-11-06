@@ -201,6 +201,16 @@ impl Receipt {
             return self.save(context);
         }
         if let Err(error) = result
+            && let Some(failure) = crate::admission::forward_refusal(
+                &json!({"code":error.code(),"details":error.details()}),
+            )
+        {
+            self.value["state"] = json!("not_created");
+            self.value["safe_to_retry"] = json!(true);
+            self.value["failure"] = json!({"code":failure.code(),"details":failure.details()});
+            return self.save(context);
+        }
+        if let Err(error) = result
             && let Some(failure) = super::start_failure::receipt(error)
         {
             self.value["state"] = json!("start_failed");
@@ -252,6 +262,11 @@ impl Receipt {
         }
         let mut result = json!({"schema_version":RESULT_SCHEMA,"machine":self.value["machine"],
             "reconciliation":{"state":self.value["state"],"safe_to_retry":self.value["safe_to_retry"]}});
+        if self.value["state"] == "not_created"
+            && crate::admission::forward_refusal(&self.value["failure"]).is_some()
+        {
+            result["failure"] = self.value["failure"].clone();
+        }
         if self.value["state"] == "start_failed" {
             result["session"] = self.value["session"].clone();
             result["failure"] = self.value["failure"].clone();
