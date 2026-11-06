@@ -263,12 +263,21 @@ helper credential or mismatched actor refuses before transport with a fix hint;
 the guard does not substitute the profile's API credential. Profile selection,
 session binding, operation admission, and audit remain required.
 
-The verified helper token is pinned in memory for the actual HTTPS command,
-without a URL rewrite or second configured-helper lookup. SSH-shaped remotes
+The verified helper token is passed in the Git child's `FORGE_IDENTITY_TOKEN`
+environment variable for the actual HTTPS command, without a URL rewrite or
+second configured-helper lookup. SSH-shaped remotes
 retain the existing profile-credential selection and child-only pinned HTTPS
 routing; the stored SSH URL stays unchanged. In either case the child has an
 empty credential-helper list followed by a helper constrained to the selected
 HTTPS host/repository, no interactive credential fallback, and redirects disabled.
+
+Pinned remote commands override `core.hooksPath=/dev/null` and
+`core.fsmonitor=false` through command-scope configuration, so repository hooks
+and fsmonitor programs cannot run with the token. The pinned credential helper
+and HTTPS transport still inherit the Git environment; their executable
+environment remains operator-owned. These overrides do not change stored Git
+configuration or commit signing and authoring behavior.
+
 TLS certificate verification is enforced for the selected URL, overriding inherited
 `http.sslVerify` settings and removing `GIT_SSL_NO_VERIFY` from the child.
 Pre-existing URL rewrites or HTTP credential headers refuse. Credentials are never

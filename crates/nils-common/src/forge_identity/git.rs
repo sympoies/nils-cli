@@ -459,6 +459,9 @@ fn prepare_git_inner(
             config.push((format!("url.{canonical}.insteadOf"), url.clone()));
         }
         config.extend([
+            // Repository programs must not inherit the pinned transport token.
+            (String::from("core.hooksPath"), String::from("/dev/null")),
+            (String::from("core.fsmonitor"), String::from("false")),
             (String::from("credential.helper"), String::new()),
             (String::from("credential.helper"), HELPER.to_string()),
             (String::from("credential.useHttpPath"), String::from("true")),
