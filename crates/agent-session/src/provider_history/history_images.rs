@@ -700,6 +700,8 @@ pub(crate) struct HistoryImage {
     pub(crate) attachment_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) original_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) upload_path: Option<String>,
 }
 
 const MAX_IMAGES: usize = 16;
@@ -847,6 +849,7 @@ fn descriptors(session: &HistorySession, offset: u64, value: &Value) -> Vec<Hist
             origin: origins.get(index).copied().flatten(),
             attachment_ref: None,
             original_name: None,
+            upload_path: None,
         })
         .collect()
 }
