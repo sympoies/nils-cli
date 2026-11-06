@@ -2781,6 +2781,7 @@ mod session_model_tests {
         assert_eq!(latest_claude_model_from_tail(rows, false, "missing"), None);
     }
 }
+pub(crate) mod codex_notice;
 pub(crate) mod native_notice;
 #[cfg(test)]
 mod native_notice_tests;

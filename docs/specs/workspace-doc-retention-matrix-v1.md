@@ -139,6 +139,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/codex-cli/docs/specs/codex-cli-diag-rate-limits-and-auth-json-contract-v1.md`
 - `crates/codex-cli/docs/specs/execution-capsule-v1.md`
 - `crates/forge-cli/docs/runbooks/pr-head-repair-loop.md`
+- `crates/forge-cli/docs/runbooks/retired-coordinator-recovery.md`
 - `crates/forge-cli/docs/specs/checks-scope-and-deadline-v1.md`
 - `crates/forge-cli/docs/specs/forge-cli-spec-v1.md`
 - `crates/forge-cli/docs/specs/forge-publication-admin-v1.md`
@@ -153,6 +154,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/forge-cli/docs/specs/pr-lifecycle-v1.md`
 - `crates/forge-cli/docs/specs/search-completions-v1.md`
 - `crates/git-cli/docs/specs/dirty-checkout-adoption-json-contract-v1.md`
+- `crates/git-cli/docs/runbooks/governed-https-transport.md`
 - `crates/git-cli/docs/specs/git-cli-remote-surfaces.md`
 - `crates/git-cli/docs/specs/git-cli-worktree-convention.md`
 - `crates/macos-agent/docs/runbooks/backend-upgrade-v1.md`

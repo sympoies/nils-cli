@@ -22,11 +22,12 @@ Ownership: crate-local canonical specification for `nils-agent-hook` and the
 
 `agent-hook` is the sole owner of nils-cli-managed Codex and Claude hook
 registrations and the policy engine behind the external DSH runtime bundle.
-Provider-native hooks remain lifecycle ingress, but their owned commands
-contain only `agent-hook dispatch --product <provider>`; policy rules never
-live in provider configuration. DSH is registered by `dsh-runtime-kit`, not by
-`agent-hook setup`. The CLI does not manage unrelated hooks, execute
-config-defined programs, weaken lower-level transaction/privacy rules, or claim
+Provider-native hooks remain lifecycle ingress. Their owned commands select
+the runtime toolchain at execution time and invoke `agent-hook dispatch` for
+the provider; policy rules never live in provider configuration. DSH is
+registered by `dsh-runtime-kit`, not by `agent-hook setup`. The CLI does not
+manage unrelated hooks, execute config-defined programs, weaken lower-level
+transaction/privacy rules, or claim
 native setup ownership for providers without a compatible runner.
 
 ## Files and limits

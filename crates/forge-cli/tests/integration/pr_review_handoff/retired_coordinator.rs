@@ -86,8 +86,6 @@ fn run_with_supervisor_policy(
     remote: &str,
     stale_after: &str,
 ) -> super::super::support::CmdOutput {
-    let repo = stub.tempdir.path().join("repo");
-    fs::create_dir_all(&repo).unwrap();
     let actor = stub
         .envs
         .iter()
@@ -100,6 +98,18 @@ fn run_with_supervisor_policy(
     } else {
         "[]".to_string()
     };
+    run_with_supervisor_entries(stub, args, &supervisors, remote, stale_after)
+}
+
+fn run_with_supervisor_entries(
+    stub: &StubEnv,
+    args: &[&str],
+    supervisors: &str,
+    remote: &str,
+    stale_after: &str,
+) -> super::super::support::CmdOutput {
+    let repo = stub.tempdir.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
     fs::write(
         repo.join(".forge-cli.toml"),
         format!("[review_handoff]\nsupervisors = {supervisors}\nstale_after = \"{stale_after}\"\n"),
@@ -1006,3 +1016,6 @@ mod diagnostics;
 
 #[path = "retired_coordinator/deleted_producer.rs"]
 mod deleted_producer;
+
+#[path = "retired_coordinator/role_supervisor.rs"]
+mod role_supervisor;

@@ -1,4 +1,5 @@
 //! Arguments for editing existing comments.
+use super::*;
 use clap::{Args, Subcommand, ValueEnum};
 
 #[derive(Args, Debug)]
@@ -73,4 +74,98 @@ pub struct CommentRedactArgs {
     /// Replacement Markdown file (stdin is not accepted).
     #[arg(long, required_unless_present = "inspect")]
     pub body_file: Option<String>,
+}
+
+/// `pr` subtree.
+#[derive(Subcommand, Debug)]
+pub enum PrCommand {
+    /// Open a draft pull / merge request from the current branch.
+    Create(PrCreateArgs),
+    /// Fetch a single PR / MR with normalised fields.
+    View {
+        /// Numeric id or branch name.
+        id: String,
+    },
+    /// List PRs / MRs.
+    List(PrListArgs),
+    /// Mutate PR / MR title, body, base, labels, reviewers.
+    Edit(PrEditArgs),
+    /// Append a comment to a PR / MR.
+    Comment(PrCommentArgs),
+    /// Edit an existing PR / MR comment.
+    CommentEdit(TimelineCommentEditArgs),
+    /// Post a review outcome comment and optionally mirror it to an issue.
+    Review(PrReviewArgs),
+    /// List the issue-style comment stream attached to a PR / MR.
+    Comments(PrCommentsArgs),
+    /// Promote a draft PR / MR to ready-for-review.
+    Ready(PrReadyArgs),
+    /// List review threads attached to a PR / MR with their resolved state.
+    ReviewThreads(PrReviewThreadsArgs),
+    /// List native review summaries, classified against the current head.
+    Reviews(PrReviewsArgs),
+    /// Recover an authenticated actor's pending native review.
+    PendingReview(PrPendingReviewArgs),
+    /// Inspect and advance the durable review-loop ledger.
+    ReviewLoop(PrReviewLoopArgs),
+    /// Explicit designated reviewer handoff and published-review admission.
+    ReviewHandoff(PrReviewHandoffArgs),
+    /// Dismiss one configured automated CHANGES_REQUESTED review after a designated PASS.
+    ReviewDismiss(PrReviewDismissArgs),
+    /// List GFM task-list items in the PR / MR description with their state.
+    Tasks(PrTasksArgs),
+    /// Merge a ready PR / MR.
+    Merge(PrMergeArgs),
+    /// Close a PR / MR without merging.
+    Close {
+        /// Numeric id.
+        id: u64,
+    },
+    /// One-shot snapshot of PR / MR check state.
+    Checks(PrChecksArgs),
+    /// Block until every required check reaches a terminal state.
+    WaitChecks(PrWaitChecksArgs),
+    /// End-to-end "open draft (or adopt the branch's open PR) → CI green →
+    /// ready → merge" macro.
+    Deliver(PrDeliverArgs),
+}
+
+/// `issue` subtree.
+#[derive(Subcommand, Debug)]
+pub enum IssueCommand {
+    /// Open a new issue.
+    Create(IssueCreateArgs),
+    /// Fetch a single issue.
+    View(IssueViewArgs),
+    /// List issues filtered by state / labels / author / assignee.
+    List(IssueListArgs),
+    /// Mutate an issue.
+    Edit(IssueEditArgs),
+    /// Append a comment to an issue.
+    Comment(IssueCommentArgs),
+    /// Edit an existing issue comment.
+    CommentEdit(TimelineCommentEditArgs),
+    /// Close an issue.
+    Close(IssueCloseArgs),
+    /// Reopen a closed issue.
+    Reopen {
+        /// Numeric id.
+        id: u64,
+    },
+    /// Check and maintain a program tracker issue's phase table.
+    Tracker(IssueTrackerArgs),
+}
+
+/// Edit a comment on the specified issue or PR.
+#[derive(Args, Debug, Clone)]
+pub struct TimelineCommentEditArgs {
+    /// Provider comment identifier.
+    #[arg(value_parser = clap::value_parser!(u64).range(1..))]
+    pub comment_id: u64,
+    /// Parent issue or MR IID (required for GitLab; not used on GitHub).
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    pub parent: Option<u64>,
+    /// Replacement body file; use - for stdin.
+    #[arg(long, value_name = "PATH")]
+    pub body_file: String,
 }

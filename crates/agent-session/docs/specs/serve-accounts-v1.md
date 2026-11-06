@@ -293,3 +293,29 @@ mismatched nickname is `claude-account-broker-invalid-response`.
 - History: catalog scans attribute each physical transcript once, by its
   canonical path, so an account directory whose `projects/` links to the
   shared `~/.claude/projects` is not counted twice.
+
+## Canonical Codex new-record resume
+
+`start --agent codex --resume PROVIDER_SESSION_ID` uses the shared resume
+admission and canonical Codex provider metadata to create a new managed record
+for the exact existing conversation. A retained source supplies the original
+broker account and provider root; all matching sources must be proven stopped
+and agree on account, root and cwd. A requested account cannot switch that
+binding. Unknown or unsettled account intent refuses before creation.
+
+The authenticated read-only target check emits
+`cli.agent-session.resume-preflight.v1` with exactly `agent`,
+`provider_session_id`, `machine` and nonempty `account` in `data`. It lists
+broker accounts and probes provider app-server capability without preparing
+credentials, runtime directories, records, operations or prompts. The shared
+resume transport's account field carries the same resolved pin through Console.
+Start repeats admission under the conversation and source locks, including after
+runtime preparation. Unsupported account/app-server capability and source,
+account or history changes refuse with `session_created:false` and
+`safe_to_retry:false`. No alternate account, provider, fresh start or reserved
+raw-argument recovery path is selected.
+
+Daemon resume creates use the ordinary Codex binding wait and deferred bootstrap
+prompt path. Ordinary lineage, role, work references, workspace and title behavior
+remain owned by the shared start engine. Disposable real-conversation recall and
+ownership acceptance is a separate tester-owned release check.

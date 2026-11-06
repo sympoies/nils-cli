@@ -806,6 +806,12 @@ at the same commit or an identical tree
 builds; ordinary PR or scoped queue checks cannot substitute. It then builds exactly three release tarballs: Linux x86_64/aarch64 and macOS
 aarch64. Intel macOS release artifacts are no longer supported.
 
+Both Linux targets use Ubuntu 24.04 runners and support glibc 2.39 or newer.
+Before artifact upload,
+[the glibc gate](../../scripts/ci/check-release-glibc.py) checks every packaged
+Linux binary with `readelf --version-info` and rejects symbol requirements newer
+than its single declared glibc baseline.
+
 Release tarballs include:
 
 - release-default workspace binaries from `scripts/workspace-bins.sh`

@@ -14,9 +14,39 @@ permissions:
   contents: read
 
 jobs:
+  plan:
+    # Trusted code only: skip the heavy check when this version already has a
+    # candidate PR or failure issue. Manual runs always do the full check.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      skip: ${{ steps.plan.outputs.skip }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Skip versions that already have a candidate or failure record
+        id: plan
+        if: github.event_name == 'schedule'
+        # Fail open: an unavailable lookup leaves skip empty and the full check runs.
+        continue-on-error: true
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { planReleaseCheck } = require("./.github/scripts/claude-release-check.cjs");
+            await planReleaseCheck({ github, context, core });
+
   check:
     # Candidate code runs only on this read-only runner, with no token input.
-    if: github.ref == 'refs/heads/main'
+    needs: plan
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.skip != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:

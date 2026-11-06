@@ -178,7 +178,11 @@ async fn queued_upload_paths_keep_managed_raster_boundary() {
     let message = &page["data"]["messages"][0];
     assert!(message.get("images").is_none());
     assert_eq!(message["text"], prompt);
-    assert_eq!(message["parts"].as_array().unwrap().len(), 1);
+    let parts = message["parts"].as_array().unwrap();
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[1]["kind"], "file");
+    assert_eq!(parts[1]["original_name"], "notes.txt");
+    assert_eq!(parts[1]["bytes"], 7);
 }
 
 #[tokio::test]

@@ -58,6 +58,13 @@ widens a send/command admission policy.
 
 ## Runtime command table
 
+The native machine-notice role includes Codex rows joined through the bounded
+producer attestation defined in [session notices](session-notices-v1.md#daemon-continuations-and-machine-history).
+The original physical response row supplies identity and paging order. A
+client id is a causality token, and receives no display authority without the
+exact positive row proof. Human messages containing the same envelope retain
+their provider role.
+
 Each provider adapter owns one small exact-token table. These are display
 recognizers, not aliases or executable command definitions. They recognize only
 commands actually recorded by that provider; no row is synthesized from a send

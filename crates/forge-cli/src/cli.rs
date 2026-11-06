@@ -31,7 +31,7 @@ mod comment;
 pub use comment::*;
 
 mod review_loop;
-pub use review_loop::PrReviewLoopObserveArgs;
+pub use review_loop::{PrReviewCommand, PrReviewEditArgs, PrReviewLoopObserveArgs};
 
 mod search;
 pub use search::{
@@ -447,33 +447,7 @@ pub struct RepoPushDefaultArgs {
 }
 
 /// `repo bootstrap` arguments for a signed empty repository on GitHub, GitLab, or Forgejo.
-#[derive(Args, Debug, Clone)]
-pub struct RepoBootstrapArgs {
-    /// Whether the owner is the authenticated user or an organization/group.
-    #[arg(long = "owner-kind", value_enum)]
-    pub owner_kind: RepoBootstrapOwnerKind,
-    /// GitHub/GitLab repository visibility (Forgejo bootstrap remains private).
-    #[arg(long, value_enum, default_value = "private")]
-    pub visibility: RepoBootstrapVisibility,
-    /// Adopt an existing empty GitHub/GitLab repository instead of creating one.
-    #[arg(long = "existing-empty", action = ArgAction::SetTrue)]
-    pub existing_empty: bool,
-    /// Exact branch name to create and establish as the remote default.
-    #[arg(long = "default-branch", value_name = "BRANCH")]
-    pub default_branch: String,
-    /// Regular file to copy into the repository root. Repeat for multiple files.
-    #[arg(long = "file", value_name = "PATH", required = true)]
-    pub files: Vec<PathBuf>,
-    /// Semantic Commit message for the signed zero-parent root commit.
-    #[arg(long, value_name = "TEXT")]
-    pub message: String,
-    /// UTF-8 file describing the user's explicit bootstrap authorization.
-    #[arg(long = "reason-file", value_name = "PATH")]
-    pub reason_file: PathBuf,
-    /// Resume an existing durable bootstrap receipt after exact read-back.
-    #[arg(long, action = ArgAction::SetTrue)]
-    pub resume: bool,
-}
+pub use crate::repo_bootstrap_args::RepoBootstrapArgs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, serde::Serialize, serde::Deserialize)]
 #[clap(rename_all = "lower")]
@@ -728,13 +702,6 @@ impl PrReviewDecision {
             Self::RequestChanges => "REQUEST_CHANGES",
         }
     }
-}
-
-/// `pr review` subcommands that do not post provider-visible review activity.
-#[derive(Subcommand, Debug, Clone)]
-pub enum PrReviewCommand {
-    /// Validate review summary and thread specs before posting.
-    Validate(PrReviewValidateArgs),
 }
 
 /// `pr review validate` arguments.
@@ -1018,7 +985,7 @@ pub struct PrReviewLoopValidateArgs {
 #[derive(Args, Debug, Clone)]
 pub struct PrReviewLoopExtendArgs {
     pub id: u64,
-    /// Exact provider head SHA whose active hard stop is being extended.
+    /// Exact provider head SHA bound to the extension.
     #[arg(long = "expected-head", value_name = "SHA", value_parser = clap::builder::NonEmptyStringValueParser::new())]
     pub expected_head: String,
     #[arg(long = "expected-state", value_name = "DIGEST", value_parser = clap::builder::NonEmptyStringValueParser::new())]
@@ -1216,58 +1183,6 @@ pub struct PrListArgs {
 mod pr_create;
 pub use pr_create::PrCreateArgs;
 
-/// `pr` subtree.
-#[derive(Subcommand, Debug)]
-pub enum PrCommand {
-    /// Open a draft pull / merge request from the current branch.
-    Create(PrCreateArgs),
-    /// Fetch a single PR / MR with normalised fields.
-    View {
-        /// Numeric id or branch name.
-        id: String,
-    },
-    /// List PRs / MRs.
-    List(PrListArgs),
-    /// Mutate PR / MR title, body, base, labels, reviewers.
-    Edit(PrEditArgs),
-    /// Append a comment to a PR / MR.
-    Comment(PrCommentArgs),
-    /// Post a review outcome comment and optionally mirror it to an issue.
-    Review(PrReviewArgs),
-    /// List the issue-style comment stream attached to a PR / MR.
-    Comments(PrCommentsArgs),
-    /// Promote a draft PR / MR to ready-for-review.
-    Ready(PrReadyArgs),
-    /// List review threads attached to a PR / MR with their resolved state.
-    ReviewThreads(PrReviewThreadsArgs),
-    /// List native review summaries, classified against the current head.
-    Reviews(PrReviewsArgs),
-    /// Recover an authenticated actor's pending native review.
-    PendingReview(PrPendingReviewArgs),
-    /// Inspect and advance the durable review-loop ledger.
-    ReviewLoop(PrReviewLoopArgs),
-    /// Explicit designated reviewer handoff and published-review admission.
-    ReviewHandoff(PrReviewHandoffArgs),
-    /// Dismiss one configured automated CHANGES_REQUESTED review after a designated PASS.
-    ReviewDismiss(PrReviewDismissArgs),
-    /// List GFM task-list items in the PR / MR description with their state.
-    Tasks(PrTasksArgs),
-    /// Merge a ready PR / MR.
-    Merge(PrMergeArgs),
-    /// Close a PR / MR without merging.
-    Close {
-        /// Numeric id.
-        id: u64,
-    },
-    /// One-shot snapshot of PR / MR check state.
-    Checks(PrChecksArgs),
-    /// Block until every required check reaches a terminal state.
-    WaitChecks(PrWaitChecksArgs),
-    /// End-to-end "open draft (or adopt the branch's open PR) → CI green →
-    /// ready → merge" macro.
-    Deliver(PrDeliverArgs),
-}
-
 /// `label` subtree.
 #[derive(Subcommand, Debug)]
 pub enum LabelCommand {
@@ -1447,30 +1362,6 @@ pub struct PrDeliverArgs {
         value_parser = clap::builder::NonEmptyStringValueParser::new()
     )]
     pub allow_no_checks_reason: Option<String>,
-}
-
-/// `issue` subtree.
-#[derive(Subcommand, Debug)]
-pub enum IssueCommand {
-    /// Open a new issue.
-    Create(IssueCreateArgs),
-    /// Fetch a single issue.
-    View(IssueViewArgs),
-    /// List issues filtered by state / labels / author / assignee.
-    List(IssueListArgs),
-    /// Mutate an issue.
-    Edit(IssueEditArgs),
-    /// Append a comment to an issue.
-    Comment(IssueCommentArgs),
-    /// Close an issue.
-    Close(IssueCloseArgs),
-    /// Reopen a closed issue.
-    Reopen {
-        /// Numeric id.
-        id: u64,
-    },
-    /// Check and maintain a program tracker issue's phase table.
-    Tracker(IssueTrackerArgs),
 }
 
 /// `issue tracker` arguments. A clean subcommand group, like
@@ -2101,7 +1992,7 @@ pub(crate) fn dispatch_parsed(cli: Cli) -> i32 {
         }
         Some(Command::Repo(RepoArgs {
             command: Some(RepoCommand::Bootstrap(args)),
-        })) => ops::repo_bootstrap::run(&global, args, format),
+        })) => ops::repo_bootstrap_abandon::dispatch(&global, args, format),
         Some(Command::Repo(RepoArgs {
             command: Some(RepoCommand::PushDefault(args)),
         })) => ops::repo_push_default::run(&global, args, format),
@@ -2126,6 +2017,9 @@ pub(crate) fn dispatch_parsed(cli: Cli) -> i32 {
         Some(Command::Pr(PrArgs {
             command: Some(PrCommand::Comment(args)),
         })) => ops::pr_comment::run(&global, args, format),
+        Some(Command::Pr(PrArgs {
+            command: Some(PrCommand::CommentEdit(args)),
+        })) => ops::comment_edit::run(&global, args, format, true),
         Some(Command::Pr(PrArgs {
             command: Some(PrCommand::Review(args)),
         })) => ops::pr_review::run(&global, args, format),
@@ -2240,6 +2134,9 @@ pub(crate) fn dispatch_parsed(cli: Cli) -> i32 {
         Some(Command::Issue(IssueArgs {
             command: Some(IssueCommand::Comment(args)),
         })) => ops::issue_comment::run(&global, args, format),
+        Some(Command::Issue(IssueArgs {
+            command: Some(IssueCommand::CommentEdit(args)),
+        })) => ops::comment_edit::run(&global, args, format, false),
         Some(Command::Issue(IssueArgs {
             command: Some(IssueCommand::Close(args)),
         })) => ops::issue_close::run(&global, args.id, args.reason, format),

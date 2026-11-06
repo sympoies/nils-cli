@@ -126,8 +126,8 @@ case "$*" in
   *"rev-list --parents -n 1"*) printf '%s\n' "$GH_TEST_SHA" ;;
   *"log -1 --format=%G?"*) printf '%s\n' "${GH_TEST_LOCAL_SIGNATURE:-G}" ;;
   *"push "*)
-    if [ -n "${FORGE_IDENTITY_REPO:-}" ]; then
-      [ "$FORGE_IDENTITY_REPO" = sympoies/widgets ] || exit 9
+    if [ -n "${FORGE_IDENTITY_PATH:-}" ]; then
+      [ "$FORGE_IDENTITY_PATH" = sympoies/widgets.git ] || exit 9
       [ "$FORGE_IDENTITY_TOKEN" = fixture-identity-token ] || exit 9
       [ -z "${FORGE_CLI_BOOTSTRAP_GITHUB_TOKEN:-}" ] || exit 9
     else
@@ -183,6 +183,20 @@ printf '{"ok":true,"commit":{"sha":"%s"}}\n' "$GH_TEST_SHA"
     fn with_identity_policy(mut self) -> Self {
         let config = self.stub.tempdir.path().join("identity-config/forge-cli");
         fs::create_dir_all(&config).expect("identity config directory");
+        let git_config = config.parent().unwrap().join("git/config");
+        fs::create_dir_all(git_config.parent().unwrap()).expect("Git config directory");
+        fs::write(&git_config, "[credential]\nhelper=\n").expect("empty helper list");
+        nils_test_support::git::git(
+            self.stub.tempdir.path(),
+            &[
+                "config",
+                "--file",
+                git_config.to_str().unwrap(),
+                "--add",
+                "credential.helper",
+                "!f() { test \"$1\" = get || exit 0; cat >/dev/null; printf 'username=fixture\\npassword=%s\\n' \"$BOOTSTRAP_IDENTITY_CREDENTIAL\"; }; f",
+            ],
+        );
         fs::write(
             config.join("identity.toml"),
             r#"version = 1
@@ -222,6 +236,10 @@ profile = "account"
             std::env::var("PATH").unwrap_or_default()
         );
         self.stub.envs.push(("PATH".into(), path));
+        self.stub.envs.push((
+            "GIT_CONFIG_GLOBAL".into(),
+            git_config.to_string_lossy().into_owned(),
+        ));
         self.stub.envs.push((
             "XDG_CONFIG_HOME".into(),
             self.stub
@@ -291,6 +309,150 @@ fn github_existing_empty_bootstrap_supports_identity_routing() {
     let result = parse_envelope(&output.stdout);
     assert_eq!(result["data"]["root_commit_sha"], SHA);
     assert_eq!(result["data"]["signature_verified"], true);
+}
+
+#[test]
+fn github_bootstrap_stages_explicit_ignored_file() {
+    let mut fixture = Fixture::new(false);
+    let excludes = fixture.stub.tempdir.path().join("excludes");
+    let config = fixture.stub.tempdir.path().join("gitconfig");
+    fs::write(&excludes, "README.md\n").unwrap();
+    fs::write(
+        &config,
+        format!("[core]\n\texcludesFile = {}\n", excludes.display()),
+    )
+    .unwrap();
+    fixture
+        .stub
+        .envs
+        .push(("GIT_CONFIG_GLOBAL".into(), config.display().to_string()));
+    fixture
+        .stub
+        .envs
+        .push(("GIT_CONFIG_NOSYSTEM".into(), "1".into()));
+    let semantic = fixture.stub.write_stub("semantic-ignored", r#"#!/bin/sh
+/usr/bin/git -C "$3" -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -m fixture >/dev/null
+"#);
+    fixture.stub.envs.push((
+        "FORGE_CLI_SEMANTIC_COMMIT_BIN".into(),
+        semantic.display().to_string(),
+    ));
+    let remote = fixture.stub.tempdir.path().join("remote.git");
+    assert!(
+        std::process::Command::new("git")
+            .args(["init", "--bare", remote.to_str().unwrap()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let git_stub = fixture.stub.tempdir.path().join("git-bootstrap");
+    let script = fs::read_to_string(&git_stub).unwrap()
+        .replace("command git \"$@\" ;;", "command git \"$@\"; exit $? ;;")
+        .replace(
+            "  *\"push \"*)", "  *\"push \"*)\n    /usr/bin/git -C \"$2\" push \"$GH_TEST_LOCAL_REMOTE\" HEAD:refs/heads/main || exit 9",
+        );
+    fs::write(&git_stub, script).unwrap();
+    fixture
+        .stub
+        .envs
+        .push(("GH_TEST_LOCAL_REMOTE".into(), remote.display().to_string()));
+    let output = fixture.run(false, false);
+    let state = fixture.stub.tempdir.path().join("state/forge-cli/repo-bootstrap/github/3aeb002460381c6f258e8395d3026f571f0d9a76488dcd837639b13aed316560/sympoies/widgets");
+    if output.code != 0 {
+        let receipt: serde_json::Value =
+            serde_json::from_slice(&fs::read(state.join("receipt.json")).unwrap()).unwrap();
+        assert_eq!(receipt["remote_created"], true);
+        assert_eq!(receipt["complete"], false);
+        assert!(
+            output.stdout.contains("bootstrap_git_add_failed"),
+            "{}",
+            output.stdout
+        );
+    }
+    assert_eq!(
+        output.code, 0,
+        "stdout={} stderr={}",
+        output.stdout, output.stderr
+    );
+    assert!(fixture.remote_sha.exists());
+    let commit = std::process::Command::new("git")
+        .args([
+            "--git-dir",
+            remote.to_str().unwrap(),
+            "show",
+            "main:README.md",
+        ])
+        .output()
+        .unwrap();
+    assert!(commit.status.success());
+    assert_eq!(commit.stdout, b"# Widgets\n");
+}
+
+#[test]
+fn github_bootstrap_incomplete_receipt_can_be_archived_and_remote_reused() {
+    let mut fixture = Fixture::new(false);
+    let failing = fixture
+        .stub
+        .write_stub("semantic-fail", "#!/bin/sh\nexit 1\n");
+    fixture.stub.envs.push((
+        "FORGE_CLI_SEMANTIC_COMMIT_BIN".into(),
+        failing.display().to_string(),
+    ));
+    assert_ne!(fixture.run(false, false).code, 0);
+    let state = fixture.stub.tempdir.path().join("state/forge-cli/repo-bootstrap/github/3aeb002460381c6f258e8395d3026f571f0d9a76488dcd837639b13aed316560/sympoies/widgets");
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(state.join("receipt.json")).unwrap()).unwrap();
+    assert_eq!(receipt["complete"], false);
+    assert_eq!(receipt["remote_created"], true);
+    let output = run_forge_cli(
+        &fixture.stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "sympoies/widgets",
+            "--format",
+            "json",
+            "repo",
+            "bootstrap",
+            "--owner-kind",
+            "org",
+            "--visibility",
+            "public",
+            "--default-branch",
+            "main",
+            "--file",
+            fixture.readme.to_str().unwrap(),
+            "--message",
+            "chore: initialize repository",
+            "--reason-file",
+            fixture.reason.to_str().unwrap(),
+            "--abandon",
+        ],
+    );
+    assert_eq!(
+        output.code, 0,
+        "stdout={} stderr={}",
+        output.stdout, output.stderr
+    );
+    assert!(fixture.exists.exists());
+    assert!(
+        !fs::read_to_string(&fixture.gh_log)
+            .unwrap()
+            .contains("DELETE")
+    );
+    let semantic = fixture.stub.tempdir.path().join("semantic-bootstrap");
+    fixture.stub.envs.push((
+        "FORGE_CLI_SEMANTIC_COMMIT_BIN".into(),
+        semantic.display().to_string(),
+    ));
+    let output = fixture.run(true, false);
+    assert_eq!(
+        output.code, 0,
+        "stdout={} stderr={}",
+        output.stdout, output.stderr
+    );
+    assert!(fixture.remote_sha.exists());
 }
 
 #[test]

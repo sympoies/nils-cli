@@ -174,4 +174,6 @@ Operators can inspect the read-only `agent-session diagnose --format json`
 Console forwarding retains only validated numeric capacity and canonical recovery
 fields, discarding upstream free text and extra payload. A proven pre-create
 capacity refusal reconciles through the existing operation receipt as
-`not_created` with `safe_to_retry: true`; reconciliation does not create again.
+`not_created` with `safe_to_retry: true`; its `failure` contains the typed code
+and validated canonical details above. This survives daemon restart and does not
+create again. Missing or incomplete capacity details remain ambiguous.

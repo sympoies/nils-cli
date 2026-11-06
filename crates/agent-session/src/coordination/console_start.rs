@@ -248,6 +248,7 @@ fn child_session(
             seed.set_forge_context(crate::forge_identity::context_of(caller)?.map(|context| {
                 nils_common::forge_identity::session::LaunchContext {
                     role: None,
+                    attested_role: None,
                     ..context
                 }
             }));
@@ -475,17 +476,34 @@ fn relay_create(
         ));
     }
     let error = &body["error"];
-    if error["code"] == UNAVAILABLE_CODE {
+    let created_id = error["details"]["created_session_id"]
+        .as_str()
+        .filter(|id| {
+            !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        });
+    if error["code"] == UNAVAILABLE_CODE
+        || (error["code"] == "create-outcome-unknown" && created_id.is_some())
+    {
         let message = bounded_line(&error["message"]).unwrap_or(
             "the console aggregator reported an unavailable start; inspect Console before retrying",
         );
-        return Err(unavailable(
+        let mut failure = unavailable(
             "aggregator_response",
             "upstream_unavailable",
             message,
             false,
             false,
-        ));
+        );
+        // A lost start answer does not erase creation evidence. Persist this
+        // allowlisted id in the operation receipt so reconciliation can return it.
+        if let Some(id) = created_id {
+            failure.details_mut().as_mut().unwrap()["created_session_id"] = json!(id);
+        }
+        return Err(failure);
     }
     let mut failure = start_failure::forward(error)
         .unwrap_or_else(|| forwarded(error["code"].as_str(), &error["message"]));
@@ -627,7 +645,9 @@ fn cli_request(
     let requested_pinned = session["title_mode"] == "pinned";
     let requested_launch_env = crate::launch_env::from_json(session.get("launch_env"))?;
     let request = match &service {
-        Some(service) => service::cli_body(service, machine, session, operation_id, reconcile)?,
+        Some(service) => {
+            service::cli_body(service, machine, session, operation_id, reconcile, lineage)?
+        }
         None => {
             let mut request = json!({ "session": session });
             if let Some(machine) = machine {
@@ -717,7 +737,17 @@ fn cli_request(
             });
     }
     let error = &body["error"];
-    let mut failure = if error["code"] == UNAVAILABLE_CODE {
+    let mut failure = if error["code"] == "console-start-busy"
+        && status.as_u16() == 503
+        && error["details"]["retryable"] == true
+        && error["details"]["recovery"]["safe_to_retry"] == true
+    {
+        CliError::unavailable(
+            "console-start-busy",
+            "service console start workers are busy",
+            Some(json!({"retryable": true, "recovery": {"safe_to_retry": true}})),
+        )
+    } else if error["code"] == UNAVAILABLE_CODE {
         unavailable_from_details(&error["message"], &error["details"])
     } else {
         start_failure::forward(error)
@@ -848,13 +878,13 @@ mod tests {
     fn console_root_inherits_the_launch_initiator_only_with_a_role() {
         let caller: crate::SessionRecord = serde_json::from_value(json!({
             "schema_version":"agent-session.session.v1", "id":"caller", "agent":"codex", "mode":"interactive", "title":null,
-            "cwd":".", "tmux_session":"fixture", "prompt_file":null, "log_file":null,
+            "cwd":".", "tmux_session":"fixture", "prompt_file":null, "log_file":null, "role":"steward",
             "created_at":"2030-01-01T00:00:00Z", "updated_at":"2030-01-01T00:00:00Z",
             "lineage": {
                 "schema_version":"agent-session.session-lineage.v1", "machine":"caller-host", "parent":null,
                 "root":{"machine":"caller-host", "session_id":"caller", "session_created_at":"2030-01-01T00:00:00Z"},
                 "depth":0, "starter":{"kind":"operator", "via":"cli"},
-                "forge_context":{"initiator":"operator", "role":null}
+                "forge_context":{"initiator":"operator", "role":"steward", "attested_role":"steward"}
             }
         }))
         .unwrap();

@@ -401,7 +401,7 @@ unstyled empty hints fail closed. These are observations, not atomic input
 admission; the final observation-to-input race remains tracked in
 [#2374](https://github.com/sympoies/nils-cli/issues/2374).
 
-Claude transcript observation first probes the known conversation's
+Claude transcript observation probes only the known conversation's
 `<conversation-id>.jsonl` filename in each project directory under the
 session's effective provider configuration root. The bounded walk reads only
 exact filename candidates and requires one regular, readable primary transcript
@@ -409,9 +409,8 @@ with matching conversation identity and a non-empty cwd. A session-bound
 `projects` root symlink is resolved to its canonical directory before the walk;
 project-directory and transcript symlinks are still not followed. An incomplete walk,
 ambiguous source, unsafe candidate, or unavailable metadata leaves observation
-unavailable. Discovery for noncanonical filenames remains available when no exact
-candidate
-exists; an incomplete or unsafe exact lookup never falls back to a partial match.
+unavailable. As with deleted-source resume, a transcript with any other filename
+is not discovered, even when its metadata matches the conversation identity.
 
 Busy app-server Codex without an authoritative steerable turn, attached or
 busy terminal runtimes, rate-limited, controller-unavailable, and

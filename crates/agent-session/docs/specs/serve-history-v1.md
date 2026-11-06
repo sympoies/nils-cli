@@ -17,6 +17,10 @@ sessions. DSH launch profiles are retired, so serve does not configure a DSH his
 searches only metadata already present in the catalog snapshot: exact archived/managed title, bounded
 first-user-prompt preview when the provider scan supplies one, provider session id, provider,
 launch-profile id, cwd/repository label, machine, and timestamps.
+For a full Claude session ID, the directly resolved exact session appears first,
+independent of the catalog scan budget, followed by matching scanned metadata.
+The exact session is not repeated. `truncated` describes the bounded scan, and
+pagination retains this order.
 
 The query never searches arbitrary conversation text or the latest-user-prompt preview. Optional
 `provider`, `cursor`, and `limit` further bound the
@@ -65,6 +69,15 @@ system rows remain excluded; invalid, unknown, conflicting or changed proof is
 not downgraded to a user or assistant message. Ordinary human messages with a
 notice header remain user messages.
 
+Codex machine notices use the same bounded attestation owner. Their additive
+proof joins a preclaimed baseline, full runtime/provider/account binding and
+provider client id to a unique physical response row and its id-bearing event.
+The closed slice and rejection rules are defined in
+[session notices](session-notices-v1.md#daemon-continuations-and-machine-history).
+The response row retains its original id and offset; the event is not a
+replacement display row. Acknowledgment or matching text alone grants no role.
+An unconfirmed attempt stays consumed/unknown and cannot authorize replay.
+
 Notice `text` is the complete exact envelope, including header, blank line,
 trailing spaces and final LF. It is not trimmed or truncated. Message id,
 timestamp, chronological row order and physical-offset cursor semantics retain
@@ -109,7 +122,7 @@ list projection.
 
 Clients may opt into typed transcript parts with `?parts=v1` on the messages route. Each message then
 adds an ordered `parts` array, including an empty array when no typed part is available. Parts include
-visible `text`, `tool_call`, `tool_result`, `image`, `question`, and recognized `notice` records. Every
+visible `text`, `tool_call`, `tool_result`, `image`, `file`, `question`, and recognized `notice` records. Every
 part carries the provider item `id` and its timestamp when available. Tool input and result summaries
 are capped at 2,048 characters and redact path-like values and sensitive input fields. Typed output is
 capped at 64 KiB per message. `tool_call.status` is `unknown` when a matching result is not found in
@@ -135,6 +148,14 @@ is resolved against the catalog first, and an id that names no history session i
 a not-found rather than a stored record. The response carries `history_id` and
 `starred_at`, which is null once the star is cleared. Clearing a star that was
 never set is a success, so a repeated toggle from two clients settles.
+
+A Claude session listed by an exact session-id query can lie beyond the catalog
+scan limit. Star, resume and messages resolve such a row through the same direct
+session lookup that listed it: the transcript must still be a regular file in a
+real project directory under a configured Claude source, and resume re-reads its
+metadata from that transcript. A row that fails those checks, or was never listed
+by exact id, resolves only through the bounded catalog. Sessions inside the scan
+limit resolve exactly as before.
 
 `POST /history/sessions/{history_id}/resume` accepts no body. The daemon scans
 the owning provider source again, recomputes the opaque history identity, and
@@ -184,3 +205,24 @@ key or value fails with HTTP 400 `invalid-query`. On success
 `GET /sessions` advertises additive `history`, `archive`, `group_archive`, and
 `history_star` capabilities. Older daemons omit them and do not serve these
 routes.
+
+## Managed file parts
+
+With `parts=v1`, quoted absolute paths in supported user prompts may also produce
+`file` parts for non-raster managed uploads owned by the history session. Each
+part has a row-bound `id` and `bytes` (the regular file size). `original_name`
+is the sanitized original basename when valid upload metadata exists; `mime`
+is inferred from recognized file extensions (`text/plain` for `.txt`,
+`application/pdf` for `.pdf`) and omitted otherwise. `original_name` is omitted
+when metadata is absent or invalid. The
+quoted path remains in the text part. File parts follow the other parts in source
+order; they are display metadata, not download authority. See the
+[file part fixture](fixtures/history-file-part-v1.json).
+
+The same session ownership, no-follow open and 8 MiB size boundary used for
+image uploads applies. Paths with raster image extensions stay on the existing image path.
+Foreign-session uploads, outside paths, symlinks,
+non-regular files and oversized files have no file part. Raster image handling
+is unchanged. Descriptors are recomputed on each history read and remain stable
+while the transcript and upload are retained. The usual parts count and byte
+limits apply.

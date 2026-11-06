@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use nils_common::git as common_git;
 use std::process::Output;
 
@@ -7,7 +7,7 @@ pub(crate) fn trim_trailing_newlines(input: &str) -> String {
 }
 
 pub(crate) fn git_output(args: &[&str]) -> Result<Output> {
-    let output = run_git_output(args).with_context(|| format!("spawn git {:?}", args))?;
+    let output = run_git_output(args).map_err(|error| anyhow!("spawn git {args:?}: {error}"))?;
     if !output.status.success() {
         return Err(anyhow!(
             "git {:?} failed: {}{}",

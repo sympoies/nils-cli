@@ -3,7 +3,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use nils_common::cli_contract::exit;
 use std::ffi::OsString;
 
-use crate::{branch, ci, commit, completion, open, publish, reset, utils, worktree};
+use crate::{branch, ci, commit, completion, open, publish, reset, transport, utils, worktree};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -31,6 +31,8 @@ enum Group {
     Branch(BranchGroup),
     #[command(about = "Worktree helpers")]
     Worktree(WorktreeGroup),
+    #[command(about = "Select and inspect repository transport")]
+    Transport(transport::TransportArgs),
     #[command(about = "CI helpers")]
     Ci(CiGroup),
     #[command(about = "Open remote pages")]
@@ -300,6 +302,7 @@ where
         Some(Group::Commit(group)) => run_commit(group),
         Some(Group::Branch(group)) => run_branch(group),
         Some(Group::Worktree(group)) => run_worktree(group),
+        Some(Group::Transport(args)) => transport::run(args),
         Some(Group::Ci(group)) => run_ci(group),
         Some(Group::Open(group)) => run_open(group),
         Some(Group::Push(raw)) => publish::dispatch("push", &raw.args).unwrap_or(exit::USAGE),
