@@ -926,11 +926,12 @@ impl HistoryCatalog {
             )
         };
         let direct = self.direct_session(history_id);
-        let snapshot = direct.is_none().then(|| self.snapshot());
-        let session = if let Some(session) = direct.as_ref() {
-            (segment_key(session) == parts[0])
-                .then_some(session)
-                .ok_or(ImageReadError::Unavailable)?
+        let matched_direct = direct
+            .as_ref()
+            .filter(|session| segment_key(session) == parts[0]);
+        let snapshot = matched_direct.is_none().then(|| self.snapshot());
+        let session = if let Some(session) = matched_direct {
+            session
         } else {
             snapshot
                 .as_ref()
@@ -938,7 +939,11 @@ impl HistoryCatalog {
                 .ok_or(ImageReadError::Unavailable)?
                 .iter()
                 .find(|s| segment_key(s) == parts[0])
-                .ok_or(ImageReadError::Deleted)?
+                .ok_or(if direct.is_some() {
+                    ImageReadError::Unavailable
+                } else {
+                    ImageReadError::Deleted
+                })?
         };
         let mut file = fs::OpenOptions::new()
             .read(true)

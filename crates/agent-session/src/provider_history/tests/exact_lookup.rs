@@ -298,3 +298,55 @@ fn fresh_exact_session_image_matches_refreshed_catalog() {
         Some(history_images::ImageReadError::Unavailable)
     );
 }
+
+#[test]
+fn direct_session_keeps_catalog_segment_images_resolvable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let roots = [tmp.path().join("first"), tmp.path().join("second")];
+    for root in &roots {
+        fs::create_dir_all(root.join("repo")).unwrap();
+    }
+    let id = "12345678-1234-1234-1234-123456789abc";
+    let row = serde_json::json!({"sessionId": id, "cwd": "/work/repo", "type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "![image](https://example.invalid/image.png)"}]}});
+    fs::write(
+        roots[0].join("repo").join(format!("{id}.jsonl")),
+        format!("{row}\n"),
+    )
+    .unwrap();
+    let sources = roots
+        .iter()
+        .map(|root| HistorySource {
+            provider: "claude".into(),
+            agent_profile: None,
+            root: root.clone(),
+        })
+        .collect();
+    let catalog = HistoryCatalog::new(
+        sources,
+        tmp.path().join("archives"),
+        tmp.path().join("stars"),
+    );
+    let history_id = stable_history_id("claude", None, id);
+    let messages = catalog
+        .messages(&history_id, None, 10, HistoryMessageDirection::Forward)
+        .unwrap();
+    let image_id = &messages.messages[0].images[0].id;
+    fs::write(
+        roots[1].join("repo").join(format!("{id}.jsonl")),
+        format!("{row}\n"),
+    )
+    .unwrap();
+    catalog
+        .list("test", Some(id), Some("claude"), None, 50)
+        .unwrap();
+    assert_eq!(
+        catalog.direct_session(&history_id).unwrap().transcript_path,
+        roots[1].join("repo").join(format!("{id}.jsonl"))
+    );
+    assert_eq!(
+        catalog.image(&history_id, image_id).err(),
+        Some(history_images::ImageReadError::RemoteUrlNotFetched(Some(
+            "https://example.invalid".into()
+        )))
+    );
+}
