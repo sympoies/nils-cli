@@ -740,16 +740,18 @@ pub(crate) fn defer_with_detail(
         if receipt.generation != candidate.generation || receipt.state != "queued" {
             return false;
         }
+        let detail = detail.and_then(safe_reason_detail);
         if !crate::notice::writers_enabled()
             && reason == "provider-not-ready"
             && receipt.last_reason.as_deref() == Some(reason)
+            && receipt.last_reason_detail == detail
         {
             return false;
         }
         receipt.updated_at_epoch = now;
         receipt.next_attempt_at_epoch = now.saturating_add(retry_after_seconds.max(0));
         receipt.last_reason = Some(safe_reason(reason));
-        receipt.last_reason_detail = detail.and_then(safe_reason_detail);
+        receipt.last_reason_detail = detail;
         receipt.record_attempt(candidate.generation, reason, now);
         true
     })
