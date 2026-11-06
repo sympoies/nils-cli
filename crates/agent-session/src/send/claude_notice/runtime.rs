@@ -281,9 +281,9 @@ pub(crate) fn readiness(
         || ready.binding.provider != "claude"
         || provider.provider != "claude"
         || ready.binding.provider_session_id != provider.session_id
-        || ready.binding.provider_version != bootstrap.provider_version
+        || ready.binding.provider_version.as_deref() != Some(bootstrap.provider_version.as_str())
         || !version::supported(&bootstrap.provider_version)
-        || ready.binding.module_sha256 != bootstrap.module_sha256
+        || ready.binding.module_sha256.as_deref() != Some(bootstrap.module_sha256.as_str())
     {
         return None;
     }

@@ -10,6 +10,15 @@ Git behavior remain unchanged. The policy contains metadata and credential
 reference names only; session binding and environment-specific installation are
 separate phases.
 
+## Bootstrap recovery
+
+Explicit `repo bootstrap --file` inputs are staged even when ignored by Git.
+`--abandon` archives an incomplete receipt and its checkout under the operation
+lock without deleting the remote. It refuses completed receipts and an existing
+archive. Operators must inspect the remote and remove or reuse an empty remote;
+an attempted push may have populated it. `--abandon` conflicts with `--resume`
+and cannot be combined with `--dry-run`.
+
 ## Purpose
 
 This spec is the canonical contract for `forge-cli`, a new binary in the
@@ -127,7 +136,9 @@ Parity matrix (v1):
 | `pr list`                                   | `gh pr list --json …`                                                                                                                        | `glab mr list -F json`                                                 | exact                                                                                                                    |
 | `pr edit <id>`                              | `gh pr edit <id> …`                                                                                                                          | `glab mr update <id> …`                                                | exact                                                                                                                    |
 | `pr comment <id>`                           | `gh pr comment <id> --body …`                                                                                                                | `glab mr note <id> --message …`                                        | exact                                                                                                                    |
+| `pr comment-edit <comment-id>`              | GitHub issue-comment REST edit                                                                                                               | GitLab merge request note REST edit                                    | edited body                                                                                                              |
 | `pr review <id>`                            | guard `gh api …/pulls/{id}`, then outcome comment, native review, or GraphQL pending review + review thread(s) + submit with `--thread-file` | `glab mr note create <id> --message … --resolvable=false`              | outcome comment, native review event, or resolvable review threads (`--thread-file`, GitHub-only); optional issue mirror |
+| `pr review edit <id> …`                     | Read review and actor, then update the owned submitted review body                                                                           | unsupported in v1                                                      | Dry-run reads the target and shows before and after bodies without writing                                               |
 | `pr review validate [id]`                   | local review body/thread-file validation; with `--check-diff`, `gh api repos/{repo}/pulls/{id}/files`                                        | local validation only; `--check-diff` unsupported in v1                | schema/privacy preflight plus optional GitHub diff-coordinate validation                                                 |
 | `pr ready <id>`                             | `gh pr ready <id>`                                                                                                                           | `glab mr update <id> --ready`                                          | exact                                                                                                                    |
 | `pr review-threads list <id>`               | `gh api graphql` (`reviewThreads` connection)                                                                                                | `glab api …/merge_requests/<iid>/discussions`                          | normalized thread state                                                                                                  |
@@ -149,6 +160,7 @@ Parity matrix (v1):
 | `issue view <id>`                           | `gh issue view <id> --json …`                                                                                                                | `glab issue view <id> -F json`                                         | exact                                                                                                                    |
 | `issue edit <id>`                           | `gh issue edit <id> …`                                                                                                                       | `glab issue update <id> …`                                             | exact                                                                                                                    |
 | `issue comment <id>`                        | `gh issue comment <id> --body …`                                                                                                             | `glab issue note <id> --message …`                                     | exact                                                                                                                    |
+| `issue comment-edit <comment-id>`           | GitHub issue-comment REST edit                                                                                                               | GitLab issue note REST edit                                            | edited body                                                                                                              |
 | `issue close <id>`                          | `gh issue close <id>`                                                                                                                        | `glab issue close <id>`                                                | exact                                                                                                                    |
 | `issue reopen <id>`                         | `gh issue reopen <id>`                                                                                                                       | `glab issue reopen <id>`                                               | exact                                                                                                                    |
 | `issue tracker lint <id>`                   | `issue view`, plus one `issue view` per referenced issue with `--check-state`                                                                | same                                                                   | exact (grammar is provider-neutral)                                                                                      |
@@ -497,6 +509,15 @@ See [review transaction and handoff state](forge-review-state-v1.md#pr-pending-r
 ### `pr review`
 
 See [review publication and thread writes](forge-review-publication-v1.md#pr-review) for this contract.
+
+### `pr review edit`
+
+GitHub accepts a numeric review database ID belonging to the selected PR. The
+command reads the review and current identity, rejects another author or a
+pending review, and updates the body. GitLab and local providers return
+`provider_unsupported`. Dry-run performs the reads and returns the review ID,
+URL, and before/after bodies without a mutation. Successful writes return the
+review ID and URL.
 
 ### `pr review validate`
 
@@ -1330,12 +1351,22 @@ Disabling this feature never disables the existing unresolved-thread gate.
 Read `.forge-cli.toml` at the exact provider base; require the selected remote host/repository
 and base-ref commit to match, and reject invalid explicit `stale_after`.
 `supervisors` is an empty-by-default allow-list of `sha256:` digests for
-canonical agent-session UUIDs. `stale_after` defaults to `2h` (range `60s` to
+canonical agent-session UUIDs or `role:<attested-role>` entries. Role entries
+match only the authenticated broker binding's operator-attested `attested_role`,
+not ordinary launch roles or board labels. The trusted operator launcher requests
+`--attest-role` for each replacement supervisor; managed children cannot inherit
+or self-assign this provenance. Digest-only policies need no migration and do
+not require a role binding.
+
+`stale_after` defaults to `2h` (range `60s` to
 `30d`). Takeover requires `--reason coordinator-retired` and a fresh board
 proving the coordinator stopped or deleted on one host, with terminal activity
 older than the threshold. Missing, unreadable, recent, or ambiguous proof
 refuses takeover. The ledger records proof and supervisor digests while
-preserving history and incrementing the assignment generation.
+preserving history and incrementing the assignment generation. Role takeover
+also retains the attested role and a digest of the complete authenticated
+session/incarnation binding; the CLI reauthenticates it before ledger append.
+See the [recovery runbook](../runbooks/retired-coordinator-recovery.md).
 For `pr merge --dry-run` and the merge-capable `pr deliver --dry-run`, the
 resolved policy is additive output under `data.review_convergence`; the same
 GitHub-only provider check runs before the dry/live split.
@@ -1393,6 +1424,17 @@ Two mechanisms harden this:
   cached budget readings are keyed by that canonical authority; a reading or
   invalidation for one GitHub host is never reused for another. The gate is
   best-effort: an unreadable probe never blocks real work.
+
+## Editing timeline comments
+
+`issue comment-edit <comment-id> --body-file <path>` and
+`pr comment-edit <comment-id> --body-file <path>` replace a timeline comment.
+On GitLab, `--parent <issue-or-mr-iid>` is required for the parent-scoped notes
+endpoint; it is not accepted on GitHub. The body file uses the comment content
+guards; `-` reads standard input. Provider permission failures retain their
+backend diagnostics. The success envelope includes the edited `body`, `id`,
+`provider`, and, on GitLab, parent `number`. GitLab may normalize the stored
+body, so its returned body can differ from the bytes sent.
 
 ## Provider detection
 

@@ -603,8 +603,7 @@ fn retitle_v3_fresh_manual_cache_avoids_provider_calls_and_reports_transport_lat
     );
     // The loopback request includes process scheduling and TCP setup/teardown,
     // so its wall clock is diagnostic rather than a deterministic correctness
-    // gate. The in-process latency regression owns the 250 ms service budget;
-    // this black-box lane proves that the provider boundary stays unused.
+    // gate. This black-box lane proves that the provider boundary stays unused.
     assert!(
         !fixture.provider_calls.exists(),
         "fresh manual operations invoked the configured provider"

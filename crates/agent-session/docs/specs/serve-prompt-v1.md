@@ -164,7 +164,8 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   input dispatch. The proof survives daemon restart and is not returned by the
   API. This does not add history waiting to ordinary immediate native input.
 
-  A keyed idle-only native dispatch also sends a provider-visible client message
+  A keyed native dispatch, including a busy reply through the control handle,
+  sends a provider-visible client message
   id derived from the dispatch-time session identity (runtime, provider thread,
   account binding) and the request id. Lookup computes the id from the identity
   current at lookup, so a changed runtime, thread or account computes a

@@ -50,15 +50,11 @@ fn missing_resume_history_is_a_terminal_read_only_admission_refusal() {
 }
 
 #[test]
-fn malformed_resume_and_unsupported_provider_are_typed_before_creation() {
+fn malformed_provider_resume_ids_are_typed_before_creation() {
     let tmp = tempfile::tempdir().unwrap();
     for (agent, id, code) in [
         ("claude", "../invalid", "resume-unsupported"),
-        (
-            "codex",
-            "00000000-0000-4000-8000-000000000007",
-            "resume-unsupported",
-        ),
+        ("codex", "../invalid", "resume-unsupported"),
     ] {
         let state = tmp.path().join(agent);
         let out = run_resolved(
@@ -495,3 +491,6 @@ fn held_conversation_lock_is_a_terminal_precreate_refusal() {
 mod console;
 #[path = "start_resume/deleted_source.rs"]
 mod deleted_source;
+
+#[path = "start_resume/codex.rs"]
+mod codex;

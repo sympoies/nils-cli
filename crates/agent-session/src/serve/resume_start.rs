@@ -152,3 +152,28 @@ async fn console_create(
     }
     super::console_start_handler(State(state), headers, AxPath(id), Ok(Json(body))).await
 }
+
+/// Resolve the retained account before ordinary create decides whether to defer
+/// the bootstrap prompt and wait for app-server account binding. The engine
+/// rechecks this exact pin under its conversation/source guards before creation.
+pub(super) async fn resolve_codex_account(
+    state: &ServeState,
+    request: Request,
+) -> Result<(Option<String>, Option<String>), CliError> {
+    if request.agent != "codex" {
+        return Ok((None, None));
+    }
+    let context = state.context.clone();
+    let tmux = state.tmux_bin.clone();
+    let machine = state.machine.clone();
+    let data = tokio::task::spawn_blocking(move || {
+        crate::start_resume::preflight(&context, &request, &tmux, &machine)
+    })
+    .await
+    .map_err(|_| refusal("resume-source-unknown"))??;
+    let account = data["account"]
+        .as_str()
+        .ok_or_else(|| refusal("resume-source-unknown"))?
+        .to_string();
+    Ok((Some(account), Some("explicit".into())))
+}

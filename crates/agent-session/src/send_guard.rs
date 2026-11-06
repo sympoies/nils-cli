@@ -97,6 +97,20 @@ impl Admission<'_> {
     }
 
     pub(crate) fn check(&self, pasted_text: Option<&str>, stage: &str) -> Result<(), CliError> {
+        self.check_with_draft_repair(pasted_text, stage, true)
+    }
+
+    /// Scheduler notices observe an empty composer without stashing or clearing a draft.
+    pub(crate) fn check_preserving_draft(&self, stage: &str) -> Result<(), CliError> {
+        self.check_with_draft_repair(None, stage, false)
+    }
+
+    fn check_with_draft_repair(
+        &self,
+        pasted_text: Option<&str>,
+        stage: &str,
+        repair_draft: bool,
+    ) -> Result<(), CliError> {
         self.timeout(stage)?;
         self.identity(stage)?;
         if (self.args.require_idle
@@ -120,7 +134,8 @@ impl Admission<'_> {
         if self.args.require_empty_composer || self.verify_composer || pasted_text.is_some() {
             let target = format!("{}:0.0", self.record.tmux_session);
             let observed = self.observe_composer(&target, pasted_text, stage)?;
-            let stale = self.args.require_empty_composer
+            let stale = repair_draft
+                && self.args.require_empty_composer
                 && pasted_text.is_none()
                 && stage == "admission"
                 && drafts::observe(self.context, self.record, observed.as_deref())?;

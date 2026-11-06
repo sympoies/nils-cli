@@ -53,7 +53,13 @@ impl Reader {
                     if !proof.claim.valid()
                         || proof.claim.history_id != self.history
                         || proof.row_offset != offset
-                        || uuid::Uuid::parse_str(&proof.native_uuid).is_err()
+                        || if proof.claim.codex.is_some() {
+                            !hash_valid(&proof.native_uuid)
+                                || !proof.codex.as_ref().is_some_and(codex::Row::valid)
+                        } else {
+                            uuid::Uuid::parse_str(&proof.native_uuid).is_err()
+                                || proof.codex.is_some()
+                        }
                         || !hash_valid(&proof.row_payload_sha256)
                     {
                         return Err(invalid());

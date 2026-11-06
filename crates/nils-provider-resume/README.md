@@ -25,6 +25,11 @@ history layouts remain supported. A valid canonical-day match is authoritative;
 the fallback does not override it. Both phases share one aggregate entry and
 deadline budget.
 
+Claude resolution probes only `<session_id>.jsonl` in each project directory.
+The candidate must contain matching primary-session metadata and a non-empty cwd;
+other transcript filenames are not discovered. Prompt-source observation uses
+the same exact filename contract with its existing safety and uniqueness checks.
+
 ## Surface
 
 - `resolve_resume_source(provider, session_id) -> Result<ResolvedResume, ResumeResolveError>`
@@ -40,7 +45,7 @@ deadline budget.
   transcript-path resolution): `codex_sessions_root`, `claude_projects_root`,
   `read_codex_session_meta` (returning `CodexSessionMeta`),
   `read_claude_session_cwd`, `collect_codex_provider_resume_matches`,
-  `collect_claude_provider_resume_matches`, `ProviderHistoryMatch`,
+  `collect_claude_named_resume_matches`, `ProviderHistoryMatch`,
   `CodexResumeScanBudget`, `ClaudeResumeScanBudget`,
   `CODEX_RESUME_SCAN_MAX_DEPTH`, `CLAUDE_SESSION_META_MAX_LINE_BYTES`.
 

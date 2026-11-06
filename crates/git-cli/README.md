@@ -3,8 +3,8 @@
 ## Overview
 
 git-cli is a Rust CLI that groups Git workflow helpers behind a dispatcher. It exposes the
-top-level remote surfaces `push`, `sync-default`, and `sync-branch` plus nine command groups
-(`utils`, `reset`, `commit`, `branch`, `worktree`, `ci`, `open`, `summary`, `completion`) with
+top-level remote surfaces `push`, `sync-default`, and `sync-branch` plus ten command groups
+(`utils`, `reset`, `commit`, `branch`, `worktree`, `transport`, `ci`, `open`, `summary`, `completion`) with
 consistent help / version handling: `git-cli help` (or `-h`/`--help`) prints top-level usage,
 `git-cli <group> help` prints group usage, and `git-cli -V`/`--version` prints the binary version.
 
@@ -24,6 +24,7 @@ subcommands (matching the binary's `--help` output):
   `lsof`, `agent-session`, and remote/provider proof; leaves the branch intact.
   `revoke-dirty`.
 - `ci`: `pick`.
+- `transport`: `set https|ssh`, `status`; select and inspect the repository-local remote URL.
 - `open`: `repo`, `branch`, `default-branch` (alias `default`), `commit`, `compare`,
   `pr` (aliases `pull-request`, `mr`, `merge-request`), `pulls` (aliases `prs`,
   `merge-requests`, `mrs`), `issues` (alias `issue`), `actions` (alias `action`),
@@ -159,6 +160,17 @@ from the primary checkout or from inside any linked worktree.
   Options: `--remote <name>`, `--no-fetch`, `--dry-run`, `--format text|json`.
 
 See the [remote surfaces spec](docs/specs/git-cli-remote-surfaces.md) for the full contract.
+
+### transport
+
+- `transport set https|ssh`: Write the canonical URL for the same forge repository
+  to local `remote.<name>.url`, shared by linked worktrees.
+- `transport status`: Read the stored transport and URL without probing credentials
+  or contacting the forge. Both commands accept `--remote <name>` (default `origin`)
+  and `--format text|json`. Multiple URLs, explicit push URLs, and URL rewrites refuse.
+
+See the [governed HTTPS procedure](docs/runbooks/governed-https-transport.md) for
+identity verification and switching back. The switch does not activate identity policy.
 
 ### ci
 

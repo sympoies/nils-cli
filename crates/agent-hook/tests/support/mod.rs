@@ -221,9 +221,7 @@ pub const SESSION_BIN: &str = nils_common::session_binary::NAME;
 
 /// The Codex notify argv this build renders.
 pub fn codex_notify_argv() -> Vec<String> {
-    [SESSION_BIN, "activity", "notify", "--agent", "codex"]
-        .map(str::to_string)
-        .to_vec()
+    nils_common::provider_entrypoint::argv(false, &["activity", "notify", "--agent", "codex"])
 }
 
 pub fn toml_string(path: &Path) -> String {

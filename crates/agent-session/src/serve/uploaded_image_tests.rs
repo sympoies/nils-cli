@@ -22,7 +22,10 @@ impl Fixture {
     }
 
     fn for_provider(provider: &str) -> Self {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = tempfile::Builder::new()
+            .prefix("history image $` ")
+            .tempdir()
+            .unwrap();
         let state_dir = temp.path().join("state");
         let cwd = temp.path().to_path_buf();
         let root = temp.path().join("history");
@@ -214,7 +217,7 @@ async fn quoted_upload_history_refresh_preserves_caption_order_and_authenticated
 }
 
 #[tokio::test]
-async fn quoted_upload_history_leaves_untrusted_and_non_image_paths_as_text() {
+async fn quoted_upload_history_keeps_untrusted_paths_and_projects_managed_files() {
     let fixture = Fixture::new();
     let own = fixture.upload("own", "valid.png", &fixture.png).await;
     let other = fixture.upload("other", "other.png", &fixture.png).await;
@@ -240,7 +243,11 @@ async fn quoted_upload_history_leaves_untrusted_and_non_image_paths_as_text() {
     let message = &refreshed["data"]["messages"][0];
     assert!(message.get("images").is_none());
     assert_eq!(message["text"], text);
-    assert_eq!(message["parts"].as_array().unwrap().len(), 1);
+    let parts = message["parts"].as_array().unwrap();
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[1]["kind"], "file");
+    assert_eq!(parts[1]["original_name"], "notes.txt");
+    assert_eq!(parts[1]["bytes"], 7);
 }
 
 #[tokio::test]
@@ -362,8 +369,14 @@ async fn upload_original_names_are_safe_and_match_history_parts_on_reload() {
         assert_eq!(images[0]["original_name"], "photo 1.png");
         assert!(images[1].get("original_name").is_none());
         assert_eq!(images[2]["original_name"], "safe.png");
-        for (image, part) in images.iter().zip(parts) {
+        for ((image, part), path) in images
+            .iter()
+            .zip(parts)
+            .zip([&named, &missing, &unsafe_name])
+        {
             assert_eq!(image.get("original_name"), part.get("original_name"));
+            assert_eq!(image["upload_path"], path.to_str().unwrap());
+            assert_eq!(part["upload_path"], image["upload_path"]);
         }
         assert!(!serde_json::to_string(message).unwrap().contains("private"));
     }
@@ -386,3 +399,30 @@ mod image_provenance_tests;
 
 #[path = "queued_upload_tests.rs"]
 mod queued_upload_tests;
+
+#[tokio::test]
+async fn managed_file_parts_are_owned_and_stable() {
+    let fixture = Fixture::new();
+    let text = fixture.upload("own", "nested%2Fnotes.txt", b"hello").await;
+    let pdf = fixture.upload("own", "paper.pdf", b"%PDF-test").await;
+    let foreign = fixture.upload("other", "foreign.txt", b"foreign").await;
+    let outside = fixture._temp.path().join("outside.txt");
+    fs::write(&outside, b"outside").unwrap();
+    fixture.append(json!([{"type":"input_text","text":format!("'{}' '{}' '{}' '{}'", text.display(), pdf.display(), foreign.display(), outside.display())}]));
+    let first = fixture.refresh().await;
+    let second = fixture.refresh().await;
+    let parts = first["data"]["messages"][0]["parts"].as_array().unwrap();
+    let files: Vec<_> = parts.iter().filter(|p| p["kind"] == "file").collect();
+    assert_eq!(files.len(), 2);
+    assert_eq!(files[0]["original_name"], "notes.txt");
+    assert_eq!(files[0]["bytes"], 5);
+    let mut expected: Value = serde_json::from_str(include_str!(
+        "../../docs/specs/fixtures/history-file-part-v1.json"
+    ))
+    .unwrap();
+    expected["id"] = files[0]["id"].clone();
+    assert_eq!(*files[0], expected);
+    assert_eq!(files[1]["original_name"], "paper.pdf");
+    assert_eq!(files[1]["bytes"], 9);
+    assert_eq!(first["data"]["messages"], second["data"]["messages"]);
+}

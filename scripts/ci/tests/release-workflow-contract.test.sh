@@ -67,6 +67,7 @@ for invalid_ref in refs/heads/main refs/tags/v1.22.10-rc.1 refs/tags/1.22.10; do
 done
 assert_contains .github/workflows/release.yml "- runs_on: ubuntu-24.04-arm" \
   "Linux ARM64 release uses the native GitHub-hosted runner"
+python3 scripts/ci/tests/check-release-glibc.test.py
 assert_contains .github/workflows/release.yml 'run: cargo build --release --workspace --locked --target ${{ matrix.target }}' \
   "release workflow uses the locked native cargo build"
 assert_not_contains .github/workflows/release.yml "tool: cross" \

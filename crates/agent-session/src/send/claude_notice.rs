@@ -60,8 +60,10 @@ pub(crate) struct Binding {
     pub(crate) launch: Launch,
     pub(crate) provider: String,
     pub(crate) provider_session_id: String,
-    pub(crate) provider_version: String,
-    pub(crate) module_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) provider_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) module_sha256: Option<String>,
 }
 
 fn unconfirmed(record: &SessionRecord, stage: &str) -> CliError {
@@ -96,6 +98,14 @@ pub(super) fn deliver(
         tmux_bin: tmux,
         verify_composer: true,
         deadline,
+    };
+    let preserve_draft = attempt.recovery.is_some();
+    let check = |stage| {
+        if preserve_draft {
+            admission.check_preserving_draft(stage)
+        } else {
+            admission.check(None, stage)
+        }
     };
     if text.len() > crate::provider_prompt::MAX_PROVIDER_PROMPT_BYTES
         || text.contains('\r')
@@ -136,13 +146,13 @@ pub(super) fn deliver(
         refusal::authorize(&connection.path, &request, &op, &bootstrap, &ready)?;
         // A live, exact native request is necessary before consuming any key.
         admission.check_key()?;
-        admission.check(None, "admission")?;
+        check("admission")?;
         let (boot, now) = runtime::readiness(context, &record)
             .ok_or_else(|| refusal::unavailable("readiness-unavailable"))?;
         if boot.nonce != bootstrap.nonce || now.binding != ready.binding {
             return Err(refusal::unavailable("readiness-changed"));
         }
-        let claim = store::Claim::new(
+        let mut claim = store::Claim::new(
             op.clone(),
             ready.binding.clone(),
             &text,
@@ -150,6 +160,7 @@ pub(super) fn deliver(
             baseline.stamp.clone(),
             deadline.saturating_duration_since(attempt.started),
         );
+        claim.recovery = attempt.recovery.clone();
         token = Some(
             store::consume(context, claim, deadline, || {
                 consumed.set(true);
@@ -169,12 +180,14 @@ pub(super) fn deliver(
             })?,
         );
         stage = "claimed";
-        admission.check(None, "claimed")?;
+        check("claimed")?;
         let mut prepared = false;
-        super::prepare_guarded_input(context, &mut record, true, &mut prepared)?;
+        if attempt.recovery.is_none() {
+            super::prepare_guarded_input(context, &mut record, true, &mut prepared)?;
+        }
         record.updated_at = jiff::Zoned::now().timestamp().to_string();
         crate::write_session_record(context, &record)?;
-        admission.check(None, "claimed")?;
+        check("claimed")?;
         bridge::remaining(deadline).map_err(|_| runtime::unavailable())?;
         // Required synchronous provider hooks must be able to acquire this
         // record lock BEFORE the module enters prompt.submit.

@@ -119,7 +119,7 @@ async fn resumed_codex_without_turn_end_delivers_one_wake_after_observed_idle() 
     tokio::select! {
         biased;
         result = fixture.commands.recv() => {
-            let Some(codex_app_server::ControlCommand::Prompt { message, response }) = result else {
+            let Some(codex_app_server::ControlCommand::Prompt { message, response, .. }) = result else {
                 panic!("expected one wake");
             };
             assert!(crate::notice::parse_notice(&message).is_some());
