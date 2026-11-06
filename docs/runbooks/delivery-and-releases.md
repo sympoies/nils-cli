@@ -151,6 +151,38 @@ archives, audit third-party notices, upload assets, publish the GitHub Release,
 and confirm that a tap update workflow actually started. Crates.io publication
 is a separate authorized [`publish-crates.yml`](../../.github/workflows/publish-crates.yml) flow.
 
+## Claude Code release check
+
+[`claude-release-check.yml`](../../.github/workflows/claude-release-check.yml)
+runs hourly on `main`. A `plan` job with read-only repository, issue and
+pull-request permissions runs first. When the newest stable version is above
+the reviewed range and a candidate PR (any state, head `ci/claude-range-<version>`)
+or a failure issue (any state) already exists for it, the scheduled run skips the
+`check` and `publish` jobs: no Rust setup, cargo build, isolated install or
+provider write, and the run stays green. A new version, an in-range version, a
+failed lookup and every manual dispatch run the full check.
+
+Cost while a candidate waits for native acceptance, per day: before, up to 24
+full runs (Rust toolchain, `cargo test --no-run -p nils-agent-session` and the
+isolated install; a run that reached those steps took about 4 minutes); after,
+up to 24 plan-only runs of roughly half a minute each, plus one full run per new
+version.
+
+A candidate failure is reported once: the first failing run fails red and opens
+the version-keyed issue, which keeps its first evidence. Later scheduled runs
+skip, so they no longer fail every hour. To retry after a fix, dispatch the
+workflow manually; it does not skip.
+
+Orphan candidate branch: if PR creation fails after `ci/claude-range-<version>`
+was pushed, a rerun on the unchanged `main` commit recovers it. After `main`
+moves, the run stops with `candidate branch occupied; maintainer reconciliation
+required` and does not recover automatically. Reconcile as a maintainer:
+
+1. Confirm the branch has no PR and no commits beyond the generated one.
+2. Delete the orphan branch.
+3. Dispatch the workflow manually on `main`; it opens the draft candidate from
+   the current `main`.
+
 ## Failure recovery
 
 For a PR or queue failure, inspect the earliest failing step and its plan,
