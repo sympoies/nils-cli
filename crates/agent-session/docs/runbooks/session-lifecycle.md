@@ -90,17 +90,20 @@ for cross-host inheritance and nullable JSON details.
 
 ## New managed record from a provider conversation
 
-For a Claude conversation with a retained, account-bound managed source,
-or a deleted source with an explicitly selected broker account:
+For a Codex or Claude conversation with a retained, account-bound managed
+source, or a deleted Claude source with an explicitly selected broker account:
 
 ```bash
+agent-session start --agent codex --resume PROVIDER_SESSION_ID --check-resume --format json
+agent-session start --agent codex --resume PROVIDER_SESSION_ID --account ACCOUNT --format json
 agent-session start --agent claude --resume PROVIDER_SESSION_ID --check-resume --format json
 agent-session start --agent claude --resume PROVIDER_SESSION_ID --account ACCOUNT --format json
 ```
 
 `--resume` creates a new managed ID and retains the exact provider conversation
-ID. It uses the shared import resolver and canonical `--resume ID` arguments,
-without generating a conflicting `--session-id`. Ordinary workspace, parent,
+ID. It uses the shared import resolver and canonical provider metadata:
+Codex uses `resume ID --cd CWD --no-alt-screen`; Claude uses `--resume ID`
+without a conflicting generated `--session-id`. Ordinary workspace, parent,
 role, work refs, title mode, provider arguments and initial prompt behavior apply.
 Reserved raw resume/session arguments remain refused.
 
@@ -116,11 +119,22 @@ refuses with `resume-source-unknown`.
 For retained sources, an omitted account resolves from the unique original
 binding; `--account` cannot rebind that source to another account. Missing or
 ambiguous account/ownership evidence refuses; the host login is never a
-fallback. A queued or failed switch requires an explicit selection of the
+fallback. A queued or failed Claude switch requires an explicit selection of the
 bound account to cancel it; otherwise admission returns
 `resume-account-transition-pending`. Read-only checks never settle an intent.
 
-After a managed source is deleted, an explicit account selects the execution
+Codex requires a retained source with a settled broker binding. Every matching
+source must agree on the original account, provider root and cwd; an unknown,
+unbound or pending account transition refuses. The selected account must still
+be listed by the Codex broker and the target Codex must advertise the ordinary
+app-server account capability. Checks probe that capability without preparing
+socket directories or resolving credentials. Start prepares the ordinary runtime
+and binds the same account; daemon creation waits for that binding before
+delivering a deferred bootstrap prompt. Codex checks emit exactly the four
+required data fields below, with `agent` set to `codex`. Deleted Codex sources
+cannot establish original account authority from shared rollout history alone.
+
+After a managed Claude source is deleted, an explicit account selects the execution
 account. Recovery requires the broker's read-only `history-root`
 verb to resolve its existing configuration root and declare the history scope
 as `account` or `shared`. Exactly one matching `PROVIDER_SESSION_ID.jsonl` file
@@ -135,7 +149,7 @@ Auth-quarantined sources continue through the existing recovery flow in
 
 A successful JSON check retains the v1 envelope and its four required data
 fields. `history_scope` is an optional additive v1 field, emitted consistently
-by this implementation for retained and deleted sources. Consumers must accept
+by this implementation for retained and deleted Claude sources. Consumers must accept
 it when present; its absence in an older response does not establish a history
 scope:
 
@@ -230,9 +244,9 @@ Terminal admission refusals retain `session_created:false` and
 `safe_to_retry:false`, including when their operation is replayed.
 
 Console support requires both the daemon routes and the matching Console relay
-implementation; installing only one side does not enable the path. Codex and
-unsupported profiles continue to return `resume-unsupported`;
-[#3011](https://github.com/sympoies/nils-cli/issues/3011) tracks canonical Codex
+implementation; installing only one side does not enable the path.
+Unsupported profiles continue to return `resume-unsupported`.
+[#3011](https://github.com/sympoies/nils-cli/issues/3011) defines canonical Codex
 resume. Disposable real-provider recall and Console ownership/role acceptance
 remain a separate release acceptance gate under
 [#3007](https://github.com/sympoies/nils-cli/issues/3007).
