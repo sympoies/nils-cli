@@ -689,7 +689,7 @@ gate.
 | Provider taxonomy | Primary/fallback timeout, unavailable, quota, rate-limit, missing-message, JSON-parse, and schema-validation remain distinguishable without content |
 | Degraded cached | Failed refresh with usable memory preserves title and returns terminal `degraded_cached` |
 | No cache | Failed refresh with no usable memory returns typed terminal failure/error and never invents a title |
-| Fresh manual, concise objective | Repeated Retitle completes without provider inference, stays under the 250 ms p95 daemon target, and preserves objective |
+| Fresh manual, concise objective | Repeated Retitle completes in-process without provider inference and preserves objective |
 | Fresh manual, long voice objective | Provider receives sanitized task context and the raw opening of the transcription is not published as a title |
 | Mixed versions | old-edge/new-daemon, new-edge/old-daemon, and v2-only combinations select a safe supported path |
 | Privacy canaries | Session record, HTTP, operation replay, structured logs/journal, provider attempt evidence, and retained artifacts contain none of the forbidden values |
