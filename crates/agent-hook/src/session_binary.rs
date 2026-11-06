@@ -26,6 +26,31 @@ pub(crate) fn trusted_sibling() -> Result<PathBuf, HookError> {
     sibling_in(&current, NAME)
 }
 
+pub(crate) fn trusted_root(root: &Path) -> Result<PathBuf, HookError> {
+    let unavailable = || {
+        HookError::runtime(
+            "operation-lifecycle-helper-unavailable",
+            "approved helper is unavailable",
+        )
+    };
+    if !root.is_absolute() || !root.is_dir() {
+        return Err(unavailable());
+    }
+    let candidate = fs::canonicalize(root.join(NAME)).map_err(|_| unavailable())?;
+    let metadata = fs::metadata(&candidate).map_err(|_| unavailable())?;
+    if !metadata.is_file()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.permissions().mode() & 0o022 != 0
+        || metadata.permissions().mode() & 0o111 == 0
+    {
+        return Err(HookError::data(
+            "operation-lifecycle-helper-untrusted",
+            "approved helper is not an owner-controlled executable",
+        ));
+    }
+    Ok(candidate)
+}
+
 /// A canonical, owner-controlled executable named `name` that stays in the
 /// directory of `current`; an alias within that directory is accepted.
 fn sibling_in(current: &Path, name: &str) -> Result<PathBuf, HookError> {

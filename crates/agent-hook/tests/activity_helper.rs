@@ -77,10 +77,38 @@ fn spool_codes(fixture: &Fixture) -> Vec<String> {
     codes
 }
 
-/// A stale override inside a managed session must not deadlock the prompt. It
-/// falls back to the daemon-pinned `PATH` and records why.
 #[test]
-fn a_stale_helper_override_falls_back_to_path_with_a_typed_classification() {
+fn approved_root_beats_path_for_activity() {
+    let fixture = Fixture::new(ACTIVITY_POLICY);
+    let root = working_helper(&fixture);
+    let poison = fixture.root.join("poison");
+    fs::create_dir_all(&poison).unwrap();
+    let helper = poison.join(support::SESSION_BIN);
+    fs::write(&helper, "#!/bin/sh\nexit 65\n").unwrap();
+    fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
+    let result = fixture.run_with_env(
+        &["dispatch", "--product", "claude", "--format", "json"],
+        Some(r#"{"hook_event_name":"UserPromptSubmit","prompt":"status"}"#),
+        &[
+            ("AGENT_SESSION_ID", "managed-session"),
+            ("AGENT_SESSION_RUNTIME_ID", "managed-runtime"),
+            ("AGENT_SESSION_BIN", ""),
+            ("AGENT_RUNTIME_TRUSTED_CLI_ROOT", root.to_str().unwrap()),
+            ("PATH", poison.to_str().unwrap()),
+        ],
+    );
+    assert_eq!(
+        result.stdout_json()["data"]["reasons"][0]["code"],
+        "activity-recorded",
+        "{}",
+        result.stdout_text()
+    );
+}
+
+/// A stale override inside a managed session must not deadlock the prompt. It
+/// falls back to an approved root and records why.
+#[test]
+fn a_stale_helper_override_falls_back_to_approved_root_with_a_typed_classification() {
     let fixture = Fixture::new(ACTIVITY_POLICY);
     let helper_dir = working_helper(&fixture);
     let stale = fixture.root.join("removed-nils-cli/bin/agent-session");
@@ -97,7 +125,10 @@ fn a_stale_helper_override_falls_back_to_path_with_a_typed_classification() {
                 ("AGENT_SESSION_ID", "managed-session"),
                 ("AGENT_SESSION_RUNTIME_ID", "managed-runtime"),
                 ("AGENT_SESSION_BIN", stale.to_str().expect("stale path")),
-                ("PATH", helper_dir.to_str().expect("helper dir")),
+                (
+                    "AGENT_RUNTIME_TRUSTED_CLI_ROOT",
+                    helper_dir.to_str().expect("helper dir"),
+                ),
             ],
         );
         assert_eq!(
@@ -110,7 +141,7 @@ fn a_stale_helper_override_falls_back_to_path_with_a_typed_classification() {
         assert_eq!(
             dispatched.stdout_json()["data"]["reasons"][0]["code"],
             "activity-recorded",
-            "the PATH-resolved helper must have recorded the event: {}",
+            "the approved helper must have recorded the event: {}",
             dispatched.stdout_text()
         );
     }
@@ -124,10 +155,10 @@ fn a_stale_helper_override_falls_back_to_path_with_a_typed_classification() {
     );
 }
 
-/// An empty assignment is the normalized "resolve through the pinned PATH" value
+/// An empty assignment is the normalized "resolve through configured authority" value
 /// that session creation now writes, so it must behave like an absent override.
 #[test]
-fn an_empty_helper_override_resolves_through_path() {
+fn an_empty_helper_override_resolves_through_approved_root() {
     let fixture = Fixture::new(ACTIVITY_POLICY);
     let helper_dir = working_helper(&fixture);
 
@@ -138,7 +169,10 @@ fn an_empty_helper_override_resolves_through_path() {
             ("AGENT_SESSION_ID", "managed-session"),
             ("AGENT_SESSION_RUNTIME_ID", "managed-runtime"),
             ("AGENT_SESSION_BIN", ""),
-            ("PATH", helper_dir.to_str().expect("helper dir")),
+            (
+                "AGENT_RUNTIME_TRUSTED_CLI_ROOT",
+                helper_dir.to_str().expect("helper dir"),
+            ),
         ],
     );
     assert_eq!(dispatched.code, 0, "stderr={}", dispatched.stderr_text());
@@ -495,7 +529,10 @@ fn doctor_fails_when_the_activity_helper_cannot_be_resolved() {
     let healthy = fixture.run_with_env(
         &["doctor", "--product", "claude", "--format", "json"],
         None,
-        &[("PATH", helper_dir.to_str().expect("helper dir"))],
+        &[(
+            "AGENT_RUNTIME_TRUSTED_CLI_ROOT",
+            helper_dir.to_str().expect("helper dir"),
+        )],
     );
     assert_eq!(
         healthy.code,
