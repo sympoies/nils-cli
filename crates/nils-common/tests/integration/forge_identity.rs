@@ -1143,3 +1143,19 @@ fn identity_cross_repository_scope_requires_a_principal_profile_host_declaration
         );
     }
 }
+
+#[test]
+fn operator_attested_role_must_match_the_launch_role() {
+    use nils_common::forge_identity::session::LaunchContext;
+    for (role, valid) in [
+        (Some("steward"), true),
+        (Some("author"), false),
+        (None, false),
+    ] {
+        let context: LaunchContext = serde_json::from_value(serde_json::json!({
+            "initiator":"operator", "role":role, "attested_role":"steward"
+        }))
+        .unwrap();
+        assert_eq!(context.validate().is_ok(), valid);
+    }
+}

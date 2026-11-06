@@ -350,6 +350,10 @@ pub struct StartArgs {
     #[arg(long, value_name = "ID", conflicts_with = "via_console")]
     pub forge_initiator: Option<String>,
 
+    /// Operator-only attestation of this session's role; never inherited by children.
+    #[arg(long, requires_all = ["forge_initiator", "role"], conflicts_with = "resume")]
+    pub attest_role: bool,
+
     /// Work-mode program tracker issue this session belongs to, as
     /// OWNER/REPO#N. Replaces the inherited program.
     #[arg(long, value_name = "OWNER/REPO#N")]

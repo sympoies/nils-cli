@@ -88,6 +88,33 @@ and account handoff preserve both fields. See the
 [session record contract](../specs/session-lineage-work-v1.md#origin-and-workspace)
 for cross-host inheritance and nullable JSON details.
 
+## Operator-attested launch role
+
+The trusted non-session launcher can attest the role of a new supervisor:
+
+```bash
+agent-session start --agent codex --forge-initiator operator --role steward --attest-role
+```
+
+Both `--forge-initiator` and `--role` are required. The attestation belongs to
+that session alone; every managed child, including a new-root local or Console
+launch, loses it. Choosing an ordinary role label does not grant attested role
+authority. Managed callers and generic HTTP cannot assert provenance. Resume
+cannot add it to an existing session; launch each replacement explicitly.
+
+Read `agent-session broker identity --session SESSION_ID --format json` with
+the session's own broker capability and current runtime incarnation. The
+binding's audit tuple identifies who attested (`initiator`, the configured
+operator-launcher identity), when (`session_created_at`), which role
+(`attested_role`), and which session/runtime (`session_id`,
+`session_incarnation`). The attestation is created with the session record and
+is immutable. No attested-role field means no operator-attested authority.
+
+This uses the existing same-OS-user trusted-launcher boundary. It does not
+defend against a same-user process deliberately removing its managed environment,
+replacing the broker executable, or modifying the private registry. It provides
+no credential isolation. See the [launch-context contract](../specs/session-lineage-work-v1.md#forge-launch-context).
+
 ## New managed record from a provider conversation
 
 For a Claude conversation with a retained, account-bound managed source,

@@ -141,6 +141,16 @@ session has no binding, so a bound role-less root always comes from a
 non-session launcher. Roles are never inherited. Resume and adoption
 preserve the original context.
 
+An operator launcher may additionally request `--attest-role` with both flags
+to record `attested_role` for that session. The broker projects this optional
+field only from immutable launch context; it must equal the session's role.
+Managed callers cannot request it, and child launches clear it even when the
+child chooses the same ordinary role or starts a new lineage root. Existing
+immutable bindings without the field remain valid and carry no attested role.
+A consumer requiring operator-attested role authority must match this field;
+existing identity launch-rule matching continues to use the ordinary launch
+context and does not turn a role label into a privileged attestation.
+
 Each resolver calls `agent-session broker identity --session ID --format json`
 under the caller's probe deadline. The producer verifies the private session
 capability, live heartbeat/registry and current runtime incarnation. The consumer

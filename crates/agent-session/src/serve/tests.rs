@@ -8128,13 +8128,13 @@ async fn create_refuses_untrusted_forge_context_before_session_creation() {
         (
             "forged-root",
             json!({"depth":0,"starter":{"kind":"operator","via":"http"},
-                "forge_context":{"initiator":"operator","role":"reviewer"}}),
+                "forge_context":{"initiator":"operator","role":"reviewer","attested_role":"reviewer"}}),
         ),
         (
             "forged-child",
             json!({"depth":1,"parent":reference,"root":reference,
                 "starter":{"kind":"session","via":"console"},
-                "forge_context":{"initiator":"operator","role":"reviewer"}}),
+                "forge_context":{"initiator":"operator","role":"reviewer","attested_role":"reviewer"}}),
         ),
     ] {
         let (status, body) = call(
