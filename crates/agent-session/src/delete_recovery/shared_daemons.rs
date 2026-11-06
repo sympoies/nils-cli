@@ -70,6 +70,9 @@ pub(super) fn gnupg_executable(
     path: &std::path::Path,
     policy: Option<&DaemonPaths>,
 ) -> Option<String> {
+    if !path.is_absolute() {
+        return None;
+    }
     let path = std::fs::canonicalize(path).ok()?;
     let name = path.file_name()?.to_str()?;
     (is_gnupg(name) && policy?.allows(&path)).then(|| name.to_owned())
@@ -139,6 +142,61 @@ mod tests {
         let mut policy = policy;
         policy.excluded.push(package.clone());
         assert!(gnupg_executable(&copy, Some(&policy)).is_none());
+    }
+
+    #[test]
+    fn relative_executable_does_not_grant_an_exemption() {
+        let temp = tempfile::Builder::new().tempdir_in(".").unwrap();
+        let executable = temp.path().join("dirmngr");
+        std::fs::write(&executable, b"fixture").unwrap();
+        let policy = DaemonPaths::fixture(temp.path());
+        let cwd = std::env::current_dir().unwrap();
+        let relative = executable.strip_prefix(cwd).unwrap();
+        assert!(gnupg_executable(relative, Some(&policy)).is_none());
+    }
+
+    #[test]
+    fn session_directories_exclude_daemon_copies() {
+        let fixture = tempfile::Builder::new().tempdir_in(".").unwrap();
+        let worktree = fixture.path().join("worktree");
+        let cwd = worktree.join("nested");
+        let state = fixture.path().join("state");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::create_dir(worktree.join(".git")).unwrap();
+        std::fs::create_dir(&state).unwrap();
+        let temporary = tempfile::tempdir().unwrap();
+        let mut policy = DaemonPaths::for_session(&cwd, &state).unwrap();
+        let locations = [&worktree, &state, temporary.path()];
+        policy.roots = locations
+            .iter()
+            .map(|path| std::fs::canonicalize(path).unwrap())
+            .collect();
+        let mut without_exclusions = policy.clone();
+        without_exclusions.excluded.clear();
+        for location in locations {
+            let executable = location.join("dirmngr");
+            std::fs::write(&executable, b"fixture").unwrap();
+            let executable = std::fs::canonicalize(executable).unwrap();
+            assert!(gnupg_executable(&executable, Some(&without_exclusions)).is_some());
+            let uid = unsafe { libc::geteuid() };
+            let listing = format!("41000 {uid} S 1 daemon\n");
+            let scan = super::super::scan_macos_processes(
+                "session",
+                "runtime",
+                listing.as_bytes(),
+                Some(&policy),
+                |_| {
+                    let mut bytes = 1i32.to_ne_bytes().to_vec();
+                    bytes.extend_from_slice(executable.as_os_str().as_encoded_bytes());
+                    bytes.extend_from_slice(
+                        b"\0daemon\0AGENT_SESSION_ID=session\0AGENT_SESSION_RUNTIME_ID=runtime\0",
+                    );
+                    Ok(bytes)
+                },
+            );
+            assert_eq!(scan.processes.len(), 1);
+            assert!(scan.shared_daemons.is_empty());
+        }
     }
 
     #[test]
