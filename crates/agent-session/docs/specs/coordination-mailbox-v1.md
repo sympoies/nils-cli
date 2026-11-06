@@ -242,6 +242,7 @@ Multiline `mailbox.wake` notices preserve the count/action summary, then list
 the distinct `sender_relation=<parent|ancestor|peer>` values of live unread,
 notification-eligible messages and the guidance once. Wakes contain no message
 body. Suppressed, read and expired messages do not contribute relation labels.
+
 The hook accepts the summary alone or the complete guidance form: relation
 labels in parent, ancestor, peer order, followed by the exact guidance below.
 When parent or ancestor appears, the dispatcher sentence follows, optionally
