@@ -831,7 +831,17 @@ fn associated_processes(record: &SessionRecord) -> ProcessScan {
     else {
         return ProcessScan::default();
     };
-    scan_processes(&record.id, &runtime.launch_id)
+    let allow_gnupg = match (
+        persisted_tmux_runtime_identity(record),
+        persisted_prior_tmux_runtime_identities(record),
+    ) {
+        (Ok(identity), Ok(prior)) => identity
+            .iter()
+            .chain(&prior)
+            .all(|i| i.control_group.is_none()),
+        _ => false,
+    };
+    scan_processes(&record.id, &runtime.launch_id, allow_gnupg)
 }
 
 fn matches_runtime(bytes: &[u8], id: &str, runtime: &str) -> bool {
@@ -857,8 +867,14 @@ fn command_name(command: &str) -> String {
 }
 
 #[cfg(target_os = "linux")]
-fn scan_processes(id: &str, runtime: &str) -> ProcessScan {
-    scan_linux_processes(id, runtime, Path::new("/proc"), read_linux_process_identity)
+fn scan_processes(id: &str, runtime: &str, allow_gnupg: bool) -> ProcessScan {
+    scan_linux_processes(
+        id,
+        runtime,
+        Path::new("/proc"),
+        allow_gnupg,
+        read_linux_process_identity,
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -866,6 +882,7 @@ fn scan_linux_processes(
     id: &str,
     runtime: &str,
     root: &Path,
+    allow_gnupg: bool,
     mut read_identity: impl FnMut(
         libc::pid_t,
     )
@@ -930,7 +947,7 @@ fn scan_linux_processes(
         }
         let command =
             fs::read_to_string(entry.path().join("comm")).unwrap_or_else(|_| "unknown".into());
-        let shared_daemon = shared_daemons::linux_shared_daemon(&entry.path());
+        let shared_daemon = shared_daemons::linux_shared_daemon(&entry.path(), allow_gnupg);
         let cgroup = marker_cgroup_path(&entry.path());
         // Recheck incarnation after reading diagnostics; reused PIDs must not
         // acquire a former process's runtime marker or command.
@@ -985,12 +1002,12 @@ fn marker_cgroup_path(process: &Path) -> Option<String> {
 }
 
 #[cfg(target_os = "macos")]
-fn scan_processes(id: &str, runtime: &str) -> ProcessScan {
+fn scan_processes(id: &str, runtime: &str, allow_gnupg: bool) -> ProcessScan {
     let Some(argument_limit) = macos_argument_limit() else {
         return ProcessScan::default();
     };
     let mut command = ProcessCommand::new("/bin/ps");
-    command.args(["-axo", "pid=,uid=,stat=,comm="]);
+    command.args(["-axo", "pid=,uid=,stat=,ppid=,comm="]);
     let output = match macos_process_listing(command) {
         Ok(output) => output,
         Err(error) => return failed_macos_process_listing(&error),
@@ -998,7 +1015,7 @@ fn scan_processes(id: &str, runtime: &str) -> ProcessScan {
     if !output.status.success() {
         return failed_macos_process_listing(&io::Error::other("process listing failed"));
     }
-    scan_macos_processes(id, runtime, &output.stdout, |pid| {
+    scan_macos_processes(id, runtime, &output.stdout, allow_gnupg, |pid| {
         macos_process_arguments(pid, argument_limit)
     })
 }
@@ -1029,6 +1046,7 @@ fn scan_macos_processes(
     id: &str,
     runtime: &str,
     listing: &[u8],
+    allow_gnupg: bool,
     mut read_arguments: impl FnMut(libc::pid_t) -> io::Result<Vec<u8>>,
 ) -> ProcessScan {
     let mut scan = ProcessScan {
@@ -1057,6 +1075,7 @@ fn scan_macos_processes(
         if fields.next().is_none_or(|state| state.starts_with('Z')) {
             continue;
         }
+        let parent = fields.next().and_then(|field| field.parse::<u32>().ok());
         let bytes = match read_arguments(pid) {
             Ok(bytes) => bytes,
             Err(error) => {
@@ -1071,6 +1090,7 @@ fn scan_macos_processes(
             &bytes,
             id,
             runtime,
+            allow_gnupg && parent == Some(1),
         );
         if scan.processes.len() + scan.shared_daemons.len() >= 128 {
             scan.incomplete("entry-limit-reached", 0);
@@ -1089,11 +1109,25 @@ fn classify_macos_environment(
     bytes: &[u8],
     id: &str,
     runtime: &str,
+    allow_gnupg: bool,
 ) {
     match macos_environment(bytes) {
         Some(environment) => {
             scan.inspected += 1;
             if matches_runtime(environment, id, runtime) {
+                let executable = bytes
+                    .get(4..)
+                    .and_then(|value| value.split(|byte| *byte == 0).next())
+                    .and_then(|value| std::str::from_utf8(value).ok())
+                    .map(command_name);
+                if allow_gnupg && executable.as_deref().is_some_and(shared_daemons::is_gnupg) {
+                    scan.shared_daemons.push(shared_daemons::RetainedDaemon {
+                        pid,
+                        command: executable.unwrap(),
+                        reason: "shared-daemon-retained",
+                    });
+                    return;
+                }
                 scan.processes.push(ProcessSummary {
                     pid,
                     command: command_name(command),
@@ -1176,7 +1210,7 @@ fn macos_environment(bytes: &[u8]) -> Option<&[u8]> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn scan_processes(_: &str, _: &str) -> ProcessScan {
+fn scan_processes(_: &str, _: &str, _: bool) -> ProcessScan {
     ProcessScan::default()
 }
 
@@ -1486,15 +1520,17 @@ mod tests {
         let uid = unsafe { libc::geteuid() };
         let mut listing = String::new();
         for pid in 100..300 {
-            listing.push_str(&format!("{pid} {uid} S /bin/ordinary-process\n"));
+            listing.push_str(&format!("{pid} {uid} S 42 /bin/ordinary-process\n"));
         }
         let survivor_pid = 999_999;
         assert!(listing.len() > 4096);
-        listing.push_str(&format!("{survivor_pid} {uid} S /bin/detached-provider\n"));
+        listing.push_str(&format!(
+            "{survivor_pid} {uid} S 42 /bin/detached-provider\n"
+        ));
         let mut command = ProcessCommand::new("/bin/sh");
         command.args(["-c", &format!("printf '%s' '{listing}'")]);
         let output = macos_process_listing(command).unwrap();
-        let scan = scan_macos_processes("session", "runtime", &output.stdout, |pid| {
+        let scan = scan_macos_processes("session", "runtime", &output.stdout, true, |pid| {
             let mut arguments = 1i32.to_ne_bytes().to_vec();
             arguments.extend_from_slice(b"/bin/provider\0\0provider\0");
             arguments.extend_from_slice(if pid == survivor_pid {
@@ -1508,6 +1544,34 @@ mod tests {
         assert_eq!(scan.processes.len(), 1);
         assert_eq!(scan.processes[0].pid, survivor_pid);
         assert_eq!(scan.processes[0].command, "detached-provider");
+    }
+
+    #[test]
+    fn macos_marker_inventory_retains_only_reparented_listed_daemons() {
+        let uid = unsafe { libc::geteuid() };
+        let listing = format!(
+            "41000 {uid} S 1 /usr/bin/dirmngr\n41001 {uid} S 42 /usr/bin/dirmngr\n41002 {uid} S 1 /usr/bin/other-daemon\n"
+        );
+        for allow in [true, false] {
+            let scan =
+                scan_macos_processes("session", "runtime", listing.as_bytes(), allow, |pid| {
+                    let mut bytes = 1i32.to_ne_bytes().to_vec();
+                    bytes.extend_from_slice(if pid == 41002 {
+                        b"/usr/bin/other-daemon\0".as_slice()
+                    } else {
+                        b"/usr/bin/dirmngr\0".as_slice()
+                    });
+                    bytes.extend_from_slice(
+                        b"daemon\0AGENT_SESSION_ID=session\0AGENT_SESSION_RUNTIME_ID=runtime\0",
+                    );
+                    Ok(bytes)
+                });
+            assert_eq!(scan.shared_daemons.len(), usize::from(allow));
+            assert_eq!(scan.processes.len(), if allow { 2 } else { 3 });
+            if allow {
+                assert_eq!(scan.shared_daemons[0].pid, 41000);
+            }
+        }
     }
 
     #[test]
@@ -1584,6 +1648,7 @@ mod tests {
             &bytes,
             "platform-marker",
             &runtime,
+            true,
         );
         if redacted {
             assert!(!scan.complete);
@@ -1614,7 +1679,7 @@ mod tests {
         fs::write(process.join("comm"), "provider\n").unwrap();
         for replacement_start in [100, 101] {
             let mut reads = 0;
-            let scan = scan_linux_processes("session", "runtime", tmp.path(), |observed| {
+            let scan = scan_linux_processes("session", "runtime", tmp.path(), true, |observed| {
                 assert_eq!(observed, pid);
                 reads += 1;
                 Ok(Some(LinuxProcessIdentity {
@@ -1667,6 +1732,7 @@ mod tests {
             &record.id,
             &record.runtime.as_ref().unwrap().launch_id,
             tmp.path(),
+            true,
             |observed| {
                 Ok(Some(LinuxProcessIdentity {
                     pid: observed,
@@ -1725,6 +1791,7 @@ mod tests {
             &record.id,
             &record.runtime.as_ref().unwrap().launch_id,
             tmp.path(),
+            true,
             |observed| {
                 Ok(Some(LinuxProcessIdentity {
                     pid: observed,
@@ -1766,7 +1833,14 @@ mod tests {
                 b"AGENT_SESSION_ID=session\0AGENT_SESSION_RUNTIME_ID=runtime\0",
             )
             .unwrap();
-            fs::write(process.join("comm"), "sccache\n").unwrap();
+            fs::write(
+                process.join("comm"),
+                std::path::Path::new(executable)
+                    .file_name()
+                    .unwrap()
+                    .as_encoded_bytes(),
+            )
+            .unwrap();
             fs::write(
                 process.join("stat"),
                 format!("{pid} (sccache) S {parent} 0 0"),
@@ -1775,7 +1849,7 @@ mod tests {
             fs::write(process.join("cmdline"), arguments).unwrap();
             std::os::unix::fs::symlink(executable, process.join("exe")).unwrap();
         }
-        scan_linux_processes("session", "runtime", tmp.path(), |pid| {
+        scan_linux_processes("session", "runtime", tmp.path(), true, |pid| {
             Ok(Some(LinuxProcessIdentity {
                 pid,
                 process_group_id: pid,
@@ -1816,9 +1890,40 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn shared_gnupg_daemon_allows_delete_and_reports_retention() {
+        for name in ["gpg-agent", "dirmngr", "keyboxd"] {
+            let executable = format!("/usr/bin/{name}");
+            let scan = cache_daemon_scan(&[(&executable, 1, b"daemon\0--daemon\0")]);
+            let (_tmp, context, record) = session_fixture();
+            let directory = session_dir(&context, &record.id);
+            let result = finish_session_delete_with_scan(
+                &context,
+                record.clone(),
+                directory,
+                SessionRegistryFence::from_record(&record),
+                board::CloseReason::Deleted,
+                scan,
+            )
+            .unwrap();
+            assert_eq!(
+                serde_json::to_value(result).unwrap()["process_inventory"]["retained_shared_daemons"]
+                    [0],
+                json!({"pid": 41000, "command": name, "reason": "shared-daemon-retained"})
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn shared_cache_daemon_does_not_hide_other_survivors() {
         for candidate in [
             ("/opt/bin/worker", 1, b"worker\0".as_slice()),
+            (
+                "/opt/bin/unlisted-daemon",
+                1,
+                b"unlisted-daemon\0".as_slice(),
+            ),
+            ("/usr/bin/dirmngr", 42, b"dirmngr\0".as_slice()),
             ("/opt/bin/sccache", 42, b"sccache\0".as_slice()),
             ("/opt/bin/sccache", 1, b"sccache\0rustc\0".as_slice()),
         ] {
@@ -1914,6 +2019,7 @@ mod tests {
                 &bytes,
                 "session",
                 "runtime",
+                true,
             );
             let inventory = scan.inventory();
             if let Some(environment) = environment {

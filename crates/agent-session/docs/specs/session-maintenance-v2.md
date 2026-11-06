@@ -112,6 +112,12 @@ removal remains limited to the conditions above. Probe failures identify the
 tmux `has-session` probe or recorded process-boundary liveness probe. No
 replacement numeric target is signaled and no boot proof is fabricated.
 
+When no cgroup is recorded, the marker inventory retains the shared per-user
+daemons `gpg-agent`, `dirmngr`, and `keyboxd` if reparented to init (launchd on
+macOS). It records their name and PID as `shared-daemon-retained`; they do not
+block deletion and are not signaled by this inventory. Other marked processes
+remain blockers. Cgroup-backed teardown and population checks are unchanged.
+
 If either condition stops holding between preview and action, the request
 returns `maintenance-preview-stale` and nothing moves.
 
