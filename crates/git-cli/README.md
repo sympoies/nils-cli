@@ -149,7 +149,8 @@ from the primary checkout or from inside any linked worktree.
   else. Uses `git merge --ff-only` when the default branch is checked out here, and a
   compare-and-swap `git update-ref` when no worktree holds it. Refuses divergence
   (`not-fast-forward`), a dirty checkout, and a default branch held by another worktree.
-  Options: `--remote <name>`, `--no-fetch`, `--dry-run`, `--format text|json`.
+  `--dry-run` skips fetching and previews the cached remote-tracking ref; fetch first for a
+  fresh preview. Options: `--remote <name>`, `--no-fetch`, `--dry-run`, `--format text|json`.
 
 ### sync-branch
 

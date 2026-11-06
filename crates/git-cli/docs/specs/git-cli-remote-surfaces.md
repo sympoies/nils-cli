@@ -114,7 +114,9 @@ git-cli sync-default [--remote <name>] [--no-fetch] [--dry-run]
 ```
 
 Fast-forwards the local default branch to its remote-tracking ref. Fetches that
-one ref first unless `--no-fetch` is passed.
+one ref first unless `--no-fetch` or `--dry-run` is passed. A dry run previews
+against the already-fetched ref and reports `fetched=false` and the compared ref.
+Fetch first for a fresh preview, or run without `--dry-run` to fetch and sync.
 
 The safety argument is that the local ref only ever moves forward onto a commit
 that is already published: nothing is authored, no content changes, nothing is
@@ -132,7 +134,7 @@ Three strategies, selected by where the default branch is checked out:
 `main` lags — and it moves the ref without touching any working tree.
 
 When `refs/remotes/<remote>/HEAD` is not cached and the command may contact the
-remote (no `--no-fetch`), it first runs `git remote set-head <remote> --auto`.
+remote (neither `--no-fetch` nor `--dry-run`), it first runs `git remote set-head <remote> --auto`.
 `git-cli worktree add` does the same for `origin` before it resolves the default
 base ref. Both are best effort: an unreachable remote leaves the cache unset.
 
