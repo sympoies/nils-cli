@@ -417,3 +417,7 @@ async fn managed_file_parts_are_owned_and_stable() {
     assert_eq!(files[1]["bytes"], 9);
     assert_eq!(first["data"]["messages"], second["data"]["messages"]);
 }
+
+#[cfg(target_os = "linux")]
+#[path = "upload_ownership_tests.rs"]
+mod upload_ownership_tests;
