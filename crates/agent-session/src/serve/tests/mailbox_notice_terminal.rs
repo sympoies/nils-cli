@@ -1,6 +1,22 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+#[tokio::test]
+async fn gate_off_repeated_deferrals_do_not_rewrite_registry() {
+    use std::os::unix::fs::MetadataExt;
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::remove(&lock, crate::notice::WRITERS_ENV);
+    let fixture = WakeFixture::new(AgentKind::Codex).await;
+    let registry = fixture.temp.path().join("coordination/registry.json");
+    let before = fs::metadata(&registry).unwrap().ino();
+    for _ in 0..2 {
+        crate::serve::terminal_notification::dispatch_coordination_notification(
+            fixture.state.clone(), fixture.candidate.clone(),
+        ).await;
+    }
+    assert_eq!(fs::metadata(registry).unwrap().ino(), before);
+}
+
 fn bind_transcript(fixture: &WakeFixture) {
     let provider_root = fixture.temp.path().join("profile-config");
     let projects = provider_root.join("projects/project-27");

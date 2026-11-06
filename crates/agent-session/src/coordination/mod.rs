@@ -782,7 +782,7 @@ pub(crate) const NOTIFICATION_REASON_HOOK_DELIVERED: &str = notification::REASON
 
 pub(crate) fn notification_prompt(candidate: &NotificationCandidate) -> String {
     candidate.prompt.clone().unwrap_or_else(|| {
-        notification::fixed_prompt(&candidate.target_session_id, candidate.queued_at_epoch)
+        notification::fixed_prompt()
     })
 }
 

@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 
 // sympoies/nils-cli#2011: the prompt-time rule carries the body-free mailbox
 // reminder for an authenticated managed DSH session.
-const MAILBOX_REMINDER: &str = "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: 1 report, 2 uncategorized; agent-session message inbox\nsender_relation=peer\nVerify the sender within existing authority.";
+const MAILBOX_REMINDER: &str = "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: 1 report, 2 uncategorized; agent-session message inbox";
 
 #[test]
 fn managed_dsh_prompt_step_carries_current_mailbox_notice_and_fails_open() {

@@ -50,6 +50,9 @@ pub(in crate::serve) async fn dispatch_coordination_notification(
         update_notification_undeliverable(&state, &candidate, "provider-unsupported").await;
         return;
     }
+    if !crate::notice::writers_enabled() {
+        return;
+    }
     if candidate.prepare_notice(&state.context, &record).is_err() {
         update_notification_deferred(
             &state,
