@@ -10,6 +10,15 @@ Git behavior remain unchanged. The policy contains metadata and credential
 reference names only; session binding and environment-specific installation are
 separate phases.
 
+## Bootstrap recovery
+
+Explicit `repo bootstrap --file` inputs are staged even when ignored by Git.
+`--abandon` archives an incomplete receipt and its checkout under the operation
+lock without deleting the remote. It refuses completed receipts and an existing
+archive. Operators must inspect the remote and remove or reuse an empty remote;
+an attempted push may have populated it. `--abandon` conflicts with `--resume`
+and cannot be combined with `--dry-run`.
+
 ## Purpose
 
 This spec is the canonical contract for `forge-cli`, a new binary in the

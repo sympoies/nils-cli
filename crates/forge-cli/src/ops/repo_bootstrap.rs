@@ -27,7 +27,7 @@ use crate::forgejo::ForgejoClient;
 use crate::provider::{Provider, ProviderContext};
 use crate::rate_limit::default_runner;
 
-mod gitlab;
+pub(super) mod gitlab;
 use gitlab::GitlabClient;
 
 const GITLAB_PUSH_TOKEN_ENV: &str = "FORGE_CLI_BOOTSTRAP_GITLAB_TOKEN";
@@ -54,7 +54,7 @@ struct ReceiptFile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct BootstrapReceipt {
+pub(super) struct BootstrapReceipt {
     schema_version: String,
     provider: String,
     host: String,
@@ -71,7 +71,7 @@ struct BootstrapReceipt {
     local_sha: Option<String>,
     push_attempted: bool,
     default_branch_set: bool,
-    complete: bool,
+    pub(super) complete: bool,
     reconciled: bool,
 }
 
@@ -1240,7 +1240,7 @@ fn create_signed_root(
             )
         })?;
     }
-    let mut add_args = vec![OsString::from("add"), OsString::from("--")];
+    let mut add_args = vec!["add".into(), "--force".into(), "--".into()];
     add_args.extend(files.iter().map(|file| OsString::from(&file.name)));
     require_success(
         run_git_os(checkout, &add_args, &[])?,
@@ -1808,7 +1808,7 @@ fn validate_receipt_inputs(
     Ok(())
 }
 
-fn bootstrap_state_dir(
+pub(super) fn bootstrap_state_dir(
     provider: &str,
     host: Option<&str>,
     owner: &str,
@@ -1871,7 +1871,7 @@ fn create_private_dir(path: &Path) -> Result<(), ForgeError> {
     Ok(())
 }
 
-fn load_receipt(path: &Path) -> Result<Option<BootstrapReceipt>, ForgeError> {
+pub(super) fn load_receipt(path: &Path) -> Result<Option<BootstrapReceipt>, ForgeError> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -1942,7 +1942,7 @@ fn load_receipt(path: &Path) -> Result<Option<BootstrapReceipt>, ForgeError> {
     Ok(Some(receipt))
 }
 
-fn acquire_bootstrap_lock(state_dir: &Path) -> Result<File, ForgeError> {
+pub(super) fn acquire_bootstrap_lock(state_dir: &Path) -> Result<File, ForgeError> {
     let path = state_dir.join(".bootstrap.lock");
     let file = OpenOptions::new()
         .read(true)

@@ -221,7 +221,11 @@ fn gitlab_bootstrap_creates_empty_project_and_sets_requested_default() {
         "{git}"
     );
     assert!(git.contains("rev-list --parents -n 1"));
-    assert!(!git.contains("--force"));
+    assert!(
+        git.lines()
+            .filter(|line| line.contains(" push "))
+            .all(|line| !line.contains("--force"))
+    );
 }
 
 #[test]
