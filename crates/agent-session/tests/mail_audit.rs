@@ -160,8 +160,13 @@ fn audit_reports_which_provider_not_ready_branch_deferred_the_wake() {
         ),
         (
             "provider-not-ready",
+            "prompt-submission-refused:unlisted-code",
+            json!("prompt-submission-refused"),
+        ),
+        (
+            "provider-not-ready",
             "prompt-submission-refused:BODY_CANARY",
-            Value::Null,
+            json!("prompt-submission-refused"),
         ),
         (
             "provider-not-ready",

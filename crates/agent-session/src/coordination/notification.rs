@@ -909,32 +909,47 @@ pub(super) fn safe_reason(reason: &str) -> String {
     }
 }
 
+/// Stable refusal codes a structured prompt submission can report. A code
+/// outside this list is never stored: the detail collapses to the bare branch.
+const KNOWN_REFUSAL_CODES: &[&str] = &[
+    "auth-quarantined",
+    "codex-account-binding-invalid",
+    "codex-account-binding-missing",
+    "codex-account-binding-superseded",
+    "codex-account-next-pending",
+    "codex-account-not-bound",
+    "codex-account-unsupported",
+    "coordination-notification-superseded",
+    "serve-task-failed",
+    "session-incarnation-conflict",
+    "structured-prompt-outcome-unknown",
+];
+
 /// Branch labels for `provider-not-ready`; they carry no message or runtime
-/// content. A refused structured prompt may append the stable error code of the
-/// refusal as `prompt-submission-refused:<code>`.
+/// content. A refused structured prompt may append one code from
+/// `KNOWN_REFUSAL_CODES` as `prompt-submission-refused:<code>`; any other
+/// suffix is dropped.
 pub(crate) fn safe_reason_detail(detail: &str) -> Option<String> {
     let (branch, code) = detail
         .split_once(':')
         .map_or((detail, None), |(branch, code)| (branch, Some(code)));
-    let code_is_stable = code.is_none_or(|code| {
-        branch == "prompt-submission-refused"
-            && (1..=64).contains(&code.len())
-            && !code.starts_with('-')
-            && !code.ends_with('-')
-            && code
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-    });
-    let known_branch = matches!(
-        branch,
-        "notice-writers-disabled"
+    match (branch, code) {
+        (
+            "notice-writers-disabled"
             | "notice-runtime-unavailable"
             | "notice-not-prepared"
             | "prompt-control-unavailable"
-            | "prompt-submission-refused"
             | "notice-attempt-not-admitted"
-    );
-    (code_is_stable && known_branch).then(|| detail.to_string())
+            | "prompt-submission-refused",
+            None,
+        ) => Some(branch.to_string()),
+        ("prompt-submission-refused", Some(code)) => Some(if KNOWN_REFUSAL_CODES.contains(&code) {
+            detail.to_string()
+        } else {
+            branch.to_string()
+        }),
+        _ => None,
+    }
 }
 
 /// A detail belongs to the deferral that recorded it, so it is shown only
