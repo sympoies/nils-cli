@@ -720,7 +720,17 @@ fn cli_request(
             });
     }
     let error = &body["error"];
-    let mut failure = if error["code"] == UNAVAILABLE_CODE {
+    let mut failure = if error["code"] == "console-start-busy"
+        && status.as_u16() == 503
+        && error["details"]["retryable"] == true
+        && error["details"]["recovery"]["safe_to_retry"] == true
+    {
+        CliError::unavailable(
+            "console-start-busy",
+            "service console start workers are busy",
+            Some(json!({"retryable": true, "recovery": {"safe_to_retry": true}})),
+        )
+    } else if error["code"] == UNAVAILABLE_CODE {
         unavailable_from_details(&error["message"], &error["details"])
     } else {
         start_failure::forward(error)
