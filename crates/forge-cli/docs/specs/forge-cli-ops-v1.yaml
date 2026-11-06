@@ -714,6 +714,32 @@ operations:
         review_threads?: "list<{ id: string, url: string, path: string, line?: integer, subject_type: enum<LINE|FILE> }>"
         threads_skipped_idempotent?: integer # cross-run duplicates skipped: findings whose (path, body) already had a live (non-resolved, non-outdated) thread on the current head; omitted when 0. When every finding is a duplicate the review event is skipped, so submitted_review is false
 
+  - id: pr.review.edit
+    schema_version: cli.forge-cli.pr.review.edit.v1
+    summary: Update an owned submitted GitHub review body.
+    inputs:
+      - { name: <id>, type: integer, required: true }
+      - { name: --review, type: integer, required: true }
+      - { name: --body-file, type: path, required: true }
+    validations: [no_local_path, no_agent_attribution, no_escaped_control_markdown]
+    dry_run:
+      offline: false
+      note: Reads the review and current identity and returns before and after bodies without writing.
+    backends:
+      github:
+        - { program: gh, argv: [api, "repos/{repo}/pulls/{id}/reviews/{review}"] }
+        - { program: gh, argv: [api, user] }
+        - { program: gh, argv: [api, "repos/{repo}/pulls/{id}/reviews/{review}", --method, PUT, --input, "<payload>"] }
+      # GitLab/local return provider_unsupported.
+    output:
+      data:
+        provider: enum<github>
+        number: integer
+        review_id: integer
+        review_url: string
+        dry_run: bool
+        body_diff: '{ before: string, after: string }?'
+
   - id: pr.review.validate
     schema_version: cli.forge-cli.pr.review.validate.v1
     summary: Validate review summary and review-thread specs before posting provider-visible review activity.

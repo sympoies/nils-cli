@@ -34,14 +34,16 @@ pub(super) fn encode_counts(
     );
     NoticeEnvelope::new("mailbox.wake", "agent-session", None)
         .expect("fixed mailbox notice metadata")
-        .encode(&body)
+        .encode(&crate::notice::generated::body(&body))
         .expect("nonempty count reminder")
 }
 
 pub(super) fn encode_summary(summary: &str) -> String {
     NoticeEnvelope::new("mailbox.wake", "agent-session", None)
         .expect("fixed mailbox notice metadata")
-        .encode(&crate::notice::render_summary("mailbox.wake", summary, ""))
+        .encode(&crate::notice::generated::body(
+            &crate::notice::render_summary("mailbox.wake", summary, ""),
+        ))
         .expect("nonempty mailbox reminder")
 }
 
@@ -88,6 +90,16 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use serde_json::json;
+
+    #[test]
+    fn generated_mailbox_summary_prevents_trailing_ascii_spaces_before_encoding() {
+        let encoded = encode_summary("generated reminder \nnext line \r\nlast line");
+        let parsed = crate::notice::parse_notice(&encoded).unwrap();
+        assert_eq!(
+            parsed.body,
+            "Mailbox: generated reminder\nnext line\r\nlast line"
+        );
+    }
 
     #[test]
     fn mailbox_wake_preserves_summary_bytes_including_long_counts() {

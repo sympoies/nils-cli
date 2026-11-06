@@ -138,6 +138,7 @@ Parity matrix (v1):
 | `pr comment <id>`                           | `gh pr comment <id> --body …`                                                                                                                | `glab mr note <id> --message …`                                        | exact                                                                                                                    |
 | `pr comment-edit <comment-id>`              | GitHub issue-comment REST edit                                                                                                               | GitLab merge request note REST edit                                    | edited body                                                                                                              |
 | `pr review <id>`                            | guard `gh api …/pulls/{id}`, then outcome comment, native review, or GraphQL pending review + review thread(s) + submit with `--thread-file` | `glab mr note create <id> --message … --resolvable=false`              | outcome comment, native review event, or resolvable review threads (`--thread-file`, GitHub-only); optional issue mirror |
+| `pr review edit <id> …`                     | Read review and actor, then update the owned submitted review body                                                                           | unsupported in v1                                                      | Dry-run reads the target and shows before and after bodies without writing                                               |
 | `pr review validate [id]`                   | local review body/thread-file validation; with `--check-diff`, `gh api repos/{repo}/pulls/{id}/files`                                        | local validation only; `--check-diff` unsupported in v1                | schema/privacy preflight plus optional GitHub diff-coordinate validation                                                 |
 | `pr ready <id>`                             | `gh pr ready <id>`                                                                                                                           | `glab mr update <id> --ready`                                          | exact                                                                                                                    |
 | `pr review-threads list <id>`               | `gh api graphql` (`reviewThreads` connection)                                                                                                | `glab api …/merge_requests/<iid>/discussions`                          | normalized thread state                                                                                                  |
@@ -508,6 +509,15 @@ See [review transaction and handoff state](forge-review-state-v1.md#pr-pending-r
 ### `pr review`
 
 See [review publication and thread writes](forge-review-publication-v1.md#pr-review) for this contract.
+
+### `pr review edit`
+
+GitHub accepts a numeric review database ID belonging to the selected PR. The
+command reads the review and current identity, rejects another author or a
+pending review, and updates the body. GitLab and local providers return
+`provider_unsupported`. Dry-run performs the reads and returns the review ID,
+URL, and before/after bodies without a mutation. Successful writes return the
+review ID and URL.
 
 ### `pr review validate`
 
