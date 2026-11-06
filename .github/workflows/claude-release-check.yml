@@ -158,11 +158,31 @@ jobs:
           name: claude-release-check
           path: ${{ runner.temp }}/claude-check-evidence
 
+      - name: Require bot app credentials
+        env:
+          BOT_APP_ID: ${{ secrets.BOT_APP_ID }}
+          BOT_APP_PRIVATE_KEY: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BOT_APP_ID}" ] || [ -z "${BOT_APP_PRIVATE_KEY}" ]; then
+            echo "::error::BOT_APP_ID / BOT_APP_PRIVATE_KEY are not configured. Configure the bot app to create candidate pull requests." >&2
+            exit 1
+          fi
+
+      - name: Mint bot token
+        id: bot_token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+
       - name: Prepare draft range candidate from validated evidence
         uses: actions/github-script@v9
         env:
           CLAUDE_CHECK_ARTIFACT_DIR: ${{ runner.temp }}/claude-check-evidence
+          ISSUE_TOKEN: ${{ github.token }}
         with:
+          github-token: ${{ steps.bot_token.outputs.token }}
           script: |
             const fs = require("node:fs");
             const path = require("node:path");
@@ -173,7 +193,7 @@ jobs:
                 throw new Error("Bounded regular evidence file required");
               return JSON.parse(fs.readFileSync(file, "utf8"));
             };
-            await runReleaseCheck({ github, context, core,
+            await runReleaseCheck({ github, issueGithub: getOctokit(process.env.ISSUE_TOKEN), context, core,
               checked: read("checked.json"), patch: read("candidate.patch.json") });
 
       - name: Retain publication result

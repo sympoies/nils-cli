@@ -75,7 +75,8 @@ function fixture({ newest = "2.1.318", passing = true } = {}) {
     },
   };
   const core = { setFailed: (x) => state.failures.push(x), summary: { addRaw: () => core.summary, write: async () => {} } };
-  return { state, options: { github: { rest, paginate: async (method, args) => (await method(args)).data }, core,
+  const github = { rest, paginate: async (method, args) => (await method(args)).data };
+  return { state, options: { github, issueGithub: github, core,
     context: { repo: { owner: "example", repo: "project" }, ref: "refs/heads/main", sha: state.source, runId: 7 },
     root: ROOT, artifactDir,
     checked: { schema_version: 1, source_sha: state.source, release: metadata(newest),
@@ -88,6 +89,20 @@ function fixture({ newest = "2.1.318", passing = true } = {}) {
     fetchJSON: async url => metadata(newest, url.includes("linux-x64") ? PLATFORM : PACKAGE),
     writeResult: (result) => { state.result = result; } } };
 }
+
+test("candidate publication uses the bot App token without a default-token fallback", () => {
+  const workflow = fs.readFileSync(path.join(REPOSITORY, ".github/workflows/claude-release-check.yml"), "utf8");
+  const publish = workflow.split("\n  publish:")[1];
+  const mint = publish.match(/- name: Mint bot token\n([\s\S]*?)(?=\n      - name:)/);
+  const candidate = publish.match(/- name: Prepare draft range candidate from validated evidence\n([\s\S]*?)(?=\n      - name:)/);
+  assert.ok(mint); assert.ok(candidate);
+  assert.match(mint[1], /id: bot_token/);
+  assert.match(mint[1], /uses: actions\/create-github-app-token@v3/);
+  assert.match(candidate[1], /github-token: \${{ steps\.bot_token\.outputs\.token }}/);
+  assert.doesNotMatch(candidate[1], /github-token:.*(?:\|\||github\.token|secrets\.GITHUB_TOKEN)/);
+  assert.match(candidate[1], /issueGithub: getOctokit\(process\.env\.ISSUE_TOKEN\)/);
+  assert.match(candidate[1], /ISSUE_TOKEN: \${{ github\.token }}/);
+});
 
 test("official latest registry discovery uses strict stable versions and exact package identity", async () => {
   const seen = [];
@@ -164,6 +179,15 @@ test("passing candidate creates one draft with exact source/integrity/exits/arti
   const before = state.writes.length;
   await runReleaseCheck(options);
   assert.equal(state.pulls.length, 1); assert.equal(state.writes.length, before);
+});
+
+test("failure issues use the separate issue client", async () => {
+  const candidate = fixture({ passing: false });
+  const issue = fixture({ passing: false });
+  candidate.options.issueGithub = issue.options.github;
+  await runReleaseCheck(candidate.options);
+  assert.equal(candidate.state.issues.length, 0);
+  assert.equal(issue.state.issues.length, 1);
 });
 
 test("failing candidate upserts a single bounded issue and preserves human notes/closed state", async () => {
