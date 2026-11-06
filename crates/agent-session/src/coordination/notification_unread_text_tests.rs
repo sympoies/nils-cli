@@ -5,7 +5,7 @@ fn retired_plain_reminder_producers_only_build_envelopes() {
     let name = nils_common::session_binary::NAME;
     let messages = [unread_message("recipient", "incarnation", "unread", 1000)];
     for (prompt, body) in [
-        (fixed_prompt("recipient", 100), format!("Mailbox: {name} message inbox")),
+        (fixed_prompt(), format!("Mailbox: {name} message inbox")),
         (coalescing::count_prompt(messages.iter()), format!("Mailbox: 1 unread; {name} message inbox")),
     ] {
         assert_eq!(crate::notice::parse_notice(&prompt).unwrap().body, body);

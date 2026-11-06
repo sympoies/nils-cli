@@ -114,7 +114,7 @@ pub(crate) struct NotificationCandidate {
 /// Body-free, provider-neutral wake in the current notice envelope.
 /// Generations and queue times remain in the receipt; reconciliation compares
 /// these exact bytes only after the matching attempt's timestamp.
-pub(crate) fn fixed_prompt(_session_id: &str, _queued_at_epoch: i64) -> String {
+pub(crate) fn fixed_prompt() -> String {
     prompt_template()
 }
 
@@ -528,10 +528,7 @@ pub(super) fn transition_attempt_at(
     {
         return None;
     }
-    receipt.attempted_prompt =
-        Some(candidate.prompt.clone().unwrap_or_else(|| {
-            fixed_prompt(&candidate.target_session_id, candidate.queued_at_epoch)
-        }));
+    receipt.attempted_prompt = Some(candidate.prompt.clone().unwrap_or_else(fixed_prompt));
     receipt.state = "attempting".to_string();
     receipt.attempted_generation = receipt.generation;
     receipt.attempted_queued_at_epoch = receipt.queued_at_epoch;
@@ -726,6 +723,12 @@ pub(crate) fn defer(
             return false;
         };
         if receipt.generation != candidate.generation || receipt.state != "queued" {
+            return false;
+        }
+        if !crate::notice::writers_enabled()
+            && reason == "provider-not-ready"
+            && receipt.last_reason.as_deref() == Some(reason)
+        {
             return false;
         }
         receipt.updated_at_epoch = now;
@@ -976,14 +979,7 @@ mod tests {
 
     #[test]
     fn every_reminder_prompt_is_recognized_by_its_prefix() {
-        assert!(is_mailbox_reminder_prompt(&fixed_prompt(
-            "target-session",
-            1_790_000_000
-        )));
-        assert!(is_mailbox_reminder_prompt(&fixed_prompt(
-            "target-session",
-            0
-        )));
+        assert!(is_mailbox_reminder_prompt(&fixed_prompt()));
         assert!(!is_mailbox_reminder_prompt(
             "Check the coordination mailbox"
         ));
@@ -992,7 +988,7 @@ mod tests {
     #[test]
     fn notification_prompt_is_fixed_envelope_and_contains_no_mail_body() {
         crate::command_identity::with_name("agent-session", || {
-            let prompt = fixed_prompt("target-session", 1_790_000_000);
+            let prompt = fixed_prompt();
             assert_eq!(
                 prompt,
                 "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: agent-session message inbox"
@@ -1004,17 +1000,6 @@ mod tests {
             assert!(!prompt.contains("message show"));
             assert!(!prompt.contains("target-session"));
             assert!(!prompt.contains("--capability-file"));
-        });
-    }
-
-    #[test]
-    fn undated_generation_uses_the_fixed_actionable_envelope() {
-        crate::command_identity::with_name("agent-session", || {
-            // Unknown queue times must never invent a date or a recipient id.
-            assert_eq!(
-                fixed_prompt("target-session", 0),
-                "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: agent-session message inbox"
-            );
         });
     }
 

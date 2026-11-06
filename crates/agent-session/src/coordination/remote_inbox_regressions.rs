@@ -132,7 +132,7 @@ fn compacted_unknown_attempt_does_not_hide_a_new_remote_generation() {
     assert_eq!(
         crate::provider_prompt::prompt_observed_after(
             &source,
-            &notification::fixed_prompt("recipient", old.queued_at_epoch),
+            &notification::fixed_prompt(),
             &old.attempted_at.as_deref().unwrap().parse().unwrap()
         ),
         None,
@@ -257,7 +257,7 @@ fn drained_remote_mail_suppresses_serve_and_hook_delivery_after_compaction() {
     assert_eq!(
         crate::provider_prompt::prompt_observed_after(
             &source,
-            &notification::fixed_prompt("recipient", attempted.queued_at_epoch),
+            &notification::fixed_prompt(),
             &attempted.attempted_at.as_deref().unwrap().parse().unwrap()
         ),
         None
