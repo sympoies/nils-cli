@@ -46,6 +46,50 @@ return `mailbox-body-invalid`, while bodies over 16 KiB return
 `mailbox-body-too-large`. Service submission preserves these codes with
 `retryable: false` recovery metadata.
 
+### Quota rejection evidence and alerts
+
+Read messages continue to count toward the unchanged 256-message / 4 MiB
+recipient limits. Showing a message does not free capacity; acknowledging it does.
+
+A local send or destination federation admission rejected with `quota-exceeded`
+records a body-free event in the destination registry before returning the error.
+The event contains `sender` (session or service address), `recipient` (exact session
+address), `category` (default `uncategorized`), `occurred_at` (UTC RFC3339),
+`occurred_at_epoch` (Unix seconds), and fixed `reason_code: quota-exceeded`.
+It never contains a body, body digest, subject, file path, or upstream error text.
+The log retains the newest 32 events per recipient and 256 per registry, for at
+most 24 hours with lazy expiry. `message audit` exposes the bounded log as
+`quota_rejections`, independently of message pagination and healthy-row filtering.
+A rejected send is not an admitted message and receives no success replay receipt;
+retrying a rejected request can record another bounded rejection event.
+
+The destination's existing `coordination/notification-policy.json` recipient entry
+accepts `mailbox_alert_percent`, an integer from 1 through 100 (default 80).
+An accepted message reaching the ceiling of that percentage of either recipient
+limit queues one fixed `mailbox.alert`. Continued usage above the threshold does
+not queue another threshold alert. Admission observes usage before adding mail:
+once acknowledgement or expiry reduces usage below both thresholds, the next
+crossing re-arms the alert. Rejections independently queue the same fixed notice.
+Category suppression and routine notification windows do not suppress quota signals.
+
+Signals use the existing exact-incarnation notification generation, guarded serve
+routes, and authenticated `message reminder` hook. They remain eligible even when
+all queued mail is already read, expire after 24 hours, and never consume message
+capacity or change read/ack state. Multiple pending signals coalesce; a successful
+notification claim announces that generation once. Notice writer rollout and
+provider/composer safety guards still apply. The fixed notice bytes are:
+
+```text
+<!-- agent-notice:v1 kind=mailbox.alert source=agent-session -->
+
+Mailbox alert: Mailbox capacity needs attention. Read pending messages and acknowledge handled messages; inspect the mailbox audit for rejected sends.
+```
+
+Persisting quota evidence or alert state fences the registry at v7. Upgrade the
+CLI, controller, projection readers, and hook together; older writers must refuse
+this state rather than erase evidence or re-arm state. There is no downgrade path.
+Existing mutable records acquire the fence when quota state is first written.
+
 ### Optional reply deadlines
 
 `message send --reply-by <duration>` requests a reply within that duration.

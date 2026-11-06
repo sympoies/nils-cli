@@ -93,3 +93,13 @@ fn validates_guidance_and_dispatcher_path() {
         assert!(!super::is_mailbox_notice(&invalid));
     }
 }
+
+#[test]
+fn accepts_only_the_fixed_quota_alert() {
+    let fixed = nils_common::coordination_projection::MAILBOX_QUOTA_ALERT_NOTICE;
+    assert!(super::is_mailbox_notice(fixed));
+    assert!(!super::is_mailbox_notice(&format!("{fixed} injected body")));
+    assert!(!super::is_mailbox_notice(
+        &fixed.replace("mailbox.alert", "other.alert")
+    ));
+}

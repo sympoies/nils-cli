@@ -13,6 +13,7 @@ pub(crate) mod delete;
 mod forwarding;
 mod heartbeat_state;
 pub mod mailbox;
+mod mailbox_quota;
 mod mailbox_sender_relation;
 mod mailbox_wait;
 mod notification;
@@ -111,6 +112,7 @@ pub(crate) struct Registry {
     operations: Vec<claims::OperationLease>,
     completion_events: Vec<claims::CompletionEvent>,
     messages: Vec<mailbox::StoredMessage>,
+    quota_rejections: Vec<mailbox_quota::Rejection>,
     cursors: BTreeMap<String, mailbox::InboxCursor>,
     receipts: BTreeMap<String, IdempotencyReceipt>,
     receipt_evictions: BTreeMap<String, receipt_retention::ReceiptEviction>,

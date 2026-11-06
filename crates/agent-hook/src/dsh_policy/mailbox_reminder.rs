@@ -9,6 +9,9 @@ const HEADER: &str = "<!-- agent-notice:v1 kind=mailbox.wake source=agent-sessio
 const MAX_BYTES: usize = 4096;
 
 pub(super) fn is_mailbox_notice(reminder: &str) -> bool {
+    if reminder == nils_common::coordination_projection::MAILBOX_QUOTA_ALERT_NOTICE {
+        return true;
+    }
     if reminder.len() > MAX_BYTES || reminder.chars().any(|ch| ch.is_control() && ch != '\n') {
         return false;
     }

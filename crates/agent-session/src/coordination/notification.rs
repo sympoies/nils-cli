@@ -61,6 +61,8 @@ pub(crate) struct NotificationReceipt {
     pub last_reason_detail: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attempt_history: Vec<NotificationAttempt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) quota: Option<super::mailbox_quota::State>,
     pub routine_interval_seconds: i64,
     pub routine_last_submitted_at_epoch: i64,
     pub urgent_generation: u64,
@@ -125,26 +127,26 @@ pub(crate) fn fixed_prompt() -> String {
 /// Only current mailbox envelopes identify an injected reminder.
 pub(crate) fn is_mailbox_reminder_prompt(prompt: &str) -> bool {
     crate::notice::parse_notice(prompt)
-        .is_some_and(|notice| notice.metadata.kind() == "mailbox.wake")
+        .is_some_and(|notice| matches!(notice.metadata.kind(), "mailbox.wake" | "mailbox.alert"))
 }
 
-/// Whether the exact recipient incarnation still holds live unread mail. A
-/// generation whose mail was already read, acknowledged, or expired has
-/// nothing left to announce, so delivering it would only prompt a stale
-/// inbox check.
-pub(crate) fn has_live_unread(
+/// Whether the exact recipient incarnation has live unread mail or an
+/// unannounced, unexpired quota signal. Read-only full mailboxes still need
+/// their body-free quota notice.
+pub(crate) fn has_pending_content(
     registry: &Registry,
     target_session_id: &str,
     target_incarnation: &str,
     now: i64,
 ) -> bool {
-    registry.messages.iter().any(|message| {
-        message.recipient_session_id == target_session_id
-            && message.recipient_incarnation == target_incarnation
-            && !message.notification_suppressed
-            && message.state == "unread"
-            && message.expires_at_epoch > now
-    })
+    super::mailbox_quota::has_pending(registry, target_session_id, target_incarnation, now)
+        || registry.messages.iter().any(|message| {
+            message.recipient_session_id == target_session_id
+                && message.recipient_incarnation == target_incarnation
+                && !message.notification_suppressed
+                && message.state == "unread"
+                && message.expires_at_epoch > now
+        })
 }
 
 /// Claim the exact recipient incarnation's pending generation for delivery by
@@ -166,7 +168,7 @@ pub(crate) fn claim_hook_reminder(
         return None;
     }
     normalize_registry(registry, now);
-    if !has_live_unread(registry, target_session_id, target_incarnation, now) {
+    if !has_pending_content(registry, target_session_id, target_incarnation, now) {
         return None;
     }
     let notice_prompt = notice::encode_counts(
@@ -421,7 +423,7 @@ pub(crate) fn deliverable_candidates(
     recovery::resolve_drained_generations(registry, now);
     let mut candidates = pending_candidates(registry, now);
     candidates.retain(|candidate| {
-        has_live_unread(
+        has_pending_content(
             registry,
             &candidate.target_session_id,
             &candidate.target_incarnation,
