@@ -764,6 +764,22 @@ pub(crate) fn defer_notification(
     notification::defer(context, candidate, reason, retry_after_seconds)
 }
 
+pub(crate) fn defer_notification_with_detail(
+    context: &CliContext,
+    candidate: &NotificationCandidate,
+    reason: &str,
+    detail: &str,
+    retry_after_seconds: i64,
+) -> Result<bool, CliError> {
+    notification::defer_with_detail(
+        context,
+        candidate,
+        reason,
+        Some(detail),
+        retry_after_seconds,
+    )
+}
+
 pub(crate) fn reconcile_notification_submitted(
     context: &CliContext,
     candidate: &NotificationCandidate,

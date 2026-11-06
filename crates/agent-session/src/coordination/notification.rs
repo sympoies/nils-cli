@@ -55,6 +55,10 @@ pub(crate) struct NotificationReceipt {
     pub next_attempt_at_epoch: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_reason: Option<String>,
+    /// Which `provider-not-ready` branch deferred the wake; meaningful only
+    /// while `last_reason` is `provider-not-ready`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_reason_detail: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attempt_history: Vec<NotificationAttempt>,
     pub routine_interval_seconds: i64,
@@ -590,6 +594,7 @@ fn transition_known_failure(
     receipt.next_attempt_at_epoch = retry_at_epoch.max(now);
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some(safe_reason(reason));
+    receipt.last_reason_detail = None;
     receipt.record_attempt(candidate.generation, reason, now);
     true
 }
@@ -714,6 +719,16 @@ pub(crate) fn defer(
     reason: &str,
     retry_after_seconds: i64,
 ) -> Result<bool, CliError> {
+    defer_with_detail(context, candidate, reason, None, retry_after_seconds)
+}
+
+pub(crate) fn defer_with_detail(
+    context: &CliContext,
+    candidate: &NotificationCandidate,
+    reason: &str,
+    detail: Option<&str>,
+    retry_after_seconds: i64,
+) -> Result<bool, CliError> {
     update_attempt(context, |registry, now| {
         normalize_registry(registry, now);
         let Some(receipt) = registry.notifications.get_mut(&receipt_key(
@@ -725,15 +740,18 @@ pub(crate) fn defer(
         if receipt.generation != candidate.generation || receipt.state != "queued" {
             return false;
         }
+        let detail = detail.and_then(safe_reason_detail);
         if !crate::notice::writers_enabled()
             && reason == "provider-not-ready"
             && receipt.last_reason.as_deref() == Some(reason)
+            && receipt.last_reason_detail == detail
         {
             return false;
         }
         receipt.updated_at_epoch = now;
         receipt.next_attempt_at_epoch = now.saturating_add(retry_after_seconds.max(0));
         receipt.last_reason = Some(safe_reason(reason));
+        receipt.last_reason_detail = detail;
         receipt.record_attempt(candidate.generation, reason, now);
         true
     })
@@ -889,6 +907,62 @@ pub(super) fn safe_reason(reason: &str) -> String {
         | REASON_HOOK_DELIVERED => reason.to_string(),
         _ => REASON_INVALID_STATE.to_string(),
     }
+}
+
+/// Stable refusal codes a structured prompt submission can report. A code
+/// outside this list is never stored: the detail collapses to the bare branch.
+const KNOWN_REFUSAL_CODES: &[&str] = &[
+    "auth-quarantined",
+    "codex-account-binding-invalid",
+    "codex-account-binding-missing",
+    "codex-account-binding-superseded",
+    "codex-account-next-pending",
+    "codex-account-not-bound",
+    "codex-account-unsupported",
+    "coordination-notification-superseded",
+    "serve-task-failed",
+    "session-incarnation-conflict",
+    "structured-prompt-outcome-unknown",
+];
+
+/// Branch labels for `provider-not-ready`; they carry no message or runtime
+/// content. A refused structured prompt may append one code from
+/// `KNOWN_REFUSAL_CODES` as `prompt-submission-refused:<code>`; any other
+/// suffix is dropped.
+pub(crate) fn safe_reason_detail(detail: &str) -> Option<String> {
+    let (branch, code) = detail
+        .split_once(':')
+        .map_or((detail, None), |(branch, code)| (branch, Some(code)));
+    match (branch, code) {
+        (
+            "notice-writers-disabled"
+            | "notice-runtime-unavailable"
+            | "notice-not-prepared"
+            | "prompt-control-unavailable"
+            | "notice-attempt-not-admitted"
+            | "prompt-submission-refused",
+            None,
+        ) => Some(branch.to_string()),
+        ("prompt-submission-refused", Some(code)) => Some(if KNOWN_REFUSAL_CODES.contains(&code) {
+            detail.to_string()
+        } else {
+            branch.to_string()
+        }),
+        _ => None,
+    }
+}
+
+/// A detail belongs to the deferral that recorded it, so it is shown only
+/// while that deferral is still the last reason.
+pub(crate) fn reason_detail(receipt: &NotificationReceipt) -> Option<String> {
+    (receipt.last_reason.as_deref() == Some("provider-not-ready"))
+        .then(|| {
+            receipt
+                .last_reason_detail
+                .as_deref()
+                .and_then(safe_reason_detail)
+        })
+        .flatten()
 }
 
 fn state_priority(state: &str) -> u8 {

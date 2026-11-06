@@ -93,11 +93,10 @@ pub(super) async fn dispatch(
         })
         .await;
         if matches!(attempted, Ok(Ok(false))) {
-            update_notification_deferred(
+            super::mailbox_dispatch::defer_provider_not_ready(
                 &state,
                 &candidate,
-                "provider-not-ready",
-                COORDINATION_NOTIFICATION_RETRY,
+                "notice-attempt-not-admitted",
             )
             .await;
         }

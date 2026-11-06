@@ -316,3 +316,123 @@ async fn coordination_notification_skips_a_mailbox_the_recipient_already_drained
     assert_eq!(notification["state"], "prompt_submitted");
     assert_eq!(notification["notified_generation"], 2);
 }
+
+#[tokio::test]
+async fn coordination_notification_without_codex_control_records_the_control_branch() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    seed_session_with_runtime(tmp.path(), "alpha", "codex", "hs-codex-alpha");
+    let launch_id = seed_codex_app_server_session(tmp.path(), "beta");
+    let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+    let alpha = load_session_record(&state.context, "alpha").expect("alpha");
+    let beta = load_session_record(&state.context, "beta").expect("beta");
+    let alpha_capability = provision_ready_coordination_fixture(&state.context, &alpha);
+    provision_ready_coordination_fixture(&state.context, &beta);
+    crate::activity::activate_runtime(&state.context, &beta).expect("activate beta");
+    for (event_id, kind) in [
+        ("control-branch-turn-start", "turn_started"),
+        ("control-branch-turn-complete", "turn_completed"),
+    ] {
+        let event = serde_json::from_value(json!({
+            "schema_version": crate::activity::TURN_EVENT_VERSION,
+            "event_id": event_id,
+            "runtime_id": launch_id,
+            "provider": "codex",
+            "provider_turn_id": "control-branch-turn",
+            "kind": kind,
+            "confidence": "authoritative"
+        }))
+        .expect("activity event");
+        crate::activity::ingest_event(&state.context, &beta.id, event).expect("ingest");
+    }
+    send_notification_fixture(&state, &alpha_capability, "control-branch-0001").await;
+
+    drain_coordination_notifications(state.clone()).await;
+
+    let notification = notification_fixture(tmp.path());
+    assert_eq!(notification["state"], "queued");
+    assert_eq!(notification["last_reason"], "provider-not-ready");
+    assert_eq!(notification["last_reason_detail"], "prompt-control-unavailable");
+    assert_eq!(notification["notified_generation"], 0);
+}
+
+#[tokio::test]
+async fn coordination_notification_blocked_by_a_claim_records_the_refusal_code() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    seed_session_with_runtime(tmp.path(), "alpha", "codex", "hs-codex-alpha");
+    let launch_id = seed_codex_app_server_session(tmp.path(), "beta");
+    let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+    let alpha = load_session_record(&state.context, "alpha").expect("alpha");
+    let beta = load_session_record(&state.context, "beta").expect("beta");
+    let alpha_capability = provision_ready_coordination_fixture(&state.context, &alpha);
+    provision_ready_coordination_fixture(&state.context, &beta);
+    crate::activity::activate_runtime(&state.context, &beta).expect("activate beta");
+    for (event_id, kind) in [
+        ("claim-refusal-turn-start", "turn_started"),
+        ("claim-refusal-turn-complete", "turn_completed"),
+    ] {
+        let event = serde_json::from_value(json!({
+            "schema_version": crate::activity::TURN_EVENT_VERSION,
+            "event_id": event_id,
+            "runtime_id": launch_id,
+            "provider": "codex",
+            "provider_turn_id": "claim-refusal-turn",
+            "kind": kind,
+            "confidence": "authoritative"
+        }))
+        .expect("activity event");
+        crate::activity::ingest_event(&state.context, &beta.id, event).expect("ingest");
+    }
+    send_notification_fixture(&state, &alpha_capability, "claim-refusal-0001").await;
+    let (handle, _commands) = codex_app_server::control_channel();
+    state.codex_controls.lock().unwrap().insert(
+        beta.id.clone(),
+        CodexControlEntry {
+            launch_id: launch_id.clone(),
+            handle,
+        },
+    );
+    let registry_path = tmp.path().join("coordination/registry.json");
+    let mut registry: Value = serde_json::from_slice(&fs::read(&registry_path).expect("registry"))
+        .expect("registry json");
+    registry["claims"]
+        .as_array_mut()
+        .expect("claims")
+        .push(json!({
+            "schema_version": "agent-session.work-context.v1",
+            "session_id": "beta",
+            "session_incarnation": launch_id,
+            "claim_id": "idle-recipient-claim",
+            "revision": 1,
+            "state": "active",
+            "intent": "implementation",
+            "tier": "direct",
+            "repositories": [],
+            "worktrees": [],
+            "provider_refs": [],
+            "plan_refs": [],
+            "scopes": [],
+            "summary": "idle recipient claim fixture",
+            "updated_at": "2030-01-01T00:00:00Z",
+            "expires_at": "9999-12-31T23:59:59Z",
+            "expires_at_epoch": i64::MAX
+        }));
+    fs::write(
+        &registry_path,
+        serde_json::to_vec_pretty(&registry).expect("registry json"),
+    )
+    .expect("write active claim");
+
+    drain_coordination_notifications(state.clone()).await;
+
+    let notification = notification_fixture(tmp.path());
+    assert_eq!(notification["last_reason"], "provider-not-ready");
+    assert_eq!(
+        notification["last_reason_detail"],
+        "prompt-submission-refused:coordination-notification-superseded"
+    );
+    assert_eq!(notification["notified_generation"], 0);
+}

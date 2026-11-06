@@ -11,7 +11,9 @@ async fn gate_off_repeated_deferrals_do_not_rewrite_registry() {
     crate::serve::terminal_notification::dispatch_coordination_notification(
         fixture.state.clone(), fixture.candidate.clone(),
     ).await;
-    assert_eq!(notification_fixture(fixture.temp.path())["last_reason"], "provider-not-ready");
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["last_reason"], "provider-not-ready");
+    assert_eq!(receipt["last_reason_detail"], "notice-writers-disabled");
     let before = fs::metadata(&registry).unwrap().ino();
     for _ in 0..2 {
         crate::serve::terminal_notification::dispatch_coordination_notification(
@@ -19,6 +21,37 @@ async fn gate_off_repeated_deferrals_do_not_rewrite_registry() {
         ).await;
     }
     assert_eq!(fs::metadata(registry).unwrap().ino(), before);
+}
+
+#[tokio::test]
+async fn gate_off_deferral_records_the_detail_a_stored_reason_lacks_once() {
+    use std::os::unix::fs::MetadataExt;
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::remove(&lock, crate::notice::WRITERS_ENV);
+    let fixture = WakeFixture::new(AgentKind::Codex).await;
+    let registry_path = fixture.temp.path().join("coordination/registry.json");
+    let mut registry: Value = serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
+    let receipt = registry["notifications"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .next()
+        .unwrap();
+    receipt["last_reason"] = json!("provider-not-ready");
+    receipt.as_object_mut().unwrap().remove("last_reason_detail");
+    fs::write(&registry_path, serde_json::to_vec(&registry).unwrap()).unwrap();
+    crate::serve::terminal_notification::dispatch_coordination_notification(
+        fixture.state.clone(), fixture.candidate.clone(),
+    ).await;
+    assert_eq!(
+        notification_fixture(fixture.temp.path())["last_reason_detail"],
+        "notice-writers-disabled"
+    );
+    let before = fs::metadata(&registry_path).unwrap().ino();
+    crate::serve::terminal_notification::dispatch_coordination_notification(
+        fixture.state.clone(), fixture.candidate.clone(),
+    ).await;
+    assert_eq!(fs::metadata(registry_path).unwrap().ino(), before);
 }
 
 fn bind_transcript(fixture: &WakeFixture) {
@@ -69,6 +102,7 @@ async fn mailbox_notice_uncertain_claude_capability_does_not_fall_back() {
     let receipt = notification_fixture(fixture.temp.path());
     assert_eq!(receipt["state"], "queued");
     assert_eq!(receipt["last_reason"], "provider-not-ready");
+    assert_eq!(receipt["last_reason_detail"], "notice-runtime-unavailable");
 }
 
 #[tokio::test]
