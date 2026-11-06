@@ -1018,7 +1018,7 @@ pub struct PrReviewLoopValidateArgs {
 #[derive(Args, Debug, Clone)]
 pub struct PrReviewLoopExtendArgs {
     pub id: u64,
-    /// Exact provider head SHA whose active hard stop is being extended.
+    /// Exact provider head SHA bound to the extension.
     #[arg(long = "expected-head", value_name = "SHA", value_parser = clap::builder::NonEmptyStringValueParser::new())]
     pub expected_head: String,
     #[arg(long = "expected-state", value_name = "DIGEST", value_parser = clap::builder::NonEmptyStringValueParser::new())]

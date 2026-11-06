@@ -45,10 +45,48 @@ pub struct PrReviewLoopPayload {
     /// shares the appended comment, so `appended: false` always means the outcome
     /// was not posted (the ledger was already current).
     pub outcome_posted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ceiling_proposal: Option<CeilingProposal>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub accepted_risks: Vec<review_state::acceptance::AcceptanceReceipt>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored_stale_records: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CeilingProposal {
+    pub stop_code: &'static str,
+    pub budget_field: &'static str,
+    pub increment: u32,
+    pub proposal_digest: String,
+    pub approval_marker: String,
+}
+
+fn ceiling_proposal(
+    state: &review_state::ReviewLoopState,
+    tip: &str,
+) -> Result<Option<CeilingProposal>, ForgeError> {
+    if state.hard_stop.is_some()
+        || state.no_progress_rounds != state.budget.max_no_progress_rounds
+        || !state.findings.values().any(|finding| {
+            finding.blocking && finding.status == review_state::ReviewFindingStatus::Open
+        })
+    {
+        return Ok(None);
+    }
+    let stop_code = "review_no_progress";
+    let budget_field = "max_no_progress_rounds";
+    let increment = 1;
+    let proposal_digest =
+        review_state::extension_proposal_digest(tip, stop_code, budget_field, increment)?;
+    let approval_marker = extension_approval_marker(&proposal_digest, budget_field, increment);
+    Ok(Some(CeilingProposal {
+        stop_code,
+        budget_field,
+        increment,
+        proposal_digest,
+        approval_marker,
+    }))
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -657,7 +695,7 @@ pub fn run_extend_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     if global.dry_run {
         return emit_dry_run(
             &ctx,
-            "verify one post-stop approval and append exactly one budget extension",
+            "verify one state-bound approval and append exactly one budget extension",
             SCHEMA_EXTEND,
             format,
         );
@@ -692,6 +730,83 @@ pub fn run_extend_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
                 previous.head_sha, args.expected_head
             )),
         ));
+    }
+    if previous.hard_stop.is_none() {
+        let proposal = ceiling_proposal(previous, &args.expected_state)?.ok_or_else(|| {
+            ForgeError::validation(
+                schema_err(),
+                "review_extension_invalid",
+                "the current state is not at the no-progress ceiling",
+                None,
+            )
+        })?;
+        if args.stop_code != proposal.stop_code
+            || args.budget_field != proposal.budget_field
+            || args.increment != proposal.increment
+            || args.proposal_digest != proposal.proposal_digest
+        {
+            return Err(ForgeError::validation(
+                schema_err(),
+                "review_extension_invalid",
+                "the extension does not match the current ceiling proposal",
+                None,
+            ));
+        }
+        let approval = read_approval_comment(
+            runner,
+            &ctx,
+            &repository,
+            view.number,
+            args.approval_comment,
+        )?;
+        validate_approval(
+            &approval,
+            state_view.tip_created_at.as_deref(),
+            &proposal.proposal_digest,
+            proposal.budget_field,
+            proposal.increment,
+        )?;
+        let mut extended = previous.clone();
+        extended.budget.max_no_progress_rounds = extended
+            .budget
+            .max_no_progress_rounds
+            .checked_add(1)
+            .ok_or_else(|| {
+                ForgeError::validation(
+                    schema_err(),
+                    "review_extension_invalid",
+                    "review budget extension overflowed",
+                    None,
+                )
+            })?;
+        extended.extensions.push(review_state::ReviewLoopExtension {
+            proposal_digest: proposal.proposal_digest,
+            approval_reference: approval.url,
+            budget_field: proposal.budget_field.to_string(),
+            increment: proposal.increment,
+        });
+        let appended = pr_review::append_review_loop_state(
+            runner,
+            &ctx,
+            pr_review::ReviewLoopAppend {
+                repository: &repository,
+                number: view.number,
+                expected_head: &args.expected_head,
+                expected_tip: state_view.chain.tip_digest.as_deref(),
+                state: extended,
+                visible_outcome: None,
+            },
+        )?;
+        return emit_state(
+            &ctx,
+            view.number,
+            view.url,
+            appended.chain,
+            true,
+            false,
+            SCHEMA_EXTEND,
+            format,
+        );
     }
     let hard_stop = previous.hard_stop.as_ref().ok_or_else(|| {
         ForgeError::validation(
@@ -1334,7 +1449,7 @@ fn validate_marker_approval(
         return Err(ForgeError::validation(
             schema_err(),
             "review_extension_approval_invalid",
-            "the approval comment must be authored after the hard-stop state tip",
+            "the approval comment must be authored after the current state tip",
             Some(format!(
                 "state_created_at={state_created_at}; approval_created_at={}",
                 approval.created_at
@@ -1365,6 +1480,14 @@ fn emit_state(
 ) -> Result<i32, ForgeError> {
     let generation = chain.records.last().map(|record| record.generation);
     let state = review_state::latest_review_loop_state(&chain).cloned();
+    let ceiling_proposal = if schema == SCHEMA_INSPECT {
+        match (state.as_ref(), chain.tip_digest.as_deref()) {
+            (Some(state), Some(tip)) => ceiling_proposal(state, tip)?,
+            _ => None,
+        }
+    } else {
+        None
+    };
     Ok(emit_success(
         schema_version_for(BINARY, schema, SCHEMA_VERSION),
         PrReviewLoopPayload {
@@ -1386,6 +1509,7 @@ fn emit_state(
             state,
             appended,
             outcome_posted,
+            ceiling_proposal,
             ignored_stale_records: chain.ignored_stale_records,
         },
         format,
@@ -1398,6 +1522,12 @@ fn emit_state(
                 appended = payload.appended,
                 outcome_posted = payload.outcome_posted,
             );
+            if let Some(proposal) = &payload.ceiling_proposal {
+                println!(
+                    "ceiling proposal: {}\napproval marker: {}",
+                    proposal.proposal_digest, proposal.approval_marker
+                );
+            }
         },
     ))
 }

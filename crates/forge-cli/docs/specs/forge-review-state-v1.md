@@ -611,6 +611,21 @@ for deleted tests, assertion changes and new skips in the PR comparison.
   open-finding cardinality is mechanical progress. Stable-fingerprint collisions, reopens, no progress,
   and the round limit fail closed as typed terminal errors. An extendable error
   first appends a durable hard-stop receipt, so a restart returns the same stop.
+- At the no-progress ceiling with an open blocking finding and no durable stop,
+  `inspect` reports `ceiling_proposal`: the stop code, budget field, increment,
+  proposal digest, and exact approval marker bound to the current state tip.
+  Inspection is read-only. An authorized maintainer may post the exact marker
+  as a new PR comment after that state. The assigned writer consumes it with:
+
+  ```sh
+  forge-cli pr review-loop extend <pr> --expected-head <current-head> --expected-state <state-tip> --stop-code review_no_progress --budget-field max_no_progress_rounds --increment 1 --proposal-digest <proposal-digest> --approval-comment <comment-id>
+  ```
+
+  This appends one extension, retaining the finding inventory and history. A
+  stale head, state, proposal, or approval is refused. If the state advances,
+  inspect again and obtain a fresh approval. No duplicate review observation
+  is needed. `observe --dry-run` is a prediction, not a durable observation;
+  an actual extendable stop follows the separate post-stop flow below.
 - A durable terminal budget error includes an exact extension proposal, but
   never extends itself. `extend` is a separate action requiring the stopped state tip,
   expected head, proposal digest, field/increment, stop code, and a newer
