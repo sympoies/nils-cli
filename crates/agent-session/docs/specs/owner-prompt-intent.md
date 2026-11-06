@@ -3,8 +3,8 @@
 Status: proposed, design only. Refs [#3114](https://github.com/sympoies/nils-cli/issues/3114)
 and [#3062](https://github.com/sympoies/nils-cli/issues/3062).
 The [current prompt contract](serve-prompt-v1.md) remains implemented behavior.
-Designated review and consumer-owner agreement are required before opening an
-implementation issue.
+Designated review, consumer-owner agreement and owner sign-off on the explicit
+command action are required before opening an implementation issue.
 
 ## Decision
 
@@ -13,6 +13,10 @@ composer defaults to text and offers an explicit command action; callers must
 not select command intent automatically from a slash prefix. Persist the choice
 with the outbox item. Do not infer intent from command names, argument wording,
 sentence shape or punctuation.
+
+Typing `/compact` in the composer will require an explicit "Send as command"
+action. This visible behavior change requires owner sign-off on the consumer
+side, in addition to design review and consumer-owner agreement.
 
 This is smaller than maintaining provider-specific argument grammars: arguments
 and extensions belong to the provider, and the current first-token classifier
@@ -30,10 +34,10 @@ explicitly select command intent. This is a typed input/intent conflict, never
 an idle requirement or attempted command. Exact leading-slash literal text
 support would need a separate provider transport design.
 
-## Sole request form
+## Explicit-intent request form
 
-After implementation, the sole owner prompt POST is
-`/sessions/{id}/prompt/v2`, requiring bearer authentication:
+The explicit-intent form uses the existing authenticated
+`POST /sessions/{id}/prompt/v2` route:
 
 ```json
 {
@@ -47,9 +51,12 @@ After implementation, the sole owner prompt POST is
 
 `text`, `intent`, and `expected_session_incarnation` are required. `request_id`
 remains optional; `require_idle` remains a boolean defaulting to false. Unknown
-fields remain invalid. Missing, null, non-string or unrecognized intent returns
-HTTP 400 `invalid-json-body` before a claim or provider interaction; the fixed
-message names both accepted values. No default intent or alternate form exists.
+fields remain invalid. Null, non-string or unrecognized intent returns HTTP 400
+`invalid-json-body` before a claim or provider interaction; the fixed message
+names both accepted values. During the approved overlap below, an omitted field
+selects only the frozen legacy protocol. After its scheduled removal, missing
+intent also returns `invalid-json-body`; the explicit-intent contract has no
+implicit default.
 
 Reuse #3062's unchanged `owner_commands::parse` predicate: trim leading
 whitespace, then inspect the first whitespace-delimited token for a leading
@@ -107,7 +114,7 @@ observes success. Codex `/login` outside quarantine retains
 Generic send, raw input, notifications, peer/model callers, account switching,
 login/logout RPC refusals and authentication lifecycle remain unchanged.
 
-## Receipts and one-shot migration
+## Receipts and bounded cross-host rollout
 
 Fingerprint original exact text, explicit intent and requested idle flag before
 command trimming or forcing idle. A changed intent gets HTTP 409
@@ -118,34 +125,72 @@ lookup URL, envelopes, outcomes, positive command-UI proof and at-most-once/no
 blind replay rules. The public receipt needs no intent field: the original
 request/outbox and fingerprint bind it.
 
-The implementation must migrate every supported caller in one coordinated
-change, with no dual forms:
+Independently deployed edges, host daemons and lagging native clients cannot all
+switch atomically. An approved repository newest-only policy exception for
+cross-host online protocols permits exactly one adjacent-release overlap, at
+most two named adjacent releases. It is limited to this online protocol and
+does not authorize indefinite dual forms or unrelated compatibility paths.
+
+Advertise `data.capabilities.owner_prompt_intent: "v2"` on the existing
+`GET /healthz` response. The edge selects the explicit-intent form only for a host
+advertising that exact value. Missing/unrecognized capability is not support;
+old-host submissions retain the frozen pre-intent behavior and must not be
+presented as intent-enforced. Do not retry a failed intent-bearing POST using an
+intent-less body. An attempt already bound to intent must wait for a supporting
+host rather than silently lose its intent or change its fingerprint.
+
+During the overlap, the daemon accepts both the current intent-less
+`/sessions/{id}/prompt/v2` body with frozen existing behavior and the intent-bearing
+body with the new semantics. The older `/sessions/{id}/prompt` route also remains
+during this bounded interval; do not remove it in the initial migration.
+Legacy inference and fingerprint computation are confined to that temporary
+protocol path. Explicit-intent attempts never enter it. Keep all existing
+context/login/quarantine guards on the legacy path as well.
+
+Before the implementation rollout can merge, the release owner must record the
+exact adjacent release pair, cross-host justification, concrete first-disallowed
+release and hard calendar expiry required by
+[repository policy](../../../../DEVELOPMENT.md#current-contracts-in-this-repository).
+This design does not invent release numbers or dates. No rolling expiry or
+automatic extension is permitted. The release owner schedules a separate removal
+step once every supported host reports v2, within that release/date fence; a
+lagging host must be upgraded or withdrawn from prompt service before expiry,
+not extend the window. Remove both old POST forms and their inference/fingerprint
+code in that step. The explicit-intent body then becomes the sole form.
+
+The implementation changes all supported caller sources together, while the
+approved deployment interval accommodates installed clients:
 
 1. Inventory both prompt POST routes, request constructors, tests, examples,
    proxies and persisted outboxes. The web console and Salon consumer owners
    agree on explicit command choice and typed error UI. Ordinary automated
    producers choose text explicitly, never infer commands from a slash.
-2. Migrate every producer to the required-intent v2 body. Remove the older
-   `/sessions/{id}/prompt` POST route, handler/body type and examples. No new route
-   version, missing-field default, fallback, alias or dual reader/writer.
+2. Update every producer to select the intent-bearing body using the capability
+   signal. Preserve only the two frozen old POST forms specified above during
+   the approved interval; remove their handlers/body types and examples in the
+   separately scheduled removal step. No new route version, alias or indefinite
+   missing-field default.
 3. Update request/proxy types, outbox persistence, retry identity and refusal
-   rendering together. One-shot migration marks unsent items lacking intent as
-   requiring user choice before submission; it never guesses intent.
-4. Quiesce prompt writers at cutover, settle in-flight requests and retain
-   uncertain IDs for lookup. Existing durable claims/receipts remain immutable
-   evidence. Pre-cutover attempts are lookup-only, never re-POSTed or interpreted
-   as new payloads. Unknown remains unknown without sufficient proof. Remove old
-   fingerprint computation and migrate all new-proof/reconciliation call sites
-   to the new tuple; never accept both tuple forms.
-5. Switch daemon and all consumers together, invalidate stale client bundles,
-   then resume writers. Missed clients fail schema/route validation before input.
-   This is a coordinated breaking rollout, not a mixed-version window.
+   rendering together. The edge assigns `intent: "text"` (the composer default)
+   to legacy unsent outbox rows lacking intent. A command-shaped row receives
+   `409 prompt-text-command-unsupported` and appears as a normal refused row
+   with Discard/Retry actions. Never silently upgrade it to command; sending it
+   as a command requires the explicit action and a new attempt after refusal.
+4. Settle in-flight attempts at each caller's transition and retain uncertain
+   IDs for lookup. Existing claims/receipts remain immutable evidence; never
+   reinterpret an old payload/key as an intent-bearing attempt. Unknown stays
+   unknown without sufficient proof. New-form proof/reconciliation uses the
+   new tuple exclusively; legacy replay uses only its frozen tuple until removal.
+   After removal, pre-transition attempts are lookup-only and never re-POSTed.
+5. Track host capability adoption and native/edge consumer rollout. At removal,
+   invalidate stale bundles and reject old forms before input. Keep receipt
+   lookup available for retained evidence; do not fabricate or replay attempts.
 
 Agreement is required from the owner prompt API maintainer, web console consumer
 owner, and Salon composer/outbox and terminal-guard consumer owner. The steward
 and lead route those decisions and designated review; record agreement and
-review before opening an implementation issue. This design PR performs no
-migration.
+review, plus owner sign-off on the explicit command action, before opening an
+implementation issue. This design PR performs no migration.
 
 ## Implementation touchpoints
 
@@ -156,9 +201,9 @@ Paths below are relative to `crates/agent-session`, except consumer modules.
 | HTTP admission | `src/serve/prompt_receipts.rs`: required intent, original-payload claim and routing; put new logic in a focused child module. |
 | Command origin | `src/serve/prompt_receipts/owner_commands.rs`: reuse unchanged shape classifier; create sealed command origin only for command intent. |
 | Request identity | `src/serve/prompt_receipts/store.rs`, `reconcile.rs`, `client_message.rs` and tests: update payload-fingerprint creation and confirmation dependencies together; retain key/receipt identity. |
-| Route removal | `src/serve.rs`: remove old route/body/handler. This baselined file must shrink; new helpers belong in a new module. Keep internal structured prompt/notification functions. |
+| Capability and bounded protocol path | `src/serve.rs` health projection and routing plus focused child helpers: advertise capability, retain old forms only for the approved overlap, and remove them separately. Baselined files cannot grow; new logic belongs in new modules. Keep internal structured prompt/notification functions. |
 | HTTP fixtures | New focused module under `src/serve/tests/`; migrate request bodies in `auth_quarantine.rs`, `owner_command_ui.rs`, `prompt_receipts.rs`, `native_busy_reply.rs`, `native_reconciliation.rs`, `codex_prompt_outcomes.rs`, Claude acknowledgement submodules and other prompt callers found by inventory. Baselined test files must not grow. |
-| Canonical docs | `docs/specs/serve-prompt-v1.md`, `serve-api-v1.md`, `serve-terminal-v1.md`, `native-busy-replies.md`, and `docs/runbooks/serve-daemon.md`: replace superseded examples/routing with the sole contract. |
+| Canonical docs | `docs/specs/serve-prompt-v1.md`, `serve-api-v1.md`, `serve-observation-v1.md`, `serve-terminal-v1.md`, `native-busy-replies.md`, and `docs/runbooks/serve-daemon.md`: document capability, bounded overlap and later sole contract. |
 | Consumer owners | Web console/Salon request type, HTTP client/proxy, composer action, outbox schema/migration/retry, refusal rendering and tests. Preserve the separate terminal context guard. Consumer owners confirm exact file inventory before implementation. |
 
 ## Synthetic HTTP test plan
@@ -168,8 +213,10 @@ fixtures. Assert HTTP status/code, receipt identity/outcome and recorded
 paste/Enter/native-turn counts. Capture meaningful boundary regressions before
 implementation; no running user session or shared-device probe is needed.
 
-- Missing/null/invalid intent, unknown fields and old-route POST: schema/route
-  failure, no claim or provider input. Test keyed and unkeyed valid bodies.
+- Null/invalid intent and unknown fields: schema failure, no claim or provider
+  input. Missing intent/old-route POST keep frozen behavior only during the
+  approved interval, then fail schema/route validation without input. Exercise
+  health capability advertisement and edge selection, keyed and unkeyed bodies.
 - Both providers: known command plus prose as text gets the new terminal refusal
   with zero provider input; the same bytes as command enter current guards,
   without asserting a provider argument grammar or unsupported UI success.
@@ -187,11 +234,15 @@ implementation; no running user session or shared-device probe is needed.
   refusal, managed Codex login refusal and quarantined Codex refusal.
 - Identical tuples replay concurrently and after daemon restart with at most one
   dispatch and stable lookup. Changed intent or requested idle conflicts even
-  when command idle would be forced. Pre-cutover keys stay lookup-only. Retain
-  unknown reconciliation and changed-incarnation/account fences.
-- Consumer tests prove explicit choice, persisted intent/retry, required choice
-  for migrated unsent items, intact forwarding and actionable refusal UI. No
-  automatic command selection or route/schema fallback.
+  when command idle would be forced. Legacy keys never become new-form attempts;
+  after removal they stay lookup-only. Retain unknown reconciliation and
+  changed-incarnation/account fences.
+- Consumer tests prove explicit choice, persisted intent/retry, legacy unsent
+  rows assigned text, intact forwarding and normal Discard/Retry refusal UI.
+  A command-shaped migrated row never silently becomes a command.
+- Rollout fixtures exercise old/new hosts and lagging clients within the exact
+  approved release/date fence, no retry downgrade, and removal of both legacy
+  POST forms once all hosts report v2. No live host/version probes are needed.
 
 ## Untouched
 

@@ -4,13 +4,16 @@
 ### Result
 
 - Recorded a proposed explicit text/command request contract, typed refusals,
-  coordinated caller migration and synthetic HTTP acceptance plan.
+  capability-selected caller migration and synthetic HTTP acceptance plan.
 
 ### Why / context
 
 - Provider argument wording cannot reliably distinguish prose from commands. A
   caller choice removes that inference while refusing literal command-shaped
   text that existing transports cannot safely preserve.
+- Independently deployed consumers require the approved bounded cross-host
+  protocol exception; exact release/date fences remain implementation gates.
+  Legacy unsent outbox rows become text, never inferred command intent.
 
 ### Evidence
 
