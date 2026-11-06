@@ -320,7 +320,7 @@ async function prepareDraft({ github, context, root, result }) {
     return { status: "draft", url: (await github.rest.pulls.create({ ...context.repo, head: branch, base: "main", title, body, draft: true })).data.html_url };
   } catch { throw new Error(CREATION_UNAVAILABLE); }
 }
-async function runReleaseCheck({ github, context, core, root = process.cwd(), checked, patch, fetchJSON = getJSON,
+async function runReleaseCheck({ github, issueGithub, context, core, root = process.cwd(), checked, patch, fetchJSON = getJSON,
   artifactDir = "claude-release-check", writeResult = (result) => {
     fs.mkdirSync(artifactDir, { recursive: true }); fs.writeFileSync(path.join(artifactDir, "result.json"), `${JSON.stringify(result, null, 2)}\n`);
   } }) {
@@ -338,7 +338,7 @@ async function runReleaseCheck({ github, context, core, root = process.cwd(), ch
       result.check = checked.check;
       if (!result.check.passed) {
         result.status = "failed"; result.action = "Isolated installation or module contract failed; inspect command artifacts and keep the current range.";
-        result.issue_url = await failureIssue({ github, context, result });
+        result.issue_url = await failureIssue({ github: issueGithub, context, result });
         core.setFailed(result.action);
       } else {
         result.status = "draft";
@@ -358,7 +358,7 @@ async function runReleaseCheck({ github, context, core, root = process.cwd(), ch
     result.action = safe.includes(error.message) || error.message.startsWith("candidate creation unavailable;")
       ? error.message : "Release preparation failed; maintainer must inspect the retained artifacts and retry without changing the current range.";
     if (result.newest && compare(result.newest, current.max) > 0 && context.ref === "refs/heads/main") {
-      try { result.issue_url = await failureIssue({ github, context, result }); }
+      try { result.issue_url = await failureIssue({ github: issueGithub, context, result }); }
       catch { result.action += " Failure issue unavailable or human-owned; maintainer must reconcile it manually."; }
     }
     core.setFailed(result.action);
