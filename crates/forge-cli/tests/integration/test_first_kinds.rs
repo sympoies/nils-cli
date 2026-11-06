@@ -464,3 +464,164 @@ fn test_kind_fetches_current_base_and_refuses_failed_fetch() {
         "test_changes_fetch_failed"
     );
 }
+
+#[test]
+fn test_kind_uses_target_base_instead_of_fork_base() {
+    let temp = TempDir::new().unwrap();
+    let repo = init_subject_repo(temp.path(), "repo", "https://github.com/fork/project.git");
+    let fork = temp.path().join("fork.git");
+    let target = temp.path().join("target.git");
+    git(temp.path(), &["init", "--bare", fork.to_str().unwrap()]);
+    git(temp.path(), &["init", "--bare", target.to_str().unwrap()]);
+    let fork_rewrite = format!("url.file://{}.insteadOf", fork.display());
+    let target_rewrite = format!("url.file://{}.insteadOf", target.display());
+    git(
+        &repo,
+        &[
+            "config",
+            &fork_rewrite,
+            "https://github.com/fork/project.git",
+        ],
+    );
+    git(
+        &repo,
+        &[
+            "config",
+            &target_rewrite,
+            "https://github.com/example/project.git",
+        ],
+    );
+    fs::write(
+        repo.join(".forge-cli.toml"),
+        "[test_first]\nrequire = true\n",
+    )
+    .unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "baseline"]);
+    git(&repo, &["push", "-q", "origin", "main"]);
+    git(
+        &repo,
+        &[
+            "config",
+            "remote.origin.pushurl",
+            "git@github.com:fork/project.git",
+        ],
+    );
+    fs::create_dir(repo.join("tests")).unwrap();
+    fs::write(
+        repo.join("tests/example.rs"),
+        "#[test]\nfn example() { assert!(true); }\n",
+    )
+    .unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "target adds test"]);
+    git(
+        &repo,
+        &[
+            "push",
+            "-q",
+            "https://github.com/example/project.git",
+            "main",
+        ],
+    );
+    git(
+        temp.path(),
+        &[
+            "--git-dir",
+            target.to_str().unwrap(),
+            "symbolic-ref",
+            "HEAD",
+            "refs/heads/main",
+        ],
+    );
+    git(&repo, &["checkout", "-qb", "test/example"]);
+    fs::remove_file(repo.join("tests/example.rs")).unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "remove test"]);
+    git(
+        &repo,
+        &["update-ref", "refs/remotes/origin/test/example", "HEAD"],
+    );
+    git(
+        &repo,
+        &["branch", "--set-upstream-to", "origin/test/example"],
+    );
+    let stub = StubEnv::new().gh_stub("#!/bin/sh\nexit 99\n");
+    for operation in ["create", "deliver"] {
+        let out = run_forge_cli_in(
+            &stub,
+            &[
+                "--provider",
+                "github",
+                "--host",
+                "github.com",
+                "--repo",
+                "example/project",
+                "--format",
+                "json",
+                "--dry-run",
+                "pr",
+                operation,
+                "--kind",
+                "test",
+                "--head",
+                "fork:test/example",
+                "--base",
+                "main",
+                "--title",
+                "Change test",
+                "--body",
+                "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+            ],
+            Some(&repo),
+        );
+        let envelope = parse_envelope(&out.stdout);
+        if operation == "create" {
+            assert_eq!(out.code, 65, "{out:?}");
+            assert_eq!(envelope["error"]["code"], "test_first_evidence_required");
+        } else {
+            assert_eq!(out.code, 0, "{out:?}");
+            let verdict = envelope["data"]["local_preflight"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["rule"] == "test_first")
+                .unwrap();
+            assert_eq!(verdict["code"], "test_first_evidence_required");
+        }
+    }
+    let out = run_forge_cli_in(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--host",
+            "github.com",
+            "--repo",
+            "example/project",
+            "--format",
+            "json",
+            "--dry-run",
+            "pr",
+            "deliver",
+            "--kind",
+            "test",
+            "--head",
+            "fork:test/example",
+            "--title",
+            "Change test",
+            "--body",
+            "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+        ],
+        Some(&repo),
+    );
+    assert_eq!(out.code, 0, "{out:?}");
+    let envelope = parse_envelope(&out.stdout);
+    let verdict = envelope["data"]["local_preflight"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["rule"] == "test_first")
+        .unwrap();
+    assert_eq!(verdict["code"], "test_first_evidence_required");
+}

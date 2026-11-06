@@ -5,10 +5,12 @@ use std::process::Command;
 use crate::config::TestFirstPolicy;
 use crate::error::ForgeError;
 use crate::ops::pr_review_handoff::test_integrity::diff;
+use crate::provider::{Provider, ProviderContext};
 use crate::validations::PrKind;
 
 pub(crate) fn policy(
     policy: &TestFirstPolicy,
+    ctx: &ProviderContext,
     kind: PrKind,
     workdir: &Path,
     remote: &str,
@@ -28,6 +30,7 @@ pub(crate) fn policy(
     } else {
         format!("refs/heads/{base}")
     };
+    let fetch_target = target_remote(ctx, workdir, remote)?;
     let fetch = Command::new("git")
         .current_dir(workdir)
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -36,7 +39,7 @@ pub(crate) fn policy(
             "--no-tags",
             "--no-recurse-submodules",
             "--",
-            remote,
+            &fetch_target,
             &base_ref,
         ])
         .output()
@@ -127,4 +130,70 @@ pub(crate) fn policy(
         effective.require_kinds.push(PrKind::Test);
     }
     Ok(effective)
+}
+
+/// Use the configured remote only when it identifies the selected target.
+fn target_remote(
+    ctx: &ProviderContext,
+    workdir: &Path,
+    remote: &str,
+) -> Result<String, ForgeError> {
+    if ctx.provider == Provider::Local {
+        return Ok(remote.to_owned());
+    }
+    let repo = ctx.repo.as_deref().ok_or_else(|| {
+        ForgeError::validation(
+            super::schema_err(),
+            "test_changes_fetch_failed",
+            "cannot identify the target repository for test-change inspection",
+            None,
+        )
+    })?;
+    let identity = nils_common::git::canonical_repository_identity(&ctx.host, repo);
+    let urls = Command::new("git")
+        .current_dir(workdir)
+        .args(["remote", "get-url", "--all", "--", remote])
+        .output();
+    if let Ok(output) = urls
+        && output.status.success()
+    {
+        let text = String::from_utf8_lossy(&output.stdout);
+        let urls: Vec<_> = text.lines().filter(|url| !url.is_empty()).collect();
+        if !urls.is_empty()
+            && urls.iter().all(|url| {
+                nils_common::git::repository_identity_from_remote_url(url).as_deref()
+                    == Some(identity.as_str())
+            })
+        {
+            return Ok(remote.to_owned());
+        }
+    }
+    let mut target = url::Url::parse(&format!("https://{}/", ctx.host)).map_err(|_| {
+        ForgeError::validation(
+            super::schema_err(),
+            "test_changes_fetch_failed",
+            "cannot form the target repository address for test-change inspection",
+            None,
+        )
+    })?;
+    {
+        let mut segments = target.path_segments_mut().map_err(|_| {
+            ForgeError::validation(
+                super::schema_err(),
+                "test_changes_fetch_failed",
+                "cannot form the target repository address for test-change inspection",
+                None,
+            )
+        })?;
+        segments.pop_if_empty();
+        let mut parts = repo.split('/').peekable();
+        while let Some(part) = parts.next() {
+            if parts.peek().is_none() {
+                segments.push(&format!("{part}.git"));
+            } else {
+                segments.push(part);
+            }
+        }
+    }
+    Ok(target.into())
 }

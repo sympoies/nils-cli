@@ -720,6 +720,7 @@ pub fn run_with<R: BackendRunner>(
     let qualified_subject = qualified_head_subject_for_env(&ctx, resolved_head, env)?;
     let policy = test_change_gate::policy(
         &env.test_first_policy,
+        &ctx,
         kind,
         &env.workdir,
         &global.remote,
@@ -890,6 +891,7 @@ fn compute_with_subject_inner<R: BackendRunner>(
     let qualified_subject = qualified_head_subject_for_env(&ctx, resolved_head, env)?;
     let policy = test_change_gate::policy(
         &env.test_first_policy,
+        &ctx,
         kind,
         &env.workdir,
         &global.remote,

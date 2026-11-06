@@ -296,6 +296,7 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
         let cfg = ForgeConfig::load_layered(workdir, find_git_toplevel(workdir).as_deref());
         let test_first_policy = match crate::ops::pr_create::test_change_gate::policy(
             &cfg.resolve_test_first_policy(),
+            ctx,
             args.kind.into_kind(),
             workdir,
             &global.remote,
@@ -1010,6 +1011,7 @@ fn build_dry_run_payload(
     // would refuse.
     let policy_result = crate::ops::pr_create::test_change_gate::policy(
         &cfg.resolve_test_first_policy(),
+        ctx,
         args.kind.into_kind(),
         workdir,
         &global.remote,
