@@ -173,7 +173,7 @@ async fn coordination_notification_startup_catchup_uses_one_acknowledged_codex_s
 
     let expected_prompt = fixture_notification_prompt(tmp.path());
     let responder = tokio::spawn(async move {
-        let Some(codex_app_server::ControlCommand::Prompt { message, response }) =
+        let Some(codex_app_server::ControlCommand::Prompt { message, response, .. }) =
             commands.recv().await
         else {
             panic!("notification did not reach the Codex control plane");
@@ -300,7 +300,7 @@ async fn coordination_notification_skips_a_mailbox_the_recipient_already_drained
     let expected_prompt = fixture_notification_prompt(tmp.path());
     assert!(crate::notice::parse_notice(&expected_prompt).is_some());
     let responder = tokio::spawn(async move {
-        let Some(codex_app_server::ControlCommand::Prompt { message, response }) =
+        let Some(codex_app_server::ControlCommand::Prompt { message, response, .. }) =
             commands.recv().await
         else {
             panic!("new mail must be announced");

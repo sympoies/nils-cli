@@ -1,5 +1,7 @@
 //! Terminal input delivery and guarded provider submission.
 pub(crate) mod claude_notice;
+pub(crate) mod codex_notice;
+pub(crate) mod daemon_notice;
 pub(crate) mod input;
 mod native;
 use std::cell::Cell;
@@ -231,6 +233,7 @@ fn send_observing(
                 started: guard_started,
                 acknowledged,
                 terminal_command: owner_command.is_some(),
+                recovery: None,
             },
         );
     }

@@ -604,12 +604,82 @@ The 2026-11-09 consumer fixture target is independent of this sender review.
 
 ## Rollout and remaining work
 
+### Daemon continuations and machine history
+
+Usage recovery, Codex app-server recovery and Codex capacity recovery use the
+shared encoder with kind `runtime.resume` and source `agent-session`. Their
+generated bodies, and generated mailbox wake bodies, remove ASCII spaces
+immediately before line endings before encoding. This is producer formatting;
+the shared codec and caller-supplied notice bodies remain byte-preserving.
+Bootstrap prompts and mailbox read events contain caller text and do not gain
+permission to rewrite it.
+
+The scheduler transfers its durable claim and record lock into daemon notice
+preparation. A continuation retains the exact runtime, provider conversation,
+account binding, interrupted predecessor, activity revision, recovery cause and
+logical generation. It does not cancel itself as manual input. Only the
+matching interrupted boundary is eligible; unrelated working activity,
+attention, replacement or an occupied composer refuses. Capacity recovery does
+not query usage. Its supported structured route may continue a matching
+interrupted non-idle provider; terminal non-idle delivery is unsupported.
+Operator notices retain their idle and empty-composer requirements.
+Scheduler admission never invokes operator stale-draft repair: an occupied
+composer is refused without stashing or clearing it, including a draft already
+observed as stale.
+
+Scheduler Codex notices extend the existing bounded attestation owner with an additive
+proof variant. Existing Claude records retain their shape and interpretation.
+The Codex claim binds the full runtime/provider/account identity, canonical
+envelope digest and length, original budget, baseline and provider client id.
+An acknowledgment alone is insufficient: absent unique physical-row proof,
+the operation remains `notice-native-unconfirmed`, durably consumed and never
+replayed. Missing rows never authorize resend.
+
+At the actual Codex receiver, after the queue/record-lock handoff and before the
+single native write, repeat the preserving-draft empty-composer observation
+under the reacquired record lock and original deadline. An occupied or
+unobservable final snapshot refuses with no native input or draft repair.
+Typing or redraw after that final observation remains non-atomic, as with
+other composer admission.
+
+Codex scheduler recovery retains one 30-second original deadline through queue,
+write, physical-row confirmation and identity reacquisition. Only this additive
+scheduler claim permits `original_budget_ms` up to 30,000; other variants retain
+the 15,000-ms attestation ceiling. Claude/operator time bounds and all byte and
+storage bounds remain unchanged. No stage restarts the budget.
+
+The external source basis is Codex 0.162.1: `ResponseItem::Message` in
+`protocol/src/models.rs`, `record_user_prompt_and_emit_turn_item` in
+`core/src/session/mod.rs`, and the `UserMessageItem` event conversion in the
+protocol crate. The client id belongs to the separately
+persisted user event, rather than the visible response row. The join therefore
+uses a closed, baseline-bounded slice ending at the unique event carrying the
+claim's client id. It requires exactly one preceding physical user response
+row, exact envelope bytes and a provider turn identity matching the
+acknowledged turn. Any interleaved or ambiguous user row, duplicate client-id
+event or missing turn join rejects proof. Both physical offsets and raw-row
+digests are retained; history projects only the original response-row id.
+There is no matching-text authorization or open-ended transcript suppression.
+
+Only positively attested rows receive `role: "notice"`, complete exact envelope
+text, `human_prompt: false`, no human prompt-request association, no images and
+no exposed receipt token. A deliberate human envelope keeps its provider user
+role. Bootstrap and authenticated hook rows without authoritative association
+remain unsupported proof forms; neither a fabricated turn nor another delivery
+may supply that association. Source fixtures do not establish native acceptance.
+
+Existing mailbox start/steer and operator notice paths retain their admission
+guards and currently have no Codex producer attestation. Those stored rows keep
+their provider user role plus the envelope display class. Their additional
+attestation is tracked in [#3393](https://github.com/sympoies/nils-cli/issues/3393);
+this scheduler slice adds no operator baseline precondition or input retry.
+
 All new writers require the explicit environment gate
 `AGENT_SESSION_NOTICE_WRITERS=1` in the CLI caller environment. Unset or any
 other value returns `notice-writers-disabled` before reading a body or starting
 a runtime. The default remains off until compatible readers and downstream
 mirrors are deployed. This does not enable any writer globally. The internal mailbox producer uses
-this gate; auto-resume integration is separate.
+this gate; scheduler continuations use it as well.
 
 Deploy the spec/codec first, then compatible readers and mirrors, then enable
 writers only in the intended caller environment. Roll back by unsetting the
@@ -630,7 +700,7 @@ uncertain notice attempt never authorizes a plain fallback or a second attempt. 
 the exact envelope and `mailbox-notice.v1` format; positive observation can
 resolve an uncertain notice, while absence keeps it parked. Retired prompt formats are not recognized or replayed; retained attempt bytes
 are evidence only. No mailbox producer shells out
-to `notice`. Auto-resume integration remains separate.
+to `notice`. Scheduler continuations reuse the same encoder and attestation owner.
 
 Readers must accept and validate the separate notice role before native writers
 are enabled. Machine notices must not acknowledge a human outbox item or become

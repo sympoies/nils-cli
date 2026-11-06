@@ -22,7 +22,7 @@ mod session_info;
 mod structured_prompt;
 #[cfg(test)]
 use structured_prompt::submit_claude_structured_prompt;
-use structured_prompt::submit_structured_prompt_locked;
+use structured_prompt::{StructuredPromptGuards, submit_structured_prompt_locked};
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 #[path = "serve/codex_quiet.rs"]
@@ -254,13 +254,6 @@ struct ManagedHistoryTitleCache {
 #[derive(Clone)]
 struct CoordinationNotificationFence {
     candidate: crate::coordination::NotificationCandidate,
-}
-
-#[derive(Default)]
-struct StructuredPromptGuards<'a> {
-    expected_session_incarnation: Option<&'a str>,
-    expected_binding: Option<(&'a str, u64)>,
-    notification: Option<CoordinationNotificationFence>,
 }
 
 #[derive(Clone)]
@@ -7344,170 +7337,9 @@ async fn process_codex_capacity_auto_resume_ids(
     }
 }
 
-async fn process_codex_capacity_auto_resume_id(
-    state: Arc<ServeState>,
-    target: CodexAutoResumeTarget,
-) {
-    let control = state
-        .codex_controls
-        .lock()
-        .ok()
-        .and_then(|controls| controls.get(&target.id).cloned());
-    let Some(control) = control else {
-        record_codex_scheduler_error_for_runtime(
-            state.context.clone(),
-            target.id,
-            target.launch_id,
-            "control_unavailable",
-        )
-        .await;
-        return;
-    };
-    if control.launch_id != target.launch_id {
-        record_codex_scheduler_error_for_runtime(
-            state.context.clone(),
-            target.id,
-            target.launch_id,
-            "control_unavailable",
-        )
-        .await;
-        return;
-    }
-    let context = state.context.clone();
-    let runtime = tokio::runtime::Handle::current();
-    let handle = control.handle.clone();
-    let expected_launch_id = target.launch_id;
-    let id = target.id;
-    tokio::task::spawn_blocking(move || {
-        let now_epoch = jiff::Timestamp::now().as_second();
-        if let Err(err) = auto_resume::tick_for_runtime_and_binding(
-            &context,
-            &id,
-            &expected_launch_id,
-            auto_resume::RuntimeBindingTick {
-                binding: &target.binding,
-                failover_account: None,
-            },
-            now_epoch,
-            &UsageSnapshot {
-                authoritative: false,
-                has_exhausted_windows: false,
-                exhausted_reset_epochs: Vec::new(),
-                soonest_reset_epoch: None,
-            },
-            |_| {
-                runtime
-                    .block_on(handle.submit(auto_resume::CAPACITY_CONTINUATION_MESSAGE))
-                    .map(|_| ())
-                    .map_err(|_| {
-                        CliError::runtime(
-                            "codex-app-server-submit-unknown",
-                            "Codex capacity continuation submission outcome is unknown",
-                            Some(json!({ "id": id })),
-                        )
-                    })
-            },
-        ) {
-            eprintln!(
-                "warning: Codex capacity auto-resume tick failed: {}",
-                err.code()
-            );
-        }
-    })
-    .await
-    .ok();
-}
-
-async fn process_codex_auto_resume_id(state: Arc<ServeState>, target: CodexAutoResumeTarget) {
-    let control = state
-        .codex_controls
-        .lock()
-        .ok()
-        .and_then(|controls| controls.get(&target.id).cloned());
-    let Some(control) = control else {
-        record_codex_scheduler_error_for_runtime(
-            state.context.clone(),
-            target.id,
-            target.launch_id,
-            "usage_unavailable",
-        )
-        .await;
-        return;
-    };
-    if control.launch_id != target.launch_id {
-        record_codex_scheduler_error_for_runtime(
-            state.context.clone(),
-            target.id,
-            target.launch_id,
-            "usage_unavailable",
-        )
-        .await;
-        return;
-    }
-    let usage = match control.handle.usage().await {
-        Ok(usage) => usage,
-        Err(_) => {
-            record_codex_scheduler_error_for_runtime(
-                state.context.clone(),
-                target.id,
-                target.launch_id,
-                "usage_unavailable",
-            )
-            .await;
-            return;
-        }
-    };
-    let context = state.context.clone();
-    let runtime = tokio::runtime::Handle::current();
-    let handle = control.handle.clone();
-    let expected_launch_id = target.launch_id;
-    let id = target.id;
-    tokio::task::spawn_blocking(move || {
-        let now_epoch = jiff::Timestamp::now().as_second();
-        let failover_account = auto_resume::failover_selection_request(
-            &context,
-            &id,
-            &expected_launch_id,
-            &target.binding,
-            usage.has_exhausted_windows,
-        )
-        .ok()
-        .flatten()
-        .and_then(|request| {
-            crate::codex_account::select_next_account(&request.after, &request.excluded)
-                .ok()
-                .flatten()
-        })
-        .map(|account| account.account);
-        if let Err(err) = auto_resume::tick_for_runtime_and_binding(
-            &context,
-            &id,
-            &expected_launch_id,
-            auto_resume::RuntimeBindingTick {
-                binding: &target.binding,
-                failover_account: failover_account.as_deref(),
-            },
-            now_epoch,
-            &usage,
-            |_| {
-                runtime
-                    .block_on(handle.submit(auto_resume::CONTINUATION_MESSAGE))
-                    .map(|_| ())
-                    .map_err(|_| {
-                        CliError::runtime(
-                            "codex-app-server-submit-unknown",
-                            "Codex continuation submission outcome is unknown",
-                            Some(json!({ "id": id })),
-                        )
-                    })
-            },
-        ) {
-            eprintln!("warning: Codex auto-resume tick failed: {}", err.code());
-        }
-    })
-    .await
-    .ok();
-}
+#[path = "serve/continuation_notices.rs"]
+mod continuation_notices;
+use continuation_notices::{process_codex_auto_resume_id, process_codex_capacity_auto_resume_id};
 
 async fn record_codex_scheduler_error_for_runtime(
     context: CliContext,
@@ -7728,9 +7560,17 @@ async fn process_auto_resume_ids_with_usage(
         let tmux = state.tmux_bin.clone();
         tasks.spawn_blocking(move || {
             let now_epoch = jiff::Timestamp::now().as_second();
-            if let Err(err) = auto_resume::tick(&context, &id, now_epoch, &usage, |record| {
-                send_auto_resume_input(&context, record, auto_resume::CONTINUATION_MESSAGE, &tmux)
-            }) {
+            if let Err(err) =
+                auto_resume::tick(&context, &id, now_epoch, &usage, |record, record_lock| {
+                    send_auto_resume_input(
+                        &context,
+                        record,
+                        record_lock,
+                        auto_resume::CONTINUATION_MESSAGE,
+                        &tmux,
+                    )
+                })
+            {
                 eprintln!("warning: auto-resume tick failed: {}", err.code());
                 if let Err(record_err) =
                     auto_resume::record_scheduler_error(&context, &id, now_epoch, "scheduler_error")

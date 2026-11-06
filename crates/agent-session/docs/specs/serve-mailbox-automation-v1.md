@@ -85,8 +85,8 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   The daemon consumes the live metadata-only protocol and requires an exact bound thread/turn with
   terminal `status == "failed"` plus `codexErrorInfo == "usageLimitExceeded"` or the internal
   `serverOverloaded` capacity cause. Capacity recovery preserves the public v1 projection, waits 30, 60,
-  120, 300, and 600 seconds across at most five submitted attempts, and uses this fixed control-channel
-  message: `The selected model was at capacity, interrupting the previous turn. Please continue from
+  120, 300, and 600 seconds across at most five submitted attempts, and uses a canonical `runtime.resume`
+  notice with this fixed body: `The selected model was at capacity, interrupting the previous turn. Please continue from
   where you stopped.` Standalone/raw Codex TUI, imported Codex conversations, and resumed pre-app-server
   Codex sessions remain unsupported. Terminal text and assistant output are never treated as authority.
 
@@ -111,10 +111,14 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   only when the latest transition records a safe operational reason.
 - The daemon owns scheduling. It waits for the latest reset among all exhausted windows, adds bounded
   deterministic jitter, re-collects usage at wake, checks that the session activity revision is still
-  eligible, and durably claims the submission before sending one fixed product-owned continuation
-  message. Capacity recovery skips usage collection but retains the same runtime, binding, activity
+  eligible, and durably claims the submission before sending one product-owned continuation notice
+  through the shared encoder and attestation owner. Capacity recovery skips usage collection but retains the same runtime, binding, activity
   revision, pending-attention, manual-input, health, and durable pre-submit fences. An indeterminate
-  control submission is terminal and is never replayed after restart.
+  control submission is terminal and is never replayed after restart. A live attempt retains a separate
+  process-held fence while its record lock is released for native ingress; another tick stays inert,
+  while process termination releases the fence and preserves crash-left unknown handling. See
+  [session notices](session-notices-v1.md#daemon-continuations-and-machine-history) for the bounded
+  physical-row proof, original deadline and system-history role.
 
   When an authoritative Claude rate limit has no exhausted percentage window or future reset timestamp,
   the daemon keeps the claim scheduled and uses a low-frequency continuation probe (backing off through

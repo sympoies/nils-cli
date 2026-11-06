@@ -1,5 +1,6 @@
 //! Versioned display-only session notices and guarded CLI delivery.
 mod envelope;
+pub(crate) mod generated;
 pub mod labels;
 mod summary;
 pub use envelope::{NoticeEnvelope, NoticeError, ParsedNotice, parse_notice};
