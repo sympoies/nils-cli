@@ -51,13 +51,7 @@ pub(in crate::serve) async fn dispatch_coordination_notification(
         return;
     }
     if candidate.prepare_notice(&state.context, &record).is_err() {
-        update_notification_deferred(
-            &state,
-            &candidate,
-            "provider-not-ready",
-            COORDINATION_NOTIFICATION_RETRY,
-        )
-        .await;
+        defer_provider_not_ready(&state, &candidate, "notice-not-prepared").await;
         return;
     }
     if record.agent == AgentKind::Claude.as_str() {
@@ -131,22 +125,10 @@ pub(in crate::serve) async fn dispatch_coordination_notification(
         })
         .await;
         if candidate.is_notice() && matches!(attempted, Ok(Ok(false))) {
-            update_notification_deferred(
-                &state,
-                &candidate,
-                "provider-not-ready",
-                COORDINATION_NOTIFICATION_RETRY,
-            )
-            .await;
+            defer_provider_not_ready(&state, &candidate, refusal_detail(&response)).await;
         }
     } else {
-        update_notification_deferred(
-            &state,
-            &candidate,
-            "provider-not-ready",
-            COORDINATION_NOTIFICATION_RETRY,
-        )
-        .await;
+        defer_provider_not_ready(&state, &candidate, refusal_detail(&response)).await;
     }
 }
 
@@ -168,13 +150,7 @@ async fn dispatch_codex_in_turn_coordination_checkpoint(
     {
         Ok(handle) => handle,
         Err(_) => {
-            update_notification_deferred(
-                &state,
-                &candidate,
-                "provider-not-ready",
-                COORDINATION_NOTIFICATION_RETRY,
-            )
-            .await;
+            defer_provider_not_ready(&state, &candidate, "prompt-control-unavailable").await;
             return;
         }
     };
@@ -279,5 +255,40 @@ async fn dispatch_codex_in_turn_coordination_checkpoint(
             )
         })
         .await;
+    }
+}
+
+/// Defers a wake as `provider-not-ready` and records which branch refused, so
+/// `message audit` can tell the branches apart.
+pub(super) async fn defer_provider_not_ready(
+    state: &ServeState,
+    candidate: &crate::coordination::NotificationCandidate,
+    detail: &'static str,
+) {
+    let context = state.context.clone();
+    let candidate = candidate.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        crate::coordination::defer_notification_with_detail(
+            &context,
+            &candidate,
+            "provider-not-ready",
+            detail,
+            COORDINATION_NOTIFICATION_RETRY,
+        )
+    })
+    .await;
+}
+
+/// A structured prompt response without a control handle is the missing-control
+/// branch; any other refusal is the submission branch.
+fn refusal_detail(response: &Response) -> &'static str {
+    if response
+        .extensions()
+        .get::<CliError>()
+        .is_some_and(|error| error.code() == "structured-prompt-unavailable")
+    {
+        "prompt-control-unavailable"
+    } else {
+        "prompt-submission-refused"
     }
 }

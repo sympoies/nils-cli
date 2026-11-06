@@ -118,12 +118,20 @@ host cannot establish recipient deletion.
 A `notification` is joined on recipient ID **and incarnation**, using the
 newest `(generation, updated_at_epoch)` receipt when historical entries coexist.
 It has `state`, `generation`, `notified_generation`, `queued_at`, `attempted_at`,
-`updated_at`, `next_retry_at`, and `reason_code`. States are `queued`,
+`updated_at`, `next_retry_at`, `reason_code`, and `reason_detail`. States are `queued`,
 `attempting`, `prompt_submitted`, `attempt_unknown`, `undeliverable`, or
 `unknown`. Notifications can coalesce multiple messages: the receipt is
 recipient-generation evidence, not proof that one message was read/executed.
 Notification timestamp zero/missing means `null`; the query never fabricates a
 migration time or rewrites the stored receipt.
+
+`reason_detail` names which branch recorded a `provider-not-ready` deferral and is
+`null` for every other reason. Its values are `notice-not-prepared` (the wake
+notice could not be prepared), `prompt-control-unavailable` (no structured
+prompt control for the Codex runtime), `prompt-submission-refused` (the
+structured prompt submission was refused), and `notice-attempt-not-admitted`
+(the guarded notice send did not admit the attempt). It is a fixed allowlist and
+carries no message or runtime content.
 
 ## Classification and joining
 

@@ -69,6 +69,7 @@ async fn mailbox_notice_uncertain_claude_capability_does_not_fall_back() {
     let receipt = notification_fixture(fixture.temp.path());
     assert_eq!(receipt["state"], "queued");
     assert_eq!(receipt["last_reason"], "provider-not-ready");
+    assert_eq!(receipt["last_reason_detail"], "notice-not-prepared");
 }
 
 #[tokio::test]
