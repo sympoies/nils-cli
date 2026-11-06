@@ -275,6 +275,17 @@ The command-scope executable overrides are exactly `core.hooksPath=/dev/null`,
 `core.fsmonitor=false`, and `core.alternateRefsCommand=`. They prevent repository
 hooks, fsmonitor programs, and alternate-refs commands from running with the token.
 
+The closed network-configuration refusal list is `http.proxy`, `http.sslCAInfo`,
+and `http.sslCAPath` (including their `http.<url>.*` forms), plus
+`remote.<name>.proxy`. Repository/worktree
+entries refuse before credential authorization with
+`identity_transport_config_untrusted` and a system/global configuration fix hint.
+Empty resets and entries reached through local includes also refuse, even when a
+URL-specific entry does not match the selected destination. Scope-inspection
+failures also refuse. This uses the same scope rules as the helper refusal;
+system/global proxy and CA values remain effective. It applies to HTTPS remotes
+and SSH-shaped remotes routed through pinned HTTPS.
+
 Other repository-configured commands remain operator-owned and may inherit the
 token if Git starts them. The pinned credential helper and HTTPS transport still
 inherit the Git environment; their executable environment remains operator-owned.

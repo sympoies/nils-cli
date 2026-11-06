@@ -47,7 +47,12 @@ impl LoadedPolicy {
 }
 
 fn credential(cwd: Option<&Path>, url: &str, username: Option<&str>) -> Result<String> {
-    reject_local_helpers(cwd)?;
+    reject_local_config(
+        cwd,
+        "^credential(\\..*)?\\.helper$",
+        "identity_credential_helper_untrusted",
+        "identity_credential_helper_unavailable",
+    )?;
     // Keep lookup out of repository discovery even if local config changes after
     // inspection. The directory never contains a credential or helper script.
     let isolated = tempfile::Builder::new()
@@ -91,7 +96,29 @@ fn credential(cwd: Option<&Path>, url: &str, username: Option<&str>) -> Result<S
     Ok(token.to_owned())
 }
 
-fn reject_local_helpers(cwd: Option<&Path>) -> Result<()> {
+pub(super) fn reject_local_transport(cwd: Option<&Path>) -> Result<()> {
+    reject_local_config(
+        cwd,
+        "^(http(\\..*)?\\.(proxy|sslcainfo|sslcapath)|remote\\..*\\.proxy)$",
+        "identity_transport_config_untrusted",
+        "identity_transport_config_unavailable",
+    )
+    .map_err(|error| {
+        let detail = if error.code == "identity_transport_config_untrusted" {
+            "configure proxy and CA settings at system/global scope; repository/worktree http.proxy, http.sslCAInfo, http.sslCAPath (including URL-specific forms), and remote.<name>.proxy entries are not trusted"
+        } else {
+            "cannot inspect HTTP proxy and CA configuration scopes; repair Git configuration before retrying"
+        };
+        Error::with_detail(error.code, detail.into())
+    })
+}
+
+fn reject_local_config(
+    cwd: Option<&Path>,
+    pattern: &str,
+    untrusted: &'static str,
+    unavailable: &'static str,
+) -> Result<()> {
     let mut command = Command::new("git");
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
@@ -102,14 +129,14 @@ fn reject_local_helpers(cwd: Option<&Path>) -> Result<()> {
         "--null",
         "--show-scope",
         "--get-regexp",
-        "^credential(\\..*)?\\.helper$",
+        pattern,
     ]);
     protect(&mut command);
     let output = probe::run(&mut command)?;
     match output.status.code() {
         Some(1) => return Ok(()), // Git's documented no-match result.
         Some(0) => {}
-        _ => return Err(Error::new("identity_credential_helper_unavailable")),
+        _ => return Err(Error::new(unavailable)),
     }
     // With --null, Git emits alternating scope and key/value records. Values
     // may contain newlines, so never interpret a value as another scope.
@@ -119,14 +146,14 @@ fn reject_local_helpers(cwd: Option<&Path>) -> Result<()> {
             break;
         }
         if fields.next().is_none() {
-            return Err(Error::new("identity_credential_helper_unavailable"));
+            return Err(Error::new(unavailable));
         }
         match scope {
             b"local" | b"worktree" => {
-                return Err(Error::new("identity_credential_helper_untrusted"));
+                return Err(Error::new(untrusted));
             }
             b"global" | b"system" => {}
-            _ => return Err(Error::new("identity_credential_helper_unavailable")),
+            _ => return Err(Error::new(unavailable)),
         }
     }
     Ok(())
