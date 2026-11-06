@@ -82,6 +82,19 @@ fn collect_origins(
     }
 }
 
+// Copy metadata preserves the stored spelling; path aliases supply no value.
+pub(super) fn stored_upload_path(name: &str) -> Option<String> {
+    if !Path::new(name).is_absolute()
+        || name
+            .split('/')
+            .skip(1)
+            .any(|component| matches!(component, "" | "." | ".."))
+    {
+        return None;
+    }
+    Some(name.to_owned())
+}
+
 impl HistoryCatalog {
     pub(super) fn owned_attachment_ref(
         &self,
@@ -140,7 +153,7 @@ impl HistoryCatalog {
                     if matches!(image.origin, Some(ImageOrigin::UserAttachment))
                         && candidate.is_absolute()
                     {
-                        image.upload_path = candidate.to_str().map(str::to_owned);
+                        image.upload_path = candidate.to_str().and_then(stored_upload_path);
                     }
                 }
             }

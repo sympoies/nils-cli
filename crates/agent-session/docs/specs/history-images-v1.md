@@ -62,8 +62,11 @@ the same value. See [the descriptor fixture](fixtures/history-image-descriptor-v
 `upload_path` is an optional JSON string containing the exact stored absolute
 path returned by the upload, without shell quoting, escaping beyond JSON, basename
 substitution, or path reconstruction. Spaces and quoting-sensitive characters are
-preserved. It is bound to the descriptor's row selector (`id`, or `ref` on the
-image part); both carry the identical value across repeated reads and pagination.
+preserved. The stored spelling must already be normalized: doubled separators
+and `.` or `..` components omit the field. The producer never normalizes or
+reconstructs the path value. It is bound to the descriptor's row selector (`id`,
+or `ref` on the image part); both carry the identical value across repeated reads
+and pagination.
 The spelling and representation are frozen by the descriptor fixture above.
 
 Only `origin: "user_attachment"` images whose file source passes the existing

@@ -485,3 +485,38 @@ async fn user_image_upload_paths_require_owned_regular_raster_files() {
         assert!(message["images"][0].get("upload_path").is_none());
     }
 }
+
+#[tokio::test]
+async fn upload_path_omits_non_normalized_spellings_without_rewriting_them() {
+    for provider in ["codex", "claude"] {
+        let fixture = Fixture::for_provider(provider);
+        let own = fixture.upload("own", "image.png", &fixture.png).await;
+        let parent = own.parent().unwrap().to_str().unwrap();
+        let name = own.file_name().unwrap().to_str().unwrap();
+        let aliases = [format!("{parent}//{name}"), format!("{parent}/./{name}")];
+        for alias in aliases {
+            let blocks = if provider == "claude" {
+                json!([{"type":"text","text":format!("'{alias}'")},
+                    {"type":"image","source":{"type":"file","path":alias}}])
+            } else {
+                json!([{"type":"input_text","text":format!("'{alias}'")},
+                    {"type":"input_image","path":alias}])
+            };
+            if provider == "claude" {
+                fixture.claude_row(blocks, "user");
+            } else {
+                fixture.append(blocks);
+            }
+        }
+        let page = fixture.refresh().await;
+        let messages = page["data"]["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        for message in messages {
+            assert_metadata(message, &[Some("user_attachment"); 2]);
+            for image in message["images"].as_array().unwrap() {
+                assert!(image["attachment_ref"].is_string());
+                assert!(image.get("upload_path").is_none());
+            }
+        }
+    }
+}
