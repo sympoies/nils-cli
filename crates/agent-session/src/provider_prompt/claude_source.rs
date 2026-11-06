@@ -1,9 +1,8 @@
-//! Resolve a known primary Claude conversation before scanning unrelated metadata.
+//! Resolve a known primary Claude conversation by its exact transcript filename.
 
-use std::collections::BTreeSet;
 use std::path::Component;
 
-use nils_provider_resume::{ClaudeResumeScanBudget, collect_claude_provider_resume_matches};
+use nils_provider_resume::ClaudeResumeScanBudget;
 
 use super::{
     Path, PathBuf, file_identity, fs, open_regular_file, opened_file_still_current,
@@ -40,22 +39,7 @@ pub(super) fn lookup(root: &Path, session_id: &str) -> Lookup {
     let root = canonical_root.as_deref().unwrap_or(root);
     match known_source(root, session_id) {
         Ok(Some(path)) => Lookup::Found(path),
-        // Retain discovery for older/noncanonical transcript filenames, but
-        // never turn an incomplete or unsafe exact lookup into a fallback win.
-        Ok(None) => {
-            let mut matches = BTreeSet::new();
-            let mut budget = ClaudeResumeScanBudget::from_env();
-            collect_claude_provider_resume_matches(root, session_id, &mut matches, &mut budget);
-            match (budget.truncated, matches.len()) {
-                (true, _) => Lookup::Unresolved,
-                (false, 0) => Lookup::NotFound,
-                (false, 1) => matches
-                    .into_iter()
-                    .next()
-                    .map_or(Lookup::Unresolved, |found| Lookup::Found(found.path)),
-                (false, _) => Lookup::Unresolved,
-            }
-        }
+        Ok(None) => Lookup::NotFound,
         Err(()) => Lookup::Unresolved,
     }
 }

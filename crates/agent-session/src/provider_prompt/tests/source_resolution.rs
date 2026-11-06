@@ -262,19 +262,20 @@ fn known_claude_source_rejects_symlinks_and_non_regular_files() {
 }
 
 #[test]
-fn known_claude_source_retains_noncanonical_filename_discovery() {
+fn known_claude_source_rejects_noncanonical_filename() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let root = tmp.path().join("projects");
     fs::create_dir_all(root.join("project")).expect("project");
     let transcript = root.join("project/historical.jsonl");
-    fs::write(&transcript, claude_metadata("claude-id")).expect("historical transcript");
-    let source = resolve_provider_prompt_source_from_roots(
-        &record("claude", "claude-id"),
-        None,
-        Some(&root),
-    )
-    .expect("unambiguous historical transcript");
-    assert_eq!(source.path, transcript);
+    fs::write(&transcript, claude_metadata("claude-id")).expect("noncanonical transcript");
+    assert!(
+        resolve_provider_prompt_source_from_roots(
+            &record("claude", "claude-id"),
+            None,
+            Some(&root),
+        )
+        .is_none()
+    );
 }
 
 #[cfg(unix)]
