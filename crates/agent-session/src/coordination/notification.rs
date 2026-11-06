@@ -912,7 +912,9 @@ pub(super) fn safe_reason(reason: &str) -> String {
 pub(crate) fn safe_reason_detail(detail: &str) -> Option<String> {
     matches!(
         detail,
-        "notice-not-prepared"
+        "notice-writers-disabled"
+            | "notice-runtime-unavailable"
+            | "notice-not-prepared"
             | "prompt-control-unavailable"
             | "prompt-submission-refused"
             | "notice-attempt-not-admitted"

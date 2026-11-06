@@ -11,7 +11,9 @@ async fn gate_off_repeated_deferrals_do_not_rewrite_registry() {
     crate::serve::terminal_notification::dispatch_coordination_notification(
         fixture.state.clone(), fixture.candidate.clone(),
     ).await;
-    assert_eq!(notification_fixture(fixture.temp.path())["last_reason"], "provider-not-ready");
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["last_reason"], "provider-not-ready");
+    assert_eq!(receipt["last_reason_detail"], "notice-writers-disabled");
     let before = fs::metadata(&registry).unwrap().ino();
     for _ in 0..2 {
         crate::serve::terminal_notification::dispatch_coordination_notification(
@@ -69,7 +71,7 @@ async fn mailbox_notice_uncertain_claude_capability_does_not_fall_back() {
     let receipt = notification_fixture(fixture.temp.path());
     assert_eq!(receipt["state"], "queued");
     assert_eq!(receipt["last_reason"], "provider-not-ready");
-    assert_eq!(receipt["last_reason_detail"], "notice-not-prepared");
+    assert_eq!(receipt["last_reason_detail"], "notice-runtime-unavailable");
 }
 
 #[tokio::test]

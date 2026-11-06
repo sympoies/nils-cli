@@ -319,7 +319,8 @@ async fn coordination_notification_skips_a_mailbox_the_recipient_already_drained
 
 #[tokio::test]
 async fn coordination_notification_without_codex_control_records_the_control_branch() {
-    let _lock = GlobalStateLock::new();
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let tmp = tempfile::TempDir::new().expect("tempdir");
     seed_session_with_runtime(tmp.path(), "alpha", "codex", "hs-codex-alpha");
     let launch_id = seed_codex_app_server_session(tmp.path(), "beta");

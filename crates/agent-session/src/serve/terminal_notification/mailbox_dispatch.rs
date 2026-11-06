@@ -50,8 +50,13 @@ pub(in crate::serve) async fn dispatch_coordination_notification(
         update_notification_undeliverable(&state, &candidate, "provider-unsupported").await;
         return;
     }
-    if candidate.prepare_notice(&state.context, &record).is_err() {
-        defer_provider_not_ready(&state, &candidate, "notice-not-prepared").await;
+    if let Err(error) = candidate.prepare_notice(&state.context, &record) {
+        let detail = match error.code() {
+            "notice-writers-disabled" => "notice-writers-disabled",
+            "notice-native-unavailable" => "notice-runtime-unavailable",
+            _ => "notice-not-prepared",
+        };
+        defer_provider_not_ready(&state, &candidate, detail).await;
         return;
     }
     if record.agent == AgentKind::Claude.as_str() {
