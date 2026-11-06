@@ -24,6 +24,33 @@ fn exact_claude_id_survives_catalog_limit() {
             root: tmp.path().join("projects"),
         },
     ];
+    let title_state: crate::SessionTitleState = serde_json::from_value(serde_json::json!({
+        "topic": "Saved topic",
+        "topic_source": "auto",
+        "references": [],
+        "activity": "Saved activity"
+    }))
+    .unwrap();
+    write_archive(
+        &tmp.path().join("archives"),
+        &ArchivedSession {
+            title_mode: crate::display_metadata::TitleMode::Pinned,
+            schema_version: "agent-session.history-archive.v1".to_string(),
+            history_id: stable_history_id("claude", None, id),
+            provider: "claude".to_string(),
+            provider_session_id: id.to_string(),
+            agent_profile: None,
+            session_id: Some("managed-abc".to_string()),
+            title: Some("Saved topic - Saved activity".to_string()),
+            title_state: Some(title_state.clone()),
+            cwd: "/work/repo".to_string(),
+            created_at: "2026-09-30T00:00:00Z".to_string(),
+            updated_at: "2026-09-30T00:00:00Z".to_string(),
+            archived_at: "2026-09-30T00:00:01Z".to_string(),
+        },
+    )
+    .unwrap()
+    .commit();
     let catalog = HistoryCatalog::new(
         sources.to_vec(),
         tmp.path().join("archives"),
@@ -53,12 +80,17 @@ fn exact_claude_id_survives_catalog_limit() {
             .as_deref(),
         Some(starred_at)
     );
+    let resumed = catalog.resolve_fresh(&history_id).unwrap();
+    assert_eq!(resumed.provider_session_id, id);
+    assert_eq!(resumed.archived_session_id.as_deref(), Some("managed-abc"));
     assert_eq!(
-        catalog
-            .resolve_fresh(&history_id)
-            .unwrap()
-            .provider_session_id,
-        id
+        resumed.title.as_deref(),
+        Some("Saved topic - Saved activity")
+    );
+    assert_eq!(resumed.archived_title_state, Some(title_state));
+    assert_eq!(
+        resumed.archived_title_mode,
+        crate::display_metadata::TitleMode::Pinned
     );
     fs::remove_file(project.join(format!("{id}.jsonl"))).unwrap();
     std::os::unix::fs::symlink(

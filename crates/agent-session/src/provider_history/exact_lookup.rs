@@ -54,16 +54,7 @@ impl HistoryCatalog {
                 ) else {
                     continue;
                 };
-                if let Some(archive) = read_archive(&self.archives_root, &session.id) {
-                    session.agent_profile = archive.agent_profile;
-                    session.title = archive.title;
-                    session.archived_session_id = archive.session_id;
-                    session.archived_title_state = archive.title_state;
-                    session.archived_title_mode = archive.title_mode;
-                    session.cwd = archive.cwd;
-                    session.repo_name = repo_name(&session.cwd);
-                    session.archived_at = Some(archive.archived_at);
-                }
+                self.overlay_archive(&mut session);
                 let star_path = self.stars_root.join(format!("{}.json", session.id));
                 if fs::metadata(&star_path).is_ok_and(|meta| meta.len() <= MAX_STAR_BYTES)
                     && let Ok(bytes) = fs::read(star_path)
@@ -142,7 +133,24 @@ impl HistoryCatalog {
             &mut false,
             false,
         )?;
-        (session.id == id).then_some(session)
+        let mut session = (session.id == id).then_some(session)?;
+        self.overlay_archive(&mut session);
+        Some(session)
+    }
+
+    /// Apply the saved archive record, so a session found by exact id keeps the
+    /// managed id and title state that a catalog scan would restore.
+    fn overlay_archive(&self, session: &mut HistorySession) {
+        if let Some(archive) = read_archive(&self.archives_root, &session.id) {
+            session.agent_profile = archive.agent_profile;
+            session.title = archive.title;
+            session.archived_session_id = archive.session_id;
+            session.archived_title_state = archive.title_state;
+            session.archived_title_mode = archive.title_mode;
+            session.cwd = archive.cwd;
+            session.repo_name = repo_name(&session.cwd);
+            session.archived_at = Some(archive.archived_at);
+        }
     }
 
     pub(super) fn direct_session(&self, id: &str) -> Option<HistorySession> {
