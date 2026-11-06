@@ -548,7 +548,8 @@ agent-session start --via-console --service ID --service-generation GENERATION \
 ```
 
 `--service` requires `--via-console`, `--service-generation`, `--credential-file` and `--owner`, and
-conflicts with `--no-parent`, `--role`, `--program`, `--issue`, `--no-inherit-work` and `--resume`.
+conflicts with `--resume`. The root accepts `--no-parent`, `--role`, `--program`, `--issue` and
+`--no-inherit-work` with the same validation as a direct start.
 `--machine` and `--expires-at` are required to create and are refused with `--reconcile`. The other
 session options are those of [Owned child sessions v1](#owned-child-sessions-v1). The credential is
 read from a private file, never from argv or the environment.
@@ -592,6 +593,8 @@ body rejects unknown members:
 {
   "service_id": "integration", "service_generation": "generation-1", "owner": "owner-a",
   "operation_id": "UUIDv7", "machine": "host-a", "expires_at": "2030-01-01T00:10:00Z",
+  "no_parent": true, "role": "coordinator",
+  "work": {"issues": [{"provider": "github", "repository": "example/project", "number": 42}]},
   "session": {"agent": "claude", "cwd": "/abs/path", "title": "...", "prompt": "..."}
 }
 ```
@@ -599,7 +602,8 @@ body rejects unknown members:
 `session` may set only `agent`, `cwd`, `workspace`, `launch_env`, `title_mode`, `title`, `prompt`,
 `agent_args`, `agent_profile`, `codex_account` and `claude_account`. The daemon sets the lineage: a
 root with `parent: null` and `starter {"kind": "console", "via": "console"}`, no forge context and no
-origin parent. A reconcile body is exactly `service_id`, `service_generation`, `owner`,
+origin parent. Optional `no_parent`, `role`, and `work` use the direct start validation;
+work resolves without a parent. A reconcile body is exactly `service_id`, `service_generation`, `owner`,
 `operation_id` and `reconcile: true`.
 
 A request is authorized only when, in this order and before any receipt or network call, the body is
@@ -662,7 +666,7 @@ the owner it was started for: reconciling it under another owner is `console-sta
 - The first request stores an `ambiguous` receipt under the store lock, then makes at most one
   aggregator create call.
 - A retry must resend the identical request, including `expires_at`: the fingerprint covers `owner`,
-  `machine`, `expires_at` and `session`, and not the operation ID or the service generation. A
+  `machine`, `expires_at`, `session`, `no_parent`, `role` and `work`, and not the operation ID or the service generation. A
   different request under the same operation ID fails `console-start-operation-conflict`.
 - Repeating the request returns the stored outcome and never posts again, including after `expires_at`
   has passed; expiry is checked only for an operation with no receipt. An `ambiguous` repeat returns
@@ -677,6 +681,7 @@ Every success, replay and reconciliation carries `receipt`:
   "service_id": "integration", "service_generation": "generation-1", "owner": "owner-a",
   "machine": "host-a", "operation_id": "UUIDv7",
   "state": "created", "safe_to_retry": false,
+  "identity": {"no_parent": true, "role": "coordinator", "work": {"program": null, "issues": [{"provider": "github", "repository": "example/project", "number": 42}], "inherited": false}},
   "session": {"id": "...", "agent": "claude", "session_incarnation": "..."}
 }
 ```

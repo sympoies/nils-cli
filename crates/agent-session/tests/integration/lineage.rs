@@ -900,11 +900,12 @@ fn session_started_root_keeps_the_launch_initiator_only_with_a_role() {
     );
     let path = state_dir.join("sessions/alpha/session.json");
     let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    record["role"] = json!("steward");
     record["lineage"] = json!({
         "schema_version":"agent-session.session-lineage.v1", "parent":null,
         "root":{"machine":"launch-source", "session_id":"alpha", "session_created_at":record["created_at"]},
         "depth":0, "starter":{"kind":"operator", "via":"cli"},
-        "forge_context":{"initiator":"operator", "role":null}
+        "forge_context":{"initiator":"operator", "role":"steward", "attested_role":"steward"}
     });
     write_private_json(&path, &record);
     let alpha_cap = capability(&state_dir, "alpha");
@@ -970,3 +971,6 @@ fn session_started_root_keeps_the_launch_initiator_only_with_a_role() {
 
 #[path = "lineage/operator_rules.rs"]
 mod operator_rules;
+
+#[path = "lineage/role_attestation.rs"]
+mod role_attestation;

@@ -66,6 +66,10 @@ impl<'a> Origin<'a> {
         }
     }
 
+    pub(super) fn set_identity(&mut self, identity: Value) {
+        self.extra["identity"] = identity;
+    }
+
     fn name(&self, operation: &str) -> String {
         format!(
             "{PREFIX}{}",

@@ -248,6 +248,7 @@ fn child_session(
             seed.set_forge_context(crate::forge_identity::context_of(caller)?.map(|context| {
                 nils_common::forge_identity::session::LaunchContext {
                     role: None,
+                    attested_role: None,
                     ..context
                 }
             }));
@@ -627,7 +628,9 @@ fn cli_request(
     let requested_pinned = session["title_mode"] == "pinned";
     let requested_launch_env = crate::launch_env::from_json(session.get("launch_env"))?;
     let request = match &service {
-        Some(service) => service::cli_body(service, machine, session, operation_id, reconcile)?,
+        Some(service) => {
+            service::cli_body(service, machine, session, operation_id, reconcile, lineage)?
+        }
         None => {
             let mut request = json!({ "session": session });
             if let Some(machine) = machine {
@@ -848,13 +851,13 @@ mod tests {
     fn console_root_inherits_the_launch_initiator_only_with_a_role() {
         let caller: crate::SessionRecord = serde_json::from_value(json!({
             "schema_version":"agent-session.session.v1", "id":"caller", "agent":"codex", "mode":"interactive", "title":null,
-            "cwd":".", "tmux_session":"fixture", "prompt_file":null, "log_file":null,
+            "cwd":".", "tmux_session":"fixture", "prompt_file":null, "log_file":null, "role":"steward",
             "created_at":"2030-01-01T00:00:00Z", "updated_at":"2030-01-01T00:00:00Z",
             "lineage": {
                 "schema_version":"agent-session.session-lineage.v1", "machine":"caller-host", "parent":null,
                 "root":{"machine":"caller-host", "session_id":"caller", "session_created_at":"2030-01-01T00:00:00Z"},
                 "depth":0, "starter":{"kind":"operator", "via":"cli"},
-                "forge_context":{"initiator":"operator", "role":null}
+                "forge_context":{"initiator":"operator", "role":"steward", "attested_role":"steward"}
             }
         }))
         .unwrap();

@@ -309,6 +309,7 @@ pub(super) async fn create_handler_inner(
         agent_profile: None,
         no_parent: false,
         forge_initiator: None,
+        attest_role: false,
         role: None,
         program: None,
         issues: Vec::new(),

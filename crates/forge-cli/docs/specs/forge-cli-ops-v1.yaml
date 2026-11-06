@@ -1182,7 +1182,7 @@ operations:
       gitlab: unsupported
       local: unsupported
     output:
-      data: object<{provider,number,url,state_tip_digest?,generation?,state?,appended:false,outcome_posted:false,accepted_risks?}>
+      data: object<{provider,number,url,state_tip_digest?,generation?,state?,appended:false,outcome_posted:false,accepted_risks?,ceiling_proposal?}>
     notes: "The append-only forge-cli.review-loop.v1 chain is completely paginated, hash-validated, and fork-checked. ReviewRunReceipt and ReviewLoop records share one chain; no second provider store is created."
 
   - id: pr.review-loop.observe
@@ -1233,7 +1233,7 @@ operations:
 
   - id: pr.review-loop.extend
     schema_version: cli.forge-cli.pr.review-loop.extend.v1
-    summary: Consume one exact post-stop maintainer approval and append one budget extension.
+    summary: Consume one exact state-bound maintainer approval and append one budget extension.
     inputs:
       - { name: <id>, type: integer, required: true }
       - { name: --expected-head, type: string, required: true }
@@ -1257,7 +1257,7 @@ operations:
       local: unsupported
     output:
       data: object<{provider,number,url,state_tip_digest,generation,state,appended:true,outcome_posted:false}>
-    notes: "This command is separate from delivery retry paths. It requires an active durable hard-stop receipt, the canonical stop-code/budget-field pair and exact one-step proposal, plus an OWNER/MEMBER/COLLABORATOR approval comment on the same PR that is newer than the stopped state tip and carries the exact marker. One proposal can be consumed once."
+    notes: "This command is separate from delivery retry paths. It requires a current ceiling proposal or active durable hard-stop receipt, the canonical stop-code/budget-field pair and exact one-step proposal, plus an OWNER/MEMBER/COLLABORATOR approval comment on the same PR that is newer than the bound state tip and carries the exact marker. One proposal can be consumed once."
 
   - id: pr.review-loop.validate
     schema_version: cli.forge-cli.pr.review-loop.validate.v1
