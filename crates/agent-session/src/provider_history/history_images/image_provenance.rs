@@ -82,6 +82,19 @@ fn collect_origins(
     }
 }
 
+// Copy metadata preserves the stored spelling; path aliases supply no value.
+pub(super) fn stored_upload_path(name: &str) -> Option<String> {
+    if !Path::new(name).is_absolute()
+        || name
+            .split('/')
+            .skip(1)
+            .any(|component| matches!(component, "" | "." | ".."))
+    {
+        return None;
+    }
+    Some(name.to_owned())
+}
+
 impl UploadOwnership<'_> {
     pub(super) fn owned_attachment_ref(&mut self, name: &str) -> Option<String> {
         use std::os::unix::fs::MetadataExt;
@@ -134,6 +147,13 @@ impl HistoryCatalog {
                     .and_then(|path| ownership.owned_attachment_ref(path));
                 if image.attachment_ref.is_some() {
                     image.original_name = ownership.owned_original_name(&path);
+                    // Copy metadata only from a proven absolute user source;
+                    // cwd resolution and tool correlation do not supply it.
+                    if matches!(image.origin, Some(ImageOrigin::UserAttachment))
+                        && candidate.is_absolute()
+                    {
+                        image.upload_path = candidate.to_str().and_then(stored_upload_path);
+                    }
                 }
             }
         }
@@ -143,6 +163,7 @@ impl HistoryCatalog {
                 origin,
                 attachment_ref,
                 original_name,
+                upload_path,
                 ..
             } = part
                 && let Some(image) = message.images.iter().find(|image| &image.id == image_ref)
@@ -150,6 +171,7 @@ impl HistoryCatalog {
                 *origin = image.origin;
                 *attachment_ref = image.attachment_ref.clone();
                 *original_name = image.original_name.clone();
+                *upload_path = image.upload_path.clone();
             }
         }
         // Correlation adds bytes after the initial parts projection.

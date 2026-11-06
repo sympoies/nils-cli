@@ -624,7 +624,8 @@ Owner resolution stays with the aggregator.
 | `console-start-operation-conflict` | usage/64 | 400 | The operation ID is bound to another request. | Do not submit a different request under this ID; reconcile the original operation. |
 | `console-start-operation-not-found` | usage/64 | 400 | No matching operation is available to reconcile. | Reconciliation is read-only; inspect the operation before creating a new one. |
 | `console-start-operation-expired` | usage/64 | 400 | The operation ID expired or its receipt was evicted. | No; inspect Console for the earlier child before using a fresh ID. |
-| `console-start-unavailable` | runtime/1 | 502 | The create outcome could not be confirmed. | No; reconcile the operation before retrying. |
+| `console-start-unavailable` | runtime/1 | 502 | The start answer could not be confirmed; `created_session_id` identifies a known creation when available. | No; reconcile the operation before retrying. |
+| `create-outcome-unknown` | runtime/1 | 502 | Upstream cannot establish whether creation happened and supplies no valid created ID. | No; reconcile the operation; absence of candidates does not prove no creation. |
 
 Refusals are content-free: they never echo paths, credentials, prompts or upstream text, and the
 unauthorized code does not say which check failed. For other forwarded failures, use the operation
@@ -661,8 +662,14 @@ session-scoped call:
 - Any typed usage- or data-class aggregator code, including those and a rejection of the request
   shape such as `invalid-request`, is forwarded with its own code and records the operation
   `not_created` with `safe_to_retry: true`.
-- Only a missing or unreadable answer is `console-start-unavailable`; it leaves the operation
-  `ambiguous`, to be reconciled.
+- A missing or unreadable answer is `console-start-unavailable`; it leaves the operation
+  `ambiguous`, to be reconciled. An upstream `create-outcome-unknown` without a known created ID
+  also remains ambiguous.
+- If an upstream `console-start-unavailable` or `create-outcome-unknown` carries a valid
+  `error.details.created_session_id`, the daemon returns `console-start-unavailable` with that ID
+  and records `created`. The creation outcome is known even though the start answer is unavailable;
+  it never reports `create-outcome-unknown` for that known creation. Only the bounded ID is retained,
+  not arbitrary upstream details. Creation evidence does not attest provider readiness.
 
 ### Receipt and idempotency
 
@@ -698,6 +705,46 @@ Every success, replay and reconciliation carries `receipt`:
 A consumer keeps its previous session unless `state` is `created` with a session ID, and rebinds its
 route only then. Operation diagnostics and the 7-day receipt retention are those of
 [Operation diagnostics and reconciliation](coordination-runtime-v1.md#operation-diagnostics-and-reconciliation).
+
+### Recovering a lost start response
+
+Generate and retain a UUIDv7 `operation_id` **before** submitting a service start. After a timeout,
+disconnect, or a warning that the session was created, use the same service ID, admitted generation,
+owner and operation ID against the same relaying daemon:
+
+```sh
+agent-session start --via-console --service integration --service-generation generation-1 \
+  --credential-file FILE --owner owner-a --operation-id UUIDV7 --reconcile --format json
+```
+
+The HTTP equivalent is `POST /coordination/services/console-start/v1` with the service bearer and
+exactly this body; despite the POST method, reconciliation performs only reads:
+
+```json
+{
+  "service_id": "integration", "service_generation": "generation-1", "owner": "owner-a",
+  "operation_id": "UUIDv7", "reconcile": true
+}
+```
+
+The lookup reuses the existing operation receipt; it never starts a session, resubmits a create,
+cleans up a child, or adopts a board candidate. It survives daemon restart within receipt retention.
+The start error's `details.operation_id` and `hint` point to this lookup. For a known creation,
+`details.created_session_id` also names the child directly, and the lookup reads its retained receipt
+without an aggregator call. Every successful start also returns `operation_id` and `receipt`.
+
+| Lookup result | Creation evidence | Retry safety |
+| --- | --- | --- |
+| `receipt.state: created` | `receipt.session.id` and top-level `session.id` are the exact created child. | Do not create again; inspect the identified session if its start answer was unavailable. |
+| `receipt.state: not_created` | The service recorded a definitive refusal before creation. | Follow `receipt.safe_to_retry`; when true, a deliberate new start may use a fresh UUIDv7 and current expiry. Reusing this ID only replays its receipt. |
+| `receipt.state: ambiguous` | Unknown or still in flight; `session` is null. Board candidates are suggestions, not proof. | `safe_to_retry: false`; never infer not-created from an empty or unavailable scan. |
+| `receipt.state: start_failed` | Creation and a startup failure were recorded; the receipt names the child. | Follow its typed failure and `safe_to_retry`; do not treat it as a missing creation. |
+
+`console-start-operation-not-found` and `console-start-operation-expired` are lookup failures,
+not definitive not-created results. They do not authorize a fresh start: receipts may be absent or
+past their retention fence. Reconcile while the receipt is retained (seven days), and retain the
+returned child identity. A genuinely unreadable upstream result can remain unknown; the service
+does not guess an ID from titles or board candidates.
 
 ## Service-origin submission
 

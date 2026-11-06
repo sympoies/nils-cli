@@ -1,4 +1,5 @@
 pub(crate) mod cli;
+pub(crate) mod notice;
 
 use std::fs;
 use std::path::PathBuf;
@@ -1313,7 +1314,7 @@ pub(crate) fn tick<F>(
     submit: F,
 ) -> Result<TickOutcome, CliError>
 where
-    F: FnMut(&SessionRecord) -> Result<(), CliError>,
+    F: FnMut(&SessionRecord, crate::SessionRecordLock) -> Result<(), CliError>,
 {
     tick_inner(
         context,
@@ -1339,7 +1340,7 @@ pub(crate) fn tick_for_runtime<F>(
     submit: F,
 ) -> Result<TickOutcome, CliError>
 where
-    F: FnMut(&SessionRecord) -> Result<(), CliError>,
+    F: FnMut(&SessionRecord, crate::SessionRecordLock) -> Result<(), CliError>,
 {
     tick_inner(
         context,
@@ -1365,7 +1366,7 @@ pub(crate) fn tick_for_runtime_and_binding<F>(
     submit: F,
 ) -> Result<TickOutcome, CliError>
 where
-    F: FnMut(&SessionRecord) -> Result<(), CliError>,
+    F: FnMut(&SessionRecord, crate::SessionRecordLock) -> Result<(), CliError>,
 {
     tick_inner(
         context,
@@ -1390,12 +1391,12 @@ fn tick_inner<F>(
     mut submit: F,
 ) -> Result<TickOutcome, CliError>
 where
-    F: FnMut(&SessionRecord) -> Result<(), CliError>,
+    F: FnMut(&SessionRecord, crate::SessionRecordLock) -> Result<(), CliError>,
 {
     let now = epoch_string(now_epoch)?;
     let observed = load_session_record(context, id)?;
     let canonical_id = observed.id.clone();
-    let _lock = acquire_session_record_lock(context, &canonical_id)?;
+    let record_lock = acquire_session_record_lock(context, &canonical_id)?;
     let mut record = load_session_record(context, &canonical_id)?;
     crate::ensure_same_session_identity(&observed, &record)?;
     if !runtime_matches(&record, fences.launch_id) {
@@ -1408,6 +1409,9 @@ where
         return Ok(TickOutcome::Unchanged);
     }
     let mut state = read_state(context, &record.id, &now)?;
+    let Some(_attempt_fence) = notice::try_attempt(context, &record.id)? else {
+        return Ok(TickOutcome::Unchanged);
+    };
     if !supported(&record) {
         state.enabled = false;
         state.state = "terminal_failure".to_string();
@@ -1663,7 +1667,18 @@ where
     state.next_check_at = None;
     write_state(context, &record.id, &state)?;
     drop(health_fence);
-    match submit(&record) {
+    let submission = submit(&record, record_lock);
+    // Native ingress needs the transferred lock. Reacquire before publishing,
+    // and never overwrite a replacement, cancellation or a newer recovery.
+    let _lock =
+        acquire_session_record_lock_timed(context, &record.id, PROTOCOL_STATE_LOCK_TIMEOUT)?;
+    let current = load_session_record(context, &record.id)?;
+    crate::ensure_same_session_identity(&record, &current)?;
+    let retained = read_state(context, &record.id, &now)?;
+    if serde_json::to_value(&retained).ok() != serde_json::to_value(&state).ok() {
+        return Ok(TickOutcome::Unchanged);
+    }
+    match submission {
         Ok(()) => {
             state.state = "resumed".to_string();
             state.updated_at = now;
@@ -2052,7 +2067,7 @@ mod tests {
                 &record.runtime.as_ref().unwrap().launch_id,
                 scheduled,
                 &no_usage,
-                |_| {
+                |_, _lock| {
                     submissions += 1;
                     Ok(())
                 },
@@ -2104,7 +2119,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| {
+            |_, _lock| {
                 submissions += 1;
                 Ok(())
             },
@@ -2244,7 +2259,7 @@ mod tests {
                     exhausted_reset_epochs: Vec::new(),
                     soonest_reset_epoch: None,
                 },
-                |_| Err(CliError::runtime("submit-unknown", "unknown", None)),
+                |_, _lock| Err(CliError::runtime("submit-unknown", "unknown", None)),
             )
             .unwrap(),
             TickOutcome::TerminalFailure
@@ -2326,7 +2341,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| Ok(()),
+            |_, _lock| Ok(()),
         )
         .unwrap();
         activity::ingest_event(
@@ -2465,7 +2480,7 @@ mod tests {
                 exhausted_reset_epochs: vec![1_893_456_600],
                 soonest_reset_epoch: None,
             },
-            |_| panic!("continuation must wait for the account switch"),
+            |_, _lock| panic!("continuation must wait for the account switch"),
         )
         .unwrap();
         assert_eq!(outcome, TickOutcome::AccountSwitchQueued);
@@ -2521,7 +2536,7 @@ mod tests {
             },
             1_893_456_001,
             &healthy,
-            |_| {
+            |_, _lock| {
                 submissions += 1;
                 Ok(())
             },
@@ -2540,7 +2555,7 @@ mod tests {
                 },
                 1_893_456_002,
                 &healthy,
-                |_| {
+                |_, _lock| {
                     submissions += 1;
                     Ok(())
                 },
@@ -2594,7 +2609,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| panic!("continuation must wait for the account switch"),
+            |_, _lock| panic!("continuation must wait for the account switch"),
         )
         .unwrap();
 
@@ -2705,7 +2720,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| {
+            |_, _lock| {
                 submissions += 1;
                 Ok(())
             },
@@ -2806,7 +2821,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| {
+            |_, _lock| {
                 submissions += 1;
                 Ok(())
             },
@@ -2905,7 +2920,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| {
+            |_, _lock| {
                 submissions += 1;
                 Ok(())
             },
@@ -2979,7 +2994,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: Some(base + 5 * 24 * 60 * 60),
             },
-            |_| panic!("no candidate must not submit a continuation"),
+            |_, _lock| panic!("no candidate must not submit a continuation"),
         )
         .unwrap();
 
@@ -3039,7 +3054,7 @@ mod tests {
                     exhausted_reset_epochs: Vec::new(),
                     soonest_reset_epoch: None,
                 },
-                |_| panic!("continuation must wait for the account switch"),
+                |_, _lock| panic!("continuation must wait for the account switch"),
             )
             .unwrap(),
             TickOutcome::AccountSwitchQueued
@@ -3075,7 +3090,7 @@ mod tests {
                     exhausted_reset_epochs: Vec::new(),
                     soonest_reset_epoch: None,
                 },
-                |_| Ok(()),
+                |_, _lock| Ok(()),
             )
             .unwrap(),
             TickOutcome::Resumed
@@ -3199,7 +3214,7 @@ mod tests {
                 exhausted_reset_epochs: vec![base + 600],
                 soonest_reset_epoch: None,
             },
-            |_| panic!("no candidate must not submit a continuation"),
+            |_, _lock| panic!("no candidate must not submit a continuation"),
         )
         .unwrap();
         assert_eq!(outcome, TickOutcome::Scheduled);
@@ -3345,7 +3360,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| panic!("must not submit without authoritative usage"),
+            |_, _lock| panic!("must not submit without authoritative usage"),
         )
         .unwrap();
 
@@ -3523,7 +3538,7 @@ mod tests {
             &record.runtime.as_ref().unwrap().launch_id,
             wake,
             &no_usage,
-            |_| Ok(()),
+            |_, _lock| Ok(()),
         )
         .unwrap();
         let resumed = view_for_record(&context, &record);
@@ -3592,7 +3607,7 @@ mod tests {
                 exhausted_reset_epochs: vec![base + 300, base + 900],
                 soonest_reset_epoch: None,
             },
-            |_| panic!("must not submit while blocked"),
+            |_, _lock| panic!("must not submit while blocked"),
         )
         .unwrap();
         assert_eq!(first, TickOutcome::Scheduled);
@@ -3612,7 +3627,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| {
+            |_, _lock| {
                 submissions += 1;
                 Ok(())
             },
@@ -3629,7 +3644,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| {
+            |_, _lock| {
                 submissions += 1;
                 Ok(())
             },
@@ -3669,7 +3684,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: Some(base + 300),
             },
-            |_| panic!("must not submit before the fallback wake"),
+            |_, _lock| panic!("must not submit before the fallback wake"),
         )
         .unwrap();
         assert_eq!(scheduled, TickOutcome::Scheduled);
@@ -3694,7 +3709,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: Some(base + 300),
             },
-            |_| {
+            |_, _lock| {
                 submissions += 1;
                 Ok(())
             },
@@ -3734,7 +3749,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| panic!("must not submit without a reset epoch"),
+            |_, _lock| panic!("must not submit without a reset epoch"),
         )
         .unwrap();
         assert_eq!(outcome, TickOutcome::Scheduled);
@@ -3790,7 +3805,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| panic!("Codex must not probe without an authoritative open window"),
+            |_, _lock| panic!("Codex must not probe without an authoritative open window"),
         )
         .unwrap();
         assert_eq!(outcome, TickOutcome::Retrying);
@@ -3830,7 +3845,7 @@ mod tests {
                 "2030-01-01T00:00:01Z",
             )
             .unwrap();
-            let outcome = tick(&context, &record.id, base, &snap, |_| Ok(())).unwrap();
+            let outcome = tick(&context, &record.id, base, &snap, |_, _lock| Ok(())).unwrap();
             assert_eq!(outcome, TickOutcome::Scheduled, "arm {i} should schedule");
             let wake = epoch_from_string(
                 read_state(&context, &record.id, "ignored")
@@ -3889,7 +3904,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| panic!("the recovered claim must wait before probing"),
+            |_, _lock| panic!("the recovered claim must wait before probing"),
         )
         .unwrap();
         assert_eq!(outcome, TickOutcome::Scheduled);
@@ -3914,7 +3929,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| panic!("a stale pre-upgrade claim must never submit"),
+            |_, _lock| panic!("a stale pre-upgrade claim must never submit"),
         )
         .unwrap();
         assert_eq!(outcome, TickOutcome::TerminalFailure);
@@ -3957,7 +3972,7 @@ mod tests {
                 exhausted_reset_epochs: vec![base + 900],
                 soonest_reset_epoch: None,
             },
-            |_| panic!("must not submit while blocked"),
+            |_, _lock| panic!("must not submit while blocked"),
         )
         .unwrap();
 
@@ -4004,7 +4019,7 @@ mod tests {
                     exhausted_reset_epochs: vec![base + 900],
                     soonest_reset_epoch: None,
                 },
-                |_| panic!("must not submit while exhausted"),
+                |_, _lock| panic!("must not submit while exhausted"),
             )
             .unwrap(),
             TickOutcome::Scheduled
@@ -4033,7 +4048,7 @@ mod tests {
                     exhausted_reset_epochs: Vec::new(),
                     soonest_reset_epoch: None,
                 },
-                |_| {
+                |_, _lock| {
                     submissions += 1;
                     Ok(())
                 },
@@ -4136,7 +4151,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| panic!("cancelled state must not submit"),
+            |_, _lock| panic!("cancelled state must not submit"),
         )
         .unwrap();
         assert_eq!(outcome, TickOutcome::Unchanged);
@@ -4196,7 +4211,7 @@ mod tests {
                 exhausted_reset_epochs: vec![base + 300],
                 soonest_reset_epoch: None,
             },
-            |_| panic!("must not submit while blocked"),
+            |_, _lock| panic!("must not submit while blocked"),
         )
         .unwrap();
         let wake = read_state(&context, &record.id, "ignored")
@@ -4226,7 +4241,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| panic!("stale or policy-blocked usage must never submit"),
+            |_, _lock| panic!("stale or policy-blocked usage must never submit"),
         )
         .unwrap();
         assert_eq!(outcome, TickOutcome::Retrying);
@@ -4264,7 +4279,7 @@ mod tests {
                 exhausted_reset_epochs: vec![base + 60],
                 soonest_reset_epoch: None,
             },
-            |_| panic!("must not submit while blocked"),
+            |_, _lock| panic!("must not submit while blocked"),
         )
         .unwrap();
         let wake = read_state(&context, &record.id, "ignored")
@@ -4283,7 +4298,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| panic!("an exhausted window without reset must never submit"),
+            |_, _lock| panic!("an exhausted window without reset must never submit"),
         )
         .unwrap();
         assert_eq!(outcome, TickOutcome::Retrying);
@@ -4331,7 +4346,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| panic!("an unconfirmed durable claim must never be replayed"),
+            |_, _lock| panic!("an unconfirmed durable claim must never be replayed"),
         )
         .unwrap();
         assert_eq!(outcome, TickOutcome::TerminalFailure);
@@ -4367,7 +4382,7 @@ mod tests {
                 exhausted_reset_epochs: vec![base + 60],
                 soonest_reset_epoch: None,
             },
-            |_| panic!("must not submit while blocked"),
+            |_, _lock| panic!("must not submit while blocked"),
         )
         .unwrap();
         let wake = read_state(&context, &record.id, "ignored")
@@ -4388,7 +4403,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| {
+            |_, _lock| {
                 submissions += 1;
                 Err(CliError::runtime("injected-partial-send", "injected", None))
             },
@@ -4405,7 +4420,7 @@ mod tests {
                 exhausted_reset_epochs: Vec::new(),
                 soonest_reset_epoch: None,
             },
-            |_| {
+            |_, _lock| {
                 submissions += 1;
                 Ok(())
             },
@@ -4548,5 +4563,61 @@ mod tests {
         assert!(!cancelled.enabled);
         let error = set_enabled(&context, &record.id, true, "2030-01-01T00:00:06Z").unwrap_err();
         assert_eq!(error.code(), "auto-resume-state-unavailable");
+    }
+    #[test]
+    fn active_notice_attempt_survives_a_second_tick_after_lock_handoff() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = seed_session(&tmp);
+        set_enabled(&context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
+        let revision = waiting_revision(&context, &record);
+        arm_usage_exhaustion(
+            &context,
+            &record.id,
+            "turn-1".into(),
+            revision,
+            "2030-01-01T00:00:01Z",
+        )
+        .unwrap();
+        let base = 1_893_456_000;
+        tick(
+            &context,
+            &record.id,
+            base,
+            &UsageSnapshot {
+                authoritative: true,
+                has_exhausted_windows: true,
+                exhausted_reset_epochs: vec![base + 1],
+                soonest_reset_epoch: None,
+            },
+            |_, _lock| panic!("must schedule first"),
+        )
+        .unwrap();
+        let open = UsageSnapshot {
+            authoritative: true,
+            has_exhausted_windows: false,
+            exhausted_reset_epochs: vec![],
+            soonest_reset_epoch: None,
+        };
+        let outcome = tick(&context, &record.id, base + 1000, &open, |_, lock| {
+            drop(lock);
+            let sibling = tick(&context, &record.id, base + 1000, &open, |_, _lock| {
+                panic!("duplicate continuation")
+            })
+            .unwrap();
+            assert_eq!(
+                sibling,
+                TickOutcome::Unchanged,
+                "a live notice attempt is not a crashed unknown attempt"
+            );
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(outcome, TickOutcome::Resumed);
+        assert_eq!(
+            read_state(&context, &record.id, "ignored")
+                .unwrap()
+                .failure_reason,
+            None
+        );
     }
 }

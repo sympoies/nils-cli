@@ -165,6 +165,12 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
                         vec!["local_inputs"]
                     },
                 ),
+                Some(PrReviewCommand::Edit(_)) => (
+                    "pr.review.edit",
+                    mutation,
+                    ProviderEffect::NetworkWrite,
+                    vec!["local_inputs", "provider"],
+                ),
                 None => (
                     "pr.review.post",
                     mutation,

@@ -397,7 +397,7 @@ fn auth_quarantine_blocks_structured_and_auto_resume_prompts() {
         Some("auth-quarantined".into())
     );
     let _lock = crate::acquire_session_record_lock(&context, ID).unwrap();
-    let result = crate::send_auto_resume_input(&context, &record, "continue", &tmux);
+    let result = crate::send_auto_resume_input(&context, &record, _lock, "continue", &tmux);
     assert_eq!(
         result.err().map(|e| e.code().to_string()),
         Some("auth-quarantined".into())

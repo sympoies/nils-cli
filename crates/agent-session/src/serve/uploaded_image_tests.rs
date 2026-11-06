@@ -22,7 +22,10 @@ impl Fixture {
     }
 
     fn for_provider(provider: &str) -> Self {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = tempfile::Builder::new()
+            .prefix("history image $` ")
+            .tempdir()
+            .unwrap();
         let state_dir = temp.path().join("state");
         let cwd = temp.path().to_path_buf();
         let root = temp.path().join("history");
@@ -366,8 +369,14 @@ async fn upload_original_names_are_safe_and_match_history_parts_on_reload() {
         assert_eq!(images[0]["original_name"], "photo 1.png");
         assert!(images[1].get("original_name").is_none());
         assert_eq!(images[2]["original_name"], "safe.png");
-        for (image, part) in images.iter().zip(parts) {
+        for ((image, part), path) in images
+            .iter()
+            .zip(parts)
+            .zip([&named, &missing, &unsafe_name])
+        {
             assert_eq!(image.get("original_name"), part.get("original_name"));
+            assert_eq!(image["upload_path"], path.to_str().unwrap());
+            assert_eq!(part["upload_path"], image["upload_path"]);
         }
         assert!(!serde_json::to_string(message).unwrap().contains("private"));
     }

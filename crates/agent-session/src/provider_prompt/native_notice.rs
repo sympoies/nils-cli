@@ -31,8 +31,8 @@ pub(crate) enum CaptureError {
 
 pub(crate) struct Baseline {
     pub(crate) stamp: Stamp,
-    path: PathBuf,
-    file: File,
+    pub(super) path: PathBuf,
+    pub(super) file: File,
 }
 
 #[derive(Clone, Debug)]
@@ -47,16 +47,20 @@ pub(crate) struct Proof {
     pub(crate) row: Row,
     pub(crate) row_offset: u64,
     pub(crate) row_payload_sha256: String,
+    pub(crate) codex: Option<crate::send::claude_notice::store::codex::Row>,
 }
 
 /// Decode only the pinned external native row shape. This confers no authority
 /// without the private producer claim and exact physical-row receipt binding.
 pub(crate) fn row(value: &Value, binding: &Binding) -> Option<Row> {
     if binding.provider != "claude"
-        || !version::supported(&binding.provider_version)
+        || !binding
+            .provider_version
+            .as_deref()
+            .is_some_and(version::supported)
         || value.get("type")?.as_str()? != "user"
         || value.get("sessionId")?.as_str()? != binding.provider_session_id
-        || value.get("version")?.as_str()? != binding.provider_version
+        || Some(value.get("version")?.as_str()?) != binding.provider_version.as_deref()
         || value.get("promptSource")?.as_str()? != "system"
         || value.get("isSidechain")?.as_bool()?
     {
@@ -144,7 +148,7 @@ impl Baseline {
         Self::pin(source).ok_or(CaptureError::Unavailable)
     }
 
-    fn pin(path: PathBuf) -> Option<Self> {
+    pub(super) fn pin(path: PathBuf) -> Option<Self> {
         let (mut file, metadata) = super::open_regular_file(&path).ok()?;
         let eof = metadata.len();
         if eof > 0 {
@@ -223,6 +227,7 @@ impl Baseline {
                         row,
                         row_offset: current,
                         row_payload_sha256: sha256(payload),
+                        codex: None,
                     });
                 }
             }

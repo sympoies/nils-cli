@@ -926,11 +926,64 @@ fn service_start_typed_aggregator_rejection_records_a_retryable_not_created() {
         assert_eq!(error["code"], code);
 
         // The operation is recorded as not created and may be retried.
+        let before = aggregator.seen().len();
         let probe = request.reconcile(&fixture, &operation);
         assert_eq!(probe.code, 0, "{code}: {}", probe.stdout_text());
+        assert_eq!(
+            aggregator.seen().len(),
+            before,
+            "not-created lookup is local"
+        );
         let data = probe.stdout_json()["data"].clone();
         assert_eq!(data["receipt"]["state"], "not_created", "{code}");
         assert_eq!(data["receipt"]["safe_to_retry"], true, "{code}");
         assert_eq!(data["receipt"]["session"], Value::Null, "{code}");
     }
+}
+
+#[test]
+fn service_start_recovers_known_created_id_after_unavailable_response_and_restart() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let admission = Admission::new(&fixture);
+    let request = Request::new(&admission);
+    for code in ["console-start-unavailable", "create-outcome-unknown"] {
+        let operation = new_operation();
+        let serve = admission.serve(&fixture, &aggregator);
+        // The target created the session but its start answer was lost upstream.
+        // The aggregator still knows the exact id; ignore the caller's first answer.
+        aggregator.reply_json(
+            502,
+            &json!({"ok":false,"error":{
+                "code":code,"message":"session was created; start response lost",
+                "details":{"created_session_id":"recovered-child","prompt":"private-fixture"}
+            }}),
+        );
+        let output = request.run(&fixture, &operation);
+        drop(serve);
+        let _serve = admission.serve(&fixture, &aggregator);
+        let before = aggregator.seen().len();
+        let probe = request.reconcile(&fixture, &operation);
+        assert_eq!(probe.code, 0, "{}", probe.stdout_text());
+        let data = probe.stdout_json()["data"].clone();
+        assert_eq!(data["receipt"]["state"], "created", "{code}: {data}");
+        assert_eq!(data["receipt"]["session"]["id"], "recovered-child");
+        assert_eq!(data["session"]["id"], "recovered-child");
+        assert_eq!(data["receipt"]["operation_id"], operation);
+        assert_eq!(data["receipt"]["safe_to_retry"], false);
+        assert_eq!(
+            aggregator.seen().len(),
+            before,
+            "lookup uses the receipt only"
+        );
+        let error = error_of(&output);
+        assert_eq!(error["code"], "console-start-unavailable");
+        assert_eq!(error["details"]["created_session_id"], "recovered-child");
+        assert_eq!(error["details"]["recovery"]["safe_to_retry"], false);
+        assert!(error["hint"].as_str().unwrap().contains(&operation));
+        assert!(error["hint"].as_str().unwrap().contains("--reconcile"));
+        assert!(!probe.stdout_text().contains("private-fixture"));
+        assert!(!output.stdout_text().contains("private-fixture"));
+    }
+    assert_eq!(creates(&aggregator), 2, "one create per operation");
 }
