@@ -1702,10 +1702,9 @@ fn resolve_activity_helper() -> Result<std::ffi::OsString, HookError> {
 /// Resolve the same authoritative helper for activity and doctor.
 pub(crate) fn locate_activity_helper() -> Option<PathBuf> {
     if let Some(override_path) = std::env::var_os(HELPER_BIN_ENV).filter(|value| !value.is_empty())
+        && let Some(candidate) = canonical_executable(Path::new(&override_path))
     {
-        if let Some(candidate) = canonical_executable(Path::new(&override_path)) {
-            return Some(candidate);
-        }
+        return Some(candidate);
     }
     if let Some(roots) = std::env::var_os("AGENT_RUNTIME_TRUSTED_CLI_ROOT")
         .filter(|roots| !roots.to_string_lossy().trim().is_empty())
