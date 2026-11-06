@@ -294,7 +294,27 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
         // create path (a draft opened earlier must still carry evidence to
         // be delivered in an opted-in repo).
         let cfg = ForgeConfig::load_layered(workdir, find_git_toplevel(workdir).as_deref());
-        let test_first_policy = cfg.resolve_test_first_policy();
+        let test_first_policy = match crate::ops::pr_create::test_change_gate::policy(
+            &cfg.resolve_test_first_policy(),
+            ctx,
+            args.kind.into_kind(),
+            workdir,
+            &global.remote,
+            &expected_base,
+            resolved_head.local_branch,
+        ) {
+            Ok(policy) => policy,
+            Err(err) => {
+                return Ok(emit_chain_failure(
+                    steps,
+                    args,
+                    ctx,
+                    Some((number, url)),
+                    &err,
+                    format,
+                ));
+            }
+        };
         let gate_applies = test_first_policy.required_for(args.kind.into_kind());
         let remote_url = evidence_remote_url(
             gate_applies,
@@ -989,7 +1009,23 @@ fn build_dry_run_payload(
     // evidence for selected kinds (both create and adopt paths), so surface
     // the same verdict here instead of predicting a success the real deliver
     // would refuse.
-    let test_first_policy = cfg.resolve_test_first_policy();
+    let policy_result = crate::ops::pr_create::test_change_gate::policy(
+        &cfg.resolve_test_first_policy(),
+        ctx,
+        args.kind.into_kind(),
+        workdir,
+        &global.remote,
+        args.base.as_deref().unwrap_or("HEAD"),
+        local_branch,
+    );
+    let policy_failed = policy_result.is_err();
+    let test_first_policy = match policy_result {
+        Ok(policy) => policy,
+        Err(err) => {
+            local_preflight.push(RuleVerdict::from_result("test_first", Err(err)));
+            cfg.resolve_test_first_policy()
+        }
+    };
     let gate_applies = test_first_policy.required_for(args.kind.into_kind());
     let remote_url = evidence_remote_url(
         gate_applies,
@@ -1001,14 +1037,19 @@ fn build_dry_run_payload(
     let repository_id = gate_applies
         .then(|| evidence_repository_id(ctx, remote_url.as_deref(), global.repo.as_deref()))
         .flatten();
-    if let Some(verdict) = test_first_preflight_verdict(
-        args,
-        &test_first_policy,
-        workdir,
-        &global.remote,
-        repository_id.as_deref(),
-        local_branch,
-    ) {
+    if let Some(verdict) = (!policy_failed)
+        .then(|| {
+            test_first_preflight_verdict(
+                args,
+                &test_first_policy,
+                workdir,
+                &global.remote,
+                repository_id.as_deref(),
+                local_branch,
+            )
+        })
+        .flatten()
+    {
         local_preflight.push(verdict);
     }
 

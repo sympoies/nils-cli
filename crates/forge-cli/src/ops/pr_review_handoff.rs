@@ -20,7 +20,7 @@ mod diagnostics;
 mod inspection;
 mod policy;
 mod surrender;
-mod test_integrity;
+pub(crate) mod test_integrity;
 use crate::cli::ApprovalPolicy;
 use approval::{Admission, PublishedApproval};
 pub use policy::SupervisorAttestation;

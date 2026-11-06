@@ -49,6 +49,11 @@ affect GitHub or GitLab operations.
 
 ## PR body section headings
 
+For a test-only bug fix, such as a flake fix, use `--kind bug` and the bug
+test-first record (or a reasoned waiver). When the bug gate is enabled, a
+`--kind test` PR with test-change findings also requires that record. A plain
+test addition without findings may use `--kind test` without a record.
+
 `pr create`, `pr edit`, and `pr deliver` require non-empty H2 sections named
 `## Summary` and `## Test plan` by default. To use other headings, configure
 both names (or just the one to override) in the repository's `.forge-cli.toml`:

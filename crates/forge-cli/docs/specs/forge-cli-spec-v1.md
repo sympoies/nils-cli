@@ -1269,6 +1269,13 @@ feature PRs without a record. The list accepts `feature`, `bug`, `docs`, `chore`
 no kinds. Setting the list alone does not enable the gate: `require` must still
 resolve `true`.
 
+When the bug gate is enabled, `pr create --kind test` also requires the bug
+record if the test-change detector reports any findings. At creation and delivery,
+the detector uses a freshly fetched target-repository base and fails with `test_changes_fetch_failed` if fetching fails. The
+provider-backed test-changes preview remains authoritative for review. Use `--kind bug` for a test-only bug fix, such as a flake fix; a
+reasoned waiver remains available. A plain test addition with no findings may
+use `--kind test` without a record.
+
 The repository list replaces the global list in full, including an explicit
 empty list; an omitted list inherits the global setting. A non-array, non-string
 member, or unknown kind records an internal parser warning and ignores the

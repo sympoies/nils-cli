@@ -42,6 +42,7 @@ use crate::validations::{
 };
 
 mod supersede;
+pub(crate) mod test_change_gate;
 
 const SCHEMA: &str = "pr.create";
 const SCHEMA_VERSION: u32 = 1;
@@ -717,7 +718,16 @@ pub fn run_with<R: BackendRunner>(
         (env.head_state)(w, branch)
     })?;
     let qualified_subject = qualified_head_subject_for_env(&ctx, resolved_head, env)?;
-    let gate_applies = env.test_first_policy.required_for(kind);
+    let policy = test_change_gate::policy(
+        &env.test_first_policy,
+        &ctx,
+        kind,
+        &env.workdir,
+        &global.remote,
+        &base,
+        resolved_head.local_branch,
+    )?;
+    let gate_applies = policy.required_for(kind);
     let remote_url = evidence_remote_url(
         gate_applies,
         &ctx,
@@ -740,7 +750,7 @@ pub fn run_with<R: BackendRunner>(
         |delivery_ref| {
             test_first_gate(
                 kind,
-                &env.test_first_policy,
+                &policy,
                 args.test_first_evidence.as_deref(),
                 &env.workdir,
                 &global.remote,
@@ -879,7 +889,16 @@ fn compute_with_subject_inner<R: BackendRunner>(
         (env.head_state)(w, branch)
     })?;
     let qualified_subject = qualified_head_subject_for_env(&ctx, resolved_head, env)?;
-    let gate_applies = env.test_first_policy.required_for(kind);
+    let policy = test_change_gate::policy(
+        &env.test_first_policy,
+        &ctx,
+        kind,
+        &env.workdir,
+        &global.remote,
+        &base,
+        resolved_head.local_branch,
+    )?;
+    let gate_applies = policy.required_for(kind);
     let remote_url = evidence_remote_url(
         gate_applies,
         &ctx,
@@ -902,7 +921,7 @@ fn compute_with_subject_inner<R: BackendRunner>(
         |delivery_ref| {
             test_first_gate(
                 kind,
-                &env.test_first_policy,
+                &policy,
                 args.test_first_evidence.as_deref(),
                 &env.workdir,
                 &global.remote,
