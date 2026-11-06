@@ -376,9 +376,9 @@ user content. Extra fields on an otherwise matching command handler make the
 complete handler user-owned: dry-run/apply/repair fail closed, and remove
 preserves it even when it appears between the agent-session TOML marker lines.
 Completion continues to use the provider's singular
-top-level TOML `notify` argv in `~/.codex/config.toml`. Setup inserts only
-`["agent-session", "activity", "notify", "--agent", "codex"]`, recognizes that
-exact argv idempotently, and removes only that exact argv. A safe user-owned
+top-level TOML `notify` argv in `~/.codex/config.toml`. Setup inserts a
+selector-backed `agent-session activity notify --agent codex` argv, recognizes
+the owned form idempotently, and removes it on request. A safe user-owned
 string argv is encoded into the owned command only after a simulated removal
 reproduces the full original TOML bytes. The helper executes that argv directly
 without a shell, appends the provider payload literally, suppresses child I/O,
