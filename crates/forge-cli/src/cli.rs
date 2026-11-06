@@ -1324,11 +1324,11 @@ pub struct PrDeliverArgs {
     /// Fail when selected labels are missing, not applicable, or conflict.
     #[arg(long = "strict-labels", action = ArgAction::SetTrue)]
     pub strict_labels: bool,
-    /// Directory holding a `test-first-evidence` record, forwarded to the
-    /// create step and verified by the test-first gate when
-    /// `[test_first].require` is true and `require_kinds` selects this kind
-    /// (default: feature/bug). Requires a complete v2 record and a bound
-    /// baseline/delivery subject matching the current checkout.
+    /// Evidence directory forwarded to create and checked when the enabled
+    /// test-first policy selects this kind (default: feature/bug), or selects
+    /// bug and test-kind changes have detector findings. Requires a complete
+    /// v2 record and a bound baseline/delivery subject matching the current
+    /// checkout.
     #[arg(long = "test-first-evidence", value_name = "DIR")]
     pub test_first_evidence: Option<String>,
     /// Cumulative CI-wait budget before declaring `checks_timeout` (default `30m`).
