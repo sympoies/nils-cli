@@ -136,7 +136,7 @@ Parity matrix (v1):
 | `pr list`                                   | `gh pr list --json …`                                                                                                                        | `glab mr list -F json`                                                 | exact                                                                                                                    |
 | `pr edit <id>`                              | `gh pr edit <id> …`                                                                                                                          | `glab mr update <id> …`                                                | exact                                                                                                                    |
 | `pr comment <id>`                           | `gh pr comment <id> --body …`                                                                                                                | `glab mr note <id> --message …`                                        | exact                                                                                                                    |
-| `pr comment-edit <id> <comment-id>` | GitHub issue-comment REST edit after parent verification | GitLab merge request note REST edit | edited body |
+| `pr comment-edit <comment-id>`              | GitHub issue-comment REST edit                                                                                                               | GitLab merge request note REST edit                                    | edited body                                                                                                              |
 | `pr review <id>`                            | guard `gh api …/pulls/{id}`, then outcome comment, native review, or GraphQL pending review + review thread(s) + submit with `--thread-file` | `glab mr note create <id> --message … --resolvable=false`              | outcome comment, native review event, or resolvable review threads (`--thread-file`, GitHub-only); optional issue mirror |
 | `pr review validate [id]`                   | local review body/thread-file validation; with `--check-diff`, `gh api repos/{repo}/pulls/{id}/files`                                        | local validation only; `--check-diff` unsupported in v1                | schema/privacy preflight plus optional GitHub diff-coordinate validation                                                 |
 | `pr ready <id>`                             | `gh pr ready <id>`                                                                                                                           | `glab mr update <id> --ready`                                          | exact                                                                                                                    |
@@ -159,7 +159,7 @@ Parity matrix (v1):
 | `issue view <id>`                           | `gh issue view <id> --json …`                                                                                                                | `glab issue view <id> -F json`                                         | exact                                                                                                                    |
 | `issue edit <id>`                           | `gh issue edit <id> …`                                                                                                                       | `glab issue update <id> …`                                             | exact                                                                                                                    |
 | `issue comment <id>`                        | `gh issue comment <id> --body …`                                                                                                             | `glab issue note <id> --message …`                                     | exact                                                                                                                    |
-| `issue comment-edit <id> <comment-id>` | GitHub issue-comment REST edit after parent verification | GitLab issue note REST edit | edited body |
+| `issue comment-edit <comment-id>`           | GitHub issue-comment REST edit                                                                                                               | GitLab issue note REST edit                                            | edited body                                                                                                              |
 | `issue close <id>`                          | `gh issue close <id>`                                                                                                                        | `glab issue close <id>`                                                | exact                                                                                                                    |
 | `issue reopen <id>`                         | `gh issue reopen <id>`                                                                                                                       | `glab issue reopen <id>`                                               | exact                                                                                                                    |
 | `issue tracker lint <id>`                   | `issue view`, plus one `issue view` per referenced issue with `--check-state`                                                                | same                                                                   | exact (grammar is provider-neutral)                                                                                      |
@@ -1417,13 +1417,13 @@ Two mechanisms harden this:
 
 ## Editing timeline comments
 
-`issue comment-edit <issue> <comment-id> --body-file <path>` and
-`pr comment-edit <pr> <comment-id> --body-file <path>` replace a timeline
-comment on GitHub or GitLab. The body file uses the comment content guards;
-`-` reads standard input. GitHub verifies the parent before editing and GitLab
-uses its parent-scoped notes endpoint. Provider permission failures retain their
+`issue comment-edit <comment-id> --body-file <path>` and
+`pr comment-edit <comment-id> --body-file <path>` replace a timeline comment.
+On GitLab, `--parent <issue-or-mr-iid>` is required for the parent-scoped notes
+endpoint; it is not accepted on GitHub. The body file uses the comment content
+guards; `-` reads standard input. Provider permission failures retain their
 backend diagnostics. The success envelope includes the edited `body`, `id`,
-parent `number`, and `provider`.
+`provider`, and, on GitLab, parent `number`.
 
 ## Provider detection
 

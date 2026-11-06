@@ -3,17 +3,17 @@
 
 ### Result
 
-- Added parent-bound timeline comment editing for GitHub and GitLab.
+- Added timeline comment editing for GitHub and GitLab.
 
 ### Why / context
 
-- GitLab requires the parent IID for its REST note endpoint; GitHub verifies
-  the parent before mutation.
+- GitLab requires the parent IID for its REST note endpoint; GitHub addresses
+  timeline comments directly by ID.
 
 ### Evidence
 
 - Provider fake integration tests cover both providers, permission refusals,
-  exact bodies, and a mismatched GitHub parent.
+  exact bodies, and a missing GitLab parent.
 
 ### Links
 

@@ -159,12 +159,12 @@ pub enum IssueCommand {
 /// Edit a comment on the specified issue or PR.
 #[derive(Args, Debug, Clone)]
 pub struct TimelineCommentEditArgs {
-    /// Parent issue or PR / MR number.
-    #[arg(value_parser = clap::value_parser!(u64).range(1..))]
-    pub id: u64,
     /// Provider comment identifier.
     #[arg(value_parser = clap::value_parser!(u64).range(1..))]
     pub comment_id: u64,
+    /// Parent issue or MR IID (required for GitLab; not used on GitHub).
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    pub parent: Option<u64>,
     /// Replacement body file; use - for stdin.
     #[arg(long, value_name = "PATH")]
     pub body_file: String,

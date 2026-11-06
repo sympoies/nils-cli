@@ -265,6 +265,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (comment-edit)
 _arguments "${_arguments_options[@]}" : \
+'--parent=[Parent issue or MR IID (required for GitLab; not used on GitHub)]:PARENT:_default' \
 '--body-file=[Replacement body file; use - for stdin]:PATH:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
@@ -276,7 +277,6 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
-':id -- Parent issue or PR / MR number:_default' \
 ':comment_id -- Provider comment identifier:_default' \
 && ret=0
 ;;
@@ -1518,6 +1518,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (comment-edit)
 _arguments "${_arguments_options[@]}" : \
+'--parent=[Parent issue or MR IID (required for GitLab; not used on GitHub)]:PARENT:_default' \
 '--body-file=[Replacement body file; use - for stdin]:PATH:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
@@ -1529,7 +1530,6 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
-':id -- Parent issue or PR / MR number:_default' \
 ':comment_id -- Provider comment identifier:_default' \
 && ret=0
 ;;

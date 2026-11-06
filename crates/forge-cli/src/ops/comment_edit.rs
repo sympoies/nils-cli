@@ -4,16 +4,11 @@ use crate::backend::{BackendCall, BackendProgram, BackendRunner, DryRunPayload};
 use crate::cli::{BINARY, GlobalFlags, TimelineCommentEditArgs};
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
-use crate::provider::{Provider, canonical_provider_host, detect, git_remote_url};
+use crate::provider::{Provider, detect, git_remote_url};
 use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 
-#[derive(Deserialize)]
-struct Snapshot {
-    id: u64,
-    issue_url: String,
-}
 #[derive(Deserialize)]
 struct Edited {
     id: u64,
@@ -22,7 +17,8 @@ struct Edited {
 #[derive(Serialize)]
 struct Payload {
     provider: &'static str,
-    number: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    number: Option<u64>,
     id: u64,
     body: String,
 }
@@ -58,6 +54,13 @@ pub fn run(
             None,
         ));
     }
+    if ctx.provider == Provider::GitHub && args.parent.is_some() {
+        return Err(write::invalid(
+            op,
+            "parent_unsupported",
+            "--parent is only supported for GitLab",
+        ));
+    }
     let body = write::text_file(&args.body_file, op)?;
     if body.trim().is_empty() {
         return Err(write::invalid(
@@ -76,40 +79,18 @@ pub fn run(
         let endpoint = format!("repos/{repo}/issues/comments/{}", args.comment_id);
         let mut argv: Vec<OsString> = vec!["api".into()];
         ctx.push_github_api_hostname(&mut argv);
-        argv.push(endpoint.clone().into());
-        if !global.dry_run {
-            let output = runner.run(&BackendCall::new(BackendProgram::Gh, argv.clone()))?;
-            let snapshot: Snapshot = serde_json::from_str(&output.stdout).map_err(|_| {
-                ForgeError::software(
-                    schema_version_for(BINARY, op, 1),
-                    "invalid comment response",
-                    None,
-                )
-            })?;
-            let host = canonical_provider_host(ctx.provider, &ctx.host);
-            let api = if host == "github.com" {
-                "api.github.com".to_string()
-            } else {
-                format!("{host}/api/v3")
-            };
-            let expected = format!("https://{api}/repos/{repo}/issues/{}", args.id);
-            if snapshot.id != args.comment_id || !snapshot.issue_url.eq_ignore_ascii_case(&expected)
-            {
-                return Err(write::invalid(
-                    op,
-                    "comment_parent_mismatch",
-                    "comment does not belong to the specified parent",
-                ));
-            }
-        }
+        argv.push(endpoint.into());
         argv.extend(["--method".into(), "PATCH".into()]);
         BackendCall::new(BackendProgram::Gh, argv)
     } else {
         let parent = if pr { "merge_requests" } else { "issues" };
+        let parent_id = args.parent.ok_or_else(|| {
+            write::invalid(op, "parent_required", "--parent is required for GitLab")
+        })?;
         let path = format!(
             "projects/{}/{parent}/{}/notes/{}",
             gitlab_api::encode_project_path(repo),
-            args.id,
+            parent_id,
             args.comment_id
         );
         gitlab_api::api_call_with_method_fields(&ctx.host, "PUT", path, &[])
@@ -146,7 +127,7 @@ pub fn run(
         schema_version_for(BINARY, op, 1),
         Payload {
             provider: ctx.provider.as_str(),
-            number: args.id,
+            number: args.parent,
             id: edited.id,
             body: edited.body,
         },

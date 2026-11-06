@@ -6,9 +6,6 @@ const FAKE: &str = r##"#!/usr/bin/python3
 import json, os, sys
 args = sys.argv[1:]
 provider = os.path.basename(sys.argv[0])
-if provider == 'gh' and '--method' not in args:
-    print(json.dumps({'id': 91, 'issue_url': os.environ.get('FAKE_PARENT', 'https://api.github.com/repos/acme/widgets/issues/7')}))
-    sys.exit(0)
 if os.environ.get('FAKE_REFUSE'):
     print('HTTP 403: permission denied', file=sys.stderr)
     sys.exit(1)
@@ -46,11 +43,14 @@ fn edits_preserve_body_and_provider_refusals() {
                 "json",
                 kind,
                 "comment-edit",
-                "7",
                 "91",
                 "--body-file",
                 &path,
             ];
+            let mut args = args.to_vec();
+            if provider == "gitlab" {
+                args.extend(["--parent", "7"]);
+            }
             let out = run_forge_cli(&stub, &args);
             assert_eq!(
                 out.code, 0,
@@ -70,25 +70,21 @@ fn edits_preserve_body_and_provider_refusals() {
 }
 
 #[test]
-fn github_rejects_a_comment_from_another_parent() {
-    let stub = StubEnv::new().gh_stub(FAKE).env(
-        "FAKE_PARENT",
-        "https://api.github.com/repos/acme/widgets/issues/8",
-    );
+fn gitlab_requires_a_parent_before_writing() {
+    let stub = StubEnv::new().glab_stub(FAKE);
     let path = stub.tempdir.path().join("body.md");
     fs::write(&path, "replacement").unwrap();
     let out = run_forge_cli(
         &stub,
         &[
             "--provider",
-            "github",
+            "gitlab",
             "--repo",
             "acme/widgets",
             "--format",
             "json",
             "issue",
             "comment-edit",
-            "7",
             "91",
             "--body-file",
             path.to_str().unwrap(),
@@ -96,7 +92,7 @@ fn github_rejects_a_comment_from_another_parent() {
     );
     assert_ne!(out.code, 0);
     assert!(
-        format!("{}{}", out.stdout, out.stderr).contains("comment_parent_mismatch"),
+        format!("{}{}", out.stdout, out.stderr).contains("parent_required"),
         "{out:?}"
     );
 }

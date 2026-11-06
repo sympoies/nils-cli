@@ -625,7 +625,7 @@ For fenced CI reruns and attempt/job receipts, see the
 
 ### Editing comments
 
-Use `forge-cli issue comment-edit <issue> <comment-id> --body-file <path>` or
-`forge-cli pr comment-edit <pr> <comment-id> --body-file <path>` to replace a
-timeline comment. The provider enforces edit permissions. The response includes
-the edited body; GitHub first checks that the comment belongs to the parent.
+Use `forge-cli issue comment-edit <comment-id> --body-file <path>` or
+`forge-cli pr comment-edit <comment-id> --body-file <path>` to replace a
+timeline comment. For GitLab, also pass `--parent <issue-or-mr-iid>`. The
+provider enforces edit permissions and the response includes the edited body.
