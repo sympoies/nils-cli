@@ -622,3 +622,10 @@ without a designated PASS at that head. See the
 
 For fenced CI reruns and attempt/job receipts, see the
 [run rerun contract](docs/specs/forge-run-rerun-v1.md).
+
+### Editing comments
+
+Use `forge-cli issue comment-edit <issue> <comment-id> --body-file <path>` or
+`forge-cli pr comment-edit <pr> <comment-id> --body-file <path>` to replace a
+timeline comment. The provider enforces edit permissions. The response includes
+the edited body; GitHub first checks that the comment belongs to the parent.

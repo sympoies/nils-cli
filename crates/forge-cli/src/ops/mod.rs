@@ -62,6 +62,7 @@ pub mod review_sync_carry_over;
 pub mod search;
 
 pub mod comment;
+pub mod comment_edit;
 pub(crate) mod github_write;
 pub mod release;
 pub mod repo_list;

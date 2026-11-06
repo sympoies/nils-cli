@@ -599,6 +599,20 @@ operations:
       github: { program: gh,   argv: [pr, comment, "{id}", --body, "{body_or_file}"] }
       gitlab: { program: glab, argv: [mr, note,    "{id}", --message, "{body_or_file}"] }
 
+  - id: pr.comment-edit
+    schema_version: cli.forge-cli.pr.comment-edit.v1
+    summary: Replace a timeline comment on the specified parent.
+    inputs:
+      - { name: <id>, type: integer, required: true }
+      - { name: <comment-id>, type: integer, required: true }
+      - { name: --body-file, type: path, required: true }
+    validations:
+      - no_local_path
+      - no_agent_attribution
+    backends:
+      github: { program: gh, argv: [api, "repos/{repo}/issues/comments/{comment-id}", --method, PATCH] }
+      gitlab: { program: glab, argv: [api, "projects/{repo}/merge_requests/{id}/notes/{comment-id}", --method, PUT] }
+
   - id: pr.review
     schema_version: cli.forge-cli.pr.review.v1
     summary: Post an already-rendered review outcome to a PR/MR and optionally mirror issue activity.
@@ -1524,6 +1538,20 @@ operations:
     backends:
       github: { program: gh,   argv: [issue, comment, "{id}", --body, "{body_or_file}"] }
       gitlab: { program: glab, argv: [issue, note,    "{id}", --message, "{body_or_file}"] }
+
+  - id: issue.comment-edit
+    schema_version: cli.forge-cli.issue.comment-edit.v1
+    summary: Replace a timeline comment on the specified parent.
+    inputs:
+      - { name: <id>, type: integer, required: true }
+      - { name: <comment-id>, type: integer, required: true }
+      - { name: --body-file, type: path, required: true }
+    validations:
+      - no_local_path
+      - no_agent_attribution
+    backends:
+      github: { program: gh, argv: [api, "repos/{repo}/issues/comments/{comment-id}", --method, PATCH] }
+      gitlab: { program: glab, argv: [api, "projects/{repo}/issues/{id}/notes/{comment-id}", --method, PUT] }
 
   - id: issue.close
     schema_version: cli.forge-cli.issue.close.v1
