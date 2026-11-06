@@ -528,7 +528,7 @@ pub(super) fn transition_attempt_at(
     {
         return None;
     }
-    receipt.attempted_prompt = Some(candidate.prompt.clone().unwrap_or_else(|| fixed_prompt()));
+    receipt.attempted_prompt = Some(candidate.prompt.clone().unwrap_or_else(fixed_prompt));
     receipt.state = "attempting".to_string();
     receipt.attempted_generation = receipt.generation;
     receipt.attempted_queued_at_epoch = receipt.queued_at_epoch;
