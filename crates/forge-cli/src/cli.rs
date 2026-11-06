@@ -1183,58 +1183,6 @@ pub struct PrListArgs {
 mod pr_create;
 pub use pr_create::PrCreateArgs;
 
-/// `pr` subtree.
-#[derive(Subcommand, Debug)]
-pub enum PrCommand {
-    /// Open a draft pull / merge request from the current branch.
-    Create(PrCreateArgs),
-    /// Fetch a single PR / MR with normalised fields.
-    View {
-        /// Numeric id or branch name.
-        id: String,
-    },
-    /// List PRs / MRs.
-    List(PrListArgs),
-    /// Mutate PR / MR title, body, base, labels, reviewers.
-    Edit(PrEditArgs),
-    /// Append a comment to a PR / MR.
-    Comment(PrCommentArgs),
-    /// Post a review outcome comment and optionally mirror it to an issue.
-    Review(PrReviewArgs),
-    /// List the issue-style comment stream attached to a PR / MR.
-    Comments(PrCommentsArgs),
-    /// Promote a draft PR / MR to ready-for-review.
-    Ready(PrReadyArgs),
-    /// List review threads attached to a PR / MR with their resolved state.
-    ReviewThreads(PrReviewThreadsArgs),
-    /// List native review summaries, classified against the current head.
-    Reviews(PrReviewsArgs),
-    /// Recover an authenticated actor's pending native review.
-    PendingReview(PrPendingReviewArgs),
-    /// Inspect and advance the durable review-loop ledger.
-    ReviewLoop(PrReviewLoopArgs),
-    /// Explicit designated reviewer handoff and published-review admission.
-    ReviewHandoff(PrReviewHandoffArgs),
-    /// Dismiss one configured automated CHANGES_REQUESTED review after a designated PASS.
-    ReviewDismiss(PrReviewDismissArgs),
-    /// List GFM task-list items in the PR / MR description with their state.
-    Tasks(PrTasksArgs),
-    /// Merge a ready PR / MR.
-    Merge(PrMergeArgs),
-    /// Close a PR / MR without merging.
-    Close {
-        /// Numeric id.
-        id: u64,
-    },
-    /// One-shot snapshot of PR / MR check state.
-    Checks(PrChecksArgs),
-    /// Block until every required check reaches a terminal state.
-    WaitChecks(PrWaitChecksArgs),
-    /// End-to-end "open draft (or adopt the branch's open PR) → CI green →
-    /// ready → merge" macro.
-    Deliver(PrDeliverArgs),
-}
-
 /// `label` subtree.
 #[derive(Subcommand, Debug)]
 pub enum LabelCommand {
@@ -1414,30 +1362,6 @@ pub struct PrDeliverArgs {
         value_parser = clap::builder::NonEmptyStringValueParser::new()
     )]
     pub allow_no_checks_reason: Option<String>,
-}
-
-/// `issue` subtree.
-#[derive(Subcommand, Debug)]
-pub enum IssueCommand {
-    /// Open a new issue.
-    Create(IssueCreateArgs),
-    /// Fetch a single issue.
-    View(IssueViewArgs),
-    /// List issues filtered by state / labels / author / assignee.
-    List(IssueListArgs),
-    /// Mutate an issue.
-    Edit(IssueEditArgs),
-    /// Append a comment to an issue.
-    Comment(IssueCommentArgs),
-    /// Close an issue.
-    Close(IssueCloseArgs),
-    /// Reopen a closed issue.
-    Reopen {
-        /// Numeric id.
-        id: u64,
-    },
-    /// Check and maintain a program tracker issue's phase table.
-    Tracker(IssueTrackerArgs),
 }
 
 /// `issue tracker` arguments. A clean subcommand group, like
@@ -2094,6 +2018,9 @@ pub(crate) fn dispatch_parsed(cli: Cli) -> i32 {
             command: Some(PrCommand::Comment(args)),
         })) => ops::pr_comment::run(&global, args, format),
         Some(Command::Pr(PrArgs {
+            command: Some(PrCommand::CommentEdit(args)),
+        })) => ops::comment_edit::run(&global, args, format, true),
+        Some(Command::Pr(PrArgs {
             command: Some(PrCommand::Review(args)),
         })) => ops::pr_review::run(&global, args, format),
         Some(Command::Pr(PrArgs {
@@ -2207,6 +2134,9 @@ pub(crate) fn dispatch_parsed(cli: Cli) -> i32 {
         Some(Command::Issue(IssueArgs {
             command: Some(IssueCommand::Comment(args)),
         })) => ops::issue_comment::run(&global, args, format),
+        Some(Command::Issue(IssueArgs {
+            command: Some(IssueCommand::CommentEdit(args)),
+        })) => ops::comment_edit::run(&global, args, format, false),
         Some(Command::Issue(IssueArgs {
             command: Some(IssueCommand::Close(args)),
         })) => ops::issue_close::run(&global, args.id, args.reason, format),

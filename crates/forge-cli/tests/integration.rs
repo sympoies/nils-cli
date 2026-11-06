@@ -6,6 +6,7 @@ mod integration {
     mod agent_attribution_guard;
     mod auth_status;
     mod cli;
+    mod comment_edit;
     mod completion_sync;
     mod completions;
     mod conformance;

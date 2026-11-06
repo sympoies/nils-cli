@@ -263,6 +263,23 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ':id -- Numeric PR / MR id:_default' \
 && ret=0
 ;;
+(comment-edit)
+_arguments "${_arguments_options[@]}" : \
+'--parent=[Parent issue or MR IID (required for GitLab; not used on GitHub)]:PARENT:_default' \
+'--body-file=[Replacement body file; use - for stdin]:PATH:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':comment_id -- Provider comment identifier:_default' \
+&& ret=0
+;;
 (review)
 _arguments "${_arguments_options[@]}" : \
 '--decision=[Outcome decision to record in the comment metadata]:DECISION:((comments-only\:"Post an informational review outcome comment only"
@@ -1194,6 +1211,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(comment-edit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (review)
 _arguments "${_arguments_options[@]}" : \
 ":: :_forge-cli__subcmd__pr__subcmd__help__subcmd__review_commands" \
@@ -1520,6 +1541,23 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ':id -- Numeric issue id:_default' \
 && ret=0
 ;;
+(comment-edit)
+_arguments "${_arguments_options[@]}" : \
+'--parent=[Parent issue or MR IID (required for GitLab; not used on GitHub)]:PARENT:_default' \
+'--body-file=[Replacement body file; use - for stdin]:PATH:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':comment_id -- Provider comment identifier:_default' \
+&& ret=0
+;;
 (close)
 _arguments "${_arguments_options[@]}" : \
 '--reason=[State reason recorded on close (GitHub only). \`completed\` marks the issue done; \`not planned\` marks it abandoned. GitLab / Local have no equivalent and silently ignore this flag]:REASON:(completed not\ planned)' \
@@ -1709,6 +1747,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (comment)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(comment-edit)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3453,6 +3495,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(comment-edit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (review)
 _arguments "${_arguments_options[@]}" : \
 ":: :_forge-cli__subcmd__help__subcmd__pr__subcmd__review_commands" \
@@ -3686,6 +3732,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (comment)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(comment-edit)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -4474,6 +4524,7 @@ _forge-cli__subcmd__help__subcmd__issue_commands() {
 'list:List issues filtered by state / labels / author / assignee' \
 'edit:Mutate an issue' \
 'comment:Append a comment to an issue' \
+'comment-edit:Edit an existing issue comment' \
 'close:Close an issue' \
 'reopen:Reopen a closed issue' \
 'tracker:Check and maintain a program tracker issue'\''s phase table' \
@@ -4489,6 +4540,11 @@ _forge-cli__subcmd__help__subcmd__issue__subcmd__close_commands() {
 _forge-cli__subcmd__help__subcmd__issue__subcmd__comment_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help issue comment commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__issue__subcmd__comment-edit_commands] )) ||
+_forge-cli__subcmd__help__subcmd__issue__subcmd__comment-edit_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help issue comment-edit commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__issue__subcmd__create_commands] )) ||
 _forge-cli__subcmd__help__subcmd__issue__subcmd__create_commands() {
@@ -4582,6 +4638,7 @@ _forge-cli__subcmd__help__subcmd__pr_commands() {
 'list:List PRs / MRs' \
 'edit:Mutate PR / MR title, body, base, labels, reviewers' \
 'comment:Append a comment to a PR / MR' \
+'comment-edit:Edit an existing PR / MR comment' \
 'review:Post a review outcome comment and optionally mirror it to an issue' \
 'comments:List the issue-style comment stream attached to a PR / MR' \
 'ready:Promote a draft PR / MR to ready-for-review' \
@@ -4614,6 +4671,11 @@ _forge-cli__subcmd__help__subcmd__pr__subcmd__close_commands() {
 _forge-cli__subcmd__help__subcmd__pr__subcmd__comment_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help pr comment commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__pr__subcmd__comment-edit_commands] )) ||
+_forge-cli__subcmd__help__subcmd__pr__subcmd__comment-edit_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help pr comment-edit commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__pr__subcmd__comments_commands] )) ||
 _forge-cli__subcmd__help__subcmd__pr__subcmd__comments_commands() {
@@ -5138,6 +5200,7 @@ _forge-cli__subcmd__issue_commands() {
 'list:List issues filtered by state / labels / author / assignee' \
 'edit:Mutate an issue' \
 'comment:Append a comment to an issue' \
+'comment-edit:Edit an existing issue comment' \
 'close:Close an issue' \
 'reopen:Reopen a closed issue' \
 'tracker:Check and maintain a program tracker issue'\''s phase table' \
@@ -5154,6 +5217,11 @@ _forge-cli__subcmd__issue__subcmd__close_commands() {
 _forge-cli__subcmd__issue__subcmd__comment_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli issue comment commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__issue__subcmd__comment-edit_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__comment-edit_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli issue comment-edit commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__issue__subcmd__create_commands] )) ||
 _forge-cli__subcmd__issue__subcmd__create_commands() {
@@ -5173,6 +5241,7 @@ _forge-cli__subcmd__issue__subcmd__help_commands() {
 'list:List issues filtered by state / labels / author / assignee' \
 'edit:Mutate an issue' \
 'comment:Append a comment to an issue' \
+'comment-edit:Edit an existing issue comment' \
 'close:Close an issue' \
 'reopen:Reopen a closed issue' \
 'tracker:Check and maintain a program tracker issue'\''s phase table' \
@@ -5189,6 +5258,11 @@ _forge-cli__subcmd__issue__subcmd__help__subcmd__close_commands() {
 _forge-cli__subcmd__issue__subcmd__help__subcmd__comment_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli issue help comment commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__issue__subcmd__help__subcmd__comment-edit_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__help__subcmd__comment-edit_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli issue help comment-edit commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__issue__subcmd__help__subcmd__create_commands] )) ||
 _forge-cli__subcmd__issue__subcmd__help__subcmd__create_commands() {
@@ -5400,6 +5474,7 @@ _forge-cli__subcmd__pr_commands() {
 'list:List PRs / MRs' \
 'edit:Mutate PR / MR title, body, base, labels, reviewers' \
 'comment:Append a comment to a PR / MR' \
+'comment-edit:Edit an existing PR / MR comment' \
 'review:Post a review outcome comment and optionally mirror it to an issue' \
 'comments:List the issue-style comment stream attached to a PR / MR' \
 'ready:Promote a draft PR / MR to ready-for-review' \
@@ -5434,6 +5509,11 @@ _forge-cli__subcmd__pr__subcmd__comment_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli pr comment commands' commands "$@"
 }
+(( $+functions[_forge-cli__subcmd__pr__subcmd__comment-edit_commands] )) ||
+_forge-cli__subcmd__pr__subcmd__comment-edit_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli pr comment-edit commands' commands "$@"
+}
 (( $+functions[_forge-cli__subcmd__pr__subcmd__comments_commands] )) ||
 _forge-cli__subcmd__pr__subcmd__comments_commands() {
     local commands; commands=()
@@ -5462,6 +5542,7 @@ _forge-cli__subcmd__pr__subcmd__help_commands() {
 'list:List PRs / MRs' \
 'edit:Mutate PR / MR title, body, base, labels, reviewers' \
 'comment:Append a comment to a PR / MR' \
+'comment-edit:Edit an existing PR / MR comment' \
 'review:Post a review outcome comment and optionally mirror it to an issue' \
 'comments:List the issue-style comment stream attached to a PR / MR' \
 'ready:Promote a draft PR / MR to ready-for-review' \
@@ -5495,6 +5576,11 @@ _forge-cli__subcmd__pr__subcmd__help__subcmd__close_commands() {
 _forge-cli__subcmd__pr__subcmd__help__subcmd__comment_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli pr help comment commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__pr__subcmd__help__subcmd__comment-edit_commands] )) ||
+_forge-cli__subcmd__pr__subcmd__help__subcmd__comment-edit_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli pr help comment-edit commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__pr__subcmd__help__subcmd__comments_commands] )) ||
 _forge-cli__subcmd__pr__subcmd__help__subcmd__comments_commands() {
