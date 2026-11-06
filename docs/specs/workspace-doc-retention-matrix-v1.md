@@ -154,6 +154,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/forge-cli/docs/specs/pr-lifecycle-v1.md`
 - `crates/forge-cli/docs/specs/search-completions-v1.md`
 - `crates/git-cli/docs/specs/dirty-checkout-adoption-json-contract-v1.md`
+- `crates/git-cli/docs/runbooks/governed-https-transport.md`
 - `crates/git-cli/docs/specs/git-cli-remote-surfaces.md`
 - `crates/git-cli/docs/specs/git-cli-worktree-convention.md`
 - `crates/macos-agent/docs/runbooks/backend-upgrade-v1.md`

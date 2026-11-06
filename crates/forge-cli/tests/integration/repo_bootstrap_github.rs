@@ -126,8 +126,8 @@ case "$*" in
   *"rev-list --parents -n 1"*) printf '%s\n' "$GH_TEST_SHA" ;;
   *"log -1 --format=%G?"*) printf '%s\n' "${GH_TEST_LOCAL_SIGNATURE:-G}" ;;
   *"push "*)
-    if [ -n "${FORGE_IDENTITY_REPO:-}" ]; then
-      [ "$FORGE_IDENTITY_REPO" = sympoies/widgets ] || exit 9
+    if [ -n "${FORGE_IDENTITY_PATH:-}" ]; then
+      [ "$FORGE_IDENTITY_PATH" = sympoies/widgets.git ] || exit 9
       [ "$FORGE_IDENTITY_TOKEN" = fixture-identity-token ] || exit 9
       [ -z "${FORGE_CLI_BOOTSTRAP_GITHUB_TOKEN:-}" ] || exit 9
     else
@@ -183,6 +183,20 @@ printf '{"ok":true,"commit":{"sha":"%s"}}\n' "$GH_TEST_SHA"
     fn with_identity_policy(mut self) -> Self {
         let config = self.stub.tempdir.path().join("identity-config/forge-cli");
         fs::create_dir_all(&config).expect("identity config directory");
+        let git_config = config.parent().unwrap().join("git/config");
+        fs::create_dir_all(git_config.parent().unwrap()).expect("Git config directory");
+        fs::write(&git_config, "[credential]\nhelper=\n").expect("empty helper list");
+        nils_test_support::git::git(
+            self.stub.tempdir.path(),
+            &[
+                "config",
+                "--file",
+                git_config.to_str().unwrap(),
+                "--add",
+                "credential.helper",
+                "!f() { test \"$1\" = get || exit 0; cat >/dev/null; printf 'username=fixture\\npassword=%s\\n' \"$BOOTSTRAP_IDENTITY_CREDENTIAL\"; }; f",
+            ],
+        );
         fs::write(
             config.join("identity.toml"),
             r#"version = 1
@@ -222,6 +236,10 @@ profile = "account"
             std::env::var("PATH").unwrap_or_default()
         );
         self.stub.envs.push(("PATH".into(), path));
+        self.stub.envs.push((
+            "GIT_CONFIG_GLOBAL".into(),
+            git_config.to_string_lossy().into_owned(),
+        ));
         self.stub.envs.push((
             "XDG_CONFIG_HOME".into(),
             self.stub
