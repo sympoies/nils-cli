@@ -324,8 +324,9 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   when supplied must hash to the recorded coordinator; otherwise the selector
   is resolved from the stored coordinator digest in a fresh, complete
   `agent-session board --state all --format json` read. Only a repository
-  configured handoff supervisor may take over, as listed by `sha256:` digest in
-  `[review_handoff].supervisors` at the exact provider base. The selected
+  configured handoff supervisor may take over, as listed by `sha256:` session
+  digest or `role:<attested-role>` in `[review_handoff].supervisors` at the exact
+  provider base. The selected
   remote must match provider host/repository and its base-tracking ref must
   resolve to that base SHA; invalid explicit `stale_after` refuses takeover.
   The list is
@@ -342,6 +343,22 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   The opaque source digest binds the final proof read without publishing its
   machine name. Source configuration remains owned by `agent-session`;
   `FORGE_CLI_AGENT_SESSION_BIN` selects its executable (including test adapters).
+- A `role:` supervisor entry matches only `attested_role` from a fresh
+  authenticated `agent-session broker identity` binding. The broker verifies
+  the caller capability and current runtime incarnation; the consumer requires
+  its session/incarnation to match the acting managed session. The trusted
+  operator launcher must have requested `--attest-role` for that specific
+  session. Children cannot inherit or self-assign this provenance. Ordinary
+  roles, board labels, titles, and inherited initiators confer no supervisor
+  authority. The role name survives session replacement; each replacement
+  requires its own operator attestation.
+
+  This uses agent-session's existing
+  same-OS-user trusted-launcher boundary, not credential isolation from code
+  that can modify the private registry. Digest entries do not require a role
+  binding; an exact digest match takes precedence in a mixed allow-list.
+  The supervisor must remain distinct from both recorded coordinator and
+  assigned reviewer, regardless of how it matches the policy.
 - A `review_coordinator_unproven` refusal carries `details.prerequisite`,
   `details.retryable` and `details.next_action`; its message states the remedy.
   Policy prerequisites: `checkout_unavailable`, `remote_unavailable`,
@@ -394,8 +411,9 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   authority remains unresolved rather than becoming automatic takeover.
 - Takeover appends a handoff recovery with `coordinator_transfer` containing
   `old_coordinator_digest`, `new_coordinator_digest`, `lifecycle_source_digest`,
-  `reason` (`coordinator-retired`), `supervisor_digest`, and
-  `retirement_evidence` (`machine_digest`, `session_status`,
+  `reason` (`coordinator-retired`), `supervisor_digest`, optional
+  `supervisor_attestation` (`role` and `binding_digest` of the complete
+  authenticated session/incarnation launch binding), and `retirement_evidence` (`machine_digest`, `session_status`,
   `last_activity_at`, and `stale_after_seconds`). This optional field is omitted on ordinary records,
   preserving their existing digest bytes. The assignment generation advances,
   the current head/base are captured, reviewer identity and public author stay
@@ -405,7 +423,8 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   observation. Coordinator publication remains prohibited.
 - Takeover requires exact provider head/base and the caller's retained ledger
   tip, including `--dry-run`. Before a live append, the CLI rereads tip,
-  ownership, session lifecycle, and provider head/base. A recovery racing an
+  ownership, session lifecycle, and provider head/base. Role authorization is
+  reauthenticated and must match the retained attestation before append. A recovery racing an
   old-generation reviewer write follows the existing recovery-wins rule;
   competing takeovers fail closed. Dry-run emits prospective transfer metadata
   without a provider write or refreshed durable tip.

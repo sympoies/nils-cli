@@ -635,6 +635,13 @@ An acknowledgment alone is insufficient: absent unique physical-row proof,
 the operation remains `notice-native-unconfirmed`, durably consumed and never
 replayed. Missing rows never authorize resend.
 
+At the actual Codex receiver, after the queue/record-lock handoff and before the
+single native write, repeat the preserving-draft empty-composer observation
+under the reacquired record lock and original deadline. An occupied or
+unobservable final snapshot refuses with no native input or draft repair.
+Typing or redraw after that final observation remains non-atomic, as with
+other composer admission.
+
 Codex scheduler recovery retains one 30-second original deadline through queue,
 write, physical-row confirmation and identity reacquisition. Only this additive
 scheduler claim permits `original_budget_ms` up to 30,000; other variants retain

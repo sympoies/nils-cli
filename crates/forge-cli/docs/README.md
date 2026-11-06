@@ -31,6 +31,8 @@ Crate-local documentation for the `forge-cli` binary.
 
 ## Runbooks
 
+- [Retired coordinator recovery](runbooks/retired-coordinator-recovery.md) — supervisor policy, role attestation, and recovery steps.
+
 - [`runbooks/pr-head-repair-loop.md`](runbooks/pr-head-repair-loop.md) —
   keeping one PR and one review timeline across a CI repair loop: amend,
   force-with-lease, re-bind evidence, re-deliver, and the check-registration

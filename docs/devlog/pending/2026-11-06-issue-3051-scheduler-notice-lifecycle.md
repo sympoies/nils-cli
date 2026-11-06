@@ -6,7 +6,9 @@
 - Three recovery producers use canonical notices and receipt-backed machine
   history; keyed native busy replies carry their client id, and generated
   bodies prevent line-trailing ASCII spaces.
-- Scheduler admission refuses known stale drafts without operator repair.
+- Scheduler admission refuses known stale drafts without operator repair,
+  and the native receiver repeats that observation after queue handoff before
+  its one write, retaining the original deadline.
 
 ### Why / context
 
@@ -21,6 +23,9 @@
   formatting and busy ids. Focused receiver GREEN includes Claude lock handoff,
   Codex non-idle capacity and the duplicate-tick regression. Native acceptance
   remains unclaimed.
+- Post-review queue-handoff RED emitted one native input after a draft appeared;
+  the identical fixture is GREEN after the receiver repeats preserving-draft
+  admission before its write.
 
 ### Links
 

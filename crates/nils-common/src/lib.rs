@@ -36,6 +36,7 @@ pub mod git;
 pub mod markdown;
 pub mod observation;
 pub mod process;
+pub mod provider_entrypoint;
 pub mod provider_payload;
 pub mod provider_runtime;
 pub mod provider_usage;

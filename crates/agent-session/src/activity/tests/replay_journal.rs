@@ -1066,10 +1066,12 @@ fn configured_provider_specs_require_the_owned_timeout() {
     let permission_command = owned_command(AgentKind::Codex, Some("PermissionRequest"));
     assert!(permission_command.contains("AGENT_SESSION_ATTENTION_AUTHORITY"));
     assert!(permission_command.contains("= protocol"));
-    assert!(permission_command.contains(&format!(
-        "exec {} activity hook --agent codex",
-        nils_common::session_binary::NAME
-    )));
+    assert!(
+        permission_command.contains(&nils_common::provider_entrypoint::command(
+            false,
+            &["activity", "hook", "--agent", "codex"]
+        ))
+    );
 }
 
 #[test]

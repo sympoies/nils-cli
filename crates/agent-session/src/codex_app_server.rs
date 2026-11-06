@@ -327,9 +327,9 @@ fn app_server_probe(agent_bin: &Path) -> AppServerProbe {
     }
 }
 
-fn bounded_command_output(agent_bin: &Path, args: &[&str]) -> Option<std::process::Output> {
-    bounded_command_output_with_timeout(agent_bin, args, APP_SERVER_CAPABILITY_PROBE_TIMEOUT)
-}
+mod resume_admission;
+use resume_admission::bounded_command_output;
+pub(crate) use resume_admission::{resume_runtime_ready, resume_transport_supported};
 
 fn bounded_command_output_with_timeout(
     agent_bin: &Path,
@@ -2892,12 +2892,12 @@ pub(crate) async fn run_control(
                         });
                         let _ = response.send(result);
                     }
-                    ControlCommand::NoticeContinue { message, client_message_id, expected, recovery, deadline, response } => {
+                    ControlCommand::NoticeContinue { message, client_message_id, expected, tmux_bin, recovery, deadline, response } => {
                         request_id = request_id.saturating_add(1);
                         let result = continuation_notice::dispatch(
                             &mut websocket, request_id, &context, &record, &thread_id, &mut reducer,
                             external_auth_account.as_deref().map(|account| (account, external_auth_connection_id.as_str())),
-                            &message, &client_message_id, &expected, &recovery, deadline,
+                            &message, &client_message_id, &expected, &tmux_bin, &recovery, deadline,
                         ).await;
                         let _ = response.send(result);
                     }

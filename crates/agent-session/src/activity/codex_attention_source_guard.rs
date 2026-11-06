@@ -107,7 +107,11 @@ pub(super) fn codex_json_permission_source_guard(path: &Path) -> bool {
             {
                 guarded += 1;
             } else if matcher_is_absent
-                && command == "agent-hook dispatch --product codex"
+                && command
+                    == nils_common::provider_entrypoint::command(
+                        true,
+                        &["dispatch", "--product", "codex"],
+                    )
                 && handler.as_object().is_some_and(|object| object.len() == 3)
                 && handler.get("timeout").and_then(Value::as_u64) == Some(60)
             {
@@ -166,7 +170,11 @@ pub(super) fn codex_toml_permission_source_guard(path: &Path) -> bool {
             {
                 guarded += 1;
             } else if group.get("matcher").is_none()
-                && command == "agent-hook dispatch --product codex"
+                && command
+                    == nils_common::provider_entrypoint::command(
+                        true,
+                        &["dispatch", "--product", "codex"],
+                    )
                 && handler.len() == 3
                 && handler.get("timeout").and_then(TomlItem::as_integer) == Some(60)
             {
@@ -181,6 +189,16 @@ pub(super) fn codex_toml_permission_source_guard(path: &Path) -> bool {
 }
 
 fn codex_permission_reporter_command(command: &str) -> bool {
+    if command == owned_command(AgentKind::Codex, Some("PermissionRequest"))
+        || command == owned_command(AgentKind::Codex, None)
+    {
+        return true;
+    }
+    if command
+        == nils_common::provider_entrypoint::command(true, &["dispatch", "--product", "codex"])
+    {
+        return true;
+    }
     let words = command
         .split(|character: char| {
             !(character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
@@ -191,6 +209,9 @@ fn codex_permission_reporter_command(command: &str) -> bool {
         .windows(3)
         .any(|words| words == [nils_common::session_binary::NAME, "activity", "hook"])
         || words
-            .windows(2)
-            .any(|words| words == ["agent-hook", "dispatch"])
+            .windows(3)
+            .any(|words| words == ["provider-entrypoint", "activity", "hook"])
+        || words.windows(2).any(|words| {
+            words == ["agent-hook", "dispatch"] || words == ["provider-entrypoint", "dispatch"]
+        })
 }

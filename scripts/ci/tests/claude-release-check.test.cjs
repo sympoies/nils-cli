@@ -7,7 +7,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const test = require("node:test");
 const { discover, verifyIntegrity, isolatedEnvironment, candidateChanges, checkCandidate,
-  runReleaseCheck, collectReleaseCheck, range } = require("../../../.github/scripts/claude-release-check.cjs");
+  runReleaseCheck, collectReleaseCheck, planReleaseCheck, range } = require("../../../.github/scripts/claude-release-check.cjs");
 const REPOSITORY = path.resolve(__dirname, "../../..");
 const VERSION = "crates/agent-session/src/send/claude_notice/version.rs";
 const NOTICE = "crates/agent-session/tests/guarded_send/claude_notice.rs";
@@ -363,4 +363,65 @@ test("privileged publication rejects stale, injected or inconsistent artifact in
     assert.equal(state.result.status, "error", variant);
     assert.deepEqual(state.writes, [], variant);
   }
+});
+
+// The plan job runs before any Rust setup, compile or install and asks the
+// provider whether this version already has a candidate PR or failure issue.
+async function plan(options, newest) {
+  const outputs = {};
+  // The provider filters by head branch; mirror that so other versions do not match.
+  const list = options.github.rest.pulls.list;
+  options.github.rest.pulls.list = async args => ({ data: (await list(args)).data.filter(pr => `${options.context.repo.owner}:${pr.head.ref}` === args.head) });
+  const core = { ...options.core, setOutput: (name, value) => { outputs[name] = value; } };
+  const result = await planReleaseCheck({ github: options.github, context: options.context, core, root: ROOT,
+    discoverRelease: async () => metadata(newest) });
+  return { outputs, result };
+}
+
+test("an existing candidate PR for the detected version skips build and install", async () => {
+  const { state, options } = fixture();
+  await runReleaseCheck(options);
+  assert.equal(state.pulls.length, 1);
+  const before = state.writes.length;
+  const { outputs } = await plan(options, "2.1.318");
+  assert.equal(outputs.skip, "true");
+  assert.equal(state.writes.length, before);
+  state.pulls[0].state = "closed";
+  assert.equal((await plan(options, "2.1.318")).outputs.skip, "true");
+});
+
+test("an existing failure issue for the detected version skips build and install, closed or open", async () => {
+  const { state, options } = fixture({ passing: false });
+  await runReleaseCheck(options);
+  assert.equal(state.issues.length, 1);
+  assert.equal((await plan(options, "2.1.318")).outputs.skip, "true");
+  state.issues[0].state = "closed";
+  assert.equal((await plan(options, "2.1.318")).outputs.skip, "true");
+});
+
+test("a new version, an in-range version or an orphan candidate branch still runs the full check", async () => {
+  const { state, options } = fixture();
+  assert.equal((await plan(options, "2.1.318")).outputs.skip, "false");
+  await runReleaseCheck(options);
+  assert.equal((await plan(options, "2.1.319")).outputs.skip, "false");
+  assert.equal((await plan(options, "2.1.316")).outputs.skip, "false");
+  const orphan = fixture();
+  orphan.state.refs.set("heads/ci/claude-range-2.1.318", "f".repeat(40));
+  assert.equal((await plan(orphan.options, "2.1.318")).outputs.skip, "false");
+  assert.equal(state.writes.filter(([kind]) => kind === "pr").length, 1);
+});
+
+test("the workflow gates the heavy check and publication on the plan job, only for scheduled runs", () => {
+  const workflow = fs.readFileSync(path.join(REPOSITORY, ".github/workflows/claude-release-check.yml"), "utf8");
+  const planJob = workflow.slice(workflow.indexOf("  plan:"), workflow.indexOf("  check:"));
+  const check = workflow.slice(workflow.indexOf("  check:"), workflow.indexOf("  publish:"));
+  const publish = workflow.slice(workflow.indexOf("  publish:"));
+  assert.doesNotMatch(planJob, /contents: write|issues: write|pull-requests: write|cargo|npm install|rust-toolchain/);
+  assert.match(planJob, /issues: read/); assert.match(planJob, /pull-requests: read/);
+  assert.match(planJob, /continue-on-error: true/);
+  assert.match(check, /needs: plan/);
+  assert.match(check, /needs\.plan\.outputs\.skip != 'true'/);
+  assert.match(planJob, /if: github\.event_name == 'schedule'/);
+  assert.match(publish, /needs: check/);
+  assert.match(publish, /needs\.check\.result == 'success'/);
 });

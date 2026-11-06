@@ -539,3 +539,189 @@ async fn capacity_notice_does_not_repair_an_observed_stale_draft() {
     );
     assert_eq!(writes.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn capacity_notice_refuses_a_draft_appearing_during_control_handoff() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let tmp = tempfile::tempdir_in("/tmp").unwrap();
+    let _home = EnvGuard::set(
+        &lock,
+        "CODEX_HOME",
+        tmp.path().join("codex-home").to_str().unwrap(),
+    );
+    let id = "capacity-draft-handoff";
+    let launch = seed_codex_app_server_session(tmp.path(), id);
+    let st = state(tmp.path(), Some(TOKEN), codex_tmux(tmp.path(), id));
+    let record = bind_codex(&st.context, id, tmp.path());
+    activity::activate_runtime(&st.context, &record).unwrap();
+    let listener = tokio::net::UnixListener::bind(tmp.path().join(format!("{id}.sock"))).unwrap();
+    let path = transcript(tmp.path());
+    let writes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = writes.clone();
+    let (blocked, waiting) = tokio::sync::oneshot::channel();
+    let (release, proceed) = tokio::sync::oneshot::channel();
+    let peer = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let mut rate_reads = 0;
+        let mut blocked = Some(blocked);
+        let mut proceed = Some(proceed);
+        while let Some(Ok(ClientMessage::Text(text))) = socket.next().await {
+            let request: Value = serde_json::from_str(&text).unwrap();
+            let Some(request_id) = request.get("id") else {
+                continue;
+            };
+            let result = match request["method"].as_str().unwrap() {
+                "initialize" | "thread/resume" => json!({}),
+                "thread/loaded/list" => json!({"data":["thread-capacity"],"nextCursor":null}),
+                "account/rateLimits/read" => {
+                    rate_reads += 1;
+                    if rate_reads == 1 {
+                        for notification in [
+                            json!({"method":"turn/started","params":{"threadId":"thread-capacity","turn":{"id":"turn-capacity","status":"inProgress"}}}),
+                            json!({"method":"error","params":{"threadId":"thread-capacity","turnId":"turn-capacity",
+                                "willRetry":false,"error":{"codexErrorInfo":"serverOverloaded"}}}),
+                        ] {
+                            socket
+                                .send(ClientMessage::Text(notification.to_string().into()))
+                                .await
+                                .unwrap();
+                        }
+                    } else if rate_reads == 2 {
+                        blocked.take().unwrap().send(()).unwrap();
+                        proceed.take().unwrap().await.unwrap();
+                    }
+                    json!({"rateLimits":{}})
+                }
+                "turn/start" => {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    let params = &request["params"];
+                    append_notice(
+                        &path,
+                        params["input"][0]["text"].as_str().unwrap(),
+                        params["clientUserMessageId"].as_str().unwrap(),
+                    );
+                    json!({"turn":{"id":"continued-turn"}})
+                }
+                method => panic!("unexpected scheduler RPC: {method}"),
+            };
+            if socket
+                .send(ClientMessage::Text(
+                    json!({"id":request_id,"result":result}).to_string().into(),
+                ))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+    let (handle, commands, ready) = codex_app_server::starting_control_channel();
+    let control = tokio::spawn(codex_app_server::run_control(
+        st.context.clone(),
+        record.clone(),
+        commands,
+        ready,
+    ));
+    handle.wait_ready(Duration::from_secs(5)).await.unwrap();
+    st.codex_controls.lock().unwrap().insert(
+        id.into(),
+        CodexControlEntry {
+            launch_id: launch.clone(),
+            handle: handle.clone(),
+        },
+    );
+    let failure = activity::ingest_codex_app_server_failure_with_kind(
+        &st.context,
+        id,
+        &launch,
+        "thread-capacity",
+        "turn-capacity",
+        codex_app_server::StructuredFailureKind::ProviderCapacity,
+    )
+    .unwrap();
+    let predecessor = failure
+        .turn_state
+        .last_turn
+        .unwrap()
+        .provider_turn_id
+        .unwrap();
+    let revision = activity::state_for_view(&st.context, &record)
+        .unwrap()
+        .revision;
+    auto_resume::set_enabled(&st.context, id, true, "2020-01-01T00:00:00Z").unwrap();
+    auto_resume::arm_provider_capacity(
+        &st.context,
+        id,
+        &launch,
+        &crate::codex_account::binding_snapshot(&record),
+        predecessor,
+        revision,
+        "2020-01-01T00:00:01Z",
+    )
+    .unwrap();
+
+    // Hold the real receiver in an earlier RPC while the producer admits and queues.
+    let usage = tokio::spawn(async move { handle.usage().await });
+    tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    let target = CodexAutoResumeTarget {
+        id: id.into(),
+        launch_id: launch,
+        binding: crate::codex_account::binding_snapshot(&record),
+    };
+    let attempt = tokio::spawn(process_codex_capacity_auto_resume_id(st.clone(), target));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let captures = fs::read_to_string(tmp.path().join("transport-calls"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|call| call[0] == "capture-pane")
+            .count();
+        if captures >= 2 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "both empty producer admissions must complete"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let draft = "  owner draft after admission  ";
+    let draft_path = tmp.path().join("composer");
+    let context = st.context.clone();
+    let output = draft_path.clone();
+    tokio::task::spawn_blocking(move || {
+        // Lock transfer proves the producer has finished both empty checks.
+        let _record =
+            crate::acquire_session_record_lock_timed(&context, id, Duration::from_secs(5)).unwrap();
+        fs::write(output, draft).unwrap();
+    })
+    .await
+    .unwrap();
+    release.send(()).unwrap();
+    usage.await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), attempt)
+        .await
+        .unwrap()
+        .unwrap();
+    control.abort();
+    let _ = control.await;
+    peer.abort();
+    let _ = peer.await;
+    assert_eq!(fs::read_to_string(draft_path).unwrap(), draft);
+    assert!(
+        crate::send_guard::drafts::list(&st.context, &record)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        writes.load(Ordering::SeqCst),
+        0,
+        "a draft appearing after producer admission must prevent the real native write",
+    );
+}

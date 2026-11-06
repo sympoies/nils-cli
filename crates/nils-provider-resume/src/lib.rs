@@ -435,50 +435,6 @@ impl ClaudeResumeScanBudget {
     }
 }
 
-/// Collect Claude Code project transcripts whose leading records carry
-/// `session_id` and a non-empty `cwd`, honoring the bounded scan budget.
-pub fn collect_claude_provider_resume_matches(
-    projects_root: &Path,
-    session_id: &str,
-    matches: &mut BTreeSet<ProviderHistoryMatch>,
-    budget: &mut ClaudeResumeScanBudget,
-) {
-    let Ok(projects) = fs::read_dir(projects_root) else {
-        return;
-    };
-    for project in projects.flatten() {
-        if !budget.visit_entry() {
-            return;
-        }
-        let Ok(project_type) = project.file_type() else {
-            continue;
-        };
-        if !project_type.is_dir() {
-            continue;
-        }
-        let Ok(entries) = fs::read_dir(project.path()) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            if !budget.visit_entry() {
-                return;
-            }
-            let path = entry.path();
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
-            if !file_type.is_file()
-                || path.extension().and_then(|value| value.to_str()) != Some("jsonl")
-            {
-                continue;
-            }
-            if let Some(cwd) = read_claude_session_cwd(&path, session_id) {
-                matches.insert(ProviderHistoryMatch { path, cwd });
-            }
-        }
-    }
-}
-
 /// Collect the Claude Code project transcript named for `session_id`.
 ///
 /// Claude names each transcript `<session_id>.jsonl` inside its project
@@ -1072,31 +1028,6 @@ mod tests {
             truncated: false,
         };
         collect_codex_provider_resume_matches(&sessions, 0, "dup", &mut matches, &mut budget);
-        assert!(budget.truncated, "entry budget must truncate the scan");
-    }
-
-    #[test]
-    fn claude_scan_truncates_by_entry_budget() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let projects = tmp.path().join("projects");
-        for index in 0..3 {
-            let project = projects.join(format!("-proj-{index}"));
-            fs::create_dir_all(&project).unwrap();
-            fs::write(
-                project.join("session.jsonl"),
-                "{\"sessionId\":\"dup\",\"cwd\":\"/repo\"}\n",
-            )
-            .unwrap();
-        }
-
-        let mut matches = BTreeSet::new();
-        let mut budget = ClaudeResumeScanBudget {
-            visited: 0,
-            max_entries: 1,
-            deadline: Instant::now() + Duration::from_secs(60),
-            truncated: false,
-        };
-        collect_claude_provider_resume_matches(&projects, "dup", &mut matches, &mut budget);
         assert!(budget.truncated, "entry budget must truncate the scan");
     }
 

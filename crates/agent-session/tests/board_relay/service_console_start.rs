@@ -864,6 +864,20 @@ fn service_route_keeps_its_bound_while_a_start_outlives_its_client() {
     thread::sleep(Duration::from_millis(300));
 
     // The eight starts still run, so a ninth is refused rather than started.
+    let receipt_count = || {
+        fs::read_dir(fixture.state_dir.join("coordination"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("console-start-")
+                    && entry.path().extension().is_some_and(|ext| ext == "json")
+            })
+            .count()
+    };
+    let before = receipt_count();
     let response = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
@@ -873,8 +887,18 @@ fn service_route_keeps_its_bound_while_a_start_outlives_its_client() {
         .json(&valid_body(&fixture, &new_operation()))
         .send()
         .expect("the ninth start is refused promptly");
+    assert_eq!(response.status().as_u16(), 503);
     let body: Value = response.json().expect("refusal json");
-    assert_eq!(body["error"]["code"], "console-start-unavailable", "{body}");
+    assert_eq!(body["error"]["code"], "console-start-busy", "{body}");
+    assert_eq!(body["error"]["details"]["retryable"], true);
+    assert_eq!(body["error"]["details"]["recovery"]["safe_to_retry"], true);
+    let output = Request::new(&admission).run(&fixture, &new_operation());
+    let error = error_of(&output);
+    assert_eq!(output.code, 69);
+    assert_eq!(error["code"], "console-start-busy");
+    assert_eq!(error["details"]["retryable"], true);
+    assert_eq!(error["details"]["recovery"]["safe_to_retry"], true);
+    assert_eq!(receipt_count(), before);
     assert_eq!(stalled.connections(), 8);
 }
 

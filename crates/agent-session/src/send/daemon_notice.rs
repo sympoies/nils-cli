@@ -146,6 +146,7 @@ pub(crate) fn send_codex(
         prepared.client_id(),
         &record,
         record_lock,
+        tmux,
         recovery,
         deadline,
     ));

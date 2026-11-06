@@ -2523,7 +2523,7 @@ fn codex_activity_doctor_accepts_the_converged_agent_hook_control_plane() {
     fs::write(codex.join("hooks.json"), r#"{"hooks":{}}"#).expect("hooks config");
     fs::write(
         codex.join("config.toml"),
-        r#"notify = ["agent-session", "activity", "notify", "--agent", "codex"]"#,
+        super::doctor::owned_notify_toml(),
     )
     .expect("Codex config");
     let hook = tmp.path().join("agent-hook");
@@ -2540,7 +2540,7 @@ printf '%s\n' '{"schema_version":"cli.agent-hook.doctor.v1","ok":true,"data":[{"
         "#!/usr/bin/env sh\nprintf 'codex-cli 0.146.0\\n'\n",
     );
     let home_arg = home.to_string_lossy().into_owned();
-    let hook_arg = hook.to_string_lossy().into_owned();
+    let hook_arg = tmp.path().to_string_lossy().into_owned();
     let codex_arg = codex_bin.to_string_lossy().into_owned();
 
     let doctor = run(
@@ -2548,7 +2548,7 @@ printf '%s\n' '{"schema_version":"cli.agent-hook.doctor.v1","ok":true,"data":[{"
         &["activity", "doctor", "--agent", "codex", "--format", "json"],
         &[
             ("HOME", home_arg.as_str()),
-            ("AGENT_HOOK_BIN", hook_arg.as_str()),
+            ("AGENT_RUNTIME_TRUSTED_CLI_ROOT", hook_arg.as_str()),
             ("AGENT_SESSION_CODEX_BIN", codex_arg.as_str()),
         ],
     );
@@ -2568,7 +2568,7 @@ fn codex_activity_doctor_fails_closed_on_invalid_agent_hook_control_plane() {
     fs::write(codex.join("hooks.json"), r#"{"hooks":{}}"#).expect("hooks config");
     fs::write(
         codex.join("config.toml"),
-        r#"notify = ["agent-session", "activity", "notify", "--agent", "codex"]"#,
+        super::doctor::owned_notify_toml(),
     )
     .expect("Codex config");
     let hook = tmp.path().join("agent-hook");
@@ -2581,7 +2581,7 @@ exit "${AGENT_HOOK_EXIT_CODE:-0}"
 "#,
     );
     let home_arg = home.to_string_lossy().into_owned();
-    let hook_arg = hook.to_string_lossy().into_owned();
+    let hook_arg = tmp.path().to_string_lossy().into_owned();
     let valid = json!({
         "schema_version":"cli.agent-hook.doctor.v1",
         "ok":true,
@@ -2677,7 +2677,7 @@ exit "${AGENT_HOOK_EXIT_CODE:-0}"
             &["activity", "doctor", "--agent", "codex", "--format", "json"],
             &[
                 ("HOME", home_arg.as_str()),
-                ("AGENT_HOOK_BIN", hook_arg.as_str()),
+                ("AGENT_RUNTIME_TRUSTED_CLI_ROOT", hook_arg.as_str()),
                 ("AGENT_HOOK_RESPONSE", response.as_str()),
                 ("AGENT_HOOK_EXIT_CODE", exit_code),
             ],
@@ -2708,7 +2708,7 @@ fn codex_activity_doctor_rejects_agent_hook_output_beyond_the_strict_cap() {
     fs::write(codex.join("hooks.json"), r#"{"hooks":{}}"#).expect("hooks config");
     fs::write(
         codex.join("config.toml"),
-        r#"notify = ["agent-session", "activity", "notify", "--agent", "codex"]"#,
+        super::doctor::owned_notify_toml(),
     )
     .expect("Codex config");
     let hook = tmp.path().join("agent-hook");
@@ -2721,14 +2721,14 @@ printf '%s\n' '{"schema_version":"cli.agent-hook.doctor.v1","ok":false}'
 "#,
     );
     let home_arg = home.to_string_lossy().into_owned();
-    let hook_arg = hook.to_string_lossy().into_owned();
+    let hook_arg = tmp.path().to_string_lossy().into_owned();
 
     let doctor = run(
         tmp.path(),
         &["activity", "doctor", "--agent", "codex", "--format", "json"],
         &[
             ("HOME", home_arg.as_str()),
-            ("AGENT_HOOK_BIN", hook_arg.as_str()),
+            ("AGENT_RUNTIME_TRUSTED_CLI_ROOT", hook_arg.as_str()),
         ],
     );
     assert_eq!(doctor.code, 0, "stderr={}", doctor.stderr_text());

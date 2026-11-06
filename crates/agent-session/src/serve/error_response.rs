@@ -63,7 +63,7 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         "board-relay-unavailable" | "board-relay-unauthorized" | "console-start-unavailable" => {
             StatusCode::BAD_GATEWAY
         }
-        "retitle-v3-history-unavailable" | "retitle-v3-history-degraded" => {
+        "console-start-busy" | "retitle-v3-history-unavailable" | "retitle-v3-history-degraded" => {
             StatusCode::SERVICE_UNAVAILABLE
         }
         // Provider account conditions share one status across providers.

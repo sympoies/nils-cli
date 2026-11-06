@@ -9,6 +9,7 @@ impl ControlHandle {
         client_message_id: &str,
         expected: &SessionRecord,
         record_lock: crate::SessionRecordLock,
+        tmux_bin: &Path,
         recovery: crate::auto_resume::notice::Recovery,
         deadline: Instant,
     ) -> Result<String, String> {
@@ -24,6 +25,7 @@ impl ControlHandle {
                 message: message.into(),
                 client_message_id: client_message_id.into(),
                 expected: Box::new(expected.clone()),
+                tmux_bin: tmux_bin.to_owned(),
                 recovery,
                 deadline,
                 response,
@@ -51,6 +53,7 @@ pub(super) async fn dispatch<S>(
     message: &str,
     client: &str,
     expected: &SessionRecord,
+    tmux_bin: &Path,
     recovery: &crate::auto_resume::notice::Recovery,
     deadline: Instant,
 ) -> Result<String, String>
@@ -102,6 +105,42 @@ where
         }
     }
     control_account_ready(context, record, external_auth.map(|(account, _)| account)).await?;
+    // TUI draft typing need not change any durable identity/recovery fence.
+    // Re-observe after the queue handoff, under the write's record lock/budget.
+    let observe_context = context.clone();
+    let observe_record = current.clone();
+    let observe_tmux = tmux_bin.to_owned();
+    tokio::time::timeout_at(
+        tokio::time::Instant::from_std(deadline),
+        tokio::task::spawn_blocking(move || {
+            let guards = crate::send_guard::GuardArgs {
+                notice_envelope: true,
+                require_empty_composer: true,
+                expect_runtime: observe_record
+                    .runtime
+                    .as_ref()
+                    .map(|runtime| runtime.launch_id.clone()),
+                expect_provider_session: observe_record
+                    .provider_resume
+                    .as_ref()
+                    .map(|provider| provider.session_id.clone()),
+                ..Default::default()
+            };
+            crate::send_guard::Admission {
+                context: &observe_context,
+                record: &observe_record,
+                args: &guards,
+                tmux_bin: &observe_tmux,
+                verify_composer: true,
+                deadline,
+            }
+            .check_preserving_draft("claimed")
+            .map_err(|error| error.code().to_owned())
+        }),
+    )
+    .await
+    .map_err(|_| "notice composer observation expired".to_string())?
+    .map_err(|_| "notice composer observation worker failed".to_string())??;
     if Instant::now() >= deadline {
         return Err(refused());
     }

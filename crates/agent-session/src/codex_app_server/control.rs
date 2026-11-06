@@ -17,6 +17,7 @@ pub(crate) enum ControlCommand {
         message: String,
         client_message_id: String,
         expected: Box<SessionRecord>,
+        tmux_bin: PathBuf,
         recovery: crate::auto_resume::notice::Recovery,
         deadline: Instant,
         response: oneshot::Sender<Result<String, String>>,

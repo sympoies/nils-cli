@@ -1,4 +1,5 @@
 mod config_path;
+mod notification_entrypoint;
 
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
@@ -18,6 +19,10 @@ use crate::error::HookError;
 use crate::model::{Capability, LoadedPolicy, Product, SetupAction};
 use crate::paths::Layout;
 use crate::strict_json;
+use notification_entrypoint::{
+    codex_forward_argv_is_safe, codex_notify_argv, codex_owned_notify, is_migration_notify,
+    migration_activity_command,
+};
 
 const CODEX_BLOCK_START: &str = "# >>> agent-hook:provider-ingress:v1 >>>";
 const CODEX_BLOCK_END: &str = "# <<< agent-hook:provider-ingress:v1 <<<";
@@ -28,7 +33,6 @@ const AGENT_SESSION_BLOCK_END: &str = "# <<< agent-session:codex-hooks <<<";
 const DISPATCH_TIMEOUT_SECONDS: i64 = 60;
 const PRIOR_DISPATCH_TIMEOUT_SECONDS: i64 = 10;
 const SESSION_COORDINATION_HANDLER: &str = "session-coordination-guard.py";
-const CODEX_NOTIFY_ARGV: [&str; 5] = [SESSION_BINARY, "activity", "notify", "--agent", "codex"];
 const CODEX_NOTIFY_FORWARD_FLAG: &str = "--forward-notify-argv-json";
 const CODEX_COMPUTER_USE_NOTIFY_EVENT: &str = "turn-ended";
 const CODEX_COMPUTER_USE_PREVIOUS_NOTIFY_FLAG: &str = "--previous-notify";
@@ -478,13 +482,15 @@ fn plan_codex_notification(
 ) -> Result<CodexNotificationPlan, HookError> {
     let remove = action.is_remove();
     let mode = codex_notify_mode(document, config_path, !remove);
-    let configured_before = matches!(
-        mode,
-        CodexNotifyMode::Owned
-            | CodexNotifyMode::Composed(_)
-            | CodexNotifyMode::ComputerUseWrappedOwned(_)
-    );
-    let mut requires_review = false;
+    let notify_needs_migration = is_migration_notify(document, &mode);
+    let configured_before = !notify_needs_migration
+        && matches!(
+            mode,
+            CodexNotifyMode::Owned
+                | CodexNotifyMode::Composed(_)
+                | CodexNotifyMode::ComputerUseWrappedOwned(_)
+        );
+    let mut requires_review = notify_needs_migration;
     if remove {
         match mode {
             CodexNotifyMode::Owned => {
@@ -498,8 +504,15 @@ fn plan_codex_notification(
         }
     } else {
         match mode {
-            CodexNotifyMode::Absent => {
-                set_codex_notify(document, &CODEX_NOTIFY_ARGV.map(str::to_string))
+            CodexNotifyMode::Absent => set_codex_notify(document, &codex_notify_argv()),
+            CodexNotifyMode::Owned if notify_needs_migration => {
+                set_codex_notify(document, &codex_notify_argv())
+            }
+            CodexNotifyMode::Composed(forwarded) if notify_needs_migration => {
+                let mut argv = codex_notify_argv();
+                argv.push(CODEX_NOTIFY_FORWARD_FLAG.into());
+                argv.push(serde_json::to_string(&forwarded).expect("serializable argv"));
+                set_codex_notify(document, &argv);
             }
             CodexNotifyMode::Owned
             | CodexNotifyMode::Composed(_)
@@ -511,6 +524,12 @@ fn plan_codex_notification(
                 normalized: Some(normalized),
                 ..
             }) => {
+                if !codex_notify_argv_is_bounded(&normalized) {
+                    return Err(HookError::data(
+                        "provider-notification-config-conflict",
+                        "Codex notification migration exceeds the safe composition limit",
+                    ));
+                }
                 set_codex_notify(document, &normalized);
                 requires_review = true;
             }
@@ -527,7 +546,7 @@ fn plan_codex_notification(
                         "Codex user notify argv exceeds the safe composition limit",
                     ));
                 }
-                let mut composed = CODEX_NOTIFY_ARGV.map(str::to_string).to_vec();
+                let mut composed = codex_notify_argv();
                 composed.push(CODEX_NOTIFY_FORWARD_FLAG.to_string());
                 composed.push(encoded);
                 set_codex_notify(document, &composed);
@@ -594,22 +613,6 @@ fn codex_notify_mode(
         return CodexNotifyMode::ComputerUseWrappedOwned(wrapped);
     }
     CodexNotifyMode::Foreign(argv)
-}
-
-fn codex_owned_notify(argv: &[String]) -> Option<CodexOwnedNotify> {
-    if argv_matches(argv, &CODEX_NOTIFY_ARGV) {
-        return Some(CodexOwnedNotify::Owned);
-    }
-    if argv.len() == CODEX_NOTIFY_ARGV.len() + 2
-        && argv_matches(&argv[..CODEX_NOTIFY_ARGV.len()], &CODEX_NOTIFY_ARGV)
-        && argv[CODEX_NOTIFY_ARGV.len()] == CODEX_NOTIFY_FORWARD_FLAG
-        && let Ok(forwarded) =
-            serde_json::from_str::<Vec<String>>(&argv[CODEX_NOTIFY_ARGV.len() + 1])
-        && codex_forward_argv_is_safe(&forwarded)
-    {
-        return Some(CodexOwnedNotify::Composed(forwarded));
-    }
-    None
 }
 
 fn codex_computer_use_path_matches(
@@ -754,11 +757,16 @@ fn codex_computer_use_wrapped_owned(
             if stripped_forwarded.restored.as_ref() == Some(&base) {
                 let mut normalized = base;
                 normalized.push(CODEX_COMPUTER_USE_PREVIOUS_NOTIFY_FLAG.to_string());
-                normalized.push(serde_json::to_string(&CODEX_NOTIFY_ARGV).ok()?);
+                normalized.push(serde_json::to_string(&codex_notify_argv()).ok()?);
                 (normalized != argv).then_some(normalized)
+            } else if previous.first().is_some_and(|s| s == SESSION_BINARY) {
+                notification_entrypoint::migrate_wrapped(&base, Some(&forwarded))
             } else {
                 None
             }
+        }
+        CodexOwnedNotify::Owned if previous.first().is_some_and(|s| s == SESSION_BINARY) => {
+            notification_entrypoint::migrate_wrapped(&base, None)
         }
         CodexOwnedNotify::Owned => None,
     };
@@ -774,10 +782,15 @@ pub fn codex_notification_ownership(
     config_path: &Path,
     argv: &[String],
 ) -> Option<CodexNotificationOwnership> {
+    if argv.first().is_some_and(|s| s == SESSION_BINARY) {
+        return None;
+    }
     match codex_owned_notify(argv) {
         Some(CodexOwnedNotify::Owned) => Some(CodexNotificationOwnership::Owned),
         Some(CodexOwnedNotify::Composed(_)) => Some(CodexNotificationOwnership::Composed),
-        None if codex_computer_use_wrapped_owned(argv, config_path, true).is_some() => {
+        None if codex_computer_use_wrapped_owned(argv, config_path, true)
+            .is_some_and(|wrapped| wrapped.normalized.is_none()) =>
+        {
             Some(CodexNotificationOwnership::Composed)
         }
         None => None,
@@ -792,21 +805,6 @@ pub fn decode_codex_forward_notify_argv(encoded: &str) -> Option<Vec<String>> {
     }
     let argv = serde_json::from_str::<Vec<String>>(encoded).ok()?;
     codex_forward_argv_is_safe(&argv).then_some(argv)
-}
-
-fn argv_matches(argv: &[String], expected: &[&str]) -> bool {
-    argv.len() == expected.len()
-        && argv
-            .iter()
-            .zip(expected)
-            .all(|(value, expected)| value == expected)
-}
-
-fn codex_forward_argv_is_safe(argv: &[String]) -> bool {
-    codex_notify_argv_is_bounded(argv)
-        && !argv.iter().any(|value| value == CODEX_NOTIFY_FORWARD_FLAG)
-        && (argv.len() < CODEX_NOTIFY_ARGV.len()
-            || !argv_matches(&argv[..CODEX_NOTIFY_ARGV.len()], &CODEX_NOTIFY_ARGV))
 }
 
 fn codex_notify_argv_is_bounded(argv: &[String]) -> bool {
@@ -1387,9 +1385,7 @@ fn strip_codex_block(raw: &str, expected: &str) -> Result<(String, usize, bool),
     let drifted = format!("{owned_prefix}{}", &raw[end_begin..end]) != expected
         || overlaps_foreign
         || !appended.is_empty();
-    let owned = owned_prefix
-        .matches("command = \"agent-hook dispatch")
-        .count();
+    let owned = notification_entrypoint::count_codex_dispatches(owned_prefix);
     let mut stripped = String::with_capacity(raw.len() - (end - begin) + appended.len());
     stripped.push_str(&raw[..begin]);
     stripped.push_str(appended);
@@ -1680,8 +1676,11 @@ fn prior_owned_json_handler(handler: &Value, product: Product) -> bool {
     handler.as_object().is_some_and(|object| object.len() == 3)
         && handler.get("type").and_then(Value::as_str) == Some("command")
         && handler.get("command").and_then(Value::as_str)
-            == Some(dispatch_command(product).as_str())
-        && handler.get("timeout").and_then(Value::as_i64) == Some(PRIOR_DISPATCH_TIMEOUT_SECONDS)
+            == Some(format!("agent-hook dispatch --product {}", product.as_str()).as_str())
+        && matches!(
+            handler.get("timeout").and_then(Value::as_i64),
+            Some(PRIOR_DISPATCH_TIMEOUT_SECONDS | DISPATCH_TIMEOUT_SECONDS)
+        )
 }
 
 fn legacy_json_handler(handler: &Value, product: Product, loaded: &LoadedPolicy) -> bool {
@@ -1756,7 +1755,7 @@ fn toml_group_has_user_metadata(group: &toml_edit::Table) -> bool {
 }
 
 fn legacy_command(command: &str, product: Product) -> bool {
-    command == format!("agent-session activity hook --agent {}", product.as_str())
+    migration_activity_command(command, product)
         || exact_runtime_handler_command(command, product, SESSION_COORDINATION_HANDLER)
         || [
             "agent-scope-lock-guard",
@@ -1790,7 +1789,7 @@ fn legacy_command(command: &str, product: Product) -> bool {
 }
 
 fn legacy_command_for_policy(command: &str, product: Product, loaded: &LoadedPolicy) -> bool {
-    if command == format!("agent-session activity hook --agent {}", product.as_str()) {
+    if migration_activity_command(command, product) {
         return true;
     }
     loaded
@@ -1964,7 +1963,7 @@ fn plan_digest(plan: &Plan) -> Result<String, HookError> {
 }
 
 fn dispatch_command(product: Product) -> String {
-    format!("agent-hook dispatch --product {}", product.as_str())
+    nils_common::provider_entrypoint::command(true, &["dispatch", "--product", product.as_str()])
 }
 
 fn distinct_events(groups: &[HookGroup]) -> Vec<String> {
