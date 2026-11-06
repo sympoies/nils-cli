@@ -41,7 +41,7 @@ async function waitFor(fn, label, milliseconds=90000) {
   throw new Error(`timed out: ${label}`);
 }
 async function start(host,federation=true,agentBinary=binary) {
-  const env={...process.env};
+  const env={...process.env,AGENT_SESSION_NOTICE_WRITERS:'1'};
   for(const key of ['AGENT_SESSION_TOKEN','AGENT_SESSION_RELAY_URL','AGENT_SESSION_RELAY_TOKEN','AGENT_SESSION_RELAY_INGRESS_TOKEN','AGENT_CONSOLE_COORDINATION_RELAYS'])delete env[key];
   if(federation)Object.assign(env,{AGENT_SESSION_RELAY_URL:edge.url,AGENT_SESSION_RELAY_TOKEN:host.relay,AGENT_SESSION_RELAY_INGRESS_TOKEN:host.ingress});
   const endpoint=join(host.root,'coordination','daemon-endpoint.json');
