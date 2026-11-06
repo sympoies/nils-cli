@@ -994,7 +994,9 @@ fn print_sync_help() {
         "  Refuses anything that is not a pure fast-forward onto an already-published commit."
     );
     println!("  Moves the ref directly when no worktree holds the default branch checked out.");
-    println!("  --dry-run skips fetch and previews the cached ref; fetch first for a fresh preview.");
+    println!(
+        "  --dry-run skips fetch and previews the cached ref; fetch first for a fresh preview."
+    );
     println!(
         "  --no-fetch syncs against the already-fetched remote ref instead of contacting the remote."
     );
