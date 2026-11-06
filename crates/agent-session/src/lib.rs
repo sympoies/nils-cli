@@ -4148,35 +4148,7 @@ fn send_input_serialized_with_title_guard(
     )
 }
 
-/// Submit the product-owned continuation while `auto_resume::tick` holds the
-/// session record lock. Reloading here prevents a stale scheduler record from
-/// targeting a restarted or recreated runtime.
-pub(crate) fn send_auto_resume_input(
-    context: &CliContext,
-    expected: &SessionRecord,
-    text: &str,
-    tmux_bin: &Path,
-) -> Result<(), CliError> {
-    let mut current = load_session_record(context, &expected.id)?;
-    ensure_same_session_identity(expected, &current)?;
-    if live_status(tmux_bin, &current.tmux_session) != "running" {
-        return Err(CliError::runtime(
-            "session-not-running",
-            format!("session is not running: {}", current.id),
-            Some(json!({ "id": current.id })),
-        ));
-    }
-    codex_account::authorize_input_locked(context, &mut current)?;
-    send_input_unlocked(
-        context,
-        &current,
-        Some(text),
-        &[SpecialKey::Enter],
-        tmux_bin,
-        None,
-        PasteMode::Raw,
-    )
-}
+pub(crate) use send::daemon_notice::send_auto_resume_input;
 
 struct ManualInputSection {
     record_lock: Option<SessionRecordLock>,

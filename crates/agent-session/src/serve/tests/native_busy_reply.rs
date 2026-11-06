@@ -233,6 +233,12 @@ async fn keyed_codex_reply_reaches_native_protocol_while_turn_is_working() {
             socket.close(None).await.unwrap();
         }
         let (status, result) = request.await.unwrap();
+        assert!(
+            native["params"]["clientUserMessageId"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("agent-session-")),
+            "a keyed busy reply must carry its provider client message id"
+        );
         assert_eq!(
             status,
             if acknowledge {
@@ -269,6 +275,10 @@ async fn keyed_codex_reply_reaches_native_protocol_while_turn_is_working() {
             assert_eq!(next["method"], "turn/start");
             assert_eq!(next["params"]["threadId"], THREAD);
             assert_ne!(next["id"], native["id"]);
+            assert_ne!(
+                next["params"]["clientUserMessageId"], native["params"]["clientUserMessageId"],
+                "distinct logical replies require distinct client ids"
+            );
             reply(
                 &mut socket,
                 &next,

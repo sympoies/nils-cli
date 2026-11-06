@@ -114,7 +114,7 @@ async fn controller(working: bool, writers: bool, outcome: Outcome) {
     let responder = tokio::spawn(async move {
         let command = commands.recv().await.unwrap();
         let message = match command {
-            codex_app_server::ControlCommand::Prompt { message, response } => {
+            codex_app_server::ControlCommand::Prompt { message, response, .. } => {
                 assert!(!working);
                 match outcome {
                     Outcome::Accepted => response.send(Ok("notice-accepted".into())).unwrap(),
@@ -355,7 +355,7 @@ async fn mailbox_notice_writer_disabled_hook_leaves_codex_delivery_to_controller
         );
         let responder = tokio::spawn(async move {
             let message = match commands.recv().await.unwrap() {
-                codex_app_server::ControlCommand::Prompt { message, response } => {
+                codex_app_server::ControlCommand::Prompt { message, response, .. } => {
                     assert!(!working);
                     response.send(Ok("notice-accepted".into())).unwrap();
                     message

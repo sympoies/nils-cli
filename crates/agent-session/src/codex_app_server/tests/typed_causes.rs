@@ -172,7 +172,7 @@ async fn prompt_readiness_refusal_is_marked_as_not_dispatched() {
     .unwrap();
 
     let error = handle
-        .submit_prompt("must remain retryable")
+        .submit_prompt("must remain retryable", None)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -192,7 +192,10 @@ async fn prompt_readiness_refusal_is_marked_as_not_dispatched() {
 async fn websocket_provider_rejection_is_not_confirmed() {
     let (_tmp, _context, _record, handle, control, peer) =
         start_prompt_control("provider-rejection", PromptPeer::Reject).await;
-    let error = handle.submit_prompt("rejected prompt").await.unwrap_err();
+    let error = handle
+        .submit_prompt("rejected prompt", None)
+        .await
+        .unwrap_err();
     assert!(matches!(
         error,
         prompt_submit::PromptSubmissionFailure::NotConfirmed
@@ -208,7 +211,7 @@ async fn websocket_disconnect_before_submit_is_not_dispatched() {
     let (_tmp, _context, _record, handle, control, peer) =
         start_prompt_control("write-failure", PromptPeer::CloseBeforePrompt).await;
     peer.await.unwrap();
-    let error = handle.submit_prompt("not written").await.unwrap_err();
+    let error = handle.submit_prompt("not written", None).await.unwrap_err();
     assert!(matches!(
         error,
         prompt_submit::PromptSubmissionFailure::NotDispatched
@@ -223,7 +226,7 @@ async fn websocket_lost_acknowledgement_is_unknown() {
     let (_tmp, _context, _record, handle, control, peer) =
         start_prompt_control("lost-acknowledgement", PromptPeer::DropAcknowledgement).await;
     let error = handle
-        .submit_prompt("sent without an acknowledgement")
+        .submit_prompt("sent without an acknowledgement", None)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -564,4 +567,25 @@ async fn busy_manual_cancellation_rejects_only_the_turn_and_keeps_proxy_alive() 
     assert_eq!(receive_json(&mut tui).await["id"], 2);
     server.await.unwrap();
     proxy.await.unwrap().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn prompt_timeout_covers_queue_plus_turn_acknowledgement_budget() {
+    let (handle, mut commands) = control_channel();
+    let responder = tokio::spawn(async move {
+        let Some(ControlCommand::Prompt { response, .. }) = commands.recv().await else {
+            panic!("continuation command was not delivered");
+        };
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        let _ = response.send(Ok("acknowledged-turn".to_string()));
+    });
+
+    assert_eq!(
+        handle
+            .submit_prompt("fixed continuation", None)
+            .await
+            .unwrap(),
+        "acknowledged-turn"
+    );
+    responder.await.unwrap();
 }

@@ -6872,76 +6872,8 @@ async fn codex_scheduler_selects_a_healthy_account_after_an_open_window_rejectio
     );
 }
 
-#[tokio::test]
-async fn codex_capacity_scheduler_submits_the_fixed_prompt_without_usage_lookup() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let launch_id = seed_codex_app_server_session(tmp.path(), "codex-capacity-recovery");
-    let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
-    let record = load_session_record(&st.context, "codex-capacity-recovery").unwrap();
-    crate::activity::activate_runtime(&st.context, &record).unwrap();
-    let failure = crate::activity::ingest_codex_app_server_failure_with_kind(
-        &st.context,
-        &record.id,
-        &launch_id,
-        "thread-capacity",
-        "turn-capacity",
-        codex_app_server::StructuredFailureKind::ProviderCapacity,
-    )
-    .unwrap();
-    let blocked_turn_id = failure
-        .turn_state
-        .last_turn
-        .and_then(|turn| turn.provider_turn_id)
-        .unwrap();
-    auto_resume::set_enabled(&st.context, &record.id, true, "2020-01-01T00:00:00Z").unwrap();
-    let revision = crate::activity::state_for_view(&st.context, &record)
-        .unwrap()
-        .revision;
-    auto_resume::arm_provider_capacity(
-        &st.context,
-        &record.id,
-        &launch_id,
-        &crate::codex_account::binding_snapshot(&record),
-        blocked_turn_id,
-        revision,
-        "2020-01-01T00:00:01Z",
-    )
-    .unwrap();
-
-    let (handle, mut commands) = codex_app_server::control_channel();
-    st.codex_controls.lock().unwrap().insert(
-        record.id.clone(),
-        CodexControlEntry {
-            launch_id: launch_id.clone(),
-            handle,
-        },
-    );
-    let responder = tokio::spawn(async move {
-        let Some(codex_app_server::ControlCommand::Continue { message, response }) =
-            commands.recv().await
-        else {
-            panic!("capacity recovery must submit directly without requesting usage");
-        };
-        assert_eq!(message, auto_resume::CAPACITY_CONTINUATION_MESSAGE);
-        response.send(Ok("continued-turn".to_string())).unwrap();
-    });
-
-    process_codex_capacity_auto_resume_id(
-        st.clone(),
-        CodexAutoResumeTarget {
-            id: record.id.clone(),
-            launch_id,
-            binding: crate::codex_account::binding_snapshot(&record),
-        },
-    )
-    .await;
-    responder.await.unwrap();
-
-    assert_eq!(
-        auto_resume::view_for_record(&st.context, &record).state,
-        "resumed"
-    );
-}
+#[path = "tests/continuation_notices.rs"]
+mod continuation_notices;
 
 #[tokio::test]
 async fn codex_capacity_scheduler_retries_missing_or_stale_control_without_submitting() {
@@ -7255,7 +7187,7 @@ async fn missing_codex_control_cannot_checkpoint_a_same_id_replacement() {
                 exhausted_reset_epochs: vec![1_893_456_600],
                 soonest_reset_epoch: None,
             },
-            |_| panic!("blocked usage must not submit"),
+            |_, _lock| panic!("blocked usage must not submit"),
         )
         .unwrap(),
         auto_resume::TickOutcome::Scheduled
@@ -9671,8 +9603,9 @@ async fn structured_prompt_submits_exact_multiline_without_terminal_paste() {
     let responder_context = st.context.clone();
     let responder_record = record.clone();
     let responder = tokio::spawn(async move {
-        let Some(codex_app_server::ControlCommand::Prompt { message, response }) =
-            commands.recv().await
+        let Some(codex_app_server::ControlCommand::Prompt {
+            message, response, ..
+        }) = commands.recv().await
         else {
             panic!("structured prompt did not reach the Codex control plane");
         };
@@ -10894,7 +10827,7 @@ fn account_switch_cancels_and_versions_codex_auto_resume_evidence() {
             exhausted_reset_epochs: Vec::new(),
             soonest_reset_epoch: None,
         },
-        |_| {
+        |_, _lock| {
             submissions += 1;
             Ok(())
         },

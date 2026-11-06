@@ -1,5 +1,13 @@
 use super::*;
 
+#[derive(Default)]
+pub(super) struct StructuredPromptGuards<'a> {
+    pub(super) expected_session_incarnation: Option<&'a str>,
+    pub(super) expected_binding: Option<(&'a str, u64)>,
+    pub(super) notification: Option<CoordinationNotificationFence>,
+    pub(super) request_id: Option<&'a str>,
+}
+
 #[allow(clippy::result_large_err)]
 pub(super) async fn submit_structured_prompt_locked(
     state: &ServeState,
@@ -28,93 +36,101 @@ pub(super) async fn submit_structured_prompt_locked(
         .map(|(account, revision)| (account.to_string(), revision));
     let direct_reply = guards.expected_binding.is_none() && guards.notification.is_none();
     let notification_fence = guards.notification;
-    let (record_lock, session_incarnation, record) = match tokio::task::spawn_blocking(move || {
-        let record_lock = crate::acquire_session_record_lock(&lock_context, &lock_id)?;
-        let mut current = load_session_record(&lock_context, &lock_id)?;
-        let Some(actual_launch_id) = current
-            .runtime
-            .as_ref()
-            .map(|runtime| runtime.launch_id.clone())
-        else {
-            return Err(structured_prompt_incarnation_conflict(
-                &current.id,
-                &expected_launch_id,
-                None,
-            ));
-        };
-        if actual_launch_id != expected_launch_id {
-            return Err(structured_prompt_incarnation_conflict(
-                &current.id,
-                &expected_launch_id,
-                Some(&actual_launch_id),
-            ));
-        }
-        if let Some(expected) = expected_session_incarnation
-            && actual_launch_id != expected
-        {
-            return Err(structured_prompt_incarnation_conflict(
-                &current.id,
-                &expected,
-                Some(&actual_launch_id),
-            ));
-        }
-        if let Some((account, revision)) = expected_binding
-            && crate::codex_account::binding_snapshot(&current)
-                != (crate::codex_account::BindingSnapshot::Bound { account, revision })
-        {
-            return Err(CliError::data(
-                "codex-account-binding-superseded",
-                "the requested Codex account binding was superseded before prompt submission",
-                Some(json!({ "id": current.id })),
-            ));
-        }
-        codex_quiet::precheck(&lock_context, &current, notification_fence.is_some())?;
-        if direct_reply {
-            crate::send_guard::require_empty_composer(&lock_context, &current, &tmux_bin)?;
-        }
-        crate::codex_account::authorize_input_locked(&lock_context, &mut current)?;
-        auto_resume::cancel_for_manual_input_locked(
-            &lock_context,
-            &current.id,
-            &jiff::Timestamp::now().to_string(),
-        )?;
-        crate::codex_account::ensure_input_allowed(&current)?;
-        if let Some(fence) = notification_fence {
-            let eligible = codex_quiet::fenced_eligible(&lock_context, &current, &fence);
-            let mut quiescence = crate::coordination::lock_session_quiescence(
-                &lock_context,
-                &fence.candidate.target_session_id,
-                &fence.candidate.target_incarnation,
-            )?;
-            if !eligible || !quiescence.begin_notification_attempt(&fence.candidate)? {
-                return Err(CliError::data(
-                    "coordination-notification-superseded",
-                    "notification eligibility changed before locked prompt submission",
+    let request_id = guards.request_id.map(str::to_owned);
+    let (record_lock, session_incarnation, record, client_message_id) =
+        match tokio::task::spawn_blocking(move || {
+            let record_lock = crate::acquire_session_record_lock(&lock_context, &lock_id)?;
+            let mut current = load_session_record(&lock_context, &lock_id)?;
+            let Some(actual_launch_id) = current
+                .runtime
+                .as_ref()
+                .map(|runtime| runtime.launch_id.clone())
+            else {
+                return Err(structured_prompt_incarnation_conflict(
+                    &current.id,
+                    &expected_launch_id,
                     None,
                 ));
+            };
+            if actual_launch_id != expected_launch_id {
+                return Err(structured_prompt_incarnation_conflict(
+                    &current.id,
+                    &expected_launch_id,
+                    Some(&actual_launch_id),
+                ));
             }
-        }
-        Ok::<_, CliError>((record_lock, actual_launch_id, current))
-    })
-    .await
-    {
-        Ok(Ok(locked)) => locked,
-        Ok(Err(err)) if err.code() == "codex-account-binding-superseded" => {
-            return Err(status_json(
-                StatusCode::CONFLICT,
-                err.code(),
-                "session account changed before prompt submission",
-            ));
-        }
-        Ok(Err(err)) => return Err(envelope_err(err)),
-        Err(_) => return Err(join_err()),
-    };
+            if let Some(expected) = expected_session_incarnation
+                && actual_launch_id != expected
+            {
+                return Err(structured_prompt_incarnation_conflict(
+                    &current.id,
+                    &expected,
+                    Some(&actual_launch_id),
+                ));
+            }
+            if let Some((account, revision)) = expected_binding
+                && crate::codex_account::binding_snapshot(&current)
+                    != (crate::codex_account::BindingSnapshot::Bound { account, revision })
+            {
+                return Err(CliError::data(
+                    "codex-account-binding-superseded",
+                    "the requested Codex account binding was superseded before prompt submission",
+                    Some(json!({ "id": current.id })),
+                ));
+            }
+            codex_quiet::precheck(&lock_context, &current, notification_fence.is_some())?;
+            if direct_reply {
+                crate::send_guard::require_empty_composer(&lock_context, &current, &tmux_bin)?;
+            }
+            crate::codex_account::authorize_input_locked(&lock_context, &mut current)?;
+            auto_resume::cancel_for_manual_input_locked(
+                &lock_context,
+                &current.id,
+                &jiff::Timestamp::now().to_string(),
+            )?;
+            crate::codex_account::ensure_input_allowed(&current)?;
+            if let Some(fence) = notification_fence {
+                let eligible = codex_quiet::fenced_eligible(&lock_context, &current, &fence);
+                let mut quiescence = crate::coordination::lock_session_quiescence(
+                    &lock_context,
+                    &fence.candidate.target_session_id,
+                    &fence.candidate.target_incarnation,
+                )?;
+                if !eligible || !quiescence.begin_notification_attempt(&fence.candidate)? {
+                    return Err(CliError::data(
+                        "coordination-notification-superseded",
+                        "notification eligibility changed before locked prompt submission",
+                        None,
+                    ));
+                }
+            }
+            let client_message_id = request_id
+                .as_deref()
+                .and_then(|id| prompt_receipts::client_message_id(&current, id));
+            Ok::<_, CliError>((record_lock, actual_launch_id, current, client_message_id))
+        })
+        .await
+        {
+            Ok(Ok(locked)) => locked,
+            Ok(Err(err)) if err.code() == "codex-account-binding-superseded" => {
+                return Err(status_json(
+                    StatusCode::CONFLICT,
+                    err.code(),
+                    "session account changed before prompt submission",
+                ));
+            }
+            Ok(Err(err)) => return Err(envelope_err(err)),
+            Err(_) => return Err(join_err()),
+        };
     let history_session_id = record
         .provider_resume
         .as_ref()
         .filter(|resume| resume.provider == "codex")
         .map(|resume| resume.session_id.clone());
-    let response = match handle.submit_prompt(text).await {
+    let response = match handle
+        .submit_prompt(text, client_message_id.as_deref())
+        .await
+    {
         Ok(history_turn_id) => Ok(StructuredPromptAcceptance {
             session_incarnation,
             history_turn_id: Some(history_turn_id),
@@ -258,6 +274,7 @@ pub(super) async fn submit_structured_prompt_handler(
         expected_session_incarnation,
         None,
         false,
+        None,
     )
     .await
 }
@@ -267,6 +284,7 @@ pub(super) async fn submit_structured_prompt_handler_for_receipt(
     id: String,
     text: String,
     expected_session_incarnation: Option<String>,
+    request_id: Option<String>,
 ) -> Response {
     submit_structured_prompt_handler_with_fence(
         state,
@@ -275,6 +293,7 @@ pub(super) async fn submit_structured_prompt_handler_for_receipt(
         expected_session_incarnation,
         None,
         true,
+        request_id,
     )
     .await
 }
@@ -286,6 +305,7 @@ pub(super) async fn submit_structured_prompt_handler_with_fence(
     expected_session_incarnation: Option<String>,
     notification_fence: Option<CoordinationNotificationFence>,
     include_history_turn_id: bool,
+    request_id: Option<String>,
 ) -> Response {
     if text.trim().is_empty() {
         return status_json(
@@ -393,6 +413,7 @@ pub(super) async fn submit_structured_prompt_handler_with_fence(
         StructuredPromptGuards {
             expected_session_incarnation,
             notification: notification_fence,
+            request_id: request_id.as_deref(),
             ..Default::default()
         },
         &handle,

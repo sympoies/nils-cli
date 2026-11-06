@@ -24,7 +24,7 @@ impl Bindings {
         let Some(state) = state else {
             return Ok(Self::default());
         };
-        if session.provider != "claude" {
+        if !matches!(session.provider.as_str(), "claude" | "codex") {
             return Ok(Self::default());
         }
         Ok(Self {
@@ -75,8 +75,17 @@ impl Bindings {
         if sha256(payload) != proof.row_payload_sha256 {
             return Decision::Rejected;
         }
-        let Some(row) = crate::provider_prompt::native_notice::row(value, &proof.claim.binding)
-        else {
+        let row = if session.provider == "codex" {
+            crate::provider_prompt::codex_notice::project(
+                &session.transcript_path,
+                value,
+                &proof.claim,
+                &proof,
+            )
+        } else {
+            crate::provider_prompt::native_notice::row(value, &proof.claim.binding)
+        };
+        let Some(row) = row else {
             return Decision::Rejected;
         };
         if row.native_uuid != proof.native_uuid
@@ -91,7 +100,7 @@ impl Bindings {
             paging_offset: offset,
             history_turn_id: None,
             prompt_request: None,
-            row_class: None,
+            row_class: Some(crate::provider_prompt::row_classes::RowClass::Notice),
             compaction: None,
             role: "notice".into(),
             text: row.text,

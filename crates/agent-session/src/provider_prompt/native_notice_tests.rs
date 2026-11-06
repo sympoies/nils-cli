@@ -34,8 +34,8 @@ fn fixture(root: &std::path::Path) -> (crate::SessionRecord, Binding, std::path:
         },
         provider: "claude".into(),
         provider_session_id: "provider-one".into(),
-        provider_version: "2.1.296".into(),
-        module_sha256: "a".repeat(64),
+        provider_version: Some("2.1.296".into()),
+        module_sha256: Some("a".repeat(64)),
     };
     let text =
         "<!-- agent-notice:v1 kind=mailbox source=synthetic -->\n\nAlpha  \nBeta \n".to_string();
