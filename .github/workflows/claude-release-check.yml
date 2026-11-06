@@ -142,9 +142,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      contents: write
+      contents: read
       issues: write
-      pull-requests: write
     steps:
       - name: Checkout trusted source revision
         uses: actions/checkout@v7
@@ -175,6 +174,8 @@ jobs:
         with:
           app-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
 
       - name: Prepare draft range candidate from validated evidence
         uses: actions/github-script@v9

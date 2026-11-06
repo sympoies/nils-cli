@@ -93,11 +93,14 @@ function fixture({ newest = "2.1.318", passing = true } = {}) {
 test("candidate publication uses the bot App token without a default-token fallback", () => {
   const workflow = fs.readFileSync(path.join(REPOSITORY, ".github/workflows/claude-release-check.yml"), "utf8");
   const publish = workflow.split("\n  publish:")[1];
+  assert.match(publish, /permissions:\n      contents: read\n      issues: write\n    steps:/);
   const mint = publish.match(/- name: Mint bot token\n([\s\S]*?)(?=\n      - name:)/);
   const candidate = publish.match(/- name: Prepare draft range candidate from validated evidence\n([\s\S]*?)(?=\n      - name:)/);
   assert.ok(mint); assert.ok(candidate);
   assert.match(mint[1], /id: bot_token/);
   assert.match(mint[1], /uses: actions\/create-github-app-token@v3/);
+  assert.match(mint[1], /permission-contents: write/);
+  assert.match(mint[1], /permission-pull-requests: write/);
   assert.match(candidate[1], /github-token: \${{ steps\.bot_token\.outputs\.token }}/);
   assert.doesNotMatch(candidate[1], /github-token:.*(?:\|\||github\.token|secrets\.GITHUB_TOKEN)/);
   assert.match(candidate[1], /issueGithub: getOctokit\(process\.env\.ISSUE_TOKEN\)/);
