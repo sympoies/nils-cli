@@ -326,9 +326,9 @@ fn app_server_probe(agent_bin: &Path) -> AppServerProbe {
     }
 }
 
-fn bounded_command_output(agent_bin: &Path, args: &[&str]) -> Option<std::process::Output> {
-    bounded_command_output_with_timeout(agent_bin, args, APP_SERVER_CAPABILITY_PROBE_TIMEOUT)
-}
+mod resume_admission;
+use resume_admission::bounded_command_output;
+pub(crate) use resume_admission::{resume_runtime_ready, resume_transport_supported};
 
 fn bounded_command_output_with_timeout(
     agent_bin: &Path,

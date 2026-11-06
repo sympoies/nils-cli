@@ -418,3 +418,6 @@ async fn console_resume_route_requires_a_resume_before_any_start_activity() {
     assert_eq!(result["error"]["details"]["session_created"], false);
     assert!(!state.exists());
 }
+
+#[path = "resume_codex_tests.rs"]
+mod codex;
