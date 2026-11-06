@@ -396,6 +396,10 @@ fn an_unresolvable_helper_allows_only_audited_read_only_pre_tool_use() {
         ("AGENT_SESSION_ID", "managed-session"),
         ("AGENT_SESSION_RUNTIME_ID", "managed-runtime"),
         ("PATH", empty_dir.to_str().expect("empty dir")),
+        (
+            "AGENT_RUNTIME_TRUSTED_CLI_ROOT",
+            empty_dir.to_str().expect("empty dir"),
+        ),
     ];
 
     let read_only = fixture.run_with_env(
@@ -513,7 +517,10 @@ fn doctor_fails_when_the_activity_helper_cannot_be_resolved() {
     let broken = fixture.run_with_env(
         &["doctor", "--product", "claude", "--format", "json"],
         None,
-        &[("PATH", empty_dir.to_str().expect("empty dir"))],
+        &[(
+            "AGENT_RUNTIME_TRUSTED_CLI_ROOT",
+            empty_dir.to_str().expect("empty dir"),
+        )],
     );
     assert_ne!(
         broken.code,
@@ -548,9 +555,8 @@ fn doctor_fails_when_the_activity_helper_cannot_be_resolved() {
 }
 
 /// The suite itself runs inside a managed session, which pins `AGENT_SESSION_BIN`
-/// since `#1415`. Because that variable outranks `PATH`, every test above that
-/// makes the helper unresolvable by emptying `PATH` was measuring the inherited
-/// helper instead, so the local gate failed for changes that touch none of this.
+/// since `#1415`. An inherited override would outrank the configured empty root,
+/// so fixture isolation must remove it before the child process starts.
 /// See `sympoies/nils-cli#1420`.
 #[test]
 fn an_inherited_helper_override_does_not_reach_the_process_under_test() {
@@ -571,7 +577,10 @@ fn an_inherited_helper_override_does_not_reach_the_process_under_test() {
     let broken = fixture.run_with_env(
         &["doctor", "--product", "claude", "--format", "json"],
         None,
-        &[("PATH", empty_dir.to_str().expect("empty dir"))],
+        &[(
+            "AGENT_RUNTIME_TRUSTED_CLI_ROOT",
+            empty_dir.to_str().expect("empty dir"),
+        )],
     );
 
     assert_ne!(
