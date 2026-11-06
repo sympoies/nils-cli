@@ -613,12 +613,15 @@ fn console_capacity_refusal_reconciles_after_restart() {
     let aggregator = Aggregator::start();
     let mut serve = fixture.serve(&[], Some(&aggregator));
     let request = json!({"operation_id":operation(),"session":{"agent":"claude"}});
-    aggregator.reply_json(409, &json!({"ok":false,"error":{
-        "code":"session-capacity-exceeded", "message":"full", "details":{
-            "max_active_sessions":2,"active_sessions":2,"retryable":true,
-            "recovery":{"safe_to_retry":true}
-        }
-    }}));
+    aggregator.reply_json(
+        409,
+        &json!({"ok":false,"error":{
+            "code":"session-capacity-exceeded", "message":"full", "details":{
+                "max_active_sessions":2,"active_sessions":2,"retryable":true,
+                "recovery":{"safe_to_retry":true}
+            }
+        }}),
+    );
     let (status, result) = route(&serve, request.clone());
     assert_eq!(status, 409, "{result}");
     for restart in [false, true] {
@@ -634,9 +637,15 @@ fn console_capacity_refusal_reconciles_after_restart() {
         assert_eq!(result["failure"]["details"]["max_active_sessions"], 2);
         assert_eq!(result["failure"]["details"]["active_sessions"], 2);
         assert_eq!(result["failure"]["details"]["retryable"], true);
-        assert_eq!(result["failure"]["details"]["recovery"]["safe_to_retry"], true);
+        assert_eq!(
+            result["failure"]["details"]["recovery"]["safe_to_retry"],
+            true
+        );
     }
-    let (status, result) = route(&serve, json!({"operation_id":operation(),"session":{"agent":"codex"}}));
+    let (status, result) = route(
+        &serve,
+        json!({"operation_id":operation(),"session":{"agent":"codex"}}),
+    );
     assert_eq!(status, 400, "{result}");
     assert_eq!(result["error"]["code"], "console-start-operation-conflict");
     assert_eq!(aggregator.seen().len(), 1);
