@@ -612,17 +612,25 @@ its `owners`; `machine` is in its `machines`; and `expires_at` is in the future 
 `max_lifetime_seconds`. With federation unconfigured the route fails with `console-start-disabled`.
 Owner resolution stays with the aggregator.
 
-| Code | Class | HTTP | Cause |
-| --- | --- | --- | --- |
-| `console-start-service-unauthorized` | data/65 | 401 | disabled, missing or invalid admission, unknown service or generation, wrong or shared credential, non-loopback peer, or a session capability |
-| `console-start-service-owner-denied` | data/65 | 422 | `owner` not admitted for the service |
-| `console-start-service-target-denied` | data/65 | 422 | `machine` not admitted for the service |
-| `console-start-service-expired` | data/65 | 422 | `expires_at` past or beyond the admitted lifetime |
-| `console-start-service-invalid` | usage/64 | 400 | unknown or missing member, forbidden `session` member, malformed selector, UUIDv7 or timestamp |
+| Code | Class | HTTP | Cause | Safe to retry? |
+| --- | --- | --- | --- | --- |
+| `console-start-busy` | unavailable/69 | 503 | All start workers are occupied; no operation, session, or runtime is created. | Yes; retry the same request. |
+| `console-start-service-unauthorized` | data/65 | 401 | disabled, missing or invalid admission, unknown service or generation, wrong or shared credential, non-loopback peer, or a session capability | Yes after admission is fixed; this request created nothing. |
+| `console-start-service-owner-denied` | data/65 | 422 | `owner` not admitted for the service | Yes after admission is fixed; this request created nothing. |
+| `console-start-service-target-denied` | data/65 | 422 | `machine` not admitted for the service | Yes after admission is fixed; this request created nothing. |
+| `console-start-service-expired` | data/65 | 422 | `expires_at` past or beyond the admitted lifetime | Yes with a valid expiry; this request created nothing. |
+| `console-start-service-invalid` | usage/64 | 400 | unknown or missing member, forbidden `session` member, malformed selector, UUIDv7 or timestamp | Yes after correcting the request; this request created nothing. |
+| `console-start-disabled` | runtime/1 | 409 | Federation is not configured. | Yes after configuration is fixed; this request created nothing. |
+| `console-start-operation-conflict` | usage/64 | 400 | The operation ID is bound to another request. | Do not submit a different request under this ID; reconcile the original operation. |
+| `console-start-operation-not-found` | usage/64 | 400 | No matching operation is available to reconcile. | Reconciliation is read-only; inspect the operation before creating a new one. |
+| `console-start-operation-expired` | usage/64 | 400 | The operation ID expired or its receipt was evicted. | No; inspect Console for the earlier child before using a fresh ID. |
+| `console-start-unavailable` | runtime/1 | 502 | The create outcome could not be confirmed. | No; reconcile the operation before retrying. |
 
 Refusals are content-free: they never echo paths, credentials, prompts or upstream text, and the
-unauthorized code does not say which check failed. The existing `console-start-operation-conflict`,
-`-not-found`, `-expired`, `console-start-disabled` and `console-start-unavailable` codes apply unchanged.
+unauthorized code does not say which check failed. For other forwarded failures, use the operation
+receipt and its `safe_to_retry` value; if the outcome cannot be established, reconcile before retrying.
+The CLI can also emit `console-start-unavailable` before contacting the daemon; its typed
+`recovery.safe_to_retry` field distinguishes definite pre-dispatch failures from unknown outcomes.
 
 ### Aggregator contract
 

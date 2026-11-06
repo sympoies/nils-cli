@@ -154,6 +154,11 @@ fn forwarded(code: Option<&str>, message: &Value) -> CliError {
         .unwrap_or(UNAVAILABLE_CODE);
     let message = bounded_line(message).unwrap_or("the console start request failed");
     match code {
+        "console-start-busy" => CliError::unavailable(
+            code,
+            message,
+            Some(json!({"retryable": true, "recovery": {"safe_to_retry": true}})),
+        ),
         INVALID_CODE
         | "console-start-service-invalid"
         | "console-start-operation-conflict"

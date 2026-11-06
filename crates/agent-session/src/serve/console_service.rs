@@ -217,13 +217,15 @@ mod tests {
             .header(AUTHORIZATION, "Bearer test-token")
             .body(Body::from("{}"))
             .unwrap();
-        request.extensions_mut().insert(ConnectInfo(
-            "127.0.0.1:1234".parse::<SocketAddr>().unwrap(),
-        ));
+        request
+            .extensions_mut()
+            .insert(ConnectInfo("127.0.0.1:1234".parse::<SocketAddr>().unwrap()));
         let response = service_console_start_handler(State(state), request).await;
         drop(permits);
         let status = response.status();
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["error"]["code"], "console-start-busy");
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
