@@ -113,11 +113,14 @@ and the existing private Forgejo creation flow. Supply `--provider`,
 `--repo namespace/name`, `--owner-kind`, a safe
 `--default-branch`, one or more regular repository-root `--file` inputs, a
 Semantic Commit `--message`, and a regular `--reason-file` recording the
-operator's authorization. The default visibility is private; public GitHub
+operator's authorization.
+
+The default visibility is private; public GitHub
 or GitLab repositories require `--visibility public`. For GitLab, use
 `--owner-kind org` for a group or subgroup and `--owner-kind user` for the
 authenticated user's namespace. Bind a self-managed instance with
-`--host gitlab.example.com`. Forgejo remains private only.
+`--host gitlab.example.com`. Forgejo remains private only. Explicit `--file` inputs are staged even when Git
+ignore rules match them.
 
 ```sh
 forge-cli --provider github --repo OWNER/REPO --dry-run repo bootstrap \
@@ -138,13 +141,22 @@ Omit `--existing-empty` to create a new empty repository; include it only when
 adopting a repository that already exists and has no refs. The CLI records an
 exact-input receipt before creation or push, verifies the local signature and
 zero-parent ancestry, reads back the exact remote branch and provider signature,
-reads GitHub and GitLab API status from the HTTP response header,
+
+The CLI reads GitHub and GitLab API status from the HTTP response header,
 rejects additional GitLab branches or tags, and never retries an ambiguous first push. Receipts use schema v2; any other schema is
 rejected as unsupported with the receipt path, and the owner reconciles it against the
 remote state before removing it. If interrupted, inspect the receipt
 reported in the error and repeat the same command with `--resume`. If an
 attempted push has no remote branch, resume stops for manual reconciliation. A completed
-matching receipt is idempotent. Nested paths belong in a normal managed
+matching receipt is idempotent.
+
+To abandon an incomplete receipt, repeat the
+bootstrap command with `--abandon` instead of `--resume`. The receipt and local
+checkout are archived under the bootstrap state directory; an existing archive
+must be retained or moved before another abandonment. This operation never
+deletes the remote. Inspect it first: an empty remote must be removed or reused
+by the operator (with `--existing-empty` where supported). A push may have
+already populated it. Nested paths belong in a normal managed
 worktree and PR after the initial branch exists.
 
 `repo push-default` is a narrow, policy-driven exception to PR delivery. It

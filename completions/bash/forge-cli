@@ -8960,7 +8960,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__repo__bootstrap)
-            opts="-h --owner-kind --visibility --existing-empty --default-branch --file --message --reason-file --resume --format --remote --provider --host --repo --store-root --dry-run --help"
+            opts="-h --owner-kind --visibility --existing-empty --default-branch --file --message --reason-file --abandon --resume --format --remote --provider --host --repo --store-root --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

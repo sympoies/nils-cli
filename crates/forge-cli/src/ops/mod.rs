@@ -53,6 +53,7 @@ pub mod pr_tasks;
 pub mod pr_view;
 pub mod pr_wait_checks;
 pub mod repo_bootstrap;
+pub(crate) mod repo_bootstrap_abandon;
 pub mod repo_freeze;
 pub mod repo_push_default;
 pub mod repo_view;

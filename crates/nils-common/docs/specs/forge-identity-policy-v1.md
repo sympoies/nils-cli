@@ -240,11 +240,33 @@ repositories/principals refuse.
 
 ## Execution and refusal
 
-Changes apply only to the child process. They do not change shared gh active
-account, persistent Git author/signing config, or stored remotes.
+Identity preparation applies only to the child process. It does not change
+shared gh active account, persistent Git author/signing config, or stored remotes.
+The explicit `git-cli transport set` command separately owns repository-local
+remote URL selection; see its
+[operator procedure](../../../git-cli/docs/runbooks/governed-https-transport.md).
 
-Supported HTTPS and GitHub SSH remote shapes execute over pinned HTTPS with the
-selected verified token. The SSH URL stays stored unchanged. The child has an
+For an HTTPS fetch/push, the guard obtains the credential from the configured
+system/global Git credential helper using `git credential fill`, with interaction
+and tracing disabled. Local/worktree helper entries (including URL-scoped keys,
+empty resets, and values reached through local includes) refuse before helper
+execution. Scope-inspection failures also refuse. Lookup runs in an owned empty
+temporary directory with repository discovery fenced there; local configuration
+cannot add a helper between inspection and lookup. Global/system configuration
+selectors and the executable environment remain operator-owned, like the
+identity policy's configuration selector. See
+[Git configuration scopes](https://git-scm.com/docs/git-config#SCOPES).
+
+The guard verifies the actor of that exact credential against the selected
+profile using the same human/App checks as other protected operations. A missing
+helper credential or mismatched actor refuses before transport with a fix hint;
+the guard does not substitute the profile's API credential. Profile selection,
+session binding, operation admission, and audit remain required.
+
+The verified helper token is pinned in memory for the actual HTTPS command,
+without a URL rewrite or second configured-helper lookup. SSH-shaped remotes
+retain the existing profile-credential selection and child-only pinned HTTPS
+routing; the stored SSH URL stays unchanged. In either case the child has an
 empty credential-helper list followed by a helper constrained to the selected
 HTTPS host/repository, no interactive credential fallback, and redirects disabled.
 TLS certificate verification is enforced for the selected URL, overriding inherited
