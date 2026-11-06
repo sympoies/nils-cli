@@ -276,7 +276,8 @@ The command-scope executable overrides are exactly `core.hooksPath=/dev/null`,
 hooks, fsmonitor programs, and alternate-refs commands from running with the token.
 
 The closed network-configuration refusal list is `http.proxy`, `http.sslCAInfo`,
-and `http.sslCAPath`, including their `http.<url>.*` forms. Repository/worktree
+and `http.sslCAPath` (including their `http.<url>.*` forms), plus
+`remote.<name>.proxy`. Repository/worktree
 entries refuse before credential authorization with
 `identity_transport_config_untrusted` and a system/global configuration fix hint.
 Empty resets and entries reached through local includes also refuse, even when a

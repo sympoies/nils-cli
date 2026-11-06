@@ -99,13 +99,13 @@ fn credential(cwd: Option<&Path>, url: &str, username: Option<&str>) -> Result<S
 pub(super) fn reject_local_transport(cwd: Option<&Path>) -> Result<()> {
     reject_local_config(
         cwd,
-        "^http(\\..*)?\\.(proxy|sslcainfo|sslcapath)$",
+        "^(http(\\..*)?\\.(proxy|sslcainfo|sslcapath)|remote\\..*\\.proxy)$",
         "identity_transport_config_untrusted",
         "identity_transport_config_unavailable",
     )
     .map_err(|error| {
         let detail = if error.code == "identity_transport_config_untrusted" {
-            "configure HTTP proxy and CA settings at system/global scope; repository/worktree http.proxy, http.sslCAInfo, and http.sslCAPath entries (including URL-specific forms) are not trusted"
+            "configure proxy and CA settings at system/global scope; repository/worktree http.proxy, http.sslCAInfo, http.sslCAPath (including URL-specific forms), and remote.<name>.proxy entries are not trusted"
         } else {
             "cannot inspect HTTP proxy and CA configuration scopes; repair Git configuration before retrying"
         };

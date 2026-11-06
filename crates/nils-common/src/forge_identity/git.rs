@@ -463,8 +463,8 @@ fn prepare_git_inner(
         }
         config.extend([
             // Suppress core.hooksPath, core.fsmonitor, and core.alternateRefsCommand;
-            // local/worktree http.proxy, http.sslCAInfo, and http.sslCAPath
-            // (including URL forms) were refused before credential authorization.
+            // local/worktree http.proxy, http.sslCAInfo, http.sslCAPath (including
+            // URL forms), and remote.<name>.proxy were refused before authorization.
             // Other repository-configured commands remain operator-owned.
             (String::from("core.hooksPath"), String::from("/dev/null")),
             (String::from("core.fsmonitor"), String::from("false")),

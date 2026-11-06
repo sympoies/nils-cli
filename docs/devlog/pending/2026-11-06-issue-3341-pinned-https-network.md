@@ -14,6 +14,8 @@
 
 ### Evidence
 
+- The security-review repair also verified RED for a repository-local
+  `remote.origin.proxy` before extending the closed refusal list to per-remote proxies.
 - Verified RED on the pre-fix baseline: each of the three local settings stayed
   effective in the pinned child environment and local bare push succeeded; the
   system/global preservation fixture passed.

@@ -58,7 +58,9 @@ fn scenario(setting: &str, scope: &str, url_scoped: bool, ssh: bool, value: &str
     let _system_file = EnvGuard::set(&lock, "GIT_CONFIG_SYSTEM", system.to_str().unwrap());
     let _system_enabled = EnvGuard::remove(&lock, "GIT_CONFIG_NOSYSTEM");
     let included = home.path().join("included.gitconfig");
-    let key = if url_scoped {
+    let key = if setting == "remote.origin.proxy" {
+        setting.to_owned()
+    } else if url_scoped {
         format!("http.https://github.com/.{setting}")
     } else {
         format!("http.{setting}")
@@ -114,12 +116,12 @@ fn scenario(setting: &str, scope: &str, url_scoped: bool, ssh: bool, value: &str
         }
         assert!(result.unwrap().is_some());
         let mut effective = Command::new("git");
-        effective.current_dir(repo.path()).args([
-            "config",
-            "--get-urlmatch",
-            &format!("http.{setting}"),
-            URL,
-        ]);
+        effective.current_dir(repo.path());
+        if setting == "remote.origin.proxy" {
+            effective.args(["config", "--get", setting]);
+        } else {
+            effective.args(["config", "--get-urlmatch", &format!("http.{setting}"), URL]);
+        }
         for (key, value) in transport.get_envs() {
             match value {
                 Some(value) => {
@@ -171,6 +173,22 @@ fn pinned_https_refuses_repository_ca_path() {
     untrusted("sslCAPath", "fixture-ca-directory");
 }
 
+#[test]
+fn pinned_https_refuses_repository_remote_proxy() {
+    for scope in ["local", "worktree", "include"] {
+        for ssh in [false, true] {
+            scenario(
+                "remote.origin.proxy",
+                scope,
+                false,
+                ssh,
+                "http://proxy.invalid:8080",
+            );
+        }
+    }
+    scenario("remote.origin.proxy", "local", false, false, "");
+}
+
 fn untrusted(setting: &str, value: &str) {
     for scope in ["local", "worktree", "include"] {
         for url_scoped in [false, true] {
@@ -190,8 +208,12 @@ fn pinned_https_preserves_global_and_system_network_configuration() {
             ("proxy", "http://proxy.invalid:8080"),
             ("sslCAInfo", "fixture-ca.pem"),
             ("sslCAPath", "fixture-ca-directory"),
+            ("remote.origin.proxy", "http://proxy.invalid:8080"),
         ] {
             for url_scoped in [false, true] {
+                if url_scoped && setting == "remote.origin.proxy" {
+                    continue;
+                }
                 scenario(setting, scope, url_scoped, false, value);
             }
         }
