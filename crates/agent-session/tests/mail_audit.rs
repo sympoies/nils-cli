@@ -175,6 +175,16 @@ fn audit_reports_which_provider_not_ready_branch_deferred_the_wake() {
         ),
         ("provider-not-ready", "BODY_CANARY", Value::Null),
         (
+            "recipient-coordination-not-quiescent",
+            "restart-fenced",
+            json!("restart-fenced"),
+        ),
+        (
+            "recipient-coordination-not-quiescent",
+            "prompt-control-unavailable",
+            Value::Null,
+        ),
+        (
             "recipient-working",
             "prompt-control-unavailable",
             Value::Null,

@@ -37,7 +37,7 @@ pub(crate) fn begin_mailbox_notice(
         &candidate.target_session_id,
         &candidate.target_incarnation,
     )?;
-    if !guard.begin_notification_attempt(candidate)? {
+    if !guard.begin_idle_notification_attempt(candidate)? {
         return Err(refused());
     }
     Ok(())

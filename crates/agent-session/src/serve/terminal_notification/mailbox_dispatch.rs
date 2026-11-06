@@ -130,10 +130,12 @@ pub(in crate::serve) async fn dispatch_coordination_notification(
         })
         .await;
         if candidate.is_notice() && matches!(attempted, Ok(Ok(false))) {
-            defer_provider_not_ready(&state, &candidate, &refusal_detail(&response)).await;
+            let refusal = refusal(&response);
+            defer_refused(&state, &candidate, refusal).await;
         }
     } else {
-        defer_provider_not_ready(&state, &candidate, &refusal_detail(&response)).await;
+        let refusal = refusal(&response);
+        defer_refused(&state, &candidate, refusal).await;
     }
 }
 
@@ -209,11 +211,12 @@ async fn dispatch_codex_in_turn_coordination_checkpoint(
             &fence.target_session_id,
             &fence.target_incarnation,
         )?;
-        if !quiescence.begin_notification_attempt(&fence)? {
+        let condition = quiescence.notification_block(true);
+        if condition.is_some() || !quiescence.begin_notification_attempt(&fence)? {
             return Err(CliError::unavailable(
                 "coordination-checkpoint-not-quiescent",
                 "the recipient has an active claim or operation",
-                None,
+                condition.map(|condition| json!({ "condition": condition })),
             ));
         }
         drop(record_lock);
@@ -223,13 +226,11 @@ async fn dispatch_codex_in_turn_coordination_checkpoint(
     match locked {
         Ok(Ok(())) => {}
         Ok(Err(err)) if err.code() == "coordination-checkpoint-not-quiescent" => {
-            update_notification_deferred(
-                &state,
-                &candidate,
-                "recipient-coordination-not-quiescent",
-                COORDINATION_NOTIFICATION_RETRY,
-            )
-            .await;
+            let condition = err
+                .details()
+                .and_then(|details| details["condition"].as_str())
+                .map(str::to_owned);
+            defer_not_quiescent(&state, &candidate, condition).await;
             return;
         }
         Ok(Err(_)) | Err(_) => {
@@ -278,20 +279,72 @@ pub(super) async fn defer_provider_not_ready(
             &context,
             &candidate,
             "provider-not-ready",
-            &detail,
+            Some(&detail),
             COORDINATION_NOTIFICATION_RETRY,
         )
     })
     .await;
 }
 
-/// A structured prompt response without a control handle is the missing-control
-/// branch; any other refusal is the submission branch, qualified by the stable
-/// error code of the refusal when the response carries one.
-fn refusal_detail(response: &Response) -> String {
-    match response.extensions().get::<CliError>().map(CliError::code) {
+/// How a refused structured prompt submission defers the wake.
+enum Refusal {
+    /// The recipient is not quiescent; carries the blocking condition.
+    NotQuiescent(String),
+    /// Control is missing or the submission was refused; carries the branch.
+    ProviderNotReady(String),
+}
+
+fn refusal(response: &Response) -> Refusal {
+    let error = response.extensions().get::<CliError>();
+    if let Some(condition) = error
+        .filter(|error| error.code() == crate::coordination::NOTIFICATION_NOT_QUIESCENT_CODE)
+        .and_then(|error| error.details())
+        .and_then(|details| details["condition"].as_str())
+    {
+        return Refusal::NotQuiescent(condition.to_owned());
+    }
+    Refusal::ProviderNotReady(match error.map(CliError::code) {
         Some("structured-prompt-unavailable") => "prompt-control-unavailable".to_owned(),
         Some(code) => format!("prompt-submission-refused:{code}"),
         None => "prompt-submission-refused".to_owned(),
+    })
+}
+
+/// Defers a wake whose structured prompt submission was refused, under the
+/// refusal's true reason: a recipient that is not quiescent reports the
+/// blocking condition rather than `provider-not-ready`.
+async fn defer_refused(
+    state: &ServeState,
+    candidate: &crate::coordination::NotificationCandidate,
+    refusal: Refusal,
+) {
+    match refusal {
+        Refusal::NotQuiescent(condition) => {
+            defer_not_quiescent(state, candidate, Some(condition)).await;
+        }
+        Refusal::ProviderNotReady(detail) => {
+            defer_provider_not_ready(state, candidate, &detail).await;
+        }
     }
+}
+
+/// Defers a wake as `recipient-coordination-not-quiescent`, naming the
+/// blocking condition when it is known.
+async fn defer_not_quiescent(
+    state: &ServeState,
+    candidate: &crate::coordination::NotificationCandidate,
+    condition: Option<String>,
+) {
+    let context = state.context.clone();
+    let candidate = candidate.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        crate::coordination::defer_notification_with_detail(
+            &context,
+            &candidate,
+            "recipient-coordination-not-quiescent",
+            condition.as_deref(),
+            COORDINATION_NOTIFICATION_RETRY,
+        )
+    })
+    .await;
 }

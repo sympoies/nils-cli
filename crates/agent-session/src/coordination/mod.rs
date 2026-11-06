@@ -16,6 +16,8 @@ pub mod mailbox;
 mod mailbox_sender_relation;
 mod mailbox_wait;
 mod notification;
+mod quiescence_attempt;
+pub(crate) use quiescence_attempt::NOTIFICATION_NOT_QUIESCENT_CODE;
 mod notification_policy;
 pub(crate) mod read_events;
 pub(crate) mod resume_preflight;
@@ -384,52 +386,6 @@ impl SessionQuiescenceGuard {
             false,
         )
     }
-
-    pub(crate) fn begin_notification_attempt(
-        &mut self,
-        candidate: &NotificationCandidate,
-    ) -> Result<bool, CliError> {
-        if auth_effects::quarantined(&self._locked.path, &self.session_id, &self.incarnation)
-            || candidate.target_session_id != self.session_id
-            || candidate.target_incarnation != self.incarnation
-            || !self.broker_authoritative
-            || self.active_claim
-            || self.active_operation
-            || self.uncertain_operation
-            || crate::restart::fenced(&self._locked.path, &self.session_id, &self.incarnation)
-        {
-            return Ok(false);
-        }
-        let attempted_at = jiff::Timestamp::now();
-        // The recipient may have drained its inbox on its own since the
-        // generation was queued; a reminder then only prompts a stale check.
-        if !notification::has_live_unread(
-            &self._locked.registry,
-            &self.session_id,
-            &self.incarnation,
-            attempted_at.as_second(),
-        ) {
-            if notification::resolve_drained_generation(
-                &mut self._locked.registry,
-                &self.session_id,
-                &self.incarnation,
-                attempted_at.as_second(),
-            ) {
-                self._locked.save()?;
-            }
-            return Ok(false);
-        }
-        let Some(_) = notification::transition_attempt_at(
-            &mut self._locked.registry,
-            candidate,
-            attempted_at.as_second(),
-            attempted_at,
-        ) else {
-            return Ok(false);
-        };
-        self._locked.save()?;
-        Ok(true)
-    }
 }
 
 pub fn lock_session_quiescence(
@@ -768,16 +724,10 @@ pub(crate) fn defer_notification_with_detail(
     context: &CliContext,
     candidate: &NotificationCandidate,
     reason: &str,
-    detail: &str,
+    detail: Option<&str>,
     retry_after_seconds: i64,
 ) -> Result<bool, CliError> {
-    notification::defer_with_detail(
-        context,
-        candidate,
-        reason,
-        Some(detail),
-        retry_after_seconds,
-    )
+    notification::defer_with_detail(context, candidate, reason, detail, retry_after_seconds)
 }
 
 pub(crate) fn reconcile_notification_submitted(

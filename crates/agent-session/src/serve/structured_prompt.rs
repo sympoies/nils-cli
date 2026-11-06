@@ -96,7 +96,14 @@ pub(super) async fn submit_structured_prompt_locked(
                     &fence.candidate.target_session_id,
                     &fence.candidate.target_incarnation,
                 )?;
-                if !eligible || !quiescence.begin_notification_attempt(&fence.candidate)? {
+                if eligible && let Some(condition) = quiescence.notification_block(false) {
+                    return Err(CliError::unavailable(
+                        crate::coordination::NOTIFICATION_NOT_QUIESCENT_CODE,
+                        "the recipient is not quiescent for a notification",
+                        Some(json!({ "condition": condition })),
+                    ));
+                }
+                if !eligible || !quiescence.begin_idle_notification_attempt(&fence.candidate)? {
                     return Err(CliError::data(
                         "coordination-notification-superseded",
                         "notification eligibility changed before locked prompt submission",

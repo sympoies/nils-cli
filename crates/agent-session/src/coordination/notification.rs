@@ -740,7 +740,7 @@ pub(crate) fn defer_with_detail(
         if receipt.generation != candidate.generation || receipt.state != "queued" {
             return false;
         }
-        let detail = detail.and_then(safe_reason_detail);
+        let detail = detail.and_then(|detail| safe_reason_detail(reason, detail));
         if !crate::notice::writers_enabled()
             && reason == "provider-not-ready"
             && receipt.last_reason.as_deref() == Some(reason)
@@ -925,11 +925,28 @@ const KNOWN_REFUSAL_CODES: &[&str] = &[
     "structured-prompt-outcome-unknown",
 ];
 
-/// Branch labels for `provider-not-ready`; they carry no message or runtime
-/// content. A refused structured prompt may append one code from
-/// `KNOWN_REFUSAL_CODES` as `prompt-submission-refused:<code>`; any other
-/// suffix is dropped.
-pub(crate) fn safe_reason_detail(detail: &str) -> Option<String> {
+/// Details a deferral may record for its reason. They name the branch or
+/// condition that deferred and carry no message or runtime content.
+pub(crate) fn safe_reason_detail(reason: &str, detail: &str) -> Option<String> {
+    match reason {
+        "provider-not-ready" => provider_not_ready_detail(detail),
+        "recipient-coordination-not-quiescent" => matches!(
+            detail,
+            "active-claim"
+                | "active-operation"
+                | "uncertain-operation"
+                | "broker-not-authoritative"
+                | "auth-quarantined"
+                | "restart-fenced"
+        )
+        .then(|| detail.to_string()),
+        _ => None,
+    }
+}
+
+/// A refused structured prompt may append one code from `KNOWN_REFUSAL_CODES`
+/// as `prompt-submission-refused:<code>`; any other suffix is dropped.
+fn provider_not_ready_detail(detail: &str) -> Option<String> {
     let (branch, code) = detail
         .split_once(':')
         .map_or((detail, None), |(branch, code)| (branch, Some(code)));
@@ -953,16 +970,13 @@ pub(crate) fn safe_reason_detail(detail: &str) -> Option<String> {
 }
 
 /// A detail belongs to the deferral that recorded it, so it is shown only
-/// while that deferral is still the last reason.
+/// while that deferral's reason is still the last reason.
 pub(crate) fn reason_detail(receipt: &NotificationReceipt) -> Option<String> {
-    (receipt.last_reason.as_deref() == Some("provider-not-ready"))
-        .then(|| {
-            receipt
-                .last_reason_detail
-                .as_deref()
-                .and_then(safe_reason_detail)
-        })
-        .flatten()
+    let reason = receipt.last_reason.as_deref()?;
+    receipt
+        .last_reason_detail
+        .as_deref()
+        .and_then(|detail| safe_reason_detail(reason, detail))
 }
 
 fn state_priority(state: &str) -> u8 {
