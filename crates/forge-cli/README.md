@@ -23,6 +23,7 @@ cargo run -p nils-forge-cli -- completion zsh
 cargo run -p nils-forge-cli -- label audit --catalog labels.yaml --format json
 cargo run -p nils-forge-cli -- pr deliver --kind feature --dry-run --format json
 cargo run -p nils-forge-cli -- pr review 123 --decision comments-only --comment-file review.md --mirror-issue --issue 456 --format json
+cargo run -p nils-forge-cli -- pr review edit 123 --review 456 --body-file review.md --format json
 cargo run -p nils-forge-cli -- pr review validate --comment-file review.md --thread-file review-threads.json --format json
 cargo run -p nils-forge-cli -- pr review validate --specialist-report --comment-file review.md --thread-file review-threads.json --format json
 cargo run -p nils-forge-cli -- pr review validate 123 --check-diff --comment-file review.md --thread-file review-threads.json --format json

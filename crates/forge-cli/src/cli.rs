@@ -31,7 +31,7 @@ mod comment;
 pub use comment::*;
 
 mod review_loop;
-pub use review_loop::PrReviewLoopObserveArgs;
+pub use review_loop::{PrReviewCommand, PrReviewEditArgs, PrReviewLoopObserveArgs};
 
 mod search;
 pub use search::{
@@ -728,13 +728,6 @@ impl PrReviewDecision {
             Self::RequestChanges => "REQUEST_CHANGES",
         }
     }
-}
-
-/// `pr review` subcommands that do not post provider-visible review activity.
-#[derive(Subcommand, Debug, Clone)]
-pub enum PrReviewCommand {
-    /// Validate review summary and thread specs before posting.
-    Validate(PrReviewValidateArgs),
 }
 
 /// `pr review validate` arguments.

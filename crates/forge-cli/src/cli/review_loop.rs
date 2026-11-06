@@ -120,3 +120,23 @@ pub struct PrReviewLoopObserveArgs {
     #[arg(long = "body-file", value_name = "PATH")]
     pub body_file: Option<String>,
 }
+
+/// Actions on existing review content.
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum PrReviewCommand {
+    /// Validate a review before posting.
+    Validate(super::PrReviewValidateArgs),
+    /// Update the body of a submitted review owned by the current identity.
+    Edit(PrReviewEditArgs),
+}
+#[derive(clap::Args, Debug, Clone)]
+pub struct PrReviewEditArgs {
+    /// Numeric pull request id.
+    pub id: u64,
+    /// Numeric review id.
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    pub review: u64,
+    /// File containing the replacement body (or - for stdin).
+    #[arg(long, value_name = "PATH")]
+    pub body_file: String,
+}
