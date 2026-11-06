@@ -725,6 +725,12 @@ pub(crate) fn defer(
         if receipt.generation != candidate.generation || receipt.state != "queued" {
             return false;
         }
+        if !crate::notice::writers_enabled()
+            && reason == "provider-not-ready"
+            && receipt.last_reason.as_deref() == Some(reason)
+        {
+            return false;
+        }
         receipt.updated_at_epoch = now;
         receipt.next_attempt_at_epoch = now.saturating_add(retry_after_seconds.max(0));
         receipt.last_reason = Some(safe_reason(reason));
