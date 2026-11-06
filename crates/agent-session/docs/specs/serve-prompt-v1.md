@@ -2,6 +2,10 @@
 
 Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply here.
 
+The proposed [owner prompt intent design](owner-prompt-intent.md) requires
+explicit caller intent and a coordinated wire migration. It is design only;
+the contract below describes implemented behavior.
+
 ## Authenticated writes and prompt submission
 
 - `POST /sessions` (create), `PATCH /sessions/{id}` (title update), `POST /sessions/{id}/send`,

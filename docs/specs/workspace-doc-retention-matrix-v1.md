@@ -88,6 +88,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/agent-session/docs/specs/control-plane-observation-v1.md`
 - `crates/agent-session/docs/specs/mail-audit-v1.md`
 - `crates/agent-session/docs/specs/native-busy-replies.md`
+- `crates/agent-session/docs/specs/owner-prompt-intent.md`
 - `crates/agent-session/docs/specs/send-v1.md`
 - `crates/agent-session/docs/specs/claude-auth-recovery-v1.md`
 - `crates/agent-session/docs/specs/auth-failover-v1.md`

@@ -52,6 +52,9 @@ or integrating a specific subsystem.
   creation, terminal transport, and usage to topic contracts.
 - [Native busy replies](specs/native-busy-replies.md): immediate client handoff,
   provider acknowledgment limits, and the separate explicit idle-only option.
+- [Owner prompt intent design](specs/owner-prompt-intent.md): proposed explicit
+  text/command choice, typed refusals, and coordinated caller migration;
+  implementation requires review and consumer-owner agreement.
 - [Session retitle v2](specs/session-retitle-v2.md): bounded title context,
   automatic scheduling, mutation fences, provider configuration, and privacy.
 - [Session retitle v3](specs/session-retitle-v3.md): bounded semantic memory,
