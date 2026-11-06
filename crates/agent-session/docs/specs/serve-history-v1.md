@@ -17,6 +17,10 @@ sessions. DSH launch profiles are retired, so serve does not configure a DSH his
 searches only metadata already present in the catalog snapshot: exact archived/managed title, bounded
 first-user-prompt preview when the provider scan supplies one, provider session id, provider,
 launch-profile id, cwd/repository label, machine, and timestamps.
+For a full Claude session ID, the directly resolved exact session appears first,
+independent of the catalog scan budget, followed by matching scanned metadata.
+The exact session is not repeated. `truncated` describes the bounded scan, and
+pagination retains this order.
 
 The query never searches arbitrary conversation text or the latest-user-prompt preview. Optional
 `provider`, `cursor`, and `limit` further bound the
