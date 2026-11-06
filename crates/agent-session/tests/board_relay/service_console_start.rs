@@ -180,6 +180,85 @@ fn post(serve: &Serve, bearer: &str, body: &Value) -> (u16, Value) {
 }
 
 #[test]
+fn service_start_accepts_root_work_identity() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let admission = Admission::new(&fixture);
+    let _serve = admission.serve(&fixture, &aggregator);
+    let operation = new_operation();
+    let credential = admission.credential.to_str().unwrap();
+    let expiry = at(600);
+    created(&aggregator, "identity-child");
+    let output = fixture.start_via_console(
+        &[
+            "--agent",
+            "claude",
+            "--service",
+            SERVICE,
+            "--service-generation",
+            GENERATION,
+            "--credential-file",
+            credential,
+            "--owner",
+            OWNER,
+            "--machine",
+            MACHINE,
+            "--expires-at",
+            &expiry,
+            "--operation-id",
+            &operation,
+            "--format",
+            "json",
+            "--no-parent",
+            "--role",
+            "coordinator",
+            "--issue",
+            "example/project#42",
+        ],
+        false,
+    );
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    let body = aggregator.seen()[0].body.clone().unwrap();
+    let work = json!({"program": null, "issues": [{"provider":"github", "repository":"example/project", "number":42}], "inherited":false});
+    assert_eq!(body["session"]["role"], "coordinator");
+    assert_eq!(body["session"]["work"], work);
+    assert_eq!(body["session"]["lineage"]["parent"], Value::Null);
+    assert_eq!(
+        output.stdout_json()["data"]["receipt"]["identity"],
+        json!({"no_parent":true,"role":"coordinator","work":work})
+    );
+    created(&aggregator, "direct-child");
+    let direct = fixture.start_via_console(
+        &[
+            "--agent",
+            "claude",
+            "--no-parent",
+            "--role",
+            "coordinator",
+            "--issue",
+            "example/project#42",
+            "--format",
+            "json",
+        ],
+        true,
+    );
+    assert_eq!(direct.code, 0, "{}", direct.stdout_text());
+    let direct_body = aggregator.seen()[1].body.clone().unwrap();
+    for field in ["role", "work"] {
+        assert_eq!(body["session"][field], direct_body["session"][field]);
+    }
+    assert_eq!(
+        body["session"]["lineage"]["parent"],
+        direct_body["session"]["lineage"]["parent"]
+    );
+    let replay = Request::new(&admission).reconcile(&fixture, &operation);
+    assert_eq!(
+        replay.stdout_json()["data"]["receipt"]["identity"],
+        output.stdout_json()["data"]["receipt"]["identity"]
+    );
+}
+
+#[test]
 fn service_start_creates_one_console_root_and_returns_the_owner_receipt() {
     let fixture = Fixture::new();
     let aggregator = Aggregator::start();
@@ -203,6 +282,7 @@ fn service_start_creates_one_console_root_and_returns_the_owner_receipt() {
         "operation_id": operation,
         "state": "created",
         "safe_to_retry": false,
+        "identity": {"no_parent": false, "role": null, "work": null},
         "session": {
             "id": "service-child",
             "agent": "claude",
@@ -600,7 +680,7 @@ fn service_start_uncertain_result_reconciles_without_a_second_create() {
 }
 
 #[test]
-fn service_start_options_are_complete_and_never_name_a_parent_or_resume() {
+fn service_start_options_require_service_identity_and_refuse_resume() {
     let fixture = Fixture::new();
     let admission = Admission::new(&fixture);
     let credential = admission.credential.to_string_lossy().to_string();
@@ -632,23 +712,38 @@ fn service_start_options_are_complete_and_never_name_a_parent_or_resume() {
         without("--credential-file"),
         without("--service-generation"),
     ];
-    for extra in [
-        vec!["--no-parent"],
-        vec!["--role", "coordinator"],
-        vec!["--issue", "owner/repo#1"],
-        vec!["--no-inherit-work"],
-        vec!["--resume", "prior"],
-    ] {
-        let mut args = complete.to_vec();
-        args.extend(extra);
-        cases.push(args);
-    }
+    let mut args = complete.to_vec();
+    args.extend(["--resume", "prior"]);
+    cases.push(args);
     for args in cases {
         // Each is refused by the parser, before any credential or daemon is touched.
         let output = fixture.start_via_console(&args, false);
         assert_eq!(output.code, 64, "{args:?}: {}", output.stdout_text());
         assert_eq!(error_of(&output)["code"], "parse-error", "{args:?}");
     }
+}
+
+#[test]
+fn service_route_rejects_invalid_root_identity() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let admission = Admission::new(&fixture);
+    let serve = admission.serve(&fixture, &aggregator);
+    for (field, value, code) in [
+        ("role", json!("bad role"), "role-invalid"),
+        (
+            "work",
+            json!({"issues": [{"provider":"github", "repository":"example/project", "number":0}]}),
+            "work-ref-invalid",
+        ),
+        ("role", json!("coordinator"), "role-requires-root"),
+    ] {
+        let mut body = valid_body(&fixture, &new_operation());
+        body[field] = value;
+        let (_, answer) = post(&serve, SERVICE_TOKEN, &body);
+        assert_eq!(answer["error"]["code"], code, "{answer}");
+    }
+    assert_eq!(creates(&aggregator), 0);
 }
 
 fn valid_body(fixture: &Fixture, operation: &str) -> Value {

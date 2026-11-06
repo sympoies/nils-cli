@@ -628,7 +628,9 @@ fn cli_request(
     let requested_pinned = session["title_mode"] == "pinned";
     let requested_launch_env = crate::launch_env::from_json(session.get("launch_env"))?;
     let request = match &service {
-        Some(service) => service::cli_body(service, machine, session, operation_id, reconcile)?,
+        Some(service) => {
+            service::cli_body(service, machine, session, operation_id, reconcile, lineage)?
+        }
         None => {
             let mut request = json!({ "session": session });
             if let Some(machine) = machine {
