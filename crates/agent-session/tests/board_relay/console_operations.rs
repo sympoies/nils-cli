@@ -606,3 +606,61 @@ fn console_start_failure_survives_cli_forwarding_and_receipt_reconciliation() {
         );
     }
 }
+
+#[test]
+fn console_capacity_refusal_reconciles_after_restart() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let mut serve = fixture.serve(&[], Some(&aggregator));
+    let request = json!({"operation_id":operation(),"session":{"agent":"claude"}});
+    aggregator.reply_json(409, &json!({"ok":false,"error":{
+        "code":"session-capacity-exceeded", "message":"full", "details":{
+            "max_active_sessions":2,"active_sessions":2,"retryable":true,
+            "recovery":{"safe_to_retry":true}
+        }
+    }}));
+    let (status, result) = route(&serve, request.clone());
+    assert_eq!(status, 409, "{result}");
+    for restart in [false, true] {
+        if restart {
+            drop(serve);
+            serve = fixture.serve(&[], Some(&aggregator));
+        }
+        let (status, result) = route(&serve, json!({"operation_id":operation(),"reconcile":true}));
+        assert_eq!(status, 201, "{result}");
+        assert_eq!(result["reconciliation"]["state"], "not_created");
+        assert_eq!(result["reconciliation"]["safe_to_retry"], true);
+        assert_eq!(result["failure"]["code"], "session-capacity-exceeded");
+        assert_eq!(result["failure"]["details"]["max_active_sessions"], 2);
+        assert_eq!(result["failure"]["details"]["active_sessions"], 2);
+        assert_eq!(result["failure"]["details"]["retryable"], true);
+        assert_eq!(result["failure"]["details"]["recovery"]["safe_to_retry"], true);
+    }
+    let (status, result) = route(&serve, json!({"operation_id":operation(),"session":{"agent":"codex"}}));
+    assert_eq!(status, 400, "{result}");
+    assert_eq!(result["error"]["code"], "console-start-operation-conflict");
+    assert_eq!(aggregator.seen().len(), 1);
+}
+
+#[test]
+fn console_partial_capacity_refusal_remains_ambiguous() {
+    for (index, details) in [
+        json!({}),
+        json!({"max_active_sessions":2,"active_sessions":2,"retryable":true}),
+        json!({"max_active_sessions":2,"active_sessions":1,"retryable":true,"recovery":{"safe_to_retry":true}}),
+    ].into_iter().enumerate() {
+        let fixture = Fixture::new();
+        let aggregator = Aggregator::start();
+        let serve = fixture.serve(&[], Some(&aggregator));
+        let operation = operation_for(700 + index as u64);
+        aggregator.reply_json(409, &json!({"ok":false,"error":{
+            "code":"session-capacity-exceeded", "message":"full", "details":details
+        }}));
+        route(&serve, json!({"operation_id":operation,"session":{"agent":"claude"}}));
+        aggregator.reply_json(200, &view());
+        let (status, result) = route(&serve, json!({"operation_id":operation,"reconcile":true}));
+        assert_eq!(status, 201, "{result}");
+        assert_eq!(result["reconciliation"]["state"], "ambiguous");
+        assert_eq!(result["reconciliation"]["safe_to_retry"], false);
+    }
+}
