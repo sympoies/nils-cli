@@ -11,6 +11,9 @@ pub(super) fn encode_counts(
     incarnation: &str,
     now: i64,
 ) -> String {
+    if super::super::mailbox_quota::has_pending(registry, session, incarnation, now) {
+        return nils_common::coordination_projection::MAILBOX_QUOTA_ALERT_NOTICE.into();
+    }
     let messages: Vec<_> = registry
         .messages
         .iter()

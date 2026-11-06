@@ -59,7 +59,7 @@ impl SessionQuiescenceGuard {
         let attempted_at = jiff::Timestamp::now();
         // The recipient may have drained its inbox on its own since the
         // generation was queued; a reminder then only prompts a stale check.
-        if !notification::has_live_unread(
+        if !notification::has_pending_content(
             &self._locked.registry,
             &self.session_id,
             &self.incarnation,

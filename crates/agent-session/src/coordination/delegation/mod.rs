@@ -21,6 +21,7 @@ pub(super) fn registry_version_supported(version: &str) -> bool {
                 | nils_common::coordination_projection::DELEGATION_REGISTRY_VERSION
                 | nils_common::coordination_projection::NOTIFICATION_HISTORY_REGISTRY_VERSION
                 | nils_common::coordination_projection::COALESCING_REGISTRY_VERSION
+                | nils_common::coordination_projection::QUOTA_REGISTRY_VERSION
         )
 }
 
@@ -29,7 +30,13 @@ pub(super) fn fence_registry(registry: &mut Registry) {
     let notification_history =
         nils_common::coordination_projection::NOTIFICATION_HISTORY_REGISTRY_VERSION;
     let coalescing = nils_common::coordination_projection::COALESCING_REGISTRY_VERSION;
-    if registry.schema_version == coalescing
+    let quota = nils_common::coordination_projection::QUOTA_REGISTRY_VERSION;
+    if registry.schema_version == quota
+        || !registry.quota_rejections.is_empty()
+        || registry.notifications.values().any(|r| r.quota.is_some())
+    {
+        registry.schema_version = quota.into();
+    } else if registry.schema_version == coalescing
         || registry.notifications.values().any(|receipt| {
             receipt.routine_interval_seconds != 0
                 || receipt.prompt.is_some()

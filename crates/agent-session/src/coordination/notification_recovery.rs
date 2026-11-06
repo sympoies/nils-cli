@@ -77,7 +77,7 @@ pub(crate) fn resolve_drained_generation(
     incarnation: &str,
     now: i64,
 ) -> bool {
-    if super::has_live_unread(registry, session, incarnation, now) {
+    if super::has_pending_content(registry, session, incarnation, now) {
         return false;
     }
     registry
@@ -104,10 +104,12 @@ pub(super) fn resolve_drained_generations(registry: &mut Registry, now: i64) -> 
         .collect();
     let mut changed = false;
     for receipt in registry.notifications.values_mut() {
-        if !live.contains(&(
-            receipt.target_session_id.as_str(),
-            receipt.target_incarnation.as_str(),
-        )) {
+        if !super::super::mailbox_quota::pending(receipt, now)
+            && !live.contains(&(
+                receipt.target_session_id.as_str(),
+                receipt.target_incarnation.as_str(),
+            ))
+        {
             changed |= resolve(receipt, now);
         }
     }
