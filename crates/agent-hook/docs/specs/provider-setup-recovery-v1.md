@@ -4,21 +4,13 @@ Part of the [agent-hook v1 contract](agent-hook-v1.md).
 
 ## Activity helper resolution
 
-`AGENT_SESSION_BIN` outranks `PATH`, so a stale value inherited from a
-long-lived tmux server survived the relocation the `PATH` pin was added to
-prevent. An override that does not resolve to an executable regular file is
-therefore treated as absent, and the daemon-pinned `PATH` decides instead. This is
-a deliberate change to a fail-closed boundary rather than a downgrade: anyone able
-to set `AGENT_SESSION_BIN` can already set `PATH`, and the pinned `PATH` is
-daemon-controlled. The resolved executable is pinned as an absolute path for
-the activity attempt. The discarded override is recorded as
-`activity-helper-unresolvable` so it cannot silently mask a misconfiguration, and
-an empty assignment is the normalized "resolve through the pinned `PATH`" value.
-
-Ingress registration is not capability health. When the selected policy binds
-`agent-session.activity.v1`, `doctor` resolves the helper to an executable file
-through the override or `PATH` before reporting an otherwise converged provider as
-healthy, and fails with `activity-helper-unresolvable` when it cannot.
+Activity and `doctor` select a resolvable `AGENT_SESSION_BIN` override first.
+If it is absent or unresolvable, they select an owner-controlled executable from
+`AGENT_RUNTIME_TRUSTED_CLI_ROOT` in declared order when roots are configured.
+Otherwise they select the validated sibling of the running hook. Arbitrary `PATH` entries are not used. A stale override is
+recorded as `activity-helper-unresolvable` before selection continues; an empty
+override is treated as absent. If no authoritative helper is available, the
+capability and health check return `activity-helper-unresolvable`.
 
 Rule modes are `enforce`, `advise`, `shadow`, and `disabled`, with authority
 3, 2, 1, 0. `advise` evaluates exactly like `enforce`, with the same side

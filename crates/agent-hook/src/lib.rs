@@ -30,7 +30,7 @@ mod paths;
 pub mod policy_parity;
 mod read_only;
 pub mod recovery;
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 mod session_binary;
 pub mod session_metadata;
 pub mod setup;
