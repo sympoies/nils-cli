@@ -1051,7 +1051,7 @@ mod client_reuse_tests {
             for _ in 0..8 {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut request = [0; 4096];
-                stream.read(&mut request).unwrap();
+                assert!(stream.read(&mut request).unwrap() > 0);
                 stream
                     .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                     .unwrap();
