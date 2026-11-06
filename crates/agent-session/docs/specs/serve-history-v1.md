@@ -136,6 +136,14 @@ a not-found rather than a stored record. The response carries `history_id` and
 `starred_at`, which is null once the star is cleared. Clearing a star that was
 never set is a success, so a repeated toggle from two clients settles.
 
+A Claude session listed by an exact session-id query can lie beyond the catalog
+scan limit. Star, resume and messages resolve such a row through the same direct
+session lookup that listed it: the transcript must still be a regular file in a
+real project directory under a configured Claude source, and resume re-reads its
+metadata from that transcript. A row that fails those checks, or was never listed
+by exact id, resolves only through the bounded catalog. Sessions inside the scan
+limit resolve exactly as before.
+
 `POST /history/sessions/{history_id}/resume` accepts no body. The daemon scans
 the owning provider source again, recomputes the opaque history identity, and
 derives provider id, cwd, profile, executable, and canonical resume arguments

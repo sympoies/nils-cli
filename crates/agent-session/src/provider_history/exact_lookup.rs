@@ -109,6 +109,42 @@ impl HistoryCatalog {
         Ok(Some(page))
     }
 
+    /// The history id a star targets: a session found by exact id (possibly
+    /// beyond the catalog scan limit) or one in the catalog snapshot. An id
+    /// that names neither is not found, so no orphan record is written.
+    pub(super) fn star_target(&self, history_id: &str) -> Result<String, HistoryError> {
+        if let Some(session) = self.direct_session(history_id) {
+            return Ok(session.id);
+        }
+        self.snapshot()
+            .sessions
+            .iter()
+            .find(|session| session.id == history_id)
+            .map(|session| session.id.clone())
+            .ok_or(HistoryError::NotFound)
+    }
+
+    /// Re-inspect a session found by exact id from its transcript, under the
+    /// same ownership and file-type guards as `direct_session`, so resume does
+    /// not launch from stale cached metadata.
+    pub(super) fn fresh_direct_session(&self, id: &str) -> Option<HistorySession> {
+        let cached = self.direct_session(id)?;
+        let root = cached.transcript_path.parent()?.parent()?;
+        let source = self
+            .sources
+            .iter()
+            .find(|source| source.provider == "claude" && source.root == root)?;
+        let session = inspect_history_file(
+            source,
+            &cached.transcript_path,
+            Instant::now() + SCAN_MAX_DURATION,
+            &mut IncrementalCatalogStampCache::default(),
+            &mut false,
+            false,
+        )?;
+        (session.id == id).then_some(session)
+    }
+
     pub(super) fn direct_session(&self, id: &str) -> Option<HistorySession> {
         let session = self
             .cache

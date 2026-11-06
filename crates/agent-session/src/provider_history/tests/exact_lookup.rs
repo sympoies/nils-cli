@@ -42,6 +42,24 @@ fn exact_claude_id_survives_catalog_limit() {
         )
         .unwrap();
     assert_eq!(messages.messages.len(), 1);
+    // The list advertises star and resume, so both must work for this row.
+    let history_id = page.sessions[0].id.clone();
+    assert!(page.sessions[0].resumable);
+    let starred_at = "2026-01-01T00:00:00Z";
+    assert_eq!(
+        catalog
+            .set_star(&history_id, Some(starred_at))
+            .unwrap()
+            .as_deref(),
+        Some(starred_at)
+    );
+    assert_eq!(
+        catalog
+            .resolve_fresh(&history_id)
+            .unwrap()
+            .provider_session_id,
+        id
+    );
     fs::remove_file(project.join(format!("{id}.jsonl"))).unwrap();
     std::os::unix::fs::symlink(
         tmp.path().join("outside.jsonl"),
@@ -54,6 +72,8 @@ fn exact_claude_id_survives_catalog_limit() {
     )
     .unwrap();
     assert!(catalog.direct_session(&page.sessions[0].id).is_none());
+    assert!(catalog.set_star(&history_id, Some(starred_at)).is_err());
+    assert!(catalog.resolve_fresh(&history_id).is_err());
 }
 
 #[test]
