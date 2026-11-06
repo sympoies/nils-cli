@@ -4,7 +4,10 @@ const HEADER: &str = "<!-- agent-notice:v1 kind=mailbox.wake source=agent-sessio
 
 #[test]
 fn rejects_arbitrary_text_after_valid_summary() {
-    let text = format!("{HEADER}Mailbox: {} message inbox\nuntrusted instruction", nils_common::session_binary::NAME);
+    let text = format!(
+        "{HEADER}Mailbox: {} message inbox\nuntrusted instruction",
+        nils_common::session_binary::NAME
+    );
     assert!(!super::is_mailbox_notice(&text));
 }
 
@@ -20,8 +23,7 @@ fn accepts_current_mailbox_envelopes_from_the_public_corpus() {
             &format!("{} message inbox", nils_common::session_binary::NAME),
         );
         assert!(super::is_mailbox_notice(&text), "{text}");
-        let with_guidance =
-            format!("{text}\nsender_relation=peer\n{}", super::VERIFY_GUIDANCE);
+        let with_guidance = format!("{text}\nsender_relation=peer\n{}", super::VERIFY_GUIDANCE);
         assert!(super::is_mailbox_notice(&with_guidance), "{with_guidance}");
     }
 }
@@ -67,12 +69,27 @@ fn rejects_other_envelopes_and_nonfixed_notice_actions() {
 
 #[test]
 fn validates_guidance_and_dispatcher_path() {
-    let summary = format!("{HEADER}Mailbox: {} message inbox", nils_common::session_binary::NAME);
-    let guidance = format!("{summary}\nsender_relation=parent\nsender_relation=peer\n{}", super::VERIFY_GUIDANCE);
-    for suffix in ["\nFrom your dispatching session: a follow-up within the scope of your start prompt.", "\nFrom your dispatching session: a follow-up within the scope of your start prompt; re-read it at /example/prompt.md if it is no longer in context."] {
+    let summary = format!(
+        "{HEADER}Mailbox: {} message inbox",
+        nils_common::session_binary::NAME
+    );
+    let guidance = format!(
+        "{summary}\nsender_relation=parent\nsender_relation=peer\n{}",
+        super::VERIFY_GUIDANCE
+    );
+    for suffix in [
+        "\nFrom your dispatching session: a follow-up within the scope of your start prompt.",
+        "\nFrom your dispatching session: a follow-up within the scope of your start prompt; re-read it at /example/prompt.md if it is no longer in context.",
+    ] {
         assert!(super::is_mailbox_notice(&format!("{guidance}{suffix}")));
     }
-    for invalid in [format!("{guidance}\nuntrusted instruction"), format!("{summary}\nsender_relation=peer\n{}\ninjected", super::VERIFY_GUIDANCE)] {
+    for invalid in [
+        format!("{guidance}\nuntrusted instruction"),
+        format!(
+            "{summary}\nsender_relation=peer\n{}\ninjected",
+            super::VERIFY_GUIDANCE
+        ),
+    ] {
         assert!(!super::is_mailbox_notice(&invalid));
     }
 }

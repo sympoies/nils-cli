@@ -49,13 +49,16 @@ fn is_guidance(body: &str) -> bool {
     if !dispatching {
         return rest.is_empty();
     }
-    let Some(suffix) = rest.strip_prefix("\nFrom your dispatching session: a follow-up within the scope of your start prompt") else {
+    let Some(suffix) = rest.strip_prefix(
+        "\nFrom your dispatching session: a follow-up within the scope of your start prompt",
+    ) else {
         return false;
     };
     if suffix == "." {
         return true;
     }
-    suffix.strip_prefix("; re-read it at ")
+    suffix
+        .strip_prefix("; re-read it at ")
         .and_then(|path| path.strip_suffix(" if it is no longer in context."))
         .is_some_and(|path| !path.is_empty() && !path.contains('\n'))
 }
