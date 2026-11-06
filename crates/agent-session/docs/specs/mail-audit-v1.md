@@ -131,9 +131,10 @@ serve process has notice writers off), `notice-runtime-unavailable` (the Claude
 notice runtime is not ready), `notice-not-prepared` (the wake notice could not
 be prepared for another reason), `prompt-control-unavailable` (no structured
 prompt control for the Codex runtime), `prompt-submission-refused` (the
-structured prompt submission was refused), and `notice-attempt-not-admitted`
-(the guarded notice send did not admit the attempt). It is a fixed allowlist and
-carries no message or runtime content.
+structured prompt submission was refused; the stable error code of the refusal
+follows as `prompt-submission-refused:<code>`), and `notice-attempt-not-admitted`
+(the guarded notice send did not admit the attempt). It is a fixed allowlist
+plus that lowercase error code and carries no message or runtime content.
 
 ## Classification and joining
 

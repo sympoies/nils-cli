@@ -153,6 +153,21 @@ fn audit_reports_which_provider_not_ready_branch_deferred_the_wake() {
             "notice-attempt-not-admitted",
             json!("notice-attempt-not-admitted"),
         ),
+        (
+            "provider-not-ready",
+            "prompt-submission-refused:coordination-notification-superseded",
+            json!("prompt-submission-refused:coordination-notification-superseded"),
+        ),
+        (
+            "provider-not-ready",
+            "prompt-submission-refused:BODY_CANARY",
+            Value::Null,
+        ),
+        (
+            "provider-not-ready",
+            "notice-attempt-not-admitted:extra",
+            Value::Null,
+        ),
         ("provider-not-ready", "BODY_CANARY", Value::Null),
         (
             "recipient-working",

@@ -130,10 +130,10 @@ pub(in crate::serve) async fn dispatch_coordination_notification(
         })
         .await;
         if candidate.is_notice() && matches!(attempted, Ok(Ok(false))) {
-            defer_provider_not_ready(&state, &candidate, refusal_detail(&response)).await;
+            defer_provider_not_ready(&state, &candidate, &refusal_detail(&response)).await;
         }
     } else {
-        defer_provider_not_ready(&state, &candidate, refusal_detail(&response)).await;
+        defer_provider_not_ready(&state, &candidate, &refusal_detail(&response)).await;
     }
 }
 
@@ -268,16 +268,17 @@ async fn dispatch_codex_in_turn_coordination_checkpoint(
 pub(super) async fn defer_provider_not_ready(
     state: &ServeState,
     candidate: &crate::coordination::NotificationCandidate,
-    detail: &'static str,
+    detail: &str,
 ) {
     let context = state.context.clone();
     let candidate = candidate.clone();
+    let detail = detail.to_owned();
     let _ = tokio::task::spawn_blocking(move || {
         crate::coordination::defer_notification_with_detail(
             &context,
             &candidate,
             "provider-not-ready",
-            detail,
+            &detail,
             COORDINATION_NOTIFICATION_RETRY,
         )
     })
@@ -285,15 +286,12 @@ pub(super) async fn defer_provider_not_ready(
 }
 
 /// A structured prompt response without a control handle is the missing-control
-/// branch; any other refusal is the submission branch.
-fn refusal_detail(response: &Response) -> &'static str {
-    if response
-        .extensions()
-        .get::<CliError>()
-        .is_some_and(|error| error.code() == "structured-prompt-unavailable")
-    {
-        "prompt-control-unavailable"
-    } else {
-        "prompt-submission-refused"
+/// branch; any other refusal is the submission branch, qualified by the stable
+/// error code of the refusal when the response carries one.
+fn refusal_detail(response: &Response) -> String {
+    match response.extensions().get::<CliError>().map(CliError::code) {
+        Some("structured-prompt-unavailable") => "prompt-control-unavailable".to_owned(),
+        Some(code) => format!("prompt-submission-refused:{code}"),
+        None => "prompt-submission-refused".to_owned(),
     }
 }
