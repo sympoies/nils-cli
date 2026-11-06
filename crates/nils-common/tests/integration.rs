@@ -23,3 +23,7 @@ mod forge_identity_https;
 #[cfg(unix)]
 #[path = "integration/forge_identity_children.rs"]
 mod forge_identity_children;
+
+#[cfg(unix)]
+#[path = "integration/forge_identity_network.rs"]
+mod forge_identity_network;

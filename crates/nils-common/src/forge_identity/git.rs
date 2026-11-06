@@ -385,6 +385,9 @@ fn prepare_git_inner(
     };
     let (target, url) = target_for_remote(cwd, &remote, op != Operation::GitRead)?;
     let path = managed_path(cwd)?;
+    if op != Operation::Commit {
+        super::https::reject_local_transport(cwd)?;
+    }
     let auth = if op != Operation::Commit && url.starts_with("https://") {
         policy.authorize_https(&target, &path, cwd, &url, op)?
     } else {
@@ -460,7 +463,9 @@ fn prepare_git_inner(
         }
         config.extend([
             // Suppress core.hooksPath, core.fsmonitor, and core.alternateRefsCommand;
-            // other repository-configured commands remain operator-owned.
+            // local/worktree http.proxy, http.sslCAInfo, and http.sslCAPath
+            // (including URL forms) were refused before credential authorization.
+            // Other repository-configured commands remain operator-owned.
             (String::from("core.hooksPath"), String::from("/dev/null")),
             (String::from("core.fsmonitor"), String::from("false")),
             (String::from("core.alternateRefsCommand"), String::new()),
