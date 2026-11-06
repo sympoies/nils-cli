@@ -155,3 +155,51 @@ async fn image_regression_markdown_distinguishes_safe_file_from_boundary_refusal
             .contains("working directory")
     );
 }
+
+async fn remote_image_error(url: &str) -> Value {
+    let row = json!({"type":"response_item","payload":{"type":"message","role":"user","content":[
+        {"type":"input_text","text":"remote image"},
+        {"type":"input_image","image_url":url}
+    ]}});
+    let fixture = Fixture::new("codex", &format!("{row}\n"));
+    let page = fixture.page("").await;
+    let image = &page["data"]["messages"][0]["images"][0]["id"];
+    let response = fixture
+        .get(&format!("images/{}", image.as_str().unwrap()))
+        .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap(),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn remote_image_read_reports_origin_only_and_makes_no_request() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let url = format!("http://user:secret@127.0.0.1:{port}/private/a.png?token=abc#frag");
+    let body = remote_image_error(&url).await;
+    assert_eq!(body["error"]["code"], "history-image-unavailable");
+    assert_eq!(body["error"]["reason"], "remote-url-not-fetched");
+    assert_eq!(body["error"]["source_origin"], "http://127.0.0.1");
+    let text = body.to_string();
+    for leaked in ["private", "token", "secret", "frag", &port.to_string()] {
+        assert!(!text.contains(leaked), "{leaked} leaked: {text}");
+    }
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}
+
+#[tokio::test]
+async fn unsupported_url_schemes_stay_plain_unavailable() {
+    let body = remote_image_error("ftp://example.invalid/a.png").await;
+    assert_eq!(body["error"]["code"], "history-image-unavailable");
+    assert!(body["error"].get("reason").is_none());
+    assert!(body["error"].get("source_origin").is_none());
+}

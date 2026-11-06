@@ -101,7 +101,7 @@ Errors use the ordinary JSON `ok: false` envelope:
 Missing history, transcript, referenced file, or stale row ids are deleted.
 A managed attachment whose session has no matching live provider identity or
 matching archive original session id is also deleted (404).
-Malformed ids, remote URLs, unsupported data, excessive size, forbidden paths,
+Malformed ids, non-HTTP URL schemes, unsupported data, excessive size, forbidden paths,
 symlinks and unreadable/invalid images are unavailable. Infrastructure failures
 remain ordinary server errors; clients can show unavailable and allow retry.
 For a local file outside both allowed roots, the 422 envelope retains
@@ -109,6 +109,13 @@ For a local file outside both allowed roots, the 422 envelope retains
 a message explaining the working-directory/owned-attachment boundary. It does not
 include the refused path. Consumers can display this reason with the image
 basename from the original Markdown instead of an unexplained placeholder.
+For an `http` or `https` URL source the image selector is still emitted, but the
+server never fetches it (no proxying and no external request). The 422 envelope
+retains `history-image-unavailable` and adds `error.reason: "remote-url-not-fetched"`
+and `error.source_origin`, the lower-cased `scheme://host` only (for example
+`https://example.com`). Credentials, port, path, query and fragment are never
+included, so the envelope carries no full external URL; clients take the link from
+the row text they already hold. These two field names are frozen.
 These states are observations at read time, not promises of permanent storage.
 
 ## File boundary and retention

@@ -885,6 +885,8 @@ pub(crate) enum ImageReadError {
     Deleted,
     Unavailable,
     OutsideAllowedRoots,
+    /// An `http(s)` reference the daemon never fetches; carries `scheme://host` only.
+    RemoteUrlNotFetched(String),
 }
 pub(crate) struct ImageBytes {
     pub(crate) mime: &'static str,
@@ -979,7 +981,10 @@ impl HistoryCatalog {
                     .strip_prefix("data:")
                     .and_then(|v| v.split_once(";base64,"))
                 else {
-                    return Err(ImageReadError::Unavailable);
+                    return Err(match remote_origin(url) {
+                        Some(origin) => ImageReadError::RemoteUrlNotFetched(origin),
+                        None => ImageReadError::Unavailable,
+                    });
                 };
                 decode_image(mime, encoded)
             }
@@ -1161,6 +1166,25 @@ fn open_beneath(root: &Path, relative: &Path) -> Result<fs::File, ImageReadError
         directory = unsafe { fs::File::from_raw_fd(fd) };
     }
     Ok(directory)
+}
+
+/// Scheme and host of an `http(s)` URL, without credentials, port, path, query or fragment.
+fn remote_origin(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let host_port = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = if host_port.starts_with('[') {
+        &host_port[..=host_port.find(']')?]
+    } else {
+        host_port.split(':').next()?
+    };
+    (!host.is_empty()).then(|| format!("{scheme}://{}", host.to_ascii_lowercase()))
 }
 
 fn decode_image(mime: &str, encoded: &str) -> Result<ImageBytes, ImageReadError> {
