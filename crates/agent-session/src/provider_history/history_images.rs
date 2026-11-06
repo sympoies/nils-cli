@@ -885,8 +885,8 @@ pub(crate) enum ImageReadError {
     Deleted,
     Unavailable,
     OutsideAllowedRoots,
-    /// An `http(s)` reference the daemon never fetches; carries `scheme://host` only.
-    RemoteUrlNotFetched(String),
+    /// An `http(s)` reference the daemon never fetches; carries a validated `scheme://host` if any.
+    RemoteUrlNotFetched(Option<String>),
 }
 pub(crate) struct ImageBytes {
     pub(crate) mime: &'static str,
@@ -981,7 +981,7 @@ impl HistoryCatalog {
                     .strip_prefix("data:")
                     .and_then(|v| v.split_once(";base64,"))
                 else {
-                    return Err(match remote_origin(url) {
+                    return Err(match remote_url_source(url) {
                         Some(origin) => ImageReadError::RemoteUrlNotFetched(origin),
                         None => ImageReadError::Unavailable,
                     });
@@ -1168,23 +1168,39 @@ fn open_beneath(root: &Path, relative: &Path) -> Result<fs::File, ImageReadError
     Ok(directory)
 }
 
-/// Scheme and host of an `http(s)` URL, without credentials, port, path, query or fragment.
-fn remote_origin(url: &str) -> Option<String> {
+/// For an `http(s)` URL, `Some(origin)` where origin is `scheme://host` only when the host is
+/// strictly valid (otherwise `None`); `None` for any other scheme. Credentials, port, path,
+/// query and fragment are never part of the origin.
+fn remote_url_source(url: &str) -> Option<Option<String>> {
     let (scheme, rest) = url.split_once("://")?;
     let scheme = scheme.to_ascii_lowercase();
     if scheme != "http" && scheme != "https" {
         return None;
     }
-    let authority = rest.split(['/', '?', '#']).next()?;
+    Some(valid_origin(&scheme, rest))
+}
+
+fn valid_origin(scheme: &str, rest: &str) -> Option<String> {
+    let authority = rest.split(['/', '\\', '?', '#']).next()?;
     let host_port = authority
         .rsplit_once('@')
         .map_or(authority, |(_, host)| host);
-    let host = if host_port.starts_with('[') {
-        &host_port[..=host_port.find(']')?]
+    let (host, port) = if let Some(inner) = host_port.strip_prefix('[') {
+        let (literal, after) = inner.split_once(']')?;
+        let ip: std::net::Ipv6Addr = literal.parse().ok()?;
+        (format!("[{ip}]"), after.strip_prefix(':').unwrap_or(after))
     } else {
-        host_port.split(':').next()?
+        let (host, port) = host_port.split_once(':').unwrap_or((host_port, ""));
+        let valid = !host.is_empty()
+            && host.len() <= 253
+            && host
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.');
+        (valid.then(|| host.to_ascii_lowercase())?, port)
     };
-    (!host.is_empty()).then(|| format!("{scheme}://{}", host.to_ascii_lowercase()))
+    port.bytes()
+        .all(|b| b.is_ascii_digit())
+        .then(|| format!("{scheme}://{host}"))
 }
 
 fn decode_image(mime: &str, encoded: &str) -> Result<ImageBytes, ImageReadError> {

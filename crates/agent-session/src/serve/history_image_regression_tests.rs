@@ -203,3 +203,39 @@ async fn unsupported_url_schemes_stay_plain_unavailable() {
     assert!(body["error"].get("reason").is_none());
     assert!(body["error"].get("source_origin").is_none());
 }
+
+#[tokio::test]
+async fn remote_image_origin_is_strictly_validated() {
+    let long_host = format!("https://{}.example/a.png", "a".repeat(250));
+    let cases: Vec<(String, Option<&str>)> = vec![
+        (
+            "HTTPS://Example.COM/a.png".into(),
+            Some("https://example.com"),
+        ),
+        ("http://[::1]:8080/a.png".into(), Some("http://[::1]")),
+        (
+            "https://us@er:p@host.example/x".into(),
+            Some("https://host.example"),
+        ),
+        (
+            "https://evil.example\\@good.example/a".into(),
+            Some("https://evil.example"),
+        ),
+        ("https://user:pw/x@host.example".into(), None),
+        ("https:///a.png".into(), None),
+        ("https://".into(), None),
+        ("https://exa mple.example/a".into(), None),
+        ("https://exa\u{7}mple.example/a".into(), None),
+        ("https://[not-ip]/a".into(), None),
+        (long_host, None),
+    ];
+    for (url, origin) in cases {
+        let body = remote_image_error(&url).await;
+        assert_eq!(body["error"]["code"], "history-image-unavailable", "{url}");
+        assert_eq!(body["error"]["reason"], "remote-url-not-fetched", "{url}");
+        match origin {
+            Some(origin) => assert_eq!(body["error"]["source_origin"], origin, "{url}"),
+            None => assert!(body["error"].get("source_origin").is_none(), "{url}"),
+        }
+    }
+}

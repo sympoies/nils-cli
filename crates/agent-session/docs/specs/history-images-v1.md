@@ -117,7 +117,10 @@ retains `history-image-unavailable` and adds `error.reason: "remote-url-not-fetc
 and `error.source_origin`, the lower-cased `scheme://host` only (for example
 `https://example.com`). Credentials, port, path, query and fragment are never
 included, so the envelope carries no full external URL; clients take the link from
-the row text they already hold. These two field names are frozen.
+the row text they already hold. The host must be ASCII letters, digits, hyphens and
+dots (at most 253 bytes) or a bracketed IPv6 literal, and a backslash ends the
+authority; otherwise `source_origin` is omitted and the reason is still returned.
+These two field names are frozen.
 
 These states are observations at read time, not promises of permanent storage.
 
