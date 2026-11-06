@@ -50,7 +50,7 @@ fn scenario(actor: &str, rewrite: bool, local_kind: &str) {
             global.to_str().unwrap(),
             "--add",
             "credential.helper",
-            "!f() { test \"$1\" = get || exit 0; cat >/dev/null; printf 'username=fixture\\npassword=%s\\n' \"$FIXTURE_HTTPS_TOKEN\"; }; f",
+            "!f() { test \"$1\" = get || exit 0; request=$(cat); if test \"$FIXTURE_HTTPS_ACTOR\" = account-a; then printf \"%s\\n\" \"$request\" | grep -qx \"username=account-a\" || exit 1; fi; printf 'username=fixture\\npassword=%s\\n' \"$FIXTURE_HTTPS_TOKEN\"; }; f",
         ],
     );
     if untrusted_local {

@@ -8,8 +8,8 @@ change forge accounts, credential storage, signing, or delivery authorization.
 ## Select and verify HTTPS
 
 1. Configure an authorized system/global Git credential helper for the forge.
-   For GitHub, the maintainer can use `gh auth setup-git` after authenticating the intended
-   account. Repository-local and worktree-local helper entries, including
+   The helper must honour the requested username and return that user's token.
+   Repository-local and worktree-local helper entries, including
    URL-scoped helpers and entries reached through local includes, refuse before
    execution. The helper's credential must authenticate as the selected identity
    profile's expected account. A working API credential alone does not prove
@@ -57,6 +57,36 @@ If the authenticated account mismatches, repair the helper's account or the
 identity profile through its owner, then retry the original governed command.
 Do not paste tokens into remote URLs, command arguments, logs, or issue text.
 API profile credentials and commit signing requirements remain independent.
+
+## Multi-account helper and isolated testing
+
+A trusted helper can select the requested account without changing the active
+account. For example, a GitHub helper may use this shape (the requested account
+must already be authenticated):
+
+```sh
+#!/bin/sh
+[ "$1" = get ] || exit 0
+host= username=
+while IFS= read -r line && [ -n "$line" ]; do
+  case "$line" in
+    host=*) host=${line#host=} ;;
+    username=*) username=${line#username=} ;;
+  esac
+done
+[ -n "$host" ] && [ -n "$username" ] || exit 0
+token=$(gh auth token --hostname "$host" --user "$username") || exit 1
+printf 'username=%s\npassword=%s\n' "$username" "$token"
+```
+
+Configure the helper through its trusted system/global configuration owner.
+A helper that ignores the username may return another account; the guard still
+verifies the returned credential and refuses a mismatch before transport.
+For isolated testing, point `GIT_CONFIG_GLOBAL` at a scratch configuration
+file with an `[include]` pointing to the real signing configuration and a
+helper entry pointing to the test helper. This preserves signing settings while
+leaving shared configuration and active accounts unchanged. Exercise both a
+matching response and a mismatched response before removing the scratch files.
 
 ## Switch back
 

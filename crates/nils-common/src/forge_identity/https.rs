@@ -16,7 +16,7 @@ impl LoadedPolicy {
         // Resolve session/principal/profile/operation before invoking any helper.
         let selected = self.select(target, Some(path), operation);
         let result = selected.as_ref().map_err(Clone::clone).and_then(|selection| {
-            let token = credential(cwd, url)?;
+            let token = credential(cwd, url, selection.profile.expected_login.as_deref())?;
             self.verify_token(selection, OsStr::new("gh"), token)
         }).map_err(|error| match error.code {
             "identity_actor_mismatch" => Error::with_detail(error.code,
@@ -46,7 +46,7 @@ impl LoadedPolicy {
     }
 }
 
-fn credential(cwd: Option<&Path>, url: &str) -> Result<String> {
+fn credential(cwd: Option<&Path>, url: &str, username: Option<&str>) -> Result<String> {
     reject_local_helpers(cwd)?;
     // Keep lookup out of repository discovery even if local config changes after
     // inspection. The directory never contains a credential or helper script.
@@ -55,14 +55,15 @@ fn credential(cwd: Option<&Path>, url: &str) -> Result<String> {
         .tempdir()
         .map_err(|_| Error::new("identity_probe_unavailable"))?;
     // Git's credential protocol takes input on stdin. This fixed pipeline passes
-    // only the already-validated public URL as an argument; the token is captured
+    // only the already-validated public URL and login as arguments; the token is captured
     // privately by the bounded probe, never placed in argv or a file.
     let mut command = Command::new("sh");
     command.args([
         "-c",
-        "printf 'url=%s\\n\\n' \"$1\" | git -c credential.interactive=false credential fill",
+        "{ printf 'url=%s\\n' \"$1\"; if [ -n \"$2\" ]; then printf 'username=%s\\n' \"$2\"; fi; printf '\\n'; } | git -c credential.interactive=false credential fill",
         "forge-https-credential",
         url,
+        username.unwrap_or(""),
     ]);
     command
         .current_dir(isolated.path())
