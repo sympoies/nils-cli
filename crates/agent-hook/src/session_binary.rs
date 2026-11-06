@@ -163,6 +163,19 @@ mod tests {
     }
 
     #[test]
+    fn an_approved_root_rejects_a_helper_owned_by_another_user() {
+        let system_binary = Path::new("/bin/sh");
+        let metadata = fs::metadata(system_binary).expect("system shell metadata");
+        if metadata.uid() == unsafe { libc::geteuid() } {
+            return; // This environment has no distinct owner for the fixture.
+        }
+        let directory = tempfile::tempdir().expect("tempdir");
+        symlink(system_binary, directory.path().join(NAME)).expect("system binary alias");
+        let refused = trusted_root(directory.path()).expect_err("wrong owner");
+        assert_eq!(refused.code, "operation-lifecycle-helper-untrusted");
+    }
+
+    #[test]
     fn the_sibling_is_an_owner_controlled_executable_in_the_hook_directory() {
         let directory = tempfile::tempdir().expect("tempdir");
         let release = fs::canonicalize(directory.path()).expect("canonical");
