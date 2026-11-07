@@ -771,13 +771,13 @@ fn attach_status(root: &Path) -> Option<Value> {
 fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
     let versions = [
         ("1", "2.1.296", true, "", ""),
-        ("1", "2.1.318", true, "", ""),
+        ("1", "2.1.319", true, "", ""),
         (
             "1",
-            "2.1.319",
+            "2.1.320",
             false,
             "provider-version-unsupported",
-            "2.1.319",
+            "2.1.320",
         ),
         (
             "1",
@@ -813,7 +813,7 @@ fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
                     "reason": reason,
                     "provider_version": (!observed.is_empty()).then_some(observed),
                     "supported_min": "2.1.296",
-                    "supported_max": "2.1.318",
+                    "supported_max": "2.1.319",
                 })),
                 "{case}"
             );
@@ -837,17 +837,17 @@ fn seed_attach_status(fixture: &super::Fixture, status: Option<Value>) {
 
 fn status(reason: &str, version: Option<&str>) -> Value {
     json!({"schema_version":"agent-session.claude-notice-attach.v1","state":"not-attached",
-        "reason":reason,"provider_version":version,"supported_min":"2.1.296","supported_max":"2.1.318"})
+        "reason":reason,"provider_version":version,"supported_min":"2.1.296","supported_max":"2.1.319"})
 }
 
 #[test]
 fn claude_notice_unattached_session_refuses_with_a_typed_reason() {
     for (seed, code, reason, version) in [
         (
-            Some(status("provider-version-unsupported", Some("2.1.319"))),
+            Some(status("provider-version-unsupported", Some("2.1.320"))),
             "notice-native-version-unsupported",
             "provider-version-unsupported",
-            json!("2.1.319"),
+            json!("2.1.320"),
         ),
         (
             Some(status("provider-version-unreadable", None)),
@@ -876,7 +876,7 @@ fn claude_notice_unattached_session_refuses_with_a_typed_reason() {
             json!({"id":"guarded","guard":"transport","stage":"admission","atomic":false,
                 "pasted":false,"submitted":false,
                 "native_module":{"attached":false,"reason":reason,"provider_version":version,
-                    "supported_min":"2.1.296","supported_max":"2.1.318"}}),
+                    "supported_min":"2.1.296","supported_max":"2.1.319"}}),
             "{reason}"
         );
         // Refused before any claim or input: the key stays unused.
