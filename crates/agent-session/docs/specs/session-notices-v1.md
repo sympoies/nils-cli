@@ -127,6 +127,7 @@ remains unobservable, and readable owner additions are preserved.
 When Codex 0.162.1 wraps a notice header into separate captured rows, the guard
 retains their physical coordinates and verifies the header's logical start and
 end before accepting those rows as a soft wrap.
+
 For pastes longer than 1000 characters, Codex 0.162.1 can show one
 `[Pasted Content N chars]` element. Only an exact single label whose count
 matches the notice after CRLF/CR normalization and Unicode scalar counting is
