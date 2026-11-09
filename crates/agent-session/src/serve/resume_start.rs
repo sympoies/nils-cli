@@ -101,12 +101,12 @@ async fn relay_check(
 async fn create(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
-    body: Result<Json<CreateBody>, JsonRejection>,
+    body: Result<Json<create_body::CheckedCreateBody>, JsonRejection>,
 ) -> Response {
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
     }
-    let Ok(Json(mut body)) = body else {
+    let Ok(Json(create_body::CheckedCreateBody(mut body))) = body else {
         return envelope_err(refusal("resume-unsupported"));
     };
     if body.normalize_resume_account().is_err() {

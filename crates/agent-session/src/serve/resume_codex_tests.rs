@@ -204,3 +204,31 @@ async fn fresh_create_accepts_both_account_fields_and_rejects_conflicts() {
     .await;
     assert_eq!(result["error"]["code"], "claude-account-agent-conflict");
 }
+
+#[tokio::test]
+async fn create_routes_reject_null_account_key_conflicts() {
+    let temp = tempfile::tempdir().unwrap();
+    let (state, _, tmux) = unbound_codex_fixture(temp.path());
+    let app = router(crate::serve::tests::state(&state, Some(TOKEN), tmux));
+    for route in ["/sessions", "/sessions/resume/v1", "/resume-preflight/v1"] {
+        for fields in [
+            json!({"account":"original","codex_account":null}),
+            json!({"account":null,"codex_account":"original"}),
+            json!({"claude_account":null}),
+        ] {
+            let mut body = json!({"agent":"codex"});
+            if route != "/sessions" {
+                body["resume"] = json!(ID);
+            }
+            body.as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            let (status, result) = post(app.clone(), route, Some(TOKEN), body).await;
+            if route == "/sessions" {
+                assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{result}");
+            } else {
+                assert_eq!(result["error"]["code"], "resume-unsupported", "{result}");
+            }
+        }
+    }
+}

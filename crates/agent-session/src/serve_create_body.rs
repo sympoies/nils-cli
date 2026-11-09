@@ -61,6 +61,27 @@ pub(super) struct CreateBody {
     pub(super) role: Option<Value>,
 }
 
+/// Preserve key presence while decoding account fields; remove with #3468.
+pub(super) struct CheckedCreateBody(pub(super) CreateBody);
+
+impl<'de> Deserialize<'de> for CheckedCreateBody {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        if let Some(object) = value.as_object()
+            && ["account", "codex_account", "claude_account"]
+                .iter()
+                .any(|key| object.get(*key).is_some_and(Value::is_null))
+        {
+            let mut fields = object.clone();
+            crate::coordination::resume_preflight::normalize_account(&mut fields)
+                .map_err(|_| serde::de::Error::custom("conflicting account fields"))?;
+        }
+        serde_json::from_value(value)
+            .map(Self)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 fn default_origin() -> Value {
     serde_json::json!({"parent":null})
 }

@@ -4,7 +4,7 @@ use super::*;
 pub(super) async fn create_handler(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
-    Json(body): Json<CreateBody>,
+    Json(create_body::CheckedCreateBody(body)): Json<create_body::CheckedCreateBody>,
 ) -> Response {
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
