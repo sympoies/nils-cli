@@ -248,12 +248,30 @@ fn codex_notice_wrapped_header_submits_once_at_native_origin() {
 fn codex_notice_wrapped_header_cleans_owned_paste_after_idle_conflict() {
     let (fixture, _) = wrapped_notice_fixture(false);
     fs::write(fixture.root().join("start-after-paste"), "").unwrap();
+    fs::write(fixture.root().join("slow-cleanup-capture"), "250").unwrap();
     let output = fixture.notice(&[]);
     let receipt = fixture.refused(&output, "send-session-not-idle");
     assert_eq!(receipt["error"]["details"]["cleared"], true);
     assert_eq!(receipt["error"]["details"]["remaining_input"], "empty");
     assert_eq!(composer(&fixture), "");
     assert!(!fixture.root().join("submissions").exists());
+}
+
+#[test]
+fn codex_notice_wrapped_header_preserves_paste_when_cleanup_budget_expires() {
+    let (fixture, input) = wrapped_notice_fixture(false);
+    fs::write(fixture.root().join("start-after-paste"), "").unwrap();
+    fs::write(fixture.root().join("slow-cleanup-roundtrip"), "").unwrap();
+    let output = fixture.notice(&[]);
+    let receipt = fixture.refused(&output, "send-session-not-idle");
+    assert_eq!(receipt["error"]["details"]["cleared"], false);
+    assert_eq!(composer(&fixture), input);
+    assert!(!fixture.root().join("submissions").exists());
+    assert!(
+        fixture.calls().iter().all(|call| {
+            call[0] != "send-keys" || call.last().is_none_or(|key| key != "BSpace")
+        })
+    );
 }
 
 #[test]

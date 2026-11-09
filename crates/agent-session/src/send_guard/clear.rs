@@ -62,7 +62,13 @@ impl Admission<'_> {
 
     pub(super) fn clear_pasted(&self, text: &str, observed_paste: bool) -> (Option<String>, bool) {
         let cleanup = Admission {
-            deadline: Instant::now() + CLEAR_BUDGET,
+            deadline: Instant::now()
+                + if self.record.agent == "codex" && self.args.notice_envelope {
+                    // The wrapped notice proof needs multiple cursor observations.
+                    crate::send::guarded_hold_budget(self.record, true)
+                } else {
+                    CLEAR_BUDGET
+                },
             context: self.context,
             record: self.record,
             args: self.args,
