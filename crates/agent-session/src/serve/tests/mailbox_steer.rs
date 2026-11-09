@@ -7,7 +7,7 @@ async fn coordination_notification_working_codex_uses_safe_in_turn_checkpoint() 
     let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let codex_home = tmp.path().join("codex-home");
-    let transcript = codex_home.join("sessions/2030/01/active.jsonl");
+    let transcript = fixture::path(tmp.path(), "beta");
     fs::create_dir_all(transcript.parent().expect("transcript parent")).expect("transcript dir");
     let provider_id = "notification-active-provider";
     let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", codex_home.to_str().unwrap());
