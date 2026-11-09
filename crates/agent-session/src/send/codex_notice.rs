@@ -27,13 +27,8 @@ impl Prepared {
         recovery: Option<crate::auto_resume::notice::Recovery>,
         claim_key: impl FnOnce() -> Result<(), CliError>,
     ) -> Result<Self, CliError> {
-        let baseline = crate::provider_prompt::codex_notice::capture(record).ok_or_else(|| {
-            CliError::runtime(
-                "notice-native-baseline-unavailable",
-                "native notice requires a bound provider transcript baseline",
-                None,
-            )
-        })?;
+        let baseline = crate::provider_prompt::codex_notice::capture(record)
+            .ok_or_else(|| claude_notice::runtime::baseline_unavailable(record))?;
         let claim = store::Claim::for_codex(
             record,
             text,

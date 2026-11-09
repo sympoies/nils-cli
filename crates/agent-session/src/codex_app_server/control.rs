@@ -6,11 +6,14 @@ pub(crate) enum ControlCommand {
     Prompt {
         message: String,
         client_message_id: Option<String>,
+        write: Option<Box<mailbox_notice::Write>>,
         response: oneshot::Sender<Result<String, prompt_submit::PromptSubmissionFailure>>,
     },
     Steer {
         message: String,
         expected_turn_id: String,
+        client_message_id: Option<String>,
+        write: Option<Box<mailbox_notice::Write>>,
         response: oneshot::Sender<Result<String, String>>,
     },
     NoticeContinue {

@@ -52,7 +52,20 @@ pub(super) fn deliver(
     client
         .idle()
         .map_err(|code| refusal(&record, code, "admission", false, false))?;
-    admission.claim_key()?;
+    let notice = if args.guards.notice_envelope {
+        Some(codex_notice::Prepared::new(
+            context,
+            &record,
+            &text,
+            attempt.started,
+            admission.deadline,
+            None,
+            || admission.claim_key(),
+        )?)
+    } else {
+        admission.claim_key()?;
+        None
+    };
     admission.check(None, "claimed")?;
     client
         .idle()
@@ -61,24 +74,38 @@ pub(super) fn deliver(
     prepare_guarded_input(context, &mut record, true, &mut prepared)?;
     record.updated_at = Zoned::now().timestamp().to_string();
     write_session_record(context, &record)?;
-    let confirmation = client
-        .dispatch(&text, args.guards.client_message_id.as_deref(), |turn_id| {
-            (attempt.acknowledged)(&record, turn_id);
-            // Acknowledged input may wait for synchronous provider ingress
-            // before entering history. Ingress needs this record lock. Keep
-            // the account gate and durable claim, but perform no further
-            // record writes after releasing the lock.
-            drop(manual_input.record_lock.take());
-        })
-        .map_err(|error| {
-            refusal(
+    let client_message_id = notice
+        .as_ref()
+        .map(|notice| notice.client_id())
+        .or(args.guards.client_message_id.as_deref());
+    let mut accepted_turn = None;
+    let dispatched = client.dispatch(&text, client_message_id, |turn_id| {
+        accepted_turn = Some(turn_id.to_owned());
+        (attempt.acknowledged)(&record, turn_id);
+        // Acknowledged input may wait for synchronous provider ingress
+        // before entering history. Ingress needs this record lock. Keep
+        // the account gate and durable claim, but perform no further
+        // record writes after releasing the lock.
+        drop(manual_input.record_lock.take());
+    });
+    let confirmation = match dispatched {
+        Ok(confirmation) => confirmation,
+        Err(error) => {
+            if let Some(notice) = notice {
+                return Err(notice.unknown(context));
+            }
+            return Err(refusal(
                 &record,
                 "send-native-unconfirmed",
                 "submit",
                 true,
                 error.acknowledged,
-            )
-        })?;
+            ));
+        }
+    };
+    if let Some(notice) = notice {
+        notice.confirm(context, &text, accepted_turn.as_deref().unwrap_or(""))?;
+    }
     if manual_input.record_lock.is_none() {
         let unconfirmed = |_| refusal(&record, "send-native-unconfirmed", "submit", true, true);
         let lock = crate::acquire_session_record_lock_timed(

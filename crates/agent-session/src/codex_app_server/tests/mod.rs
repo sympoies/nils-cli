@@ -1742,7 +1742,7 @@ async fn queued_steer_waits_for_handler_so_its_durable_fence_cannot_expire_early
     let (handle, mut commands) = control_channel();
     let task = tokio::spawn(async move {
         handle
-            .steer_prompt("mailbox checkpoint", "projected-active-turn")
+            .steer_prompt("mailbox checkpoint", "projected-active-turn", None, None)
             .await
     });
     let command = commands.recv().await.expect("queued steer");
@@ -8030,7 +8030,7 @@ async fn unix_control_recovers_raw_active_turn_after_reconnect_before_steering()
     .expect("project recovered active turn");
     assert_eq!(
         handle
-            .steer_prompt("mailbox checkpoint", &projected_turn_id)
+            .steer_prompt("mailbox checkpoint", &projected_turn_id, None, None)
             .await
             .unwrap(),
         projected_turn_id
@@ -8245,7 +8245,7 @@ async fn unix_control_projects_live_failure_and_acknowledges_exact_turn_without_
             .expect("project active turn id");
     assert_eq!(
         handle
-            .steer_prompt("mailbox checkpoint", &projected_turn_id)
+            .steer_prompt("mailbox checkpoint", &projected_turn_id, None, None)
             .await
             .unwrap(),
         projected_turn_id
