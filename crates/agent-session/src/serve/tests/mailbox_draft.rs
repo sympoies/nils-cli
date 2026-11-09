@@ -197,3 +197,7 @@ mod stale_drafts {
 mod unresponsive {
     include!("mailbox_draft/unresponsive.rs");
 }
+
+mod residue_discard {
+    include!("mailbox_draft/residue_discard.rs");
+}

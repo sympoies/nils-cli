@@ -276,7 +276,6 @@ where
     };
     dispatch(cli)
 }
-
 fn dispatch(cli: Cli) -> i32 {
     if let Some(code) = cli::operator_rules::prepare(&cli.command) {
         return code;
@@ -302,6 +301,7 @@ fn dispatch(cli: Cli) -> i32 {
         account_broker::adopt_serve_brokers(&context.state_dir);
     }
     match cli.command {
+        Command::Drafts(args) => cli::drafts::run(&context, args),
         Command::Start(args) => run_start(&context, *args),
         Command::Run(args) => run_one_shot(&context, args),
         Command::List(args) => run_list(&context, args),
