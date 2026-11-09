@@ -16,6 +16,11 @@ pub(crate) fn observe_attempt(
     {
         return None;
     }
+    // A timestamp/text match cannot supply the native client/physical-row proof.
+    // An unresolved app-server notice remains consumed even if it completes late.
+    if candidate.is_notice() && crate::codex_app_server::runtime_is_supported(&record) {
+        return None;
+    }
     let attempted_at = candidate
         .attempted_at
         .as_deref()?

@@ -2096,6 +2096,7 @@ pub(crate) struct ControlHandle {
 
 pub(crate) mod continuation_notice;
 mod control;
+pub(crate) mod mailbox_notice;
 pub(crate) use control::ControlCommand;
 
 impl ControlHandle {
@@ -2132,32 +2133,6 @@ impl ControlHandle {
         })
         .await
         .map_err(|_| "codex rate-limit request timed out".to_string())?
-    }
-
-    pub(crate) async fn steer_prompt(
-        &self,
-        message: &str,
-        expected_turn_id: &str,
-    ) -> Result<String, String> {
-        let (response, receive) = oneshot::channel();
-        tokio::time::timeout(
-            CONTROL_RESPONSE_TIMEOUT,
-            self.sender.send(ControlCommand::Steer {
-                message: message.to_string(),
-                expected_turn_id: expected_turn_id.to_string(),
-                response,
-            }),
-        )
-        .await
-        .map_err(|_| "codex turn steering enqueue timed out".to_string())?
-        .map_err(|_| "codex control connection unavailable".to_string())?;
-        // Once the command is queued, the caller's durable notification fence
-        // must remain held until the bounded control handler answers or the
-        // connection closes. Timing out here would let a late provider write
-        // outlive that fence and overlap a newly admitted atomic operation.
-        receive
-            .await
-            .map_err(|_| "codex control connection closed".to_string())?
     }
 
     pub(crate) async fn bind_account(
@@ -2707,7 +2682,7 @@ pub(crate) async fn run_control(
                         ).await;
                         let _ = response.send(result.map(|value| usage_snapshot(&value)));
                     }
-                    ControlCommand::Prompt { message, client_message_id, response } => {
+                    ControlCommand::Prompt { message, client_message_id, write, response } => {
                         if let Err(error) = control_account_ready(
                             &context,
                             &record,
@@ -2719,6 +2694,10 @@ pub(crate) async fn run_control(
                             let _ = response.send(Err(prompt_submit::PromptSubmissionFailure::NotDispatched));
                             continue;
                         }
+                        let write_lock = match mailbox_notice::lock(&context, &thread_id, &message, write.as_deref()).await {
+                            Ok(lock) => lock,
+                            Err(_) => { let _ = response.send(Err(prompt_submit::PromptSubmissionFailure::NotDispatched)); continue; }
+                        };
                         request_id = request_id.saturating_add(1);
                         let result = prompt_submit::submit_prompt_request(
                             &mut websocket,
@@ -2729,6 +2708,7 @@ pub(crate) async fn run_control(
                                 .as_deref()
                                 .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                             CONTROL_SUBMISSION_TIMEOUT,
+                            write_lock,
                         ).await;
                         let result = match result {
                             Ok(turn_id) => Ok(turn_id),
@@ -2746,6 +2726,8 @@ pub(crate) async fn run_control(
                     ControlCommand::Steer {
                         message,
                         expected_turn_id,
+                        client_message_id,
+                        write,
                         response,
                     } => {
                         if let Err(error) = control_terminal_account_ready(
@@ -2809,15 +2791,13 @@ pub(crate) async fn run_control(
                             }
                         };
                         request_id = request_id.saturating_add(1);
-                        if let Err(err) = send_json(
-                            &mut websocket,
-                            steering_request(
-                                request_id,
-                                &thread_id,
-                                &raw_turn_id,
-                                &message,
-                            ),
-                        )
+                        let write_lock = match mailbox_notice::lock(&context, &thread_id, &message, write.as_deref()).await {
+                            Ok(lock) => lock,
+                            Err(error) => { let _ = response.send(Err(error)); continue; }
+                        };
+                        let mut request = steering_request(request_id, &thread_id, &raw_turn_id, &message);
+                        if let Some(client) = client_message_id.as_deref() { request["params"]["clientUserMessageId"] = json!(client); }
+                        if let Err(err) = mailbox_notice::send(&mut websocket, request, write_lock)
                         .await
                         {
                             let _ = response.send(Err(err));
@@ -2830,7 +2810,7 @@ pub(crate) async fn run_control(
                             external_auth_account
                                 .as_deref()
                                 .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
-                            CONTROL_SUBMISSION_TIMEOUT,
+                            write.as_ref().map_or(CONTROL_SUBMISSION_TIMEOUT, |write| CONTROL_SUBMISSION_TIMEOUT.min(write.deadline.saturating_duration_since(Instant::now()))),
                         )
                         .await
                         .and_then(|value| {
@@ -2847,7 +2827,7 @@ pub(crate) async fn run_control(
                                         .to_string(),
                                 );
                             }
-                            Ok(expected_turn_id)
+                            Ok(if client_message_id.is_some() { raw_turn_id } else { expected_turn_id })
                         });
                         let _ = response.send(result);
                     }

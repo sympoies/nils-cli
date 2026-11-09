@@ -6,6 +6,18 @@ use super::*;
 pub(crate) const NOTIFICATION_NOT_QUIESCENT_CODE: &str = "coordination-notification-not-quiescent";
 
 impl SessionQuiescenceGuard {
+    /// The queue handoff may write only its still-consumed exact generation.
+    pub(crate) fn notice_attempt_matches(&self, candidate: &NotificationCandidate) -> bool {
+        self._locked.registry.notifications.values().any(|receipt| {
+            receipt.target_session_id == candidate.target_session_id
+                && receipt.target_incarnation == candidate.target_incarnation
+                && receipt.state == "attempting"
+                && receipt.attempted_generation == candidate.generation
+                && receipt.attempted_generation > receipt.notified_generation
+                && receipt.attempted_prompt == candidate.prompt
+        })
+    }
+
     /// The first recipient condition that forbids a wake attempt. With
     /// `claim_blocks` false the recipient's own claim, which says what it
     /// works on rather than that it is busy, is not a condition; only an

@@ -31,7 +31,7 @@ fn turn(state: &ServeState, launch: &str, working: bool) {
         let event = serde_json::from_value(json!({
             "schema_version": crate::activity::TURN_EVENT_VERSION,
             "event_id": format!("notice-{kind}"), "runtime_id": launch,
-            "provider": "codex", "provider_turn_id": "notice-turn",
+            "provider": "codex", "provider_session_id": "thread-capacity", "provider_turn_id": "notice-turn",
             "kind": kind, "confidence": "authoritative"
         }))
         .unwrap();
@@ -80,6 +80,8 @@ fn assert_notice_body(body: &str, summary: &str) {
 #[derive(Clone, Copy)]
 enum Outcome {
     Accepted,
+    MissingProof,
+    AmbiguousProof,
     Rejected,
     Dropped,
 }
@@ -92,7 +94,9 @@ async fn controller(working: bool, writers: bool, outcome: Outcome) {
         if writers { "1" } else { "0" },
     );
     let tmp = tempfile::tempdir().unwrap();
+    let _home = EnvGuard::set(&lock, "CODEX_HOME", tmp.path().join("codex-home").to_str().unwrap());
     let (state, launch, sender, _) = setup(tmp.path());
+    fixture::bind(&state.context, "beta", tmp.path(), "thread-capacity");
     turn(&state, &launch, working);
     mail(&state, &sender).await;
     let (handle, mut commands) = codex_app_server::control_channel();
@@ -111,13 +115,16 @@ async fn controller(working: bool, writers: bool, outcome: Outcome) {
         assert_eq!(notification_fixture(tmp.path())["notified_generation"], 0);
         return;
     }
+    let path = fixture::path(tmp.path(), "beta");
     let responder = tokio::spawn(async move {
         let command = commands.recv().await.unwrap();
         let message = match command {
-            codex_app_server::ControlCommand::Prompt { message, response, .. } => {
+            codex_app_server::ControlCommand::Prompt { message, client_message_id, response, .. } => {
                 assert!(!working);
+                fixture::append(&path, &message, if matches!(outcome, Outcome::MissingProof) { "unbound-client" } else { client_message_id.as_deref().unwrap_or("unattested") }, "continued-turn");
+                if matches!(outcome, Outcome::AmbiguousProof) { fixture::append(&path, &message, client_message_id.as_deref().unwrap(), "continued-turn"); }
                 match outcome {
-                    Outcome::Accepted => response.send(Ok("notice-accepted".into())).unwrap(),
+                    Outcome::Accepted | Outcome::MissingProof | Outcome::AmbiguousProof => response.send(Ok("continued-turn".into())).unwrap(),
                     Outcome::Rejected => response
                         .send(Err(codex_app_server::prompt_submit::not_confirmed(
                             "provider rejected notice",
@@ -129,12 +136,16 @@ async fn controller(working: bool, writers: bool, outcome: Outcome) {
             }
             codex_app_server::ControlCommand::Steer {
                 message,
-                expected_turn_id,
+                expected_turn_id: _,
+                client_message_id,
                 response,
+                ..
             } => {
                 assert!(working);
+                fixture::append(&path, &message, if matches!(outcome, Outcome::MissingProof) { "unbound-client" } else { client_message_id.as_deref().unwrap() }, "continued-turn");
+                if matches!(outcome, Outcome::AmbiguousProof) { fixture::append(&path, &message, client_message_id.as_deref().unwrap(), "continued-turn"); }
                 match outcome {
-                    Outcome::Accepted => response.send(Ok(expected_turn_id)).unwrap(),
+                    Outcome::Accepted | Outcome::MissingProof | Outcome::AmbiguousProof => response.send(Ok("continued-turn".into())).unwrap(),
                     Outcome::Rejected => response
                         .send(Err("provider rejected notice".into()))
                         .unwrap(),
@@ -169,6 +180,23 @@ async fn controller(working: bool, writers: bool, outcome: Outcome) {
         "controller attempt must exclude hook delivery"
     );
     assert_notice(&message);
+    if matches!(outcome, Outcome::MissingProof | Outcome::AmbiguousProof) {
+        reconcile_coordination_notifications(state.clone()).await;
+        assert_eq!(notification_fixture(tmp.path())["state"], "attempt_unknown",
+            "text/timestamp observation cannot confirm an unattested native notice");
+    }
+    if matches!(outcome, Outcome::Accepted) {
+        let history = provider_history::stable_history_id("codex", None, "thread-capacity");
+        let catalog = HistoryCatalog::new(
+            vec![HistorySource { provider: "codex".into(), agent_profile: None,
+                root: tmp.path().join("codex-home/sessions") }],
+            provider_history::archive_root(tmp.path()), provider_history::star_root(tmp.path()),
+        ).with_session_state_dir(tmp.path().to_owned());
+        let page = catalog.messages_with_parts(&history, None, 10, HistoryMessageDirection::Forward, true).unwrap();
+        assert_eq!(page.messages.len(), 1);
+        assert_eq!(page.messages[0].role, "notice", "accepted mailbox notice needs an exact physical row attestation");
+        assert!(!page.messages[0].human_prompt);
+    }
     if !matches!(outcome, Outcome::Accepted) {
         assert_eq!(notification_fixture(tmp.path())["state"], "attempt_unknown");
     }
@@ -314,6 +342,7 @@ async fn mailbox_notice_writer_disabled_hook_leaves_codex_delivery_to_controller
     for (working, hook_gate) in [(false, None), (true, Some("0"))] {
         let tmp = tempfile::tempdir().unwrap();
         let (state, launch, sender, _) = setup(tmp.path());
+        fixture::bind(&state.context, "beta", tmp.path(), "thread-capacity");
         // Unconfigured receipts retain the fixed plain prompt until dispatch.
         fs::remove_file(tmp.path().join("coordination/notification-policy.json")).unwrap();
         turn(&state, &launch, working);
@@ -353,18 +382,21 @@ async fn mailbox_notice_writer_disabled_hook_leaves_codex_delivery_to_controller
         state.codex_controls.lock().unwrap().insert(
             "beta".into(), CodexControlEntry { launch_id: launch, handle },
         );
+        let path = fixture::path(tmp.path(), "beta");
         let responder = tokio::spawn(async move {
             let message = match commands.recv().await.unwrap() {
-                codex_app_server::ControlCommand::Prompt { message, response, .. } => {
+                codex_app_server::ControlCommand::Prompt { message, client_message_id, response, .. } => {
                     assert!(!working);
-                    response.send(Ok("notice-accepted".into())).unwrap();
+                    fixture::append(&path, &message, client_message_id.as_deref().unwrap(), "continued-turn");
+                    response.send(Ok("continued-turn".into())).unwrap();
                     message
                 }
                 codex_app_server::ControlCommand::Steer {
-                    message, expected_turn_id, response,
+                    message, client_message_id, response, ..
                 } => {
                     assert!(working);
-                    response.send(Ok(expected_turn_id)).unwrap();
+                    fixture::append(&path, &message, client_message_id.as_deref().unwrap(), "continued-turn");
+                    response.send(Ok("continued-turn".into())).unwrap();
                     message
                 }
                 _ => panic!("unexpected controller command"),
@@ -378,5 +410,14 @@ async fn mailbox_notice_writer_disabled_hook_leaves_codex_delivery_to_controller
         assert!(claim(&state)["reminder"].is_null());
         drain_coordination_notifications(state.clone()).await;
         assert!(commands.try_recv().is_err(), "one generation is delivered once");
+    }
+}
+
+#[tokio::test]
+async fn mailbox_notice_accepted_without_unique_row_proof_stays_unconfirmed() {
+    for working in [false, true] {
+        for outcome in [Outcome::MissingProof, Outcome::AmbiguousProof] {
+            controller(working, true, outcome).await;
+        }
     }
 }

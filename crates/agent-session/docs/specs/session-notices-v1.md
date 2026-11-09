@@ -634,8 +634,8 @@ Scheduler admission never invokes operator stale-draft repair: an occupied
 composer is refused without stashing or clearing it, including a draft already
 observed as stale.
 
-Scheduler Codex notices extend the existing bounded attestation owner with an additive
-proof variant. Existing Claude records retain their shape and interpretation.
+Codex scheduler, mailbox controller start/steer, and operator app-server notices
+share the existing bounded attestation owner and its Codex proof variant. Existing Claude records retain their shape and interpretation.
 The Codex claim binds the full runtime/provider/account identity, canonical
 envelope digest and length, original budget, baseline and provider client id.
 An acknowledgment alone is insufficient: absent unique physical-row proof,
@@ -675,11 +675,14 @@ role. Bootstrap and authenticated hook rows without authoritative association
 remain unsupported proof forms; neither a fabricated turn nor another delivery
 may supply that association. Source fixtures do not establish native acceptance.
 
-Existing mailbox start/steer and operator notice paths retain their admission
-guards and currently have no Codex producer attestation. Those stored rows keep
-their provider user role plus the envelope display class. Their additional
-attestation is tracked in [#3393](https://github.com/sympoies/nils-cli/issues/3393);
-this scheduler slice adds no operator baseline precondition or input retry.
+Mailbox controller start/steer and operator app-server notices retain their
+admission guards and require a bound transcript baseline before consuming an
+attempt. Both controller routes carry the claim's client id; the controller
+reacquires and revalidates the record lock through the actual native write,
+then releases it before provider ingress. A native attempt without exact proof
+stays unconfirmed and cannot be confirmed by a later text/timestamp match.
+Codex terminal-only operator notices remain available without attestation and
+retain the provider user role.
 
 All new writers require the explicit environment gate
 `AGENT_SESSION_NOTICE_WRITERS=1` in the CLI caller environment. Unset or any

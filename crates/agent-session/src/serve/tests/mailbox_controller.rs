@@ -14,7 +14,7 @@ async fn coordination_notification_startup_catchup_uses_one_acknowledged_codex_s
     let launch_id = seed_codex_app_server_session(tmp.path(), "beta");
     let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
     let alpha = load_session_record(&state.context, "alpha").expect("alpha");
-    let beta = load_session_record(&state.context, "beta").expect("beta");
+    let beta = fixture::bind(&state.context, "beta", tmp.path(), "mailbox-thread");
     let alpha_capability = provision_ready_coordination_fixture(&state.context, &alpha);
     provision_ready_coordination_fixture(&state.context, &beta);
     crate::activity::activate_runtime(&state.context, &beta).expect("activate beta");
@@ -27,6 +27,7 @@ async fn coordination_notification_startup_catchup_uses_one_acknowledged_codex_s
             "event_id": event_id,
             "runtime_id": launch_id,
             "provider": "codex",
+            "provider_session_id": "mailbox-thread",
             "provider_turn_id": "notification-idle-turn",
             "kind": kind,
             "confidence": "authoritative"
@@ -211,14 +212,16 @@ async fn coordination_notification_startup_catchup_uses_one_acknowledged_codex_s
     .expect("clear uncertain operation");
 
     let expected_prompt = fixture_notification_prompt(tmp.path());
+    let notice_path = fixture::path(tmp.path(), "beta");
     let responder = tokio::spawn(async move {
-        let Some(codex_app_server::ControlCommand::Prompt { message, response, .. }) =
+        let Some(codex_app_server::ControlCommand::Prompt { message, client_message_id, response, .. }) =
             commands.recv().await
         else {
             panic!("notification did not reach the Codex control plane");
         };
         assert_eq!(message, expected_prompt);
         assert!(!message.contains(canary));
+        fixture::append(&notice_path, &message, client_message_id.as_deref().unwrap(), "turn-notification-catchup");
         response
             .send(Ok("turn-notification-catchup".to_string()))
             .expect("acknowledge prompt");
@@ -261,7 +264,7 @@ async fn coordination_notification_skips_a_mailbox_the_recipient_already_drained
     let launch_id = seed_codex_app_server_session(tmp.path(), "beta");
     let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
     let alpha = load_session_record(&state.context, "alpha").expect("alpha");
-    let beta = load_session_record(&state.context, "beta").expect("beta");
+    let beta = fixture::bind(&state.context, "beta", tmp.path(), "mailbox-thread");
     let alpha_capability = provision_ready_coordination_fixture(&state.context, &alpha);
     provision_ready_coordination_fixture(&state.context, &beta);
     crate::activity::activate_runtime(&state.context, &beta).expect("activate beta");
@@ -274,6 +277,7 @@ async fn coordination_notification_skips_a_mailbox_the_recipient_already_drained
             "event_id": event_id,
             "runtime_id": launch_id,
             "provider": "codex",
+            "provider_session_id": "mailbox-thread",
             "provider_turn_id": "drained-idle-turn",
             "kind": kind,
             "confidence": "authoritative"
@@ -338,13 +342,15 @@ async fn coordination_notification_skips_a_mailbox_the_recipient_already_drained
     send_notification_fixture(&state, &alpha_capability, "drained-mailbox-0002").await;
     let expected_prompt = fixture_notification_prompt(tmp.path());
     assert!(crate::notice::parse_notice(&expected_prompt).is_some());
+    let notice_path = fixture::path(tmp.path(), "beta");
     let responder = tokio::spawn(async move {
-        let Some(codex_app_server::ControlCommand::Prompt { message, response, .. }) =
+        let Some(codex_app_server::ControlCommand::Prompt { message, client_message_id, response, .. }) =
             commands.recv().await
         else {
             panic!("new mail must be announced");
         };
         assert_eq!(message, expected_prompt);
+        fixture::append(&notice_path, &message, client_message_id.as_deref().unwrap(), "turn-drained-mailbox");
         response
             .send(Ok("turn-drained-mailbox".to_string()))
             .expect("acknowledge prompt");
@@ -365,7 +371,7 @@ async fn coordination_notification_without_codex_control_records_the_control_bra
     let launch_id = seed_codex_app_server_session(tmp.path(), "beta");
     let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
     let alpha = load_session_record(&state.context, "alpha").expect("alpha");
-    let beta = load_session_record(&state.context, "beta").expect("beta");
+    let beta = fixture::bind(&state.context, "beta", tmp.path(), "mailbox-thread");
     let alpha_capability = provision_ready_coordination_fixture(&state.context, &alpha);
     provision_ready_coordination_fixture(&state.context, &beta);
     crate::activity::activate_runtime(&state.context, &beta).expect("activate beta");
@@ -378,6 +384,7 @@ async fn coordination_notification_without_codex_control_records_the_control_bra
             "event_id": event_id,
             "runtime_id": launch_id,
             "provider": "codex",
+            "provider_session_id": "mailbox-thread",
             "provider_turn_id": "control-branch-turn",
             "kind": kind,
             "confidence": "authoritative"
@@ -412,7 +419,7 @@ async fn idle_claimed_codex_recipient(
     let launch_id = seed_codex_app_server_session(tmp.path(), "beta");
     let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
     let alpha = load_session_record(&state.context, "alpha").expect("alpha");
-    let beta = load_session_record(&state.context, "beta").expect("beta");
+    let beta = fixture::bind(&state.context, "beta", tmp.path(), "mailbox-thread");
     let alpha_capability = provision_ready_coordination_fixture(&state.context, &alpha);
     provision_ready_coordination_fixture(&state.context, &beta);
     crate::activity::activate_runtime(&state.context, &beta).expect("activate beta");
@@ -427,6 +434,7 @@ async fn idle_claimed_codex_recipient(
             "event_id": format!("{tag}-turn-{suffix}"),
             "runtime_id": launch_id,
             "provider": "codex",
+            "provider_session_id": "mailbox-thread",
             "provider_turn_id": format!("{tag}-turn"),
             "kind": kind,
             "confidence": "authoritative"
@@ -510,12 +518,14 @@ async fn coordination_notification_wakes_an_idle_recipient_holding_only_its_own_
     let lock = GlobalStateLock::new();
     let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let (tmp, state, mut commands) = idle_claimed_codex_recipient("own-claim", false, false).await;
+    let notice_path = fixture::path(tmp.path(), "beta");
     let responder = tokio::spawn(async move {
-        let Some(codex_app_server::ControlCommand::Prompt { response, .. }) =
+        let Some(codex_app_server::ControlCommand::Prompt { message, client_message_id, response, .. }) =
             commands.recv().await
         else {
             panic!("the wake did not reach the Codex control plane");
         };
+        fixture::append(&notice_path, &message, client_message_id.as_deref().unwrap(), "turn-own-claim-wake");
         response
             .send(Ok("turn-own-claim-wake".to_string()))
             .expect("acknowledge prompt");

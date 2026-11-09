@@ -42,6 +42,7 @@ impl ResumedFixture {
             resume_args: vec![], extra: BTreeMap::new(),
         });
         crate::write_session_record(&state.context, &record).unwrap();
+        record = fixture::bind(&state.context, "beta", temp.path(), "resumed-thread");
         let starting = crate::activity::activate_runtime(&state.context, &record).unwrap();
         assert_eq!(starting.phase, activity::TurnPhase::Starting);
         assert!(starting.current_turn.is_none());
@@ -119,11 +120,12 @@ async fn resumed_codex_without_turn_end_delivers_one_wake_after_observed_idle() 
     tokio::select! {
         biased;
         result = fixture.commands.recv() => {
-            let Some(codex_app_server::ControlCommand::Prompt { message, response, .. }) = result else {
+            let Some(codex_app_server::ControlCommand::Prompt { message, client_message_id, response, .. }) = result else {
                 panic!("expected one wake");
             };
             assert!(crate::notice::parse_notice(&message).is_some());
             assert!(!message.contains("notification reconciliation fixture"));
+            fixture::append(&fixture::path(fixture.temp.path(), "beta"), &message, client_message_id.as_deref().unwrap(), "wake-turn");
             response.send(Ok("wake-turn".into())).unwrap();
         }
         () = async { while !drain.is_finished() { tokio::task::yield_now().await; } } => {}

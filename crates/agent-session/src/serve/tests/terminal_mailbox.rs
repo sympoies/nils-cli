@@ -7,3 +7,18 @@ mod mailbox_controller {
 mod draft_guard {
     include!("mailbox_draft.rs");
 }
+
+mod notice {
+    include!("mailbox_notice.rs");
+}
+
+mod fixture {
+    include!("mailbox_fixture.rs");
+}
+mod steer {
+    include!("mailbox_steer.rs");
+}
+
+mod wire {
+    include!("mailbox_wire.rs");
+}
