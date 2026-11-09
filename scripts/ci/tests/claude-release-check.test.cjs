@@ -97,14 +97,51 @@ test("candidate publication uses the bot App token without a default-token fallb
   const mint = publish.match(/- name: Mint bot token\n([\s\S]*?)(?=\n      - name:)/);
   const candidate = publish.match(/- name: Prepare draft range candidate from validated evidence\n([\s\S]*?)(?=\n      - name:)/);
   assert.ok(mint); assert.ok(candidate);
+  const credentials = publish.match(/- name: Require bot app credentials\n([\s\S]*?)(?=\n      - name:)/);
+  assert.match(credentials[1], /if: steps\.publication_plan\.outputs\.candidate == 'true'/);
+  const plan = publish.match(/- name: Plan candidate publication[\s\S]*?node <<'JS'\n([\s\S]*?)\n          JS/)[1]
+    .split("\n").map(line => line.slice(10)).join("\n");
+  for (const [checked, expected] of [[{ check: null }, "candidate=false\n"],
+    [{ check: { passed: false } }, "candidate=false\n"], [{ check: { passed: true } }, "candidate=true\n"]]) {
+    const writes = [];
+    require("node:vm").runInNewContext(plan, {
+      require: name => name === "node:fs" ? { readFileSync: () => JSON.stringify(checked), appendFileSync: (_, value) => writes.push(value) } : path,
+      process: { env: { CLAUDE_CHECK_ARTIFACT_DIR: "evidence", GITHUB_OUTPUT: "output" } },
+    });
+    assert.deepEqual(writes, [expected]);
+  }
+  assert.match(candidate[1], /Candidate publication requires a bot App token/);
+  assert.match(mint[1], /if: steps\.publication_plan\.outputs\.candidate == 'true'/);
   assert.match(mint[1], /id: bot_token/);
   assert.match(mint[1], /uses: actions\/create-github-app-token@v3/);
   assert.match(mint[1], /permission-contents: write/);
   assert.match(mint[1], /permission-pull-requests: write/);
-  assert.match(candidate[1], /github-token: \${{ steps\.bot_token\.outputs\.token }}/);
-  assert.doesNotMatch(candidate[1], /github-token:.*(?:\|\||github\.token|secrets\.GITHUB_TOKEN)/);
+  assert.match(candidate[1], /github-token: \${{ github\.token }}/);
+  assert.match(candidate[1], /getOctokit\(process\.env\.BOT_TOKEN\)/);
   assert.match(candidate[1], /issueGithub: getOctokit\(process\.env\.ISSUE_TOKEN\)/);
   assert.match(candidate[1], /ISSUE_TOKEN: \${{ github\.token }}/);
+});
+
+test("publication reaches reporting without an App token and refuses candidate writes without one", async () => {
+  const workflow = fs.readFileSync(path.join(REPOSITORY, ".github/workflows/claude-release-check.yml"), "utf8");
+  const step = workflow.split("- name: Prepare draft range candidate from validated evidence")[1].split("- name: Retain publication result")[0];
+  const script = step.split("          script: |\n")[1].split("\n").map(line => line.slice(12)).join("\n");
+  for (const [checked, token, expected] of [[{ check: null }, "", "report"],
+    [{ check: { passed: false } }, "", "report"], [{ check: { passed: true } }, "", "refuse"],
+    [{ check: { passed: true } }, "app-token", "candidate"]]) {
+    let call;
+    const issueClient = {};
+    const appClient = {};
+    const run = require("node:vm").runInNewContext(`(async () => { ${script} })`, {
+      require: name => name === "node:fs" ? { lstatSync: () => ({ isFile: () => true }), statSync: () => ({ size: 1 }),
+        readFileSync: file => JSON.stringify(file.endsWith("checked.json") ? checked : {}) } : name === "node:path" ? path :
+        { runReleaseCheck: async options => { call = options; } },
+      process: { env: { CLAUDE_CHECK_ARTIFACT_DIR: "evidence", ISSUE_TOKEN: "issue-token", BOT_TOKEN: token } },
+      github: issueClient, getOctokit: value => value === "app-token" ? appClient : issueClient, context: {}, core: {},
+    });
+    if (expected === "refuse") await assert.rejects(run(), /requires a bot App token/);
+    else { await run(); assert.equal(call.github, expected === "candidate" ? appClient : issueClient); assert.equal(call.issueGithub, issueClient); }
+  }
 });
 
 test("official latest registry discovery uses strict stable versions and exact package identity", async () => {
@@ -234,7 +271,8 @@ test("existing human edits, reviews, ready/closed PRs, duplicates and occupied b
     await runReleaseCheck(options);
     assert.ok(["preserved", "error"].includes(state.result.status), `${variant}: ${state.result.status}`);
     assert.ok(!state.writes.slice(before).some(([kind]) => ["ref", "commit", "tree", "pr"].includes(kind)), variant);
-    if (variant !== "branch") assert.equal(state.pulls[0]?.body, pr.body);
+    if (variant === "branch") assert.match(state.result.action, /delivery-and-releases\.md#orphan-candidate-branch/);
+    else assert.equal(state.pulls[0]?.body, pr.body);
   }
 });
 
