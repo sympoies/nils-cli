@@ -161,3 +161,28 @@ async fn mailbox_notice_supported_terminal_preserves_operator_draft_before_claim
     fixture.assert_no_input("operator partial draft");
     assert_eq!(notification_fixture(fixture.temp.path())["state"], "queued");
 }
+
+#[tokio::test]
+async fn mailbox_notice_collapsed_codex_paste_submits_once() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let fixture = WakeFixture::new(AgentKind::Codex).await;
+    fs::write(fixture.temp.path().join("codex-collapse-paste"), "").unwrap();
+    let record = load_session_record(&fixture.state.context, "beta").unwrap();
+    let mut candidate = fixture.candidate.clone();
+    candidate.prepare_notice(&fixture.state.context, &record).unwrap();
+    let prompt = crate::coordination::notification_prompt(&candidate);
+    assert!(prompt.chars().count() > 1000);
+    crate::serve::terminal_notification::dispatch_coordination_notification(
+        fixture.state.clone(), candidate,
+    ).await;
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["state"], "prompt_submitted", "{receipt}");
+    assert_eq!(receipt["notified_generation"], 1);
+    let submissions: Vec<String> = fs::read_to_string(fixture.temp.path().join("submissions"))
+        .unwrap().lines().map(|row| serde_json::from_str(row).unwrap()).collect();
+    assert_eq!(submissions, [prompt]);
+    assert_eq!(fs::read_to_string(fixture.temp.path().join("composer")).unwrap(), "");
+    drain_coordination_notifications(fixture.state.clone()).await;
+    assert_eq!(fs::read_to_string(fixture.temp.path().join("submissions")).unwrap().lines().count(), 1);
+}

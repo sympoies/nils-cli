@@ -107,7 +107,7 @@ def print_cursor():
         if time.monotonic() - started < delay: x, y = 3, 1
     if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()):
         label = (root / 'collapsed-label').read_text()
-        x, y = (2 if cursor == 0 else 2 + len(label) + cell_width(text[len(label):][:cursor - 1])), 1
+        x, y = (2 if cursor == 0 else 2 + len(label) + cell_width(text[len(label):][:cursor - 1])), (0 if provider == 'codex' else 1)
     print(x, y)
 
 if command == 'capture-pane' and 'display-message' in args: atexit.register(print_cursor)
@@ -174,6 +174,12 @@ elif command == 'paste-buffer':
     if (root / 'collapse-paste').exists():
         count = len(re.findall(r'\r\n|\r|\n', (root / 'buffer').read_text()))
         label = '[Pasted text #1' + (f' +{count} lines' if count else '') + ']'
+        (root / 'composer').write_text(label)
+        (root / 'collapsed-label').write_text(label)
+        (root / 'cursor').write_text('1')
+    if (root / 'codex-collapse-paste').exists():
+        pasted = (root / 'buffer').read_text().replace('\r\n', '\n').replace('\r', '\n')
+        label = f'[Pasted Content {len(pasted)} chars]'
         (root / 'composer').write_text(label)
         (root / 'collapsed-label').write_text(label)
         (root / 'cursor').write_text('1')
@@ -259,7 +265,10 @@ elif command == 'send-keys' and args[-1] == 'Enter':
         (root / 'entered').touch(); sys.exit(0)
     if (root / 'unverified-after-enter').exists():
         (root / 'entered').touch(); sys.exit(0)
-    with (root / 'submissions').open('a') as out: out.write(json.dumps((root / 'composer').read_text()) + '\n')
+    submitted = (root / 'composer').read_text()
+    if (root / 'codex-collapse-paste').exists() and submitted == (root / 'collapsed-label').read_text():
+        submitted = (root / 'buffer').read_text().replace('\r\n', '\n').replace('\r', '\n')
+    with (root / 'submissions').open('a') as out: out.write(json.dumps(submitted) + '\n')
     (root / 'composer').write_text('')
     if (root / 'replace-after-enter').exists(): (root / 'runtime-replaced').touch()
 elif command == 'capture-pane':

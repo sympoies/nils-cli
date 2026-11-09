@@ -118,7 +118,8 @@ authentication, blocked-state, durable key, receipt and unknown-outcome rules.
 ### Terminal delivery and queue mode
 
 Codex terminal sessions use the verified terminal composer path; the complete
-envelope must be observable before Enter. Codex's blank composer rows can
+envelope or its verified single paste element must be observable before Enter.
+Codex's blank composer rows can
 hide typed spaces behind layout cells. Display matching supplies a candidate;
 bounded cursor observations must also prove its logical length and row
 boundaries before Enter or removal of an owned paste. An unproved candidate
@@ -126,6 +127,13 @@ remains unobservable, and readable owner additions are preserved.
 When Codex 0.162.1 wraps a notice header into separate captured rows, the guard
 retains their physical coordinates and verifies the header's logical start and
 end before accepting those rows as a soft wrap.
+
+For pastes longer than 1000 characters, Codex 0.162.1 can show one
+`[Pasted Content N chars]` element. Only an exact single label whose count
+matches the notice after CRLF/CR normalization and Unicode scalar counting is
+a candidate. Cursor observations must prove one atomic editing unit before
+Enter or single-unit cleanup. Extra input, multiple labels, a different count
+and a typed literal label remain refusals.
 
 `--queue` waits while the target
 reports busy and retries only a preclaim busy admission refusal. Other failures
