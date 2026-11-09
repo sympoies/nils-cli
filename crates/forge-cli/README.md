@@ -97,10 +97,12 @@ remain literal strings, and dispatch success records acceptance rather than run
 completion. Use `--dry-run` to inspect a plan without writing. See the
 [command contract](docs/specs/forge-cli-spec-v1.md#release-create--release-upload)
 for flags and typed outputs. Asset deletion validates all names and optional SHA-256 guards before deleting;
-JSON output includes each selected asset’s former size and provider digest. A dry
-run reads the release and lists the selected assets without deleting them. A
-provider failure during deletion can leave earlier requested assets deleted;
+JSON output includes each selected asset’s former size and provider digest.
+
+A dry run reads the release and lists the selected assets without deleting them.
+A provider failure during deletion can leave earlier requested assets deleted;
 inspect the release before retrying.
+
 Release and deletion commands require the caller's
 existing authorization. Canonical SemVer tags require `--allow-version-tag`
 for release deletion; `--cleanup-tag` separately opts into tag removal. The
