@@ -47,7 +47,7 @@ pub(super) async fn repair_blocked_codex_accounts(
             let snapshot_context = context.clone();
             let snapshot_id = id.clone();
             let snapshot_launch = launch_id.clone();
-            let snapshot = tokio::task::spawn_blocking(move || {
+            let snapshot = match tokio::task::spawn_blocking(move || {
                 crate::auth_incident::recheck::codex_snapshot(
                     &snapshot_context,
                     &snapshot_id,
@@ -55,9 +55,10 @@ pub(super) async fn repair_blocked_codex_accounts(
                 )
             })
             .await
-            .ok()
-            .and_then(Result::ok)
-            .flatten();
+            {
+                Ok(Ok(snapshot)) => snapshot,
+                _ => return,
+            };
             let begin_context = context.clone();
             let begin_id = id.clone();
             let begin_launch_id = launch_id.clone();
@@ -72,16 +73,33 @@ pub(super) async fn repair_blocked_codex_accounts(
             else {
                 return;
             };
-            if handle.bind_account(&account, revision).await.is_ok() {
-                if let Some(snapshot) = snapshot {
-                    let _ = tokio::task::spawn_blocking(move || {
-                        crate::auth_incident::recheck::settle_codex(
-                            &context, &id, &launch_id, &account, revision, snapshot,
-                        )
-                    })
-                    .await;
+            let bind_result = handle.bind_account(&account, revision).await;
+            let failure = if bind_result.is_err() {
+                Some("control_apply_unconfirmed")
+            } else if let Some(snapshot) = snapshot {
+                let settle_context = context.clone();
+                let settle_id = id.clone();
+                let settle_launch = launch_id.clone();
+                let settle_account = account.clone();
+                match tokio::task::spawn_blocking(move || {
+                    crate::auth_incident::recheck::settle_codex(
+                        &settle_context,
+                        &settle_id,
+                        &settle_launch,
+                        &settle_account,
+                        revision,
+                        snapshot,
+                    )
+                })
+                .await
+                {
+                    Ok(Ok(())) => None,
+                    _ => Some("recheck_settlement_failed"),
                 }
             } else {
+                None
+            };
+            if let Some(reason) = failure {
                 let _ = tokio::task::spawn_blocking(move || {
                     crate::codex_account::finish_binding(
                         &context,
@@ -89,7 +107,7 @@ pub(super) async fn repair_blocked_codex_accounts(
                         &launch_id,
                         &account,
                         revision,
-                        Err("control_apply_unconfirmed"),
+                        Err(reason),
                     )
                 })
                 .await;
@@ -109,7 +127,7 @@ mod tests {
 
     const RUNTIME: &str = "runtime-binding-fixture";
 
-    async fn queued_switch_recheck(succeed: bool, later_failure: bool) {
+    async fn queued_switch_recheck(succeed: bool, later_failure: bool, store_failure: bool) {
         use std::os::unix::fs::PermissionsExt;
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
@@ -251,6 +269,12 @@ esac
                     Err("broker_resolve_rejected")
                 },
             );
+            if store_failure {
+                let path =
+                    crate::session_dir(&control_context, &control_id).join("auth-incidents.json");
+                std::fs::rename(&path, path.with_extension("backup")).unwrap();
+                std::fs::create_dir(&path).unwrap();
+            }
             let result = if succeed {
                 view.map_err(|err| err.code().to_string())
             } else {
@@ -267,9 +291,61 @@ esac
         .await;
 
         assert_eq!(control.await.unwrap(), ("acct1".to_string(), 8));
+        if store_failure {
+            let path = crate::session_dir(&context, &record.id).join("auth-incidents.json");
+            std::fs::remove_dir(&path).unwrap();
+            std::fs::rename(path.with_extension("backup"), path).unwrap();
+            let failed = crate::load_session_record(&context, &record.id).unwrap();
+            let view = crate::codex_account::view_for_record(&failed);
+            assert_eq!(view.state, "failed");
+            assert_eq!(
+                view.failure_reason.as_deref(),
+                Some("recheck_settlement_failed")
+            );
+            assert!(
+                crate::auth_incident::recovery::ensure_input_allowed(&context, &failed).is_err()
+            );
+            crate::session_account::switch(
+                &context,
+                &record.id,
+                "acct1",
+                Some(RUNTIME),
+                std::path::Path::new("unused"),
+            )
+            .unwrap();
+            let (handle, mut commands) = control_channel();
+            let control_context = context.clone();
+            let control_id = record.id.clone();
+            let retry = tokio::spawn(async move {
+                let Some(ControlCommand::BindAccount {
+                    account,
+                    revision,
+                    response,
+                }) = commands.recv().await
+                else {
+                    panic!("retry did not reach control")
+                };
+                let view = crate::codex_account::finish_binding(
+                    &control_context,
+                    &control_id,
+                    RUNTIME,
+                    &account,
+                    revision,
+                    Ok(()),
+                );
+                let _ = response.send(view.map_err(|error| error.code().to_string()));
+            });
+            repair_blocked_codex_accounts(
+                &context,
+                &AccountSwitchRegistry::default(),
+                vec![(record.id.clone(), RUNTIME.to_string(), handle)],
+            )
+            .await;
+            retry.await.unwrap();
+        }
         let repaired = crate::load_session_record(&context, &record.id).unwrap();
         let view = crate::codex_account::view_for_record(&repaired);
-        if succeed {
+        if succeed && !later_failure {
             assert_eq!(view.state, "bound");
             assert_eq!(view.applied_runtime_id.as_deref(), Some(RUNTIME));
             assert!(view.next.is_none());
@@ -282,7 +358,11 @@ esac
             assert_eq!(view.state, "failed");
             assert_eq!(
                 view.failure_reason.as_deref(),
-                Some("broker_resolve_rejected")
+                Some(if later_failure {
+                    "recheck_settlement_failed"
+                } else {
+                    "broker_resolve_rejected"
+                })
             );
             assert!(
                 crate::auth_incident::recovery::ensure_input_allowed(&context, &repaired).is_err()
@@ -292,15 +372,19 @@ esac
 
     #[tokio::test]
     async fn queued_same_account_recheck_settles_after_confirmed_bind() {
-        queued_switch_recheck(true, false).await;
+        queued_switch_recheck(true, false, false).await;
     }
 
     #[tokio::test]
     async fn queued_same_account_recheck_refusal_keeps_quarantine() {
-        queued_switch_recheck(false, false).await;
+        queued_switch_recheck(false, false, false).await;
     }
     #[tokio::test]
     async fn queued_same_account_recheck_does_not_settle_a_later_failure() {
-        queued_switch_recheck(true, true).await;
+        queued_switch_recheck(true, true, false).await;
+    }
+    #[tokio::test]
+    async fn queued_same_account_recheck_retries_after_incident_store_failure() {
+        queued_switch_recheck(true, false, true).await;
     }
 }

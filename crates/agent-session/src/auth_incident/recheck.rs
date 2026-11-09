@@ -160,7 +160,11 @@ pub(crate) fn settle_codex(
     }
     let mut store = read(context, &record)?;
     if store.last_failure_key != snapshot.failure_key {
-        return Ok(());
+        return Err(CliError::runtime(
+            "codex-account-recheck-superseded",
+            "a newer authentication failure occurred during account recheck",
+            None,
+        ));
     }
     let at = jiff::Timestamp::now().to_string();
     let mut changed = false;
