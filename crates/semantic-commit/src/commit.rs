@@ -1071,7 +1071,7 @@ fn read_message_contents(options: &CommitOptions) -> Result<String, i32> {
             eprintln!("error: --no-edit requires an existing HEAD commit");
             return Err(EXIT_ERROR);
         };
-        return Ok(contents);
+        return Ok(contents.trim_end_matches('\n').to_string());
     }
 
     if options.structured.has_any() {
