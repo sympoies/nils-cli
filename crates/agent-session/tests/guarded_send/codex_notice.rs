@@ -262,7 +262,9 @@ fn codex_notice_wrapped_header_preserves_paste_when_cleanup_budget_expires() {
     let (fixture, input) = wrapped_notice_fixture(false);
     fs::write(fixture.root().join("start-after-paste"), "").unwrap();
     fs::write(fixture.root().join("slow-cleanup-roundtrip"), "").unwrap();
+    let started = std::time::Instant::now();
     let output = fixture.notice(&[]);
+    assert!(started.elapsed() >= std::time::Duration::from_secs(15));
     let receipt = fixture.refused(&output, "send-session-not-idle");
     assert_eq!(receipt["error"]["details"]["cleared"], false);
     assert_eq!(composer(&fixture), input);
