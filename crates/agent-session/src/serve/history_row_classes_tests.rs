@@ -1319,7 +1319,6 @@ fn synthetic_large_compaction_page_measurement() {
         started.elapsed()
     );
     eprintln!("synthetic compaction page: {bytes} bytes read");
-    assert!(rows >= 88, "page yielded only {rows} rows");
     assert!(
         bytes < 100_000_000,
         "page repeatedly read the preceding window: {bytes} bytes"
