@@ -1,4 +1,5 @@
 pub mod broker_proof;
+pub(crate) mod drafts;
 pub(crate) mod operator_rules;
 pub(crate) mod send_key;
 
@@ -95,6 +96,8 @@ pub enum Command {
     Notice(crate::notice::NoticeArgs),
     /// Verify retained native notice archives and the authenticated checkpoint.
     NoticeStore(crate::send::claude_notice::store::audit::Args),
+    /// Discard saved user drafts.
+    Drafts(drafts::Args),
     /// Capture the recent pane tail plus live status as a dashboard glance.
     Glance(GlanceArgs),
     /// Recreate a missing tmux runtime from exact provider resume metadata.

@@ -530,6 +530,30 @@ is added. Historical title matching yields only `row_class: "notice"`, not
 invented kind/source metadata. In particular, the shared Mailbox label does not
 require choosing between the `mailbox` and `mailbox.wake` kinds for raw text.
 
+## Saved-draft residue recognition
+
+Before stashing an observed stale composer, the runtime checks its last exact
+notice/automation paste for the same session incarnation. Equal text or a
+nonempty prefix of that paste is runtime residue: clear it through the existing
+exact cleanup path without creating a saved draft. A different incarnation or
+an edited text that is no longer a prefix does not inherit that ownership.
+Restore and ordinary user-draft preservation are unchanged.
+
+When that ownership evidence is absent, this is the single fallback match table.
+Matches are anchored at the start of the first line; title words elsewhere do
+not classify user text as residue. No whitespace trimming or substring matching
+is applied.
+
+| First-line shape | Definition |
+| --- | --- |
+| Notice header | Starts with the `agent-notice:v1` HTML comment header, closed on the first line. |
+| `<Stored title>:` plus one ASCII space | A label or stored title in the shared kind-to-label table above. |
+| `Mailbox: <summary>; agent-session message inbox` | Whole first line; see [mailbox contract](coordination-mailbox-v1.md). |
+
+Unknown titles and text that only contains a title word mid-line are user drafts
+and remain saved byte-for-byte. These rules concern composer cleanup only;
+they do not change history classification or authorize notice delivery.
+
 ## Summary writer design
 
 This section is a design for #3228, not a claim that `--summary` is released.

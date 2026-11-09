@@ -588,6 +588,9 @@ fn guarded(
         );
         let _ = fs::remove_file(temp);
         delivered?;
+        if args.guards.notice_envelope {
+            send_guard::drafts::residue::remember(context, &record, text)?;
+        }
     } else {
         admission.claim_key()?;
         admission.check(None, "claimed")?;
