@@ -244,3 +244,60 @@ async fn mailbox_notice_collapsed_codex_paste_submits_once() {
     drain_coordination_notifications(fixture.state.clone()).await;
     assert_eq!(fs::read_to_string(fixture.temp.path().join("submissions")).unwrap().lines().count(), 1);
 }
+
+#[tokio::test]
+async fn stale_codex_wake_saves_draft_and_delivers_once() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let fixture = WakeFixture::new(AgentKind::Codex).await;
+    let draft = "  café owner draft  ";
+    fs::write(fixture.temp.path().join("composer"), draft).unwrap();
+    fs::write(
+        fixture.temp.path().join("cursor-x"),
+        (2 + draft.chars().count()).to_string(),
+    )
+    .unwrap();
+    crate::serve::terminal_notification::dispatch_coordination_notification(
+        fixture.state.clone(),
+        fixture.candidate.clone(),
+    )
+    .await;
+    let observed = fixture
+        .temp
+        .path()
+        .join("sessions/beta/drafts/observation.json");
+    let mut observation: Value = serde_json::from_slice(&fs::read(&observed).unwrap()).unwrap();
+    observation["unchanged_since"] = json!(1);
+    fs::write(observed, serde_json::to_vec(&observation).unwrap()).unwrap();
+    fs::write(fixture.temp.path().join("codex-collapse-paste"), "").unwrap();
+    crate::serve::terminal_notification::dispatch_coordination_notification(
+        fixture.state.clone(),
+        fixture.candidate.clone(),
+    )
+    .await;
+    let record = load_session_record(&fixture.state.context, "beta").unwrap();
+    let saved = crate::send_guard::drafts::list(&fixture.state.context, &record).unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(
+        saved.into_iter().next().unwrap().text().as_bytes(),
+        draft.as_bytes()
+    );
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["state"], "prompt_submitted", "{receipt}");
+    assert_eq!(receipt["notified_generation"], 1);
+    assert_eq!(
+        fs::read_to_string(fixture.temp.path().join("submissions"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    drain_coordination_notifications(fixture.state.clone()).await;
+    assert_eq!(
+        fs::read_to_string(fixture.temp.path().join("submissions"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+}
