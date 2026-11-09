@@ -1282,8 +1282,8 @@ async fn claude_2_1_317_compact_caveat_keeps_order_and_monotonic_ids() {
 }
 
 #[cfg(target_os = "linux")]
-#[tokio::test]
-async fn synthetic_large_compaction_page_measurement() {
+#[test]
+fn synthetic_large_compaction_page_measurement() {
     let mut records = Vec::new();
     for _ in 0..150 {
         records.push(json!({"type":"progress","data":"x".repeat(200_000)}));
@@ -1303,14 +1303,23 @@ async fn synthetic_large_compaction_page_measurement() {
     };
     let before = read_bytes();
     let started = std::time::Instant::now();
-    let page = f.page("direction=latest&limit=100").await;
+    let page = f
+        .catalog
+        .messages(
+            &f.history,
+            None,
+            100,
+            provider_history::HistoryMessageDirection::Latest,
+        )
+        .unwrap();
     let bytes = read_bytes() - before;
-    let rows = page["messages"].as_array().unwrap().len();
+    let rows = page.messages.len();
     eprintln!(
         "synthetic compaction page: {rows} rows in {:?}",
         started.elapsed()
     );
     eprintln!("synthetic compaction page: {bytes} bytes read");
+    assert!(rows >= 88, "page yielded only {rows} rows");
     assert!(
         bytes < 100_000_000,
         "page repeatedly read the preceding window: {bytes} bytes"
