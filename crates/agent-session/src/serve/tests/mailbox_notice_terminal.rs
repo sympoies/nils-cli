@@ -161,3 +161,61 @@ async fn mailbox_notice_supported_terminal_preserves_operator_draft_before_claim
     fixture.assert_no_input("operator partial draft");
     assert_eq!(notification_fixture(fixture.temp.path())["state"], "queued");
 }
+
+#[tokio::test]
+async fn wrapped_claude_draft_wake_defers_with_composer_reason() {
+    use crate::send::claude_notice::{Launch, runtime, sha256};
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let fixture = WakeFixture::new(AgentKind::Claude).await;
+    bind_transcript(&fixture);
+    let activity_path = fixture.temp.path().join("sessions/beta/activity.json");
+    let mut activity: Value = serde_json::from_slice(&fs::read(&activity_path).unwrap()).unwrap();
+    activity["state"]["phase"] = json!("waiting");
+    activity["state"]["current_turn"] = Value::Null;
+    fs::write(activity_path, serde_json::to_vec(&activity).unwrap()).unwrap();
+    fs::write(fixture.temp.path().join("composer"), "previous draft").unwrap();
+    assert_eq!(fixture.check_draft().unwrap_err().code(), "composer-not-empty");
+    let observation = fixture.temp.path().join("sessions/beta/drafts/observation.json");
+    assert!(observation.exists());
+    let draft = "generic stale draft alpha beta gamma delta\n  epsilon z";
+    fs::write(fixture.temp.path().join("composer"), draft).unwrap();
+    let record = load_session_record(&fixture.state.context, "beta").unwrap();
+    let dir = runtime::module_dir(&fixture.state.context.state_dir, &record).unwrap();
+    fs::create_dir_all(dir.join("hooks")).unwrap();
+    for path in [&dir, &dir.join("hooks")] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let socket_root = tempfile::tempdir_in("/tmp").unwrap();
+    fs::set_permissions(socket_root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let socket_parent = socket_root.path().join("agent-session");
+    fs::create_dir(&socket_parent).unwrap();
+    fs::set_permissions(&socket_parent, fs::Permissions::from_mode(0o700)).unwrap();
+    let namespace = sha256(format!("{}\0beta\0{}", fixture.state.context.state_dir.display(), fixture.candidate.target_incarnation).as_bytes());
+    let socket = socket_parent.join(format!("cn-{}.sock", &namespace[..16]));
+    let launch = Launch::from_record(&record).unwrap();
+    let module = sha256(runtime::MODULE.as_bytes());
+    let nonce = "a".repeat(64);
+    let binding = json!({"launch":launch,"provider":"claude","provider_session_id":"provider-beta","provider_version":"2.1.296","module_sha256":module});
+    for (name, value) in [
+        ("bootstrap.json", json!({"schema_version":"agent-session.claude-notice-runtime.v1","launch":launch,"module_sha256":module,"provider_version":"2.1.296","socket_path":socket,"nonce":nonce})),
+        ("ready.json", json!({"schema_version":"agent-session.claude-notice-ready.v1","binding":binding,"nonce":nonce,"terminal":true,"timer_started":true})),
+        ("offer.json", json!({"schema_version":"agent-session.claude-notice-offer.v1","state":"idle"})),
+    ] {
+        crate::write_private_file(&dir.join(name), value.to_string().as_bytes()).unwrap();
+    }
+    crate::write_private_file(&dir.join("hooks/register.js"), runtime::MODULE.as_bytes()).unwrap();
+    assert!(runtime::readiness(&fixture.state.context, &record).is_some());
+    drain_coordination_notifications(fixture.state.clone()).await;
+    fixture.assert_no_input(draft);
+    assert!(!fixture.temp.path().join("sessions/beta/drafts/saved").exists());
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["state"], "queued", "{receipt}");
+    assert_eq!(receipt["last_reason"], "recipient-composer-unobservable", "{receipt}");
+    assert_eq!(receipt["last_reason_detail"], "region-not-single-row", "{receipt}");
+    assert!(!observation.exists(), "unreadable input must discard the stale timer");
+    let refusal = fixture.check_draft().unwrap_err();
+    assert_eq!(refusal.code(), "composer-unobservable");
+    assert_eq!(refusal.details().unwrap()["observation"], "region-not-single-row");
+    assert!(refusal.message().contains("multi-row composer"));
+}
