@@ -46,6 +46,8 @@ pub(super) struct CreateBody {
     #[serde(default)]
     pub(super) codex_account: Option<String>,
     #[serde(default)]
+    pub(super) account: Option<String>,
+    #[serde(default)]
     pub(super) claude_account: Option<String>,
     /// `session-lineage-work-v1`: who started this session, as the caller
     /// (Agent Console) states it. Absent: an operator root over HTTP.

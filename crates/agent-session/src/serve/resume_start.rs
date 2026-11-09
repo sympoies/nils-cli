@@ -110,6 +110,7 @@ async fn create(
         || body.provider_resume_id.is_some()
         || body.agent_profile.is_some()
         || body.codex_account.is_some()
+        || body.claude_account.is_some()
     {
         return envelope_err(refusal("resume-unsupported"));
     }
@@ -117,7 +118,7 @@ async fn create(
         agent: body.agent.clone(),
         resume: body.resume.clone().unwrap(),
         cwd: body.cwd.as_ref().map(PathBuf::from),
-        account: body.claude_account.clone(),
+        account: body.account.clone(),
         agent_profile: body.agent_profile.clone(),
         agent_args: body.agent_args.clone(),
     };

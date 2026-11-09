@@ -466,8 +466,7 @@ command runs inside a managed session, with a scoped worker delegation, or as an
 
 It sends `agent`, the absolute `cwd` (default: the current directory), and the optional `title`, prompt
 (`--prompt`, `--prompt-file`, or `--prompt-stdin`), `--agent-arg` values (for example a model),
-`--agent-profile` as `agent_profile`, and `--account` as `codex_account` for `--agent codex` or
-`claude_account` for `--agent claude`; `--account` with another agent fails with
+`--agent-profile` as `agent_profile`, and `--account` as `account` for Codex or Claude; `--account` with another agent fails with
 `console-start-account-unsupported`. `--id`, `--tmux-bin`, `--agent-bin`, `--paste-delay-ms`, and
 `--coordination-mode` conflict with `--via-console`, because Agent Console assigns the session id and the
 target daemon owns the launch.
@@ -600,7 +599,7 @@ body rejects unknown members:
 ```
 
 `session` may set only `agent`, `cwd`, `workspace`, `launch_env`, `title_mode`, `title`, `prompt`,
-`agent_args`, `agent_profile`, `codex_account` and `claude_account`. The daemon sets the lineage: a
+`agent_args`, `agent_profile` and `account`. The daemon sets the lineage: a
 root with `parent: null` and `starter {"kind": "console", "via": "console"}`, no forge context and no
 origin parent. Optional `no_parent`, `role`, and `work` use the direct start validation;
 work resolves without a parent. A reconcile body is exactly `service_id`, `service_generation`, `owner`,

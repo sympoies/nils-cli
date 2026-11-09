@@ -139,7 +139,7 @@ async fn target_resume_refusals_preserve_terminal_details_and_never_create() {
     let st = crate::serve::tests::state(&state, Some(TOKEN), tmux);
     let before = snapshot(temp.path());
     for (fields, code) in [
-        (json!({"claude_account":"other"}), "resume-account-mismatch"),
+        (json!({"account":"other"}), "resume-account-mismatch"),
         (json!({"agent_profile":"unsupported"}), "resume-unsupported"),
         (json!({"agent_args":["--resume",ID]}), "resume-unsupported"),
         (json!({"resume":"../bad"}), "resume-unsupported"),
@@ -227,7 +227,7 @@ async fn console_resume_operation_replay_never_rechecks_or_resubmits_and_keeps_t
         );
         let create = &requests[1].1["session"];
         assert_eq!(create["resume"], ID);
-        assert_eq!(create["claude_account"], "original");
+        assert_eq!(create["account"], "original");
         assert_eq!(create["prompt"], "fixture bootstrap");
         assert_eq!(create["role"], "coordinator");
         assert_eq!(create["workspace"], "example");
@@ -381,7 +381,8 @@ async fn console_preflight_binds_identity_and_target_without_operation_or_auth_w
         ingress_token: "synthetic-ingress-token".into(),
     });
     let before = snapshot(temp.path());
-    let request = json!({"machine":"target","session":{"agent":"claude","resume":ID,"claude_account":"original"}});
+    let request =
+        json!({"machine":"target","session":{"agent":"claude","resume":ID,"account":"original"}});
     let (status, result) = post(
         router(st),
         "/sessions/caller/resume-preflight/v1",
@@ -396,7 +397,7 @@ async fn console_preflight_binds_identity_and_target_without_operation_or_auth_w
         *seen.lock().unwrap(),
         vec![
             json!({"source_session_id":"caller","source_incarnation":"current","machine":"target",
-        "session":{"agent":"claude","resume":ID,"claude_account":"original"}})
+        "session":{"agent":"claude","resume":ID,"account":"original"}})
         ]
     );
     assert_eq!(snapshot(temp.path()), before);

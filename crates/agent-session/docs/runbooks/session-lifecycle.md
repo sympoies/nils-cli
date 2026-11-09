@@ -233,7 +233,7 @@ its current caller incarnation and calls Console's
 and target grant before forwarding the prompt-free `session` request to the
 target daemon's authenticated `POST /resume-preflight/v1`. The relay request
 carries `source_session_id`, `source_incarnation`, `machine`, and `session`;
-the session carries `agent`, `resume`, and optional `cwd`, `claude_account`,
+the session carries `agent`, `resume`, and optional `cwd`, `account`,
 `agent_profile`, and `agent_args`. Every hop checks the exact preflight schema
 and target/conversation/account binding. No check creates an operation, writes
 an authentication audit, reads a prompt, or materializes credentials.
@@ -246,7 +246,7 @@ unavailable. First submissions still check the target through the read-only
 Console preflight before submitting a create, and target creation rechecks
 admission under the conversation and source guards.
 
-A Console start forwards `session.resume` and the resolved `claude_account`
+A Console start forwards `session.resume` and the resolved `account`
 through ordinary owner, origin/workspace, lineage, work, role, title, provider
 arguments and prompt handling. It also carries `session.resume_account_explicit`,
 a boolean derived from the original requested account before resolving that pin.
@@ -259,7 +259,7 @@ resolved-account equality check.
 
 Relays preserve this boolean, including `false`; it is not a preflight field. A present
 nonboolean value or a flag without `resume` refuses. Direct target clients that
-omit the flag retain the explicit selection semantics of `claude_account`.
+omit the flag retain the explicit selection semantics of `account`.
 
 The origin daemon retains its at-most-once
 operation receipt and checks the target before submission. Console must send

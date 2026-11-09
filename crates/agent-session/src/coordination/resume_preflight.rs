@@ -188,7 +188,7 @@ pub(crate) fn request_from_session(session: &Value) -> Result<Request, CliError>
         "agent",
         "resume",
         "cwd",
-        "claude_account",
+        "account",
         "agent_profile",
         "agent_args",
     ] {

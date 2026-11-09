@@ -62,7 +62,7 @@ async fn codex_target_preflight_is_read_only_and_create_rechecks_the_pinned_acco
     fs::write(&source_path, source.to_string()).unwrap();
     let before = snapshot(temp.path());
     let (status, result) = post(router(st), "/sessions/resume/v1", Some(TOKEN),
-        json!({"agent":"codex","resume":ID,"claude_account":"original","resume_account_explicit":false,"id":"blocked"})).await;
+        json!({"agent":"codex","resume":ID,"account":"original","resume_account_explicit":false,"id":"blocked"})).await;
     assert!(!status.is_success(), "{result}");
     assert_eq!(result["error"]["code"], "resume-account-mismatch");
     assert_eq!(
@@ -70,4 +70,26 @@ async fn codex_target_preflight_is_read_only_and_create_rechecks_the_pinned_acco
         json!({"session_created":false,"safe_to_retry":false})
     );
     assert_eq!(snapshot(temp.path()), before);
+}
+
+#[test]
+fn console_codex_explicit_account_reaches_preflight_request() {
+    let session = json!({"agent":"codex", "resume":ID, "account":"original"});
+    let request = crate::coordination::resume_preflight::request_from_session(&session).unwrap();
+    assert_eq!(request.account.as_deref(), Some("original"));
+}
+
+#[tokio::test]
+async fn console_codex_explicit_account_reaches_target_admission() {
+    let temp = tempfile::tempdir().unwrap();
+    let (state, _, tmux) = fixture(temp.path());
+    let st = crate::serve::tests::state(&state, Some(TOKEN), tmux);
+    let (_, result) = post(
+        router(st),
+        "/sessions/resume/v1",
+        Some(TOKEN),
+        json!({"agent":"codex","resume":ID,"account":"original"}),
+    )
+    .await;
+    assert_eq!(result["error"]["code"], "resume-source-unknown");
 }

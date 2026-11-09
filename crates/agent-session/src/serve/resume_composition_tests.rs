@@ -161,7 +161,7 @@ async fn exercise(lock: &GlobalStateLock, case: Case) {
     let mut request = json!({"operation_id":uuid::Uuid::now_v7().to_string(),"machine":"test-machine","no_parent":true,
         "session":{"agent":"claude","resume":ID,"id":"replacement","prompt":"Synthetic resume bootstrap","workspace":"example","title":"Resume fixture","title_mode":"pinned"}});
     if explicit {
-        request["session"]["claude_account"] = json!("original");
+        request["session"]["account"] = json!("original");
     }
     let success = matches!(case, Case::Deleted(_) | Case::PreparingSwitch(true));
     for _ in 0..2 {
@@ -196,7 +196,7 @@ async fn exercise(lock: &GlobalStateLock, case: Case) {
     server.abort();
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 2, "receipt replay must repeat neither hop");
-    assert_eq!(requests[1].1["session"]["claude_account"], "original");
+    assert_eq!(requests[1].1["session"]["account"], "original");
     assert_eq!(
         requests[1].1["session"]["resume_account_explicit"],
         explicit

@@ -236,7 +236,11 @@ fn checked_request(body: &Value) -> Option<(Option<&str>, ChildLineage, &Map<Str
         None | Some(Value::Null) => {}
         Some(value) => child.role = lineage::role_from_request(Some(value.as_str()?)).ok()?,
     }
-    Some((machine, child, request.get("session")?.as_object()?))
+    let session = request.get("session")?.as_object()?;
+    if session.contains_key("codex_account") || session.contains_key("claude_account") {
+        return None;
+    }
+    Some((machine, child, session))
 }
 
 /// The child's `lineage` and resolved `work`, from the caller's own record on
@@ -396,7 +400,7 @@ fn relay_operation(
                 "resume_account_explicit".into(),
                 json!(request.account.is_some()),
             );
-            child.insert("claude_account".into(), data["account"].clone());
+            child.insert("account".into(), data["account"].clone());
         }
         let source = json!({"source_session_id": session, "source_incarnation": incarnation});
         relay_create(config, source, machine, child, operation_id)
