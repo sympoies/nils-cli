@@ -1,3 +1,5 @@
+#[path = "integration/activity_setup.rs"]
+mod activity_setup;
 #[path = "integration/admission.rs"]
 mod admission;
 #[path = "integration/board.rs"]
