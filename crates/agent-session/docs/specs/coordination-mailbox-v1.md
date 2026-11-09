@@ -381,7 +381,9 @@ recipient that holds only its own claim, such as the issue-tier claim a dispatch
 a claim says what the recipient works on, not that it is busy. Terminal-backed Codex uses a
 controller-owned private-buffer paste plus a separate Enter. Claude uses its authenticated native
 notice receiver. Both require exact-incarnation, authoritative-idle, detached, live-runtime,
-authoritative-broker, and no-operation checks. A wake the idle structured route
+authoritative-broker, and no-operation checks.
+
+A wake the idle structured route
 defers because the recipient is not quiescent is recorded as `recipient-coordination-not-quiescent` with
 the blocking condition as its detail, never as `provider-not-ready`. The short `queued -> attempting` CAS is a
 per-session submission fence: claim and
