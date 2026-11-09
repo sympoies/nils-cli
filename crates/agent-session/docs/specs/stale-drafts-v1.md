@@ -80,7 +80,9 @@ residue does not consume saved-draft quota. Draft IDs are opaque UUIDs.
 
 `agent-session drafts discard <session-id> <draft-id> [--format json]` performs
 that same operation locally and returns the same result fields and error codes.
-Discard neither submits input nor changes the composer.
+Discard neither submits input nor changes the composer. The latest projection
+is persisted and synced before deleting the saved record. On persist failure
+the draft is kept.
 
 These routes are always installed; their absence means saved-draft retrieval is
 unsupported. There is no feature flag. Setting the fallback bound to 0 leaves

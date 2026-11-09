@@ -219,3 +219,46 @@ async fn edited_or_replaced_runtime_text_is_saved() {
         assert_eq!(drafts.into_iter().next().unwrap().text(), text);
     }
 }
+
+#[tokio::test]
+async fn failed_projection_persist_preserves_saved_draft_and_allows_retry() {
+    let _lock = GlobalStateLock::new();
+    let fixture = WakeFixture::new(AgentKind::Codex).await;
+    age_and_clear(&fixture, "earlier user draft");
+    age_and_clear(&fixture, "latest user draft");
+    let record = load_session_record(&fixture.state.context, "beta").unwrap();
+    let drafts = crate::send_guard::drafts::list(&fixture.state.context, &record).unwrap();
+    let metadata = drafts.last().unwrap().metadata("beta");
+    let id = metadata["draft_id"].as_str().unwrap();
+    let root = session_dir(&fixture.state.context, "beta").join("drafts");
+    let saved = root.join("saved").join(format!("{id}.json"));
+    let saved_bytes = fs::read(&saved).unwrap();
+    let latest = root.join("latest.json");
+    let latest_bytes = fs::read(&latest).unwrap();
+    // The saved directory stays writable, but the atomic projection writer
+    // cannot create its replacement in the read-only parent directory.
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o500)).unwrap();
+    let app = router(fixture.state.clone());
+    let (status, result) = call(app.clone(), discard_request("beta", id, Some(TOKEN))).await;
+    // Restore fixture permissions before any assertion, including the RED,
+    // so a failed test can still reclaim its temporary directory.
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(result["error"]["code"], "draft-store-unavailable");
+    assert_eq!(fs::read(&latest).unwrap(), latest_bytes);
+    assert!(
+        saved.is_file(),
+        "failed projection persistence must leave the saved draft intact"
+    );
+    assert_eq!(fs::read(&saved).unwrap(), saved_bytes);
+    assert_eq!(
+        crate::send_guard::drafts::list(&fixture.state.context, &record)
+            .unwrap()
+            .len(),
+        2
+    );
+    let (status, result) = call(app, discard_request("beta", id, Some(TOKEN))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(result["data"]["remaining"], 1);
+    assert!(!saved.exists());
+}

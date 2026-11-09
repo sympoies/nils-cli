@@ -14,10 +14,7 @@ pub(crate) fn discard(
         .position(|draft| draft.draft_id == id)
         .ok_or_else(|| CliError::runtime("draft-not-found", "saved draft was not found", None))?;
     drafts.remove(index);
-    fs::remove_file(path).map_err(|_| unavailable())?;
-    fs::File::open(root.join("saved"))
-        .and_then(|dir| dir.sync_all())
-        .map_err(|_| unavailable())?;
+    // Keep the saved record if updating its projection fails.
     if let Some(newest) = drafts.last() {
         persist(&root.join("latest.json"), &newest.metadata(&record.id))?;
     } else {
@@ -30,6 +27,10 @@ pub(crate) fn discard(
             .and_then(|dir| dir.sync_all())
             .map_err(|_| unavailable())?;
     }
+    fs::remove_file(path).map_err(|_| unavailable())?;
+    fs::File::open(root.join("saved"))
+        .and_then(|dir| dir.sync_all())
+        .map_err(|_| unavailable())?;
     Ok(
         json!({"discarded":id, "remaining":drafts.len(), "stale_draft":latest(context, &record.id)?}),
     )
