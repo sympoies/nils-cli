@@ -7,6 +7,7 @@ use std::cell::Cell;
 pub(crate) struct Bindings {
     reader: Option<store::Reader>,
     launch: Option<(u64, String, String)>,
+    cutoff: Option<u64>,
     failed: Cell<bool>,
 }
 
@@ -28,12 +29,29 @@ impl Bindings {
         if !matches!(session.provider.as_str(), "claude" | "codex") {
             return Ok(Self::default());
         }
+        let reader =
+            store::Reader::open(state, &session.id, deadline).map_err(|_| HistoryError::Io)?;
+        let launch = crate::notice::launch::binding(state, session, deadline);
+        let live = reader.as_ref().and_then(|reader| {
+            reader.earliest_live_offset(
+                &session.provider_session_id,
+                session.agent_profile.as_deref(),
+            )
+        });
+        let cutoff = live
+            .into_iter()
+            .chain(launch.as_ref().map(|binding| binding.0))
+            .min();
         Ok(Self {
-            reader: store::Reader::open(state, &session.id, deadline)
-                .map_err(|_| HistoryError::Io)?,
-            launch: crate::notice::launch::binding(state, session, deadline),
+            reader,
+            launch,
+            cutoff,
             failed: Cell::new(false),
         })
+    }
+
+    pub(crate) fn legacy_header(&self, offset: u64) -> bool {
+        self.cutoff.is_none_or(|cutoff| offset < cutoff)
     }
 
     pub(crate) fn check(&self) -> Result<(), HistoryError> {

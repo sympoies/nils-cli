@@ -104,6 +104,25 @@ fn adjacent_summary(session: &HistorySession, offset: u64) -> Option<String> {
     }
 }
 
+pub(super) fn text_with_receipts(
+    provider: &str,
+    role: &str,
+    text: &str,
+    value: &Value,
+    legacy_header: bool,
+) -> (String, Option<classes::RowClass>) {
+    let (text, class) = self::text(provider, role, text, value);
+    if !legacy_header
+        && class == Some(classes::RowClass::Notice)
+        && text.starts_with("<!-- agent-notice:")
+        && crate::notice::parse_notice(&text).is_some()
+    {
+        (truncate_chars(&text, MAX_MESSAGE_CHARS), None)
+    } else {
+        (text, class)
+    }
+}
+
 pub(super) fn text(
     provider: &str,
     role: &str,

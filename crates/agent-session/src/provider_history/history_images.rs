@@ -234,7 +234,13 @@ pub(super) fn read_messages(
         if text.trim().is_empty() && images.is_empty() && parts.is_empty() {
             continue;
         }
-        let (text, row_class) = row_classes::text(&session.provider, &role, &text, &value);
+        let (text, row_class) = row_classes::text_with_receipts(
+            &session.provider,
+            &role,
+            &text,
+            &value,
+            notices.legacy_header(line_offset),
+        );
         messages.push(HistoryMessage {
             id: format!("{}-{line_offset}", session.id),
             paging_offset: line_offset,
@@ -468,7 +474,13 @@ pub(super) fn push_reverse_message(
     if text.trim().is_empty() && images.is_empty() && parts.is_empty() {
         return;
     }
-    let (text, row_class) = row_classes::text(&session.provider, &role, &text, &value);
+    let (text, row_class) = row_classes::text_with_receipts(
+        &session.provider,
+        &role,
+        &text,
+        &value,
+        notices.legacy_header(line_offset),
+    );
     messages.push(HistoryMessage {
         id: format!("{}-{line_offset}", session.id),
         paging_offset: line_offset,

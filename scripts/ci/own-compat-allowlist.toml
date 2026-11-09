@@ -1563,3 +1563,30 @@ issue = "https://github.com/sympoies/nils-cli/issues/3228"
 expires = "2026-12-31"
 count = 1
 external_version = "Coordinator notice CLI integration v1 (body-only); monitoring bridge notice CLI integration v1 (body-only)"
+
+[[retention]]
+path = "crates/agent-session/src/provider_history/history_images.rs"
+match = "legacy_header"
+kind = "current-contract"
+reason = "Historical notice cutoff is required by https://github.com/sympoies/nils-cli/issues/3482#issuecomment-6749177004; reviewed 2026-11-09 with a six-month review cadence."
+issue = "https://github.com/sympoies/nils-cli/issues/3482"
+expires = "2027-05-09"
+count = 2
+
+[[retention]]
+path = "crates/agent-session/src/provider_history/history_images/native_notices.rs"
+match = "legacy_header"
+kind = "current-contract"
+reason = "Historical notice cutoff is required by https://github.com/sympoies/nils-cli/issues/3482#issuecomment-6749177004; reviewed 2026-11-09 with a six-month review cadence."
+issue = "https://github.com/sympoies/nils-cli/issues/3482"
+expires = "2027-05-09"
+count = 1
+
+[[retention]]
+path = "crates/agent-session/src/provider_history/history_images/row_classes.rs"
+match = "legacy_header"
+kind = "current-contract"
+reason = "Historical notice cutoff is required by https://github.com/sympoies/nils-cli/issues/3482#issuecomment-6749177004; reviewed 2026-11-09 with a six-month review cadence."
+issue = "https://github.com/sympoies/nils-cli/issues/3482"
+expires = "2027-05-09"
+count = 2
