@@ -8,6 +8,7 @@ pub(super) struct State {
     pub root: PathBuf,
     pub branch: String,
     pub upstream: Option<String>,
+    pub onto: Option<String>,
 }
 
 fn file(path: &Path) -> Result<String, String> {
@@ -126,9 +127,25 @@ pub(super) fn preflight(options: &Options) -> Result<State, String> {
     {
         return Err("rebase_linear_history_required".into());
     }
+    let onto = options
+        .onto
+        .as_ref()
+        .map(|reference| {
+            git::read(
+                &root,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--end-of-options",
+                    &format!("{reference}^{{commit}}"),
+                ],
+            )
+        })
+        .transpose()?;
     Ok(State {
         root,
         branch,
         upstream,
+        onto,
     })
 }
