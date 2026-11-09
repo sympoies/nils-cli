@@ -1,8 +1,9 @@
 //! Logical checkpoints for a Codex notice candidate, including hidden blank cells.
-use super::{known_multiline_input, styled_text};
+use super::{DIALOG_HINTS, codex_composer, known_multiline_input, styled_text};
 use unicode_width::UnicodeWidthChar;
 
 pub(crate) struct NoticeCursorPath {
+    /// Cursor steps: one per character, or one for a collapsed paste element.
     pub(crate) characters: usize,
     pub(crate) start: (usize, usize),
     pub(crate) end: (usize, usize),
@@ -16,6 +17,16 @@ pub(crate) fn codex_notice_cursor_path(pane: &str, text: &str) -> Option<NoticeC
     let (plain, _) = styled_text(pane)?;
     let lines: Vec<_> = plain.lines().collect();
     let start = lines.iter().rposition(|row| row.starts_with('›'))?;
+    if let Some(label) = collapsed_notice_label(&lines, text) {
+        let end = (2 + label.len(), start);
+        return Some(NoticeCursorPath {
+            characters: 1,
+            start: (2, start),
+            end,
+            rows: vec![(1, end)],
+            wrapped_header_end: None,
+        });
+    }
     let visual = text.replace("\r\n", "\n");
     let logical_rows: Vec<_> = visual.split('\n').collect();
     let header = *logical_rows.first()?;
@@ -72,6 +83,31 @@ pub(crate) fn codex_notice_cursor_path(pane: &str, text: &str) -> Option<NoticeC
         rows,
         wrapped_header_end: (wrapped_rows > 0).then_some((2 + header_cells, header_end)),
     })
+}
+
+fn collapsed_notice_label(lines: &[&str], text: &str) -> Option<String> {
+    crate::notice::parse_notice(text)?;
+    // Codex 0.162.1 apply_paste normalizes line endings, counts Unicode
+    // scalars and collapses pastes exceeding 1000 characters into one element.
+    let characters = text
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .chars()
+        .count();
+    if characters <= 1000 {
+        return None;
+    }
+    let (region, footer) = codex_composer(lines)?;
+    if region.len() != 1
+        || footer.iter().any(|row| {
+            let lower = row.to_lowercase();
+            DIALOG_HINTS.iter().any(|hint| lower.contains(hint))
+        })
+    {
+        return None;
+    }
+    let label = format!("[Pasted Content {characters} chars]");
+    (region[0].strip_prefix("› ")? == label).then_some(label)
 }
 
 fn cells(text: &str) -> Option<usize> {
