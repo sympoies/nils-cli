@@ -1280,3 +1280,39 @@ async fn claude_2_1_317_compact_caveat_keeps_order_and_monotonic_ids() {
         assert!(offset(pair[0]) < offset(pair[1]));
     }
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn synthetic_large_compaction_page_measurement() {
+    let mut records = Vec::new();
+    for _ in 0..150 {
+        records.push(json!({"type":"progress","data":"x".repeat(200_000)}));
+        records.push(json!({"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual"}}));
+        records.push(json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}));
+        records.push(command("claude", "/compact"));
+    }
+    let f = Fixture::new("claude", &records);
+    let read_bytes = || -> u64 {
+        fs::read_to_string("/proc/thread-self/io")
+            .unwrap()
+            .lines()
+            .find_map(|line| line.strip_prefix("rchar: "))
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let before = read_bytes();
+    let started = std::time::Instant::now();
+    let page = f.page("direction=latest&limit=100").await;
+    let bytes = read_bytes() - before;
+    let rows = page["messages"].as_array().unwrap().len();
+    eprintln!(
+        "synthetic compaction page: {rows} rows in {:?}",
+        started.elapsed()
+    );
+    eprintln!("synthetic compaction page: {bytes} bytes read");
+    assert!(
+        bytes < 100_000_000,
+        "page repeatedly read the preceding window: {bytes} bytes"
+    );
+}
