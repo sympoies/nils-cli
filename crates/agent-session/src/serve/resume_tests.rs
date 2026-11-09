@@ -140,6 +140,12 @@ async fn target_resume_refusals_preserve_terminal_details_and_never_create() {
     let before = snapshot(temp.path());
     for (fields, code) in [
         (json!({"account":"other"}), "resume-account-mismatch"),
+        (json!({"claude_account":"other"}), "resume-account-mismatch"),
+        (
+            json!({"account":"other","claude_account":"other"}),
+            "resume-unsupported",
+        ),
+        (json!({"codex_account":"other"}), "resume-unsupported"),
         (json!({"agent_profile":"unsupported"}), "resume-unsupported"),
         (json!({"agent_args":["--resume",ID]}), "resume-unsupported"),
         (json!({"resume":"../bad"}), "resume-unsupported"),
@@ -199,9 +205,10 @@ async fn console_resume_operation_replay_never_rechecks_or_resubmits_and_keeps_t
             ingress_token: "synthetic-ingress-token".into(),
         });
         let operation = uuid::Uuid::now_v7().to_string();
-        let request = json!({"operation_id":operation,"machine":"target","no_parent":true,"role":"coordinator",
+        let mut request = json!({"operation_id":operation,"machine":"target","no_parent":true,"role":"coordinator",
             "work":{"issues":[{"provider":"github","repository":"example/project","number":7}],"inherit":false},
             "session":{"agent":"claude","resume":ID,"prompt":"fixture bootstrap","workspace":"example","title":"Resume fixture","title_mode":"pinned","agent_args":["--model","fixture-model"]}});
+        request["session"][if refused { "claude_account" } else { "account" }] = json!("original");
         for _ in 0..2 {
             let (_, result) = post(
                 router(st.clone()),
@@ -218,6 +225,24 @@ async fn console_resume_operation_replay_never_rechecks_or_resubmits_and_keeps_t
                 assert_eq!(result["session"]["id"], "new-child", "{result}");
             }
         }
+        for fields in [
+            json!({"account":"original","claude_account":"original"}),
+            json!({"codex_account":"original"}),
+        ] {
+            let mut session = json!({"agent":"claude","resume":ID});
+            session
+                .as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            let (_, result) = post(
+                router(st.clone()),
+                "/sessions/caller/console-resume/v1",
+                Some(&token),
+                json!({"operation_id":uuid::Uuid::now_v7().to_string(),"session":session}),
+            )
+            .await;
+            assert_eq!(result["error"]["code"], "resume-unsupported", "{result}");
+        }
         server.abort();
         let requests = requests.lock().unwrap();
         assert_eq!(
@@ -227,6 +252,7 @@ async fn console_resume_operation_replay_never_rechecks_or_resubmits_and_keeps_t
         );
         let create = &requests[1].1["session"];
         assert_eq!(create["resume"], ID);
+        assert_eq!(requests[0].1["session"]["account"], "original");
         assert_eq!(create["account"], "original");
         assert_eq!(create["prompt"], "fixture bootstrap");
         assert_eq!(create["role"], "coordinator");
@@ -381,25 +407,26 @@ async fn console_preflight_binds_identity_and_target_without_operation_or_auth_w
         ingress_token: "synthetic-ingress-token".into(),
     });
     let before = snapshot(temp.path());
-    let request =
-        json!({"machine":"target","session":{"agent":"claude","resume":ID,"account":"original"}});
-    let (status, result) = post(
-        router(st),
-        "/sessions/caller/resume-preflight/v1",
-        Some(&token),
-        request,
-    )
-    .await;
+    for field in ["account", "claude_account"] {
+        let request =
+            json!({"machine":"target","session":{"agent":"claude","resume":ID,field:"original"}});
+        let (status, result) = post(
+            router(st.clone()),
+            "/sessions/caller/resume-preflight/v1",
+            Some(&token),
+            request,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{result}");
+        assert_eq!(result["data"]["machine"], "target");
+    }
+    let (_, conflict) = post(router(st), "/sessions/caller/resume-preflight/v1", Some(&token),
+        json!({"machine":"target","session":{"agent":"claude","resume":ID,"account":"original","claude_account":"original"}})).await;
+    assert_eq!(conflict["error"]["code"], "resume-unsupported");
     server.abort();
-    assert_eq!(status, StatusCode::OK, "{result}");
-    assert_eq!(result["data"]["machine"], "target");
-    assert_eq!(
-        *seen.lock().unwrap(),
-        vec![
-            json!({"source_session_id":"caller","source_incarnation":"current","machine":"target",
-        "session":{"agent":"claude","resume":ID,"account":"original"}})
-        ]
-    );
+    let expected = json!({"source_session_id":"caller","source_incarnation":"current","machine":"target",
+        "session":{"agent":"claude","resume":ID,"account":"original"}});
+    assert_eq!(*seen.lock().unwrap(), vec![expected.clone(), expected]);
     assert_eq!(snapshot(temp.path()), before);
 }
 

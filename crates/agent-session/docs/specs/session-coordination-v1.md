@@ -467,7 +467,10 @@ command runs inside a managed session, with a scoped worker delegation, or as an
 It sends `agent`, the absolute `cwd` (default: the current directory), and the optional `title`, prompt
 (`--prompt`, `--prompt-file`, or `--prompt-stdin`), `--agent-arg` values (for example a model),
 `--agent-profile` as `agent_profile`, and `--account` as `account` for Codex or Claude; `--account` with another agent fails with
-`console-start-account-unsupported`. `--id`, `--tmux-bin`, `--agent-bin`, `--paste-delay-ms`, and
+`console-start-account-unsupported`. The target daemon advertises this field as
+`data.capabilities.session_account_field: true` in `GET /sessions`; consumers use this
+capability to select the request contract during a mixed-version rollout. Previous
+provider-specific account keys remain accepted inbound until nils-cli#3468. `--id`, `--tmux-bin`, `--agent-bin`, `--paste-delay-ms`, and
 `--coordination-mode` conflict with `--via-console`, because Agent Console assigns the session id and the
 target daemon owns the launch.
 

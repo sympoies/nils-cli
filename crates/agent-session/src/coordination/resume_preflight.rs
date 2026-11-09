@@ -151,7 +151,12 @@ pub(crate) fn relay_route(
         Some(Value::String(s)) if !s.is_empty() => s,
         _ => return Err(refusal("resume-unsupported")),
     };
-    let request: Request = serde_json::from_value(body["session"].clone())
+    let mut session = body["session"]
+        .as_object()
+        .cloned()
+        .ok_or_else(|| refusal("resume-unsupported"))?;
+    normalize_account(&mut session)?;
+    let request: Request = serde_json::from_value(Value::Object(session))
         .map_err(|_| refusal("resume-unsupported"))?;
     relay_authenticated(config, caller, &incarnation, machine, &request)
 }
@@ -182,7 +187,32 @@ pub(crate) fn relay_authenticated(
     checked_response(body, success, request, Some(machine))
 }
 
+/// Accept the previous provider-specific request fields for one transition release.
+/// Remove this normalization with nils-cli#3468.
+pub(crate) fn normalize_account(
+    session: &mut serde_json::Map<String, Value>,
+) -> Result<(), CliError> {
+    let codex = session.remove("codex_account");
+    let claude = session.remove("claude_account");
+    if codex.is_some() && claude.is_some()
+        || session.contains_key("account") && (codex.is_some() || claude.is_some())
+        || codex.is_some() && session.get("agent").and_then(Value::as_str) != Some("codex")
+        || claude.is_some() && session.get("agent").and_then(Value::as_str) != Some("claude")
+    {
+        return Err(refusal("resume-unsupported"));
+    }
+    if let Some(account) = codex.or(claude) {
+        session.insert("account".into(), account);
+    }
+    Ok(())
+}
+
 pub(crate) fn request_from_session(session: &Value) -> Result<Request, CliError> {
+    let mut session = session
+        .as_object()
+        .cloned()
+        .ok_or_else(|| refusal("resume-unsupported"))?;
+    normalize_account(&mut session)?;
     let mut request = json!({});
     for key in [
         "agent",

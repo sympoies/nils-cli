@@ -1500,6 +1500,35 @@ fn console_start_route_requires_the_current_session_capability_and_a_known_body(
         );
     }
     assert!(aggregator.seen().is_empty(), "{:?}", aggregator.seen());
+    for field in ["account", "claude_account"] {
+        aggregator.reply_json(
+            201,
+            &json!({"ok":true,"data":{"session":{"id":"child","agent":"claude"}}}),
+        );
+        let (status, body) = post(
+            CAPABILITY,
+            json!({"operation_id":uuid::Uuid::now_v7().to_string(),"session":{"agent":"claude",field:"spare"}}),
+        );
+        assert_eq!(status, 201, "{body}");
+        let sent = aggregator.seen().last().unwrap().body.clone().unwrap();
+        assert_eq!(sent["session"]["account"], "spare");
+        assert!(sent["session"].get("claude_account").is_none());
+    }
+    for fields in [
+        json!({"account":"spare","claude_account":"spare"}),
+        json!({"codex_account":"spare"}),
+    ] {
+        let mut session = json!({"agent":"claude"});
+        session
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        let (_, result) = post(
+            CAPABILITY,
+            json!({"operation_id":uuid::Uuid::now_v7().to_string(),"session":session}),
+        );
+        assert_eq!(result["ok"], false, "{result}");
+    }
 }
 
 #[test]

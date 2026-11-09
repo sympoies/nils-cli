@@ -31,7 +31,7 @@ const MAX_LISTED: usize = 64;
 const MAX_LIFETIME_SECONDS: u64 = 86400;
 /// The members a service may set in `session`; lineage, work, role, resume and
 /// origin belong to the daemon or are not available to a service.
-const SESSION_MEMBERS: [&str; 10] = [
+const SESSION_MEMBERS: [&str; 12] = [
     "agent",
     "cwd",
     "workspace",
@@ -42,6 +42,8 @@ const SESSION_MEMBERS: [&str; 10] = [
     "agent_args",
     "agent_profile",
     "account",
+    "codex_account",
+    "claude_account",
 ];
 
 /// `start --via-console` as an admitted service. The members are required
@@ -337,6 +339,7 @@ fn child_session(
         )?;
     }
     let mut session = session.clone();
+    crate::coordination::resume_preflight::normalize_account(&mut session)?;
     session.insert(
         "lineage".into(),
         LineageSeed::root(machine, lineage::STARTER_CONSOLE, lineage::VIA_CONSOLE).to_create_json(),

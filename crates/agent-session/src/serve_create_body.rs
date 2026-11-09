@@ -66,6 +66,21 @@ fn default_origin() -> Value {
 }
 
 impl CreateBody {
+    /// Translate the prior resume wire fields during the #3468 transition.
+    pub(super) fn normalize_resume_account(&mut self) -> Result<(), CliError> {
+        let codex = self.codex_account.take();
+        let claude = self.claude_account.take();
+        if codex.is_some() && claude.is_some()
+            || self.account.is_some() && (codex.is_some() || claude.is_some())
+            || codex.is_some() && self.agent != "codex"
+            || claude.is_some() && self.agent != "claude"
+        {
+            return Err(crate::start_resume::refusal("resume-unsupported"));
+        }
+        self.account = self.account.take().or(codex).or(claude);
+        Ok(())
+    }
+
     pub(super) fn operation(&self) -> &'static str {
         if self.provider_resume_id.is_some() {
             "import"
@@ -185,4 +200,26 @@ pub(super) fn validate_create_accounts(
         }
     }
     Ok(())
+}
+
+/// Capabilities of the daemon session list and its related routes.
+pub(super) fn session_capabilities() -> Value {
+    serde_json::json!({
+        "profile_resume_import": true,
+        "managed_resume_command": false,
+        "resume_blocked_reason": true,
+        "last_prompt": true,
+        "last_message": true,
+        "history": true,
+        "archive": true,
+        "group_archive": true,
+        "history_star": true,
+        "managed_account_handoff": crate::codex_app_server::MANAGED_ACCOUNT_HANDOFF_CAPABILITY,
+        "claude_account_switch": crate::claude_account::broker_is_configured(),
+        "codex_account_switch": crate::codex_account::broker_is_configured(),
+        "session_retitle_v2": true,
+        "session_retitle_v3": true,
+        "session_retitle_v3_receipts": true,
+        "session_account_field": true,
+    })
 }

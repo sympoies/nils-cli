@@ -987,3 +987,34 @@ fn service_start_recovers_known_created_id_after_unavailable_response_and_restar
     }
     assert_eq!(creates(&aggregator), 2, "one create per operation");
 }
+
+#[test]
+fn service_start_translates_old_account_and_rejects_conflicts() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let admission = Admission::new(&fixture);
+    let serve = admission.serve(&fixture, &aggregator);
+    let request = |session: Value| {
+        json!({"service_id":SERVICE,"service_generation":GENERATION,
+        "owner":OWNER,"machine":MACHINE,"expires_at":at(600),"operation_id":new_operation(),"session":session})
+    };
+    for field in ["account", "claude_account"] {
+        created(&aggregator, "child");
+        let (status, body) = post(
+            &serve,
+            SERVICE_TOKEN,
+            &request(json!({"agent":"claude",field:"spare"})),
+        );
+        assert_eq!(status, 201, "{body}");
+        let sent = aggregator.seen().last().unwrap().body.clone().unwrap();
+        assert_eq!(sent["session"]["account"], "spare");
+        assert!(sent["session"].get("claude_account").is_none());
+    }
+    for session in [
+        json!({"agent":"claude","account":"spare","claude_account":"spare"}),
+        json!({"agent":"claude","codex_account":"spare"}),
+    ] {
+        let (_, body) = post(&serve, SERVICE_TOKEN, &request(session));
+        assert_eq!(body["ok"], false, "{body}");
+    }
+}

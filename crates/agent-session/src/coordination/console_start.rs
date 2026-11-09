@@ -237,9 +237,6 @@ fn checked_request(body: &Value) -> Option<(Option<&str>, ChildLineage, &Map<Str
         Some(value) => child.role = lineage::role_from_request(Some(value.as_str()?)).ok()?,
     }
     let session = request.get("session")?.as_object()?;
-    if session.contains_key("codex_account") || session.contains_key("claude_account") {
-        return None;
-    }
     Some((machine, child, session))
 }
 
@@ -253,6 +250,7 @@ fn child_session(
     session: &Map<String, Value>,
 ) -> Result<Map<String, Value>, CliError> {
     let mut session = session.clone();
+    super::resume_preflight::normalize_account(&mut session)?;
     session.remove("lineage");
     session.remove("work");
     session.remove("role");

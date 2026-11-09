@@ -45,8 +45,11 @@ async fn target_check(
     }
     let request: Request = match body
         .ok()
-        .and_then(|Json(body)| serde_json::from_value(body).ok())
-    {
+        .and_then(|Json(body)| body.as_object().cloned())
+        .and_then(|mut body| {
+            crate::coordination::resume_preflight::normalize_account(&mut body).ok()?;
+            serde_json::from_value(Value::Object(body)).ok()
+        }) {
         Some(request) => request,
         None => return response(Err(refusal("resume-unsupported"))),
     };
@@ -103,9 +106,12 @@ async fn create(
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
     }
-    let Ok(Json(body)) = body else {
+    let Ok(Json(mut body)) = body else {
         return envelope_err(refusal("resume-unsupported"));
     };
+    if body.normalize_resume_account().is_err() {
+        return envelope_err(refusal("resume-unsupported"));
+    }
     if body.resume.is_none()
         || body.provider_resume_id.is_some()
         || body.agent_profile.is_some()
