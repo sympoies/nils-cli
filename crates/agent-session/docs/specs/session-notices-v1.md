@@ -503,6 +503,9 @@ agent-session start --agent claude --prompt-file prompt.txt \
 The same flags work with `--prompt` and `--prompt-stdin`, including
 `--via-console`. Encoding occurs before launch; ordinary start prompts remain
 unchanged. These flags classify only the supplied prompt, not native commands.
+For a fresh local Claude launch, the runtime stores a private launch receipt.
+History uses it to identify the first user row by its exact prompt digest,
+including when Claude wraps the prompt in a single paste envelope.
 Keep `/compact` and other control actions in their existing command paths.
 
 ## Shared kind-to-label table

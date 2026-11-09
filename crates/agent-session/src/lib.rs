@@ -1842,7 +1842,7 @@ fn start_session_inner_unjournaled(
         }
         return Err(with_failed_launch_cleanup(err, cleanup));
     }
-    if let Err(err) = release_held_runtime(context, &created.record) {
+    if let Err(err) = notice::release_start(context, &args.notice, &created.record) {
         let cleanup = recover_failed_tmux_launch_bounded(
             context,
             &mut created.record,
