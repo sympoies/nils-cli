@@ -815,8 +815,9 @@ agent-session activity doctor [--agent <provider>] --format json
 ```
 
 `activity setup` always forwards to the shared `agent-hook setup` owner, using
-`AGENT_HOOK_BIN` when explicitly set and otherwise resolving `agent-hook` on
-`PATH`. It maps the compatibility provider and digest options, requests the versioned
+the shared toolchain selector: an executable `AGENT_SESSION_BIN` selects its
+same-directory companion, otherwise approved absolute roots are searched. It
+never searches `PATH` or the working directory. It maps the compatibility provider and digest options, requests the versioned
 JSON contract, and adds `compatibility_owner: "agent-hook"` to the returned
 result. It never writes provider configuration itself.
 
