@@ -198,7 +198,7 @@ jobs:
           ISSUE_TOKEN: ${{ github.token }}
           BOT_TOKEN: ${{ steps.bot_token.outputs.token }}
         with:
-          github-token: ${{ steps.bot_token.outputs.token }}
+          github-token: ${{ github.token }}
           script: |
             const fs = require("node:fs");
             const path = require("node:path");
@@ -212,7 +212,7 @@ jobs:
             const checked = read("checked.json");
             if (!checked.error && checked.check?.passed === true && !process.env.BOT_TOKEN)
               throw new Error("Candidate publication requires a bot App token");
-            await runReleaseCheck({ github, issueGithub: getOctokit(process.env.ISSUE_TOKEN), context, core,
+            await runReleaseCheck({ github: process.env.BOT_TOKEN ? getOctokit(process.env.BOT_TOKEN) : github, issueGithub: getOctokit(process.env.ISSUE_TOKEN), context, core,
               checked, patch: read("candidate.patch.json") });
 
       - name: Retain publication result

@@ -116,10 +116,32 @@ test("candidate publication uses the bot App token without a default-token fallb
   assert.match(mint[1], /uses: actions\/create-github-app-token@v3/);
   assert.match(mint[1], /permission-contents: write/);
   assert.match(mint[1], /permission-pull-requests: write/);
-  assert.match(candidate[1], /github-token: \${{ steps\.bot_token\.outputs\.token }}/);
-  assert.doesNotMatch(candidate[1], /github-token:.*(?:\|\||github\.token|secrets\.GITHUB_TOKEN)/);
+  assert.match(candidate[1], /github-token: \${{ github\.token }}/);
+  assert.match(candidate[1], /getOctokit\(process\.env\.BOT_TOKEN\)/);
   assert.match(candidate[1], /issueGithub: getOctokit\(process\.env\.ISSUE_TOKEN\)/);
   assert.match(candidate[1], /ISSUE_TOKEN: \${{ github\.token }}/);
+});
+
+test("publication reaches reporting without an App token and refuses candidate writes without one", async () => {
+  const workflow = fs.readFileSync(path.join(REPOSITORY, ".github/workflows/claude-release-check.yml"), "utf8");
+  const step = workflow.split("- name: Prepare draft range candidate from validated evidence")[1].split("- name: Retain publication result")[0];
+  const script = step.split("          script: |\n")[1].split("\n").map(line => line.slice(12)).join("\n");
+  for (const [checked, token, expected] of [[{ check: null }, "", "report"],
+    [{ check: { passed: false } }, "", "report"], [{ check: { passed: true } }, "", "refuse"],
+    [{ check: { passed: true } }, "app-token", "candidate"]]) {
+    let call;
+    const issueClient = {};
+    const appClient = {};
+    const run = require("node:vm").runInNewContext(`(async () => { ${script} })`, {
+      require: name => name === "node:fs" ? { lstatSync: () => ({ isFile: () => true }), statSync: () => ({ size: 1 }),
+        readFileSync: file => JSON.stringify(file.endsWith("checked.json") ? checked : {}) } : name === "node:path" ? path :
+        { runReleaseCheck: async options => { call = options; } },
+      process: { env: { CLAUDE_CHECK_ARTIFACT_DIR: "evidence", ISSUE_TOKEN: "issue-token", BOT_TOKEN: token } },
+      github: issueClient, getOctokit: value => value === "app-token" ? appClient : issueClient, context: {}, core: {},
+    });
+    if (expected === "refuse") await assert.rejects(run(), /requires a bot App token/);
+    else { await run(); assert.equal(call.github, expected === "candidate" ? appClient : issueClient); assert.equal(call.issueGithub, issueClient); }
+  }
 });
 
 test("official latest registry discovery uses strict stable versions and exact package identity", async () => {
