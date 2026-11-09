@@ -40,6 +40,22 @@ impl Reader {
         }))
     }
 
+    pub(crate) fn earliest_live_offset(
+        &self,
+        provider_session_id: &str,
+        profile: Option<&str>,
+    ) -> Option<u64> {
+        self.live
+            .iter()
+            .filter_map(|(offset, proof)| {
+                let proof = proof.as_ref()?;
+                (proof.claim.binding.provider_session_id == provider_session_id
+                    && proof.claim.binding.launch.profile.as_deref() == profile)
+                    .then_some(*offset)
+            })
+            .min()
+    }
+
     /// Outer None means unbound; inner None is an ambiguous physical row.
     pub(crate) fn proof(&self, offset: u64) -> io::Result<Option<Option<Confirmed>>> {
         lifecycle::check_time(self.deadline)?;

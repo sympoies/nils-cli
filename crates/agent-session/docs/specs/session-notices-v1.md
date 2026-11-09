@@ -347,6 +347,16 @@ the provider session id and a working directory) returns
 `notice-native-unavailable`, because waiting for a turn cannot be assumed to fix
 it.
 
+Paged History accepts a header without a producer receipt only before the
+earliest confirmed live-ledger receipt for the same provider session, or the
+matching launch receipt, whichever is earlier. At or after that row, a header
+alone is ordinary user content; an exact producer-bound row remains a notice.
+When no matching live or launch receipt is found within the bound, including
+when the only receipts have been archived, the header-only fallback remains for
+the whole session. Existing receipt-store read failures still fail the History
+request. History previews, incremental History and semantic memory retain their
+content-only header classification.
+
 ### Native claim lifecycle
 
 Private attestations live outside managed session directories so history survives

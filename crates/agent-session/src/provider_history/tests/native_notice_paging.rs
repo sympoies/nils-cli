@@ -477,3 +477,73 @@ fn history_latest_skips_notice_snapshot_after_real_user_prompt() {
         Some("real prompt")
     );
 }
+
+#[test]
+fn header_only_history_uses_first_receipt_as_cutoff() {
+    let temp = tempfile::tempdir().unwrap();
+    let text = "<!-- agent-notice:v1 kind=mailbox source=synthetic -->\n\nreceipt-bound\n";
+    let (catalog, id, _) = notice_catalog(temp.path(), text);
+    let transcript = temp
+        .path()
+        .join("provider/project/11111111-1111-4111-8111-111111111111.jsonl");
+    let original = fs::read_to_string(&transcript).unwrap();
+    let later = serde_json::json!({"type":"user", "sessionId":"11111111-1111-4111-8111-111111111111", "cwd":"/work/example", "promptSource":"typed", "message":{"role":"user", "content":text}});
+    fs::write(&transcript, format!("{original}{later}\n")).unwrap();
+    let old_id = "77777777-7777-4777-8777-777777777777";
+    let old_row = serde_json::json!({"type":"user", "sessionId":old_id, "cwd":"/work/example", "message":{"role":"user", "content":text}});
+    fs::write(
+        temp.path().join(format!("provider/project/{old_id}.jsonl")),
+        format!("{old_row}\n"),
+    )
+    .unwrap();
+    let old_history = stable_history_id("claude", None, old_id);
+    let old_page = catalog
+        .messages_with_parts(
+            &old_history,
+            None,
+            10,
+            HistoryMessageDirection::Forward,
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        old_page.messages[0].row_class,
+        Some(crate::provider_prompt::row_classes::RowClass::Notice),
+        "pre-receipt history remains a notice even when another history has receipts"
+    );
+    let page = catalog
+        .messages_with_parts(&id, None, 10, HistoryMessageDirection::Forward, false)
+        .unwrap();
+    assert_eq!(
+        page.messages[0].row_class,
+        Some(crate::provider_prompt::row_classes::RowClass::Notice),
+        "header before the first receipt retains the legacy classification"
+    );
+    assert_eq!(
+        page.messages[1].row_class,
+        Some(crate::provider_prompt::row_classes::RowClass::Notice)
+    );
+    assert_eq!(
+        page.messages[3].row_class, None,
+        "unclaimed header after receipt is a user row"
+    );
+    assert!(page.messages[3].human_prompt);
+    let latest = catalog
+        .messages_with_parts(&id, None, 10, HistoryMessageDirection::Latest, false)
+        .unwrap();
+    assert_eq!(latest.messages[3].row_class, None);
+    assert!(latest.messages[3].human_prompt);
+    fs::remove_file(
+        temp.path()
+            .join("state/history/claude-notices/ledger.jsonl"),
+    )
+    .unwrap();
+    let page = catalog
+        .messages_with_parts(&id, None, 10, HistoryMessageDirection::Forward, false)
+        .unwrap();
+    assert_eq!(
+        page.messages[0].row_class,
+        Some(crate::provider_prompt::row_classes::RowClass::Notice),
+        "pre-receipt history retains the header fallback"
+    );
+}
