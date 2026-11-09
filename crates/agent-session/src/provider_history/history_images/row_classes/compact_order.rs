@@ -131,34 +131,57 @@ fn following_echo(session: &HistorySession, anchor: u64) -> Result<Pair, End> {
 fn preceding_boundary(session: &HistorySession, offset: u64) -> Option<(u64, Value)> {
     let start = offset.saturating_sub(classes::ADJACENT_BYTES as u64);
     let mut file = fs::File::open(&session.transcript_path).ok()?;
-    file.seek(SeekFrom::Start(start)).ok()?;
-    let mut bytes = Vec::new();
-    file.take(offset - start).read_to_end(&mut bytes).ok()?;
-    let mut end = offset;
+    let mut cursor = offset;
+    let mut pending = Vec::new();
     let mut summary_seen = false;
-    for line in bytes.split_inclusive(|byte| *byte == b'\n').rev() {
-        end -= line.len() as u64;
-        if end == start && start > 0 {
-            break; // The first bounded fragment need not start at a record boundary.
+    let mut chunk_size = 8192_u64;
+    while cursor > start {
+        let chunk_start = cursor.saturating_sub(chunk_size).max(start);
+        file.seek(SeekFrom::Start(chunk_start)).ok()?;
+        let mut bytes = vec![0; (cursor - chunk_start) as usize];
+        file.read_exact(&mut bytes).ok()?;
+        bytes.extend_from_slice(&pending);
+        let mut end = bytes.len();
+        while end > 0 {
+            let Some(delimiter) = bytes[..end.saturating_sub(1)]
+                .iter()
+                .rposition(|byte| *byte == b'\n')
+            else {
+                break;
+            };
+            let line_start = delimiter + 1;
+            let line = &bytes[line_start..end];
+            let line_offset = chunk_start + line_start as u64;
+            end = line_start;
+            let Ok(value) = serde_json::from_slice::<Value>(line) else {
+                continue;
+            };
+            if ignored(session, &value) {
+                continue;
+            }
+            if classes::claude_boundary(&value) {
+                return Some((line_offset, value));
+            }
+            if classes::claude_summary(&value).is_some() {
+                summary_seen = true;
+                continue;
+            }
+            if !summary_seen && classes::claude_compact_echo(&value).is_some() {
+                continue;
+            }
+            if classes::claude_logical_record(&value) {
+                return None;
+            }
         }
-        let Ok(value) = serde_json::from_slice::<Value>(line) else {
-            continue;
-        };
-        if ignored(session, &value) {
-            continue;
-        }
-        if classes::claude_boundary(&value) {
-            return Some((end, value));
-        }
-        if classes::claude_summary(&value).is_some() {
-            summary_seen = true;
-            continue;
-        }
-        if !summary_seen && classes::claude_compact_echo(&value).is_some() {
-            continue;
-        }
-        if classes::claude_logical_record(&value) {
-            break;
+        pending = bytes[..end].to_vec();
+        cursor = chunk_start;
+        chunk_size = (chunk_size * 2).min(classes::ADJACENT_BYTES as u64);
+    }
+    // As in the bounded scan, only the start of the file is a known record boundary.
+    if start == 0 {
+        let value = serde_json::from_slice::<Value>(&pending).ok()?;
+        if !ignored(session, &value) && classes::claude_boundary(&value) {
+            return Some((0, value));
         }
     }
     None
