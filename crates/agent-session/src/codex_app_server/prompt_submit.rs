@@ -4,13 +4,17 @@ use super::*;
 pub(super) enum PromptResponseFailure {
     Rejected(String),
     NotConfirmed(String),
+    AuthRefresh(String),
     Other(String),
 }
 
 impl PromptResponseFailure {
     pub(super) fn into_string(self) -> String {
         match self {
-            Self::Rejected(error) | Self::NotConfirmed(error) | Self::Other(error) => error,
+            Self::Rejected(error)
+            | Self::NotConfirmed(error)
+            | Self::AuthRefresh(error)
+            | Self::Other(error) => error,
         }
     }
 }
@@ -114,7 +118,7 @@ where
             PromptResponseFailure::Rejected(_) | PromptResponseFailure::NotConfirmed(_) => {
                 PromptRequestFailure::Response(PromptSubmissionFailure::NotConfirmed)
             }
-            PromptResponseFailure::Other(_) => {
+            PromptResponseFailure::AuthRefresh(_) | PromptResponseFailure::Other(_) => {
                 PromptRequestFailure::Response(PromptSubmissionFailure::AcknowledgementUnknown)
             }
         })
@@ -146,7 +150,7 @@ where
             .map_err(PromptResponseFailure::Other)?;
         if super::respond_to_external_auth_refresh(websocket, &value, external_auth)
             .await
-            .map_err(PromptResponseFailure::Other)?
+            .map_err(PromptResponseFailure::AuthRefresh)?
         {
             continue;
         }

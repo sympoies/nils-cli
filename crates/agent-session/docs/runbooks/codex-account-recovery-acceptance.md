@@ -37,6 +37,24 @@ with `account changed during workspace routing discovery`. Readiness requires
 both the native idle thread and the selected account bound to the replacement
 incarnation; selecting or resolving credentials alone is not a recovery pass.
 
+## Rotated credential already synced to a replica
+
+Use a reserved disposable session whose selected-account binding failed before
+the test credential rotation. After the credential owner confirms that the new
+test credential is synced, retry the same selected account with normal restart;
+no queued replacement account is required:
+
+```bash
+agent-session restart "$TEST_SESSION_ID" --format json
+agent-session account show "$TEST_SESSION_ID" --format json
+```
+
+Expect a new ready incarnation and the same selected account bound to it.
+For a stopped session, use normal `resume` and verify the same result. If apply
+still fails, record only its typed `failure_reason`; never read or copy credential
+files, broker output or raw provider error text. A resolved credential alone is
+not a successful binding. Shared-device acceptance belongs to the scheduled tester.
+
 ## Idle fixture without a model turn
 
 The supported `activity event --stdin` interface can seed lifecycle metadata for

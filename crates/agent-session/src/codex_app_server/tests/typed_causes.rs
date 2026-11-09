@@ -3,6 +3,9 @@ use pretty_assertions::assert_eq;
 #[path = "bootstrap_account.rs"]
 mod bootstrap_account;
 
+#[path = "replica_apply.rs"]
+mod replica_apply;
+
 #[derive(Clone, Copy)]
 enum PromptPeer {
     Reject,

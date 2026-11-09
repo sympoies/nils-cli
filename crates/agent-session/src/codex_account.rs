@@ -499,7 +499,12 @@ pub(crate) fn mark_runtime_pending(record: &mut SessionRecord) -> Result<(), Cli
         // Keep malformed state fenced across resume. A repair-capable control
         // is still launched so an explicit switch can replace it.
         DecodedBinding::Invalid => return Ok(()),
-        DecodedBinding::Valid(binding) if binding.state == "failed" => return Ok(()),
+        // Let existing intent recovery select a queued replacement first.
+        DecodedBinding::Valid(binding)
+            if binding.state == "failed" && !matches!(decode_next(record), DecodedNext::Absent) =>
+        {
+            return Ok(());
+        }
         DecodedBinding::Valid(binding) => binding,
     };
     binding.state = "pending".to_string();
@@ -678,6 +683,11 @@ pub(crate) fn finish_binding(
             "Codex account binding changed while it was being applied",
             Some(json!({ "id": id })),
         ));
+    }
+    // A daemon completion may follow the control's more specific failure.
+    // Keep that diagnosis for this exact account, revision and incarnation.
+    if result == Err("control_apply_unconfirmed") && current.state == "failed" {
+        return Ok(view_for_record(&record));
     }
     let (state, applied_runtime_id, failure_reason) = match result {
         Ok(()) => ("bound", Some(expected_launch_id.to_string()), None),
@@ -2273,15 +2283,19 @@ mod tests {
     }
 
     #[test]
-    fn resumed_runtime_preserves_failed_binding_until_explicit_retry() {
+    fn resumed_runtime_retries_failed_binding_before_allowing_input() {
         let lock = GlobalStateLock::new();
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
         let mut record = record_with_binding_value(valid_binding("failed"));
 
         mark_runtime_pending(&mut record).unwrap();
 
-        assert_eq!(view_for_record(&record).state, "failed");
-        assert!(account_for_control_rebind(&record).unwrap().is_none());
+        assert_eq!(view_for_record(&record).state, "pending");
+        assert_eq!(
+            account_for_control_rebind(&record).unwrap(),
+            Some(("acct1".to_string(), 7))
+        );
+        assert!(ensure_input_allowed(&record).is_err());
     }
 
     #[test]
