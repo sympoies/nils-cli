@@ -123,6 +123,9 @@ hide typed spaces behind layout cells. Display matching supplies a candidate;
 bounded cursor observations must also prove its logical length and row
 boundaries before Enter or removal of an owned paste. An unproved candidate
 remains unobservable, and readable owner additions are preserved.
+When Codex 0.162.1 wraps a notice header into separate captured rows, the guard
+retains their physical coordinates and verifies the header's logical start and
+end before accepting those rows as a soft wrap.
 
 `--queue` waits while the target
 reports busy and retries only a preclaim busy admission refusal. Other failures

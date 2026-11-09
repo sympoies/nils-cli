@@ -175,6 +175,7 @@ pub(crate) fn classify(agent: &str, pane: &str, probe: &Probe) -> Composer {
     if let Some(text) = probe.notice.as_deref() {
         if composer::known_multiline_input(agent, pane, text)
             .is_some_and(|input| composer::composer_holds(agent, &input, text))
+            || agent == "codex" && composer::codex_notice_cursor_path(pane, text).is_some()
         {
             return Composer::Pending;
         }

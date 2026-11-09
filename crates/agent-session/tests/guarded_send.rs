@@ -195,6 +195,14 @@ elif command == 'send-keys' and args[-2:] == ['Right', 'Left']:
     text = (root / 'composer').read_text()
     length = 1 + len(text) - len((root / 'collapsed-label').read_text()) if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()) else len(text)
     (root / 'cursor').write_text(str(max(0, min(length, cursor + count) - count)))
+elif command == 'send-keys' and args[-1] in ('Home', 'End'):
+    text = (root / 'composer').read_text()
+    cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
+    if args[-1] == 'Home': cursor = text.rfind('\n', 0, cursor) + 1
+    else:
+        end = text.find('\n', cursor)
+        cursor = len(text) if end < 0 else end
+    (root / 'cursor').write_text(str(cursor))
 elif command == 'send-keys' and args[-1] == 'Right':
     cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len((root / 'composer').read_text())
     count = int(args[args.index('-N') + 1])
