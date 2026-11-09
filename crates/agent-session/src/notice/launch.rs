@@ -76,6 +76,17 @@ pub(crate) fn matches_row(value: &Value, text: &str) -> bool {
         && value["message"]["content"].as_str().and_then(unwrap_paste) == Some(text)
 }
 
+pub(crate) fn bound_row(
+    binding: &(u64, String, String),
+    offset: u64,
+    line: &[u8],
+    value: &Value,
+) -> bool {
+    binding.0 == offset
+        && sha256(crate::provider_prompt::native_notice::payload(line)) == binding.2
+        && matches_row(value, &binding.1)
+}
+
 /// Locate an exact launch receipt and the first user row, independently of paging direction.
 pub(crate) fn binding(
     state: &Path,

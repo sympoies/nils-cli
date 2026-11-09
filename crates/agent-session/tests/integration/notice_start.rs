@@ -120,12 +120,19 @@ sys.exit(result.returncode)
         .append(true)
         .open(project.join(format!("{provider}.jsonl")))
         .unwrap();
+    let mut unclaimed_in_session = row("22222222-2222-4222-8222-222222222222");
+    unclaimed_in_session["message"]["content"] =
+        serde_json::json!(wrapped.replace("Second line", "Human line"));
+    writeln!(transcript, "{unclaimed_in_session}").unwrap();
     writeln!(
         transcript,
         "{}",
-        row("22222222-2222-4222-8222-222222222222")
+        row("66666666-6666-4666-8666-666666666666")
     )
     .unwrap();
+    let mut human = row("55555555-5555-4555-8555-555555555555");
+    human["message"]["content"] = serde_json::json!("actual human request");
+    writeln!(transcript, "{human}").unwrap();
     let unclaimed_id = "33333333-3333-4333-8333-333333333333";
     let mut unclaimed = row("44444444-4444-4444-8444-444444444444");
     unclaimed["sessionId"] = serde_json::json!(unclaimed_id);
@@ -175,24 +182,62 @@ sys.exit(result.returncode)
         .unwrap()["id"]
         .as_str()
         .unwrap();
+    let claimed = list
+        .iter()
+        .find(|s| s["provider_session_id"] == provider)
+        .unwrap();
+    for field in ["first_user_prompt_preview", "prompt_preview"] {
+        assert!(
+            claimed[field].as_str().unwrap().contains("Human line"),
+            "{field}"
+        );
+    }
+    assert_eq!(claimed["last_user_prompt_preview"], "actual human request");
+    let unclaimed_session = list
+        .iter()
+        .find(|s| s["provider_session_id"] == unclaimed_id)
+        .unwrap();
+    assert!(
+        unclaimed_session["first_user_prompt_preview"]
+            .as_str()
+            .unwrap()
+            .contains("pasted_content")
+    );
     let page = get(
         addr,
         &format!("/history/sessions/{id}/messages?direction=forward"),
     );
     assert_eq!(page["data"]["messages"][0]["role"], "notice");
     assert_eq!(page["data"]["messages"][1]["role"], "user");
+    assert_eq!(page["data"]["messages"][2]["role"], "user");
+    assert_eq!(page["data"]["messages"][2]["text"], wrapped);
+    assert_eq!(page["data"]["messages"][3]["role"], "user");
     let latest = get(
         addr,
         &format!("/history/sessions/{id}/messages?direction=latest"),
     );
     assert_eq!(latest["data"]["messages"][0]["role"], "notice");
     assert_eq!(latest["data"]["messages"][1]["role"], "user");
+    assert_eq!(latest["data"]["messages"][2]["role"], "user");
+    assert_eq!(latest["data"]["messages"][3]["role"], "user");
     let latest = get(
         addr,
         &format!("/history/sessions/{id}/messages?direction=latest&limit=1"),
     );
     assert_eq!(latest["data"]["messages"][0]["role"], "user");
     let cursor = latest["data"]["older_cursor"].as_str().unwrap();
+    let older = get(
+        addr,
+        &format!("/history/sessions/{id}/messages?direction=older&limit=1&cursor={cursor}"),
+    );
+    assert_eq!(older["data"]["messages"][0]["role"], "user");
+    let cursor = older["data"]["older_cursor"].as_str().unwrap();
+    let older = get(
+        addr,
+        &format!("/history/sessions/{id}/messages?direction=older&limit=1&cursor={cursor}"),
+    );
+    assert_eq!(older["data"]["messages"][0]["role"], "user");
+    let cursor = older["data"]["older_cursor"].as_str().unwrap();
     let older = get(
         addr,
         &format!("/history/sessions/{id}/messages?direction=older&limit=1&cursor={cursor}"),

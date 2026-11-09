@@ -52,10 +52,8 @@ impl Bindings {
         value: &Value,
         include_parts: bool,
     ) -> Decision {
-        if let Some((first_offset, text, row_hash)) = &self.launch
-            && *first_offset == offset
-            && sha256(crate::provider_prompt::native_notice::payload(line)) == *row_hash
-            && crate::notice::launch::matches_row(value, text)
+        if let Some(binding) = &self.launch
+            && crate::notice::launch::bound_row(binding, offset, line, value)
         {
             return Decision::Notice(Box::new(HistoryMessage {
                 id: format!("{}-{offset}", session.id),
@@ -65,7 +63,7 @@ impl Bindings {
                 row_class: Some(crate::provider_prompt::row_classes::RowClass::Notice),
                 compaction: None,
                 role: "notice".into(),
-                text: text.clone(),
+                text: binding.1.clone(),
                 timestamp: value
                     .get("timestamp")
                     .and_then(Value::as_str)
