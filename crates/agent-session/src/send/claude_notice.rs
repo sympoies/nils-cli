@@ -189,6 +189,9 @@ pub(super) fn deliver(
         crate::write_session_record(context, &record)?;
         check("claimed")?;
         bridge::remaining(deadline).map_err(|_| runtime::unavailable())?;
+        if let Some(candidate) = attempt.notification {
+            crate::serve::begin_mailbox_notice(context, &record, tmux, candidate)?;
+        }
         // Required synchronous provider hooks must be able to acquire this
         // record lock BEFORE the module enters prompt.submit.
         drop(manual.record_lock.take());

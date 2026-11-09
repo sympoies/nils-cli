@@ -148,6 +148,8 @@ For `provider-not-ready` it names the branch that deferred:
   `prompt-submission-refused`.
 - `notice-attempt-not-admitted`: the guarded notice send did not admit the
   attempt.
+- `authorization-timeout`: the Claude native receiver did not authorize the
+  notice before the deadline.
 
 ## Classification and joining
 

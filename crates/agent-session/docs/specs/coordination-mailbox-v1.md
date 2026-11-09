@@ -378,9 +378,10 @@ Both paths count only the matching acknowledged turn id and require the same exa
 authoritative broker, no active or uncertain operation, no auth quarantine, and no restart fence before
 their generation CAS. The in-turn `turn/steer` path additionally requires no active claim. An idle
 recipient that holds only its own claim, such as the issue-tier claim a dispatched author sets, is woken:
-a claim says what the recipient works on, not that it is busy. Terminal-backed Codex and Claude use the
-controller-owned private-buffer paste plus a separate Enter after exact-incarnation, authoritative-idle,
-detached, live-runtime, authoritative-broker, and no-operation checks. A wake the idle structured route
+a claim says what the recipient works on, not that it is busy. Terminal-backed Codex uses a
+controller-owned private-buffer paste plus a separate Enter. Claude uses its authenticated native
+notice receiver. Both require exact-incarnation, authoritative-idle, detached, live-runtime,
+authoritative-broker, and no-operation checks. A wake the idle structured route
 defers because the recipient is not quiescent is recorded as `recipient-coordination-not-quiescent` with
 the blocking condition as its detail, never as `provider-not-ready`. The short `queued -> attempting` CAS is a
 per-session submission fence: claim and
@@ -405,6 +406,11 @@ admitted to the exact recipient incarnation, including remote deliveries and car
 
 Migrated timestamps are recovered from those records; existing upper bounds and original attempted
 timestamps are retained.
+
+Claude native mailbox wakes stay queued while awaiting authenticated receiver
+authorization. The generation is claimed under the session lock after authorization
+and before notice text is released; an authorization timeout leaves it queued for
+retry. Once released, an uncertain outcome remains parked for that generation.
 
 Terminal wakes observe the composer before claiming the attempt, then recheck
 it after loading the private buffer and immediately before paste. A fresh
