@@ -77,6 +77,10 @@ pub(crate) fn human_history_prompt(
     session: &str,
     line: &str,
 ) -> Option<super::super::LastPrompt> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    if input(provider, &value, session).is_some() {
+        return None;
+    }
     let prompt = super::super::parse_history_user_prompt(provider, session, line)?;
-    (!matches("", &prompt.text, &Value::Null)).then_some(prompt)
+    (!matches(provider, &prompt.text, &value)).then_some(prompt)
 }

@@ -309,3 +309,23 @@ fn codex_notice_submission_is_observable_without_a_human_prompt_event() {
     assert!(submissions.poll_submitted_prompts().unwrap().is_empty());
     assert!(human_events.poll().unwrap().is_empty());
 }
+
+#[test]
+fn notice_canonical_snapshot_does_not_replace_real_prompt() {
+    let notice = "<!-- agent-notice:v1 kind=mailbox source=synthetic -->\n\nMailbox wake";
+    let human = json!({"type":"user","sessionId":"synthetic","message":{"role":"user","content":"real prompt"}});
+    let notice_row =
+        json!({"type":"user","sessionId":"synthetic","message":{"role":"user","content":notice}});
+    let snapshot = json!({"type":"last-prompt","sessionId":"synthetic","lastPrompt":notice});
+    let transcript = format!(
+        "{human}\n{}{snapshot}\n",
+        format!("{notice_row}\n").repeat(40)
+    );
+    let (prompt, _, _) = extract_preview(
+        transcript.as_bytes(),
+        ProviderKind::Claude,
+        "synthetic",
+        true,
+    );
+    assert_eq!(prompt.unwrap().prompt, "real prompt");
+}

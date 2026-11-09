@@ -95,7 +95,9 @@ impl PreviewMessages {
                 } else if !self.claude_human_seen {
                     // Older transcripts without human-source tags retain the
                     // canonical last-prompt fallback, but it is not a message.
-                    if let Some(prompt) = parse_claude_last_prompt_value(value, session) {
+                    if let Some(prompt) = parse_claude_last_prompt_value(value, session)
+                        && !row_classes::notice::matches("claude", &prompt.prompt, value)
+                    {
                         return Some(prompt);
                     }
                     None
