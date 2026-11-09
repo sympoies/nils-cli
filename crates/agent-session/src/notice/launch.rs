@@ -165,7 +165,11 @@ pub(crate) fn binding(
             {
                 return None;
             }
-            return Some((offset, inner.to_owned(), sha256(&line)));
+            return Some((
+                offset,
+                inner.to_owned(),
+                sha256(crate::provider_prompt::native_notice::payload(&line)),
+            ));
         }
         offset += line.len() as u64;
     }

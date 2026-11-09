@@ -181,6 +181,23 @@ sys.exit(result.returncode)
     );
     assert_eq!(page["data"]["messages"][0]["role"], "notice");
     assert_eq!(page["data"]["messages"][1]["role"], "user");
+    let latest = get(
+        addr,
+        &format!("/history/sessions/{id}/messages?direction=latest"),
+    );
+    assert_eq!(latest["data"]["messages"][0]["role"], "notice");
+    assert_eq!(latest["data"]["messages"][1]["role"], "user");
+    let latest = get(
+        addr,
+        &format!("/history/sessions/{id}/messages?direction=latest&limit=1"),
+    );
+    assert_eq!(latest["data"]["messages"][0]["role"], "user");
+    let cursor = latest["data"]["older_cursor"].as_str().unwrap();
+    let older = get(
+        addr,
+        &format!("/history/sessions/{id}/messages?direction=older&limit=1&cursor={cursor}"),
+    );
+    assert_eq!(older["data"]["messages"][0]["role"], "notice");
     let page = get(
         addr,
         &format!("/history/sessions/{unclaimed_history}/messages?direction=forward"),

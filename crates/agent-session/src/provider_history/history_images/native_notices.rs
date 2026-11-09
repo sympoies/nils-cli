@@ -54,7 +54,7 @@ impl Bindings {
     ) -> Decision {
         if let Some((first_offset, text, row_hash)) = &self.launch
             && *first_offset == offset
-            && sha256(line) == *row_hash
+            && sha256(crate::provider_prompt::native_notice::payload(line)) == *row_hash
             && crate::notice::launch::matches_row(value, text)
         {
             return Decision::Notice(Box::new(HistoryMessage {
