@@ -351,6 +351,65 @@ fn scoped_console_starts_relay_without_exposing_the_worker_credential() {
 }
 
 #[test]
+fn resume_preflight_relay_reports_bounded_branch_reasons() {
+    use nils_test_support::http::{HttpResponse, LoopbackServer};
+    let fixture = Fixture::new("claude");
+    let (_, token, _) = fixture.mint(vec![Operation::StartViaConsole], vec![]);
+    let request =
+        json!({"session":{"agent":"claude","resume":"550e8400-e29b-41d4-a716-446655440000"}});
+    let server = LoopbackServer::new().unwrap();
+    let config = super::super::remote::Config {
+        machine: "fixture-machine".into(),
+        url: server.url(),
+        token: "synthetic-relay-token".into(),
+        ingress_token: "synthetic-ingress-token".into(),
+    };
+    let call = |config, body: &Value| {
+        super::super::resume_preflight::relay_route(
+            &fixture.context,
+            config,
+            "caller",
+            &token,
+            body,
+        )
+        .unwrap_err()
+    };
+    let assert_reason = |error: CliError, reason: &str| {
+        assert_eq!(error.code(), "resume-unsupported");
+        assert_eq!(
+            error.details().unwrap(),
+            &json!({"session_created":false,"safe_to_retry":false,"reason":reason})
+        );
+    };
+    assert_reason(call(None, &request), "relay-config-missing");
+    for body in [
+        json!(null),
+        json!({"unexpected":"secret"}),
+        json!({"machine":42}),
+        json!({"session":{"extra":"secret"}}),
+    ] {
+        assert_reason(call(Some(&config), &body), "relay-request-invalid");
+    }
+    server.add_route(
+        "POST",
+        "/api/coordination/resume-preflight/v1",
+        HttpResponse::new(404, ""),
+    );
+    assert_reason(call(Some(&config), &request), "console-route-missing");
+    let server = LoopbackServer::new().unwrap();
+    server.add_route(
+        "POST",
+        "/api/coordination/resume-preflight/v1",
+        HttpResponse::new(200, "untrusted-content"),
+    );
+    let config = super::super::remote::Config {
+        url: server.url(),
+        ..config.clone()
+    };
+    assert_reason(call(Some(&config), &request), "console-answer-invalid");
+}
+
+#[test]
 fn forged_credentials_and_unscoped_minting_are_refused() {
     let fixture = Fixture::new("codex");
     let (_, token, path) = fixture.mint(vec![Operation::StartViaConsole], vec![]);

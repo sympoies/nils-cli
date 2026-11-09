@@ -456,6 +456,14 @@ See [Cross-host mailbox federation v1](coordination-federation-v1.md#cross-host-
 
 ## Owned child sessions v1
 
+For Console resume preflight refusals, `error.details.reason` is one of the
+following closed set when a transport or binding branch supplies it:
+`daemon-route-missing`, `daemon-answer-unreadable`, `preflight-schema-mismatch`,
+`preflight-binding-mismatch`, `relay-config-missing`, `relay-request-invalid`,
+`console-route-missing`, or `console-answer-invalid`. The public error code
+remains `resume-unsupported`, with `session_created:false` and
+`safe_to_retry:false`. Reasons contain no upstream response content or credentials.
+
 `agent-session start --via-console [--machine MACHINE]` starts a session through Agent Console instead of
 launching tmux locally. Agent Console owns the new session for the same principal that owns the calling
 managed session, so the child appears in that owner's console list and board and can be attached. The
