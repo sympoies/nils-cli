@@ -295,7 +295,7 @@ fn cli_console_start_forwards_resume_account_and_ordinary_context_and_terminal_r
         assert_eq!(requests[0].0, "/sessions/source/console-resume/v1");
         let request = &requests[0].1;
         assert_eq!(request["session"]["resume"], CONVERSATION);
-        assert_eq!(request["session"]["claude_account"], "original");
+        assert_eq!(request["session"]["account"], "original");
         assert_eq!(request["session"]["prompt"], "fixture bootstrap");
         assert_eq!(
             request["session"]["agent_args"],

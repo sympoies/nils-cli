@@ -62,7 +62,7 @@ async fn codex_target_preflight_is_read_only_and_create_rechecks_the_pinned_acco
     fs::write(&source_path, source.to_string()).unwrap();
     let before = snapshot(temp.path());
     let (status, result) = post(router(st), "/sessions/resume/v1", Some(TOKEN),
-        json!({"agent":"codex","resume":ID,"claude_account":"original","resume_account_explicit":false,"id":"blocked"})).await;
+        json!({"agent":"codex","resume":ID,"account":"original","resume_account_explicit":false,"id":"blocked"})).await;
     assert!(!status.is_success(), "{result}");
     assert_eq!(result["error"]["code"], "resume-account-mismatch");
     assert_eq!(
@@ -70,4 +70,165 @@ async fn codex_target_preflight_is_read_only_and_create_rechecks_the_pinned_acco
         json!({"session_created":false,"safe_to_retry":false})
     );
     assert_eq!(snapshot(temp.path()), before);
+}
+
+#[test]
+fn console_codex_explicit_account_reaches_preflight_request() {
+    let session = json!({"agent":"codex", "resume":ID, "account":"original"});
+    let request = crate::coordination::resume_preflight::request_from_session(&session).unwrap();
+    assert_eq!(request.account.as_deref(), Some("original"));
+}
+
+fn unbound_codex_fixture(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    let (state, broker, tmux) = fixture(root);
+    let path = state.join("sessions/source/session.json");
+    let mut source: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    source["agent"] = json!("codex");
+    source["provider_resume"]["provider"] = json!("codex");
+    source
+        .as_object_mut()
+        .unwrap()
+        .remove("claude_account_binding");
+    fs::write(path, source.to_string()).unwrap();
+    (state, broker, tmux)
+}
+
+#[tokio::test]
+async fn console_codex_explicit_account_reaches_target_admission() {
+    let temp = tempfile::tempdir().unwrap();
+    let (state, _, tmux) = unbound_codex_fixture(temp.path());
+    let st = crate::serve::tests::state(&state, Some(TOKEN), tmux);
+    let (_, result) = post(
+        router(st),
+        "/sessions/resume/v1",
+        Some(TOKEN),
+        json!({"agent":"codex","resume":ID,"account":"original"}),
+    )
+    .await;
+    assert_eq!(result["error"]["code"], "resume-source-unknown");
+}
+
+#[tokio::test]
+async fn sessions_list_advertises_shared_account_field() {
+    let temp = tempfile::tempdir().unwrap();
+    let state =
+        crate::serve::tests::state(temp.path(), Some(TOKEN), PathBuf::from("/unavailable/tmux"));
+    let response = router(state)
+        .oneshot(
+            Request::builder()
+                .uri("/sessions")
+                .header("authorization", format!("Bearer {TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["capabilities"]["session_account_field"], true);
+}
+
+#[tokio::test]
+async fn target_resume_accepts_both_account_fields_and_rejects_conflicts() {
+    let temp = tempfile::tempdir().unwrap();
+    let (state, _, tmux) = unbound_codex_fixture(temp.path());
+    let app = router(crate::serve::tests::state(&state, Some(TOKEN), tmux));
+    for route in ["/resume-preflight/v1", "/sessions/resume/v1"] {
+        for field in ["account", "codex_account"] {
+            let (_, result) = post(
+                app.clone(),
+                route,
+                Some(TOKEN),
+                json!({"agent":"codex","resume":ID,field:"original"}),
+            )
+            .await;
+            assert_eq!(
+                result["error"]["code"], "resume-source-unknown",
+                "{route} {field}: {result}"
+            );
+        }
+        for fields in [
+            json!({"account":"original","codex_account":"original"}),
+            json!({"claude_account":"original"}),
+        ] {
+            let mut body = json!({"agent":"codex","resume":ID});
+            body.as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            let (_, result) = post(app.clone(), route, Some(TOKEN), body).await;
+            assert_eq!(
+                result["error"]["code"], "resume-unsupported",
+                "{route}: {result}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn fresh_create_accepts_both_account_fields_and_rejects_conflicts() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = router(crate::serve::tests::state(
+        temp.path(),
+        Some(TOKEN),
+        PathBuf::from("/unavailable/tmux"),
+    ));
+    for field in ["account", "codex_account"] {
+        let (_, result) = post(
+            app.clone(),
+            "/sessions",
+            Some(TOKEN),
+            json!({"agent":"codex",field:"invalid/name"}),
+        )
+        .await;
+        assert_eq!(
+            result["error"]["code"], "invalid-codex-account",
+            "{field}: {result}"
+        );
+    }
+    let (_, result) = post(
+        app.clone(),
+        "/sessions",
+        Some(TOKEN),
+        json!({"agent":"codex","account":"original","codex_account":"original"}),
+    )
+    .await;
+    assert_eq!(result["error"]["code"], "invalid-account");
+    let (_, result) = post(
+        app,
+        "/sessions",
+        Some(TOKEN),
+        json!({"agent":"codex","claude_account":"original"}),
+    )
+    .await;
+    assert_eq!(result["error"]["code"], "claude-account-agent-conflict");
+}
+
+#[tokio::test]
+async fn create_routes_reject_null_account_key_conflicts() {
+    let temp = tempfile::tempdir().unwrap();
+    let (state, _, tmux) = unbound_codex_fixture(temp.path());
+    let app = router(crate::serve::tests::state(&state, Some(TOKEN), tmux));
+    for route in ["/sessions", "/sessions/resume/v1", "/resume-preflight/v1"] {
+        for fields in [
+            json!({"account":"original","codex_account":null}),
+            json!({"account":null,"codex_account":"original"}),
+            json!({"claude_account":null}),
+        ] {
+            let mut body = json!({"agent":"codex"});
+            if route != "/sessions" {
+                body["resume"] = json!(ID);
+            }
+            body.as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            let (status, result) = post(app.clone(), route, Some(TOKEN), body).await;
+            if route == "/sessions" {
+                assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{result}");
+            } else {
+                assert_eq!(result["error"]["code"], "resume-unsupported", "{result}");
+            }
+        }
+    }
 }

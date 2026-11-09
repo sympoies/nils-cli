@@ -161,11 +161,7 @@ pub(crate) struct Request {
     pub resume: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<PathBuf>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        rename = "claude_account"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_profile: Option<String>,

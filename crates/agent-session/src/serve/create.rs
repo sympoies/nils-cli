@@ -4,7 +4,7 @@ use super::*;
 pub(super) async fn create_handler(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
-    Json(body): Json<CreateBody>,
+    Json(create_body::CheckedCreateBody(body)): Json<create_body::CheckedCreateBody>,
 ) -> Response {
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
@@ -41,7 +41,7 @@ pub(super) async fn create_handler(
 pub(super) async fn create_handler_inner(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
-    Json(body): Json<CreateBody>,
+    Json(mut body): Json<CreateBody>,
     origin: crate::origin::Fields,
 ) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
@@ -62,10 +62,31 @@ pub(super) async fn create_handler_inner(
         ));
     }
     let resuming = body.resume.is_some();
+    if !resuming && let Some(account) = body.account.take() {
+        if body.codex_account.is_some() || body.claude_account.is_some() {
+            return envelope_err(CliError::usage(
+                "invalid-account",
+                "account cannot be combined with a provider account",
+                None,
+            ));
+        }
+        match agent {
+            AgentKind::Codex => body.codex_account = Some(account),
+            AgentKind::Claude => body.claude_account = Some(account),
+            _ => {
+                return envelope_err(CliError::usage(
+                    "invalid-account",
+                    "account requires Codex or Claude",
+                    None,
+                ));
+            }
+        }
+    }
     if resuming
         && (body.agent_profile.is_some()
             || body.provider_resume_id.is_some()
-            || body.codex_account.is_some())
+            || body.codex_account.is_some()
+            || body.claude_account.is_some())
     {
         return envelope_err(crate::start_resume::refusal("resume-unsupported"));
     }
@@ -214,7 +235,7 @@ pub(super) async fn create_handler_inner(
     }
     let resume_account_explicit = body
         .resume_account_explicit
-        .or_else(|| resuming.then_some(body.claude_account.is_some()));
+        .or_else(|| resuming.then_some(body.account.is_some()));
     let explicit_account = body.codex_account;
     let (selected_account, selection_source) = if resuming {
         match super::resume_start::resolve_codex_account(
@@ -223,7 +244,7 @@ pub(super) async fn create_handler_inner(
                 agent: body.agent.clone(),
                 resume: body.resume.clone().unwrap(),
                 cwd: body.cwd.as_ref().map(PathBuf::from),
-                account: body.claude_account.clone(),
+                account: body.account.clone(),
                 agent_profile: body.agent_profile.clone(),
                 agent_args: body.agent_args.clone(),
             },
@@ -326,7 +347,7 @@ pub(super) async fn create_handler_inner(
         console_operation: Default::default(),
         machine: None,
         account: if resuming {
-            selected_account.clone().or(body.claude_account)
+            selected_account.clone().or(body.account)
         } else {
             None
         },

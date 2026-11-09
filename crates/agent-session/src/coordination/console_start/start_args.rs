@@ -81,9 +81,8 @@ fn build_args(
         session["agent_profile"] = json!(profile);
     }
     if let Some(account) = &args.account {
-        let field = match args.agent {
-            cli::AgentKind::Codex => "codex_account",
-            cli::AgentKind::Claude => "claude_account",
+        match args.agent {
+            cli::AgentKind::Codex | cli::AgentKind::Claude => (),
             _ => {
                 return Err(CliError::usage(
                     "console-start-account-unsupported",
@@ -92,7 +91,7 @@ fn build_args(
                 ));
             }
         };
-        session[field] = json!(account);
+        session["account"] = json!(account);
     }
     let lineage = super::ChildLineage {
         no_parent: args.no_parent,
