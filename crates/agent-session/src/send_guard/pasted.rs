@@ -38,6 +38,13 @@ impl Admission<'_> {
             return self.prove_placeholder(&label).then(|| text.to_owned());
         }
         if self.args.notice_envelope
+            && self.record.agent == "codex"
+            && let Some(text) = pasted
+            && send_submit::codex_notice_cursor_path(pane, text).is_some()
+        {
+            return self.codex_notice_input(text, stage);
+        }
+        if self.args.notice_envelope
             && let Some(input) = pasted
                 .and_then(|text| send_submit::known_multiline_input(&self.record.agent, pane, text))
         {

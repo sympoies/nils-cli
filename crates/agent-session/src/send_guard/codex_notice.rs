@@ -11,7 +11,11 @@ impl Admission<'_> {
         if let Some(input) = send_submit::exact_composer_input("codex", &pane) {
             return Some(input);
         }
-        let input = send_submit::known_multiline_input("codex", &pane, text)?;
+        let input = if send_submit::codex_notice_cursor_path(&pane, text).is_some() {
+            text.to_owned()
+        } else {
+            send_submit::known_multiline_input("codex", &pane, text)?
+        };
         let path = send_submit::codex_notice_cursor_path(&pane, &input)?;
         let navigate = |key: &str, count: usize, endpoint: (usize, usize)| -> Option<()> {
             self.identity(stage).ok()?;
@@ -28,11 +32,7 @@ impl Admission<'_> {
                     &target,
                     self.timeout(stage).ok()?,
                 )?;
-                if send_submit::known_multiline_input("codex", &current, &input).as_deref()
-                    != Some(input.as_str())
-                {
-                    return None;
-                }
+                send_submit::codex_notice_cursor_path(&current, &input)?;
                 if cursor == endpoint {
                     return Some(());
                 }
@@ -50,6 +50,13 @@ impl Admission<'_> {
         // distinguishes spaces moved between blank rows with the same length.
         navigate("Right", path.characters + 1, path.end)?;
         navigate("Left", path.characters, path.start)?;
+        if let Some(end) = path.wrapped_header_end {
+            // A hard newline replacing a soft-wrap separator can have the
+            // same display and character count. Prove the logical header's
+            // end and start before accepting its physical continuation rows.
+            navigate("End", 1, end)?;
+            navigate("Home", 1, path.start)?;
+        }
         for (count, endpoint) in path.rows {
             navigate("Right", count, endpoint)?;
         }
