@@ -381,3 +381,99 @@ fn dense_latest_page_stops_after_one_reverse_chunk() {
     assert_eq!(page.messages.len(), 50);
     assert!(reader.bytes_read <= REVERSE_MESSAGE_CHUNK_BYTES);
 }
+
+#[test]
+fn history_previews_skip_classified_provider_context_notice() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("sessions/2026/08/31");
+    fs::create_dir_all(&root).unwrap();
+    let rows = [
+        serde_json::json!({"timestamp":"2026-08-31T00:00:00Z","type":"session_meta","payload":{"id":"abc","cwd":"/work/example","source":"cli","timestamp":"2026-08-31T00:00:00Z"}}),
+        serde_json::json!({"type":"event_msg","payload":{"type":"user_message","message":"<environment_context>\ncontext\n</environment_context>"}}),
+        serde_json::json!({"type":"event_msg","payload":{"type":"user_message","message":"real prompt"}}),
+        serde_json::json!({"type":"event_msg","payload":{"type":"user_message","message":"<environment_context>\ncontext\n</environment_context>"}}),
+    ];
+    fs::write(
+        root.join("rollout.jsonl"),
+        rows.iter()
+            .map(|row| format!("{row}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    let sources = [HistorySource {
+        provider: "codex".into(),
+        agent_profile: None,
+        root: tmp.path().join("sessions"),
+    }];
+    let page = list(
+        &sources,
+        HistoryRoots {
+            archives: &tmp.path().join("archives"),
+            stars: &tmp.path().join("stars"),
+        },
+        "test",
+        None,
+        None,
+        None,
+        25,
+    )
+    .unwrap();
+    let session = &page.sessions[0];
+    assert_eq!(
+        session.first_user_prompt_preview.as_deref(),
+        Some("real prompt")
+    );
+    assert_eq!(session.prompt_preview.as_deref(), Some("real prompt"));
+    assert_eq!(
+        session.last_user_prompt_preview.as_deref(),
+        Some("real prompt")
+    );
+}
+
+#[test]
+fn history_latest_skips_notice_snapshot_after_real_user_prompt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("projects/example");
+    fs::create_dir_all(&root).unwrap();
+    let id = "11111111-1111-4111-8111-111111111111";
+    let notice = "<!-- agent-notice:v1 kind=mailbox source=synthetic -->\n\nMailbox wake";
+    let human = serde_json::json!({"type":"user","sessionId":id,"cwd":"/work/example","message":{"role":"user","content":"real prompt"}});
+    let injected = serde_json::json!({"type":"user","sessionId":id,"message":{"role":"user","content":notice}});
+    let snapshot = serde_json::json!({"type":"last-prompt","sessionId":id,"lastPrompt":notice});
+    fs::write(
+        root.join(format!("{id}.jsonl")),
+        format!(
+            "{human}\n{}{snapshot}\n",
+            format!("{injected}\n").repeat(40)
+        ),
+    )
+    .unwrap();
+    let sources = [HistorySource {
+        provider: "claude".into(),
+        agent_profile: None,
+        root: tmp.path().join("projects"),
+    }];
+    let page = list(
+        &sources,
+        HistoryRoots {
+            archives: &tmp.path().join("archives"),
+            stars: &tmp.path().join("stars"),
+        },
+        "test",
+        None,
+        None,
+        None,
+        25,
+    )
+    .unwrap();
+    let session = &page.sessions[0];
+    assert_eq!(
+        session.first_user_prompt_preview.as_deref(),
+        Some("real prompt")
+    );
+    assert_eq!(session.prompt_preview.as_deref(), Some("real prompt"));
+    assert_eq!(
+        session.last_user_prompt_preview.as_deref(),
+        Some("real prompt")
+    );
+}
