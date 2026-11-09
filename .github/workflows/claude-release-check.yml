@@ -157,7 +157,20 @@ jobs:
           name: claude-release-check
           path: ${{ runner.temp }}/claude-check-evidence
 
+      - name: Plan candidate publication
+        id: publication_plan
+        env:
+          CLAUDE_CHECK_ARTIFACT_DIR: ${{ runner.temp }}/claude-check-evidence
+        run: |
+          node <<'JS'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const checked = JSON.parse(fs.readFileSync(path.join(process.env.CLAUDE_CHECK_ARTIFACT_DIR, "checked.json"), "utf8"));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `candidate=${!checked.error && checked.check?.passed === true}\n`);
+          JS
+
       - name: Require bot app credentials
+        if: steps.publication_plan.outputs.candidate == 'true'
         env:
           BOT_APP_ID: ${{ secrets.BOT_APP_ID }}
           BOT_APP_PRIVATE_KEY: ${{ secrets.BOT_APP_PRIVATE_KEY }}
@@ -169,6 +182,7 @@ jobs:
           fi
 
       - name: Mint bot token
+        if: steps.publication_plan.outputs.candidate == 'true'
         id: bot_token
         uses: actions/create-github-app-token@v3
         with:
@@ -182,6 +196,7 @@ jobs:
         env:
           CLAUDE_CHECK_ARTIFACT_DIR: ${{ runner.temp }}/claude-check-evidence
           ISSUE_TOKEN: ${{ github.token }}
+          BOT_TOKEN: ${{ steps.bot_token.outputs.token }}
         with:
           github-token: ${{ steps.bot_token.outputs.token }}
           script: |
@@ -194,8 +209,11 @@ jobs:
                 throw new Error("Bounded regular evidence file required");
               return JSON.parse(fs.readFileSync(file, "utf8"));
             };
+            const checked = read("checked.json");
+            if (!checked.error && checked.check?.passed === true && !process.env.BOT_TOKEN)
+              throw new Error("Candidate publication requires a bot App token");
             await runReleaseCheck({ github, issueGithub: getOctokit(process.env.ISSUE_TOKEN), context, core,
-              checked: read("checked.json"), patch: read("candidate.patch.json") });
+              checked, patch: read("candidate.patch.json") });
 
       - name: Retain publication result
         if: always()

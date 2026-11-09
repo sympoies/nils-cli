@@ -173,14 +173,27 @@ the version-keyed issue, which keeps its first evidence. Later scheduled runs
 skip, so they no longer fail every hour. To retry after a fix, dispatch the
 workflow manually; it does not skip.
 
-Orphan candidate branch: if PR creation fails after `ci/claude-range-<version>`
+### Orphan candidate branch
+
+If PR creation fails after `ci/claude-range-<version>`
 was pushed, a rerun on the unchanged `main` commit recovers it. After `main`
 moves, the run stops with `candidate branch occupied; maintainer reconciliation
 required` and does not recover automatically. Reconcile as a maintainer:
 
-1. Confirm the branch has no PR and no commits beyond the generated one.
-2. Delete the orphan branch.
-3. Dispatch the workflow manually on `main`; it opens the draft candidate from
+1. Confirm there is no PR for the branch, open or closed. Inspect its commits
+   and changes against its base: every commit must be workflow-generated, and
+   only the generated range files may change. If either check fails, stop and
+   investigate; do not delete the branch.
+2. Record the exact branch head on the tracking issue.
+3. The maintainer, or a session authorized by the maintainer for this branch,
+   deletes exactly that branch using its recorded head as the lease. Never use
+   a wildcard; run one command per branch:
+
+   ```bash
+   git push --force-with-lease=refs/heads/ci/claude-range-<version>:<recorded-head-sha> origin --delete ci/claude-range-<version>
+   ```
+
+4. Dispatch the workflow manually on `main`; it opens the draft candidate from
    the current `main`.
 
 ## Failure recovery

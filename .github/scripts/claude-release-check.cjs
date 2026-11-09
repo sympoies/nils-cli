@@ -306,7 +306,7 @@ async function prepareDraft({ github, context, root, result }) {
     // Recover only our exact immutable orphan commit after failed PR creation.
     const commit = (await github.rest.git.getCommit({ ...context.repo, commit_sha: ref })).data;
     if (commit.message !== message || commit.parents?.length !== 1 || commit.parents[0].sha !== context.sha)
-      throw new Error("candidate branch occupied; maintainer reconciliation required");
+      throw new Error("candidate branch occupied; maintainer reconciliation required: see docs/runbooks/delivery-and-releases.md#orphan-candidate-branch");
   } else {
     const base = (await github.rest.git.getCommit({ ...context.repo, commit_sha: context.sha })).data;
     const tree = (await github.rest.git.createTree({ ...context.repo, base_tree: base.tree.sha,
@@ -353,7 +353,7 @@ async function runReleaseCheck({ github, issueGithub, context, core, root = proc
   } catch (error) {
     result.status = "error";
     const safe = ["default-branch-only execution required", "source revision moved; rerun on default branch",
-      "candidate branch occupied; maintainer reconciliation required", "duplicate candidate PRs; maintainer reconciliation required",
+      "candidate branch occupied; maintainer reconciliation required: see docs/runbooks/delivery-and-releases.md#orphan-candidate-branch", "duplicate candidate PRs; maintainer reconciliation required",
       "duplicate failure issues; maintainer reconciliation required", "human-owned failure evidence; maintainer reconciliation required"];
     result.action = safe.includes(error.message) || error.message.startsWith("candidate creation unavailable;")
       ? error.message : "Release preparation failed; maintainer must inspect the retained artifacts and retry without changing the current range.";

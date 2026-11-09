@@ -97,6 +97,21 @@ test("candidate publication uses the bot App token without a default-token fallb
   const mint = publish.match(/- name: Mint bot token\n([\s\S]*?)(?=\n      - name:)/);
   const candidate = publish.match(/- name: Prepare draft range candidate from validated evidence\n([\s\S]*?)(?=\n      - name:)/);
   assert.ok(mint); assert.ok(candidate);
+  const credentials = publish.match(/- name: Require bot app credentials\n([\s\S]*?)(?=\n      - name:)/);
+  assert.match(credentials[1], /if: steps\.publication_plan\.outputs\.candidate == 'true'/);
+  const plan = publish.match(/- name: Plan candidate publication[\s\S]*?node <<'JS'\n([\s\S]*?)\n          JS/)[1]
+    .split("\n").map(line => line.slice(10)).join("\n");
+  for (const [checked, expected] of [[{ check: null }, "candidate=false\n"],
+    [{ check: { passed: false } }, "candidate=false\n"], [{ check: { passed: true } }, "candidate=true\n"]]) {
+    const writes = [];
+    require("node:vm").runInNewContext(plan, {
+      require: name => name === "node:fs" ? { readFileSync: () => JSON.stringify(checked), appendFileSync: (_, value) => writes.push(value) } : path,
+      process: { env: { CLAUDE_CHECK_ARTIFACT_DIR: "evidence", GITHUB_OUTPUT: "output" } },
+    });
+    assert.deepEqual(writes, [expected]);
+  }
+  assert.match(candidate[1], /Candidate publication requires a bot App token/);
+  assert.match(mint[1], /if: steps\.publication_plan\.outputs\.candidate == 'true'/);
   assert.match(mint[1], /id: bot_token/);
   assert.match(mint[1], /uses: actions\/create-github-app-token@v3/);
   assert.match(mint[1], /permission-contents: write/);
@@ -234,7 +249,8 @@ test("existing human edits, reviews, ready/closed PRs, duplicates and occupied b
     await runReleaseCheck(options);
     assert.ok(["preserved", "error"].includes(state.result.status), `${variant}: ${state.result.status}`);
     assert.ok(!state.writes.slice(before).some(([kind]) => ["ref", "commit", "tree", "pr"].includes(kind)), variant);
-    if (variant !== "branch") assert.equal(state.pulls[0]?.body, pr.body);
+    if (variant === "branch") assert.match(state.result.action, /delivery-and-releases\.md#orphan-candidate-branch/);
+    else assert.equal(state.pulls[0]?.body, pr.body);
   }
 });
 
