@@ -2,6 +2,7 @@
 mod envelope;
 pub(crate) mod generated;
 pub mod labels;
+pub(crate) mod launch;
 mod summary;
 pub use envelope::{NoticeEnvelope, NoticeError, ParsedNotice, parse_notice};
 pub(crate) use summary::render_summary;
@@ -12,6 +13,29 @@ use clap::{Args, ValueHint};
 use nils_common::cli_contract::OutputFormat;
 
 use crate::{CliContext, CliError, cli, send_guard};
+
+pub(crate) fn release_start(
+    context: &CliContext,
+    notice: &StartNoticeArgs,
+    record: &crate::SessionRecord,
+) -> Result<(), CliError> {
+    if notice.notice_kind.is_some()
+        && record.provider_resume.as_ref().is_some_and(|p| {
+            p.provider == "claude" && p.capture_method == "claude-explicit-session-id"
+        })
+    {
+        let text =
+            std::fs::read_to_string(record.prompt_file.as_deref().unwrap_or("")).map_err(|_| {
+                CliError::runtime(
+                    "launch-notice-unavailable",
+                    "initial notice binding unavailable",
+                    None,
+                )
+            })?;
+        launch::save(context, record, &text)?;
+    }
+    crate::release_held_runtime(context, record)
+}
 
 /// Explicit rollout gate; unset, empty and all values except `1` keep writers off.
 pub const WRITERS_ENV: &str = "AGENT_SESSION_NOTICE_WRITERS";

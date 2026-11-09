@@ -6,6 +6,7 @@ use std::cell::Cell;
 #[derive(Default)]
 pub(crate) struct Bindings {
     reader: Option<store::Reader>,
+    launch: Option<(u64, String, String)>,
     failed: Cell<bool>,
 }
 
@@ -30,6 +31,7 @@ impl Bindings {
         Ok(Self {
             reader: store::Reader::open(state, &session.id, deadline)
                 .map_err(|_| HistoryError::Io)?,
+            launch: crate::notice::launch::binding(state, session, deadline),
             failed: Cell::new(false),
         })
     }
@@ -50,6 +52,29 @@ impl Bindings {
         value: &Value,
         include_parts: bool,
     ) -> Decision {
+        if let Some((first_offset, text, row_hash)) = &self.launch
+            && *first_offset == offset
+            && sha256(crate::provider_prompt::native_notice::payload(line)) == *row_hash
+            && crate::notice::launch::matches_row(value, text)
+        {
+            return Decision::Notice(Box::new(HistoryMessage {
+                id: format!("{}-{offset}", session.id),
+                paging_offset: offset,
+                history_turn_id: None,
+                prompt_request: None,
+                row_class: Some(crate::provider_prompt::row_classes::RowClass::Notice),
+                compaction: None,
+                role: "notice".into(),
+                text: text.clone(),
+                timestamp: value
+                    .get("timestamp")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                images: Vec::new(),
+                parts: include_parts.then(Vec::new),
+                human_prompt: false,
+            }));
+        }
         let Some(reader) = &self.reader else {
             return Decision::NotBound;
         };

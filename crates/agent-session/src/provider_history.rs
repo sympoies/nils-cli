@@ -140,7 +140,7 @@ pub(crate) struct HistorySession {
     #[serde(skip)]
     pub(crate) archived_title_state: Option<crate::SessionTitleState>,
     #[serde(skip)]
-    transcript_path: PathBuf,
+    pub(crate) transcript_path: PathBuf,
     #[serde(skip)]
     incremental_catalog_stamp: String,
 }
