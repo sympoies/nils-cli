@@ -78,6 +78,7 @@ pub(crate) fn send_auto_resume_input(
             acknowledged: &mut |_, _| {},
             terminal_command: false,
             recovery: Some(recovery),
+            notification: None,
         },
         deadline,
         capability,

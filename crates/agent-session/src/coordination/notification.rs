@@ -962,6 +962,7 @@ fn provider_not_ready_detail(detail: &str) -> Option<String> {
             | "notice-not-prepared"
             | "prompt-control-unavailable"
             | "notice-attempt-not-admitted"
+            | "authorization-timeout"
             | "prompt-submission-refused",
             None,
         ) => Some(branch.to_string()),

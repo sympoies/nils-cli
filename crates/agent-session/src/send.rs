@@ -218,7 +218,9 @@ fn send_observing(
             codex_account::authorize_terminal_input_locked(context, &mut record)?;
         }
     }
-    if let Some(candidate) = notification {
+    if record.agent != "claude"
+        && let Some(candidate) = notification
+    {
         crate::serve::begin_mailbox_notice(context, &record, &tmux_bin, candidate)?;
     }
     if args.guards.enabled() {
@@ -234,6 +236,7 @@ fn send_observing(
                 acknowledged,
                 terminal_command: owner_command.is_some(),
                 recovery: None,
+                notification,
             },
         );
     }

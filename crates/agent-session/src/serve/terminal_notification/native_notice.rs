@@ -65,10 +65,14 @@ pub(super) async fn dispatch(
             require_empty_composer: true,
             expect_runtime: Some(sending.target_incarnation.clone()),
             expect_provider_session: record.provider_resume.map(|provider| provider.session_id),
-            idempotency_key: Some(format!(
-                "mailbox-{}-{}",
-                sending.target_incarnation, sending.generation
-            )),
+            // Claude uses the generation CAS at the release boundary; consuming
+            // a separate key before that CAS would prevent a refused retry.
+            idempotency_key: (record.agent != "claude").then(|| {
+                format!(
+                    "mailbox-{}-{}",
+                    sending.target_incarnation, sending.generation
+                )
+            }),
             client_message_id: None,
         };
         crate::send::send_mailbox_notice(&context, args, &sending)
@@ -111,12 +115,16 @@ pub(super) async fn dispatch(
                 })
                 .await;
             } else {
-                super::mailbox_dispatch::defer_provider_not_ready(
-                    &state,
-                    &candidate,
-                    "notice-attempt-not-admitted",
-                )
-                .await;
+                let detail = if matches!(&result, Ok(Err(error))
+                    if error.code() == "notice-native-unavailable"
+                        && error.details().and_then(|details| details["reason"].as_str())
+                            == Some("authorization-timeout"))
+                {
+                    "authorization-timeout"
+                } else {
+                    "notice-attempt-not-admitted"
+                };
+                super::mailbox_dispatch::defer_provider_not_ready(&state, &candidate, detail).await;
             }
         }
     }
