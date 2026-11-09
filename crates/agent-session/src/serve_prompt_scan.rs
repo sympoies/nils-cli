@@ -137,6 +137,11 @@ impl ProviderPromptDiscoveryRegistry {
 
 #[cfg(test)]
 impl ProviderPromptDiscoveryRegistry {
+    async fn continuity_for_key(&self, key: &ProviderPromptDiscoveryKey) -> Option<String> {
+        let slot = self.entries.lock().await.get(key).cloned()?;
+        Some(slot.lock().await.last_prompt_continuity.clone())
+    }
+
     async fn wait_until<F, Fut>(&self, what: &str, mut done: F)
     where
         F: FnMut() -> Fut,

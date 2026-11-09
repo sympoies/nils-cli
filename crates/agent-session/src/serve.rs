@@ -8611,11 +8611,6 @@ impl ProviderPromptDiscoveryRegistry {
         }
     }
 
-    async fn continuity_for_key(&self, key: &ProviderPromptDiscoveryKey) -> Option<String> {
-        let slot = self.entries.lock().await.get(key).cloned()?;
-        Some(slot.lock().await.last_prompt_continuity.clone())
-    }
-
     async fn evict_session_if_matches(&self, fence: &SessionRegistryFence) {
         let (Some(expected_launch_id), Some(expected_generation)) =
             (fence.runtime_launch_id.as_deref(), fence.runtime_generation)
