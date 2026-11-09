@@ -407,6 +407,10 @@ backend mapping, validation rules, and output schema versions.
 
 See [publication and administration](forge-publication-admin-v1.md#release-create--release-upload) for this contract.
 
+### `release delete-asset`
+
+See [release asset deletion](forge-publication-admin-v1.md#release-delete-asset) for this contract.
+
 ### `release view` / `release edit` / `release delete`
 
 See [release lifecycle operations](forge-publication-admin-v1.md#release-view--release-edit--release-delete)

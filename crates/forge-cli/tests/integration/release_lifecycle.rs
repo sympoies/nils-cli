@@ -17,8 +17,8 @@ fn fixture(tag: &str) -> StubEnv {
           "html_url":format!("https://github.com/example/widget/releases/tag/{tag}"),
           "name":"Original title", "draft":false, "prerelease":true,
           "body":"Original notes", "assets":[
-            {"name":"artifact.zip", "size":42, "digest":"sha256:provider-value"},
-            {"name":"notes.txt", "size":7}
+            {"id":101, "name":"artifact.zip", "size":42, "digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+            {"id":102, "name":"notes.txt", "size":7}
           ]}
     });
     fs::write(stub.tempdir.path().join("state.json"), state.to_string()).unwrap();
@@ -92,7 +92,7 @@ fn release_view_reports_identity_resolved_commit_and_optional_provider_digest() 
         assert_eq!(
             d["assets"],
             json!([
-                {"name":"artifact.zip","size":42,"digest":"sha256:provider-value"},
+                {"name":"artifact.zip","size":42,"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
                 {"name":"notes.txt","size":7,"digest":null}
             ])
         );
@@ -116,7 +116,7 @@ fn release_view_reports_identity_resolved_commit_and_optional_provider_digest() 
             "Original notes",
             "artifact.zip",
             "42",
-            "sha256:provider-value",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             &"a".repeat(40),
             "draft",
             "prerelease",
@@ -301,4 +301,68 @@ fn draft_edit_and_delete_use_resolved_release_identity() {
         }
         assert_eq!(writes(&stub).len(), 1);
     }
+}
+
+#[test]
+fn release_delete_asset_preflights_and_deletes_only_requested_assets() {
+    for (args, expected) in [
+        (vec!["artifact.zip", "missing"], "release_asset_not_found"),
+        (
+            vec![
+                "artifact.zip",
+                "--expect-sha256",
+                "artifact.zip=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ],
+            "release_asset_digest_mismatch",
+        ),
+    ] {
+        let stub = fixture("evidence-check");
+        let mut cmd = vec!["release", "delete-asset", "evidence-check"];
+        cmd.extend(args);
+        error(&invoke(&stub, &cmd), expected);
+        assert!(writes(&stub).is_empty());
+    }
+    let stub = fixture("evidence-check");
+    let result = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "example/widget",
+            "--format",
+            "json",
+            "--dry-run",
+            "release",
+            "delete-asset",
+            "evidence-check",
+            "artifact.zip",
+        ],
+    );
+    let d = data(&result);
+    assert_eq!(d["assets"][0]["name"], "artifact.zip");
+    assert!(writes(&stub).is_empty());
+    let stub = fixture("evidence-check");
+    let d = data(&invoke(
+        &stub,
+        &[
+            "release",
+            "delete-asset",
+            "evidence-check",
+            "artifact.zip",
+            "--expect-sha256",
+            "artifact.zip=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ],
+    ));
+    assert_eq!(
+        d["assets"],
+        json!([{"name":"artifact.zip","size":42,"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}])
+    );
+    assert_eq!(writes(&stub).len(), 1);
+    let state: Value =
+        serde_json::from_slice(&fs::read(stub.tempdir.path().join("state.json")).unwrap()).unwrap();
+    assert_eq!(state["release"]["assets"].as_array().unwrap().len(), 1);
+    assert_eq!(state["release"]["assets"][0]["name"], "notes.txt");
+    assert_eq!(state["release"]["body"], "Original notes");
+    assert_eq!(state["tag_exists"], true);
 }
