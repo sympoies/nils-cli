@@ -39,9 +39,9 @@ validates every requested name before sending any delete request. Repeat
 a requested asset. Missing or mismatched digests refuse the operation.
 `--dry-run` reads the release and lists selected assets without writes. JSON
 output includes each selected asset's name, former size, and provider digest.
-Delete requests run sequentially; if one fails, inspect the release before
-retrying because earlier requests may have succeeded. GitLab and Local are
-unsupported.
+Delete requests run sequentially; on failure, the error details include the
+confirmed deleted prefix and the current asset whose outcome is unknown. Inspect
+the release before retrying. GitLab and Local are unsupported.
 
 ### `release view` / `release edit` / `release delete`
 

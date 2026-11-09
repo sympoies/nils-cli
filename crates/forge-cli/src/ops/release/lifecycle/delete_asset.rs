@@ -127,7 +127,7 @@ pub(super) fn run(
         });
     }
     if !global.dry_run {
-        for asset in &selected {
+        for (index, asset) in selected.iter().enumerate() {
             let call = api::call(
                 &ctx,
                 &format!("repos/{repo}/releases/assets/{}", asset.id),
@@ -139,7 +139,13 @@ pub(super) fn run(
                     schema_version_for("forge-cli", OP, 1),
                     "release_asset_delete_failed",
                     "asset deletion failed or its outcome is unknown; inspect the release before retrying",
-                    serde_json::json!({"next_action":"inspect_release_before_retry", "retryable":false}),
+                    serde_json::json!({
+                        "deleted_assets": &selected[..index],
+                        "failed_asset": asset,
+                        "failed_asset_outcome": "unknown",
+                        "next_action": "inspect_release_before_retry",
+                        "retryable": false
+                    }),
                 ));
             }
         }

@@ -366,3 +366,26 @@ fn release_delete_asset_preflights_and_deletes_only_requested_assets() {
     assert_eq!(state["release"]["body"], "Original notes");
     assert_eq!(state["tag_exists"], true);
 }
+
+#[test]
+fn release_delete_asset_reports_confirmed_prefix_on_partial_failure() {
+    let stub = fixture("evidence-check").env("RELEASE_MODE", "second-asset-rejected");
+    let result = invoke(
+        &stub,
+        &[
+            "release",
+            "delete-asset",
+            "evidence-check",
+            "artifact.zip",
+            "notes.txt",
+        ],
+    );
+    let e = error(&result, "release_asset_delete_failed");
+    assert_eq!(
+        e["details"]["deleted_assets"],
+        json!([{ "name":"artifact.zip", "size":42, "digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }])
+    );
+    assert_eq!(e["details"]["failed_asset"]["name"], "notes.txt");
+    assert_eq!(e["details"]["failed_asset_outcome"], "unknown");
+    assert_eq!(writes(&stub).len(), 2);
+}

@@ -42,6 +42,8 @@ if mode == 'network' or (mode == 'readback-fails' and state['mutated']):
 if path.startswith('repos/example/widget/releases/assets/'):
     asset_id = int(path.rsplit('/', 1)[1])
     assert method == 'DELETE'
+    if mode == 'second-asset-rejected' and asset_id == 102:
+        reply(403, {'message': 'Forbidden'})
     state['release']['assets'] = [a for a in state['release']['assets'] if a['id'] != asset_id]
     state['mutated'] = True
     (root / 'state.json').write_text(json.dumps(state))
