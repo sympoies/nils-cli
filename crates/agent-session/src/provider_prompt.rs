@@ -1375,6 +1375,31 @@ pub(crate) fn read_last_prompt(
     read_preview(source, max_bytes).0
 }
 
+pub(crate) fn read_last_prompt_skipping_launch(
+    source: &ProviderPromptSource,
+    max_bytes: usize,
+    binding: &(u64, String, String),
+) -> Option<LastPrompt> {
+    let (mut buffer, start) = read_tail_window_with_start(&source.path, max_bytes).ok()?;
+    if let Some(relative) = binding
+        .0
+        .checked_sub(start)
+        .and_then(|n| usize::try_from(n).ok())
+        && relative < buffer.len()
+        && let Some(end) = buffer[relative..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map(|n| relative + n + 1)
+        && let Ok(value) = serde_json::from_slice::<Value>(&buffer[relative..end])
+        && crate::notice::launch::bound_row(binding, binding.0, &buffer[relative..end], &value)
+    {
+        buffer[relative..end - 1].fill(b' ');
+    }
+    extract_preview(&buffer, source.provider, &source.session_id, start == 0)
+        .0
+        .map(LastPrompt::from)
+}
+
 fn read_preview(
     source: &ProviderPromptSource,
     max_bytes: usize,

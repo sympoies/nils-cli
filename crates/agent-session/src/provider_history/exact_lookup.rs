@@ -1,6 +1,14 @@
 use super::*;
 
 impl HistoryCatalog {
+    pub(super) fn enrich_previews(
+        &self,
+        sessions: &mut [HistorySession],
+        cache: &mut HashMap<PathBuf, LatestPromptCacheEntry>,
+    ) {
+        enrich_launch_previews(sessions, cache, self.session_state_dir.as_deref());
+    }
+
     pub(super) fn exact_claude_page(
         &self,
         machine: &str,
@@ -122,7 +130,11 @@ impl HistoryCatalog {
             next_cursor,
             truncated: snapshot.truncated,
         };
-        enrich_latest_prompt_previews(&mut page.sessions, &mut HashMap::new());
+        enrich_launch_previews(
+            &mut page.sessions,
+            &mut HashMap::new(),
+            self.session_state_dir.as_deref(),
+        );
         Ok(Some(page))
     }
 
@@ -314,3 +326,7 @@ mod deadline_tests {
         assert!(truncated);
     }
 }
+
+#[path = "launch_previews.rs"]
+mod launch_previews;
+use launch_previews::enrich_launch_previews;

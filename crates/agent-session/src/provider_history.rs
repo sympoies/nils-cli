@@ -513,7 +513,7 @@ impl HistoryCatalog {
             }
             cache.latest_prompt_previews.clone()
         };
-        enrich_latest_prompt_previews(&mut page.sessions, &mut prompt_cache);
+        self.enrich_previews(&mut page.sessions, &mut prompt_cache);
         if enrich_dsh_session_summaries(&self.dsh_sources, &mut page.sessions).is_err() {
             page.truncated = true;
         }
