@@ -943,12 +943,12 @@ after creation; inspect the created session before retrying. Configure the
 same allowlist on the caller and target daemon for custom switches. Resume,
 account switching, clear/rebind, and runtime recreation retain the saved map;
 a recreated provider receives the same overrides. Recreation revalidates the
-current allowlist and refuses a saved key that is no longer approved. The
-daemon pins `PATH`, `CODEX_AUTH_PROFILE_NAMES`, `AGENT_SESSION_BIN`, and
+current allowlist and refuses a saved key that is no longer approved.
+
+The daemon pins `PATH`, `CODEX_AUTH_PROFILE_NAMES`, `AGENT_SESSION_BIN`, and
 `AGENT_RUNTIME_TRUSTED_CLI_ROOT` into each new or resumed pane so a long-lived
 tmux server cannot supply stale values. An unset roster or trust root is pinned
-as an empty value. An already-running pane
-keeps the environment it inherited when it was created; stop and resume that
+as an empty value. An already-running pane keeps the environment it inherited when it was created; stop and resume that
 managed session (or create a new one) to refresh it.
 
 ## Keep secrets out of commands
