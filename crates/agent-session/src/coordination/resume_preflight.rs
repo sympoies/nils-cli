@@ -12,6 +12,27 @@ fn unavailable() -> CliError {
     )
 }
 
+// Only these static values may cross the preflight refusal boundary.
+fn unsupported(reason: &'static str) -> CliError {
+    let mut error = refusal("resume-unsupported");
+    error.details_mut().as_mut().unwrap()["reason"] = json!(reason);
+    error
+}
+
+fn known_reason(value: &Value) -> Option<&'static str> {
+    match value.as_str()? {
+        "daemon-route-missing" => Some("daemon-route-missing"),
+        "daemon-answer-unreadable" => Some("daemon-answer-unreadable"),
+        "preflight-schema-mismatch" => Some("preflight-schema-mismatch"),
+        "preflight-binding-mismatch" => Some("preflight-binding-mismatch"),
+        "relay-config-missing" => Some("relay-config-missing"),
+        "relay-request-invalid" => Some("relay-request-invalid"),
+        "console-route-missing" => Some("console-route-missing"),
+        "console-answer-invalid" => Some("console-answer-invalid"),
+        _ => None,
+    }
+}
+
 /// Never accept a capability guess, partial binding, or a response for another target.
 pub(crate) fn checked_response(
     body: Value,
@@ -20,7 +41,7 @@ pub(crate) fn checked_response(
     machine: Option<&str>,
 ) -> Result<Value, CliError> {
     if body["schema_version"] != PREFLIGHT_SCHEMA {
-        return Err(refusal("resume-unsupported"));
+        return Err(unsupported("preflight-schema-mismatch"));
     }
     if body["ok"] == false {
         if let Some(error) = forward_refusal(&body["error"]) {
@@ -51,7 +72,7 @@ pub(crate) fn checked_response(
             .as_ref()
             .is_some_and(|account| data["account"] != *account)
     {
-        return Err(refusal("resume-unsupported"));
+        return Err(unsupported("preflight-binding-mismatch"));
     }
     // Rebuild the bounded public envelope; never return upstream history or filesystem fields.
     let mut result = json!({"agent":request.agent,"provider_session_id":request.resume,"machine":data["machine"],"account":data["account"]});
@@ -79,7 +100,12 @@ pub(crate) fn forward_refusal(error: &Value) -> Option<CliError> {
         "resume-account-mismatch" => "resume-account-mismatch",
         "resume-source-live" => "resume-source-live",
         "resume-source-unknown" => "resume-source-unknown",
-        "resume-unsupported" => "resume-unsupported",
+        "resume-unsupported" => {
+            return Some(match known_reason(&error["details"]["reason"]) {
+                Some(reason) => unsupported(reason),
+                None => refusal("resume-unsupported"),
+            });
+        }
         _ => return None,
     };
     Some(refusal(code))
@@ -115,10 +141,11 @@ pub(crate) fn check_args(context: &CliContext, args: &cli::StartArgs) -> Result<
         .send()
         .map_err(|_| unavailable())?;
     if matches!(response.status().as_u16(), 404 | 405) {
-        return Err(refusal("resume-unsupported"));
+        return Err(unsupported("daemon-route-missing"));
     }
     let success = response.status().is_success();
-    let body = console_start::read_json(response).ok_or_else(|| refusal("resume-unsupported"))?;
+    let body = console_start::read_json(response)
+        .ok_or_else(|| unsupported("daemon-answer-unreadable"))?;
     checked_response(body, success, &request, args.machine.as_deref())
 }
 
@@ -136,28 +163,28 @@ pub(crate) fn relay_route(
         token,
         delegation::Use::StartViaConsole,
     )?;
-    let config = config.ok_or_else(|| refusal("resume-unsupported"))?;
+    let config = config.ok_or_else(|| unsupported("relay-config-missing"))?;
     let object = body
         .as_object()
-        .ok_or_else(|| refusal("resume-unsupported"))?;
+        .ok_or_else(|| unsupported("relay-request-invalid"))?;
     if object
         .keys()
         .any(|k| !matches!(k.as_str(), "machine" | "session"))
     {
-        return Err(refusal("resume-unsupported"));
+        return Err(unsupported("relay-request-invalid"));
     }
     let machine = match body.get("machine") {
         None => config.machine.as_str(),
         Some(Value::String(s)) if !s.is_empty() => s,
-        _ => return Err(refusal("resume-unsupported")),
+        _ => return Err(unsupported("relay-request-invalid")),
     };
     let mut session = body["session"]
         .as_object()
         .cloned()
-        .ok_or_else(|| refusal("resume-unsupported"))?;
-    normalize_account(&mut session)?;
+        .ok_or_else(|| unsupported("relay-request-invalid"))?;
+    normalize_account(&mut session).map_err(|_| unsupported("relay-request-invalid"))?;
     let request: Request = serde_json::from_value(Value::Object(session))
-        .map_err(|_| refusal("resume-unsupported"))?;
+        .map_err(|_| unsupported("relay-request-invalid"))?;
     relay_authenticated(config, caller, &incarnation, machine, &request)
 }
 
@@ -180,10 +207,14 @@ pub(crate) fn relay_authenticated(
         .send()
         .map_err(|_| unavailable())?;
     if matches!(response.status().as_u16(), 404 | 405) {
-        return Err(refusal("resume-unsupported"));
+        return Err(unsupported("console-route-missing"));
     }
     let success = response.status().is_success();
-    let body = console_start::read_json(response).ok_or_else(|| refusal("resume-unsupported"))?;
+    let body =
+        console_start::read_json(response).ok_or_else(|| unsupported("console-answer-invalid"))?;
+    if body["schema_version"] != PREFLIGHT_SCHEMA {
+        return Err(unsupported("console-answer-invalid"));
+    }
     checked_response(body, success, request, Some(machine))
 }
 

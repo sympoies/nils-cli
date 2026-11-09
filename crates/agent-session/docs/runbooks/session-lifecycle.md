@@ -207,6 +207,14 @@ this supported rejection. `resume-account-transition-pending` requires an
 explicit bound-account selection or recovery of the existing account transition;
 Console preserves that code and its terminal pre-create details.
 
+For Console resume preflight refusals, `error.details.reason` is one of the
+following closed set when a transport or binding branch supplies it:
+`daemon-route-missing`, `daemon-answer-unreadable`, `preflight-schema-mismatch`,
+`preflight-binding-mismatch`, `relay-config-missing`, `relay-request-invalid`,
+`console-route-missing`, or `console-answer-invalid`. The public error code
+remains `resume-unsupported`, with `session_created:false` and
+`safe_to_retry:false`. Reasons contain no upstream response content or credentials.
+
 Start rechecks admission under conversation and source locks before creating its
 record, including after credential preparation. It rechecks the resolved root,
 exact history and every remaining matching source, including sources that first
