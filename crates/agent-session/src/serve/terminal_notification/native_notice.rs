@@ -93,12 +93,31 @@ pub(super) async fn dispatch(
         })
         .await;
         if matches!(attempted, Ok(Ok(false))) {
-            super::mailbox_dispatch::defer_provider_not_ready(
-                &state,
-                &candidate,
-                "notice-attempt-not-admitted",
-            )
-            .await;
+            let multi_row = matches!(&result, Ok(Err(error))
+                if error.code() == "send-composer-unobservable"
+                    && error.details().and_then(|details| details["observation"].as_str())
+                        == Some("region-not-single-row"));
+            if multi_row {
+                let context = state.context.clone();
+                let candidate = candidate.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::coordination::defer_notification_with_detail(
+                        &context,
+                        &candidate,
+                        "recipient-composer-unobservable",
+                        Some("region-not-single-row"),
+                        COORDINATION_NOTIFICATION_RETRY,
+                    )
+                })
+                .await;
+            } else {
+                super::mailbox_dispatch::defer_provider_not_ready(
+                    &state,
+                    &candidate,
+                    "notice-attempt-not-admitted",
+                )
+                .await;
+            }
         }
     }
 }

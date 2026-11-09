@@ -932,6 +932,9 @@ const KNOWN_REFUSAL_CODES: &[&str] = &[
 pub(crate) fn safe_reason_detail(reason: &str, detail: &str) -> Option<String> {
     match reason {
         "provider-not-ready" => provider_not_ready_detail(detail),
+        "recipient-composer-unobservable" if detail == "region-not-single-row" => {
+            Some(detail.to_string())
+        }
         "recipient-coordination-not-quiescent" => matches!(
             detail,
             "active-claim"

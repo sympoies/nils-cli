@@ -410,7 +410,9 @@ Terminal wakes observe the composer before claiming the attempt, then recheck
 it after loading the private buffer and immediately before paste. A fresh
 non-empty or unobservable composer leaves the generation queued with
 `recipient-composer-not-empty` or `recipient-composer-unobservable`, without
-injected input. An eligible unchanged stale draft follows
+injected input. A multi-row Claude composer that cannot be read exactly uses
+`recipient-composer-unobservable` with `region-not-single-row` detail. The
+wake remains queued for retry and does not save or clear that draft. An eligible unchanged stale draft follows
 [saved draft admission](stale-drafts-v1.md): saving and shared cleanup occur
 after the existing quiescence/attempt fence, and only a confirmed empty composer
 proceeds to paste. A bound of 0 preserves refusal. An unobservable pane is never

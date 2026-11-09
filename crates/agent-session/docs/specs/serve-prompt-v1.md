@@ -57,6 +57,9 @@ the contract below describes implemented behavior.
   A `composer-unobservable` refusal also names the observation step that
   failed, as `observation` in `error.details` for the unkeyed route and in the
   refused receipt (`error.details.receipt.observation`) for the keyed route.
+  A multi-row Claude composer that cannot be read exactly is refused with a
+  message asking the owner to send or clear the draft first; it is not saved or
+  cleared by the refusal.
   The value is one of:
 
   - `capture-failed`: the terminal capture failed.

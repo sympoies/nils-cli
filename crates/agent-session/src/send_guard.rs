@@ -133,7 +133,23 @@ impl Admission<'_> {
         self.idle(stage)?;
         if self.args.require_empty_composer || self.verify_composer || pasted_text.is_some() {
             let target = format!("{}:0.0", self.record.tmux_session);
-            let observed = self.observe_composer(&target, pasted_text, stage)?;
+            let observed = match self.observe_composer(&target, pasted_text, stage) {
+                Ok(observed) => observed,
+                Err(error) => {
+                    if repair_draft
+                        && self.args.require_empty_composer
+                        && pasted_text.is_none()
+                        && stage == "admission"
+                        && error
+                            .details()
+                            .and_then(|details| details["observation"].as_str())
+                            == Some("region-not-single-row")
+                    {
+                        drafts::observe(self.context, self.record, None)?;
+                    }
+                    return Err(error);
+                }
+            };
             let stale = repair_draft
                 && self.args.require_empty_composer
                 && pasted_text.is_none()
@@ -237,6 +253,23 @@ impl Admission<'_> {
                     );
                     error.0.details.as_mut().expect("guard details")["observation"] =
                         json!("paste-placeholder");
+                    return Err(error);
+                }
+                if pasted_text.is_none()
+                    && self.record.agent == "claude"
+                    && pane.as_deref().is_some_and(|pane| {
+                        send_submit::direct_composer_observation("claude", pane)
+                            == Err(send_submit::Unobserved::RegionNotSingleRow)
+                    })
+                {
+                    let mut error = self.refusal(
+                        "send-composer-unobservable",
+                        "multi-row composer cannot be read exactly; send or clear the draft first",
+                        "empty_composer",
+                        stage,
+                    );
+                    error.0.details.as_mut().expect("guard details")["observation"] =
+                        json!("region-not-single-row");
                     return Err(error);
                 }
                 pane.and_then(|pane| observation.pasted_composer_input(&pane, pasted_text, stage))
