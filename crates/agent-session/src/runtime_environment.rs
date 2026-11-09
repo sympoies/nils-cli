@@ -153,6 +153,12 @@ pub(super) fn add_runtime_tmux_environment(
         roster.push(value);
     }
     command.arg("-e").arg(roster);
+    // Clear a stale server trust root when the daemon has none.
+    let mut trusted_root = OsString::from("AGENT_RUNTIME_TRUSTED_CLI_ROOT=");
+    if let Some(value) = env::var_os("AGENT_RUNTIME_TRUSTED_CLI_ROOT") {
+        trusted_root.push(value);
+    }
+    command.arg("-e").arg(trusted_root);
     // Pinning PATH alone is not enough: AGENT_SESSION_BIN outranks PATH when
     // agent-hook resolves the activity helper, so a value cached by the tmux
     // server survives the PATH pin and fail-closes every UserPromptSubmit and
