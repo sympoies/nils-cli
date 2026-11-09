@@ -86,3 +86,105 @@ pub(crate) fn settle(
     }
     save(context, record, &store)
 }
+
+pub(crate) struct CodexSnapshot {
+    account: String,
+    incident_ids: Vec<String>,
+    failure_key: Option<String>,
+}
+
+/// Snapshot only incidents belonging to the selected account before a queued
+/// Codex repair begins. Later incidents must never be settled by this apply.
+pub(crate) fn codex_snapshot(
+    context: &CliContext,
+    id: &str,
+    launch: &str,
+) -> Result<Option<CodexSnapshot>, CliError> {
+    let _lock = crate::acquire_session_record_lock(context, id)?;
+    let record = crate::load_session_record(context, id)?;
+    if record.agent != "codex"
+        || record.runtime.as_ref().map(|r| r.launch_id.as_str()) != Some(launch)
+    {
+        return Ok(None);
+    }
+    let Some(account) = crate::codex_account::selected_account(&record) else {
+        return Ok(None);
+    };
+    let store = read(context, &record)?;
+    let ids = store
+        .incidents
+        .iter()
+        .filter(|i| {
+            quarantining(i, &record)
+                && i.account_nickname.as_deref() == Some(account.as_str())
+                && !i
+                    .failover
+                    .as_ref()
+                    .is_some_and(failover::Receipt::in_flight)
+                && !i
+                    .same_account_recovery
+                    .as_ref()
+                    .is_some_and(recovery::active)
+        })
+        .map(|i| i.incident_id.clone())
+        .collect::<Vec<_>>();
+    Ok((!ids.is_empty()).then_some(CodexSnapshot {
+        account,
+        incident_ids: ids,
+        failure_key: store.last_failure_key,
+    }))
+}
+
+/// A confirmed live Codex bind settles only the incidents captured before it.
+pub(crate) fn settle_codex(
+    context: &CliContext,
+    id: &str,
+    launch: &str,
+    account: &str,
+    revision: u64,
+    snapshot: CodexSnapshot,
+) -> Result<(), CliError> {
+    if snapshot.account != account {
+        return Ok(());
+    }
+    let _lock = crate::acquire_session_record_lock(context, id)?;
+    let record = crate::load_session_record(context, id)?;
+    let view = crate::codex_account::view_for_record(&record);
+    if record.runtime.as_ref().map(|r| r.launch_id.as_str()) != Some(launch)
+        || view.state != "bound"
+        || view.selected_account.as_deref() != Some(account)
+        || view.applied_runtime_id.as_deref() != Some(launch)
+        || view.revision != revision
+    {
+        return Ok(());
+    }
+    let mut store = read(context, &record)?;
+    if store.last_failure_key != snapshot.failure_key {
+        return Ok(());
+    }
+    let at = jiff::Timestamp::now().to_string();
+    let mut changed = false;
+    for incident in &mut store.incidents {
+        if !snapshot.incident_ids.contains(&incident.incident_id)
+            || !quarantining(incident, &record)
+            || incident.account_nickname.as_deref() != Some(account)
+            || incident
+                .failover
+                .as_ref()
+                .is_some_and(failover::Receipt::in_flight)
+        {
+            continue;
+        }
+        if let Some(r) = incident.failover.as_mut().filter(|r| r.quarantines()) {
+            r.mark_credentials_refreshed();
+        }
+        incident.status = "recovered".into();
+        incident.settle(PATH_CREDENTIAL_RECHECK, "credentials_refreshed", &at);
+        incident.recovery_notification = Notification::default();
+        changed = true;
+    }
+    if changed {
+        save(context, &record, &store)?;
+    }
+    Ok(())
+}
