@@ -64,6 +64,8 @@ args = sys.argv[1:]
 with (root / 'calls').open('a') as out: out.write(json.dumps(args) + '\n')
 command = args[0]
 provider = (root / 'provider').read_text()
+if (root / 'slow-cleanup-roundtrip').exists() and (root / 'paste-completed').exists():
+    time.sleep(0.7)
 def cell_width(value):
     return sum(0 if unicodedata.combining(ch) else 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1 for ch in value)
 def print_cursor():
@@ -272,6 +274,8 @@ elif command == 'send-keys' and args[-1] == 'Enter':
     (root / 'composer').write_text('')
     if (root / 'replace-after-enter').exists(): (root / 'runtime-replaced').touch()
 elif command == 'capture-pane':
+    if (root / 'slow-cleanup-capture').exists() and (root / 'paste-completed').exists():
+        time.sleep(int((root / 'slow-cleanup-capture').read_text()) / 1000)
     if (root / 'exit-after-enter').exists() and (root / 'entered').exists():
         if (root / 'exit-pending-pane').exists() and not (root / 'exit-pending-captured').exists():
             (root / 'exit-pending-captured').touch()
