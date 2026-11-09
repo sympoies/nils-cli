@@ -63,6 +63,7 @@ impl ControlHandle {
             self.sender.send(ControlCommand::Prompt {
                 message: message.to_string(),
                 client_message_id: client_message_id.map(str::to_owned),
+                write: None,
                 response,
             }),
         )
@@ -103,15 +104,20 @@ pub(super) async fn submit_prompt_request<S>(
     live: Option<(&CliContext, &SessionRecord, &mut FailureReducer)>,
     external_auth: Option<(&CliContext, &SessionRecord, &str, &str)>,
     timeout: Duration,
+    write_lock: Option<mailbox_notice::WriteGuard>,
 ) -> Result<String, PromptRequestFailure>
 where
     S: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
         + futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error>
         + Unpin,
 {
-    super::send_json(websocket, request)
+    let deadline = write_lock.as_ref().map(|guard| guard.deadline);
+    mailbox_notice::send(websocket, request, write_lock)
         .await
         .map_err(|_| PromptRequestFailure::Write(PromptSubmissionFailure::NotConfirmed))?;
+    let timeout = deadline.map_or(timeout, |deadline| {
+        timeout.min(deadline.saturating_duration_since(Instant::now()))
+    });
     receive_prompt_response_with_timeout(websocket, id, live, external_auth, timeout)
         .await
         .map_err(|error| match error {
@@ -235,6 +241,7 @@ mod tests {
             None,
             None,
             Duration::from_millis(20),
+            None,
         )
         .await;
 
@@ -265,6 +272,7 @@ mod tests {
             None,
             None,
             Duration::from_millis(20),
+            None,
         )
         .await;
 
@@ -290,6 +298,7 @@ mod tests {
             None,
             None,
             Duration::from_secs(1),
+            None,
         )
         .await;
 

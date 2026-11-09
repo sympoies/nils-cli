@@ -43,6 +43,9 @@ if command == 'load-buffer':
     if (root / 'draft-on-load').exists(): (root / 'composer').write_text('later operator draft')
 elif command == 'paste-buffer':
     with (root / 'composer').open('a') as out: out.write((root / 'buffer').read_text())
+    if (root / 'codex-collapse-paste').exists():
+        text = (root / 'buffer').read_text().replace('\r\n', '\n').replace('\r', '\n')
+        (root / 'composer').write_text(f'[Pasted Content {len(text)} chars]')
     (root / 'cursor-x').write_text(str(2 + len((root / 'composer').read_text())))
     if (root / 'working-after-paste').exists():
         subprocess.Popen([sys.executable, str(root / 'hold-ingress.py')], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -50,6 +53,7 @@ elif command == 'paste-buffer':
         with (root / 'composer').open('a') as out: out.write(' operator addition')
 elif command == 'send-keys' and args[-1] == 'Enter':
     submitted = (root / 'composer').read_text()
+    if (root / 'codex-collapse-paste').exists(): submitted = (root / 'buffer').read_text()
     with (root / 'submissions').open('a') as out: out.write(json.dumps(submitted) + '\n')
     if (root / 'emit-transcript-after-enter').exists():
         count_file = root / 'enter-count'
@@ -75,7 +79,12 @@ elif command == 'send-keys' and args[-1] == 'C-a': (root / 'cursor-x').write_tex
 elif command == 'send-keys' and args[-2:] == ['Right', 'Left']:
     end = 2 + len((root / 'composer').read_text())
     (root / 'cursor-x').write_text(str(max(2, min(end, int((root / 'cursor-x').read_text()) + 1) - 1)))
-elif command == 'send-keys' and args[-1] == 'Right': (root / 'cursor-x').write_text(str(min(2 + len((root / 'composer').read_text()), int((root / 'cursor-x').read_text()) + int(args[-2]))))
+elif command == 'send-keys' and args[-1] == 'Right':
+    end = 2 + len((root / 'composer').read_text())
+    x = end if (root / 'codex-collapse-paste').exists() else min(end, int((root / 'cursor-x').read_text()) + int(args[-2]))
+    (root / 'cursor-x').write_text(str(x))
+elif command == 'send-keys' and args[-1] == 'Left' and (root / 'codex-collapse-paste').exists():
+    (root / 'cursor-x').write_text('2')
 elif command == 'send-keys' and args[-1] == 'BSpace':
     if (root / 'ignore-clear').exists(): sys.exit(0)
     text = (root / 'composer').read_text()
@@ -196,4 +205,8 @@ mod stale_drafts {
 
 mod unresponsive {
     include!("mailbox_draft/unresponsive.rs");
+}
+
+mod residue_discard {
+    include!("mailbox_draft/residue_discard.rs");
 }

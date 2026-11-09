@@ -10,6 +10,7 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
     let data = err.into_inner();
     let status = match data.code.as_str() {
         "session-not-found"
+        | "draft-not-found"
         | "message-not-found"
         | "retitle-v3-operation-not-found"
         | "history-session-not-found" => StatusCode::NOT_FOUND,

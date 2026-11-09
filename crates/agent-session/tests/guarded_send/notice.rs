@@ -11,6 +11,12 @@ impl Fixture {
 
     fn notice_kind(&self, extra: &[&str]) -> CmdOutput {
         fs::write(self.root().join("notice-mode"), "").unwrap();
+        let path = self.root().join("codex-home/sessions/rollout.jsonl");
+        if !path.exists() && !self.root().join("no-notice-baseline").exists() {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, format!("{}\n", json!({"type":"session_meta","timestamp":"2026-01-01T00:00:00Z",
+                "payload":{"id":"provider-one","cwd":self.root(),"source":"cli","timestamp":"2026-01-01T00:00:00Z"}}))).unwrap();
+        }
         let body = self.root().join("notice-body");
         let state = self.root().join("state");
         let tmux = self.root().join("tmux");
@@ -42,7 +48,11 @@ impl Fixture {
             &CmdOptions::new()
                 .with_cwd(self.root())
                 .with_env_remove_prefix("AGENT_SESSION_")
-                .with_env("AGENT_SESSION_NOTICE_WRITERS", "1"),
+                .with_env("AGENT_SESSION_NOTICE_WRITERS", "1")
+                .with_env(
+                    "CODEX_HOME",
+                    self.root().join("codex-home").to_str().unwrap(),
+                ),
         )
     }
 }
@@ -51,7 +61,7 @@ impl Fixture {
 fn notice_native_preserves_exact_bytes_and_idempotency() {
     let fixture = Fixture::new("codex");
     let _capability = fixture.bind_codex();
-    let server = Server::start(&fixture, "idle");
+    let server = Server::start(&fixture, "hook-lock");
     let output = fixture.notice(&[]);
     assert_eq!(
         output.code,
@@ -67,6 +77,15 @@ fn notice_native_preserves_exact_bytes_and_idempotency() {
     assert_eq!(
         server.mutations()[0]["params"]["input"][0]["text"],
         "<!-- agent-notice:v1 kind=schedule.tick source=scheduler id=Example-1 -->\n\n  synthetic\r\n\n本文 <tag>\n"
+    );
+    let ledger = fixture
+        .root()
+        .join("state/history/claude-notices/ledger.jsonl");
+    let rows = fs::read_to_string(ledger).unwrap_or_default();
+    assert!(
+        rows.lines()
+            .any(|line| serde_json::from_str::<Value>(line).unwrap()["state"] == "submitted"),
+        "accepted operator notice needs a machine-history attestation"
     );
     fixture.refused(&fixture.notice(&[]), "send-idempotency-key-used");
     assert_eq!(server.mutations().len(), 1);
@@ -106,7 +125,7 @@ fn notice_native_unknown_outcome_never_replays() {
     let fixture = Fixture::new("codex");
     let _capability = fixture.bind_codex();
     let server = Server::start(&fixture, "disconnect");
-    let value = fixture.refused(&fixture.notice(&[]), "send-native-unconfirmed");
+    let value = fixture.refused(&fixture.notice(&[]), "notice-native-unconfirmed");
     assert_eq!(value["error"]["details"]["submitted"], Value::Null);
     fixture.refused(&fixture.notice(&[]), "send-idempotency-key-used");
     assert_eq!(server.mutations().len(), 1);
@@ -138,6 +157,13 @@ fn notice_terminal_delivers_the_envelope_through_guarded_input() {
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
     assert_eq!(submissions, [envelope]);
+    assert!(
+        !fixture
+            .root()
+            .join("state/history/claude-notices/ledger.jsonl")
+            .exists(),
+        "terminal-only input must not mint a machine-history attestation"
+    );
     let calls = fixture.calls();
     assert!(calls.iter().any(|call| call[0] == "paste-buffer"));
     assert_eq!(
@@ -408,3 +434,53 @@ fn notice_summary_contract_reaches_native_transport_with_exact_bytes() {
 
 #[path = "codex_notice.rs"]
 mod codex_notice;
+
+#[test]
+fn codex_operator_notice_requires_baseline_before_consuming_its_key() {
+    let fixture = Fixture::new("codex");
+    let _capability = fixture.bind_codex();
+    let server = Server::start(&fixture, "idle");
+    let marker = fixture.root().join("no-notice-baseline");
+    fs::write(&marker, "").unwrap();
+    let refusal = fixture.refused(&fixture.notice(&[]), "notice-native-baseline-unavailable");
+    assert_eq!(refusal["error"]["details"]["guard"], "baseline");
+    assert_eq!(refusal["error"]["details"]["stage"], "admission");
+    assert_eq!(refusal["error"]["details"]["submitted"], false);
+    assert!(server.mutations().is_empty());
+    assert!(
+        !fixture
+            .root()
+            .join("state/history/claude-notices/ledger.jsonl")
+            .exists()
+    );
+    fs::remove_file(marker).unwrap();
+    let output = fixture.notice(&[]);
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    fixture.refused(&fixture.notice(&[]), "send-idempotency-key-used");
+    assert_eq!(server.mutations().len(), 1);
+    fixture.no_delivery();
+}
+
+#[test]
+fn codex_operator_notice_missing_or_ambiguous_row_proof_never_replays() {
+    for mode in ["notice-missing", "notice-duplicate"] {
+        let fixture = Fixture::new("codex");
+        let _capability = fixture.bind_codex();
+        let server = Server::start(&fixture, mode);
+        fixture.refused(&fixture.notice(&[]), "notice-native-unconfirmed");
+        fixture.refused(&fixture.notice(&[]), "send-idempotency-key-used");
+        assert_eq!(server.mutations().len(), 1);
+        let ledger = fs::read_to_string(
+            fixture
+                .root()
+                .join("state/history/claude-notices/ledger.jsonl"),
+        )
+        .unwrap();
+        assert!(
+            ledger
+                .lines()
+                .all(|line| serde_json::from_str::<Value>(line).unwrap()["state"] != "submitted")
+        );
+        fixture.no_delivery();
+    }
+}

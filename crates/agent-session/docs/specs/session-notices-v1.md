@@ -118,7 +118,8 @@ authentication, blocked-state, durable key, receipt and unknown-outcome rules.
 ### Terminal delivery and queue mode
 
 Codex terminal sessions use the verified terminal composer path; the complete
-envelope must be observable before Enter. Codex's blank composer rows can
+envelope or its verified single paste element must be observable before Enter.
+Codex's blank composer rows can
 hide typed spaces behind layout cells. Display matching supplies a candidate;
 bounded cursor observations must also prove its logical length and row
 boundaries before Enter or removal of an owned paste. An unproved candidate
@@ -126,6 +127,13 @@ remains unobservable, and readable owner additions are preserved.
 When Codex 0.162.1 wraps a notice header into separate captured rows, the guard
 retains their physical coordinates and verifies the header's logical start and
 end before accepting those rows as a soft wrap.
+
+For pastes longer than 1000 characters, Codex 0.162.1 can show one
+`[Pasted Content N chars]` element. Only an exact single label whose count
+matches the notice after CRLF/CR normalization and Unicode scalar counting is
+a candidate. Cursor observations must prove one atomic editing unit before
+Enter or single-unit cleanup. Extra input, multiple labels, a different count
+and a typed literal label remain refusals.
 
 `--queue` waits while the target
 reports busy and retries only a preclaim busy admission refusal. Other failures
@@ -533,6 +541,30 @@ is added. Historical title matching yields only `row_class: "notice"`, not
 invented kind/source metadata. In particular, the shared Mailbox label does not
 require choosing between the `mailbox` and `mailbox.wake` kinds for raw text.
 
+## Saved-draft residue recognition
+
+Before stashing an observed stale composer, the runtime checks its last exact
+notice/automation paste for the same session incarnation. Equal text or a
+nonempty prefix of that paste is runtime residue: clear it through the existing
+exact cleanup path without creating a saved draft. A different incarnation or
+an edited text that is no longer a prefix does not inherit that ownership.
+Restore and ordinary user-draft preservation are unchanged.
+
+When that ownership evidence is absent, this is the single fallback match table.
+Matches are anchored at the start of the first line; title words elsewhere do
+not classify user text as residue. No whitespace trimming or substring matching
+is applied.
+
+| First-line shape | Definition |
+| --- | --- |
+| Notice header | Starts with the `agent-notice:v1` HTML comment header, closed on the first line. |
+| `<Stored title>:` plus one ASCII space | A label or stored title in the shared kind-to-label table above. |
+| `Mailbox: <summary>; agent-session message inbox` | Whole first line; see [mailbox contract](coordination-mailbox-v1.md). |
+
+Unknown titles and text that only contains a title word mid-line are user drafts
+and remain saved byte-for-byte. These rules concern composer cleanup only;
+they do not change history classification or authorize notice delivery.
+
 ## Summary writer design
 
 This section is a design for #3228, not a claim that `--summary` is released.
@@ -634,8 +666,8 @@ Scheduler admission never invokes operator stale-draft repair: an occupied
 composer is refused without stashing or clearing it, including a draft already
 observed as stale.
 
-Scheduler Codex notices extend the existing bounded attestation owner with an additive
-proof variant. Existing Claude records retain their shape and interpretation.
+Codex scheduler, mailbox controller start/steer, and operator app-server notices
+share the existing bounded attestation owner and its Codex proof variant. Existing Claude records retain their shape and interpretation.
 The Codex claim binds the full runtime/provider/account identity, canonical
 envelope digest and length, original budget, baseline and provider client id.
 An acknowledgment alone is insufficient: absent unique physical-row proof,
@@ -675,11 +707,14 @@ role. Bootstrap and authenticated hook rows without authoritative association
 remain unsupported proof forms; neither a fabricated turn nor another delivery
 may supply that association. Source fixtures do not establish native acceptance.
 
-Existing mailbox start/steer and operator notice paths retain their admission
-guards and currently have no Codex producer attestation. Those stored rows keep
-their provider user role plus the envelope display class. Their additional
-attestation is tracked in [#3393](https://github.com/sympoies/nils-cli/issues/3393);
-this scheduler slice adds no operator baseline precondition or input retry.
+Mailbox controller start/steer and operator app-server notices retain their
+admission guards and require a bound transcript baseline before consuming an
+attempt. Both controller routes carry the claim's client id; the controller
+reacquires and revalidates the record lock through the actual native write,
+then releases it before provider ingress. A native attempt without exact proof
+stays unconfirmed and cannot be confirmed by a later text/timestamp match.
+Codex terminal-only operator notices remain available without attestation and
+retain the provider user role.
 
 All new writers require the explicit environment gate
 `AGENT_SESSION_NOTICE_WRITERS=1` in the CLI caller environment. Unset or any

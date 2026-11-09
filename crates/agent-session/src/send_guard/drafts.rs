@@ -1,6 +1,9 @@
 //! Exact stale draft preservation. Callers hold the session record lock.
+mod discard;
+pub(crate) mod residue;
 use super::{Admission, GuardArgs};
 use crate::{CliContext, CliError, SessionRecord, session_dir};
+pub(crate) use discard::discard;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -261,6 +264,19 @@ pub(crate) fn read(
 /// The caller has reached the existing mutation admission boundary. Saving
 /// never grants admission; cleanup must still prove an empty composer.
 pub(crate) fn clear(admission: &Admission<'_>, text: &str) -> Result<bool, CliError> {
+    if residue::matches(admission.context, admission.record, text)? {
+        if !admission.clear_saved_draft(text) {
+            return Ok(false);
+        }
+        observe_at(
+            admission.context,
+            admission.record,
+            Some(""),
+            0,
+            jiff::Timestamp::now().as_second(),
+        )?;
+        return Ok(true);
+    }
     let drafts = list(admission.context, admission.record)?;
     let root = root(admission.context, admission.record);
     private_dir(&root)?;

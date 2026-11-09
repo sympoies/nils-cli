@@ -258,7 +258,10 @@ impl Admission<'_> {
         self.identity("cleanup").ok()?;
         // One repeated-key command keeps long pastes inside the cleanup budget.
         let characters = if self.record.agent == "codex" && self.args.notice_envelope {
-            text.replace("\r\n", "\n").chars().count()
+            let pane = capture_styled(self.tmux_bin, &target, self.timeout("cleanup").ok()?)?;
+            // A collapsed Codex paste is one atomic editing unit, regardless
+            // of its expanded size. Reobserve before selecting deletion keys.
+            send_submit::codex_notice_cursor_path(&pane, text)?.characters
         } else {
             text.chars().count()
         };
