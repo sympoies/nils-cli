@@ -348,6 +348,27 @@ operations:
     output:
       data: { provider: github, repository: string, release_id: integer, tag: string, release_deleted: bool, tag_deleted: bool }
 
+  - id: release.delete-asset
+    schema_version: cli.forge-cli.release.delete-asset.v1
+    summary: Delete named assets from an exact GitHub release after preflight.
+    inputs:
+      - { name: tag, type: string, required: true }
+      - { name: asset-name, type: "list<string>", required: true }
+      - { name: --expect-sha256, type: "list<NAME=DIGEST>", optional: true }
+      - { name: --dry-run, type: bool, default: false }
+    validations: [release_tag_invalid, release_asset_invalid, release_asset_guard_invalid, release_asset_not_found, release_asset_digest_mismatch]
+    backends:
+      github:
+        - { program: gh, argv: [api, "repos/<repo>/releases/tags/<encoded-tag>", --method, GET], notes: "Resolve exact release, including draft fallback, and preflight all requested names and guards." }
+        - { program: gh, argv: [api, "repos/<repo>/releases/assets/<asset-id>", --method, DELETE], notes: "One sequential request per selected asset; omitted for dry-run." }
+    output:
+      data: { provider: github, repository: string, tag: string, dry_run: bool, assets: "list<{name,size,digest:nullable<string>}>" }
+    notes: >-
+      A release_asset_delete_failed error includes details.deleted_assets as the
+      confirmed prefix, details.failed_asset as the current asset, and
+      details.failed_asset_outcome as unknown. Inspect the release before retrying;
+      subsequent assets were not attempted. GitLab and Local are unsupported.
+
   - id: run.rerun
     schema_version: cli.forge-cli.run.rerun.v1
     summary: Request one identity-scoped GitHub rerun at the expected current PR head.

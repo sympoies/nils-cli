@@ -63,6 +63,7 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
                 ReleaseCommand::Upload(_) => "release.upload",
                 ReleaseCommand::Edit(_) => "release.edit",
                 ReleaseCommand::Delete(_) => "release.delete",
+                ReleaseCommand::DeleteAsset(_) => "release.delete-asset",
                 ReleaseCommand::View(_) => unreachable!("read handled above"),
             },
             mutation,
