@@ -90,7 +90,7 @@ impl Admission<'_> {
     fn clear(&self, text: &str, observed_paste: bool, exact_draft: bool) -> Option<(String, bool)> {
         let target = format!("{}:0.0", self.record.tmux_session);
         let observe = |stage: &str| {
-            if self.record.agent == "codex" && self.args.notice_envelope {
+            if !exact_draft && self.record.agent == "codex" && self.args.notice_envelope {
                 return self.codex_notice_input(text, stage);
             }
             let pane = capture_styled(self.tmux_bin, &target, self.timeout(stage).ok()?)?;
@@ -263,14 +263,15 @@ impl Admission<'_> {
         }
         self.identity("cleanup").ok()?;
         // One repeated-key command keeps long pastes inside the cleanup budget.
-        let characters = if self.record.agent == "codex" && self.args.notice_envelope {
-            let pane = capture_styled(self.tmux_bin, &target, self.timeout("cleanup").ok()?)?;
-            // A collapsed Codex paste is one atomic editing unit, regardless
-            // of its expanded size. Reobserve before selecting deletion keys.
-            send_submit::codex_notice_cursor_path(&pane, text)?.characters
-        } else {
-            text.chars().count()
-        };
+        let characters =
+            if !exact_draft && self.record.agent == "codex" && self.args.notice_envelope {
+                let pane = capture_styled(self.tmux_bin, &target, self.timeout("cleanup").ok()?)?;
+                // A collapsed Codex paste is one atomic editing unit, regardless
+                // of its expanded size. Reobserve before selecting deletion keys.
+                send_submit::codex_notice_cursor_path(&pane, text)?.characters
+            } else {
+                text.chars().count()
+            };
         let mut command = std::process::Command::new(self.tmux_bin);
         command.args([
             "send-keys",
