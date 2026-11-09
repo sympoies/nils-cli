@@ -66,7 +66,7 @@ pub(super) async fn repair_blocked_codex_accounts(
                         &launch_id,
                         &account,
                         revision,
-                        Err("apply_failed"),
+                        Err("control_apply_unconfirmed"),
                     )
                 })
                 .await;

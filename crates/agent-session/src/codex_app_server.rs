@@ -6,6 +6,8 @@
 //! the same bound thread and turn. Auto-resume distinguishes
 //! `usageLimitExceeded` from bounded `serverOverloaded` capacity recovery.
 
+mod account_login;
+use account_login::drive_external_auth_login;
 mod exact_attention;
 pub(crate) mod guarded;
 mod idle_probe;
@@ -2220,49 +2222,6 @@ pub(crate) fn control_channel() -> (ControlHandle, mpsc::Receiver<ControlCommand
     let (handle, commands, ready) = starting_control_channel();
     ready.send_replace(true);
     (handle, commands)
-}
-
-/// Resolve credentials and drive the app-server external-auth login for
-/// `account`. Mutates only the live app-server; never touches durable binding
-/// or next-intent state. Returns a fail-closed reason code on failure.
-async fn drive_external_auth_login(
-    websocket: &mut tokio_tungstenite::WebSocketStream<UnixStream>,
-    request_id: &mut u64,
-    account: &str,
-) -> Result<(), &'static str> {
-    let resolve_account = account.to_string();
-    let credentials = tokio::task::spawn_blocking(move || {
-        crate::codex_account::resolve_account(&resolve_account, false)
-    })
-    .await
-    .map_err(|_| "broker_failed")?
-    .map_err(|_| "broker_failed")?;
-
-    *request_id = request_id.saturating_add(1);
-    if send_json(
-        websocket,
-        external_auth_login_request(
-            *request_id,
-            &credentials.access_token,
-            &credentials.chatgpt_account_id,
-            credentials.chatgpt_plan_type.as_deref(),
-        ),
-    )
-    .await
-    .is_err()
-    {
-        return Err("apply_failed");
-    }
-    let result =
-        receive_response_with_timeout(websocket, *request_id, None, None, CONTROL_RESPONSE_TIMEOUT)
-            .await;
-    if !result
-        .as_ref()
-        .is_ok_and(|result| result.get("type").and_then(Value::as_str) == Some("chatgptAuthTokens"))
-    {
-        return Err("apply_failed");
-    }
-    Ok(())
 }
 
 async fn apply_account_binding(

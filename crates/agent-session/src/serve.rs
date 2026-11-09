@@ -6723,7 +6723,7 @@ async fn session_account_handler_inner(
                     &finish_launch_id,
                     &finish_account,
                     revision,
-                    Err("apply_failed"),
+                    Err("control_apply_unconfirmed"),
                 )
             })
             .await;

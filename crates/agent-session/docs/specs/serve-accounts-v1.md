@@ -76,6 +76,25 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   when the Codex binding is not bound to this runtime, including text without a submitting Enter.
   Control-only non-submitting keys remain available for dialogs.
 
+  Explicit resume/restart retries a valid failed selected-account binding using
+  the broker's current credential. With no queued switch, a failed binding may
+  pass the sealed restart-exit authorization after the existing native-idle,
+  identity, empty-composer and concurrency checks. Malformed or in-flight intents
+  still refuse. Ordinary daemon reconnect preserves failed bindings until an
+  explicit retry; ordinary input remains fenced until the replacement binds.
+
+  Account apply reports closed-set `failure_reason` values: broker worker,
+  configuration and resolution failures are `broker_worker_failed`,
+  `broker_invalid_config`, `broker_unconfigured`, `broker_invalid_response`,
+  `broker_resolve_rejected`, `broker_resolve_timeout`,
+  `broker_resolve_unavailable`, or `broker_resolve_failed`. Login failures are
+  `login_write_failed`, `login_timeout`, `login_rejected`,
+  `login_invalid_response`, `login_refresh_failed`, or `login_response_failed`.
+  An unconfirmed control call records `control_apply_unconfirmed`; this
+  completion preserves a cause already recorded by the control for the same
+  incarnation, account and revision. These causes
+  contain no credential, account identity, provider message or broker stderr.
+
 ## Account brokers
 
 A provider's account broker is enabled by one environment variable, or by the

@@ -246,6 +246,25 @@ async fn native_idle_starting_restart_honours_queued_account_repair() {
 }
 
 #[tokio::test]
+async fn native_idle_restart_retries_failed_selected_account_without_queue() {
+    let lock = GlobalStateLock::new();
+    let _broker = EnvGuard::set(
+        &lock,
+        "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+        r#"["/configured/broker"]"#,
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    let (context, mut record, tmux, _socket_dir) = fixture(tmp.path());
+    record.extra.remove("codex_account_next");
+    crate::write_session_record(&context, &record).unwrap();
+    assert!(request_exit(context, record, tmux, "idle").await.unwrap());
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("input")).unwrap(),
+        "/quit"
+    );
+}
+
+#[tokio::test]
 async fn failed_startup_without_identity_stops_without_typing_or_resuming() {
     let lock = GlobalStateLock::new();
     let _broker = EnvGuard::set(
@@ -340,7 +359,7 @@ async fn synthetic_idle_fixture_allows_restart_repair_without_a_model_turn() {
 }
 
 #[tokio::test]
-async fn restart_repair_keeps_native_idle_and_explicit_intent_guards() {
+async fn restart_repair_keeps_native_idle_and_intent_guards() {
     let lock = GlobalStateLock::new();
     let _broker = EnvGuard::set(
         &lock,
@@ -350,7 +369,6 @@ async fn restart_repair_keeps_native_idle_and_explicit_intent_guards() {
     for case in [
         "active",
         "attention",
-        "absent",
         "malformed",
         "applying",
         "automatic",
@@ -361,9 +379,6 @@ async fn restart_repair_keeps_native_idle_and_explicit_intent_guards() {
         match case {
             "pending_binding" => {
                 record.extra.get_mut("codex_account_binding").unwrap()["state"] = json!("pending");
-            }
-            "absent" => {
-                record.extra.remove("codex_account_next");
             }
             "malformed" => {
                 record
