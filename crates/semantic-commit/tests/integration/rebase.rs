@@ -41,7 +41,8 @@ fn selected_identity_signs_conflict_continuation_and_preserves_resolution() {
     ]);
     f.git(&["config", "branch.fix/replay-fixture.pushRemote", "origin"]);
     f.git(&["config", "remote.pushDefault", "other"]);
-    let replay = f.replay(&["main"]);
+    let old_base = f.git(&["merge-base", "main", "HEAD"]);
+    let replay = f.replay(&["--onto", "main", &old_base]);
     assert_ne!(replay.code, 0);
     assert!(replay.stderr_text().contains("--continue"));
     assert!(!f.git(&["ls-files", "--unmerged"]).is_empty());
@@ -161,6 +162,8 @@ fn replay_refuses_default_branch_and_unsafe_arguments_before_mutation() {
         vec!["--no-gpg-sign", "main"],
         vec!["main", "other-branch"],
         vec!["--continue", "main"],
+        vec!["--onto", "main"],
+        vec!["--onto", "main", "--continue"],
     ] {
         assert_eq!(f.replay(&args).code, 64);
         assert_eq!(f.git(&["rev-parse", "HEAD"]), original);
@@ -185,4 +188,66 @@ fn replay_refuses_default_branch_and_unsafe_arguments_before_mutation() {
         refused.stderr_text()
     );
     assert_eq!(f.git(&["rev-parse", "HEAD"]), original);
+}
+
+#[test]
+fn range_replay_excludes_squashed_dependencies_and_signs_selected_commits() {
+    let Some(f) = Fixture::new(false) else { return };
+    fs::write(f.worktree.join("topic"), b"dependency revised\n").unwrap();
+    f.git(&["add", "topic"]);
+    f.git(&[
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "test: dependency",
+    ]);
+    let old_base = f.git(&["rev-parse", "HEAD"]);
+    fs::write(f.worktree.join("selected"), b"selected\n").unwrap();
+    f.git(&["add", "selected"]);
+    f.git(&[
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "test: selected",
+    ]);
+    fs::write(f.worktree.join("selected-two"), b"selected two\n").unwrap();
+    f.git(&["add", "selected-two"]);
+    f.git(&[
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "test: selected two",
+    ]);
+    let original = f.git(&["rev-parse", "HEAD"]);
+    let squash = f.git_at(&f.repo, &["merge", "--squash", &old_base]);
+    assert_eq!(squash.code, 0, "{}", squash.stderr_text());
+    let commit = f.git_at(
+        &f.repo,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "test: squash dependencies",
+        ],
+    );
+    assert_eq!(commit.code, 0, "{}", commit.stderr_text());
+    let new_base = f.git(&["rev-parse", "main"]);
+    let plain = f.replay(&["main"]);
+    assert_ne!(plain.code, 0, "plain replay unexpectedly completed");
+    assert!(!f.git(&["ls-files", "--unmerged"]).is_empty());
+    f.git(&["rebase", "--abort"]);
+    assert_eq!(f.git(&["rev-parse", "HEAD"]), original);
+    let replay = f.replay(&["--onto", "main", &old_base]);
+    assert_eq!(replay.code, 0, "{}", replay.stderr_text());
+    assert_eq!(f.git(&["rev-parse", "HEAD~2"]), new_base);
+    assert_eq!(
+        f.git(&["log", "--format=%s", "main..HEAD"]),
+        "test: selected two\ntest: selected"
+    );
+    f.git(&["verify-commit", "HEAD"]);
+    f.git(&["verify-commit", "HEAD^"]);
 }
