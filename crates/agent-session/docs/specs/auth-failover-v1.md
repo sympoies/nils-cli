@@ -96,6 +96,12 @@ Queued and applying intents refuse refresh. Failed or malformed intents do
 not prevent refresh of the current bound account; their evidence remains
 intact and continues to fence new prompts until applied or cancelled.
 
+When a failed Codex binding is repaired by selecting the same account, the
+daemon applies the queued switch without waiting for a prompt. A confirmed bind
+settles the matching quarantine as `credentials_refreshed`; a failed apply
+leaves the quarantine in place and records the binding failure. A newer failure
+observed during the apply remains quarantined.
+
 A later successful explicit Codex binding supersedes the prior automatic
 refusal's input quarantine. Official refresh and health observations also
 settle older receipts for the same provider conversation, even when the
