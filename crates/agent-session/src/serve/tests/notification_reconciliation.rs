@@ -23,6 +23,7 @@ async fn mailbox_notice_rejects_retired_and_unknown_attempt_formats() {
 
 async fn check_attempt(form: AttemptPrompt, submitted_at: &str, expected_state: &str) {
         let lock = GlobalStateLock::new();
+        let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let codex_home = tmp.path().join("codex-home");
         let transcript = codex_home.join("sessions/2026/07/session.jsonl");
