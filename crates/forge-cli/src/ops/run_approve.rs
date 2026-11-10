@@ -15,6 +15,7 @@ struct Run {
     id: u64,
     head_sha: String,
     status: String,
+    conclusion: Option<String>,
     event: String,
     head_repository: Repo,
     pull_requests: Vec<Pr>,
@@ -119,7 +120,9 @@ pub fn run(
                 "run does not belong to the requested PR",
             ));
         }
-        if run.status != "action_required" {
+        let awaiting = run.status == "action_required"
+            || (run.status == "completed" && run.conclusion.as_deref() == Some("action_required"));
+        if !awaiting {
             return Err(ForgeError::validation_with_details(
                 schema_version_for(BINARY, OP, 1),
                 "run-not-awaiting-approval",

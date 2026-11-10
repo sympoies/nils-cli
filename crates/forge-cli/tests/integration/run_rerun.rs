@@ -16,7 +16,7 @@ if path == 'user':
 with open(root + '/calls', 'a') as f: f.write(('POST ' if post else 'GET ') + path + '\n')
 head = 'a' * 40
 attempt = 2 if os.path.exists(root + '/posted') else 1
-run = {'id':42, 'head_sha':head, 'run_attempt':attempt, 'html_url':'https://github.com/example/widget/actions/runs/42', 'event':os.environ.get('EVENT', 'pull_request'), 'status':('queued' if os.path.exists(root + '/posted') else os.environ.get('RUN_STATUS', 'completed')), 'pull_requests':([] if os.environ.get('NO_PRS') else [{'number':7}]), 'head_repository':{'full_name':os.environ.get('RUN_REPO', 'fork/widget')}, 'triggering_actor':{'login':actor}}
+run = {'id':42, 'head_sha':head, 'run_attempt':attempt, 'html_url':'https://github.com/example/widget/actions/runs/42', 'event':os.environ.get('EVENT', 'pull_request'), 'status':('queued' if os.path.exists(root + '/posted') else os.environ.get('RUN_STATUS', 'completed')), 'pull_requests':([] if os.environ.get('NO_PRS') else [{'number':7}]), 'conclusion':(None if os.path.exists(root + '/posted') else os.environ.get('RUN_CONCLUSION')), 'head_repository':{'full_name':os.environ.get('RUN_REPO', 'fork/widget')}, 'triggering_actor':{'login':actor}}
 if '/commits/' in path:
     print(json.dumps([[{'number':7}]])); sys.exit(0)
 if post:
@@ -379,7 +379,8 @@ fn run_rerun_declares_write_effect_and_rejects_conflicting_or_invalid_arguments(
 #[test]
 fn run_approve_fences_and_records_the_provider_receipt() {
     let stub = fixture()
-        .env("RUN_STATUS", "action_required")
+        .env("RUN_STATUS", "completed")
+        .env("RUN_CONCLUSION", "action_required")
         .env("NO_PRS", "1");
     let reason = stub.tempdir.path().join("reason.txt");
     fs::write(&reason, "Reviewed workflow changes").unwrap();
@@ -410,7 +411,7 @@ fn run_approve_fences_and_records_the_provider_receipt() {
     assert_eq!(data["head_sha"], HEAD);
     assert_eq!(data["pr"], 7);
     assert_eq!(data["reason"], "Reviewed workflow changes");
-    assert_eq!(data["prior_status"], "action_required");
+    assert_eq!(data["prior_status"], "completed");
     assert_eq!(data["new_status"], "queued");
     assert_eq!(data["outcome"], "approved");
     let repeat = run_forge_cli(
@@ -456,7 +457,9 @@ fn run_approve_rejects_mismatches_and_repeated_approval() {
         (HEAD, "7", "completed", "run-not-awaiting-approval"),
         (HEAD, "7", "queued", "run-not-awaiting-approval"),
     ] {
-        let stub = fixture().env("RUN_STATUS", status);
+        let stub = fixture()
+            .env("RUN_STATUS", status)
+            .env("RUN_CONCLUSION", "failure");
         let reason = stub.tempdir.path().join("reason.txt");
         fs::write(&reason, "Reviewed workflow changes").unwrap();
         let out = run_forge_cli(
