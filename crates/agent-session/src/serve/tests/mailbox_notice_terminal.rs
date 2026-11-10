@@ -383,6 +383,11 @@ async fn stale_codex_wake_saves_draft_and_delivers_once() {
     observation["unchanged_since"] = json!(1);
     fs::write(observed, serde_json::to_vec(&observation).unwrap()).unwrap();
     fs::write(fixture.temp.path().join("codex-collapse-paste"), "").unwrap();
+    let receipt = notification_fixture(fixture.temp.path());
+    // Match retry discovery rather than relying on composer guard latency.
+    let retry_at = std::time::UNIX_EPOCH + Duration::from_secs(receipt["next_attempt_at_epoch"].as_u64().unwrap());
+    tokio::time::sleep(retry_at.duration_since(std::time::SystemTime::now()).unwrap_or_default()).await;
+    assert!(crate::coordination::pending_notifications(&fixture.state.context).unwrap().iter().any(|candidate| candidate.generation == fixture.candidate.generation), "retry candidate is not due; notification receipt: {receipt}");
     crate::serve::terminal_notification::dispatch_coordination_notification(
         fixture.state.clone(),
         fixture.candidate.clone(),
