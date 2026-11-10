@@ -597,12 +597,26 @@ fn routine_coalescing_is_opt_in_and_urgent_mail_bypasses_the_window() {
         .unwrap();
     let prompt = super::super::notification_prompt(&urgent);
     // One progress, one handoff and one blocker message are unread.
+    let notice = crate::notice::parse_notice(&prompt).unwrap();
     assert_eq!(
-        prompt,
-        format!(
-            "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: 3 unread; {} message inbox",
-            nils_common::session_binary::NAME
+        notice.body.lines().next(),
+        Some(
+            format!(
+                "Mailbox: 3 unread; {} message inbox",
+                nils_common::session_binary::NAME
+            )
+            .as_str()
         )
+    );
+    assert!(
+        notice
+            .body
+            .contains("message inbox --session recipient --format json")
+    );
+    assert!(
+        notice
+            .body
+            .contains("message show --session recipient --message MESSAGE_ID --format json")
     );
     assert!(!prompt.contains("bounded fixture body"));
 }

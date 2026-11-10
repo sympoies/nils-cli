@@ -53,8 +53,7 @@ async fn check_attempt(form: AttemptPrompt, submitted_at: &str, expected_state: 
             .pop()
             .expect("notification candidate");
         if matches!(form, AttemptPrompt::Notice | AttemptPrompt::MissingNotice | AttemptPrompt::Current) {
-            candidate.prompt = Some(crate::notice::NoticeEnvelope::new("mailbox.wake", "agent-session", None)
-                .unwrap().encode("Mailbox: 1 uncategorized; agent-session message inbox").unwrap());
+            candidate.prepare_notice(&state.context, &beta).unwrap();
         }
         assert!(
             crate::coordination::begin_notification_attempt(&state.context, &candidate)
