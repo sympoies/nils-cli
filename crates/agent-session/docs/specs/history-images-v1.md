@@ -144,12 +144,13 @@ For an `http` or `https` URL source the image selector is still emitted, but the
 server never fetches it (no proxying and no external request). The 422 envelope
 retains `history-image-unavailable` and adds `error.reason: "remote-url-not-fetched"`
 and `error.source_origin`, the lower-cased `scheme://host` only (for example
-`https://example.com`). Credentials, port, path, query and fragment are never
-included, so the envelope carries no full external URL; clients take the link from
-the row text they already hold. The host must be ASCII letters, digits, hyphens and
+`https://example.com`). The origin excludes credentials, port, path, query and
+fragment. The envelope also adds `error.source_url` with the exact URL selected
+for the image, without normalization or decoding, when it is at most 2048 bytes;
+longer URLs omit the field. The host must be ASCII letters, digits, hyphens and
 dots (at most 253 bytes) or a bracketed IPv6 literal, and a backslash ends the
 authority; otherwise `source_origin` is omitted and the reason is still returned.
-These two field names are frozen.
+These field names are frozen.
 
 These states are observations at read time, not promises of permanent storage.
 

@@ -168,6 +168,7 @@ async fn remote_image_error(url: &str) -> Value {
         .get(&format!("images/{}", image.as_str().unwrap()))
         .await;
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
     serde_json::from_slice(
         &axum::body::to_bytes(response.into_body(), 4096)
             .await
@@ -177,7 +178,7 @@ async fn remote_image_error(url: &str) -> Value {
 }
 
 #[tokio::test]
-async fn remote_image_read_reports_origin_only_and_makes_no_request() {
+async fn remote_image_read_reports_selected_url_and_makes_no_request() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -186,10 +187,7 @@ async fn remote_image_read_reports_origin_only_and_makes_no_request() {
     assert_eq!(body["error"]["code"], "history-image-unavailable");
     assert_eq!(body["error"]["reason"], "remote-url-not-fetched");
     assert_eq!(body["error"]["source_origin"], "http://127.0.0.1");
-    let text = body.to_string();
-    for leaked in ["private", "token", "secret", "frag", &port.to_string()] {
-        assert!(!text.contains(leaked), "{leaked} leaked: {text}");
-    }
+    assert_eq!(body["error"]["source_url"], url);
     assert_eq!(
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock
@@ -202,6 +200,7 @@ async fn unsupported_url_schemes_stay_plain_unavailable() {
     assert_eq!(body["error"]["code"], "history-image-unavailable");
     assert!(body["error"].get("reason").is_none());
     assert!(body["error"].get("source_origin").is_none());
+    assert!(body["error"].get("source_url").is_none());
 }
 
 #[tokio::test]
@@ -238,4 +237,44 @@ async fn remote_image_origin_is_strictly_validated() {
             None => assert!(body["error"].get("source_origin").is_none(), "{url}"),
         }
     }
+}
+
+#[tokio::test]
+async fn remote_image_source_url_preserves_selector_output_and_length_bound() {
+    let url = "https://Example.invalid/a%2Fb.png?q=x%20y#fragment";
+    for text in [
+        format!("![image]({url} \"title\")"),
+        format!("[outer ![image]({url})](https://example.invalid/)"),
+        format!("[link](https://example.invalid/ \"![image]({url})\")"),
+    ] {
+        let row = json!({"type":"response_item","payload":{"type":"message","role":"user","content":[
+            {"type":"input_text","text":text}
+        ]}});
+        let fixture = Fixture::new("codex", &format!("{row}\n"));
+        let page = fixture.page("").await;
+        let image = page["data"]["messages"][0]["images"][0]["id"]
+            .as_str()
+            .unwrap();
+        let response = fixture.get(&format!("images/{image}")).await;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["error"]["source_url"], url);
+    }
+    let prefix = "https://example.invalid/";
+    let at_limit = format!("{prefix}{}", "a".repeat(2048 - prefix.len()));
+    assert_eq!(
+        remote_image_error(&at_limit).await["error"]["source_url"],
+        at_limit
+    );
+    let over_limit = format!("{at_limit}a");
+    assert!(
+        remote_image_error(&over_limit).await["error"]
+            .get("source_url")
+            .is_none()
+    );
 }
