@@ -664,3 +664,11 @@ Use `forge-cli issue comment-edit <comment-id> --body-file <path>` or
 timeline comment. For GitLab, also pass `--parent <issue-or-mr-iid>`. The
 provider enforces edit permissions and the response includes the edited body.
 GitLab may normalize the body before saving it.
+
+## Identity verification errors
+
+| Error code | Exit | Meaning |
+| --- | --- | --- |
+| `github_rate_limited` | 69 | GitHub identity verification hit a rate limit; retry after the reported reset time. |
+| `identity_actor_unavailable` | 65 | Identity lookup failed, including an HTTP 401 response. |
+| `identity_actor_mismatch` | 65 | The authenticated actor differs from the selected identity. |

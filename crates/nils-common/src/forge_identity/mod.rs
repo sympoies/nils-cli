@@ -4,6 +4,7 @@ mod git;
 mod https;
 mod policy;
 mod probe;
+mod rate_limit;
 mod replay;
 pub mod session;
 pub use git::{
@@ -476,6 +477,9 @@ impl Authorization {
                 }
                 error
             })?;
+            if let Some(error) = rate_limit::classify(&output.stdout, &self.selection.profile) {
+                return Err(error);
+            }
             if args.contains(&"--paginate") {
                 parse_paginated_actor_probe_response(&output)
             } else {
