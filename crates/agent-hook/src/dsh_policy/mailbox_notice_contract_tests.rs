@@ -22,8 +22,10 @@ fn accepts_current_mailbox_envelopes_from_the_public_corpus() {
             "agent-session message inbox",
             &format!("{} message inbox", nils_common::session_binary::NAME),
         );
-        assert!(super::is_mailbox_notice(&text), "{text}");
-        let with_guidance = format!("{text}\nsender_relation=peer\n{}", super::VERIFY_GUIDANCE);
+        let with_guidance = format!(
+            "{text}\nRead: /opt/bin/agent-session message inbox --session recipient --format json\nShow: /opt/bin/agent-session message show --session recipient --message MESSAGE_ID --format json\nsender_relation=peer\n{}",
+            super::VERIFY_GUIDANCE
+        );
         assert!(super::is_mailbox_notice(&with_guidance), "{with_guidance}");
     }
 }
@@ -74,7 +76,7 @@ fn validates_guidance_and_dispatcher_path() {
         nils_common::session_binary::NAME
     );
     let guidance = format!(
-        "{summary}\nsender_relation=parent\nsender_relation=peer\n{}",
+        "{summary}\nRead: /opt/bin/agent-session message inbox --session recipient --format json\nShow: /opt/bin/agent-session message show --session recipient --message MESSAGE_ID --format json\nsender_relation=parent\nsender_relation=peer\n{}",
         super::VERIFY_GUIDANCE
     );
     for suffix in [
@@ -102,4 +104,23 @@ fn accepts_only_the_fixed_quota_alert() {
     assert!(!super::is_mailbox_notice(
         &fixed.replace("mailbox.alert", "other.alert")
     ));
+}
+
+#[test]
+fn accepts_mailbox_wake_with_read_command() {
+    let text = format!(
+        "{HEADER}Mailbox: 1 report; agent-session message inbox\nRead: /opt/bin/agent-session message inbox --session recipient --format json\nShow: /opt/bin/agent-session message show --session recipient --message MESSAGE_ID --format json\nsender_relation=peer\n{}",
+        super::VERIFY_GUIDANCE
+    );
+    assert!(super::is_mailbox_notice(&text));
+}
+
+#[test]
+fn rejects_wakes_without_read_commands() {
+    let summary = format!("{HEADER}Mailbox: 1 report; agent-session message inbox");
+    assert!(!super::is_mailbox_notice(&summary));
+    assert!(!super::is_mailbox_notice(&format!(
+        "{summary}\nsender_relation=peer\n{}",
+        super::VERIFY_GUIDANCE
+    )));
 }

@@ -5,11 +5,16 @@ use pretty_assertions::assert_eq;
 
 // sympoies/nils-cli#2011: the prompt-time rule carries the body-free mailbox
 // reminder for an authenticated managed DSH session.
-const MAILBOX_REMINDER: &str = "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: 1 report, 2 uncategorized; agent-session message inbox";
+fn mailbox_reminder() -> String {
+    format!(
+        "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: 1 report, 2 uncategorized; agent-session message inbox\nRead: /opt/bin/agent-session message inbox --session dsh-worker --format json\nShow: /opt/bin/agent-session message show --session dsh-worker --message MESSAGE_ID --format json\nsender_relation=peer\n{}",
+        nils_common::mailbox_notice::VERIFY_GUIDANCE
+    )
+}
 
 #[test]
 fn managed_dsh_prompt_step_carries_current_mailbox_notice_and_fails_open() {
-    check_mailbox_reminder(MAILBOX_REMINDER);
+    check_mailbox_reminder(&mailbox_reminder());
 }
 
 /// Stops a managed session whose same-directory session binary fails every
@@ -109,6 +114,7 @@ fn check_mailbox_reminder(reminder: &str) {
             "data": {"session_id": "dsh-worker", "generation": 3, "reminder": reminder}
         })
         .to_string()
+        .replace('\'', "'\\''")
     };
     let companion = release.join(super::support::SESSION_BIN);
     fs::write(
@@ -151,12 +157,12 @@ esac
                 "schema_version": "cli.agent-session.message-reminder.v1",
                 "ok": true,
                 "data": {"session_id": "another-worker", "generation": 3, "reminder": reminder}
-            }),
+            }).to_string().replace('\'', "'\\''"),
             other_schema = json!({
                 "schema_version": "cli.agent-session.other.v1",
                 "ok": true,
                 "data": {"session_id": "dsh-worker", "generation": 3, "reminder": reminder}
-            }),
+            }).to_string().replace('\'', "'\\''"),
             foreign_command = reminder_json(json!(
                 reminder.replace("agent-session message inbox", "agent-session message inbox --session another-worker")
             )),

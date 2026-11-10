@@ -119,14 +119,22 @@ pub(crate) struct NotificationCandidate {
 /// Body-free, provider-neutral wake in the current notice envelope.
 /// Generations and queue times remain in the receipt; reconciliation compares
 /// these exact bytes only after the matching attempt's timestamp.
-pub(crate) fn fixed_prompt() -> String {
-    prompt_template()
+pub(crate) fn fixed_prompt(session: &str) -> String {
+    prompt_template(session).unwrap_or_default()
 }
 
 /// Only current mailbox envelopes identify an injected reminder.
 pub(crate) fn is_mailbox_reminder_prompt(prompt: &str) -> bool {
-    crate::notice::parse_notice(prompt)
-        .is_some_and(|notice| matches!(notice.metadata.kind(), "mailbox.wake" | "mailbox.alert"))
+    crate::notice::parse_notice(prompt).is_some_and(|notice| match notice.metadata.kind() {
+        "mailbox.alert" => true,
+        "mailbox.wake" => {
+            let mut lines = notice.body.lines();
+            lines.next().is_some()
+                && lines.next().is_some_and(|line| line.starts_with("Read: "))
+                && lines.next().is_some_and(|line| line.starts_with("Show: "))
+        }
+        _ => false,
+    })
 }
 
 /// Whether the exact recipient incarnation has live unread mail or an
@@ -176,7 +184,7 @@ pub(crate) fn claim_hook_reminder(
         target_session_id,
         target_incarnation,
         now,
-    );
+    )?;
     let receipt = registry
         .notifications
         .get_mut(&receipt_key(target_session_id, target_incarnation))?;
@@ -214,8 +222,8 @@ pub(crate) fn claim_hook_reminder(
     })
 }
 
-pub(crate) fn prompt_template() -> String {
-    notice::encode_summary(&format!("{} message inbox", crate::executable()))
+pub(crate) fn prompt_template(session: &str) -> Option<String> {
+    notice::encode_summary(&format!("{} message inbox", crate::executable()), session)
 }
 
 pub(crate) fn normalize_registry(registry: &mut Registry, now: i64) -> bool {
@@ -533,7 +541,12 @@ pub(super) fn transition_attempt_at(
     {
         return None;
     }
-    receipt.attempted_prompt = Some(candidate.prompt.clone().unwrap_or_else(fixed_prompt));
+    receipt.attempted_prompt = Some(
+        candidate
+            .prompt
+            .clone()
+            .unwrap_or_else(|| fixed_prompt(&candidate.target_session_id)),
+    );
     receipt.state = "attempting".to_string();
     receipt.attempted_generation = receipt.generation;
     receipt.attempted_queued_at_epoch = receipt.queued_at_epoch;
@@ -1083,7 +1096,7 @@ mod tests {
 
     #[test]
     fn every_reminder_prompt_is_recognized_by_its_prefix() {
-        assert!(is_mailbox_reminder_prompt(&fixed_prompt()));
+        assert!(is_mailbox_reminder_prompt(&fixed_prompt("target")));
         assert!(!is_mailbox_reminder_prompt(
             "Check the coordination mailbox"
         ));
@@ -1091,20 +1104,12 @@ mod tests {
 
     #[test]
     fn notification_prompt_is_fixed_envelope_and_contains_no_mail_body() {
-        crate::command_identity::with_name("agent-session", || {
-            let prompt = fixed_prompt();
-            assert_eq!(
-                prompt,
-                "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: agent-session message inbox"
-            );
-            assert_eq!(
-                prompt_template(),
-                "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: agent-session message inbox"
-            );
-            assert!(!prompt.contains("message show"));
-            assert!(!prompt.contains("target-session"));
-            assert!(!prompt.contains("--capability-file"));
-        });
+        let prompt = fixed_prompt("target");
+        assert!(prompt.contains("message inbox --session target --format json"));
+        assert!(
+            prompt.contains("message show --session target --message MESSAGE_ID --format json")
+        );
+        assert!(!prompt.contains("--capability-file"));
     }
 
     #[test]
@@ -1178,7 +1183,11 @@ mod tests {
         ))
         .expect("notification fixture");
         crate::command_identity::with_name("agent-session", || {
-            assert_eq!(fixture["prompt_template"], prompt_template());
+            assert!(
+                prompt_template("target")
+                    .unwrap()
+                    .contains("--session target")
+            );
         });
         assert_eq!(
             fixture["states"],

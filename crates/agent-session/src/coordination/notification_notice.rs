@@ -10,9 +10,9 @@ pub(super) fn encode_counts(
     session: &str,
     incarnation: &str,
     now: i64,
-) -> String {
+) -> Option<String> {
     if super::super::mailbox_quota::has_pending(registry, session, incarnation, now) {
-        return nils_common::coordination_projection::MAILBOX_QUOTA_ALERT_NOTICE.into();
+        return Some(nils_common::coordination_projection::MAILBOX_QUOTA_ALERT_NOTICE.into());
     }
     let messages: Vec<_> = registry
         .messages
@@ -30,24 +30,64 @@ pub(super) fn encode_counts(
         .ok()
         .map(|record| super::super::mailbox_sender_relation::SenderRelations::new(context, &record))
         .unwrap_or_default();
-    let body = crate::notice::render_summary(
-        "mailbox.wake",
-        &summary,
-        &relations.notice_guidance(&messages),
+    let executable = trusted_executable()?;
+    let path = shell_words::quote(executable.to_str()?);
+    let recipient = shell_words::quote(session);
+    let guidance = format!(
+        "Read: {path} message inbox --session {recipient} --format json\nShow: {path} message show --session {recipient} --message MESSAGE_ID --format json\n{}",
+        relations.notice_guidance(&messages)
     );
-    NoticeEnvelope::new("mailbox.wake", "agent-session", None)
+    let body = crate::notice::render_summary("mailbox.wake", &summary, &guidance);
+    let notice = NoticeEnvelope::new("mailbox.wake", "agent-session", None)
         .expect("fixed mailbox notice metadata")
         .encode(&crate::notice::generated::body(&body))
-        .expect("nonempty count reminder")
+        .expect("nonempty count reminder");
+    (notice.len() <= 4096).then_some(notice)
 }
 
-pub(super) fn encode_summary(summary: &str) -> String {
-    NoticeEnvelope::new("mailbox.wake", "agent-session", None)
-        .expect("fixed mailbox notice metadata")
-        .encode(&crate::notice::generated::body(
-            &crate::notice::render_summary("mailbox.wake", summary, ""),
-        ))
-        .expect("nonempty mailbox reminder")
+fn trusted_executable() -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let executable = |path: &std::path::Path| {
+        path.is_absolute()
+            && std::fs::metadata(path)
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    };
+    if let Some(path) = std::env::var_os("AGENT_SESSION_BIN")
+        .map(std::path::PathBuf::from)
+        .filter(|p| executable(p))
+    {
+        return Some(path);
+    }
+    if let Some(roots) = std::env::var_os("AGENT_RUNTIME_TRUSTED_CLI_ROOT")
+        && let Some(path) = std::env::split_paths(&roots)
+            .find_map(|root| nils_common::session_binary::trusted_root(&root))
+    {
+        return Some(path);
+    }
+    #[cfg(test)]
+    return crate::resolve_agent_session_executable().ok();
+    #[cfg(not(test))]
+    let current = std::env::current_exe().ok()?;
+    #[cfg(not(test))]
+    crate::stable_executable::launch_executable_from(&current, &[])
+        .ok()
+        .map(|launch| launch.path)
+}
+
+pub(super) fn encode_summary(summary: &str, session: &str) -> Option<String> {
+    let executable = trusted_executable()?;
+    let path = shell_words::quote(executable.to_str()?);
+    let recipient = shell_words::quote(session);
+    let guidance = format!(
+        "Read: {path} message inbox --session {recipient} --format json\nShow: {path} message show --session {recipient} --message MESSAGE_ID --format json\nsender_relation=peer\n{}",
+        nils_common::mailbox_notice::VERIFY_GUIDANCE
+    );
+    let body = crate::notice::render_summary("mailbox.wake", summary, &guidance);
+    let notice = NoticeEnvelope::new("mailbox.wake", "agent-session", None)
+        .ok()?
+        .encode(&crate::notice::generated::body(&body))
+        .ok()?;
+    (notice.len() <= 4096).then_some(notice)
 }
 
 impl NotificationCandidate {
@@ -106,13 +146,22 @@ impl NotificationCandidate {
             return Err(crate::send::claude_notice::runtime::unavailable());
         }
         let locked = super::super::lock_registry_observational(context)?;
-        self.prompt = Some(encode_counts(
-            context,
-            &locked.registry,
-            &self.target_session_id,
-            &self.target_incarnation,
-            jiff::Timestamp::now().as_second(),
-        ));
+        self.prompt = Some(
+            encode_counts(
+                context,
+                &locked.registry,
+                &self.target_session_id,
+                &self.target_incarnation,
+                jiff::Timestamp::now().as_second(),
+            )
+            .ok_or_else(|| {
+                CliError::unavailable(
+                    "mailbox-helper-unavailable",
+                    "trusted agent-session executable unavailable",
+                    None,
+                )
+            })?,
+        );
         Ok(())
     }
 }
@@ -125,12 +174,39 @@ mod tests {
 
     #[test]
     fn generated_mailbox_summary_prevents_trailing_ascii_spaces_before_encoding() {
-        let encoded = encode_summary("generated reminder \nnext line \r\nlast line");
+        let encoded =
+            encode_summary("generated reminder \nnext line \r\nlast line", "recipient").unwrap();
         let parsed = crate::notice::parse_notice(&encoded).unwrap();
         assert_eq!(
-            parsed.body,
-            "Mailbox: generated reminder\nnext line\r\nlast line"
+            parsed.body.lines().take(3).collect::<Vec<_>>().join("\n"),
+            "Mailbox: generated reminder\nnext line\nlast line"
         );
+    }
+
+    #[test]
+    fn mailbox_wake_includes_recipient_read_command() {
+        let temp = tempfile::tempdir().unwrap();
+        let context = CliContext {
+            state_dir: temp.path().into(),
+            host: None,
+        };
+        let encoded = encode_counts(
+            &context,
+            &Registry::default(),
+            "recipient",
+            "incarnation",
+            100,
+        )
+        .unwrap();
+        let path = trusted_executable().unwrap();
+        let executable = shell_words::quote(path.to_str().unwrap());
+        assert!(encoded.contains(&format!(
+            "Read: {executable} message inbox --session recipient --format json"
+        )));
+        assert!(encoded.contains(&format!(
+            "Show: {executable} message show --session recipient --message MESSAGE_ID --format json"
+        )));
+        assert!(encoded.len() <= 4096);
     }
 
     #[test]
@@ -180,7 +256,7 @@ mod tests {
                     ))
                     .unwrap()
             } else {
-                encode_counts(&context, &registry, "recipient", "incarnation", 100)
+                encode_counts(&context, &registry, "recipient", "incarnation", 100).unwrap()
             };
             assert_eq!(
                 encoded

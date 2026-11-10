@@ -23,6 +23,7 @@ async fn mailbox_notice_rejects_retired_and_unknown_attempt_formats() {
 
 async fn check_attempt(form: AttemptPrompt, submitted_at: &str, expected_state: &str) {
         let lock = GlobalStateLock::new();
+        let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let codex_home = tmp.path().join("codex-home");
         let transcript = codex_home.join("sessions/2026/07/session.jsonl");
@@ -53,8 +54,7 @@ async fn check_attempt(form: AttemptPrompt, submitted_at: &str, expected_state: 
             .pop()
             .expect("notification candidate");
         if matches!(form, AttemptPrompt::Notice | AttemptPrompt::MissingNotice | AttemptPrompt::Current) {
-            candidate.prompt = Some(crate::notice::NoticeEnvelope::new("mailbox.wake", "agent-session", None)
-                .unwrap().encode("Mailbox: 1 uncategorized; agent-session message inbox").unwrap());
+            candidate.prepare_notice(&state.context, &beta).unwrap();
         }
         assert!(
             crate::coordination::begin_notification_attempt(&state.context, &candidate)

@@ -20,12 +20,57 @@ pub(super) fn is_mailbox_notice(reminder: &str) -> bool {
     };
     match body.split_once('\n') {
         Some((summary, guidance)) => is_summary(summary) && is_guidance(guidance),
-        None => is_summary(body),
+        None => false,
     }
 }
 
 fn is_guidance(body: &str) -> bool {
     let mut remaining = body;
+    {
+        let Some(read) = remaining.strip_prefix("Read: ") else {
+            return false;
+        };
+        let Some((inbox, rest)) = read.split_once('\n') else {
+            return false;
+        };
+        let Some(show) = rest.strip_prefix("Show: ") else {
+            return false;
+        };
+        let Some((show, rest)) = show.split_once('\n') else {
+            return false;
+        };
+        let inbox_text = inbox;
+        let show_text = show;
+        let (Ok(inbox), Ok(show)) = (shell_words::split(inbox), shell_words::split(show)) else {
+            return false;
+        };
+        if inbox.len() != 7
+            || show.len() != 9
+            || !std::path::Path::new(&inbox[0]).is_absolute()
+            || inbox[1..3] != ["message", "inbox"]
+            || inbox[3] != "--session"
+            || inbox[4].is_empty()
+            || inbox[5..] != ["--format", "json"]
+            || show[0] != inbox[0]
+            || show[1..3] != ["message", "show"]
+            || show[3] != "--session"
+            || show[4] != inbox[4]
+            || show[5..] != ["--message", "MESSAGE_ID", "--format", "json"]
+        {
+            return false;
+        }
+        let path = shell_words::quote(&inbox[0]);
+        let session = shell_words::quote(&inbox[4]);
+        if inbox_text != format!("{path} message inbox --session {session} --format json")
+            || show_text
+                != format!(
+                    "{path} message show --session {session} --message MESSAGE_ID --format json"
+                )
+        {
+            return false;
+        }
+        remaining = rest;
+    }
     let mut relation_count = 0;
     let mut dispatching = false;
     for relation in ["parent", "ancestor", "peer"] {

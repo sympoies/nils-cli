@@ -752,7 +752,7 @@ pub(crate) fn notification_prompt(candidate: &NotificationCandidate) -> String {
     candidate
         .prompt
         .clone()
-        .unwrap_or_else(notification::fixed_prompt)
+        .unwrap_or_else(|| notification::fixed_prompt(&candidate.target_session_id))
 }
 
 pub(crate) fn coordination_dir(context: &CliContext, session_id: &str) -> PathBuf {

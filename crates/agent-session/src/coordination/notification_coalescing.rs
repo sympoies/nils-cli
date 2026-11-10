@@ -35,6 +35,7 @@ pub(in crate::coordination) fn admit(
         return;
     }
     let prompt = count_prompt(
+        &message.recipient_session_id,
         registry
             .messages
             .iter()
@@ -55,7 +56,7 @@ pub(in crate::coordination) fn admit(
         if urgent {
             receipt.urgent_generation = receipt.generation;
         }
-        receipt.prompt = Some(prompt);
+        receipt.prompt = prompt;
     }
 }
 
@@ -63,12 +64,15 @@ pub(in crate::coordination) fn admit(
 const MAX_TOTAL: usize = 256;
 
 /// Bounded unread totals are always carried in a notice envelope.
-pub(super) fn unread_prompt(total: usize) -> String {
-    super::notice::encode_summary(&format!(
-        "{} unread; {} message inbox",
-        total.clamp(1, MAX_TOTAL),
-        crate::executable()
-    ))
+pub(super) fn unread_prompt(total: usize, session: &str) -> Option<String> {
+    super::notice::encode_summary(
+        &format!(
+            "{} unread; {} message inbox",
+            total.clamp(1, MAX_TOTAL),
+            crate::executable()
+        ),
+        session,
+    )
 }
 
 fn category_counts<'a>(
@@ -92,8 +96,11 @@ fn category_counts<'a>(
 /// Render only unread metadata selected by the owning mailbox transaction.
 ///
 /// One bounded total inside the current notice envelope.
-pub(super) fn count_prompt<'a>(messages: impl Iterator<Item = &'a StoredMessage>) -> String {
-    unread_prompt(messages.count())
+pub(super) fn count_prompt<'a>(
+    session: &str,
+    messages: impl Iterator<Item = &'a StoredMessage>,
+) -> Option<String> {
+    unread_prompt(messages.count(), session)
 }
 
 /// The counts spelled out by category, for notice delivery. A notice envelope is

@@ -590,6 +590,7 @@ is applied.
 | Notice header | Starts with the `agent-notice:v1` HTML comment header, closed on the first line. |
 | `<Stored title>:` plus one ASCII space | A label or stored title in the shared kind-to-label table above. |
 | `Mailbox: <summary>; agent-session message inbox` | Whole first line; see [mailbox contract](coordination-mailbox-v1.md). |
+| `Read: <absolute agent-session> message inbox --session <recipient> --format json` | Recipient inbox command; followed by a `Show:` command for a message body. |
 
 Unknown titles and text that only contains a title word mid-line are user drafts
 and remain saved byte-for-byte. These rules concern composer cleanup only;
@@ -758,8 +759,8 @@ writers only in the intended caller environment. Roll back by unsetting the
 writer gate; retain readers for notices already stored in history. Internal mailbox reminders call the same encoder directly with kind
 `mailbox.wake`, source `agent-session` and no display id. The body is the
 coalesced live unread-count reminder, for example `Mailbox: 1 handoff, 2 report;
-agent-session message inbox`; it never
-contains message bodies or recipient identity. Idle and working Codex retain
+agent-session message inbox`, followed by the recipient read and show commands described in the
+[mailbox contract](coordination-mailbox-v1.md). It never contains message bodies. Idle and working Codex retain
 their existing start/steer paths; authenticated hook claims return the same
 notice text. Supported terminal recipients use guarded notice delivery,
 including the existing native Claude module. This preserves the mailbox's
