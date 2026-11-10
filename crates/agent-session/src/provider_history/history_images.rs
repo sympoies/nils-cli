@@ -936,7 +936,7 @@ pub(crate) enum ImageReadError {
     Unavailable,
     OutsideAllowedRoots,
     /// An `http(s)` reference the daemon never fetches; carries a validated `scheme://host` if any.
-    RemoteUrlNotFetched(Option<String>),
+    RemoteUrlNotFetched(Option<String>, Option<String>),
 }
 pub(crate) struct ImageBytes {
     pub(crate) mime: &'static str,
@@ -1043,7 +1043,10 @@ impl HistoryCatalog {
                     .and_then(|v| v.split_once(";base64,"))
                 else {
                     return Err(match remote_url_source(url) {
-                        Some(origin) => ImageReadError::RemoteUrlNotFetched(origin),
+                        Some(origin) => ImageReadError::RemoteUrlNotFetched(
+                            origin,
+                            (url.len() <= 2048).then(|| (*url).to_owned()),
+                        ),
                         None => ImageReadError::Unavailable,
                     });
                 };

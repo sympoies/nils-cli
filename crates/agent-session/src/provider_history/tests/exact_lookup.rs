@@ -275,9 +275,10 @@ fn fresh_exact_session_image_matches_refreshed_catalog() {
     );
     assert_eq!(
         refreshed.image(history_id, image_id).err(),
-        Some(history_images::ImageReadError::RemoteUrlNotFetched(Some(
-            "https://example.invalid".into()
-        )))
+        Some(history_images::ImageReadError::RemoteUrlNotFetched(
+            Some("https://example.invalid".into()),
+            Some("https://example.invalid/image.png".into())
+        ))
     );
     assert_eq!(
         catalog.image(history_id, image_id).err(),
@@ -345,9 +346,10 @@ fn direct_session_keeps_catalog_segment_images_resolvable() {
     );
     assert_eq!(
         catalog.image(&history_id, image_id).err(),
-        Some(history_images::ImageReadError::RemoteUrlNotFetched(Some(
-            "https://example.invalid".into()
-        )))
+        Some(history_images::ImageReadError::RemoteUrlNotFetched(
+            Some("https://example.invalid".into()),
+            Some("https://example.invalid/image.png".into())
+        ))
     );
 }
 

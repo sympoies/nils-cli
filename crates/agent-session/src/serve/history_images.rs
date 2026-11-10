@@ -84,7 +84,7 @@ async fn image_handler(
                 "message":"Image is outside the recorded working directory and owned attachments"
             }}))
         ).into_response(),
-        Ok(Err(provider_history::history_images::ImageReadError::RemoteUrlNotFetched(origin))) => {
+        Ok(Err(provider_history::history_images::ImageReadError::RemoteUrlNotFetched(origin, url))) => {
             let mut error = json!({
                 "code":"history-image-unavailable",
                 "reason":"remote-url-not-fetched",
@@ -92,6 +92,9 @@ async fn image_handler(
             });
             if let Some(origin) = origin {
                 error["source_origin"] = json!(origin);
+            }
+            if let Some(url) = url {
+                error["source_url"] = json!(url);
             }
             (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"ok":false,"error":error}))).into_response()
         },
