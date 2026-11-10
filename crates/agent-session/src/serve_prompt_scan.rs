@@ -4,7 +4,7 @@
 use super::*;
 
 #[path = "serve_prompt_projection.rs"]
-mod projection;
+pub(super) mod projection;
 
 /// Why no transcript source is available yet.
 enum NoSource {
@@ -250,7 +250,7 @@ mod tests {
             async move {
                 tokio::time::timeout(
                     Duration::from_millis(500),
-                    registry.last_prompt_projection(&record),
+                    registry.last_prompt_projection(&record, None),
                 )
                 .await
                 .expect("GET /sessions must not wait for a provider-history scan")

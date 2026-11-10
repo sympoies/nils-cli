@@ -5630,7 +5630,7 @@ async fn enrich_last_prompts(state: &Arc<ServeState>, sessions: &mut [SessionVie
         };
         if let Some(projection) = state
             .provider_prompt_discovery
-            .last_prompt_projection(&record)
+            .last_prompt_projection(&record, Some(&state.context.state_dir))
             .await
         {
             session.previews = crate::provider_prompt::SessionPreviews {
@@ -8386,14 +8386,12 @@ struct ProviderPromptDiscoveryRegistry {
     >,
     resolver: Arc<ProviderPromptSourceResolver>,
     scan_permits: Arc<tokio::sync::Semaphore>,
-    tracker_opener: Arc<ProviderLastPromptTrackerOpener>,
+    tracker_opener: Arc<prompt_scan::projection::ProviderLastPromptTrackerOpener>,
     recovery_permits: Arc<tokio::sync::Semaphore>,
 }
 
 type ProviderPromptSourceResolver =
     dyn Fn(&crate::SessionRecord) -> Option<ProviderPromptSource> + Send + Sync;
-type ProviderLastPromptTrackerOpener =
-    dyn Fn(ProviderPromptSource) -> Option<ProviderLastPromptTracker> + Send + Sync;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -8517,7 +8515,7 @@ impl Default for ProviderPromptDiscoveryRegistry {
             scan_permits: Arc::new(tokio::sync::Semaphore::new(
                 PROVIDER_PROMPT_DISCOVERY_MAX_CONCURRENT_SCANS,
             )),
-            tracker_opener: Arc::new(ProviderLastPromptTracker::open_source),
+            tracker_opener: Arc::new(ProviderLastPromptTracker::open_source_with_binding),
             recovery_permits: Arc::new(tokio::sync::Semaphore::new(
                 PROVIDER_PROMPT_RECOVERY_MAX_CONCURRENT_SCANS,
             )),
@@ -8552,26 +8550,7 @@ impl ProviderPromptDiscoveryRegistry {
             scan_permits: Arc::new(tokio::sync::Semaphore::new(
                 PROVIDER_PROMPT_DISCOVERY_MAX_CONCURRENT_SCANS,
             )),
-            tracker_opener: Arc::new(ProviderLastPromptTracker::open_source),
-            recovery_permits: Arc::new(tokio::sync::Semaphore::new(
-                PROVIDER_PROMPT_RECOVERY_MAX_CONCURRENT_SCANS,
-            )),
-        }
-    }
-
-    #[cfg(test)]
-    fn with_resolver_and_tracker_opener<F, G>(resolver: F, tracker_opener: G) -> Self
-    where
-        F: Fn(&crate::SessionRecord) -> Option<ProviderPromptSource> + Send + Sync + 'static,
-        G: Fn(ProviderPromptSource) -> Option<ProviderLastPromptTracker> + Send + Sync + 'static,
-    {
-        Self {
-            entries: tokio::sync::Mutex::new(HashMap::new()),
-            resolver: Arc::new(resolver),
-            scan_permits: Arc::new(tokio::sync::Semaphore::new(
-                PROVIDER_PROMPT_DISCOVERY_MAX_CONCURRENT_SCANS,
-            )),
-            tracker_opener: Arc::new(tracker_opener),
+            tracker_opener: Arc::new(ProviderLastPromptTracker::open_source_with_binding),
             recovery_permits: Arc::new(tokio::sync::Semaphore::new(
                 PROVIDER_PROMPT_RECOVERY_MAX_CONCURRENT_SCANS,
             )),

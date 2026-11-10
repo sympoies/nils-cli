@@ -634,13 +634,22 @@ impl ProviderPromptTail {
 }
 
 impl ProviderLastPromptTracker {
+    #[cfg(test)]
     pub(crate) fn open_source(source: ProviderPromptSource) -> Option<Self> {
-        Self::open_source_with_validation(source, true)
+        Self::open_source_with_binding(source, None)
+    }
+
+    pub(crate) fn open_source_with_binding(
+        source: ProviderPromptSource,
+        binding: Option<(u64, String, String)>,
+    ) -> Option<Self> {
+        Self::open_source_with_validation(source, true, binding.as_ref())
     }
 
     fn open_source_with_validation(
         source: ProviderPromptSource,
         validate_source_identity: bool,
+        binding: Option<&(u64, String, String)>,
     ) -> Option<Self> {
         // Establish the append offset before the cold read. Any bytes written
         // during recovery remain after this offset and are consumed by refresh.
@@ -651,7 +660,8 @@ impl ProviderLastPromptTracker {
             validate_source_identity,
         )
         .ok()?;
-        let (last_prompt, goal, messages) = read_preview(&source, MAX_LAST_PROMPT_RECOVERY_BYTES);
+        let (last_prompt, goal, messages) =
+            read_preview_with_binding(&source, MAX_LAST_PROMPT_RECOVERY_BYTES, binding);
         tail.goal = goal;
         tail.messages = messages;
         tail.restore_display_partial().ok()?;
@@ -676,7 +686,7 @@ impl ProviderLastPromptTracker {
             session_id: session_id.to_string(),
             path,
         };
-        let mut tracker = Self::open_source_with_validation(source, false)?;
+        let mut tracker = Self::open_source_with_validation(source, false, None)?;
         tracker.tail.claude_fallback_delay = claude_fallback_delay;
         Some(tracker)
     }
@@ -1381,6 +1391,13 @@ pub(crate) fn read_last_prompt_skipping_launch(
     binding: &(u64, String, String),
 ) -> Option<LastPrompt> {
     let (mut buffer, start) = read_tail_window_with_start(&source.path, max_bytes).ok()?;
+    mask_bound_launch(&mut buffer, start, binding);
+    extract_preview(&buffer, source.provider, &source.session_id, start == 0)
+        .0
+        .map(LastPrompt::from)
+}
+
+fn mask_bound_launch(buffer: &mut [u8], start: u64, binding: &(u64, String, String)) {
     if let Some(relative) = binding
         .0
         .checked_sub(start)
@@ -1395,16 +1412,21 @@ pub(crate) fn read_last_prompt_skipping_launch(
     {
         buffer[relative..end - 1].fill(b' ');
     }
-    extract_preview(&buffer, source.provider, &source.session_id, start == 0)
-        .0
-        .map(LastPrompt::from)
 }
 
 fn read_preview(
     source: &ProviderPromptSource,
     max_bytes: usize,
 ) -> (Option<LastPrompt>, GoalPreviewState, PreviewMessages) {
-    let Ok((buffer, start)) = read_tail_window_with_start(&source.path, max_bytes) else {
+    read_preview_with_binding(source, max_bytes, None)
+}
+
+fn read_preview_with_binding(
+    source: &ProviderPromptSource,
+    max_bytes: usize,
+    binding: Option<&(u64, String, String)>,
+) -> (Option<LastPrompt>, GoalPreviewState, PreviewMessages) {
+    let Ok((mut buffer, start)) = read_tail_window_with_start(&source.path, max_bytes) else {
         return (
             None,
             GoalPreviewState {
@@ -1414,6 +1436,9 @@ fn read_preview(
             PreviewMessages::default(),
         );
     };
+    if let Some(binding) = binding {
+        mask_bound_launch(&mut buffer, start, binding);
+    }
     let (parsed, goal, messages) =
         extract_preview(&buffer, source.provider, &source.session_id, start == 0);
     (parsed.map(LastPrompt::from), goal, messages)

@@ -93,7 +93,25 @@ pub(crate) fn binding(
     session: &crate::provider_history::HistorySession,
     deadline: std::time::Instant,
 ) -> Option<(u64, String, String)> {
-    if session.provider != "claude" {
+    binding_for_source(
+        state,
+        &session.provider,
+        &session.provider_session_id,
+        session.agent_profile.as_deref(),
+        &session.transcript_path,
+        deadline,
+    )
+}
+
+pub(crate) fn binding_for_source(
+    state: &Path,
+    provider: &str,
+    provider_session_id: &str,
+    agent_profile: Option<&str>,
+    transcript_path: &Path,
+    deadline: std::time::Instant,
+) -> Option<(u64, String, String)> {
+    if provider != "claude" {
         return None;
     }
     let context = CliContext {
@@ -117,7 +135,7 @@ pub(crate) fn binding(
         let Ok(receipt) = serde_json::from_slice::<Receipt>(&bytes) else {
             continue;
         };
-        if receipt.provider_session_id != session.provider_session_id {
+        if receipt.provider_session_id != provider_session_id {
             continue;
         }
         let id = entry.file_name();
@@ -126,10 +144,10 @@ pub(crate) fn binding(
             continue;
         };
         if record.agent != "claude"
-            || crate::session_agent_profile(&record) != session.agent_profile.as_deref()
+            || crate::session_agent_profile(&record) != agent_profile
             || record.provider_resume.as_ref().is_none_or(|p| {
                 p.provider != "claude"
-                    || p.session_id != session.provider_session_id
+                    || p.session_id != provider_session_id
                     || p.capture_method != "claude-explicit-session-id"
             })
         {
@@ -145,7 +163,7 @@ pub(crate) fn binding(
     }
     let receipt = found?;
     use std::io::{BufRead, Read};
-    let file = std::fs::File::open(&session.transcript_path).ok()?;
+    let file = std::fs::File::open(transcript_path).ok()?;
     let mut reader = std::io::BufReader::new(file.take(1024 * 1024 + 1));
     let mut line = Vec::new();
     let mut offset = 0u64;
@@ -161,7 +179,7 @@ pub(crate) fn binding(
         }
         let value: Value = serde_json::from_slice(&line).ok()?;
         if value["type"] == "user" && value["message"]["role"] == "user" {
-            if value["sessionId"].as_str()? != session.provider_session_id
+            if value["sessionId"].as_str()? != provider_session_id
                 || value["isSidechain"].as_bool() != Some(false)
             {
                 return None;

@@ -424,7 +424,7 @@ async fn cancelled_large_claude_list_refresh_recovers_real_prompt() {
     let request = tokio::spawn({
         let registry = registry.clone();
         let record = record.clone();
-        async move { registry.last_prompt_projection(&record).await }
+        async move { registry.last_prompt_projection(&record, None).await }
     });
     tokio::time::timeout(Duration::from_secs(5), async {
         while !slot.lock().await.last_prompt_in_flight {
@@ -440,7 +440,7 @@ async fn cancelled_large_claude_list_refresh_recovers_real_prompt() {
 
     let recovered = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let projection = registry.last_prompt_projection(&record).await.unwrap();
+            let projection = registry.last_prompt_projection(&record, None).await.unwrap();
             if projection.state == LastPromptState::Current {
                 break projection;
             }

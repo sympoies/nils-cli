@@ -1,10 +1,43 @@
 //! Bounded incremental prompt and message projection for session lists.
 use super::*;
 
+pub(in crate::serve) type ProviderLastPromptTrackerOpener = dyn Fn(ProviderPromptSource, Option<(u64, String, String)>) -> Option<ProviderLastPromptTracker>
+    + Send
+    + Sync;
+
 impl ProviderPromptDiscoveryRegistry {
+    #[cfg(test)]
+    pub(in crate::serve) fn with_resolver_and_tracker_opener<F, G>(
+        resolver: F,
+        tracker_opener: G,
+    ) -> Self
+    where
+        F: Fn(&crate::SessionRecord) -> Option<ProviderPromptSource> + Send + Sync + 'static,
+        G: Fn(
+                ProviderPromptSource,
+                Option<(u64, String, String)>,
+            ) -> Option<ProviderLastPromptTracker>
+            + Send
+            + Sync
+            + 'static,
+    {
+        Self {
+            entries: tokio::sync::Mutex::new(HashMap::new()),
+            resolver: Arc::new(resolver),
+            scan_permits: Arc::new(tokio::sync::Semaphore::new(
+                PROVIDER_PROMPT_DISCOVERY_MAX_CONCURRENT_SCANS,
+            )),
+            tracker_opener: Arc::new(tracker_opener),
+            recovery_permits: Arc::new(tokio::sync::Semaphore::new(
+                PROVIDER_PROMPT_RECOVERY_MAX_CONCURRENT_SCANS,
+            )),
+        }
+    }
+
     pub(in crate::serve) async fn last_prompt_projection(
         &self,
         record: &crate::SessionRecord,
+        state_dir: Option<&std::path::Path>,
     ) -> Option<LastPromptProjection> {
         let key = ProviderPromptDiscoveryKey::from_record(record)?;
         let source = match self.cached_source_or_start_scan(record, &key).await {
@@ -42,6 +75,8 @@ impl ProviderPromptDiscoveryRegistry {
         };
         let tracker_opener = self.tracker_opener.clone();
         let recovery_permits = self.recovery_permits.clone();
+        let state_dir = state_dir.map(std::path::Path::to_path_buf);
+        let record = record.clone();
         // The work owns its single-flight completion. Dropping a list request
         // must not leave the slot pending after its blocking refresh finishes.
         tokio::spawn(async move {
@@ -91,6 +126,8 @@ impl ProviderPromptDiscoveryRegistry {
                         source,
                         tracker_opener,
                         recovery_permits,
+                        state_dir,
+                        record,
                     );
                     Some(LastPromptProjection {
                         state: if unavailable_until_current {
@@ -133,7 +170,7 @@ impl ProviderPromptDiscoveryRegistry {
         &self,
         record: &crate::SessionRecord,
     ) -> Option<LastPrompt> {
-        self.last_prompt_projection(record)
+        self.last_prompt_projection(record, None)
             .await
             .and_then(|projection| projection.prompt)
     }
@@ -144,6 +181,8 @@ impl ProviderPromptDiscoveryRegistry {
         source: ProviderPromptSource,
         tracker_opener: Arc<ProviderLastPromptTrackerOpener>,
         recovery_permits: Arc<tokio::sync::Semaphore>,
+        state_dir: Option<PathBuf>,
+        record: crate::SessionRecord,
     ) {
         tokio::spawn(async move {
             loop {
@@ -159,12 +198,25 @@ impl ProviderPromptDiscoveryRegistry {
                 let task_cell = tracker_cell.clone();
                 let task_source = source.clone();
                 let task_opener = tracker_opener.clone();
+                let task_state = state_dir.clone();
+                let task_record = record.clone();
                 let refresh = tokio::task::spawn_blocking(move || {
                     let Ok(mut tracker) = task_cell.lock() else {
                         return ProviderLastPromptRefresh::Invalidated;
                     };
                     if tracker.is_none() {
-                        *tracker = task_opener(task_source);
+                        let binding = task_state.as_deref().and_then(|state| {
+                            let provider = task_record.provider_resume.as_ref()?;
+                            crate::notice::launch::binding_for_source(
+                                state,
+                                &provider.provider,
+                                &provider.session_id,
+                                crate::session_agent_profile(&task_record),
+                                task_source.path(),
+                                std::time::Instant::now() + Duration::from_secs(2),
+                            )
+                        });
+                        *tracker = task_opener(task_source, binding);
                     }
                     let Some(tracker) = tracker.as_mut() else {
                         return ProviderLastPromptRefresh::Invalidated;
