@@ -126,6 +126,9 @@ fn unavailable_alert_route_is_explicit_and_retries_after_it_recovers() {
     assert_eq!(receipt["escalation"]["recorded_at"], Value::Null);
     assert_eq!(receipt["delivered_at"], Value::Null);
     assert_eq!(receipt["degraded_reason"], "owner_unavailable");
+    let deliverable = super::alert_delivery::list(&context, 100).unwrap();
+    assert_eq!(deliverable["alerts"].as_array().unwrap().len(), 1);
+    assert_eq!(deliverable["alerts"][0]["state"], "pending");
 
     fs::remove_file(&blocker).unwrap();
     tick_once(&context, &record);
@@ -210,4 +213,272 @@ fn renamed_executable_is_used_in_owner_escalation() {
         "session-control",
         parentless_incident_records_one_deduplicated_alert_without_claiming_delivery,
     );
+}
+
+#[test]
+fn owner_unavailable_alert_exposes_pending_person_and_watchdog_delivery() {
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+    let lock = GlobalStateLock::new();
+    for configured in ["person", "person,watchdog"] {
+        let _targets = EnvGuard::set(&lock, "AGENT_SESSION_AUTH_ALERT_TARGETS", configured);
+        let record = record();
+        let (_tmp, context) = failed(&record);
+        tick_once(&context, &record);
+        let bytes = fs::read(session_dir(&context, &record.id).join("auth-alerts.json"))
+            .expect("owner-unavailable incident has no deliverable record, only a spool entry");
+        let store: Value = serde_json::from_slice(&bytes).unwrap();
+        let alert = &store["alerts"][0];
+        assert_eq!(alert["state"], "pending");
+        let expected = configured.split(',').collect::<Vec<_>>();
+        assert_eq!(alert["required_targets"], json!(expected));
+        for target in expected {
+            assert_eq!(alert["delivery"][target]["state"], "pending");
+            assert_eq!(alert["delivery"][target]["delivered_at"], Value::Null);
+        }
+    }
+}
+
+#[test]
+fn alert_delivery_acks_only_configured_targets_and_retains_transport_proof() {
+    use super::alert_delivery::{self, Target};
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+    let lock = GlobalStateLock::new();
+    for configured in ["person", "person,watchdog"] {
+        let _targets = EnvGuard::set(&lock, "AGENT_SESSION_AUTH_ALERT_TARGETS", configured);
+        let record = record();
+        let (_tmp, context) = failed(&record);
+        tick_once(&context, &record);
+        let listed = alert_delivery::list(&context, 100).unwrap();
+        let alert_id = listed["alerts"][0]["alert_id"].as_str().unwrap();
+        let proof = format!("sha256:{}", "a".repeat(64));
+        let delivered =
+            alert_delivery::acknowledge(&context, &record.id, alert_id, Target::Person, &proof)
+                .unwrap();
+        let delivered = serde_json::to_value(delivered).unwrap();
+        assert_eq!(
+            delivered["state"],
+            if configured == "person" {
+                "delivered"
+            } else {
+                "pending"
+            }
+        );
+        assert_eq!(delivered["delivery"]["person"]["receipt"], proof);
+        let path = session_dir(&context, &record.id).join("auth-alerts.json");
+        let before = fs::read(&path).unwrap();
+        alert_delivery::acknowledge(&context, &record.id, alert_id, Target::Person, &proof)
+            .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), before);
+        let conflict = format!("sha256:{}", "b".repeat(64));
+        assert_eq!(
+            alert_delivery::acknowledge(&context, &record.id, alert_id, Target::Person, &conflict)
+                .unwrap_err()
+                .code(),
+            "auth-alert-receipt-conflict"
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+        if configured == "person,watchdog" {
+            // Configuration is frozen on the alert even if the daemon changes.
+            let _changed = EnvGuard::set(&lock, "AGENT_SESSION_AUTH_ALERT_TARGETS", "person");
+            let result = alert_delivery::acknowledge(
+                &context,
+                &record.id,
+                alert_id,
+                Target::Watchdog,
+                &conflict,
+            )
+            .unwrap();
+            assert_eq!(serde_json::to_value(result).unwrap()["state"], "delivered");
+        } else {
+            assert_eq!(
+                alert_delivery::acknowledge(
+                    &context,
+                    &record.id,
+                    alert_id,
+                    Target::Watchdog,
+                    &proof
+                )
+                .unwrap_err()
+                .code(),
+                "auth-alert-target-unconfigured"
+            );
+        }
+        tick_once(&context, &record);
+        let listed = alert_delivery::list(&context, 100).unwrap();
+        assert_eq!(listed["alerts"].as_array().unwrap().len(), 1);
+        assert_eq!(listed["alerts"][0]["state"], "delivered");
+        assert!(listed["alerts"][0]["delivered_at"].is_string());
+        assert_eq!(
+            incident(&context, &record)["notification"]["delivered_at"],
+            Value::Null
+        );
+        assert_eq!(events(&context).len(), 1);
+        assert!(recovery::ensure_input_allowed(&context, &record).is_err());
+    }
+}
+
+#[test]
+fn alert_delivery_retries_without_repeating_a_recorded_spool_event() {
+    let record = record();
+    let (_tmp, context) = failed(&record);
+    let blocker = session_dir(&context, &record.id).join("auth-alerts.json");
+    fs::create_dir(&blocker).unwrap();
+    tick_once(&context, &record);
+    assert_eq!(
+        incident(&context, &record)["notification"]["escalation"]["state"],
+        "delivery_unavailable"
+    );
+    assert_eq!(events(&context).len(), 1);
+    fs::remove_dir(&blocker).unwrap();
+    tick_once(&context, &record);
+    tick_once(&context, &record);
+    assert_eq!(
+        incident(&context, &record)["notification"]["escalation"]["state"],
+        "recorded"
+    );
+    assert_eq!(events(&context).len(), 1);
+    assert_eq!(
+        super::alert_delivery::list(&context, 100).unwrap()["alerts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn alert_delivery_keeps_incident_and_later_result_acknowledgements_independent() {
+    use super::alert_delivery::{self, Target};
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+    let lock = GlobalStateLock::new();
+    let _targets = EnvGuard::set(&lock, "AGENT_SESSION_AUTH_ALERT_TARGETS", "person");
+    let record = record();
+    let (_tmp, context) = failed(&record);
+    tick_once(&context, &record);
+    let listed = alert_delivery::list(&context, 100).unwrap();
+    let original = listed["alerts"][0]["alert_id"].as_str().unwrap();
+    recover(
+        &context,
+        &record,
+        "credentials_refreshed",
+        "2030-01-01T00:01:00Z",
+    )
+    .unwrap();
+    tick_once(&context, &record);
+    alert_delivery::acknowledge(
+        &context,
+        &record.id,
+        original,
+        Target::Person,
+        &format!("sha256:{}", "a".repeat(64)),
+    )
+    .unwrap();
+    let listed = alert_delivery::list(&context, 100).unwrap();
+    assert_eq!(listed["alerts"].as_array().unwrap().len(), 2);
+    assert_eq!(listed["alerts"][0]["phase"], "recovery");
+    assert_eq!(listed["alerts"][0]["result"], "credentials_refreshed");
+    assert_eq!(listed["alerts"][0]["recovery_action"], Value::Null);
+    assert_eq!(listed["alerts"][0]["state"], "pending");
+    assert_eq!(listed["alerts"][1]["state"], "delivered");
+    let only_pending = alert_delivery::list(&context, 1).unwrap();
+    assert_eq!(only_pending["alerts"][0]["state"], "pending");
+    assert_eq!(only_pending["truncated"], true);
+}
+
+#[test]
+fn alert_delivery_defaults_to_person_and_retries_invalid_configuration() {
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+    let lock = GlobalStateLock::new();
+    let _unset = EnvGuard::remove(&lock, "AGENT_SESSION_AUTH_ALERT_TARGETS");
+    let record = record();
+    let (_tmp, context) = failed(&record);
+    {
+        let _invalid = EnvGuard::set(&lock, "AGENT_SESSION_AUTH_ALERT_TARGETS", "unknown");
+        tick_once(&context, &record);
+        assert_eq!(
+            incident(&context, &record)["notification"]["escalation"]["state"],
+            "delivery_unavailable"
+        );
+        assert_eq!(
+            super::alert_delivery::list(&context, 100).unwrap()["alerts"],
+            json!([])
+        );
+    }
+    tick_once(&context, &record);
+    let listed = super::alert_delivery::list(&context, 100).unwrap();
+    assert_eq!(listed["alerts"][0]["required_targets"], json!(["person"]));
+    assert_eq!(events(&context).len(), 1);
+}
+
+#[test]
+fn alert_delivery_refuses_invalid_proof_without_recording_delivery() {
+    use super::alert_delivery::{self, Target};
+    let record = record();
+    let (_tmp, context) = failed(&record);
+    tick_once(&context, &record);
+    let listed = alert_delivery::list(&context, 100).unwrap();
+    let alert_id = listed["alerts"][0]["alert_id"].as_str().unwrap();
+    let path = session_dir(&context, &record.id).join("auth-alerts.json");
+    let before = fs::read(&path).unwrap();
+    for invalid in [
+        "receipt".to_string(),
+        format!("sha256:{}", "a".repeat(63)),
+        format!("sha256:{}", "A".repeat(64)),
+        format!("sha256:{}", "g".repeat(64)),
+    ] {
+        assert_eq!(
+            alert_delivery::acknowledge(&context, &record.id, alert_id, Target::Person, &invalid)
+                .unwrap_err()
+                .code(),
+            "auth-alert-receipt-invalid"
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+}
+
+#[test]
+fn alert_delivery_drops_a_superseded_unlocked_notification_snapshot() {
+    use super::alert_delivery;
+    for changed in ["delivered", "result", "owner_restored"] {
+        let record = record();
+        let (_tmp, context) = failed(&record);
+        tick_once(&context, &record);
+        recover(&context, &record, "refresh_failed", "2030-01-01T00:01:00Z").unwrap();
+        tick_once(&context, &record);
+        let stale = read(&context, &record).unwrap().incidents[0].clone();
+        fs::remove_file(session_dir(&context, &record.id).join("auth-alerts.json")).unwrap();
+        let mut store = read(&context, &record).unwrap();
+        if changed == "delivered" {
+            store.incidents[0].recovery_notification.delivered_at =
+                Some("2030-01-01T00:02:00Z".into());
+        } else if changed == "result" {
+            store.incidents[0].recovery_result = Some("credentials_refreshed".into());
+        } else {
+            crate::write_session_record(&context, &with_owner(record.clone())).unwrap();
+        }
+        save(&context, &record, &store).unwrap();
+        alert_delivery::enqueue(&context, &stale, true).unwrap();
+        assert_eq!(
+            alert_delivery::list(&context, 100).unwrap()["alerts"],
+            json!([])
+        );
+        if changed == "result" {
+            tick_once(&context, &record);
+            let listed = alert_delivery::list(&context, 100).unwrap();
+            assert!(
+                listed["alerts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|alert| alert["result"] != "refresh_failed")
+            );
+            assert!(
+                listed["alerts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|alert| alert["result"] == "credentials_refreshed")
+            );
+        }
+    }
 }

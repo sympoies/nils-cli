@@ -25,6 +25,9 @@ _agent__session() {
             agent__session,attach)
                 cmd="agent__session__attach"
                 ;;
+            agent__session,auth-alert)
+                cmd="agent__session__auth__alert"
+                ;;
             agent__session,auto-resume)
                 cmd="agent__session__auto__resume"
                 ;;
@@ -150,6 +153,12 @@ _agent__session() {
                 ;;
             agent__session__activity,status)
                 cmd="agent__session__activity__status"
+                ;;
+            agent__session__auth__alert,ack)
+                cmd="agent__session__auth__alert__ack"
+                ;;
+            agent__session__auth__alert,list)
+                cmd="agent__session__auth__alert__list"
                 ;;
             agent__session__broker,adopt)
                 cmd="agent__session__broker__adopt"
@@ -296,7 +305,7 @@ _agent__session() {
 
     case "${cmd}" in
         agent__session)
-            opts="-h -V --state-dir --host --help --version rules start run auto-resume list board command attach logs diagnose send notice notice-store drafts glance resume restart clear rebind account refresh title activity work-context broker readiness delegation message metadata workspace lineage work serve codex-app-server-proxy delete tmp completion"
+            opts="-h -V --state-dir --host --help --version auth-alert rules start run auto-resume list board command attach logs diagnose send notice notice-store drafts glance resume restart clear rebind account refresh title activity work-context broker readiness delegation message metadata workspace lineage work serve codex-app-server-proxy delete tmp completion"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -669,6 +678,101 @@ _agent__session() {
                     if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
                         compopt -o filenames
                     fi
+                    return 0
+                    ;;
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agent__session__auth__alert)
+            opts="-h --state-dir --host --help list ack"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agent__session__auth__alert__ack)
+            opts="-h --target --receipt --format --state-dir --host --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --target)
+                    COMPREPLY=($(compgen -W "person watchdog" -- "${cur}"))
+                    return 0
+                    ;;
+                --receipt)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agent__session__auth__alert__list)
+            opts="-h --limit --format --state-dir --host --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --limit)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0
                     ;;
                 --state-dir)

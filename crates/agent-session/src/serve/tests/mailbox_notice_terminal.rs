@@ -284,6 +284,10 @@ async fn queued_claude_wake_remains_retryable_after_clear(stash: bool) {
         assert_eq!(saved["text"], draft);
         assert_eq!(saved["cleared"], true);
     }
+    // Retry discovery honors the receipt backoff; direct redispatch must do so too.
+    let retry_at = std::time::UNIX_EPOCH + Duration::from_secs(receipt["next_attempt_at_epoch"].as_u64().unwrap());
+    tokio::time::sleep(retry_at.duration_since(std::time::SystemTime::now()).unwrap_or_default()).await;
+    assert!(crate::coordination::pending_notifications(&fixture.state.context).unwrap().iter().any(|candidate| candidate.generation == fixture.candidate.generation), "retry candidate is not due; notification receipt: {receipt}");
     let transcript = fixture.temp.path().join("profile-config/projects/project-27/provider-beta.jsonl");
     let receiver = std::thread::spawn(move || {
         use std::io::{Read, Write};
@@ -306,13 +310,13 @@ async fn queued_claude_wake_remains_retryable_after_clear(stash: bool) {
             serde_json::from_str(body).unwrap()
         };
         let authorized = post("/authorize", json!({"schema_version":"agent-session.claude-notice-authorize.v1", "op":offer["op"], "binding":binding, "nonce":nonce, "terminal":true, "box_empty":true, "cursor":0}));
-        let text = authorized["text"].as_str().unwrap();
+        let text = authorized["text"].as_str().unwrap_or_else(|| panic!("authorization response: {authorized}"));
         writeln!(fs::OpenOptions::new().append(true).open(transcript).unwrap(), "{}", json!({"type":"user", "sessionId":"provider-beta", "uuid":"11111111-1111-4111-8111-111111111111", "version":"2.1.296", "promptSource":"system", "isSidechain":false, "origin":{"kind":"plugin", "name":"agent-session-claude-notice", "asUser":true}, "message":{"role":"user", "content":text}})).unwrap();
         post("/result", json!({"schema_version":"agent-session.claude-notice-result.v1", "op":offer["op"], "binding":binding, "nonce":nonce, "outcome":"accepted", "after_empty":true, "returned_text":text, "origin":{"kind":"plugin", "name":"agent-session-claude-notice", "as_user":true}}));
     });
     crate::serve::terminal_notification::dispatch_coordination_notification(fixture.state.clone(), fixture.candidate.clone()).await;
-    receiver.join().unwrap();
     let receipt = notification_fixture(fixture.temp.path());
+    assert!(receiver.join().is_ok(), "receiver failed; notification receipt: {receipt}");
     assert_eq!(receipt["state"], "prompt_submitted", "{receipt}");
     assert_eq!(receipt["notified_generation"], 1);
     drain_coordination_notifications(fixture.state.clone()).await;
@@ -379,6 +383,11 @@ async fn stale_codex_wake_saves_draft_and_delivers_once() {
     observation["unchanged_since"] = json!(1);
     fs::write(observed, serde_json::to_vec(&observation).unwrap()).unwrap();
     fs::write(fixture.temp.path().join("codex-collapse-paste"), "").unwrap();
+    let receipt = notification_fixture(fixture.temp.path());
+    // Match retry discovery rather than relying on composer guard latency.
+    let retry_at = std::time::UNIX_EPOCH + Duration::from_secs(receipt["next_attempt_at_epoch"].as_u64().unwrap());
+    tokio::time::sleep(retry_at.duration_since(std::time::SystemTime::now()).unwrap_or_default()).await;
+    assert!(crate::coordination::pending_notifications(&fixture.state.context).unwrap().iter().any(|candidate| candidate.generation == fixture.candidate.generation), "retry candidate is not due; notification receipt: {receipt}");
     crate::serve::terminal_notification::dispatch_coordination_notification(
         fixture.state.clone(),
         fixture.candidate.clone(),

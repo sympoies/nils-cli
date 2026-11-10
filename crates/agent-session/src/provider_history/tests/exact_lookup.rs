@@ -350,3 +350,87 @@ fn direct_session_keeps_catalog_segment_images_resolvable() {
         )))
     );
 }
+
+#[test]
+fn fresh_managed_claude_session_survives_catalog_limit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let crowded = tmp.path().join("older/projects/repo");
+    let project = tmp.path().join("recent/projects/repo");
+    let state = tmp.path().join("state");
+    fs::create_dir_all(&crowded).unwrap();
+    fs::create_dir_all(&project).unwrap();
+    for n in 0..=SCAN_MAX_ENTRIES {
+        fs::write(crowded.join(format!("older-{n}.jsonl")), "").unwrap();
+    }
+    let id = "12345678-1234-1234-1234-123456789abc";
+    fs::write(
+        project.join(format!("{id}.jsonl")),
+        format!("{{\"sessionId\":\"{id}\",\"cwd\":\"/work/repo\",\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"fresh human prompt\"}}}}\n"),
+    ).unwrap();
+    let record = serde_json::json!({
+        "schema_version": crate::SESSION_DOCUMENT_VERSION,
+        "id": "managed-fixture", "agent": "claude", "mode": "interactive",
+        "title": null, "cwd": "/work/repo", "tmux_session": "fixture",
+        "prompt_file": null, "log_file": null,
+        "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+        "provider_resume": {
+            "provider": "claude", "session_id": id,
+            "captured_at": "2026-01-01T00:00:00Z",
+            "capture_method": "fixture", "resume_args": ["--resume", id]
+        }
+    });
+    let session_dir = state.join("sessions/managed-fixture");
+    fs::create_dir_all(&session_dir).unwrap();
+    fs::write(session_dir.join("session.json"), record.to_string()).unwrap();
+    let catalog = HistoryCatalog::new(
+        vec![
+            HistorySource {
+                provider: "claude".into(),
+                agent_profile: None,
+                root: tmp.path().join("older/projects"),
+            },
+            HistorySource {
+                provider: "claude".into(),
+                agent_profile: None,
+                root: tmp.path().join("recent/projects"),
+            },
+        ],
+        tmp.path().join("archives"),
+        tmp.path().join("stars"),
+    )
+    .with_session_state_dir(state);
+
+    // Ordinary History listing, without the exact-ID query path from #3358.
+    let page = catalog
+        .list("test", None, Some("claude"), None, 50)
+        .unwrap();
+    assert!(page.truncated);
+    assert!(
+        page.sessions
+            .iter()
+            .any(|session| session.provider_session_id == id),
+        "fresh managed session missing from truncated History page"
+    );
+    let session = page
+        .sessions
+        .iter()
+        .find(|session| session.provider_session_id == id)
+        .unwrap();
+    assert_eq!(
+        session.first_user_prompt_preview.as_deref(),
+        Some("fresh human prompt")
+    );
+    let messages = catalog
+        .messages(&session.id, None, 10, HistoryMessageDirection::Forward)
+        .unwrap();
+    assert_eq!(messages.messages[0].text, "fresh human prompt");
+    fs::remove_file(&session.transcript_path).unwrap();
+    catalog.invalidate();
+    assert!(
+        catalog
+            .list("test", None, Some("claude"), None, 50)
+            .unwrap()
+            .sessions
+            .is_empty()
+    );
+}

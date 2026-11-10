@@ -615,6 +615,15 @@ mailbox verdicts never replace provider evidence. See the
 [handoff contract](docs/specs/forge-cli-spec-v1.md#pr-review-handoff-assign--inspect--check--surrender--recover)
 for assignment, writer fencing, generation-bound surrender/recovery, and privacy boundaries.
 
+If the assigned review publisher is unavailable, the recorded coordinator can
+use `recover --reason publisher-unavailable --expected-head <sha> --expected-state
+<digest>`. This audited recovery advances the generation and releases the
+designated merge gate. Merge then follows the repository's non-assigned review
+policy; `--review-convergence=false` permits an absent observation. Other merge
+gates remain enforced. Reviewer recovery reasons still return
+`designated_reviewer_unavailable`. See the
+[publisher recovery runbook](docs/runbooks/unavailable-review-publisher.md).
+
 A repository-configured handoff supervisor can recover a retired coordinator
 with `--reason coordinator-retired`, `--base-sha`, `--expected-head`, and
 `--expected-state`. `--coordinator-session` is optional; the stored coordinator
@@ -633,6 +642,17 @@ a head the designated reviewer has passed, `pr review-dismiss <id> --review-id <
 refuses human, unconfigured, wrong-head and wrong-state reviews, and any PR
 without a designated PASS at that head. See the
 [dismissal contract](docs/specs/forge-cli-spec-v1.md#pr-review-dismiss).
+
+Approve an external contributor's GitHub Actions run after reviewing the workflow changes:
+
+```bash
+forge-cli --repo example/widget run approve 42 --pr 7 --expected-head "$EXPECTED_HEAD" --reason-file reason.txt
+```
+
+The reason file is recorded in the output and must not contain secrets. The run
+and PR must match the expected head, and the run must be awaiting approval. A
+repeat after the run moves on is refused with `run-not-awaiting-approval`.
+GitLab is unsupported. Use `--dry-run` to check the fences without approving.
 
 For fenced CI reruns and attempt/job receipts, see the
 [run rerun contract](docs/specs/forge-run-rerun-v1.md).

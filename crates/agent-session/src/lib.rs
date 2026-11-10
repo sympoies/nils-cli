@@ -302,45 +302,9 @@ fn dispatch(cli: Cli) -> i32 {
     ) {
         account_broker::adopt_serve_brokers(&context.state_dir);
     }
-    match cli.command {
-        Command::Drafts(args) => cli::drafts::run(&context, args),
-        Command::Start(args) => run_start(&context, *args),
-        Command::Run(args) => run_one_shot(&context, args),
-        Command::List(args) => run_list(&context, args),
-        Command::Board(args) => board::run(&context, args),
-        Command::Show(args) => session_model::refresh::run_show(&context, args),
-        Command::Refresh(args) => session_model::refresh::run(&context, args),
-        Command::Title(args) => session_title::run(&context, args),
-        Command::AutoResume(args) => auto_resume::cli::run(&context, args),
-        Command::Attach(args) => run_attach(&context, args),
-        Command::Logs(args) => run_logs(&context, args),
-        Command::Diagnose(args) => diagnose::run_diagnose(&context, args),
-        Command::Send(args) => send::run(&context, args),
-        Command::Notice(args) => notice::run(&context, args),
-        Command::NoticeStore(args) => send::claude_notice::store::audit::run(&context, args),
-        Command::Glance(args) => run_glance(&context, args),
-        Command::Resume(args) => run_resume(&context, args),
-        Command::Restart(args) => restart::run(&context, args),
-        Command::Clear(args) => conversation::run(&context, args, true),
-        Command::Rebind(args) => conversation::run(&context, args, false),
-        Command::Account(args) => session_account::run_account(&context, args),
-        Command::Activity(args) => run_activity(&context, args),
-        Command::WorkContext(args) => coordination::run_work_context(&context, args),
-        Command::Broker(args) => coordination::run_broker(&context, args),
-        Command::Readiness(args) => coordination::readiness::run(&context, args),
-        Command::Delegation(args) => coordination::delegation::run(&context, args),
-        Command::Message(args) => coordination::run_message(&context, args),
-        Command::Metadata(args) => metadata::run_metadata(&context, args),
-        Command::Lineage(args) => lineage::run_lineage(&context, args),
-        Command::Work(args) => lineage::run_work(&context, args),
-        Command::Workspace(args) => origin::run(&context, args),
-        Command::Serve(args) => serve::run_serve(&context, args),
-        Command::CodexAppServerProxy(args) => codex_app_server::run_proxy(&context, args),
-        Command::Delete(args) => run_delete(&context, args),
-        Command::Tmp(args) => runtime_environment::session_tmp::run(&context, args),
-        Command::Completion(_) | Command::Rules(_) => unreachable!("handled earlier"),
-    }
+    cli::dispatch::run(&context, cli.command)
 }
+
 fn detect_format_from_args(args: &[OsString]) -> OutputFormat {
     let mut index = 1;
     while index < args.len() {

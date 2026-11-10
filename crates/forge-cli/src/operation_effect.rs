@@ -70,8 +70,11 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
             ProviderEffect::NetworkWrite,
             Vec::new(),
         ),
-        Some(Command::Run(_)) => (
-            "run.rerun",
+        Some(Command::Run(args)) => (
+            match args.command {
+                crate::cli::RunCommand::Rerun(_) => "run.rerun",
+                crate::cli::RunCommand::Approve(_) => "run.approve",
+            },
             mutation,
             ProviderEffect::NetworkWrite,
             vec!["provider", "identity_policy"],

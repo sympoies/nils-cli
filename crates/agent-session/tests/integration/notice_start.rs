@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 struct Server(std::process::Child);
@@ -37,8 +37,7 @@ fn console_target_notice_start_writes_launch_receipt() {
         .unwrap()
         .local_addr()
         .unwrap();
-    let mut command = Command::new(nils_test_support::bin::resolve("agent-session"));
-    nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
+    let mut command = super::hermetic_provider_command(root);
     command
         .args([
             "serve",
@@ -51,10 +50,8 @@ fn console_target_notice_start_writes_launch_receipt() {
             "--tmux-bin",
             tmux.to_str().unwrap(),
         ])
-        .env("HOME", root)
         .env("AGENT_HOME", root.join("agent-home"))
         .env("CLAUDE_CONFIG_DIR", root.join("provider-config"))
-        .env("CODEX_HOME", root.join("codex-config"))
         .env("AGENT_SESSION_CLAUDE_BIN", &agent)
         .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
         .env("AGENT_SESSION_NOTICE_WRITERS", "1")
@@ -250,7 +247,7 @@ sys.exit(result.returncode)
         .unwrap()
         .local_addr()
         .unwrap();
-    let mut command = Command::new(nils_test_support::bin::resolve("agent-session"));
+    let mut command = super::hermetic_provider_command(root);
     command
         .args([
             "serve",
@@ -262,12 +259,9 @@ sys.exit(result.returncode)
             "synthetic-token",
         ])
         .env("CLAUDE_CONFIG_DIR", &config)
-        .env("CODEX_HOME", root.join("codex-config"))
-        .env("HOME", root)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
     let _server = Server(command.spawn().unwrap());
     let deadline = Instant::now() + Duration::from_secs(15);
     while TcpStream::connect(addr).is_err() {
@@ -571,7 +565,7 @@ sys.exit(result.returncode)
         .unwrap()
         .local_addr()
         .unwrap();
-    let mut command = Command::new(nils_test_support::bin::resolve("agent-session"));
+    let mut command = super::hermetic_provider_command(root);
     command
         .args([
             "serve",
@@ -585,12 +579,9 @@ sys.exit(result.returncode)
             tmux.to_str().unwrap(),
         ])
         .env("CLAUDE_CONFIG_DIR", &config)
-        .env("CODEX_HOME", root.join("codex-config"))
-        .env("HOME", root)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
     let _server = Server(command.spawn().unwrap());
     let deadline = Instant::now() + Duration::from_secs(15);
     while TcpStream::connect(addr).is_err() {
