@@ -9,6 +9,29 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::PathBuf;
 
 #[test]
+fn configured_binary_resolves_directly_and_as_facade_sibling() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let binary = tmp.path().join(format!(
+        "{}{}",
+        nils_common::session_binary::NAME,
+        std::env::consts::EXE_SUFFIX
+    ));
+    let facade = tmp.path().join("fixture-helper");
+    for path in [&binary, &facade] {
+        fs::write(path, "fixture").expect("fixture");
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).expect("mode");
+    }
+    for invocation in [&binary, &facade] {
+        assert_eq!(
+            launch_executable_from(invocation, &[])
+                .expect("configured executable")
+                .path,
+            binary
+        );
+    }
+}
+
+#[test]
 fn agent_session_executable_resolves_facade_to_exact_release_sibling() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let sibling_helper = tmp
