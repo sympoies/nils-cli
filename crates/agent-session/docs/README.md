@@ -15,6 +15,9 @@ or integrating a specific subsystem.
 - [Codex account recovery acceptance](runbooks/codex-account-recovery-acceptance.md):
   disposable-session recipes for startup recovery and an idle fixture without
   a model turn.
+- [Authentication quarantine fixture acceptance](runbooks/auth-quarantine-acceptance.md):
+  headless Claude and Codex recovery checks using synthetic credentials, with
+  repaired/admitted and unrepaired/refused outcomes.
 - [Work coordination](runbooks/work-coordination.md): coordination modes,
   declared paths, authority boundaries, advisory flow, and enforce flow.
 - [Serve daemon operations](runbooks/serve-daemon.md): safe startup,
