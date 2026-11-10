@@ -22,21 +22,27 @@ pub enum Command {
 
 #[derive(Debug, ClapArgs)]
 pub struct List {
+    /// Maximum alerts to return, with pending delivery first.
     #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u16).range(1..=200))]
     pub limit: u16,
+    /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 }
 
 #[derive(Debug, ClapArgs)]
 pub struct Ack {
+    /// Session that owns the authentication alert.
     pub session_id: String,
+    /// Stable authentication alert identity.
     pub alert_id: String,
+    /// Configured target whose transport confirmed delivery.
     #[arg(long, value_enum)]
     pub target: Target,
     /// SHA-256 digest of the external delivery receipt, never its payload.
     #[arg(long)]
     pub receipt: String,
+    /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 }
