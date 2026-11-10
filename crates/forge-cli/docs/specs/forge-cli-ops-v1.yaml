@@ -369,6 +369,21 @@ operations:
       details.failed_asset_outcome as unknown. Inspect the release before retrying;
       subsequent assets were not attempted. GitLab and Local are unsupported.
 
+  - id: run.approve
+    schema_version: cli.forge-cli.run.approve.v1
+    summary: Approve a GitHub pull request workflow run at the reviewed head.
+    inputs:
+      - { name: run-id, type: positive-integer, required: true }
+      - { name: --expected-head, type: full-sha, required: true }
+      - { name: --pr, type: positive-integer, required: true }
+      - { name: --reason-file, type: path, required: true }
+    validations: []
+    backends:
+      github:
+        - { program: gh, argv: [api, "repos/<repo>/actions/runs/<run-id>/approve", --method, POST], notes: "Read and fence the run and PR before one approval request." }
+    output:
+      data: { provider: github, repository: string, run_id: integer, head_sha: string, pr: integer, reason: string, prior_status: string, new_status: string, outcome: approved }
+
   - id: run.rerun
     schema_version: cli.forge-cli.run.rerun.v1
     summary: Request one identity-scoped GitHub rerun at the expected current PR head.
@@ -1147,13 +1162,18 @@ operations:
       - { name: --reviewer-session, type: string, required: conditional }
       - { name: --review-author, type: string, required: conditional }
       - { name: --base-sha, type: string, required: conditional }
-      - { name: --reason, type: enum, values: [reviewer-unreachable, reviewer-closed, reviewer-declined, reviewer-timeout, coordinator-retired], required: conditional }
+      - { name: --reason, type: enum, values: [reviewer-unreachable, reviewer-closed, reviewer-declined, reviewer-timeout, publisher-unavailable, coordinator-retired], required: conditional }
       - { name: --coordinator-session, type: string, required: false, notes: "optional recovery selector; when supplied, must match the recorded coordinator digest" }
     dry_run:
       offline: false
       repo_resolution: "--repo owner/name or recognised GitHub remote"
     validations:
       - designated_review_handoff
+      # publisher-unavailable uses original-coordinator identity and head/tip CAS,
+      # advances the generation and records the reason in the trusted chain.
+      # The latest released assignment does not gate merge; non-assigned review
+      # policy and all remaining merge gates apply. Other recovery reasons stay
+      # designated_reviewer_unavailable; later assign restores the designated gate.
       # test-changes and designated check share test-change-admission-v1.md:
       # optional PR-body provenance imports enumerate complete PR-files pages,
       # verify mapped additions against pinned upstream blob IDs, and require

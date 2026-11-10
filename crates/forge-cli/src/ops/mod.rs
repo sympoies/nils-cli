@@ -73,4 +73,5 @@ pub mod workflow;
 
 pub(crate) mod stacked_branch;
 
+pub mod run_approve;
 pub mod run_rerun;

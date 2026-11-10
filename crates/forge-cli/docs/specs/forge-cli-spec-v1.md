@@ -417,6 +417,15 @@ See [release lifecycle operations](forge-publication-admin-v1.md#release-view--r
 for resolved target commits, guarded notes editing, version-tag protection,
 explicit tag cleanup, verified readback, identity and failure contracts.
 
+### `run approve`
+
+`run approve <run-id> --pr <number> --expected-head <sha> --reason-file <path>`
+checks the current GitHub PR head, source repository, run association and
+`action_required` status or a `completed` status with an `action_required`
+conclusion before requesting approval. The reason is included in
+the output and must not contain secrets. A run no longer awaiting approval is
+refused with `run-not-awaiting-approval`; GitLab is unsupported.
+
 ### `run rerun`
 
 See [workflow run reruns](forge-run-rerun-v1.md) for identity-scoped GitHub

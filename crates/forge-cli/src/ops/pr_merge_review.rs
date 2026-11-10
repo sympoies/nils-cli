@@ -40,11 +40,14 @@ pub(super) fn ensure_merge_ready<R: BackendRunner>(
         })?;
         // Validate the complete trusted chain even when no observation exists.
         // Compatibility assignments permit explicit opt-out without a ledger.
-        // A strict final-approval assignment must still pass designated admission.
+        // A strict final-approval assignment gates until its coordinator releases
+        // an unavailable publisher; reviewer-only recovery keeps gating.
         let view = pr_review::read_review_loop_state_view(runner, ctx, &repository, number)?;
         if review_state::latest_review_loop_state(&view.chain).is_none()
-            && !super::pr_review_handoff::latest(&view.chain)
-                .is_some_and(|h| h.approval_policy == crate::cli::ApprovalPolicy::FinalApproval)
+            && !super::pr_review_handoff::latest(&view.chain).is_some_and(|h| {
+                h.approval_policy == crate::cli::ApprovalPolicy::FinalApproval
+                    && h.returned_reason.as_deref() != Some("publisher-unavailable")
+            })
         {
             return Ok(Some(MergeReviewGate::Unobserved {
                 state_tip_digest: view.chain.tip_digest,
