@@ -58,13 +58,12 @@ fn trusted_executable() -> Option<std::path::PathBuf> {
     {
         return Some(path);
     }
-    if let Some(roots) = std::env::var_os("AGENT_RUNTIME_TRUSTED_CLI_ROOT") {
-        if let Some(path) = std::env::split_paths(&roots)
+    if let Some(roots) = std::env::var_os("AGENT_RUNTIME_TRUSTED_CLI_ROOT")
+        && let Some(path) = std::env::split_paths(&roots)
             .map(|root| root.join("agent-session"))
             .find(|p| executable(p))
-        {
-            return Some(path);
-        }
+    {
+        return Some(path);
     }
     let current = std::env::current_exe().ok()?;
     crate::stable_executable::launch_executable_from(&current, &[])
