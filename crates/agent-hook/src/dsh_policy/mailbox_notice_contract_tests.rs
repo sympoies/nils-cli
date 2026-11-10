@@ -103,3 +103,12 @@ fn accepts_only_the_fixed_quota_alert() {
         &fixed.replace("mailbox.alert", "other.alert")
     ));
 }
+
+#[test]
+fn accepts_mailbox_wake_with_read_command() {
+    let text = format!(
+        "{HEADER}Mailbox: 1 report; agent-session message inbox\nRead: /opt/bin/agent-session message inbox --session recipient --format json\nShow: /opt/bin/agent-session message show --session recipient --message MESSAGE_ID --format json\nsender_relation=peer\n{}",
+        super::VERIFY_GUIDANCE
+    );
+    assert!(super::is_mailbox_notice(&text));
+}

@@ -176,7 +176,7 @@ pub(crate) fn claim_hook_reminder(
         target_session_id,
         target_incarnation,
         now,
-    );
+    )?;
     let receipt = registry
         .notifications
         .get_mut(&receipt_key(target_session_id, target_incarnation))?;

@@ -590,6 +590,7 @@ is applied.
 | Notice header | Starts with the `agent-notice:v1` HTML comment header, closed on the first line. |
 | `<Stored title>:` plus one ASCII space | A label or stored title in the shared kind-to-label table above. |
 | `Mailbox: <summary>; agent-session message inbox` | Whole first line; see [mailbox contract](coordination-mailbox-v1.md). |
+| `Read: <absolute agent-session> message inbox --session <recipient> --format json` | Recipient inbox command; followed by a `Show:` command for a message body. |
 
 Unknown titles and text that only contains a title word mid-line are user drafts
 and remain saved byte-for-byte. These rules concern composer cleanup only;

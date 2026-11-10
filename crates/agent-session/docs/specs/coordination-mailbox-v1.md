@@ -291,10 +291,18 @@ the dispatcher sentence for parent/ancestor, or an empty string for peers.
 Body-returning show/wait results include the relation and full guidance.
 Multiline `mailbox.wake` notices preserve the count/action summary, then list
 the distinct `sender_relation=<parent|ancestor|peer>` values of live unread,
-notification-eligible messages and the guidance once. Wakes contain no message
+notification-eligible messages and the guidance once. Before those labels, wakes include:
+
+```text
+Read: <absolute agent-session> message inbox --session <recipient> --format json
+Show: <absolute agent-session> message show --session <recipient> --message MESSAGE_ID --format json
+```
+
+Replace `MESSAGE_ID` with the inbox message id. Paths and session ids are shell quoted when necessary. The executable comes from the
+trusted session binary, trusted CLI roots, or the stable executable. Wakes contain no message
 body. Suppressed, read and expired messages do not contribute relation labels.
 
-The hook accepts the summary alone or the complete guidance form: relation
+The hook accepts the summary alone or the complete guidance form, including the read and show commands: relation
 labels in parent, ancestor, peer order, followed by the exact guidance below.
 When parent or ancestor appears, the dispatcher sentence follows, optionally
 including the recipient's nonempty single-line prompt path. Other trailing text

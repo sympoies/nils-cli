@@ -795,9 +795,9 @@ async fn unmarked_notices_match_history_paging_and_card() {
 
 #[tokio::test]
 async fn notice_preserves_admission_and_stays_out_of_human_previews() {
-    let marked = crate::notice::NoticeEnvelope::new("mailbox", "scheduler", None)
+    let marked = crate::notice::NoticeEnvelope::new("mailbox.wake", "agent-session", None)
         .unwrap()
-        .encode("Exact body\n")
+        .encode("Mailbox: 1 report; agent-session message inbox\nRead: /opt/bin/agent-session message inbox --session recipient --format json\nShow: /opt/bin/agent-session message show --session recipient --message MESSAGE_ID --format json")
         .unwrap();
     for provider in ["claude", "codex"] {
         let mut records = vec![user(provider, &marked), user(provider, "actual human")];
