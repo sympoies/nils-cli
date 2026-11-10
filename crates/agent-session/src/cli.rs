@@ -1,4 +1,6 @@
+pub(crate) mod auth_alert;
 pub mod broker_proof;
+pub(crate) mod dispatch;
 pub(crate) mod drafts;
 pub(crate) mod operator_rules;
 pub(crate) mod send_key;
@@ -68,6 +70,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Consume and acknowledge independent authentication alerts.
+    AuthAlert(auth_alert::Args),
     /// Show or validate the shared operator rules file.
     Rules(operator_rules::RulesArgs),
     /// Start an interactive tmux-backed agent session.

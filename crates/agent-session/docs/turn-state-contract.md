@@ -157,7 +157,7 @@ Each notification receipt contains these four members, plus an optional
 | `delivered_at` | timestamp string or null | Time durable inbox delivery was confirmed; does not imply the owner read or accepted the message. |
 | `message_id` | string or null | Mailbox identity after submission is recorded. |
 | `degraded_reason` | string or null | `owner_unavailable`, `relay_unavailable`, `relay_pending`, `delivery_unknown`, or `identity_conflict`; null when no degradation is recorded. |
-| `escalation` | object, optional | Present only after an `owner_unavailable` attempt: `route` (`observation_spool`), `state` (`recorded` once the event was appended, `unavailable` while the spool cannot be written and the next 15-second tick retries) and `recorded_at` (timestamp or null). It never implies delivery. |
+| `escalation` | object, optional | Present only after an `owner_unavailable` attempt: `route` (`observation_spool`), `state` (`recorded` once the event was appended, `unavailable` while the spool cannot be written and the next 15-second tick retries) and `recorded_at` (timestamp or null). `delivery_unavailable` means the independent deliverable record could not be retained and will be retried. Spool recording never implies delivery; see [alert delivery](specs/auth-alert-delivery-v1.md). |
 
 Timestamps use RFC 3339 strings. `auth_detection_health` is omitted before
 observation and otherwise contains exactly one of `structured`,

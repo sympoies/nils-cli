@@ -180,3 +180,11 @@ version is release drift, reported as a distinct read error. A body that does no
 parse, or that belongs to another schema family, remains corruption. Keeping the
 two apart is what lets a consumer offer a bounded upgrade recovery instead of a
 dead end.
+
+## Authentication alert consumer
+
+Owner-unavailable authentication events also create a durable deliverable record.
+Use [`auth-alert list` and `auth-alert ack`](auth-alert-delivery-v1.md) to consume
+and acknowledge actual transport delivery. The spool event remains an observation;
+a configured person/watchdog target becomes delivered only after its consumer
+acknowledgement.

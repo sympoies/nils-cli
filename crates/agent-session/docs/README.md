@@ -25,6 +25,8 @@ or integrating a specific subsystem.
 
 ## Stable contracts
 
+- [Authentication alert delivery v1](specs/auth-alert-delivery-v1.md): durable
+  consumer records, configured person/watchdog targets and delivery acknowledgements.
 - [Authentication failover v1](specs/auth-failover-v1.md): fresh broker policy
   and capacity, fenced switching, terminal outcomes and rollback.
 - [Claude auth recovery v1](specs/claude-auth-recovery-v1.md): prompt quarantine,

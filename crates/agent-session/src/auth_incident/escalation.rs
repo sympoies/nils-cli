@@ -5,7 +5,8 @@
 //! (`control-plane-observation-v1`) instead, so a consumer needs neither the
 //! affected runtime nor the serve daemon. Recording it is not delivery: the
 //! notification receipt keeps `delivered_at` null until a real owner receives
-//! the mailbox message.
+//! the mailbox message. The independent alert delivery record owns external
+//! consumer acknowledgements and retries alongside the spool.
 
 use nils_common::observation::{self, Component, Event, FieldError, Severity};
 use serde::{Deserialize, Serialize};
@@ -28,7 +29,7 @@ pub(super) struct Receipt {
 
 impl Receipt {
     fn recorded(&self) -> bool {
-        self.state == RECORDED
+        self.recorded_at.is_some()
     }
 }
 
@@ -47,14 +48,25 @@ pub(super) fn route_unowned(context: &CliContext, incidents: &mut [AuthIncident]
             };
             if notification.delivered_at.is_some()
                 || notification.degraded_reason.as_deref() != Some("owner_unavailable")
-                || notification
-                    .escalation
-                    .as_ref()
-                    .is_some_and(Receipt::recorded)
             {
                 continue;
             }
-            let receipt = record(context, incident, recovery);
+            let mut receipt = notification
+                .escalation
+                .as_ref()
+                .filter(|receipt| receipt.recorded())
+                .cloned()
+                .unwrap_or_else(|| record(context, incident, recovery));
+            if super::alert_delivery::enqueue(context, incident, recovery).is_err() {
+                receipt.state = "delivery_unavailable".into();
+            } else {
+                receipt.state = if receipt.recorded() {
+                    RECORDED
+                } else {
+                    UNAVAILABLE
+                }
+                .into();
+            }
             let notification = if recovery {
                 &mut incident.recovery_notification
             } else {
