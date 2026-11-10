@@ -1,11 +1,9 @@
-//! Operator-initiated settlement of a Claude authentication quarantine.
-//! A model turn is the only automatic exit, and none can be admitted while
-//! quarantined, so a same-account switch re-runs the credential preflight and
-//! records `credentials_refreshed` only when the credentials are usable again.
+//! Same-account credential preflight for operator and scheduled Claude rechecks.
+//! Records `credentials_refreshed` only when the credentials are usable again.
 use super::*;
 use crate::claude_account::generation;
 
-fn refused(record: &SessionRecord, reason: &str) -> CliError {
+pub(super) fn refused(record: &SessionRecord, reason: &str) -> CliError {
     CliError::data(
         "claude-account-recheck-refused",
         "the account credentials could not be confirmed; the authentication quarantine was left unchanged",
@@ -15,7 +13,7 @@ fn refused(record: &SessionRecord, reason: &str) -> CliError {
 
 /// Incidents that currently fence input for this runtime: each clause mirrors
 /// one input guard, so an incident the guard no longer enforces is not owned.
-fn quarantining(incident: &AuthIncident, record: &SessionRecord) -> bool {
+pub(super) fn quarantining(incident: &AuthIncident, record: &SessionRecord) -> bool {
     let current = same_runtime(incident, record);
     current && incident.status == "auth_failed"
         || incident

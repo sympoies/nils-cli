@@ -186,3 +186,342 @@ fn auth_recheck_leaves_a_session_healed_by_a_later_turn_untouched() {
         before
     );
 }
+
+#[test]
+fn daemon_settles_auth_quarantine_when_same_account_credentials_are_usable() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = quarantined(&context, tmp.path(), &tmux);
+    publish(tmp.path(), 2);
+    let path = crate::session_dir(&context, ID).join("auth-incidents.json");
+    let mut store = incident_store(&context);
+    store["incidents"][0]["observed_at"] = json!(
+        jiff::Timestamp::from_second(jiff::Timestamp::now().as_second() - 31)
+            .unwrap()
+            .to_string()
+    );
+    fs::write(path, serde_json::to_vec(&store).unwrap()).unwrap();
+    let before = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
+    crate::auth_incident::tick(&context, &record, &tmux, "fixture", Some(false)).unwrap();
+    let after = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
+    let store = incident_store(&context);
+    assert_eq!(
+        store["incidents"][0]["status"],
+        "recovered",
+        "daemon left usable credentials quarantined; broker calls after tick: {:?}",
+        &after[before.len()..]
+    );
+    assert_eq!(
+        store["incidents"][0]["recovery_result"],
+        "credentials_refreshed"
+    );
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_ok());
+    assert!(after[before.len()..].contains("materialize"));
+    crate::auth_incident::auto_settle::tick(
+        &context,
+        &record,
+        jiff::Timestamp::now().as_second() + 1000,
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("broker.log")).unwrap(),
+        after
+    );
+    let current = load_session_record(&context, ID).unwrap();
+    assert_eq!(launch_id(&current), launch_id(&record));
+}
+
+#[test]
+fn scheduled_recheck_refusals_exhaust_and_survive_daemon_recreation() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    let context = context(&fs::canonicalize(tmp.path()).unwrap());
+    let tmux = fake_tmux(tmp.path());
+    let record = quarantined(&context, tmp.path(), &tmux);
+    let start = incident_store(&context)["incidents"][0]["observed_at"]
+        .as_str()
+        .unwrap()
+        .parse::<jiff::Timestamp>()
+        .unwrap()
+        .as_second();
+    let before = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
+    for age in [0, 29] {
+        crate::auth_incident::auto_settle::tick(&context, &record, start + age).unwrap();
+    }
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("broker.log")).unwrap(),
+        before
+    );
+    for (age, count) in [(30, 1), (119, 1), (120, 2), (599, 2), (600, 3), (900, 3)] {
+        // Recreate daemon inputs from disk on every tick: no in-memory budget.
+        let context = CliContext {
+            state_dir: context.state_dir.clone(),
+            host: None,
+        };
+        let record = load_session_record(&context, ID).unwrap();
+        crate::auth_incident::auto_settle::tick(&context, &record, start + age).unwrap();
+        let store = incident_store(&context);
+        let receipt = &store["incidents"][0]["auto_settle"];
+        assert_eq!(receipt["attempts"].as_array().unwrap().len(), count);
+        assert_eq!(
+            receipt["attempts"][count - 1]["result"],
+            "credentials_not_republished"
+        );
+    }
+    let store = incident_store(&context);
+    assert_eq!(store["incidents"][0]["auto_settle"]["state"], "exhausted");
+    assert_eq!(
+        store["incidents"][0]["recovery_result"],
+        "recheck_exhausted"
+    );
+    let after = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
+    assert_eq!(after[before.len()..].matches("materialize").count(), 3);
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
+    crate::auth_incident::tick(&context, &record, &tmux, "fixture", Some(false)).unwrap();
+    let store = incident_store(&context);
+    let notification = &store["incidents"][0]["recovery_notification"];
+    assert_eq!(notification["degraded_reason"], "owner_unavailable");
+    assert_eq!(notification["escalation"]["route"], "observation_spool");
+    assert_eq!(notification["escalation"]["state"], "recorded");
+    let events = nils_common::observation::read_recent(&context.state_dir, 0).unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.code == "auth-recovery-owner-unavailable")
+    );
+}
+
+#[test]
+fn scheduled_recheck_preserves_a_queued_different_account_intent() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let mut record = quarantined(&context, tmp.path(), &tmux);
+    publish(tmp.path(), 2);
+    record.extra.insert(
+        "claude_account_next".into(),
+        json!({
+            "schema_version":"agent-session.claude-account-next.v1", "account":"beta",
+            "revision":3, "state":"queued", "updated_at":"2030-01-01T00:00:00Z"
+        }),
+    );
+    crate::write_session_record(&context, &record).unwrap();
+    let before = fs::read(crate::session_dir(&context, ID).join("session.json")).unwrap();
+    let broker_before = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
+    crate::auth_incident::auto_settle::tick(&context, &record, i64::MAX / 1000).unwrap();
+    assert_eq!(
+        fs::read(crate::session_dir(&context, ID).join("session.json")).unwrap(),
+        before
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("broker.log")).unwrap(),
+        broker_before
+    );
+    let store = incident_store(&context);
+    assert_eq!(
+        store["incidents"][0]["auto_settle"]["refusal"],
+        "next_account_queued"
+    );
+    assert_eq!(store["incidents"][0]["status"], "auth_failed");
+}
+
+#[test]
+fn scheduled_recheck_applies_to_a_carried_quarantine_on_the_new_runtime() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = quarantined(&context, tmp.path(), &tmux);
+    let start = jiff::Timestamp::now().as_second();
+    crate::auth_incident::auto_settle::tick(&context, &record, start + 30).unwrap();
+    let mut replacement = record.clone();
+    let runtime = replacement.runtime.as_mut().unwrap();
+    runtime.launch_id = "replacement-runtime".into();
+    runtime.generation += 1;
+    runtime.started_at = jiff::Timestamp::from_second(start + 50)
+        .unwrap()
+        .to_string();
+    replacement.extra.get_mut("claude_account_binding").unwrap()["applied_runtime_id"] =
+        json!("replacement-runtime");
+    crate::write_session_record(&context, &replacement).unwrap();
+    let path = crate::session_dir(&context, ID).join("auth-incidents.json");
+    let mut store = incident_store(&context);
+    store["incidents"][0]["failover"]["new_runtime_incarnation"] = json!("replacement-runtime");
+    store["incidents"][0]["failover"]["new_runtime_generation"] =
+        json!(replacement.runtime.as_ref().unwrap().generation);
+    fs::write(path, serde_json::to_vec(&store).unwrap()).unwrap();
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &replacement).is_err());
+    let before = fs::read(crate::session_dir(&context, ID).join("session.json")).unwrap();
+    let incidents_before =
+        fs::read(crate::session_dir(&context, ID).join("auth-incidents.json")).unwrap();
+    let broker_before = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
+    let error = crate::auth_incident::auto_settle::tick(&context, &record, start + 80).unwrap_err();
+    assert_eq!(error.code(), "claude-account-recheck-refused");
+    assert_eq!(error.details().unwrap()["reason"], "runtime_changed");
+    assert_eq!(
+        fs::read(crate::session_dir(&context, ID).join("session.json")).unwrap(),
+        before
+    );
+    assert_eq!(
+        fs::read(crate::session_dir(&context, ID).join("auth-incidents.json")).unwrap(),
+        incidents_before
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("broker.log")).unwrap(),
+        broker_before
+    );
+    publish(tmp.path(), 2);
+    crate::auth_incident::auto_settle::tick(&context, &replacement, start + 79).unwrap();
+    assert_eq!(
+        incident_store(&context)["incidents"][0]["auto_settle"]["attempts"],
+        json!([])
+    );
+    crate::auth_incident::auto_settle::tick(&context, &replacement, start + 80).unwrap();
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &replacement).is_ok());
+    let projected =
+        serde_json::to_value(crate::auth_incident::view(&context, &replacement).unwrap()).unwrap();
+    assert_eq!(
+        projected["auto_settle"]["runtime_incarnation"],
+        "replacement-runtime"
+    );
+    assert_eq!(projected["auto_settle"]["state"], "settled");
+}
+
+#[test]
+fn scheduled_recheck_records_account_mismatch_and_in_flight_refusals() {
+    let lock = GlobalStateLock::new();
+    for reason in [
+        "account_changed",
+        "recovery_in_progress",
+        "failover_in_progress",
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let _broker = broker(tmp.path(), &lock);
+        let context = context(tmp.path());
+        let tmux = fake_tmux(tmp.path());
+        let mut record = quarantined(&context, tmp.path(), &tmux);
+        publish(tmp.path(), 2);
+        if reason == "account_changed" {
+            record.extra.get_mut("claude_account_binding").unwrap()["selected_account"] =
+                json!("beta");
+            crate::write_session_record(&context, &record).unwrap();
+        } else if reason == "recovery_in_progress" {
+            change_receipt(&context, "resuming");
+        } else {
+            let path = crate::session_dir(&context, ID).join("auth-incidents.json");
+            let mut store = incident_store(&context);
+            store["incidents"][0]["failover"]["state"] = json!("candidate_preflight");
+            fs::write(path, serde_json::to_vec(&store).unwrap()).unwrap();
+        }
+        let before = fs::read(crate::session_dir(&context, ID).join("session.json")).unwrap();
+        let broker_before = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
+        crate::auth_incident::auto_settle::tick(
+            &context,
+            &record,
+            jiff::Timestamp::now().as_second() + 30,
+        )
+        .unwrap();
+        let store = incident_store(&context);
+        let receipt = &store["incidents"][0]["auto_settle"];
+        if reason == "account_changed" {
+            assert_eq!(receipt["refusal"], reason);
+            assert_eq!(receipt["attempts"], json!([]));
+        } else {
+            assert_eq!(receipt["attempts"][0]["result"], "recovery_in_progress");
+        }
+        assert_eq!(store["incidents"][0]["status"], "auth_failed");
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("broker.log")).unwrap(),
+            broker_before
+        );
+        assert_eq!(
+            fs::read(crate::session_dir(&context, ID).join("session.json")).unwrap(),
+            before
+        );
+    }
+}
+
+#[test]
+fn scheduled_recheck_reconciles_external_settlement_and_interrupted_success() {
+    let lock = GlobalStateLock::new();
+    for result in ["healthy", "operator", "interrupted"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let _broker = broker(tmp.path(), &lock);
+        let context = context(tmp.path());
+        let tmux = fake_tmux(tmp.path());
+        let record = quarantined(&context, tmp.path(), &tmux);
+        let start = jiff::Timestamp::now().as_second();
+        crate::auth_incident::auto_settle::tick(&context, &record, start).unwrap();
+        if result == "healthy" {
+            crate::auth_incident::recover(
+                &context,
+                &record,
+                "healthy",
+                &jiff::Timestamp::now().to_string(),
+            )
+            .unwrap();
+        } else {
+            publish(tmp.path(), 2);
+            recheck(&context, &record, &tmux).unwrap();
+            if result == "interrupted" {
+                let path = crate::session_dir(&context, ID).join("auth-incidents.json");
+                let mut store = incident_store(&context);
+                store["incidents"][0]["auto_settle"]["attempts"] = json!([
+                    {"attempted_at_epoch":start, "result":"started"}
+                ]);
+                fs::write(path, serde_json::to_vec(&store).unwrap()).unwrap();
+            }
+        }
+        let before = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
+        crate::auth_incident::auto_settle::tick(&context, &record, start + 1000).unwrap();
+        let store = incident_store(&context);
+        assert_eq!(store["incidents"][0]["auto_settle"]["state"], "settled");
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("broker.log")).unwrap(),
+            before
+        );
+    }
+}
+
+#[test]
+fn scheduled_recheck_bounds_credential_preflight_refusal_output() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = quarantined(&context, tmp.path(), &tmux);
+    publish(tmp.path(), 2);
+    fs::remove_file(tmp.path().join("alpha/.credentials.json")).unwrap();
+    crate::auth_incident::auto_settle::tick(
+        &context,
+        &record,
+        jiff::Timestamp::now().as_second() + 30,
+    )
+    .unwrap();
+    let projected =
+        serde_json::to_value(crate::auth_incident::view(&context, &record).unwrap()).unwrap();
+    let receipt = &projected["auto_settle"];
+    assert_eq!(
+        receipt["attempts"][0]["result"],
+        "credential_preflight_refused"
+    );
+    assert_eq!(receipt["state"], "scheduled");
+    assert_eq!(receipt["runtime_incarnation"], launch_id(&record).unwrap());
+    assert_eq!(
+        receipt["runtime_generation"],
+        record.runtime.as_ref().unwrap().generation
+    );
+    assert_eq!(receipt["refusal"], Value::Null);
+    assert!(receipt["started_at_epoch"].is_i64());
+    assert!(receipt["attempts"][0]["attempted_at_epoch"].is_i64());
+    assert_eq!(receipt.as_object().unwrap().len(), 6);
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
+}

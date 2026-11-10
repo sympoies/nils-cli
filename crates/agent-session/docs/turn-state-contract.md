@@ -36,9 +36,11 @@ ID, provider, optional configured account nickname, host `observed_at`, fixed
 source (`claude_stop_failure`, `codex_app_server`, `codex_external_refresh`, or
 `terminal_pattern`), confidence, status and notification receipts. Provider
 errors, terminal bytes, prompts, credential values and credential paths never
-enter the incident or notification body. Old-runtime incidents are retained
-privately and omitted from the current public projection. Their pending owner
-notifications continue using the current authenticated runtime; private mailbox
+enter the incident or notification body. Old-runtime incidents remain private
+unless an `auto_settle` schedule owns the current carried quarantine. That
+projection retains the incident's original runtime selectors; the schedule
+identifies the current runtime receiving rechecks. Pending owner notifications
+continue using the current authenticated runtime; private mailbox
 journals reconcile earlier submissions before any resend. The bounded history
 holds sixteen incidents and evicts only fully settled incidents. If all slots
 have pending obligations, those obligations are preserved and new incidents are
@@ -126,7 +128,8 @@ these degraded states do not establish that target or a measured p99.
 
 ### Authentication JSON fields
 
-`auth_incident` is omitted when the current runtime has no incident. When
+`auth_incident` is omitted when the current runtime has no incident or carried
+quarantine schedule. When
 present, list and board expose the same object; nullable members are present
 with JSON `null`. Consumers must ignore additive unknown members.
 
@@ -142,9 +145,10 @@ with JSON `null`. Consumers must ignore additive unknown members.
 | `source` | string | `claude_stop_failure`, `codex_app_server`, `codex_external_refresh`, or `terminal_pattern`. |
 | `confidence` | string | `authoritative`, `observed`, or `inferred`. Terminal fallback is `inferred`. |
 | `status` | string | `auth_failed`, `recovered`, `recovery_failed`, or `runtime_replaced`. |
-| `recovery_result` | string or null | `healthy`, `credentials_refreshed`, `refresh_failed`, or `runtime_replaced`; null before a final result. |
+| `recovery_result` | string or null | `healthy`, `credentials_refreshed`, `refresh_failed`, `recheck_exhausted`, or `runtime_replaced`; null before a final result. |
 | `recovery_observed_at` | timestamp string or null | Final-result observation time. |
-| `recovery_path` | string, optional | Fixed class of the settlement: `model_health` (a healthy provider turn was observed), `credential_recheck` (an explicit operator same-account recheck passed) or `controller` (an automatic refresh, failover or lifecycle result). It never carries an identity, credential or request body. A bound `account_nickname` is a binding, not evidence of healthy authentication. |
+| `recovery_path` | string, optional | Fixed class of the settlement: `model_health` (a healthy provider turn was observed), `credential_recheck` (an operator or scheduled same-account recheck passed) or `controller` (an automatic refresh, failover or lifecycle result). It never carries an identity, credential or request body. A bound `account_nickname` is a binding, not evidence of healthy authentication. |
+| `auto_settle` | object, optional | Bounded daemon same-account recheck schedule, runtime selectors, attempts and fixed refusal; see [scheduled recheck](specs/claude-auth-recovery-v1.md#scheduled-credential-recheck). |
 | `notification` | object | Initial incident notification receipt, shaped below. |
 | `recovery_notification` | object | Final-result notification receipt, with the same shape. |
 
