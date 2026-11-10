@@ -55,24 +55,30 @@ pub(crate) fn settle(
     crate::claude_account::materialize(account).map_err(|e| refused(record, e.code()))?;
     // Materialization is never evidence of repair: when the failed launch's
     // publication is known, a newer one must exist for the same account.
-    let baseline = owned
+    let receipt_baseline = |i: usize| {
+        store.incidents[i]
+            .same_account_recovery
+            .as_ref()
+            .and_then(|receipt| receipt.baseline.clone())
+    };
+    let current_failed = owned
         .iter()
-        .find_map(|&i| {
-            store.incidents[i]
-                .same_account_recovery
-                .as_ref()
-                .and_then(|r| r.baseline.clone())
-        })
-        .or_else(|| {
-            // A delayed first daemon tick can precede recovery receipt creation.
-            // Use the failed launch checkpoint directly when it is still current;
-            // a replacement's checkpoint must not stand in for its predecessor.
+        .any(|&i| same_runtime(&store.incidents[i], record));
+    let baseline = if current_failed {
+        // A predecessor must never weaken the current failed launch's proof.
+        // Its receipt may not exist yet when the first daemon tick is delayed.
+        generation::baseline(record).or_else(|| {
             owned
                 .iter()
-                .any(|&i| same_runtime(&store.incidents[i], record))
-                .then(|| generation::baseline(record))
-                .flatten()
-        });
+                .copied()
+                .filter(|&i| same_runtime(&store.incidents[i], record))
+                .find_map(receipt_baseline)
+        })
+    } else {
+        // With carried-only quarantine, the failed predecessor owns the proof;
+        // the replacement's publication is not itself evidence of a new fault.
+        owned.iter().copied().find_map(receipt_baseline)
+    };
     if let Some(baseline) = baseline
         && !generation::published(account)
             .ok()

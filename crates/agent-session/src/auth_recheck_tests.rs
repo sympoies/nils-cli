@@ -557,3 +557,76 @@ fn delayed_first_scheduled_recheck_retains_the_failed_launch_publication_fence()
     );
     assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_ok());
 }
+
+#[test]
+fn scheduled_recheck_prioritizes_current_failure_over_carried_baseline() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let original = quarantined(&context, tmp.path(), &tmux);
+    let old_checkpoint = crate::claude_account::generation::baseline(&original).unwrap();
+    publish(tmp.path(), 2);
+    let mut replacement = original.clone();
+    let runtime = replacement.runtime.as_mut().unwrap();
+    runtime.launch_id = "replacement-runtime".into();
+    runtime.generation += 1;
+    runtime.started_at = jiff::Timestamp::now().to_string();
+    replacement.extra.get_mut("claude_account_binding").unwrap()["applied_runtime_id"] =
+        json!("replacement-runtime");
+    crate::claude_account::generation::capture(&mut replacement, "alpha");
+    assert!(
+        crate::claude_account::generation::baseline(&replacement)
+            .unwrap()
+            .newer_than(&old_checkpoint)
+    );
+    crate::write_session_record(&context, &replacement).unwrap();
+    let path = crate::session_dir(&context, ID).join("auth-incidents.json");
+    let mut store = incident_store(&context);
+    let prior = &mut store["incidents"][0]["same_account_recovery"];
+    prior["state"] = json!("blocked");
+    prior["last_reason"] = json!("runtime_not_ready");
+    prior["new_runtime_incarnation"] = json!("replacement-runtime");
+    prior["new_runtime_generation"] = json!(replacement.runtime.as_ref().unwrap().generation);
+    fs::write(path, serde_json::to_vec(&store).unwrap()).unwrap();
+    crate::auth_incident::observe(
+        &context,
+        &replacement,
+        "replacement-auth-failure",
+        crate::auth_incident::AuthSource::ClaudeStopFailure,
+        crate::activity::Confidence::Authoritative,
+        &jiff::Timestamp::now().to_string(),
+    )
+    .unwrap();
+    let store = incident_store(&context);
+    assert_eq!(store["incidents"].as_array().unwrap().len(), 2);
+    assert_eq!(store["incidents"][1]["same_account_recovery"], Value::Null);
+    let now = jiff::Timestamp::now().as_second() + 31;
+    crate::auth_incident::auto_settle::tick(&context, &replacement, now).unwrap();
+    let store = incident_store(&context);
+    assert!(
+        store["incidents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|incident| incident["status"] == "auth_failed"),
+        "unchanged failed publication must not settle either incident: {store}"
+    );
+    assert_eq!(
+        store["incidents"][1]["auto_settle"]["attempts"][0]["result"],
+        "credentials_not_republished"
+    );
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &replacement).is_err());
+    publish(tmp.path(), 3);
+    crate::auth_incident::auto_settle::tick(&context, &replacement, now + 120).unwrap();
+    let store = incident_store(&context);
+    assert!(
+        store["incidents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|incident| incident["recovery_result"] == "credentials_refreshed")
+    );
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &replacement).is_ok());
+}
