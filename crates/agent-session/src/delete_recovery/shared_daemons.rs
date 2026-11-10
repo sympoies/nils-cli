@@ -87,6 +87,9 @@ pub(super) fn linux_shared_daemon(
     // allowlist deliberately small: a new daemon needs its own server contract.
     let executable = std::fs::read_link(process.join("exe")).ok()?;
     let name = executable.file_name()?.to_str()?;
+    if name == "codex" {
+        return super::codex_daemons::classify(process).map(str::to_owned);
+    }
     let stat = std::fs::read_to_string(process.join("stat")).ok()?;
     let (_, fields) = stat.rsplit_once(") ")?;
     let parent = fields.split_whitespace().nth(1)?;

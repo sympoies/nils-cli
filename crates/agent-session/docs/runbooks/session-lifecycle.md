@@ -624,11 +624,11 @@ Human success output reports the verified stopped state; the v1 JSON
 Its `termination_scope: "recorded-boundaries"` describes the verified recorded
 runtime boundary; it does not certify that no escaped process exists.
 Observed processes carrying both runtime markers block ordinary deletion and
-retain the session record, with one narrow Linux exemption: a shared `sccache`
+retain the session record, with narrow shared-daemon exemptions. Linux recognizes a shared `sccache`
 server whose executable basename is `sccache`, whose parent is PID 1, and whose
 command line has no work arguments. The executable is checked through `/proc`,
 not the process display name. Missing inspection data does not grant an exemption.
-Attached cache processes, compiler wrappers, and all other survivors still block.
+Attached cache processes, compiler wrappers, and unproven survivors still block.
 Recorded process-boundary verification remains required before this exemption is
 considered; a daemon still inside that boundary does not bypass termination.
 
@@ -642,6 +642,22 @@ and in the optional `process_inventory.retained_shared_daemons` array in JSON:
   ]
 }
 ```
+
+Linux also recognizes Codex 0.162.1 provider-managed app-server and updater
+processes. Deletion must run with the owning `CODEX_HOME` (or default Codex
+home). The proof binds that independently selected home, the current provider
+package executable, the daemon command, and the provider PID record's boot ID
+and native process start time. A candidate process's environment or display
+name cannot choose its own exemption. The inventory names retained processes
+`codex-app-server` and `codex-daemon-updater`.
+
+These provider daemons are shared per provider home and excluded from session
+marker and recorded cgroup liveness checks. A cgroup containing proven shared
+infrastructure is not frozen or killed: deletion terminates the verified tmux
+target and still refuses if other session processes survive. An interrupted
+whole-cgroup termination is retained for inspection if replay would target a
+proven shared provider daemon. Session-private app-servers with private listen
+sockets remain ordinary session work.
 
 The same inventory field reports retained servers when another survivor blocks
 deletion. Retaining a shared daemon never grants signaling authority over it.
