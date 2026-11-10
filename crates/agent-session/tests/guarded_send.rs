@@ -3,6 +3,8 @@
 mod cases;
 #[path = "guarded_send/claude_notice.rs"]
 mod claude_notice;
+#[path = "guarded_send/completion_evidence.rs"]
+mod completion_evidence;
 #[path = "guarded_send/exit.rs"]
 mod exit;
 #[path = "guarded_send/history_command_bytes.rs"]
