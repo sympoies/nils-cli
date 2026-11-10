@@ -55,12 +55,24 @@ pub(crate) fn settle(
     crate::claude_account::materialize(account).map_err(|e| refused(record, e.code()))?;
     // Materialization is never evidence of repair: when the failed launch's
     // publication is known, a newer one must exist for the same account.
-    let baseline = owned.iter().find_map(|&i| {
-        store.incidents[i]
-            .same_account_recovery
-            .as_ref()
-            .and_then(|r| r.baseline.clone())
-    });
+    let baseline = owned
+        .iter()
+        .find_map(|&i| {
+            store.incidents[i]
+                .same_account_recovery
+                .as_ref()
+                .and_then(|r| r.baseline.clone())
+        })
+        .or_else(|| {
+            // A delayed first daemon tick can precede recovery receipt creation.
+            // Use the failed launch checkpoint directly when it is still current;
+            // a replacement's checkpoint must not stand in for its predecessor.
+            owned
+                .iter()
+                .any(|&i| same_runtime(&store.incidents[i], record))
+                .then(|| generation::baseline(record))
+                .flatten()
+        });
     if let Some(baseline) = baseline
         && !generation::published(account)
             .ok()

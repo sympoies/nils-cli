@@ -525,3 +525,35 @@ fn scheduled_recheck_bounds_credential_preflight_refusal_output() {
     assert_eq!(receipt.as_object().unwrap().len(), 6);
     assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
 }
+
+#[test]
+fn delayed_first_scheduled_recheck_retains_the_failed_launch_publication_fence() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = failed_runtime(&context, tmp.path(), &tmux, true);
+    assert!(crate::claude_account::generation::baseline(&record).is_some());
+    assert_eq!(
+        incident_store(&context)["incidents"][0]["same_account_recovery"],
+        Value::Null
+    );
+    let now = jiff::Timestamp::now().as_second() + 31;
+    crate::auth_incident::auto_settle::tick(&context, &record, now).unwrap();
+    let store = incident_store(&context);
+    assert_eq!(store["incidents"][0]["status"], "auth_failed");
+    assert_eq!(
+        store["incidents"][0]["auto_settle"]["attempts"][0]["result"],
+        "credentials_not_republished"
+    );
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
+    assert_eq!(store["incidents"][0]["same_account_recovery"], Value::Null);
+    publish(tmp.path(), 2);
+    crate::auth_incident::auto_settle::tick(&context, &record, now + 120).unwrap();
+    assert_eq!(
+        incident_store(&context)["incidents"][0]["recovery_result"],
+        "credentials_refreshed"
+    );
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_ok());
+}
