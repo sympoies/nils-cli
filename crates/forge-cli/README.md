@@ -643,6 +643,17 @@ refuses human, unconfigured, wrong-head and wrong-state reviews, and any PR
 without a designated PASS at that head. See the
 [dismissal contract](docs/specs/forge-cli-spec-v1.md#pr-review-dismiss).
 
+Approve an external contributor's GitHub Actions run after reviewing the workflow changes:
+
+```bash
+forge-cli --repo example/widget run approve 42 --pr 7 --expected-head "$EXPECTED_HEAD" --reason-file reason.txt
+```
+
+The reason file is recorded in the output and must not contain secrets. The run
+and PR must match the expected head, and the run must be awaiting approval. A
+repeat after the run moves on is refused with `run-not-awaiting-approval`.
+GitLab is unsupported. Use `--dry-run` to check the fences without approving.
+
 For fenced CI reruns and attempt/job receipts, see the
 [run rerun contract](docs/specs/forge-run-rerun-v1.md).
 
