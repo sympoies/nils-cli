@@ -194,7 +194,8 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   cannot change it.
 
   Assigned delivery and merge enforce the persisted policy, including explicit
-  merge review opt-out. `final-approval` requires a canonical passing native
+  merge review opt-out, until an explicit `publisher-unavailable` recovery
+  releases the assignment's merge gate as described below. `final-approval` requires a canonical passing native
   `APPROVED` report on the current provider head. `check` accepts the same flag
   to demand stricter approval for that invocation; it cannot weaken the
   assignment. A source pass under a strict policy returns DATA 65,
@@ -307,8 +308,8 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   <reviewer-unreachable|reviewer-closed|reviewer-declined|reviewer-timeout>` is
   an explicit original-coordinator revocation that advances the assignment
   generation. The parent owns mailbox transport, bounded waits, and liveness
-  evidence; the CLI never guesses reviewer availability. Surrendered or revoked
-  control fails with `designated_reviewer_unavailable`, never self-review.
+  evidence; the CLI never guesses reviewer availability. Surrendered or
+  reviewer-revoked control fails with `designated_reviewer_unavailable`, never self-review.
   Recovery captures the current provider head/base even after base drift.
   The current recorded coordinator may assign the next generation using the
   durable `state_tip_digest` returned by recovery or fresh inspection.
@@ -318,6 +319,26 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   or `--reason coordinator-retired`. Assignment-time validation of a remote
   reviewer session's publishing author remains unavailable: the identity
   policy authenticates the calling session, not an arbitrary remote reviewer.
+- `recover <id> --reason publisher-unavailable --expected-head <sha>
+  --expected-state <digest>` releases an assignment whose review publisher is
+  unavailable. Only the recorded original coordinator may call it, using the
+  same identity and head/tip CAS rules as reviewer recovery. It appends a trusted
+  handoff with `returned_reason: publisher-unavailable`, advances the assignment
+  generation, and captures the current provider head/base. It does not publish
+  a review or create an observation.
+
+  The latest released handoff no longer gates `pr merge`, even when its policy
+  is `final-approval` or the assignment environment remains set. The repository's
+  non-assigned policy applies: `--review-convergence=false` permits merge without
+  an observation as for an unassigned PR. Existing observations, blocking
+  findings, head/base and chain CAS, required checks, holds, threads, tasks and
+  provider gates retain their ordinary enforcement. Default or enforced review
+  convergence still requires its ordinary ledger evidence. Designated `check`
+  and review publication remain unavailable under revoked ownership; this
+  recovery grants no review verdict or self-review authority. Other recovery
+  reasons and surrender retain their existing behavior. A later `assign` by the
+  recorded coordinator starts a fresh generation and restores the designated gate.
+  See the [publisher recovery runbook](../runbooks/unavailable-review-publisher.md).
 - Successor takeover uses `recover <id> --reason coordinator-retired
   [--coordinator-session <recorded-session-id>[@machine]] --base-sha <current-base>
   --expected-head <current-head> --expected-state <exact-tip>`. The selector

@@ -7504,7 +7504,7 @@ _forge__cli() {
                     return 0
                     ;;
                 --reason)
-                    COMPREPLY=($(compgen -W "reviewer-unreachable reviewer-closed reviewer-declined reviewer-timeout coordinator-retired" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "reviewer-unreachable reviewer-closed reviewer-declined reviewer-timeout publisher-unavailable coordinator-retired" -- "${cur}"))
                     return 0
                     ;;
                 --coordinator-session)

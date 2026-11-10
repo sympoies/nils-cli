@@ -1,6 +1,8 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+mod publisher_unavailable;
+
 fn check_final(stub: &StubEnv) -> super::super::support::CmdOutput {
     run_forge_cli(
         stub,

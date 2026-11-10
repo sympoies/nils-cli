@@ -615,6 +615,15 @@ mailbox verdicts never replace provider evidence. See the
 [handoff contract](docs/specs/forge-cli-spec-v1.md#pr-review-handoff-assign--inspect--check--surrender--recover)
 for assignment, writer fencing, generation-bound surrender/recovery, and privacy boundaries.
 
+If the assigned review publisher is unavailable, the recorded coordinator can
+use `recover --reason publisher-unavailable --expected-head <sha> --expected-state
+<digest>`. This audited recovery advances the generation and releases the
+designated merge gate. Merge then follows the repository's non-assigned review
+policy; `--review-convergence=false` permits an absent observation. Other merge
+gates remain enforced. Reviewer recovery reasons still return
+`designated_reviewer_unavailable`. See the
+[publisher recovery runbook](docs/runbooks/unavailable-review-publisher.md).
+
 A repository-configured handoff supervisor can recover a retired coordinator
 with `--reason coordinator-retired`, `--base-sha`, `--expected-head`, and
 `--expected-state`. `--coordinator-session` is optional; the stored coordinator

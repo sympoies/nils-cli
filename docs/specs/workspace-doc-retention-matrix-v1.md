@@ -142,6 +142,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/codex-cli/docs/specs/execution-capsule-v1.md`
 - `crates/forge-cli/docs/runbooks/pr-head-repair-loop.md`
 - `crates/forge-cli/docs/runbooks/retired-coordinator-recovery.md`
+- `crates/forge-cli/docs/runbooks/unavailable-review-publisher.md`
 - `crates/forge-cli/docs/specs/checks-scope-and-deadline-v1.md`
 - `crates/forge-cli/docs/specs/forge-cli-spec-v1.md`
 - `crates/forge-cli/docs/specs/forge-publication-admin-v1.md`
