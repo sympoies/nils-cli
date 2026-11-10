@@ -15,7 +15,7 @@
 ### Evidence
 
 - The over-budget fresh-session regression failed on main before production
-  edits and passed after the fix; the affected History suite passed 95 tests
+  edits and passed after the fix; the affected History suite passed 96 tests
   with one existing ignored case.
 
 ### Links

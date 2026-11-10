@@ -11,6 +11,9 @@ pub(super) fn scan_catalog(
 ) -> CatalogSnapshot {
     let deadline = Instant::now() + SCAN_MAX_DURATION;
     let mut truncated = false;
+    // Saved metadata keeps its original precedence over transcript work.
+    let archives = read_archives(archives_root, deadline, &mut truncated);
+    let stars = read_stars(stars_root, deadline, &mut truncated);
     let mut visited = 0usize;
     let preferred = managed_claude_sessions(
         sources,
@@ -19,8 +22,8 @@ pub(super) fn scan_catalog(
         &mut visited,
         &mut truncated,
     );
-    let archives = read_archives(archives_root, deadline, &mut truncated);
-    let stars = read_stars(stars_root, deadline, &mut truncated);
+    #[cfg(test)]
+    let deadline = tests::after_managed_probes(deadline);
     let mut sessions = Vec::new();
     let mut incremental_segments = BTreeMap::<String, Vec<HistorySession>>::new();
     let mut seen = HashSet::new();

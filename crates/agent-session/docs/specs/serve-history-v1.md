@@ -30,8 +30,10 @@ consume that same entry budget; registry documents and resume sidecars are each
 limited to 1 MiB. Only validated existing transcripts produce rows, with identity
 and profile attributed to their configured source. This gives managed Claude
 sessions priority over older transcript discovery without raising either bound.
-Archive/star and ancestor-directory stamp reads retain their existing entry
-caps and consume the shared deadline. Remaining discovery keeps configured-root,
+
+Archive/star metadata is loaded before the managed probes. Those reads and
+ancestor-directory stamps retain their existing entry caps and consume the
+shared deadline. Remaining discovery keeps configured-root,
 filesystem-walk and lexical-path inspection order. An incomplete scan still reports `truncated: true`; catalog
 snapshots retain the existing 30-second cache lifetime.
 

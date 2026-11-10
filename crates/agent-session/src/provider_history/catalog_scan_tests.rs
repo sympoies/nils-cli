@@ -35,16 +35,9 @@ fn source(root: PathBuf, profile: Option<&str>) -> HistorySource {
     }
 }
 
-#[test]
-fn seeded_sessions_keep_source_identity_overlays_and_do_not_duplicate() {
-    let tmp = tempfile::tempdir().unwrap();
-    registry_record(tmp.path());
-    let sources = vec![
-        source(tmp.path().join("first"), Some("profile-a")),
-        source(tmp.path().join("second"), Some("profile-b")),
-    ];
-    let archives = tmp.path().join("archives");
-    let stars = tmp.path().join("stars");
+fn saved_overlays(root: &Path) -> String {
+    let archives = root.join("archives");
+    let stars = root.join("stars");
     let id = stable_history_id("claude", Some("profile-a"), PROVIDER_ID);
     write_archive(
         &archives,
@@ -67,6 +60,20 @@ fn seeded_sessions_keep_source_identity_overlays_and_do_not_duplicate() {
     .unwrap()
     .commit();
     write_star(&stars, &id, "2026-01-03T00:00:00Z").unwrap();
+    id
+}
+
+#[test]
+fn seeded_sessions_keep_source_identity_overlays_and_do_not_duplicate() {
+    let tmp = tempfile::tempdir().unwrap();
+    registry_record(tmp.path());
+    let sources = vec![
+        source(tmp.path().join("first"), Some("profile-a")),
+        source(tmp.path().join("second"), Some("profile-b")),
+    ];
+    let archives = tmp.path().join("archives");
+    let stars = tmp.path().join("stars");
+    let id = saved_overlays(tmp.path());
     let catalog =
         HistoryCatalog::new(sources, archives, stars).with_session_state_dir(tmp.path().into());
     let page = catalog.list("test", None, None, None, 50).unwrap();
@@ -165,4 +172,47 @@ fn managed_priority_rejects_linked_or_unbounded_registry_inputs_and_transcripts(
         );
         assert!(sessions.is_empty(), "accepted {invalid}");
     }
+}
+
+// Advance only this test thread's scan deadline at the managed-probe boundary.
+// No wall-clock sleeps or large/slow fixtures are needed to exercise cutoff.
+thread_local! {
+    static EXPIRE_AFTER_MANAGED_PROBES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(super) fn after_managed_probes(deadline: Instant) -> Instant {
+    EXPIRE_AFTER_MANAGED_PROBES.with(|expire| {
+        if expire.replace(false) {
+            Instant::now() - Duration::from_secs(1)
+        } else {
+            deadline
+        }
+    })
+}
+
+#[test]
+fn managed_probe_deadline_preserves_saved_overlays() {
+    let tmp = tempfile::tempdir().unwrap();
+    registry_record(tmp.path());
+    let sources = vec![source(tmp.path().join("projects"), Some("profile-a"))];
+    let id = saved_overlays(tmp.path());
+    let catalog = HistoryCatalog::new(
+        sources,
+        tmp.path().join("archives"),
+        tmp.path().join("stars"),
+    )
+    .with_session_state_dir(tmp.path().into());
+    EXPIRE_AFTER_MANAGED_PROBES.with(|expire| expire.set(true));
+    let page = catalog.list("test", None, None, None, 50).unwrap();
+    assert!(page.truncated);
+    assert_eq!(page.sessions.len(), 1);
+    let session = &page.sessions[0];
+    assert_eq!(session.id, id);
+    assert_eq!(session.title.as_deref(), Some("Saved title"));
+    assert_eq!(
+        session.archived_session_id.as_deref(),
+        Some("managed-fixture")
+    );
+    assert_eq!(session.archived_at.as_deref(), Some("2026-01-02T00:00:00Z"));
+    assert_eq!(session.starred_at.as_deref(), Some("2026-01-03T00:00:00Z"));
 }
