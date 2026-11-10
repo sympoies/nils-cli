@@ -305,3 +305,12 @@ Success returns the ordinary serve envelope with
 event, exactly as the file path ignores it. Ingestion failures return the file
 path's error code and record the same activity diagnostic. Responses never echo
 the capability or payload.
+
+### Stopped Codex runtime
+
+If a Codex turn has no provider completion and lifecycle evidence records a
+successful `exit-observed` for the same runtime incarnation and generation,
+activity projects `phase: unknown` with `diagnostic.reason: codex_runtime_stopped`.
+The diagnostic is retained in stream and board projections. The projection does
+not change the journal, activity revision, or provider turn outcome. An exit
+alone does not establish successful completion or a provider usage-limit reason.

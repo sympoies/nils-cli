@@ -1807,3 +1807,97 @@ fn claude_resume_session_start_readiness_precedes_contended_model_persistence() 
     hook.join().unwrap().unwrap();
     assert_eq!(phase, TurnPhase::Waiting);
 }
+
+#[test]
+fn plain_codex_failed_turn_exit_projects_stopped_without_claiming_completion() {
+    // A provider usage-limit end can emit no notify completion on plain Codex.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (context, created) = test_session(&tmp);
+    let record = &created.record;
+    crate::lifecycle::record(
+        &context,
+        Some(record),
+        &record.id,
+        "create",
+        "cli",
+        Ok(()),
+        None,
+    );
+    activate_runtime(&context, record).unwrap();
+    let mut started = event(TurnEventKind::TurnStarted, "usage-limit-start");
+    started.runtime_id = record.runtime.as_ref().unwrap().launch_id.clone();
+    ingest_event(&context, &record.id, started).unwrap();
+    let state = || {
+        activity_status_for_record(&context, record)
+            .unwrap()
+            .turn_state
+    };
+    assert_eq!(state().phase, TurnPhase::Working);
+    let working = state();
+    let snapshot = fs::read(session_dir(&context, &record.id).join(ACTIVITY_FILE)).unwrap();
+    let mut prior = record.clone();
+    prior.runtime.as_mut().unwrap().launch_id = "prior-runtime".into();
+    let mut prior_generation = record.clone();
+    prior_generation.runtime.as_mut().unwrap().generation += 1;
+    for target in [&prior, &prior_generation] {
+        crate::lifecycle::record(
+            &context,
+            Some(target),
+            &record.id,
+            "exit-observed",
+            "controller",
+            Ok(()),
+            None,
+        );
+        assert_eq!(state().phase, TurnPhase::Working);
+    }
+    crate::lifecycle::record(
+        &context,
+        Some(record),
+        &record.id,
+        "exit-observed",
+        "controller",
+        Ok(()),
+        Some(json!({"code": 0, "reason": "runtime-exited"})),
+    );
+    let stopped = state();
+    assert_eq!(stopped.phase, TurnPhase::Unknown);
+    assert_eq!(
+        stopped.diagnostic.as_ref().unwrap().reason,
+        "codex_runtime_stopped"
+    );
+    assert!(
+        stopped.last_turn.is_none(),
+        "exit is not successful provider completion"
+    );
+    assert_eq!(
+        super::super::stream_diagnostic::project(stopped.diagnostic.as_ref().unwrap())
+            .unwrap()
+            .reason,
+        "codex_runtime_stopped"
+    );
+    assert_eq!(
+        super::super::codex_quiet::diagnostic_for_board(&Map::from_iter([(
+            "reason".into(),
+            json!("codex_runtime_stopped")
+        )]))
+        .unwrap()["reason"],
+        "codex_runtime_stopped"
+    );
+    assert_eq!(stopped.revision, working.revision);
+    assert_eq!(stopped.phase_changed_at, crate::lifecycle::stopped_observed_at(&context, record).unwrap());
+    assert_eq!(
+        fs::read(session_dir(&context, &record.id).join(ACTIVITY_FILE)).unwrap(),
+        snapshot
+    );
+    assert_eq!(
+        controller_state_for_record(&context, record).unwrap().phase,
+        TurnPhase::Unknown
+    );
+    let mut completed = event(TurnEventKind::TurnCompleted, "late-completion");
+    completed.runtime_id = record.runtime.as_ref().unwrap().launch_id.clone();
+    completed.confidence = Confidence::Authoritative;
+    ingest_event(&context, &record.id, completed).unwrap();
+    assert_eq!(state().phase, TurnPhase::Waiting);
+    assert_eq!(state().last_turn.unwrap().outcome, "completed");
+}
