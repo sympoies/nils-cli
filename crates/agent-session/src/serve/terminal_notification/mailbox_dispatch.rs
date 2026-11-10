@@ -50,6 +50,11 @@ pub(in crate::serve) async fn dispatch_coordination_notification(
         update_notification_undeliverable(&state, &candidate, "provider-unsupported").await;
         return;
     }
+    if crate::send::claude_notice::attach::mailbox_text_reason(&state.context, &record).is_some() {
+        candidate.prompt = Some(candidate.text_wake_prompt());
+        super::native_notice::dispatch(state, record, candidate).await;
+        return;
+    }
     if let Err(error) = candidate.prepare_notice(&state.context, &record) {
         let detail = match error.code() {
             "notice-writers-disabled" => "notice-writers-disabled",

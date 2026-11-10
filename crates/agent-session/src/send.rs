@@ -190,7 +190,11 @@ fn send_observing(
             .check(None, "admission")?;
             send_guard::placeholder::admit(&record, &tmux_bin)?;
         }
-        admission.check(None, "admission")?;
+        if notification.is_some_and(|candidate| candidate.is_text_wake()) {
+            admission.check_preserving_draft("admission")?;
+        } else {
+            admission.check(None, "admission")?;
+        }
     }
     // Only input that types characters is gated. Special keys — including the
     // `enter` that confirms a highlighted choice — stay admitted, because
@@ -520,7 +524,17 @@ fn guarded(
         deadline: hold_started + guarded_hold_budget(&record, attempt.terminal_command),
     };
     admission.check_key()?;
-    admission.check(None, "admission")?;
+    let text_wake = attempt
+        .notification
+        .filter(|candidate| candidate.is_text_wake());
+    let check_empty = || {
+        if text_wake.is_some() {
+            admission.check_preserving_draft("admission")
+        } else {
+            admission.check(None, "admission")
+        }
+    };
+    check_empty()?;
     if !attempt.terminal_command
         && args.guards.notice_envelope
         && record.agent == "claude"
@@ -583,9 +597,12 @@ fn guarded(
             PANE_INPUT_COMMAND_TIMEOUT,
             PasteMode::Bracketed,
             || {
-                admission.check(None, "admission")?;
+                check_empty()?;
                 admission.claim_key()?;
                 admission.check(None, "claimed")?;
+                if let Some(candidate) = text_wake {
+                    crate::serve::begin_mailbox_notice(context, &record, tmux_bin, candidate)?;
+                }
                 prepare_guarded_input(context, &mut record, submits, &mut input_prepared)
             },
         );

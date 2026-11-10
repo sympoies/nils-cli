@@ -17,7 +17,9 @@ pub(crate) fn begin_mailbox_notice(
         )
     };
     let agent = AgentKind::from_name(&record.agent).ok_or_else(refused)?;
-    if !candidate.is_notice()
+    let text_wake = candidate.is_text_wake()
+        && crate::send::claude_notice::attach::mailbox_text_reason(context, record).is_some();
+    if (!candidate.is_notice() && !text_wake)
         || record.id != candidate.target_session_id
         || record
             .runtime
@@ -28,6 +30,7 @@ pub(crate) fn begin_mailbox_notice(
         || !terminal_notification_waiting(context, record, agent)
         || tmux_session_attached(tmux, &record.tmux_session) != Ok(false)
         || (agent == AgentKind::Claude
+            && !text_wake
             && crate::send::claude_notice::runtime::readiness(context, record).is_none())
     {
         return Err(refused());
@@ -48,6 +51,10 @@ pub(super) async fn dispatch(
     record: SessionRecord,
     candidate: crate::coordination::NotificationCandidate,
 ) {
+    let text_reason = candidate
+        .is_text_wake()
+        .then(|| crate::send::claude_notice::attach::mailbox_text_reason(&state.context, &record))
+        .flatten();
     let context = state.context.clone();
     let tmux = state.tmux_bin.clone();
     let sending = candidate.clone();
@@ -60,7 +67,7 @@ pub(super) async fn dispatch(
             tmux,
         );
         args.guards = crate::send_guard::GuardArgs {
-            notice_envelope: true,
+            notice_envelope: sending.is_notice(),
             require_idle: true,
             require_empty_composer: true,
             expect_runtime: Some(sending.target_incarnation.clone()),
@@ -80,6 +87,7 @@ pub(super) async fn dispatch(
     .await;
     let context = state.context.clone();
     if matches!(result, Ok(Ok(_))) {
+        let candidate = candidate.clone();
         let _ = tokio::task::spawn_blocking(move || {
             crate::coordination::mark_notification_submitted(&context, &candidate)
         })
@@ -127,5 +135,12 @@ pub(super) async fn dispatch(
                 super::mailbox_dispatch::defer_provider_not_ready(&state, &candidate, detail).await;
             }
         }
+    }
+    if let Some(reason) = text_reason {
+        let context = state.context.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            candidate.record_text_wake_reason(&context, reason)
+        })
+        .await;
     }
 }
