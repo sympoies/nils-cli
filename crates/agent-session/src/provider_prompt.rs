@@ -314,6 +314,7 @@ struct ProviderPromptPoll {
 pub(crate) struct ProviderLastPromptTracker {
     tail: ProviderPromptTail,
     last_prompt: Option<LastPrompt>,
+    awaiting_launch_binding: bool,
 }
 
 impl ProviderPromptTail {
@@ -643,7 +644,10 @@ impl ProviderLastPromptTracker {
         source: ProviderPromptSource,
         binding: Option<(u64, String, String)>,
     ) -> Option<Self> {
-        Self::open_source_with_validation(source, true, binding.as_ref())
+        let awaiting = binding.is_none() && source.provider == ProviderKind::Claude;
+        let mut tracker = Self::open_source_with_validation(source, true, binding.as_ref())?;
+        tracker.awaiting_launch_binding = awaiting;
+        Some(tracker)
     }
 
     fn open_source_with_validation(
@@ -671,7 +675,11 @@ impl ProviderLastPromptTracker {
         {
             return None;
         }
-        Some(Self { tail, last_prompt })
+        Some(Self {
+            tail,
+            last_prompt,
+            awaiting_launch_binding: false,
+        })
     }
 
     #[cfg(test)]
@@ -689,6 +697,12 @@ impl ProviderLastPromptTracker {
         let mut tracker = Self::open_source_with_validation(source, false, None)?;
         tracker.tail.claude_fallback_delay = claude_fallback_delay;
         Some(tracker)
+    }
+
+    pub(crate) fn needs_launch_binding(&self) -> bool {
+        self.awaiting_launch_binding
+            && fs::metadata(&self.tail.source.path)
+                .is_ok_and(|metadata| metadata.len() > self.tail.offset)
     }
 
     pub(crate) fn refresh(&mut self) -> ProviderLastPromptRefresh {

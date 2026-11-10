@@ -81,10 +81,21 @@ impl ProviderPromptDiscoveryRegistry {
         // must not leave the slot pending after its blocking refresh finishes.
         tokio::spawn(async move {
             let task_cell = tracker_cell.clone();
+            let cached_source = source.clone();
+            let cached_state = state_dir.clone();
+            let cached_record = record.clone();
+            let cached_opener = tracker_opener.clone();
             let (cached, message) = tokio::task::spawn_blocking(move || {
                 let Ok(mut tracker) = task_cell.lock() else {
                     return (ProviderLastPromptRefresh::Invalidated, None);
                 };
+                rebind_late_launch(
+                    &mut tracker,
+                    cached_state.as_deref(),
+                    &cached_record,
+                    &cached_source,
+                    &cached_opener,
+                );
                 let Some(tracker) = tracker.as_mut() else {
                     return (ProviderLastPromptRefresh::Pending, None);
                 };
@@ -216,8 +227,15 @@ impl ProviderPromptDiscoveryRegistry {
                                 std::time::Instant::now() + Duration::from_secs(2),
                             )
                         });
-                        *tracker = task_opener(task_source, binding);
+                        *tracker = task_opener(task_source.clone(), binding);
                     }
+                    rebind_late_launch(
+                        &mut tracker,
+                        task_state.as_deref(),
+                        &task_record,
+                        &task_source,
+                        &task_opener,
+                    );
                     let Some(tracker) = tracker.as_mut() else {
                         return ProviderLastPromptRefresh::Invalidated;
                     };
@@ -253,5 +271,42 @@ impl ProviderPromptDiscoveryRegistry {
                 }
             }
         });
+    }
+}
+
+fn rebind_late_launch(
+    tracker: &mut Option<ProviderLastPromptTracker>,
+    state: Option<&std::path::Path>,
+    record: &crate::SessionRecord,
+    source: &ProviderPromptSource,
+    opener: &Arc<ProviderLastPromptTrackerOpener>,
+) {
+    if !tracker
+        .as_ref()
+        .is_some_and(ProviderLastPromptTracker::needs_launch_binding)
+    {
+        return;
+    }
+    let Some(state) = state else { return };
+    if !state
+        .join("sessions")
+        .join(&record.id)
+        .join("launch-notice.json")
+        .is_file()
+    {
+        return;
+    }
+    let Some(provider) = record.provider_resume.as_ref() else {
+        return;
+    };
+    if let Some(binding) = crate::notice::launch::binding_for_source(
+        state,
+        &provider.provider,
+        &provider.session_id,
+        crate::session_agent_profile(record),
+        source.path(),
+        std::time::Instant::now() + Duration::from_secs(2),
+    ) {
+        *tracker = opener(source.clone(), Some(binding));
     }
 }

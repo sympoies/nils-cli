@@ -386,7 +386,8 @@ if result.returncode == 0 and sys.argv[1] == 'paste-buffer':
         'timestamp':'2026-01-01T00:00:00Z','message':{'role':'user','content':wrapped}}
     project = pathlib.Path(os.environ['CLAUDE_CONFIG_DIR']) / 'projects/synthetic'
     project.mkdir(parents=True, exist_ok=True)
-    (project / (provider + '.jsonl')).write_text(json.dumps(row) + '\n')
+    (project / (provider + '.jsonl')).write_text(json.dumps({'type':'mode','sessionId':provider,'cwd':record['cwd'],'isSidechain':False}) + '\n')
+    (state / 'launch-row.jsonl').write_text(json.dumps(row) + '\n')
 sys.exit(result.returncode)
 "##,
     )
@@ -494,6 +495,27 @@ sys.exit(result.returncode)
             Instant::now() < deadline,
             "projection did not become current: {session}"
         );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let mut launch_transcript = fs::OpenOptions::new()
+        .append(true)
+        .open(project.join(format!("{provider}.jsonl")))
+        .unwrap();
+    launch_transcript
+        .write_all(&fs::read(state.join("launch-row.jsonl")).unwrap())
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let sessions = get(addr, "/sessions");
+        let session = &sessions["data"]["sessions"][0];
+        if session["last_prompt_state"] == "current" {
+            assert!(
+                session.get("last_prompt").is_none(),
+                "late launch row leaked: {session}"
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(20));
     }
     let mut transcript = fs::OpenOptions::new()
