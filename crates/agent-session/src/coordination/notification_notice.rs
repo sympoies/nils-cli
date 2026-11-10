@@ -51,6 +51,35 @@ pub(super) fn encode_summary(summary: &str) -> String {
 }
 
 impl NotificationCandidate {
+    pub(crate) fn text_wake_prompt(&self) -> String {
+        format!(
+            "Unread mailbox messages; run {} message inbox",
+            crate::executable()
+        )
+    }
+
+    pub(crate) fn is_text_wake(&self) -> bool {
+        self.prompt.as_deref() == Some(self.text_wake_prompt().as_str())
+    }
+
+    /// Preserve the selected route's configuration cause on both queued and
+    /// consumed receipts, without changing their scheduling or attempt state.
+    pub(crate) fn record_text_wake_reason(
+        &self,
+        context: &CliContext,
+        reason: &str,
+    ) -> Result<(), CliError> {
+        let mut locked = super::super::lock_registry(context)?;
+        let key = super::receipt_key(&self.target_session_id, &self.target_incarnation);
+        if let Some(receipt) = locked.registry.notifications.get_mut(&key)
+            && receipt.generation == self.generation
+        {
+            receipt.last_reason_detail = Some(reason.to_owned());
+            locked.save()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn is_notice(&self) -> bool {
         self.prompt
             .as_deref()

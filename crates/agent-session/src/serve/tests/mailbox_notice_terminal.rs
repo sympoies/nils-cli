@@ -111,15 +111,18 @@ fn bind_transcript(fixture: &WakeFixture) {
 }
 
 #[tokio::test]
-async fn mailbox_notice_unsupported_claude_sends_nothing() {
+async fn mailbox_notice_unattached_claude_delivers_once() {
     let lock = GlobalStateLock::new();
     let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let fixture = WakeFixture::new(AgentKind::Claude).await;
-    bind_transcript(&fixture);
+    configuration_fallback::bind_idle(&fixture);
     drain_coordination_notifications(fixture.state.clone()).await;
-    fixture.assert_no_input("");
-    assert_eq!(notification_fixture(fixture.temp.path())["state"], "queued");
-    assert_eq!(notification_fixture(fixture.temp.path())["notified_generation"], 0);
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["state"], "prompt_submitted", "{receipt}");
+    assert_eq!(receipt["notified_generation"], 1);
+    assert_eq!(receipt["last_reason_detail"], "notice-receiver-not-attached");
+    drain_coordination_notifications(fixture.state.clone()).await;
+    assert_eq!(fs::read_to_string(fixture.temp.path().join("submissions")).unwrap().lines().count(), 1);
 }
 
 #[tokio::test]
@@ -139,6 +142,10 @@ async fn mailbox_notice_uncertain_claude_capability_does_not_fall_back() {
     assert_eq!(receipt["state"], "queued");
     assert_eq!(receipt["last_reason"], "provider-not-ready");
     assert_eq!(receipt["last_reason_detail"], "notice-runtime-unavailable");
+}
+
+mod configuration_fallback {
+    include!("mailbox_notice_fallback.rs");
 }
 
 #[tokio::test]

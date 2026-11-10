@@ -55,8 +55,7 @@ pub(crate) struct NotificationReceipt {
     pub next_attempt_at_epoch: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_reason: Option<String>,
-    /// Which `provider-not-ready` branch deferred the wake; meaningful only
-    /// while `last_reason` is `provider-not-ready`.
+    /// The deferral branch or the configuration cause selecting a text wake.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_reason_detail: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -540,9 +539,14 @@ pub(super) fn transition_attempt_at(
     receipt.attempted_queued_at_epoch = receipt.queued_at_epoch;
     receipt.attempted_at_epoch = now;
     receipt.attempted_at = Some(attempted_at.to_string());
-    receipt.attempted_prompt_format = Some(notice::FORMAT.to_string());
+    receipt.attempted_prompt_format = Some(if candidate.is_text_wake() {
+        "mailbox-text-wake.v1".to_string()
+    } else {
+        notice::FORMAT.to_string()
+    });
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some(REASON_ATTEMPTING.to_string());
+    receipt.last_reason_detail = None;
     Some(NotificationCandidate {
         prompt: receipt.attempted_prompt.clone(),
         target_session_id: candidate.target_session_id.clone(),
@@ -930,6 +934,12 @@ const KNOWN_REFUSAL_CODES: &[&str] = &[
 /// Details a deferral may record for its reason. They name the branch or
 /// condition that deferred and carry no message or runtime content.
 pub(crate) fn safe_reason_detail(reason: &str, detail: &str) -> Option<String> {
+    if matches!(
+        detail,
+        "notice-writers-disabled" | "notice-provider-unsupported" | "notice-receiver-not-attached"
+    ) {
+        return Some(detail.to_owned());
+    }
     match reason {
         "provider-not-ready" => provider_not_ready_detail(detail),
         "recipient-composer-unobservable" if detail == "region-not-single-row" => {
@@ -975,8 +985,8 @@ fn provider_not_ready_detail(detail: &str) -> Option<String> {
     }
 }
 
-/// A detail belongs to the deferral that recorded it, so it is shown only
-/// while that deferral's reason is still the last reason.
+/// Deferral details follow their last reason; a text wake's configuration cause
+/// also remains visible after submission or an unknown outcome.
 pub(crate) fn reason_detail(receipt: &NotificationReceipt) -> Option<String> {
     let reason = receipt.last_reason.as_deref()?;
     receipt

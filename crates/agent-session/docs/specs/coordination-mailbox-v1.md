@@ -208,9 +208,15 @@ which joins wrapped rows. The multiline envelope uses the notice delivery guards
 
 Controller and hook delivery share the same generation claim. Supported
 terminal recipients use guarded notice delivery; Codex retains its start/steer
-semantics. A disabled writer gate or unsupported notice route sends nothing.
-An installed module whose readiness is missing or invalid defers without
-fallback. Failed or uncertain notice attempts remain consumed; absent history
+semantics. For Claude, a disabled writer gate, a recorded unsupported provider
+version, or a launch without an attached receiver selects a single-line,
+body-free text wake. Its receipt detail names `notice-writers-disabled`,
+`notice-provider-unsupported`, or `notice-receiver-not-attached`. The guarded
+text path requires an idle recipient and an empty composer, preserves even a
+stale operator draft, and claims the generation immediately before pasting.
+An installed module whose readiness is missing or invalid still defers without
+fallback, as does a receiver that has not authorized its offer. Failed or
+uncertain attempts remain consumed within their generation; absent history
 never authorizes replay. See [session notices](session-notices-v1.md).
 
 The authenticated `message reminder` command reads the invoking hook's writer
@@ -220,9 +226,10 @@ off. With writers enabled, hook-only recipients receive the current
 the companion schema, recipient and envelope. Hook-only wakes remain supported.
 A stripped hook environment cannot select another format or claim a generation.
 
-Plain fixed, dated and count reminders are retired. Generation and queue-time
-fences remain in durable receipts. Unread metadata is authoritative, and mail
-remains readable through an explicit inbox read when no notice is sent.
+The configuration-only Claude text wake is recorded as `mailbox-text-wake.v1`.
+It uses the same generation and queue-time fences as native delivery. Unread
+metadata is authoritative, and mail remains readable through an explicit inbox
+read when no wake is sent.
 
 `message inbox` resolves an omitted `--session` from `AGENT_SESSION_ID` and still
 requires the matching recipient capability. An explicit `--session` takes
@@ -331,9 +338,12 @@ and the earlier `Coordination mailbox has unread messages` sentence are ordinary
 input rows.
 
 New durable attempt receipts record `attempted_prompt_format`
-`mailbox-notice.v1` with the exact envelope bytes. A notice attempt requires
-positive observation to resolve; absence leaves it parked. A receipt in a retired
-or unknown format never resolves by observation and never authorizes replay.
+`mailbox-notice.v1` with the exact envelope bytes, or `mailbox-text-wake.v1` for
+the configuration-only Claude text route. A native notice attempt requires
+positive observation to resolve; absence leaves it parked. Text wakes use the
+guarded terminal submission result; an unknown result stays consumed. A receipt
+in a retired or unknown format never resolves by observation and never
+authorizes replay.
 
 Ambiguous transcript timestamps remain parked. Prefix recognition alone never
 provides submission proof.

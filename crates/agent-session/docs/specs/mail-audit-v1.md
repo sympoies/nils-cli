@@ -129,6 +129,13 @@ migration time or rewrites the stored receipt.
 `reason_detail` is `null` unless the last reason recorded one. It is a closed
 set and carries no message or runtime content.
 
+A configuration-only Claude text wake retains its route cause while queued,
+submitted, or unknown: `notice-writers-disabled` (writers disabled at launch or
+in the daemon), `notice-provider-unsupported` (the launch could not use the
+tested provider version), or `notice-receiver-not-attached` (no receiver was
+installed for that launch). A nonempty composer keeps the wake queued and the
+draft intact; an unknown attempted generation is never resent.
+
 For `recipient-coordination-not-quiescent` it names the blocking condition:
 `active-claim` (the in-turn route only), `active-operation`,
 `uncertain-operation`, `broker-not-authoritative`, `auth-quarantined`, or
@@ -136,7 +143,7 @@ For `recipient-coordination-not-quiescent` it names the blocking condition:
 
 For `provider-not-ready` it names the branch that deferred:
 
-- `notice-writers-disabled`: the serve process has notice writers off.
+- `notice-writers-disabled`: the notice writer gate is disabled.
 - `notice-runtime-unavailable`: the Claude notice runtime is not ready.
 - `notice-not-prepared`: the wake notice could not be prepared for another
   reason.
