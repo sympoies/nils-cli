@@ -31,6 +31,14 @@ impl Drop for Scope {
     }
 }
 fn error(e: identity::Error) -> ForgeError {
+    if e.code == "github_rate_limited" {
+        return ForgeError::unavailable(
+            schema_version_for(BINARY, "identity", 1),
+            e.code,
+            e.to_string(),
+            None,
+        );
+    }
     if e.code == "identity_actor_unavailable"
         && let Some(details) = e.details.clone()
     {
