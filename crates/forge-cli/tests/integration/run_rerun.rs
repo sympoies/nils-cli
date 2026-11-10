@@ -16,7 +16,7 @@ if path == 'user':
 with open(root + '/calls', 'a') as f: f.write(('POST ' if post else 'GET ') + path + '\n')
 head = 'a' * 40
 attempt = 2 if os.path.exists(root + '/posted') else 1
-run = {'id':42, 'head_sha':head, 'run_attempt':attempt, 'html_url':'https://github.com/example/widget/actions/runs/42', 'event':os.environ.get('EVENT', 'pull_request'), 'status':'completed', 'pull_requests':([] if os.environ.get('NO_PRS') else [{'number':7}]), 'triggering_actor':{'login':actor}}
+run = {'id':42, 'head_sha':head, 'run_attempt':attempt, 'html_url':'https://github.com/example/widget/actions/runs/42', 'event':os.environ.get('EVENT', 'pull_request'), 'status':('queued' if os.path.exists(root + '/posted') else os.environ.get('RUN_STATUS', 'completed')), 'pull_requests':([] if os.environ.get('NO_PRS') else [{'number':7}]), 'head_repository':{'full_name':os.environ.get('RUN_REPO', 'fork/widget')}, 'triggering_actor':{'login':actor}}
 if '/commits/' in path:
     print(json.dumps([[{'number':7}]])); sys.exit(0)
 if post:
@@ -24,8 +24,8 @@ if post:
     if os.environ.get('POST_FAIL'):
         print(os.environ.get('GH_TOKEN', 'provider unavailable'), file=sys.stderr); sys.exit(1)
     sys.exit(0)
-if path.endswith('/pulls/7'):
-    print(json.dumps({'number':7, 'state':os.environ.get('PR_STATE', 'open'), 'merged_at':os.environ.get('MERGED_AT'), 'merge_commit_sha':head, 'head':{'sha':os.environ.get('PR_HEAD', head)}}))
+if '/pulls/' in path and not '/commits/' in path:
+    print(json.dumps({'number':int(path.rsplit('/', 1)[-1]), 'state':os.environ.get('PR_STATE', 'open'), 'merged_at':os.environ.get('MERGED_AT'), 'merge_commit_sha':head, 'head':{'sha':os.environ.get('PR_HEAD', head), 'repo':{'full_name':'fork/widget'}}}))
 elif '/jobs/19' in path:
     print(json.dumps({'id':19, 'run_id':int(os.environ.get('JOB_RUN', '42')), 'run_attempt':int(os.environ.get('JOB_ATTEMPT', '1')), 'head_sha':head, 'name':'test'}))
 elif path.endswith('/jobs?per_page=100'):
@@ -374,4 +374,197 @@ fn run_rerun_declares_write_effect_and_rejects_conflicting_or_invalid_arguments(
     assert_eq!(out.code, 64);
     assert!(out.stdout.contains("provider_unsupported"));
     assert!(posts(&stub).is_empty());
+}
+
+#[test]
+fn run_approve_fences_and_records_the_provider_receipt() {
+    let stub = fixture()
+        .env("RUN_STATUS", "action_required")
+        .env("NO_PRS", "1");
+    let reason = stub.tempdir.path().join("reason.txt");
+    fs::write(&reason, "Reviewed workflow changes").unwrap();
+    let reason = reason.to_str().unwrap();
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "example/widget",
+            "--format",
+            "json",
+            "run",
+            "approve",
+            "42",
+            "--expected-head",
+            HEAD,
+            "--pr",
+            "7",
+            "--reason-file",
+            reason,
+        ],
+    );
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    let data = parse_envelope(&out.stdout)["data"].clone();
+    assert_eq!(data["run_id"], 42);
+    assert_eq!(data["head_sha"], HEAD);
+    assert_eq!(data["pr"], 7);
+    assert_eq!(data["reason"], "Reviewed workflow changes");
+    assert_eq!(data["prior_status"], "action_required");
+    assert_eq!(data["new_status"], "queued");
+    assert_eq!(data["outcome"], "approved");
+    let repeat = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "example/widget",
+            "--format",
+            "json",
+            "run",
+            "approve",
+            "42",
+            "--expected-head",
+            HEAD,
+            "--pr",
+            "7",
+            "--reason-file",
+            reason,
+        ],
+    );
+    assert_eq!(repeat.code, 65, "{}", repeat.stdout);
+    let error = parse_envelope(&repeat.stdout)["error"].clone();
+    assert_eq!(error["code"], "run-not-awaiting-approval");
+    assert_eq!(error["details"]["status"], "queued");
+    assert_eq!(
+        posts(&stub),
+        "repos/example/widget/actions/runs/42/approve\n"
+    );
+}
+
+#[test]
+fn run_approve_rejects_mismatches_and_repeated_approval() {
+    for (head, pr, status, expected) in [
+        (
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "7",
+            "action_required",
+            "run_head_mismatch",
+        ),
+        (HEAD, "8", "action_required", "run-pr-mismatch"),
+        (HEAD, "7", "completed", "run-not-awaiting-approval"),
+        (HEAD, "7", "queued", "run-not-awaiting-approval"),
+    ] {
+        let stub = fixture().env("RUN_STATUS", status);
+        let reason = stub.tempdir.path().join("reason.txt");
+        fs::write(&reason, "Reviewed workflow changes").unwrap();
+        let out = run_forge_cli(
+            &stub,
+            &[
+                "--provider",
+                "github",
+                "--repo",
+                "example/widget",
+                "--format",
+                "json",
+                "run",
+                "approve",
+                "42",
+                "--expected-head",
+                head,
+                "--pr",
+                pr,
+                "--reason-file",
+                reason.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
+        assert!(out.stdout.contains(expected), "{}", out.stdout);
+        assert!(posts(&stub).is_empty());
+    }
+}
+
+#[test]
+fn run_approve_rejects_other_forks_and_gitlab() {
+    let stub = fixture()
+        .env("RUN_STATUS", "action_required")
+        .env("RUN_REPO", "other/widget")
+        .env("NO_PRS", "1");
+    let reason = stub.tempdir.path().join("reason.txt");
+    fs::write(&reason, "Reviewed workflow changes").unwrap();
+    let reason = reason.to_str().unwrap();
+    let args = [
+        "--repo",
+        "example/widget",
+        "--format",
+        "json",
+        "run",
+        "approve",
+        "42",
+        "--expected-head",
+        HEAD,
+        "--pr",
+        "7",
+        "--reason-file",
+        reason,
+    ];
+    let mut github = vec!["--provider", "github"];
+    github.extend(args);
+    let out = run_forge_cli(&stub, &github);
+    assert_eq!(out.code, 65, "{}", out.stdout);
+    assert!(out.stdout.contains("run-pr-mismatch"));
+    assert!(posts(&stub).is_empty());
+    let mut gitlab = vec!["--provider", "gitlab"];
+    gitlab.extend(args);
+    let out = run_forge_cli(&stub, &gitlab);
+    assert!(
+        out.stdout.contains("provider_unsupported"),
+        "{}",
+        out.stdout
+    );
+    assert!(posts(&stub).is_empty());
+}
+
+#[test]
+fn run_approve_dry_run_and_post_race() {
+    for (dry, fail) in [(true, false), (false, true)] {
+        let stub = fixture().env("RUN_STATUS", "action_required");
+        let stub = if fail {
+            stub.env("POST_FAIL", "1")
+        } else {
+            stub
+        };
+        let reason = stub.tempdir.path().join("reason.txt");
+        fs::write(&reason, "Reviewed workflow changes").unwrap();
+        let mut args = vec![
+            "--provider",
+            "github",
+            "--repo",
+            "example/widget",
+            "--format",
+            "json",
+            "run",
+            "approve",
+            "42",
+            "--expected-head",
+            HEAD,
+            "--pr",
+            "7",
+            "--reason-file",
+            reason.to_str().unwrap(),
+        ];
+        if dry {
+            args.push("--dry-run");
+        }
+        let out = run_forge_cli(&stub, &args);
+        if dry {
+            assert_eq!(out.code, 0, "{}", out.stdout);
+            assert!(posts(&stub).is_empty());
+        } else {
+            assert_eq!(out.code, 65, "{}", out.stdout);
+            assert!(out.stdout.contains("run-not-awaiting-approval"));
+            assert_eq!(posts(&stub).lines().count(), 1);
+        }
+    }
 }

@@ -369,6 +369,21 @@ operations:
       details.failed_asset_outcome as unknown. Inspect the release before retrying;
       subsequent assets were not attempted. GitLab and Local are unsupported.
 
+  - id: run.approve
+    schema_version: cli.forge-cli.run.approve.v1
+    summary: Approve a GitHub pull request workflow run at the reviewed head.
+    inputs:
+      - { name: run-id, type: positive-integer, required: true }
+      - { name: --expected-head, type: full-sha, required: true }
+      - { name: --pr, type: positive-integer, required: true }
+      - { name: --reason-file, type: path, required: true }
+    validations: []
+    backends:
+      github:
+        - { program: gh, argv: [api, "repos/<repo>/actions/runs/<run-id>/approve", --method, POST], notes: "Read and fence the run and PR before one approval request." }
+    output:
+      data: { provider: github, repository: string, run_id: integer, head_sha: string, pr: integer, reason: string, prior_status: string, new_status: string, outcome: approved }
+
   - id: run.rerun
     schema_version: cli.forge-cli.run.rerun.v1
     summary: Request one identity-scoped GitHub rerun at the expected current PR head.

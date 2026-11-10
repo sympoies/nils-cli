@@ -22,7 +22,7 @@ mod security;
 pub use security::*;
 
 mod run;
-pub use run::{RunArgs, RunCommand, RunRerunArgs};
+pub use run::{RunApproveArgs, RunArgs, RunCommand, RunRerunArgs};
 
 mod checks;
 pub use checks::PrChecksArgs;

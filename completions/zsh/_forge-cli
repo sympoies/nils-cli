@@ -2092,6 +2092,24 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ':run_id -- Existing workflow run database id:_default' \
 && ret=0
 ;;
+(approve)
+_arguments "${_arguments_options[@]}" : \
+'--expected-head=[Exact full SHA of the reviewed pull request head]:EXPECTED_HEAD:_default' \
+'--pr=[Pull request associated with the run]:PR:_default' \
+'--reason-file=[File containing the approval reason; do not include secrets]:REASON_FILE:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':run_id -- Workflow run database id:_default' \
+&& ret=0
+;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 ":: :_forge-cli__subcmd__run__subcmd__help_commands" \
@@ -2105,6 +2123,10 @@ _arguments "${_arguments_options[@]}" : \
         curcontext="${curcontext%:*:*}:forge-cli-run-help-command-$line[1]:"
         case $line[1] in
             (rerun)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(approve)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3880,6 +3902,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(approve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
         esac
     ;;
 esac
@@ -5037,8 +5063,14 @@ _forge-cli__subcmd__help__subcmd__repo__subcmd__view_commands() {
 _forge-cli__subcmd__help__subcmd__run_commands() {
     local commands; commands=(
 'rerun:Request exactly one rerun, then read its attempt and job receipt' \
+'approve:Approve a workflow run awaiting approval at the reviewed head' \
     )
     _describe -t commands 'forge-cli help run commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__run__subcmd__approve_commands] )) ||
+_forge-cli__subcmd__help__subcmd__run__subcmd__approve_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help run approve commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__run__subcmd__rerun_commands] )) ||
 _forge-cli__subcmd__help__subcmd__run__subcmd__rerun_commands() {
@@ -6501,17 +6533,29 @@ _forge-cli__subcmd__repo__subcmd__view_commands() {
 _forge-cli__subcmd__run_commands() {
     local commands; commands=(
 'rerun:Request exactly one rerun, then read its attempt and job receipt' \
+'approve:Approve a workflow run awaiting approval at the reviewed head' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'forge-cli run commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__run__subcmd__approve_commands] )) ||
+_forge-cli__subcmd__run__subcmd__approve_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli run approve commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__run__subcmd__help_commands] )) ||
 _forge-cli__subcmd__run__subcmd__help_commands() {
     local commands; commands=(
 'rerun:Request exactly one rerun, then read its attempt and job receipt' \
+'approve:Approve a workflow run awaiting approval at the reviewed head' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'forge-cli run help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__run__subcmd__help__subcmd__approve_commands] )) ||
+_forge-cli__subcmd__run__subcmd__help__subcmd__approve_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli run help approve commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__run__subcmd__help__subcmd__help_commands] )) ||
 _forge-cli__subcmd__run__subcmd__help__subcmd__help_commands() {

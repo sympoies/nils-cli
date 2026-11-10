@@ -53,7 +53,7 @@ struct Receipt {
     jobs: Vec<JobReceipt>,
 }
 
-fn call(ctx: &ProviderContext, path: &str, post: bool) -> BackendCall {
+pub(super) fn call(ctx: &ProviderContext, path: &str, post: bool) -> BackendCall {
     let mut argv: Vec<OsString> = vec!["api".into()];
     ctx.push_github_api_hostname(&mut argv);
     argv.push(path.into());
@@ -61,18 +61,23 @@ fn call(ctx: &ProviderContext, path: &str, post: bool) -> BackendCall {
     BackendCall::new(BackendProgram::Gh, argv)
 }
 
-fn read<T: serde::de::DeserializeOwned>(
+pub(super) fn read<T: serde::de::DeserializeOwned>(
     runner: &impl BackendRunner,
     ctx: &ProviderContext,
     path: &str,
     timeout: Duration,
+    op: &str,
 ) -> Result<T, ForgeError> {
     let output = runner.run_with_timeout(&call(ctx, path, false), Some(timeout))?;
     serde_json::from_str(&output.stdout).map_err(|_| {
         invalid(
-            OP,
-            "rerun_response_invalid",
-            "provider returned an invalid rerun response",
+            op,
+            if op == OP {
+                "rerun_response_invalid"
+            } else {
+                "approval_response_invalid"
+            },
+            "provider returned an invalid workflow response",
         )
     })
 }
@@ -148,6 +153,7 @@ fn pr_fence(
             ctx,
             &format!("repos/{repo}/pulls/{}", pr.number),
             READ_TIMEOUT,
+            OP,
         )?;
         // Commit lookup also returns the merged PR that introduced a default-
         // branch commit. Its source head need not equal the merge/squash head.
@@ -176,7 +182,10 @@ pub fn run(
     command: RunCommand,
     format: OutputFormat,
 ) -> Result<i32, ForgeError> {
-    let RunCommand::Rerun(args) = command;
+    let args = match command {
+        RunCommand::Rerun(args) => args,
+        RunCommand::Approve(args) => return super::run_approve::run(global, args, format),
+    };
     let ctx = write::target(global, OP)?;
     if args.run_id == 0 || args.job == Some(0) {
         return Err(invalid(
@@ -197,7 +206,7 @@ pub fn run(
     let repo = ctx.repo.as_deref().expect("target repository");
     let runner = crate::rate_limit::default_runner();
     let run_path = format!("repos/{repo}/actions/runs/{}", args.run_id);
-    let before: WorkflowRun = read(&runner, &ctx, &run_path, READ_TIMEOUT)?;
+    let before: WorkflowRun = read(&runner, &ctx, &run_path, READ_TIMEOUT, OP)?;
     fence(&before, &args)?;
     if let Some(id) = args.job {
         let job: Value = read(
@@ -205,6 +214,7 @@ pub fn run(
             &ctx,
             &format!("repos/{repo}/actions/jobs/{id}"),
             READ_TIMEOUT,
+            OP,
         )?;
         if job["id"].as_u64() != Some(id)
             || job["run_id"].as_u64() != Some(args.run_id)
@@ -220,7 +230,7 @@ pub fn run(
             ));
         }
     }
-    let actor: Value = read(&runner, &ctx, "user", READ_TIMEOUT)?;
+    let actor: Value = read(&runner, &ctx, "user", READ_TIMEOUT, OP)?;
     let actor = actor["login"]
         .as_str()
         .filter(|s| !s.is_empty())
@@ -234,7 +244,7 @@ pub fn run(
         .to_owned();
     // Re-read immediately before the write; a concurrent rerun must not make
     // a previously selected job or attempt silently stale.
-    let latest: WorkflowRun = read(&runner, &ctx, &run_path, READ_TIMEOUT)?;
+    let latest: WorkflowRun = read(&runner, &ctx, &run_path, READ_TIMEOUT, OP)?;
     fence(&latest, &args)?;
     if latest.run_attempt != before.run_attempt {
         return Err(invalid(
@@ -342,7 +352,7 @@ fn observe_once(
             .max(Duration::from_millis(1))
             .min(READ_TIMEOUT)
     };
-    let after: WorkflowRun = read(runner, ctx, path, remaining())?;
+    let after: WorkflowRun = read(runner, ctx, path, remaining(), OP)?;
     if after.id != receipt.run_id || after.head_sha != receipt.head_sha {
         return Err(invalid(
             OP,
