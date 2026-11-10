@@ -514,6 +514,17 @@ field that names an owner: the aggregator takes the owner from the caller's
 exact Console grant. With federation unconfigured the route fails with
 `console-start-disabled` (HTTP 409).
 
+Notice starts add optional `notice_kind`, `notice_source`, and `notice_id` to
+`session`, alongside the already encoded `prompt`. Both managed-session and
+admitted-service starts forward these fields to the target create handler.
+Omitting them is a valid ordinary start. The target writes the private Claude
+launch receipt and returns `session.launch_notice` as `written`, `not-requested`,
+or `unavailable`; see [initial prompt notices](session-notices-v1.md).
+Upgrade target daemons first: a preceding-release target ignores the notice
+fields, so it creates the session without the launch receipt or outcome field.
+The edge must forward the notice fields and return `session.launch_notice`;
+the coordinated edge change is [salon#406](https://github.com/sympoies/salon/issues/406).
+
 On success the daemon answers HTTP 201 with `{"schema_version": "agent-session.console-start.v1",
 "machine", "session"}`, where `machine` is the requested machine or the daemon's own and `session` is the
 aggregator's public projection of the created session, including its `id`. The CLI wraps it as

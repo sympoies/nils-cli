@@ -966,6 +966,79 @@ fn console_start_confirms_pinned_mode_without_retrying_a_created_session() {
 }
 
 #[test]
+fn console_start_transports_notice_metadata_with_encoded_stdin() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let _serve = fixture.serve(&[], Some(&aggregator));
+    aggregator.reply_json(
+        201,
+        &json!({"ok":true,"data":{"session":{
+            "id":"notice-child", "agent":"claude", "launch_notice":"written"
+        }}}),
+    );
+    let body = "Synthetic dispatch\n";
+    let output = run_resolved(
+        "agent-session",
+        &[
+            "--state-dir",
+            fixture.state_dir.to_str().unwrap(),
+            "start",
+            "--via-console",
+            "--machine",
+            "host-b",
+            "--agent",
+            "claude",
+            "--cwd",
+            fixture.root.to_str().unwrap(),
+            "--title",
+            "Dispatch task",
+            "--notice-kind",
+            "dispatch.bootstrap",
+            "--notice-source",
+            "scheduler",
+            "--notice-id",
+            "dispatch-example",
+            "--prompt-stdin",
+            "--format",
+            "json",
+        ],
+        &CmdOptions::new()
+            .with_cwd(&fixture.root)
+            .without_ambient_managed_session_env()
+            .with_env_remove_many(&ISOLATED_ENV)
+            .with_env("HOME", fixture.home.to_str().unwrap())
+            .with_env("AGENT_SESSION_ID", SESSION)
+            .with_env(
+                "AGENT_SESSION_CAPABILITY_FILE",
+                fixture.capability_file.to_str().unwrap(),
+            )
+            .with_env("AGENT_SESSION_NOTICE_WRITERS", "1")
+            .with_stdin_str(body),
+    );
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["data"]["session"]["launch_notice"],
+        "written"
+    );
+    let seen = aggregator.seen();
+    let session = &seen[0].body.as_ref().unwrap()["session"];
+    assert_eq!(session["notice_kind"], "dispatch.bootstrap");
+    assert_eq!(session["notice_source"], "scheduler");
+    assert_eq!(session["notice_id"], "dispatch-example");
+    assert_eq!(
+        session["prompt"],
+        agent_session::notice::NoticeEnvelope::new(
+            "dispatch.bootstrap",
+            "scheduler",
+            Some("dispatch-example")
+        )
+        .unwrap()
+        .encode(body)
+        .unwrap()
+    );
+}
+
+#[test]
 fn console_start_creates_the_child_through_the_aggregator_as_the_calling_session() {
     let fixture = Fixture::new();
     let aggregator = Aggregator::start();

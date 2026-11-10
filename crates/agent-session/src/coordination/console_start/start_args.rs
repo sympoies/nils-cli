@@ -48,6 +48,13 @@ fn build_args(
         );
     }
     let mut session = json!({ "agent": args.agent.as_str() });
+    session.as_object_mut().expect("session object").extend(
+        serde_json::to_value(&args.notice)
+            .expect("notice fields")
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
     if args.resume.is_some() {
         session["resume"] = json!(args.resume);
     }

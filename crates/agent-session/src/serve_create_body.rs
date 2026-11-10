@@ -30,6 +30,8 @@ pub(super) struct CreateBody {
     pub(super) title_state: Option<SessionTitleStateInput>,
     pub(super) id: Option<String>,
     pub(super) prompt: Option<String>,
+    #[serde(flatten)]
+    pub(super) notice: crate::notice::StartNoticeArgs,
     #[serde(default, alias = "resume_id")]
     pub(super) provider_resume_id: Option<String>,
     /// Account-bound new-record resume; accepted only by the versioned resume route.

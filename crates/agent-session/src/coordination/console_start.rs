@@ -183,6 +183,8 @@ fn forwarded(code: Option<&str>, message: &Value) -> CliError {
         | "work-ref-invalid"
         | "workspace-invalid"
         | "origin-invalid"
+        | "invalid-notice-field"
+        | "launch-notice-invalid"
         | "launch-env-key-refused"
         | "launch-env-allowlist-invalid"
         | "launch-env-too-many"
@@ -977,8 +979,10 @@ mod tests {
     }
 
     #[test]
-    fn launch_env_forwarded_validation_preserves_usage_errors() {
+    fn create_metadata_forwarded_validation_preserves_usage_errors() {
         for code in [
+            "invalid-notice-field",
+            "launch-notice-invalid",
             "launch-env-key-refused",
             "launch-env-allowlist-invalid",
             "launch-env-too-many",
