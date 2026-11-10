@@ -1,11 +1,9 @@
-//! Operator-initiated settlement of a Claude authentication quarantine.
-//! A model turn is the only automatic exit, and none can be admitted while
-//! quarantined, so a same-account switch re-runs the credential preflight and
-//! records `credentials_refreshed` only when the credentials are usable again.
+//! Same-account credential preflight for operator and scheduled Claude rechecks.
+//! Records `credentials_refreshed` only when the credentials are usable again.
 use super::*;
 use crate::claude_account::generation;
 
-fn refused(record: &SessionRecord, reason: &str) -> CliError {
+pub(super) fn refused(record: &SessionRecord, reason: &str) -> CliError {
     CliError::data(
         "claude-account-recheck-refused",
         "the account credentials could not be confirmed; the authentication quarantine was left unchanged",
@@ -15,7 +13,7 @@ fn refused(record: &SessionRecord, reason: &str) -> CliError {
 
 /// Incidents that currently fence input for this runtime: each clause mirrors
 /// one input guard, so an incident the guard no longer enforces is not owned.
-fn quarantining(incident: &AuthIncident, record: &SessionRecord) -> bool {
+pub(super) fn quarantining(incident: &AuthIncident, record: &SessionRecord) -> bool {
     let current = same_runtime(incident, record);
     current && incident.status == "auth_failed"
         || incident
@@ -57,12 +55,30 @@ pub(crate) fn settle(
     crate::claude_account::materialize(account).map_err(|e| refused(record, e.code()))?;
     // Materialization is never evidence of repair: when the failed launch's
     // publication is known, a newer one must exist for the same account.
-    let baseline = owned.iter().find_map(|&i| {
+    let receipt_baseline = |i: usize| {
         store.incidents[i]
             .same_account_recovery
             .as_ref()
-            .and_then(|r| r.baseline.clone())
-    });
+            .and_then(|receipt| receipt.baseline.clone())
+    };
+    let current_failed = owned
+        .iter()
+        .any(|&i| same_runtime(&store.incidents[i], record));
+    let baseline = if current_failed {
+        // A predecessor must never weaken the current failed launch's proof.
+        // Its receipt may not exist yet when the first daemon tick is delayed.
+        generation::baseline(record).or_else(|| {
+            owned
+                .iter()
+                .copied()
+                .filter(|&i| same_runtime(&store.incidents[i], record))
+                .find_map(receipt_baseline)
+        })
+    } else {
+        // With carried-only quarantine, the failed predecessor owns the proof;
+        // the replacement's publication is not itself evidence of a new fault.
+        owned.iter().copied().find_map(receipt_baseline)
+    };
     if let Some(baseline) = baseline
         && !generation::published(account)
             .ok()

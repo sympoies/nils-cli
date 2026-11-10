@@ -4,6 +4,7 @@
 
 use std::fs;
 pub(crate) mod alert_delivery;
+pub(crate) mod auto_settle;
 mod escalation;
 #[cfg(test)]
 mod escalation_tests;
@@ -73,6 +74,8 @@ pub(crate) struct AuthIncident {
     pub recovery_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub same_account_recovery: Option<recovery::Receipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_settle: Option<auto_settle::Receipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failover: Option<failover::Receipt>,
     notification: Notification,
@@ -192,11 +195,9 @@ pub(crate) fn projection(
 ) -> (Option<AuthIncident>, Option<String>) {
     match read(context, record) {
         Ok(store) => (
-            store
-                .incidents
-                .into_iter()
-                .rev()
-                .find(|incident| same_runtime(incident, record)),
+            store.incidents.into_iter().rev().find(|incident| {
+                same_runtime(incident, record) || auto_settle::matches(incident, record)
+            }),
             store.detection_health,
         ),
         Err(_) => (None, Some("degraded_store_unavailable".into())),
@@ -282,6 +283,7 @@ fn observe_locked(
         recovery_observed_at: None,
         recovery_path: None,
         same_account_recovery: None,
+        auto_settle: None,
         failover: None,
         notification: Notification::default(),
         recovery_notification: Notification::default(),
@@ -694,7 +696,10 @@ fn retry_window_open(notification: &Notification, now: jiff::Timestamp) -> bool 
 
 fn retire_replaced(store: &mut Store, record: &SessionRecord) {
     for incident in &mut store.incidents {
-        if !same_runtime(incident, record) && incident.status == "auth_failed" {
+        if !same_runtime(incident, record)
+            && incident.status == "auth_failed"
+            && !recheck::quarantining(incident, record)
+        {
             incident.status = "runtime_replaced".into();
             incident.settle(
                 PATH_CONTROLLER,
@@ -792,6 +797,7 @@ pub(crate) fn tick(
             }
         }
     }
+    auto_settle::tick(context, record, jiff::Timestamp::now().as_second())?;
     recovery::tick(context, record, tmux, jiff::Timestamp::now().as_second())?;
     failover::tick(context, record, tmux, jiff::Timestamp::now().as_second())?;
     let discovered = read(context, record)?;

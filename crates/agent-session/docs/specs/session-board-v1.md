@@ -181,7 +181,7 @@ the extension. A session with lineage and work looks like this:
 | Progress | `turn_state.current_turn.last_progress_at` | string or null | `CurrentTurn.last_progress_at`. |
 | Progress | `turn_state.current_turn.attention` | object or null | `CurrentTurn.attention`, projected to `kind`, `requested_at`, optional nonnegative integer `pending_count`, and optional `certainty` (`exact` or `conservative`). Older inputs omit the new fields. |
 | Progress | `turn_state.last_turn` | object or null | `TurnState.last_turn`, projected to `outcome` and an optional allowlisted `provider_failure_kind` (`authentication` or `provider_capacity`). |
-| Progress | `auth_incident` | optional object | Typed, runtime-bound provider authentication incident and notification receipts; see the [turn-state contract](../turn-state-contract.md#provider-authentication-incidents). Absent before an incident is observed. |
+| Progress | `auth_incident` | optional object | Typed provider authentication incident and notification receipts, bound to the current runtime directly or through a carried `auto_settle` schedule; see the [turn-state contract](../turn-state-contract.md#provider-authentication-incidents). Absent before an incident is observed. |
 | Progress | `auth_detection_health` | optional string | `structured`, `degraded_terminal_fallback`, `degraded_source_unavailable`, `degraded_store_unavailable`, or `degraded_queue_capacity`; absent before observation. Unrecognized values are omitted. |
 | Progress | `turn_state.source.confidence` | string | `TurnState.source.confidence`: `authoritative`, `observed`, or `inferred`. |
 | Lifecycle | `state` | string | New derivation: `live`, `stopped`, or `closed`. See [Lifecycle states](#lifecycle-states). |
