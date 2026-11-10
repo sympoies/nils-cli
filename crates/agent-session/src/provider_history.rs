@@ -1,5 +1,7 @@
 #[cfg(test)]
 use history_images::normalize_message;
+mod catalog_scan;
+use catalog_scan::scan_catalog;
 mod exact_lookup;
 pub(crate) mod history_images;
 use exact_lookup::inspect_history_file;
@@ -457,7 +459,13 @@ impl HistoryCatalog {
                 }
             }
         }
-        let snapshot = scan_catalog(&self.sources, &[], &self.archives_root, &self.stars_root);
+        let snapshot = scan_catalog(
+            &self.sources,
+            &[],
+            &self.archives_root,
+            &self.stars_root,
+            self.session_state_dir.as_deref(),
+        );
         if let Some(session) = snapshot
             .sessions
             .into_iter()
@@ -673,6 +681,7 @@ impl HistoryCatalog {
             &self.dsh_sources,
             &self.archives_root,
             &self.stars_root,
+            self.session_state_dir.as_deref(),
         ));
         cache.refreshed_at = Some(Instant::now());
         cache.snapshot = Some(Arc::clone(&snapshot));
@@ -870,7 +879,7 @@ pub(crate) fn list(
     limit: usize,
 ) -> Result<HistoryPage, HistoryError> {
     let mut page = paginate_snapshot(
-        scan_catalog(sources, &[], roots.archives, roots.stars),
+        scan_catalog(sources, &[], roots.archives, roots.stars, None),
         machine,
         query,
         provider,
@@ -997,158 +1006,6 @@ fn parse_list_cursor(value: &str) -> Result<ListCursor, HistoryError> {
 
 fn session_is_after_cursor(session: &HistorySession, cursor: &ListCursor) -> bool {
     compare_list_keys(&list_key(session), cursor) == std::cmp::Ordering::Greater
-}
-
-fn scan_catalog(
-    sources: &[HistorySource],
-    dsh_sources: &[DshHistorySource],
-    archives_root: &Path,
-    stars_root: &Path,
-) -> CatalogSnapshot {
-    let deadline = Instant::now() + SCAN_MAX_DURATION;
-    let mut truncated = false;
-    let archives = read_archives(archives_root, deadline, &mut truncated);
-    let stars = read_stars(stars_root, deadline, &mut truncated);
-    let mut visited = 0usize;
-    let mut sessions = Vec::new();
-    let mut incremental_segments = BTreeMap::<String, Vec<HistorySession>>::new();
-    let mut seen = HashSet::new();
-    // Configured roots may overlap through symlinks (for example a Claude
-    // account directory whose `projects/` links to the shared tree), so each
-    // physical transcript is attributed to the first source that reaches it.
-    let mut seen_transcripts = HashSet::new();
-    let mut catalog_stamps = IncrementalCatalogStampCache::default();
-
-    for source in sources {
-        let mut paths = Vec::new();
-        collect_jsonl(
-            &source.root,
-            if source.provider == "codex" { 6 } else { 2 },
-            0,
-            &mut paths,
-            &mut visited,
-            deadline,
-            &mut truncated,
-        );
-        paths.sort();
-        for path in paths {
-            if Instant::now() >= deadline {
-                truncated = true;
-                break;
-            }
-            let physical = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-            if !seen_transcripts.insert(physical) {
-                continue;
-            }
-            let Some(mut session) = inspect_history_file(
-                source,
-                &path,
-                deadline,
-                &mut catalog_stamps,
-                &mut truncated,
-                true,
-            ) else {
-                continue;
-            };
-            let archive = archives.get(&session.id);
-            if let Some(archive) = archive {
-                session.id = archive.history_id.clone();
-                session.agent_profile = archive.agent_profile.clone();
-                session.title = archive.title.clone();
-                session.archived_session_id = archive.session_id.clone();
-                session.archived_title_state = archive.title_state.clone();
-                session.archived_title_mode = archive.title_mode;
-                session.cwd = archive.cwd.clone();
-                session.repo_name = repo_name(&archive.cwd);
-                session.archived_at = Some(archive.archived_at.clone());
-            }
-            session.starred_at = stars.get(&session.id).cloned();
-            incremental_segments
-                .entry(session.id.clone())
-                .or_default()
-                .push(session.clone());
-            if !seen.insert(session.id.clone()) {
-                continue;
-            }
-            sessions.push(session);
-            if Instant::now() >= deadline {
-                truncated = true;
-                break;
-            }
-        }
-        if truncated {
-            break;
-        }
-    }
-
-    for source in dsh_sources {
-        let remaining = SCAN_MAX_ENTRIES.saturating_sub(visited);
-        if remaining == 0 || Instant::now() >= deadline {
-            truncated = true;
-            break;
-        }
-        let Ok(mut listed) = list_dsh_sessions(source) else {
-            truncated = true;
-            continue;
-        };
-        if listed.len() > remaining {
-            listed.truncate(remaining);
-            truncated = true;
-        }
-        visited += listed.len();
-        for item in listed {
-            if !valid_dsh_catalog_item(&item) {
-                truncated = true;
-                continue;
-            }
-            let id = stable_history_id(
-                "dsh",
-                Some(&source.agent_profile),
-                &item.provider_session_id,
-            );
-            if !seen.insert(id.clone()) {
-                continue;
-            }
-            sessions.push(HistorySession {
-                archived_title_mode: Default::default(),
-                id: id.clone(),
-                provider: "dsh".to_string(),
-                provider_version: None,
-                provider_session_id: item.provider_session_id,
-                agent_profile: Some(source.agent_profile.clone()),
-                title: None,
-                prompt_preview: None,
-                first_user_prompt_preview: None,
-                last_user_prompt_preview: None,
-                repo_name: repo_name(&item.cwd),
-                cwd: item.cwd,
-                created_at: item.created_at,
-                updated_at: item.updated_at,
-                archived_at: archives.get(&id).map(|archive| archive.archived_at.clone()),
-                starred_at: stars.get(&id).cloned(),
-                resumable: false,
-                archived_session_id: None,
-                archived_title_state: None,
-                transcript_path: source.root.clone(),
-                incremental_catalog_stamp: item.revision,
-            });
-        }
-    }
-
-    for segments in incremental_segments.values_mut() {
-        segments.sort_by(|left, right| {
-            left.created_at
-                .cmp(&right.created_at)
-                .then_with(|| left.transcript_path.cmp(&right.transcript_path))
-        });
-        segments.dedup_by(|left, right| left.transcript_path == right.transcript_path);
-    }
-
-    CatalogSnapshot {
-        sessions,
-        incremental_segments,
-        truncated,
-    }
 }
 
 #[derive(Debug, Deserialize)]
