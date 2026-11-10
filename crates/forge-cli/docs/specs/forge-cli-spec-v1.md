@@ -1165,7 +1165,7 @@ without exception:
 GitHub identity verification reports `github_rate_limited` with exit `69` when
 an exhausted primary or secondary rate limit is identified. The message names
 the selected login and the reset time from the response, or states that the
-reset time is unknown when the response supplies neither reset nor retry time.
+reset time is unknown when the response supplies no usable reset or retry time.
 HTTP 401 and identity mismatches retain their existing `65` errors.
 
 Callers (agent-runtime-kit skills, CI scripts) MUST branch on `error.kind`

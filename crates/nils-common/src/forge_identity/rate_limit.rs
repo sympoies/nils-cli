@@ -42,8 +42,10 @@ pub(super) fn classify(bytes: &[u8], profile: &Profile) -> Option<Error> {
     if !remaining_zero && !message.contains("secondary rate limit") && !message.contains("abuse") {
         return None;
     }
+    let now = jiff::Timestamp::now().as_second();
     let timestamp = reset
-        .or_else(|| jiff::Timestamp::now().as_second().checked_add(retry_after?))
+        .filter(|seconds| *seconds > now)
+        .or_else(|| now.checked_add(retry_after?))
         .and_then(|seconds| jiff::Timestamp::from_second(seconds).ok())
         .map(|time| time.to_string())
         .unwrap_or_else(|| "an unknown time".to_owned());

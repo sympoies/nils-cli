@@ -481,7 +481,10 @@ impl Authorization {
                 return Err(error);
             }
             if args.contains(&"--paginate") {
-                parse_paginated_actor_probe_response(&output)
+                parse_paginated_actor_probe_response_with_profile(
+                    &output,
+                    Some(&self.selection.profile),
+                )
             } else {
                 parse_actor_probe_response(&output)
             }
@@ -568,7 +571,15 @@ fn parse_actor_probe_response(output: &Output) -> Result<serde_json::Value> {
         .map_err(|_| actor_probe_error("response_decode", "invalid_json", None, None, false))
 }
 
+#[cfg(test)]
 fn parse_paginated_actor_probe_response(output: &Output) -> Result<serde_json::Value> {
+    parse_paginated_actor_probe_response_with_profile(output, None)
+}
+
+fn parse_paginated_actor_probe_response_with_profile(
+    output: &Output,
+    profile: Option<&Profile>,
+) -> Result<serde_json::Value> {
     let mut remaining = output.stdout.as_slice();
     let mut pages = Vec::new();
     while !remaining.is_empty() {
@@ -577,6 +588,9 @@ fn parse_paginated_actor_probe_response(output: &Output) -> Result<serde_json::V
         }
         if remaining.is_empty() {
             break;
+        }
+        if let Some(error) = profile.and_then(|profile| rate_limit::classify(remaining, profile)) {
+            return Err(error);
         }
         let (status, retry_after, request_id, body) = parse_included_http_response(remaining);
         let Some(status) = status else {
