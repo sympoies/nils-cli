@@ -116,7 +116,8 @@ fn message_reminder_claims_each_live_unread_generation_once() {
             .ends_with("agent-session message inbox")
     );
     assert!(text.is_ascii());
-    assert!(!text.contains("beta"));
+    assert!(text.contains("message inbox --session beta --format json"));
+    assert!(text.contains("message show --session beta --message MESSAGE_ID --format json"));
     assert!(!first.stdout_text().contains("REMINDER-BODY-CANARY"));
     assert_eq!(data(&first)["generation"], 1);
     let receipt = coordination_registry(&state_dir)["notifications"]
