@@ -330,8 +330,72 @@ impl Journal {
         Ok(Self { _lock: lock, dir })
     }
 }
+/// Fence observations while a newly allocated session is being created.
+pub(crate) fn begin_creation(context: &CliContext, target: &SessionRecord) -> Result<(), CliError> {
+    let runtime = target.runtime.as_ref().ok_or_else(unavailable)?;
+    let journal = Journal::lock(context, &target.id)?;
+    nils_common::fs::write_atomic(
+        &journal.dir.join("pending-create.json"),
+        &serde_json::to_vec(
+            &json!({"identity": [runtime.launch_id, runtime.generation], "exit": null}),
+        )
+        .map_err(|_| unavailable())?,
+        0o600,
+    )
+    .map_err(|_| unavailable())
+}
+
 fn append(context: &CliContext, id: &str, row: &Value) -> Result<(), CliError> {
     let journal = Journal::lock(context, id)?;
+    let pending_path = journal.dir.join("pending-create.json");
+    let identity = json!([row["session_incarnation"], row["session_generation"]]);
+    let mut pending = if pending_path.exists() {
+        let mut bytes = String::new();
+        open(&pending_path, false)?
+            .take((RECORD_BYTES * 2) as u64)
+            .read_to_string(&mut bytes)
+            .map_err(|_| unavailable())?;
+        Some(serde_json::from_str::<Value>(&bytes).map_err(|_| unavailable())?)
+    } else {
+        None
+    };
+    let matches_pending = pending
+        .as_ref()
+        .is_some_and(|value| value["identity"] == identity);
+    if matches_pending && row["operation"] == "exit-observed" {
+        // An explicit wrapper exit is real even if it races the create response.
+        // Inventory disappearance during startup is not proof of an exit.
+        if row["exit"]["reason"] == "runtime-exited" {
+            pending.as_mut().unwrap()["exit"] = row.clone();
+            nils_common::fs::write_atomic(
+                &pending_path,
+                &serde_json::to_vec(&pending).map_err(|_| unavailable())?,
+                0o600,
+            )
+            .map_err(|_| unavailable())?;
+        }
+        return Ok(());
+    }
+    append_locked(&journal, row)?;
+    if matches_pending
+        && matches!(
+            row["operation"].as_str(),
+            Some("create" | "start" | "import")
+        )
+    {
+        if let Some(exit) = pending
+            .as_ref()
+            .and_then(|value| value.get("exit"))
+            .filter(|exit| !exit.is_null())
+        {
+            append_locked(&journal, exit)?;
+        }
+        fs::remove_file(pending_path).map_err(|_| unavailable())?;
+    }
+    Ok(())
+}
+
+fn append_locked(journal: &Journal, row: &Value) -> Result<(), CliError> {
     let path = journal.dir.join("current.jsonl");
     let marker = journal.dir.join("exit-observed.json");
     let exit_identity = json!([row["session_incarnation"], row["session_generation"]]);
@@ -352,7 +416,6 @@ fn append(context: &CliContext, id: &str, row: &Value) -> Result<(), CliError> {
     }
     let mut file = open(&path, true)?;
     if file.metadata().map_err(|_| unavailable())?.len() + bytes.len() as u64 > SEGMENT_BYTES {
-        // The old previous segment is replaced only while the stable lock is held.
         fs::rename(&path, journal.dir.join("previous.jsonl")).map_err(|_| unavailable())?;
         file = open(&path, true)?;
     }
