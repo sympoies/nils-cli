@@ -41,10 +41,74 @@ impl Drop for Runtime {
 }
 
 #[test]
+fn launch_observation_does_not_hide_real_exit() {
+    let root = nils_test_support::tempdir::ScopedTempDir::new();
+    let (context, record) = fixture(root.path());
+    super::begin_creation(&context, &record).unwrap();
+    observe_stopped(&context, &record);
+    super::record(
+        &context,
+        Some(&record),
+        &record.id,
+        "create",
+        "serve",
+        Ok(()),
+        None,
+    );
+    super::record(
+        &context,
+        Some(&record),
+        &record.id,
+        "exit-observed",
+        "controller",
+        Ok(()),
+        Some(json!({"code": 0, "signal": null, "reason": "runtime-exited", "stopped_by": null})),
+    );
+    let rows = read(&context, &record.id, 10).unwrap();
+    let rows = rows["records"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["operation"], "create");
+    assert_eq!(rows[1]["operation"], "exit-observed");
+    assert_eq!(rows[1]["exit"]["reason"], "runtime-exited");
+}
+
+#[test]
+fn genuine_exit_during_creation_is_recorded_after_create() {
+    let root = nils_test_support::tempdir::ScopedTempDir::new();
+    let (context, record) = fixture(root.path());
+    super::begin_creation(&context, &record).unwrap();
+    super::record(
+        &context,
+        Some(&record),
+        &record.id,
+        "exit-observed",
+        "controller",
+        Ok(()),
+        Some(json!({"code": 7, "signal": null, "reason": "runtime-exited", "stopped_by": null})),
+    );
+    super::record(
+        &context,
+        Some(&record),
+        &record.id,
+        "create",
+        "serve",
+        Ok(()),
+        None,
+    );
+    observe_stopped(&context, &record);
+    let result = read(&context, &record.id, 10).unwrap();
+    let rows = result["records"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["operation"], "create");
+    assert_eq!(rows[1]["exit"]["code"], 7);
+}
+
+#[test]
 fn sigint_exit_retains_reason_and_explicit_resume_without_restart_loop() {
     use std::os::unix::process::CommandExt;
     let root = nils_test_support::tempdir::ScopedTempDir::new();
     let (context, record) = fixture(root.path());
+    super::begin_creation(&context, &record).unwrap();
     let ready = root.path().join("provider-ready");
     let launches = root.path().join("provider-launches");
     let gate = root.path().join("gate");
@@ -85,6 +149,16 @@ signal.pause()
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+    observe_stopped(&context, &record);
+    super::record(
+        &context,
+        Some(&record),
+        &record.id,
+        "create",
+        "serve",
+        Ok(()),
+        None,
+    );
     let pid: i32 = fs::read_to_string(&ready).unwrap().parse().unwrap();
     assert_eq!(unsafe { libc::kill(pid, libc::SIGINT) }, 0);
     loop {
@@ -122,7 +196,7 @@ signal.pause()
             .as_array()
             .unwrap()
             .len(),
-        1
+        2
     );
     let persisted = crate::load_session_record(&context, &record.id).unwrap();
     assert_eq!(
