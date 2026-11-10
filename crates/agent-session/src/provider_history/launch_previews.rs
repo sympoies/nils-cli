@@ -12,56 +12,109 @@ pub(super) fn enrich_launch_previews(
         LATEST_PREVIEW_SESSION_MAX_BYTES.min(LATEST_PREVIEW_PAGE_MAX_BYTES / sessions.len().max(1));
     for session in sessions {
         let deadline = Instant::now() + SCAN_MAX_DURATION;
-        let Some(binding) = crate::notice::launch::binding(state, session, deadline) else {
-            continue;
-        };
-        let first = first_without_launch(session, &binding, deadline);
-        session.first_user_prompt_preview = first.clone();
-        session.prompt_preview = first;
-        session.last_user_prompt_preview = ProviderPromptSource::for_history(
-            &session.provider,
-            session.provider_session_id.clone(),
-            session.transcript_path.clone(),
-        )
-        .and_then(|source| {
-            crate::provider_prompt::read_last_prompt_skipping_launch(&source, budget, &binding)
-        })
-        .map(|prompt| truncate_chars(prompt.text.trim(), MAX_PREVIEW_CHARS));
+        let notices =
+            match history_images::native_notices::Bindings::load(Some(state), session, deadline) {
+                Ok(notices) => notices,
+                Err(_) => continue,
+            };
+        if notices.has_cutoff() {
+            apply_cutoff_previews(session, &notices, budget, deadline);
+        }
     }
 }
 
-fn first_without_launch(
-    session: &HistorySession,
-    binding: &(u64, String, String),
+fn apply_cutoff_previews(
+    session: &mut HistorySession,
+    notices: &history_images::native_notices::Bindings,
+    budget: usize,
     deadline: Instant,
-) -> Option<String> {
-    let mut reader = BufReader::new(fs::File::open(&session.transcript_path).ok()?);
+) {
+    let first = cutoff_preview_scan(session, notices, 0, MAX_PREVIEW_LINES, deadline).0;
+    session.first_user_prompt_preview = first.clone();
+    session.prompt_preview = first;
+    if let Ok(metadata) = fs::metadata(&session.transcript_path) {
+        let start = metadata.len().saturating_sub(budget as u64);
+        let (_, last) = cutoff_preview_scan(session, notices, start, usize::MAX, deadline);
+        if let Some((last, true)) = &last {
+            session.last_user_prompt_preview = Some(last.clone());
+        } else if notices.launch_binding().is_some() && last.is_none() {
+            session.last_user_prompt_preview = None;
+        }
+    }
+}
+
+fn cutoff_preview_scan(
+    session: &HistorySession,
+    notices: &history_images::native_notices::Bindings,
+    start: u64,
+    max_lines: usize,
+    deadline: Instant,
+) -> (Option<String>, Option<(String, bool)>) {
+    let Ok(mut file) = fs::File::open(&session.transcript_path) else {
+        return (None, None);
+    };
+    let Ok(metadata) = file.metadata() else {
+        return (None, None);
+    };
+    let available = metadata.len().saturating_sub(start);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return (None, None);
+    }
+    let mut reader = BufReader::new(file.take(available));
     let mut line = Vec::new();
-    for _ in 0..MAX_PREVIEW_LINES {
+    let mut first = None;
+    let mut last = None;
+    for _ in 0..max_lines {
         if Instant::now() >= deadline {
-            return None;
+            break;
         }
-        let offset = reader.stream_position().ok()?;
-        match read_bounded_line(&mut reader, &mut line).ok()? {
-            BoundedLine::Eof => return None,
-            BoundedLine::Oversized => continue,
-            BoundedLine::Line => {}
+        let offset = start + available - reader.get_ref().limit() - reader.buffer().len() as u64;
+        match read_bounded_line(&mut reader, &mut line) {
+            Ok(BoundedLine::Eof) | Err(_) => break,
+            Ok(BoundedLine::Oversized) => continue,
+            Ok(BoundedLine::Line) => {}
         }
-        if let Ok(value) = serde_json::from_slice::<Value>(&line)
-            && crate::notice::launch::bound_row(binding, offset, &line, &value)
-        {
+        let Ok(value) = serde_json::from_slice::<Value>(&line) else {
+            continue;
+        };
+        if !matches!(
+            notices.project(session, offset, &line, &value, false),
+            history_images::native_notices::Decision::NotBound
+        ) {
             continue;
         }
         let Ok(text) = std::str::from_utf8(&line) else {
             continue;
         };
-        if let Some(prompt) =
+        let prompt = if notices.legacy_header(offset) {
             history_preview_prompt(&session.provider, &session.provider_session_id, text)
-        {
-            return Some(truncate_chars(prompt.text.trim(), MAX_PREVIEW_CHARS));
+        } else {
+            let parsed = crate::provider_prompt::parse_history_user_prompt(
+                &session.provider,
+                &session.provider_session_id,
+                text,
+            );
+            parsed.filter(|prompt| {
+                !crate::provider_prompt::row_classes::notice::matches(
+                    &session.provider,
+                    &prompt.text,
+                    &value,
+                ) || (prompt.text.starts_with("<!-- agent-notice:")
+                    && crate::notice::parse_notice(&prompt.text).is_some())
+            })
+        };
+        if let Some(prompt) = prompt {
+            let text = truncate_chars(prompt.text.trim(), MAX_PREVIEW_CHARS);
+            if first.is_none() {
+                first = Some(text.clone());
+            }
+            let post_cutoff_header = !notices.legacy_header(offset)
+                && prompt.text.starts_with("<!-- agent-notice:")
+                && crate::notice::parse_notice(&prompt.text).is_some();
+            last = Some((text, post_cutoff_header));
         }
     }
-    None
+    (first, last)
 }
 
 #[cfg(test)]

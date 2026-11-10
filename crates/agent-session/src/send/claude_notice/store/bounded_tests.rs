@@ -76,6 +76,52 @@ pub(super) fn seed(root: &Path, count: usize, width: usize) -> CliContext {
     context
 }
 
+#[test]
+fn archived_only_receipt_keeps_header_fallback_in_history_readers() {
+    use crate::provider_history::HistoryMessageDirection;
+    use std::io::Write;
+    let root = tempfile::tempdir().unwrap();
+    let context = seed(root.path(), 1, 1);
+    consume(
+        &context,
+        claim(20_000, Some("warmup")),
+        Instant::now() + Duration::from_secs(15),
+        || Ok(()),
+    )
+    .unwrap();
+    let (catalog, history) = catalog(root.path());
+    let row = json!({"type":"user", "sessionId":"11111111-1111-4111-8111-111111111111", "cwd":"/workspace/project", "promptSource":"typed", "message":{"role":"user", "content":"<!-- agent-notice:v1 kind=mailbox source=synthetic -->\n\nhuman\n"}});
+    let path = root
+        .path()
+        .join("provider/project/11111111-1111-4111-8111-111111111111.jsonl");
+    writeln!(
+        fs::OpenOptions::new().append(true).open(path).unwrap(),
+        "{row}"
+    )
+    .unwrap();
+    let page = catalog
+        .messages(&history, None, 10, HistoryMessageDirection::Forward)
+        .unwrap();
+    assert_eq!(
+        page.messages.last().unwrap().row_class,
+        Some(crate::provider_prompt::row_classes::RowClass::Notice)
+    );
+    let incremental = catalog.incremental_messages(&history, None, 65536).unwrap();
+    assert_eq!(
+        incremental.messages.last().unwrap().row_class,
+        Some(crate::provider_prompt::row_classes::RowClass::Notice)
+    );
+    let page = catalog.list("test", None, None, None, 25).unwrap();
+    assert!(
+        page.sessions
+            .iter()
+            .find(|session| session.id == history)
+            .unwrap()
+            .last_user_prompt_preview
+            .is_none()
+    );
+}
+
 #[cfg(target_os = "linux")]
 fn read_bytes() -> u64 {
     let stats = fs::read_to_string("/proc/thread-self/io").unwrap();

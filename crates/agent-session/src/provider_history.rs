@@ -4,6 +4,7 @@ mod exact_lookup;
 pub(crate) mod history_images;
 use exact_lookup::inspect_history_file;
 pub(crate) use history_images::HistoryMessage;
+#[cfg(test)]
 use history_images::read_messages_incremental_from_reader;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -586,83 +587,6 @@ impl HistoryCatalog {
             applied_message_ids,
             max_bytes,
         )
-    }
-
-    fn incremental_messages_from_snapshot(
-        &self,
-        mut snapshot: Arc<CatalogSnapshot>,
-        history_id: &str,
-        cursor: Option<&IncrementalHistoryCursor>,
-        applied_message_ids: &[String],
-        max_bytes: usize,
-    ) -> Result<IncrementalHistoryPage, HistoryError> {
-        if max_bytes == 0 {
-            return Err(HistoryError::InvalidCursor);
-        }
-        if snapshot
-            .incremental_segments
-            .get(history_id)
-            .is_some_and(|segments| incremental_catalog_generation_changed(segments))
-        {
-            // Creating, removing or renaming a provider segment changes an
-            // ancestor directory, while ordinary appends do not. Refresh on
-            // that generation change so the general 30-second history-list
-            // cache cannot hide a just-created resume/rotation segment.
-            self.invalidate();
-            snapshot = self.snapshot();
-        }
-        let segments = snapshot
-            .incremental_segments
-            .get(history_id)
-            .ok_or(HistoryError::NotFound)?;
-        let source_id = incremental_source_id(&segments[0]);
-        let resolved = resolve_incremental_segment(segments, cursor, &source_id)?;
-        let session = &segments[resolved.index];
-        let mut file =
-            fs::File::open(&session.transcript_path).map_err(|_| HistoryError::NotFound)?;
-        let file_len = file.metadata().map_err(|_| HistoryError::Io)?.len();
-        let page = read_messages_incremental_from_reader(
-            session,
-            &mut file,
-            file_len,
-            resolved.offset,
-            max_bytes,
-            resolved.discarding_oversized_line,
-        )?;
-        let continuity_hash = incremental_continuity_hash(&mut file, page.next_offset)?;
-        let generation = incremental_file_generation(&file, file_len)?;
-        let prefix_integrity = extend_or_compute_prefix_integrity(
-            &mut file,
-            cursor,
-            &resolved,
-            page.next_offset,
-            &generation,
-        )?;
-        let applied = applied_message_ids
-            .iter()
-            .map(String::as_str)
-            .collect::<HashSet<_>>();
-        let mut emitted = HashSet::new();
-        let messages = page
-            .messages
-            .into_iter()
-            .filter(|message| {
-                !applied.contains(message.id.as_str()) && emitted.insert(message.id.clone())
-            })
-            .collect();
-        Ok(IncrementalHistoryPage {
-            messages,
-            cursor: IncrementalHistoryCursor {
-                source_id,
-                segment_id: resolved.segment_id,
-                offset: page.next_offset,
-                continuity_hash,
-                discarding_oversized_line: page.discarding_oversized_line,
-                prefix_integrity: Some(prefix_integrity),
-            },
-            caught_up: page.next_offset == file_len && resolved.index + 1 == segments.len(),
-            discontinuity: resolved.discontinuity,
-        })
     }
 
     /// Compatibility lookup for callers that predate profile-aware identity.
