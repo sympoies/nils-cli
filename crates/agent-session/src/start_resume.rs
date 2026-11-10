@@ -3,6 +3,13 @@ use super::*;
 
 mod codex;
 
+#[derive(Debug)]
+pub struct StartView {
+    pub(crate) format: OutputFormat,
+    pub result: SessionView,
+    pub prompt_delivery_observation: Option<PromptDeliveryObservation>,
+}
+
 pub(super) fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
     let format = args.format;
     if args.check_resume {

@@ -4,6 +4,14 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
 
 ## Session creation
 
+Console notice launches add optional `notice_kind`, `notice_source`, and
+`notice_id` beside the already encoded `prompt`. The target validates matching
+metadata before creating a session and does not encode the prompt again.
+Omitted notice fields mean an ordinary start. Successful fresh creates return
+`session.launch_notice` as `written`, `not-requested`, or `unavailable`, following
+the [initial notice contract](session-notices-v1.md). Upgrade the target daemon
+before sending notice metadata; the preceding release ignores those fields.
+
 - `POST /sessions` normally creates a fresh session from `agent`, optional `cwd`, `title`, `title_state`,
   `id`, `prompt`, `coordination_mode`, and `agent_args`, and `launch_env`. `launch_env` is an optional
   string-to-string object of public non-secret runtime switches, validated against

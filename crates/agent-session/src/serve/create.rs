@@ -15,6 +15,11 @@ pub(super) async fn create_handler(
     if let Err(error) = crate::launch_env::validate(&body.launch_env) {
         return envelope_err(error);
     }
+    if let Err(error) =
+        crate::notice::start::validate_prepared(&body.notice, body.prompt.as_deref())
+    {
+        return envelope_err(error);
+    }
     let origin = match body.origin_fields() {
         Ok(origin) => origin,
         Err(error) => return envelope_err(error),
@@ -330,7 +335,7 @@ pub(super) async fn create_handler_inner(
         },
         prompt_file: None,
         prompt_stdin: false,
-        notice: Default::default(),
+        notice: body.notice,
         tmux_bin: Some(state.tmux_bin.clone()),
         agent_bin: launch_profile
             .as_ref()

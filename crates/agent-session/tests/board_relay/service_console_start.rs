@@ -180,6 +180,27 @@ fn post(serve: &Serve, bearer: &str, body: &Value) -> (u16, Value) {
 }
 
 #[test]
+fn service_route_forwards_notice_metadata() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let admission = Admission::new(&fixture);
+    let serve = admission.serve(&fixture, &aggregator);
+    let mut body = valid_body(&fixture, &new_operation());
+    body["session"]["prompt"] =
+        json!("<!-- agent-notice:v1 kind=dispatch.bootstrap source=scheduler -->\n\nTask");
+    body["session"]["notice_kind"] = json!("dispatch.bootstrap");
+    body["session"]["notice_source"] = json!("scheduler");
+    created(&aggregator, "notice-child");
+    let (status, response) = post(&serve, SERVICE_TOKEN, &body);
+    assert_eq!(status, 201, "{response}");
+    let seen = aggregator.seen();
+    let session = &seen[0].body.as_ref().unwrap()["session"];
+    for field in ["prompt", "notice_kind", "notice_source"] {
+        assert_eq!(session[field], body["session"][field]);
+    }
+}
+
+#[test]
 fn service_start_accepts_root_work_identity() {
     let fixture = Fixture::new();
     let aggregator = Aggregator::start();

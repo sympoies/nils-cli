@@ -513,10 +513,27 @@ agent-session start --agent claude --prompt-file prompt.txt \
 The same flags work with `--prompt` and `--prompt-stdin`, including
 `--via-console`. Encoding occurs before launch; ordinary start prompts remain
 unchanged. These flags classify only the supplied prompt, not native commands.
-For a fresh local Claude launch, the runtime stores a private launch receipt.
+For a fresh Claude launch, the runtime stores a private launch receipt on the
+target host. Console starts carry optional `notice_kind`, `notice_source`, and
+`notice_id` fields beside the already encoded `prompt`; the target validates
+the metadata and stages that prompt without encoding it again. Omitted notice
+fields mean an ordinary start, including requests from the preceding release.
 History uses it to identify the first user row by its exact prompt digest,
 including when Claude wraps the prompt in a single paste envelope.
 Keep `/compact` and other control actions in their existing command paths.
+
+Successful fresh start JSON includes `launch_notice`: `written` when the
+private Claude launch receipt was saved, `not-requested` when no notice kind
+was supplied, or `unavailable` when the provider launch cannot bind that receipt.
+It appears at `data.launch_notice` for direct starts and
+`data.session.launch_notice` for Console starts. Receipt write failures still
+fail the start through its existing cleanup path. This field contains no prompt
+or notice metadata. Upgrade the target daemon before dispatching notice starts:
+the preceding release ignores the new fields and cannot report or write the receipt.
+
+Console routing also requires the edge to forward the notice fields and return
+`session.launch_notice`; the coordinated edge change is
+[salon#406](https://github.com/sympoies/salon/issues/406).
 
 ## Shared kind-to-label table
 

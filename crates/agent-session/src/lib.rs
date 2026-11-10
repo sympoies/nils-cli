@@ -1257,6 +1257,9 @@ struct DurableResumeRecord {
 
 #[derive(Debug, Serialize)]
 pub struct SessionView {
+    /// Present on fresh start results; contains no private receipt metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch_notice: Option<notice::start::LaunchNotice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     context_usage: Option<context_usage::ContextUsage>,
     launch_env: launch_env::LaunchEnv,
@@ -1339,12 +1342,7 @@ pub struct SessionView {
     role: Option<String>,
 }
 
-#[derive(Debug)]
-pub struct StartView {
-    format: OutputFormat,
-    pub result: SessionView,
-    pub prompt_delivery_observation: Option<PromptDeliveryObservation>,
-}
+pub use start_resume::StartView;
 
 pub(crate) struct ProviderResumeImportArgs {
     pub(crate) ordinary_start: Option<Box<cli::StartArgs>>,
@@ -1912,7 +1910,8 @@ fn start_session_inner_unjournaled(
     let status = session_status(context, &tmux_bin, &created.record);
     startup::check_stopped(context, &mut created.record, &status, &tmux_bin)?;
     reconcile_owned_startup_projection(context, &mut created.record, &status);
-    let result = session_view(context, &created.record, Some(status), Some(&tmux_bin));
+    let mut result = session_view(context, &created.record, Some(status), Some(&tmux_bin));
+    notice::start::project(&args.notice, &created.record, &mut result);
     record_workdir_usage(context, &cwd);
     // Keep the app-server bootstrap marker valid for the entire create-lock
     // lifetime. Explicit ordering avoids Rust's reverse local-drop order from
@@ -6456,6 +6455,7 @@ fn session_view_from_parts(
     });
     let (auth_incident, auth_detection_health) = auth_incident::projection(context, record);
     SessionView {
+        launch_notice: None,
         origin: origin::Fields::of(record),
         context_usage,
         launch_env: launch_env::projection(record.extra.get("launch_env")),

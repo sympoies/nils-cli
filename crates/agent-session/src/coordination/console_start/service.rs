@@ -31,7 +31,7 @@ const MAX_LISTED: usize = 64;
 const MAX_LIFETIME_SECONDS: u64 = 86400;
 /// The members a service may set in `session`; lineage, work, role, resume and
 /// origin belong to the daemon or are not available to a service.
-const SESSION_MEMBERS: [&str; 12] = [
+const SESSION_MEMBERS: [&str; 15] = [
     "agent",
     "cwd",
     "workspace",
@@ -39,6 +39,9 @@ const SESSION_MEMBERS: [&str; 12] = [
     "title_mode",
     "title",
     "prompt",
+    "notice_kind",
+    "notice_source",
+    "notice_id",
     "agent_args",
     "agent_profile",
     "account",

@@ -3,6 +3,7 @@ mod envelope;
 pub(crate) mod generated;
 pub mod labels;
 pub(crate) mod launch;
+pub(crate) mod start;
 mod summary;
 pub use envelope::{NoticeEnvelope, NoticeError, ParsedNotice, parse_notice};
 pub(crate) use summary::render_summary;
@@ -77,14 +78,17 @@ pub struct NoticeArgs {
     pub format: OutputFormat,
 }
 
-#[derive(Debug, Default, Args)]
+#[derive(Debug, Default, Args, serde::Deserialize, serde::Serialize)]
 pub struct StartNoticeArgs {
     /// Mark this initial prompt as a notice (requires the notice writer rollout gate).
     #[arg(long, requires = "notice_source")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice_kind: Option<String>,
     #[arg(long, requires = "notice_kind")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice_source: Option<String>,
     #[arg(long, requires = "notice_kind")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice_id: Option<String>,
 }
 

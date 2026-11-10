@@ -27,6 +27,111 @@ fn get(addr: std::net::SocketAddr, path: &str) -> serde_json::Value {
 }
 
 #[test]
+fn console_target_notice_start_writes_launch_receipt() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let state = root.join("state");
+    let (tmux, log) = super::cli::fake_tmux(root);
+    let agent = super::cli::fake_agent(root, "claude");
+    let addr = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let mut command = Command::new(nils_test_support::bin::resolve("agent-session"));
+    nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
+    command
+        .args([
+            "serve",
+            "--bind",
+            &addr.to_string(),
+            "--state-dir",
+            state.to_str().unwrap(),
+            "--token",
+            "synthetic-token",
+            "--tmux-bin",
+            tmux.to_str().unwrap(),
+        ])
+        .env("HOME", root)
+        .env("AGENT_HOME", root.join("agent-home"))
+        .env("CLAUDE_CONFIG_DIR", root.join("provider-config"))
+        .env("CODEX_HOME", root.join("codex-config"))
+        .env("AGENT_SESSION_CLAUDE_BIN", &agent)
+        .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
+        .env("AGENT_SESSION_NOTICE_WRITERS", "1")
+        .env_remove("AGENT_SESSION_LAUNCH_PROFILES")
+        .env_remove("AGENT_SESSION_CLAUDE_ACCOUNT_BROKER")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let _server = Server(command.spawn().unwrap());
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while TcpStream::connect(addr).is_err() {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // The Console relay delivers an already encoded prompt, plus explicit metadata.
+    let prompt = agent_session::notice::NoticeEnvelope::new(
+        "dispatch.bootstrap",
+        "scheduler",
+        Some("dispatch-example"),
+    )
+    .unwrap()
+    .encode("Synthetic task\n")
+    .unwrap();
+    let invalid: serde_json::Value = reqwest::blocking::Client::new()
+        .post(format!("http://{addr}/sessions"))
+        .bearer_auth("synthetic-token")
+        .json(&serde_json::json!({
+            "agent":"claude", "cwd":root, "id":"invalid-notice", "prompt":prompt,
+            "notice_kind":"dispatch.bootstrap", "notice_source":"different",
+        }))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(invalid["error"]["code"], "launch-notice-invalid");
+    assert!(!state.join("sessions/invalid-notice").exists());
+    let response: serde_json::Value = reqwest::blocking::Client::new()
+        .post(format!("http://{addr}/sessions"))
+        .bearer_auth("synthetic-token")
+        .json(&serde_json::json!({
+            "agent":"claude", "cwd":root, "id":"console-notice", "title":"Task",
+            "prompt":prompt, "notice_kind":"dispatch.bootstrap", "notice_source":"scheduler",
+            "notice_id":"dispatch-example",
+        }))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(response["ok"], true, "{response}");
+    let session = state.join("sessions/console-notice");
+    assert_eq!(
+        fs::read_to_string(session.join("prompt.md")).unwrap(),
+        prompt
+    );
+    assert!(
+        session.join("launch-notice.json").is_file(),
+        "target start lost notice metadata"
+    );
+    assert_eq!(response["data"]["session"]["launch_notice"], "written");
+    // Omitted optional notice fields are the current plain-start contract.
+    let response: serde_json::Value = reqwest::blocking::Client::new()
+        .post(format!("http://{addr}/sessions"))
+        .bearer_auth("synthetic-token")
+        .json(&serde_json::json!({"agent":"claude", "cwd":root, "id":"plain", "prompt":"Task"}))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(response["ok"], true, "{response}");
+    assert_eq!(
+        response["data"]["session"]["launch_notice"],
+        "not-requested"
+    );
+    assert!(!state.join("sessions/plain/launch-notice.json").exists());
+}
+
+#[test]
 fn claimed_launch_paste_projects_as_notice_but_unclaimed_paste_remains_user() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
@@ -157,6 +262,7 @@ sys.exit(result.returncode)
             "synthetic-token",
         ])
         .env("CLAUDE_CONFIG_DIR", &config)
+        .env("CODEX_HOME", root.join("codex-config"))
         .env("HOME", root)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -173,7 +279,7 @@ sys.exit(result.returncode)
     let id = list
         .iter()
         .find(|s| s["provider_session_id"] == provider)
-        .unwrap()["id"]
+        .unwrap_or_else(|| panic!("missing launch history: {sessions}"))["id"]
         .as_str()
         .unwrap();
     let unclaimed_history = list
@@ -352,6 +458,16 @@ fn notice_start_stages_exact_encoded_stdin_for_both_providers() {
             expected.as_bytes()
         );
         assert!(!output.stdout_text().contains(body));
+        let receipt = state.join("sessions/synthetic/launch-notice.json");
+        assert_eq!(receipt.is_file(), provider == "claude");
+        assert_eq!(
+            output.stdout_json()["data"]["launch_notice"],
+            if provider == "claude" {
+                "written"
+            } else {
+                "unavailable"
+            }
+        );
         assert!(
             super::cli::tmux_calls(&log)
                 .iter()
@@ -469,6 +585,7 @@ sys.exit(result.returncode)
             tmux.to_str().unwrap(),
         ])
         .env("CLAUDE_CONFIG_DIR", &config)
+        .env("CODEX_HOME", root.join("codex-config"))
         .env("HOME", root)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
