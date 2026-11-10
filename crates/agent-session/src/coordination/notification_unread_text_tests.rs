@@ -5,10 +5,10 @@ fn retired_plain_reminder_producers_only_build_envelopes() {
     let name = nils_common::session_binary::NAME;
     let messages = [unread_message("recipient", "incarnation", "unread", 1000)];
     for (prompt, body) in [
-        (fixed_prompt(), format!("Mailbox: {name} message inbox")),
-        (coalescing::count_prompt(messages.iter()), format!("Mailbox: 1 unread; {name} message inbox")),
+        (fixed_prompt("recipient"), format!("Mailbox: {name} message inbox")),
+        (coalescing::count_prompt("recipient", messages.iter()).unwrap(), format!("Mailbox: 1 unread; {name} message inbox")),
     ] {
-        assert_eq!(crate::notice::parse_notice(&prompt).unwrap().body, body);
+        assert!(crate::notice::parse_notice(&prompt).unwrap().body.starts_with(&body));
         assert!(is_mailbox_reminder_prompt(&prompt));
     }
 }
@@ -40,8 +40,8 @@ fn pending_invalid_prompt_is_replaced_without_replaying_attempt_bytes() {
 fn total_reminder_is_bounded_by_mailbox_quota_inside_envelope() {
     crate::command_identity::with_name("agent-session", || {
         for total in [256, 1000] {
-            let prompt = coalescing::unread_prompt(total);
-            assert_eq!(crate::notice::parse_notice(&prompt).unwrap().body, "Mailbox: 256 unread; agent-session message inbox");
+            let prompt = coalescing::unread_prompt(total, "recipient").unwrap();
+            assert!(crate::notice::parse_notice(&prompt).unwrap().body.starts_with("Mailbox: 256 unread; agent-session message inbox\nRead:"));
         }
     });
 }

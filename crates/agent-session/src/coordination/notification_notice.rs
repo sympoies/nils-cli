@@ -60,24 +60,34 @@ fn trusted_executable() -> Option<std::path::PathBuf> {
     }
     if let Some(roots) = std::env::var_os("AGENT_RUNTIME_TRUSTED_CLI_ROOT")
         && let Some(path) = std::env::split_paths(&roots)
-            .map(|root| root.join("agent-session"))
-            .find(|p| executable(p))
+            .find_map(|root| nils_common::session_binary::trusted_root(&root))
     {
         return Some(path);
     }
+    #[cfg(test)]
+    return crate::resolve_agent_session_executable().ok();
+    #[cfg(not(test))]
     let current = std::env::current_exe().ok()?;
+    #[cfg(not(test))]
     crate::stable_executable::launch_executable_from(&current, &[])
         .ok()
         .map(|launch| launch.path)
 }
 
-pub(super) fn encode_summary(summary: &str) -> String {
-    NoticeEnvelope::new("mailbox.wake", "agent-session", None)
-        .expect("fixed mailbox notice metadata")
-        .encode(&crate::notice::generated::body(
-            &crate::notice::render_summary("mailbox.wake", summary, ""),
-        ))
-        .expect("nonempty mailbox reminder")
+pub(super) fn encode_summary(summary: &str, session: &str) -> Option<String> {
+    let executable = trusted_executable()?;
+    let path = shell_words::quote(executable.to_str()?);
+    let recipient = shell_words::quote(session);
+    let guidance = format!(
+        "Read: {path} message inbox --session {recipient} --format json\nShow: {path} message show --session {recipient} --message MESSAGE_ID --format json\nsender_relation=peer\n{}",
+        nils_common::mailbox_notice::VERIFY_GUIDANCE
+    );
+    let body = crate::notice::render_summary("mailbox.wake", summary, &guidance);
+    let notice = NoticeEnvelope::new("mailbox.wake", "agent-session", None)
+        .ok()?
+        .encode(&crate::notice::generated::body(&body))
+        .ok()?;
+    (notice.len() <= 4096).then_some(notice)
 }
 
 impl NotificationCandidate {
@@ -164,11 +174,12 @@ mod tests {
 
     #[test]
     fn generated_mailbox_summary_prevents_trailing_ascii_spaces_before_encoding() {
-        let encoded = encode_summary("generated reminder \nnext line \r\nlast line");
+        let encoded =
+            encode_summary("generated reminder \nnext line \r\nlast line", "recipient").unwrap();
         let parsed = crate::notice::parse_notice(&encoded).unwrap();
         assert_eq!(
-            parsed.body,
-            "Mailbox: generated reminder\nnext line\r\nlast line"
+            parsed.body.lines().take(3).collect::<Vec<_>>().join("\n"),
+            "Mailbox: generated reminder\nnext line\nlast line"
         );
     }
 

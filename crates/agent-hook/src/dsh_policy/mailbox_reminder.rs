@@ -20,13 +20,16 @@ pub(super) fn is_mailbox_notice(reminder: &str) -> bool {
     };
     match body.split_once('\n') {
         Some((summary, guidance)) => is_summary(summary) && is_guidance(guidance),
-        None => is_summary(body),
+        None => false,
     }
 }
 
 fn is_guidance(body: &str) -> bool {
     let mut remaining = body;
-    if let Some(read) = remaining.strip_prefix("Read: ") {
+    {
+        let Some(read) = remaining.strip_prefix("Read: ") else {
+            return false;
+        };
         let Some((inbox, rest)) = read.split_once('\n') else {
             return false;
         };
@@ -44,10 +47,6 @@ fn is_guidance(body: &str) -> bool {
         if inbox.len() != 7
             || show.len() != 9
             || !std::path::Path::new(&inbox[0]).is_absolute()
-            || std::path::Path::new(&inbox[0])
-                .file_name()
-                .and_then(|s| s.to_str())
-                != Some(NAME)
             || inbox[1..3] != ["message", "inbox"]
             || inbox[3] != "--session"
             || inbox[4].is_empty()

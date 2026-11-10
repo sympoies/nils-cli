@@ -302,7 +302,7 @@ Replace `MESSAGE_ID` with the inbox message id. Paths and session ids are shell 
 trusted session binary, trusted CLI roots, or the stable executable. Wakes contain no message
 body. Suppressed, read and expired messages do not contribute relation labels.
 
-The hook accepts the summary alone or the complete guidance form, including the read and show commands: relation
+The hook accepts the complete guidance form, including the read and show commands: relation
 labels in parent, ancestor, peer order, followed by the exact guidance below.
 When parent or ancestor appears, the dispatcher sentence follows, optionally
 including the recipient's nonempty single-line prompt path. Other trailing text

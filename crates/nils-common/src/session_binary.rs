@@ -7,8 +7,8 @@
 
 use std::ffi::OsStr;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 
 /// Executable name of the session binary, fixed when the workspace is built.
 pub const NAME: &str = match option_env!("NILS_SESSION_BIN_NAME") {
@@ -36,6 +36,20 @@ const fn valid_name(name: &str) -> bool {
         index += 1;
     }
     true
+}
+
+/// Resolve an owner-controlled session executable from an approved absolute root.
+pub fn trusted_root(root: &Path) -> Option<PathBuf> {
+    if !root.is_absolute() || !root.is_dir() {
+        return None;
+    }
+    let candidate = fs::canonicalize(root.join(NAME)).ok()?;
+    let metadata = fs::metadata(&candidate).ok()?;
+    (metadata.is_file()
+        && metadata.uid() == unsafe { libc::geteuid() }
+        && metadata.permissions().mode() & 0o022 == 0
+        && metadata.permissions().mode() & 0o111 != 0)
+        .then_some(candidate)
 }
 
 /// First regular executable file named [`NAME`] in a `PATH`-style list.
@@ -78,6 +92,24 @@ mod tests {
         ] {
             assert!(!valid_name(unsafe_name), "{unsafe_name:?}");
         }
+    }
+
+    #[test]
+    fn trusted_roots_skip_writable_helper() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        for (root, mode) in [(first.path(), 0o777), (second.path(), 0o700)] {
+            let path = root.join(NAME);
+            fs::write(&path, "fixture").unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        }
+        let selected = [first.path(), second.path()]
+            .into_iter()
+            .find_map(trusted_root);
+        assert_eq!(
+            selected,
+            Some(fs::canonicalize(second.path().join(NAME)).unwrap())
+        );
     }
 
     #[test]

@@ -35,22 +35,15 @@ pub(crate) fn trusted_root(root: &Path) -> Result<PathBuf, HookError> {
             "approved helper is unavailable",
         )
     };
-    if !root.is_absolute() || !root.is_dir() {
+    if !root.is_absolute() || !root.is_dir() || fs::canonicalize(root.join(NAME)).is_err() {
         return Err(unavailable());
     }
-    let candidate = fs::canonicalize(root.join(NAME)).map_err(|_| unavailable())?;
-    let metadata = fs::metadata(&candidate).map_err(|_| unavailable())?;
-    if !metadata.is_file()
-        || metadata.uid() != unsafe { libc::geteuid() }
-        || metadata.permissions().mode() & 0o022 != 0
-        || metadata.permissions().mode() & 0o111 == 0
-    {
-        return Err(HookError::data(
+    nils_common::session_binary::trusted_root(root).ok_or_else(|| {
+        HookError::data(
             "operation-lifecycle-helper-untrusted",
             "approved helper is not an owner-controlled executable",
-        ));
-    }
-    Ok(candidate)
+        )
+    })
 }
 
 /// A canonical, owner-controlled executable named `name` that stays in the
