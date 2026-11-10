@@ -318,6 +318,11 @@ pub(crate) fn prepare_process_runtime(
 ) -> Result<PinnedProcessRuntime, SessionTerminationFailure> {
     #[cfg(target_os = "linux")]
     {
+        // Orphan maintenance calls the common transaction directly, without
+        // the live-tmux wrapper. Refuse before pinning or freezing its cgroup.
+        if crate::delete_recovery::codex_daemons::shared_scope(identity)? {
+            return Err(SessionTerminationFailure::RuntimeIdentityUnavailable);
+        }
         let process_session_id = identity
             .process_session_id
             .filter(|session_id| *session_id > 1 && *session_id != unsafe { libc::getsid(0) })

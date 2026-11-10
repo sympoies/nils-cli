@@ -211,3 +211,161 @@ fn provider_owned_codex_daemon_pair_survives_successful_session_delete() {
         );
     }
 }
+
+#[test]
+fn orphan_maintenance_preparation_refuses_a_mixed_shared_provider_scope() {
+    let lock = GlobalStateLock::new();
+    let (tmp, context, record) = session_fixture();
+    let home = tmp.path().join("provider-home");
+    let bin = home.join("packages/app-server-daemon/releases/fixture/bin/codex");
+    fs::create_dir_all(bin.parent().unwrap()).unwrap();
+    let source = tmp.path().join("daemon.c");
+    fs::write(
+        &source,
+        "#include <unistd.h>\nint main(void) { setsid(); for (;;) pause(); }\n",
+    )
+    .unwrap();
+    assert!(
+        Command::new("cc")
+            .arg(&source)
+            .arg("-o")
+            .arg(&bin)
+            .status()
+            .unwrap()
+            .success()
+    );
+    std::os::unix::fs::symlink(
+        "releases/fixture",
+        home.join("packages/app-server-daemon/current"),
+    )
+    .unwrap();
+    let pid_dir = home.join("app-server-daemon");
+    fs::create_dir(&pid_dir).unwrap();
+    let _home = EnvGuard::set(&lock, "CODEX_HOME", home.to_str().unwrap());
+    let daemon_pid_file = tmp.path().join("provider.pid");
+    let worker_pid_file = tmp.path().join("worker.pid");
+    let unit = format!("tmux-spawn-{}.scope", uuid::Uuid::new_v4());
+    let mut command = Command::new("systemd-run");
+    command.args(["--user", "--scope", "--quiet", "--collect", "--unit", &unit]);
+    if let Ok(slice) = std::env::var("NILS_CLI_GATE_SLICE") {
+        command.arg("--slice").arg(slice);
+    }
+    command.args(["--", "/bin/sh", "-c",
+        "\"$1\" app-server --listen unix:// --managed-daemon & printf '%s\\n' \"$!\" > \"$2\"; printf '%s\\n' \"$$\" > \"$3\"; exec sleep 60",
+        "fixture"])
+        .arg(&bin).arg(&daemon_pid_file).arg(&worker_pid_file)
+        .env("AGENT_SESSION_ID", &record.id)
+        .env("AGENT_SESSION_RUNTIME_ID", &record.runtime.as_ref().unwrap().launch_id)
+        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        });
+    }
+    struct Scope {
+        unit: String,
+        child: Child,
+    }
+    impl Drop for Scope {
+        fn drop(&mut self) {
+            // The UUID scope contains only this test's disposable processes.
+            let _ = Command::new("systemctl")
+                .args(["--user", "stop", &self.unit])
+                .status();
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+    let mut scope = Scope {
+        unit,
+        child: command.spawn().unwrap(),
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let read_pid = |path: &Path| {
+        fs::read_to_string(path)
+            .ok()
+            .and_then(|text| text.trim().parse::<libc::pid_t>().ok())
+    };
+    let (daemon_pid, worker_pid) = loop {
+        if let (Some(daemon), Some(worker)) =
+            (read_pid(&daemon_pid_file), read_pid(&worker_pid_file))
+            && read_linux_process_identity(daemon)
+                .unwrap()
+                .is_some_and(|identity| identity.session_id == daemon)
+        {
+            break (daemon, worker);
+        }
+        assert!(
+            scope.child.try_wait().unwrap().is_none(),
+            "fixture scope exited during startup"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "native mixed-scope fixture did not start"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    let daemon = read_linux_process_identity(daemon_pid).unwrap().unwrap();
+    let worker = read_linux_process_identity(worker_pid).unwrap().unwrap();
+    let group = linux_process_control_group(worker_pid)
+        .unwrap()
+        .expect("owned dedicated scope");
+    assert_eq!(
+        linux_process_control_group(daemon_pid).unwrap().as_ref(),
+        Some(&group)
+    );
+    nils_common::fs::write_atomic(&pid_dir.join("daemon.pid"), &serde_json::to_vec(&json!({
+        "pid": daemon_pid, "processIdentity": {"bootId": linux_boot_id().unwrap(), "startTicks": daemon.start_time}
+    })).unwrap(), 0o600).unwrap();
+    assert!(crate::delete_recovery::codex_daemons::proven_pid(
+        daemon_pid,
+        Some(daemon.start_time)
+    ));
+    let identity: TmuxRuntimeIdentity = serde_json::from_value(json!({
+        "launch_id": record.runtime.as_ref().unwrap().launch_id,
+        "session_id": "$99", "pane_id": "%99", "pane_pid": worker_pid,
+        "pane_start_time": worker.start_time, "process_group_id": worker.process_group_id,
+        "process_session_id": worker.session_id,
+        "process_session_members": [{"pid": worker_pid, "start_time": worker.start_time}],
+        "control_group_members": [{"pid": worker_pid, "start_time": worker.start_time}, {"pid": daemon_pid, "start_time": daemon.start_time}],
+        "control_group": group
+    })).unwrap();
+    let tmux = tmp.path().join("absent-tmux");
+    let _status = tmux_probe_fixture::install_status(&tmux, tmux_probe_fixture::Status::Stopped);
+    assert_eq!(
+        verified_tmux_status_with_timeout(&tmux, "=fixture", Duration::from_secs(1)),
+        "stopped"
+    );
+    assert_eq!(
+        process_observation::runtime(&identity).0,
+        ProcessGroupStatus::Running
+    );
+    let path = linux_control_group_full_path(Path::new(&group.path)).unwrap();
+    let freeze_before = fs::read(path.join("cgroup.freeze")).unwrap();
+    // Orphan maintenance's AlreadyStopped transaction uses this common owner
+    // before persisting FreezePending, freezing, or writing cgroup.kill.
+    let prepared = crate::runtime_teardown::split_scope::prepare_process_runtime(&identity, false);
+    assert!(
+        matches!(
+            &prepared,
+            Err(SessionTerminationFailure::RuntimeIdentityUnavailable)
+        ),
+        "maintenance must refuse shared infrastructure before preparing a cgroup kill; preparation_succeeded={}, failure={:?}",
+        prepared.is_ok(),
+        prepared.as_ref().err()
+    );
+    assert_eq!(fs::read(path.join("cgroup.freeze")).unwrap(), freeze_before);
+    assert!(persisted_tmux_termination_state(&record).unwrap().is_none());
+    for observed in [&daemon, &worker] {
+        let current = read_linux_process_identity(observed.pid).unwrap().unwrap();
+        assert!(
+            !current.zombie && current.start_time == observed.start_time,
+            "fixture was terminated"
+        );
+    }
+    assert!(session_dir(&context, &record.id).exists());
+}
