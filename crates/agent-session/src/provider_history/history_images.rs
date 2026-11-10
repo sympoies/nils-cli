@@ -18,7 +18,9 @@ mod incremental;
 mod row_classes;
 mod upload_ownership;
 use crate::provider_prompt::row_classes::{Compaction, RowClass};
+#[cfg(test)]
 pub(super) use incremental::read_messages_incremental_from_reader;
+pub(super) use incremental::read_messages_incremental_with_notices;
 use upload_ownership::UploadOwnership;
 pub(super) mod native_notices;
 #[path = "upload_references.rs"]
@@ -326,11 +328,28 @@ pub(super) fn read_extended_line<R: Read + Seek>(
     }
 }
 
+#[cfg(test)]
 pub(super) fn push_incremental_message(
     session: &HistorySession,
     line: &[u8],
     line_offset: u64,
     messages: &mut Vec<HistoryMessage>,
+) -> bool {
+    push_incremental_message_with_notices(
+        session,
+        line,
+        line_offset,
+        messages,
+        &native_notices::Bindings::default(),
+    )
+}
+
+fn push_incremental_message_with_notices(
+    session: &HistorySession,
+    line: &[u8],
+    line_offset: u64,
+    messages: &mut Vec<HistoryMessage>,
+    notices: &native_notices::Bindings,
 ) -> bool {
     let Ok(value) = serde_json::from_slice::<Value>(line) else {
         return false;
@@ -343,6 +362,14 @@ pub(super) fn push_incremental_message(
         row_classes::Projection::Pending => return true,
         row_classes::Projection::Hidden => return false,
         row_classes::Projection::Ordinary => {}
+    }
+    match notices.project(session, line_offset, line, &value, false) {
+        native_notices::Decision::Notice(message) => {
+            messages.push(*message);
+            return false;
+        }
+        native_notices::Decision::Rejected => return false,
+        native_notices::Decision::NotBound => {}
     }
     if line.len() > MAX_LINE_BYTES
         && image_sources(&value).is_empty()
@@ -377,7 +404,13 @@ pub(super) fn push_incremental_message(
     } else {
         digest_parts(&[base_id.as_bytes(), row_key(&value).as_bytes()])
     };
-    let (text, row_class) = row_classes::text(&session.provider, &role, &text, &value);
+    let (text, row_class) = row_classes::text_with_receipts(
+        &session.provider,
+        &role,
+        &text,
+        &value,
+        notices.legacy_header(line_offset),
+    );
     let id = if row_class.is_some() {
         format!("{}-{line_offset}", session.id)
     } else {

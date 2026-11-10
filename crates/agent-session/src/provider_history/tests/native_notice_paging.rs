@@ -528,6 +528,28 @@ fn header_only_history_uses_first_receipt_as_cutoff() {
         "unclaimed header after receipt is a user row"
     );
     assert!(page.messages[3].human_prompt);
+    let list = catalog.list("test", None, None, None, 25).unwrap();
+    let preview = list
+        .sessions
+        .iter()
+        .find(|session| session.id == id)
+        .unwrap();
+    assert_eq!(
+        preview.first_user_prompt_preview.as_deref(),
+        Some(text.trim())
+    );
+    assert_eq!(preview.prompt_preview.as_deref(), Some(text.trim()));
+    assert_eq!(
+        preview.last_user_prompt_preview.as_deref(),
+        Some(text.trim())
+    );
+    let incremental = catalog.incremental_messages(&id, None, 65536).unwrap();
+    let later = incremental.messages.last().unwrap();
+    assert_eq!(
+        later.row_class, None,
+        "incremental history agrees with paged history after the receipt cutoff"
+    );
+    assert!(later.human_prompt);
     let latest = catalog
         .messages_with_parts(&id, None, 10, HistoryMessageDirection::Latest, false)
         .unwrap();
@@ -546,4 +568,16 @@ fn header_only_history_uses_first_receipt_as_cutoff() {
         Some(crate::provider_prompt::row_classes::RowClass::Notice),
         "pre-receipt history retains the header fallback"
     );
+    let incremental = catalog.incremental_messages(&id, None, 65536).unwrap();
+    assert_eq!(
+        incremental.messages.last().unwrap().row_class,
+        Some(crate::provider_prompt::row_classes::RowClass::Notice)
+    );
+    let list = catalog.list("test", None, None, None, 25).unwrap();
+    let preview = list
+        .sessions
+        .iter()
+        .find(|session| session.id == id)
+        .unwrap();
+    assert!(preview.last_user_prompt_preview.is_none());
 }

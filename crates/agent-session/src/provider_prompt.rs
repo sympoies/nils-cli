@@ -1375,6 +1375,7 @@ pub(crate) fn read_last_prompt(
     read_preview(source, max_bytes).0
 }
 
+#[cfg(test)]
 pub(crate) fn read_last_prompt_skipping_launch(
     source: &ProviderPromptSource,
     max_bytes: usize,

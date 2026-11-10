@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(test)]
 pub(in super::super) fn read_messages_incremental_from_reader<R: Read + Seek>(
     session: &HistorySession,
     reader: &mut R,
@@ -7,6 +8,26 @@ pub(in super::super) fn read_messages_incremental_from_reader<R: Read + Seek>(
     offset: u64,
     max_bytes: usize,
     discarding_oversized_line: bool,
+) -> Result<IncrementalReaderPage, HistoryError> {
+    read_messages_incremental_with_notices(
+        session,
+        reader,
+        file_len,
+        offset,
+        max_bytes,
+        discarding_oversized_line,
+        &native_notices::Bindings::default(),
+    )
+}
+
+pub(in super::super) fn read_messages_incremental_with_notices<R: Read + Seek>(
+    session: &HistorySession,
+    reader: &mut R,
+    file_len: u64,
+    offset: u64,
+    max_bytes: usize,
+    discarding_oversized_line: bool,
+    notices: &native_notices::Bindings,
 ) -> Result<IncrementalReaderPage, HistoryError> {
     if offset > file_len || max_bytes == 0 {
         return Err(HistoryError::InvalidCursor);
@@ -38,7 +59,13 @@ pub(in super::super) fn read_messages_incremental_from_reader<R: Read + Seek>(
             match read_extended_line(reader, file_len, offset, &bytes)? {
                 ImageLineRead::Complete(line, next_offset) => {
                     let mut messages = Vec::new();
-                    let pending = push_incremental_message(session, &line, offset, &mut messages);
+                    let pending = push_incremental_message_with_notices(
+                        session,
+                        &line,
+                        offset,
+                        &mut messages,
+                        notices,
+                    );
                     return Ok(IncrementalReaderPage {
                         messages,
                         next_offset: if pending { offset } else { next_offset },
@@ -80,7 +107,13 @@ pub(in super::super) fn read_messages_incremental_from_reader<R: Read + Seek>(
         if line.is_empty() || line.len() > MAX_IMAGE_RECORD_BYTES {
             continue;
         }
-        if push_incremental_message(session, line, current_offset, &mut messages) {
+        if push_incremental_message_with_notices(
+            session,
+            line,
+            current_offset,
+            &mut messages,
+            notices,
+        ) {
             return Ok(IncrementalReaderPage {
                 messages,
                 next_offset: current_offset,

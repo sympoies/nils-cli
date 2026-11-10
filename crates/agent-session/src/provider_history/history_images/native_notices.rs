@@ -50,6 +50,14 @@ impl Bindings {
         })
     }
 
+    pub(crate) fn launch_binding(&self) -> Option<&(u64, String, String)> {
+        self.launch.as_ref()
+    }
+
+    pub(crate) fn has_cutoff(&self) -> bool {
+        self.cutoff.is_some()
+    }
+
     pub(crate) fn legacy_header(&self, offset: u64) -> bool {
         self.cutoff.is_none_or(|cutoff| offset < cutoff)
     }
