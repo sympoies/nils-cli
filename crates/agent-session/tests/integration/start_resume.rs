@@ -20,7 +20,7 @@ fn fresh_direct_start_with_account_reports_usage_refusal_without_creating_sessio
         ],
         &CmdOptions::new().with_env_remove_prefix("AGENT_SESSION_"),
     );
-    assert_eq!(out.code, 65);
+    assert_eq!(out.code, 64);
     let response = out.stdout_json();
     assert_eq!(response["error"]["code"], "start-account-unsupported");
     assert_eq!(

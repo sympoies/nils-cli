@@ -19,7 +19,7 @@ pub(super) fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
         return render_error(
             START_COMMAND,
             format,
-            CliError::data(
+            CliError::usage(
                 "start-account-unsupported",
                 "--account is only supported with --via-console or --resume",
                 Some(json!({"session_created":false,"safe_to_retry":false})),
