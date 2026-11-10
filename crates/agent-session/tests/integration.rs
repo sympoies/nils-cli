@@ -72,6 +72,17 @@ fn hermetic_provider_options(dir: &std::path::Path) -> nils_test_support::cmd::C
         .with_env("AGENT_SESSION_CLAUDE_BIN", UNPINNED_PROVIDER_BIN)
 }
 
+/// Construct a server command with provider roots confined to the fixture.
+fn hermetic_provider_command(dir: &std::path::Path) -> std::process::Command {
+    let mut command = std::process::Command::new(nils_test_support::bin::resolve("agent-session"));
+    nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
+    command
+        .env("HOME", dir)
+        .env("CODEX_HOME", dir.join("codex-config"))
+        .env("CLAUDE_CONFIG_DIR", dir.join("claude-config"));
+    command
+}
+
 #[path = "integration/origin.rs"]
 mod origin;
 
