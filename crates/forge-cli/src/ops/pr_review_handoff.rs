@@ -199,6 +199,7 @@ pub(crate) fn validate_handoff(h: &ReviewHandoff) -> Result<(), ForgeError> {
                     | "reviewer-closed"
                     | "reviewer-declined"
                     | "reviewer-timeout"
+                    | "publisher-unavailable"
                     | "coordinator-retired"
             )
         })
@@ -713,6 +714,12 @@ pub(crate) fn ensure_published<R: BackendRunner>(
     chain: &review_state::ReviewStateChain,
     handoff_created_at: Option<&str>,
 ) -> Result<Option<SyncCarryOver>, ForgeError> {
+    // A coordinator release restores ordinary merge policy without inventing
+    // a designated PASS. Check/publication still refuse revoked ownership.
+    if latest(chain).is_some_and(|h| h.returned_reason.as_deref() == Some("publisher-unavailable"))
+    {
+        return Ok(None);
+    }
     published_admission(runner, ctx, number, url, head, chain, handoff_created_at)
         .map(|admission| admission.sync_carry_over)
 }

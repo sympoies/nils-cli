@@ -1147,13 +1147,18 @@ operations:
       - { name: --reviewer-session, type: string, required: conditional }
       - { name: --review-author, type: string, required: conditional }
       - { name: --base-sha, type: string, required: conditional }
-      - { name: --reason, type: enum, values: [reviewer-unreachable, reviewer-closed, reviewer-declined, reviewer-timeout, coordinator-retired], required: conditional }
+      - { name: --reason, type: enum, values: [reviewer-unreachable, reviewer-closed, reviewer-declined, reviewer-timeout, publisher-unavailable, coordinator-retired], required: conditional }
       - { name: --coordinator-session, type: string, required: false, notes: "optional recovery selector; when supplied, must match the recorded coordinator digest" }
     dry_run:
       offline: false
       repo_resolution: "--repo owner/name or recognised GitHub remote"
     validations:
       - designated_review_handoff
+      # publisher-unavailable uses original-coordinator identity and head/tip CAS,
+      # advances the generation and records the reason in the trusted chain.
+      # The latest released assignment does not gate merge; non-assigned review
+      # policy and all remaining merge gates apply. Other recovery reasons stay
+      # designated_reviewer_unavailable; later assign restores the designated gate.
       # test-changes and designated check share test-change-admission-v1.md:
       # optional PR-body provenance imports enumerate complete PR-files pages,
       # verify mapped additions against pinned upstream blob IDs, and require
