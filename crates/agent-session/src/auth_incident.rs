@@ -3,6 +3,7 @@
 //! are inspected in memory and never persisted or sent to the owner.
 
 use std::fs;
+pub(crate) mod alert_delivery;
 mod escalation;
 #[cfg(test)]
 mod escalation_tests;

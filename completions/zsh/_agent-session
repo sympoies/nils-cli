@@ -30,7 +30,52 @@ _agent-session() {
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:agent-session-command-$line[1]:"
         case $line[1] in
-            (rules)
+            (auth-alert)
+_arguments "${_arguments_options[@]}" : \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_agent-session__subcmd__auth-alert_commands" \
+"*::: :->auth-alert" \
+&& ret=0
+
+    case $state in
+    (auth-alert)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agent-session-auth-alert-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+'--limit=[]:LIMIT:_default' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(ack)
+_arguments "${_arguments_options[@]}" : \
+'--target=[]:TARGET:(person watchdog)' \
+'--receipt=[SHA-256 digest of the external delivery receipt, never its payload]:RECEIPT:_default' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':session_id:_default' \
+':alert_id:_default' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(rules)
 _arguments "${_arguments_options[@]}" : \
 '--format=[Show effective rules, selected file, and source]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
@@ -1445,6 +1490,7 @@ esac
 (( $+functions[_agent-session_commands] )) ||
 _agent-session_commands() {
     local commands; commands=(
+'auth-alert:Consume and acknowledge independent authentication alerts' \
 'rules:Show or validate the shared operator rules file' \
 'start:Start an interactive tmux-backed agent session' \
 'run:Run a one-shot agent task in a tmux session and write output to a log file' \
@@ -1549,6 +1595,24 @@ _agent-session__subcmd__activity__subcmd__status_commands() {
 _agent-session__subcmd__attach_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session attach commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__auth-alert_commands] )) ||
+_agent-session__subcmd__auth-alert_commands() {
+    local commands; commands=(
+'list:List durable authentication alerts without the serve daemon' \
+'ack:Record a consumer'\''s confirmed transport delivery' \
+    )
+    _describe -t commands 'agent-session auth-alert commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__auth-alert__subcmd__ack_commands] )) ||
+_agent-session__subcmd__auth-alert__subcmd__ack_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session auth-alert ack commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__auth-alert__subcmd__list_commands] )) ||
+_agent-session__subcmd__auth-alert__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session auth-alert list commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__auto-resume_commands] )) ||
 _agent-session__subcmd__auto-resume_commands() {
