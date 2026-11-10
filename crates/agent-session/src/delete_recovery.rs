@@ -1,5 +1,7 @@
 use super::*;
 
+#[cfg(target_os = "linux")]
+pub(crate) mod codex_daemons;
 mod shared_daemons;
 
 #[derive(Clone, Copy, Debug)]
@@ -1232,6 +1234,8 @@ fn scan_processes(_: &str, _: &str, _: Option<&shared_daemons::DaemonPaths>) -> 
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    mod codex_daemons;
     use super::*;
     use pretty_assertions::assert_eq;
 

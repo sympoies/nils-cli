@@ -269,6 +269,12 @@ pub(super) fn cgroup(
     {
         match read_linux_process_identity(captured.pid) {
             Ok(Some(current)) if current.start_time == captured.start_time && !current.zombie => {
+                if delete_recovery::codex_daemons::proven_pid(
+                    captured.pid,
+                    Some(captured.start_time),
+                ) {
+                    continue;
+                }
                 return result(
                     ProcessGroupStatus::Running,
                     "identity",
@@ -316,6 +322,9 @@ pub(super) fn cgroup(
         (name == "populated").then_some(value)
     }) {
         Some("0") => result(ProcessGroupStatus::Stopped, "cgroup", "stopped", None, None),
+        Some("1") if delete_recovery::codex_daemons::provider_only_scope(&path) => {
+            result(ProcessGroupStatus::Stopped, "cgroup", "stopped", None, None)
+        }
         Some("1") => result(ProcessGroupStatus::Running, "cgroup", "present", None, None),
         _ => unknown("events invalid"),
     }

@@ -8774,48 +8774,12 @@ fn recover_persisted_linux_control_group_at_root(
     state: TmuxTerminationState,
     root: &Path,
 ) -> Result<LinuxControlGroupRecovery, SessionTerminationFailure> {
-    let full_path = linux_control_group_full_path_at_root(Path::new(&control_group.path), root)?;
-    let current_boot_id = linux_boot_id()?;
-    match control_group.boot_id.as_deref() {
-        Some(boot_id) if boot_id == current_boot_id => {}
-        Some(_) => return Ok(LinuxControlGroupRecovery::DifferentBoot),
-        None if !full_path.exists() => return Ok(LinuxControlGroupRecovery::CurrentBoot),
-        None => return Err(SessionTerminationFailure::RuntimeIdentityUnavailable),
-    }
-    let mut pinned_control_group = match fs::metadata(&full_path) {
-        Ok(_) => Some(open_pinned_linux_control_group(control_group, &full_path)?),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
-        Err(_) => return Err(SessionTerminationFailure::VerificationFailed),
-    };
-    let pinned_processes = if matches!(state, TmuxTerminationState::KillConfirmed { .. }) {
-        control_group_members
-            .iter()
-            .map(pin_matching_linux_process)
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
-    if matches!(state, TmuxTerminationState::KillConfirmed { .. }) {
-        if let Some(pinned) = pinned_control_group.as_ref() {
-            write_control_group_file(&pinned.kill_fd, b"1")?;
-        }
-        for process in &pinned_processes {
-            pidfd_send_signal(&process.pidfd, libc::SIGKILL, true)?;
-        }
-    }
-    if state.thaw_on_recovery()
-        && let Some(pinned) = pinned_control_group.as_mut()
-    {
-        pinned.thaw_on_drop = true;
-        if !thaw_pinned_control_group(pinned) {
-            return Err(SessionTerminationFailure::VerificationFailed);
-        }
-        pinned.thaw_on_drop = false;
-    }
-    Ok(LinuxControlGroupRecovery::CurrentBoot)
+    runtime_teardown::cgroup_membership::recover_persisted_linux_control_group_at_root(
+        control_group,
+        control_group_members,
+        state,
+        root,
+    )
 }
 
 pub(crate) fn recover_interrupted_tmux_terminations(context: &CliContext) -> Result<(), CliError> {
