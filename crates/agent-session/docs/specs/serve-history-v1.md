@@ -22,6 +22,19 @@ independent of the catalog scan budget, followed by matching scanned metadata.
 The exact session is not repeated. `truncated` describes the bounded scan, and
 pagination retains this order.
 
+Catalog refreshes share a two-second deadline and a 10,000-entry discovery/probe
+budget across configured roots. Before the general transcript walk, the daemon
+reads managed registry records and probes named Claude transcripts in configured
+project directories. Registry entries, project entries and named-file probes
+consume that same entry budget; registry documents and resume sidecars are each
+limited to 1 MiB. Only validated existing transcripts produce rows, with identity
+and profile attributed to their configured source. This gives managed Claude
+sessions priority over older transcript discovery without raising either bound.
+Archive/star and ancestor-directory stamp reads retain their existing entry
+caps and consume the shared deadline. Remaining discovery keeps configured-root,
+filesystem-walk and lexical-path inspection order. An incomplete scan still reports `truncated: true`; catalog
+snapshots retain the existing 30-second cache lifetime.
+
 The query never searches arbitrary conversation text or the latest-user-prompt preview. Optional
 `provider`, `cursor`, and `limit` further bound the
 result. Each item may add `first_user_prompt_preview` and `last_user_prompt_preview`; both are bounded
