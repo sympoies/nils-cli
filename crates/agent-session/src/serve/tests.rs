@@ -1264,7 +1264,7 @@ async fn provider_prompt_recovery_is_single_flight_and_concurrency_bounded() {
                 let active = active.clone();
                 let max_active = max_active.clone();
                 let release = release.clone();
-                move |_| {
+                move |_, _| {
                     started.fetch_add(1, Ordering::SeqCst);
                     let current = active.fetch_add(1, Ordering::SeqCst) + 1;
                     max_active.fetch_max(current, Ordering::SeqCst);
