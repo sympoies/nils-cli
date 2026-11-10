@@ -381,6 +381,7 @@ included in refusal output. Use `--format json` to consume `error.code` and
 | `send-session-not-idle` | A provider-reported phase or current turn is not idle. |
 | `send-provider-event-pending` | Provider event ingestion is queued/in progress. |
 | `send-idle-unobservable` | Provider-reported activity or ingress status cannot be observed. |
+| `send-completion-evidence-missing` | A Stop lacks provider completion evidence after the quiet window; inspect activity status and choose operator recovery. |
 | `send-composer-not-empty` | A visible draft exists before paste. |
 | `send-composer-unobservable` | The composer cannot be read exactly. |
 | `send-composer-mismatch` | After paste, the composer differs from the submitted text. |
@@ -394,6 +395,14 @@ included in refusal output. Use `--format json` to consume `error.code` and
 | `send-native-unconfirmed` | Native dispatch or subsequent exact-input confirmation is uncertain; the key is retained. |
 | `send-submit-stuck` | Text remains after at most two guarded Enter presses; the claim is retained. |
 | `send-submit-unconfirmed` | Pane observations cannot prove submission; the claim is retained. |
+
+When activity is unknown because `completion_evidence_missing` follows a Stop,
+`--require-idle` returns `send-completion-evidence-missing`. It does not infer
+idle or deliver input. The operator can inspect `activity status`, confirm the
+turn is idle, and explicitly send with `--require-empty-composer` without
+`--require-idle`, retaining identity and idempotency guards. The CLI never
+performs this recovery automatically. Draft and unconfirmed-submission
+protections still apply.
 
 Observation refusals include the failed `guard` and `stage` (`admission`,
 `claimed` for the recheck right after the idempotency claim, or `submit`),

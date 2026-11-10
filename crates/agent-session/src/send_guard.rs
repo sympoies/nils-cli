@@ -447,7 +447,22 @@ impl Admission<'_> {
                 },
             );
         }
-        let state = activity::state_for_view(self.context, self.record)
+        let state = activity::state_for_view(self.context, self.record);
+        if state.as_ref().is_some_and(|state| {
+            state.phase == activity::TurnPhase::Unknown
+                && state
+                    .diagnostic
+                    .as_ref()
+                    .is_some_and(|diagnostic| diagnostic.reason == "completion_evidence_missing")
+        }) {
+            return Err(self.refusal(
+                "send-completion-evidence-missing",
+                "provider completion evidence is missing; inspect activity status; operator recovery: use --require-empty-composer without --require-idle after confirming the turn is idle",
+                "idle",
+                stage,
+            ));
+        }
+        let state = state
             .filter(|state| {
                 state.phase != activity::TurnPhase::Unknown
                     && state.source.kind == activity::SourceKind::ProviderHook
