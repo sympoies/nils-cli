@@ -1885,7 +1885,10 @@ fn plain_codex_failed_turn_exit_projects_stopped_without_claiming_completion() {
         "codex_runtime_stopped"
     );
     assert_eq!(stopped.revision, working.revision);
-    assert_eq!(stopped.phase_changed_at, crate::lifecycle::stopped_observed_at(&context, record).unwrap());
+    assert_eq!(
+        stopped.phase_changed_at,
+        crate::lifecycle::stopped_observed_at(&context, record).unwrap()
+    );
     assert_eq!(
         fs::read(session_dir(&context, &record.id).join(ACTIVITY_FILE)).unwrap(),
         snapshot
