@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `d177f0995f76b5731a7c93e002b5d463c8fb80e12434ab05797341e5e6667e06`
+- Cargo.lock SHA256: `7379f1ccf6a5536073b0ade2ea7aaeaeb620e8069e64e1e242c32b6228002948`
 - Third-party crates (`source != null`): 493
 - Workspace crates (`source == null`, excluded below): 42
 
@@ -363,7 +363,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | roxmltree | 0.21.2 | MIT OR Apache-2.0 | crates.io |
 | rustc-hash | 2.1.2 | Apache-2.0 OR MIT | crates.io |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 | crates.io |
-| rustix | 1.1.4 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io |
+| rustix | 1.1.6 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io |
 | rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT | crates.io |
 | rustls-native-certs | 0.8.4 | Apache-2.0 OR ISC OR MIT | crates.io |
 | rustls-pki-types | 1.14.1 | MIT OR Apache-2.0 | crates.io |

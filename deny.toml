@@ -41,7 +41,6 @@ skip = [
     { crate = "getrandom@0.3.4", reason = "getrandom 0.2/0.3/0.4 ecosystem transition" },
     { crate = "r-efi@5.3.0", reason = "pulled by the older getrandom UEFI backend" },
     # hashbrown / foldhash generation overlap.
-    { crate = "hashbrown@0.16.1", reason = "hashbrown 0.16/0.17 transition" },
     { crate = "foldhash@0.1.5", reason = "foldhash 0.1/0.2 via hashbrown" },
     # resvg/usvg 0.48 requires base64 0.23 while the workspace and web stack
     # remain on base64 0.22.
