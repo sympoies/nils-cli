@@ -1139,7 +1139,8 @@ mod tests {
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).expect("tmux mode");
         let path = session_dir(&context, &record.id).join(SHADOW_FILE);
 
-        let one_shot = crate::list_sessions(&context, Some(&tmux)).expect("one-shot list");
+        let one_shot =
+            crate::session_views::list_sessions(&context, Some(&tmux)).expect("one-shot list");
         assert_eq!(one_shot.len(), 1);
         thread::sleep(Duration::from_millis(50));
         assert!(!path.exists(), "one-shot view launched detached sampling");

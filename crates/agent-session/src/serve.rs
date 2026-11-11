@@ -107,6 +107,9 @@ mod create;
 mod create_body;
 #[path = "serve_prompt_scan.rs"]
 mod prompt_scan;
+#[path = "serve_session_previews.rs"]
+mod session_previews;
+pub(crate) use session_previews::run_previews;
 #[path = "serve_remote_outbox.rs"]
 mod remote_outbox;
 #[path = "serve/resume_start.rs"]
@@ -1126,15 +1129,8 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             session_collector.clone(),
         )
         .await;
-        let history_catalog = Arc::new(
-            HistoryCatalog::new(
-                launch_profiles.history_sources(),
-                provider_history::archive_root(&context.state_dir),
-                provider_history::star_root(&context.state_dir),
-            )
-            .with_session_state_dir(context.state_dir.clone())
-            .with_dsh_sources(launch_profiles.dsh_history_sources()),
-        );
+        let history_catalog =
+            Arc::new(session_previews::history_catalog(context, &launch_profiles));
         let state = Arc::new(ServeState {
             context: context.clone(),
             machine,
@@ -5145,7 +5141,12 @@ async fn list_handler(State(state): State<Arc<ServeState>>) -> Response {
     .await
     {
         Ok(Ok((mut sessions, agent_profiles))) => {
-            enrich_last_prompts(&state, &mut sessions).await;
+            session_previews::enrich_last_prompts(
+                &state.context,
+                &state.provider_prompt_discovery,
+                &mut sessions,
+            )
+            .await;
             envelope_ok(json!({
                 "machine": state.machine,
                 "observed_at": activity_observed_at(),
@@ -5605,41 +5606,6 @@ fn history_error_response(error: HistoryError) -> Response {
             "history-read-failed",
             "history could not be read",
         ),
-    }
-}
-
-/// Best-effort enrichment: attach each running Codex/Claude session's most recent
-/// user prompt to the list projection.
-///
-/// Cold recovery and bounded backlog catch-up run in the background. Eligible
-/// sessions report `last_prompt_state` so a consumer can distinguish pending
-/// catch-up from an authoritative empty or unavailable projection. The latest
-/// caught-up value remains process-local and is returned in the response only;
-/// it is never persisted by the daemon.
-async fn enrich_last_prompts(state: &Arc<ServeState>, sessions: &mut [SessionView]) {
-    for session in sessions.iter_mut() {
-        if session.status == "stopped" || !matches!(session.agent.as_str(), "codex" | "claude") {
-            continue;
-        }
-        let context = state.context.clone();
-        let id = session.id.clone();
-        let Ok(Ok(record)) =
-            tokio::task::spawn_blocking(move || load_session_record(&context, &id)).await
-        else {
-            continue;
-        };
-        if let Some(projection) = state
-            .provider_prompt_discovery
-            .last_prompt_projection(&record, Some(&state.context.state_dir))
-            .await
-        {
-            session.previews = crate::provider_prompt::SessionPreviews {
-                last_prompt_state: Some(projection.state),
-                last_prompt_continuity: projection.continuity,
-                last_prompt: projection.prompt,
-                last_message: projection.message,
-            };
-        }
     }
 }
 

@@ -161,3 +161,14 @@ fn visit_with_usage(
     }
     Ok(())
 }
+
+pub(super) fn run_list(context: &CliContext, args: cli::ListArgs) -> i32 {
+    match list_sessions(context, None) {
+        Ok(results) => render_list_success(
+            args.format,
+            &results,
+            &board::machine_identity(None, context),
+        ),
+        Err(err) => render_error(LIST_COMMAND, args.format, err),
+    }
+}
