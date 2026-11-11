@@ -32,6 +32,11 @@ use crate::rate_limit::default_runner;
 pub const SCHEMA: &str = "pr.checks";
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// Aggregate `data.state` for a head with no check rows at all. Absence of
+/// checks is not evidence of success: a run that is still queued has no rows
+/// yet, so every gate treats this state as not green.
+pub const NO_CHECKS: &str = "no-checks";
+
 pub const GH_JSON_FIELDS: &str =
     "name,state,bucket,workflow,link,startedAt,completedAt,description";
 
@@ -306,7 +311,12 @@ fn snapshot_github<R: BackendRunner>(
         }
         Err(err) => return Err(err),
     };
-    let snapshot = parse_github_snapshot_with_required_output(ctx, &output, &required_output)?;
+    let mut snapshot = parse_github_snapshot_with_required_output(ctx, &output, &required_output)?;
+    if snapshot.checks.is_empty()
+        && let Some(rows) = github_gate::queued_runs_for_empty_snapshot(runner, ctx, &args.id)
+    {
+        snapshot = aggregate(ctx, rows, args.required_only, None);
+    }
     if args.required_only {
         Ok(snapshot)
     } else {
@@ -945,7 +955,7 @@ pub fn normalize_github_state(
 }
 
 /// Aggregate a list of checks into the payload, derived per spec's
-/// terminal-state mapping.
+/// terminal-state mapping. An empty list is [`NO_CHECKS`], never `success`.
 pub fn aggregate(
     ctx: &ProviderContext,
     checks: Vec<CheckItem>,
@@ -1014,20 +1024,22 @@ pub fn aggregate(
         }
     }
     let state = if has_failure {
-        CheckState::Failure
+        CheckState::Failure.as_str()
     } else if has_timed_out {
-        CheckState::TimedOut
+        CheckState::TimedOut.as_str()
     } else if has_cancelled {
-        CheckState::Cancelled
+        CheckState::Cancelled.as_str()
     } else if has_pending {
-        CheckState::Pending
+        CheckState::Pending.as_str()
+    } else if checks.is_empty() {
+        NO_CHECKS
     } else {
         // No failures, no pending, no cancelled, no timeouts.
-        CheckState::Success
+        CheckState::Success.as_str()
     };
     PrChecksPayload {
         provider: ctx.provider.as_str(),
-        state: state.as_str(),
+        state,
         gate_scope,
         required_count,
         success_count,
@@ -1300,9 +1312,12 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_empty_checks_is_success() {
+    fn aggregate_empty_checks_is_no_checks() {
         let p = aggregate(&ctx(Provider::GitHub), Vec::new(), true, None);
-        assert_eq!(p.state, "success");
+        assert_eq!(p.state, "no-checks");
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json["gate_state"], "no-checks");
+        assert_eq!(json["visible_state"], "no-checks");
         assert_eq!(p.required_count, 0);
         assert_eq!(p.success_count, 0);
         assert!(p.failed.is_empty());
@@ -1342,24 +1357,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_github_snapshot_empty_array_is_success() {
+    fn parse_github_snapshot_empty_array_is_no_checks() {
         let out = BackendSuccess {
             stdout: "[]".into(),
             stderr: String::new(),
         };
         let p = parse_github_snapshot(&ctx(Provider::GitHub), &out, true).unwrap();
-        assert_eq!(p.state, "success");
+        assert_eq!(p.state, "no-checks");
         assert!(p.checks.is_empty());
     }
 
     #[test]
-    fn parse_github_snapshot_blank_stdout_is_success() {
+    fn parse_github_snapshot_blank_stdout_is_no_checks() {
         let out = BackendSuccess {
             stdout: String::new(),
             stderr: String::new(),
         };
         let p = parse_github_snapshot(&ctx(Provider::GitHub), &out, true).unwrap();
-        assert_eq!(p.state, "success");
+        assert_eq!(p.state, "no-checks");
     }
 
     #[test]

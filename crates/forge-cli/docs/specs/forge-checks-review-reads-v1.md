@@ -46,6 +46,8 @@ validation rules, and output schema versions.
   `glab ci status -b <branch>` text parser.
 - Terminal states map to envelope `ok`:
   - all required `success`, with at least one check reported → `ok = true`.
+    A queued or running GitHub workflow run that has no jobs yet is a pending
+    row naming the run id and age.
   - any required `failure`/`cancelled`/`timed_out` → `ok = false`,
     exit `RUNTIME 1`, `error.kind = "checks_failed"`.
   - timeout reached with checks still running → `ok = false`, exit
@@ -54,7 +56,8 @@ validation rules, and output schema versions.
     `ok = false`, exit `DATA 65`, `error.kind = "checks_not_registered"`.
     An empty snapshot is **not** terminal (rule 8): the poll continues
     through the provider's check-registration window rather than reading
-    "nothing is failing" as "everything passed". `--allow-no-checks`, or a
+    "nothing is failing" as "everything passed" (an empty snapshot's
+    `data.state` is `no-checks`, never `success`). `--allow-no-checks`, or a
     repository `[checks] none = true` declaration, makes the empty set
     terminal for a repository that configures none.
   - GitHub no-CI fast fail: once the head has reported nothing for 60s, the

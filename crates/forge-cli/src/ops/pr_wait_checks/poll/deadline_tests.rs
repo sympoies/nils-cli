@@ -111,7 +111,7 @@ fn empty_history_is_not_registered_when_a_read_times_out_before_at_or_after_budg
                 if completed_polls == 0 {
                     "pending"
                 } else {
-                    "success"
+                    "no-checks"
                 }
             );
         }

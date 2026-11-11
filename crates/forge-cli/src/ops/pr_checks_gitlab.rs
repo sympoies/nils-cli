@@ -41,15 +41,12 @@ pub fn build_version_call() -> BackendCall {
 /// `mr view`), then parses `glab ci status` text.
 ///
 /// `glab` exits non-zero when there is no pipeline at all (vs. an empty
-/// pipeline). We surface that case as an empty-success payload rather than a
+/// pipeline). We surface that case as an empty `no-checks` payload rather than a
 /// backend error: a repo without `.gitlab-ci.yml` is not a broken provider
-/// call, and this read surface is right to report "nothing is failing".
-///
-/// That is a *reporting* answer, not a gating one. Since lock-down rule 8, the
-/// merge gate treats the same empty snapshot as "nothing proves this head was
-/// checked" and refuses it with `checks_not_registered`, so an MR with no
-/// pipeline needs an explicit `--allow-no-checks` to merge. Do not restore the
-/// old reading that empty-success here means the gate will pass.
+/// call. The payload state is `no-checks`, never `success`: every gate treats
+/// it as "nothing proves this head was checked" and refuses it with
+/// `checks_not_registered`, so an MR with no pipeline needs an explicit
+/// `--allow-no-checks` to merge.
 pub fn snapshot<R: BackendRunner>(
     runner: &R,
     ctx: &ProviderContext,
@@ -658,14 +655,14 @@ e2e    skipped
     }
 
     #[test]
-    fn parse_status_text_empty_pipeline_is_success() {
+    fn parse_status_text_empty_pipeline_is_no_checks() {
         let stdout = "No pipeline found for branch feat/sample\n";
         let out = BackendSuccess {
             stdout: stdout.into(),
             stderr: String::new(),
         };
         let p = parse_status_text(&ctx(), &out, true).unwrap();
-        assert_eq!(p.state, "success");
+        assert_eq!(p.state, "no-checks");
         assert_eq!(p.required_count, 0);
         assert!(p.checks.is_empty());
     }

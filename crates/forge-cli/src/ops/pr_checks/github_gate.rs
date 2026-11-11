@@ -270,8 +270,17 @@ pub(super) fn snapshot<R: BackendRunner>(
             missing_checks.push(pending(&requirement.name));
         }
     }
+    let suites: HashSet<i64> = runs_rows
+        .iter()
+        .filter_map(|row| row.pointer("/check_suite/id").and_then(|v| v.as_i64()))
+        .collect();
     let mut checks: Vec<_> = rows.into_iter().map(|(check, _, _)| check).collect();
     checks.extend(missing_checks);
+    let mut warnings = Vec::new();
+    match queued_runs_without_jobs(runner, ctx, &head, &suites) {
+        Ok(rows) => checks.extend(rows),
+        Err(_) => warnings.push("github_workflow_runs_unavailable".to_string()),
+    }
     if json_total_count_exceeds_len(&runs, runs_rows.len())
         || json_total_count_exceeds_len(&statuses, status_rows.len())
     {
@@ -283,8 +292,94 @@ pub(super) fn snapshot<R: BackendRunner>(
         checks.clear();
         checks.push(pending("github-pr-head-changed"));
     }
-    Ok(aggregate(ctx, checks, args.required_only, None))
+    let mut payload = aggregate(ctx, checks, args.required_only, None);
+    payload.warnings = warnings;
+    Ok(payload)
 }
+
+/// One-shot reads have no exact-head rows to compare against, so they look for
+/// queued runs only when the rollup came back empty. Best effort: when the
+/// lookup fails the empty snapshot stays `no-checks`, which is still not green.
+pub(super) fn queued_runs_for_empty_snapshot<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    id: &str,
+) -> Option<Vec<CheckItem>> {
+    let head = read_head(runner, ctx, id).ok()?;
+    let rows = queued_runs_without_jobs(runner, ctx, &head, &HashSet::new()).ok()?;
+    (!rows.is_empty()).then_some(rows)
+}
+
+/// Pending rows for workflow runs of the head that have been accepted but have
+/// not produced a job yet. Such a run registers no check run, so without these
+/// rows a head whose CI is stuck in the queue looks like it has nothing to wait
+/// for. `suites` holds the check suites that already have check runs.
+fn queued_runs_without_jobs<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    head: &Head,
+    suites: &HashSet<i64>,
+) -> Result<Vec<CheckItem>, ForgeError> {
+    let runs = api(
+        runner,
+        ctx,
+        format!(
+            "repos/{}/actions/runs?head_sha={}&per_page=100",
+            head.repo, head.sha
+        ),
+    )?;
+    let rows = runs
+        .get("workflow_runs")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| invalid("head workflow runs"))?;
+    let now = jiff::Timestamp::now();
+    let mut out: Vec<_> = rows
+        .iter()
+        .filter_map(|run| queued_run_row(run, suites, now))
+        .collect();
+    if json_total_count_exceeds_len(&runs, rows.len()) {
+        out.push(pending("github-workflow-runs-pagination-truncated"));
+    }
+    Ok(out)
+}
+
+fn queued_run_row(
+    run: &serde_json::Value,
+    suites: &HashSet<i64>,
+    now: jiff::Timestamp,
+) -> Option<CheckItem> {
+    let status = run.get("status")?.as_str()?;
+    if !matches!(
+        status,
+        "queued" | "in_progress" | "waiting" | "requested" | "pending"
+    ) {
+        return None;
+    }
+    let id = run.get("id")?.as_i64()?;
+    let has_jobs = run
+        .get("check_suite_id")
+        .and_then(|v| v.as_i64())
+        .is_some_and(|suite| suites.contains(&suite));
+    if has_jobs {
+        return None;
+    }
+    let created = json_string(run, &["created_at"]);
+    let age = created
+        .as_deref()
+        .and_then(|at| at.parse::<jiff::Timestamp>().ok())
+        .map_or_else(
+            || "an unknown time".to_string(),
+            |at| format!("{}s", now.as_second().saturating_sub(at.as_second()).max(0)),
+        );
+    let workflow = json_string(run, &["name"]).unwrap_or_else(|| "workflow".into());
+    let mut item = pending(&format!(
+        "workflow run {id} ({workflow}) {status} with no jobs for {age}"
+    ));
+    item.url = json_string(run, &["html_url"]);
+    item.started_at = created;
+    Some(item)
+}
+
 fn pending(name: &str) -> CheckItem {
     CheckItem {
         name: name.into(),

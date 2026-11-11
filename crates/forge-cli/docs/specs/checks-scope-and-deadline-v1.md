@@ -72,10 +72,33 @@ A non-passing strict gate emits `ok=false` with the snapshot in `data` and exits
 or neutral gating checks, or `checks_pending` when only pending checks block.
 A successful strict gate emits the ordinary success snapshot and exits zero.
 When `required_count=0` and `checks` is empty, nothing was checked: strict mode
-sets `state` and `gate_state` to `pending` and returns `checks_pending` with
-exit 1. The default read retains its ordinary empty-snapshot behavior. Strict
-mode does not establish required-check configuration or prove snapshot
-completeness.
+sets `state` and `gate_state` to `no-checks` and returns `checks_not_registered`
+with exit 1. Strict mode does not establish required-check configuration or
+prove snapshot completeness.
+
+## The `no-checks` state
+
+An empty check list is never `success`. Every reader that aggregates checks
+(`pr checks`, `pr wait-checks`, the merge gate, `pr deliver`) reports it as
+`state=no-checks`, `gate_state=no-checks`, and `visible_state=no-checks`.
+The default `pr checks` read still exits 0, because it reports; gates refuse it:
+`--strict` returns `checks_not_registered` (exit 1), `pr wait-checks` keeps
+polling and expires as `checks_not_registered` (exit 65), and `pr merge` and
+`pr deliver` fail closed with `checks_not_registered`. A repository that truly
+has no checks opts in explicitly with `--allow-no-checks` (`--allow-no-checks-reason`
+on mutating commands) or `[checks] none = true` with a `none_reason` in
+`.forge-cli.toml`; the empty set then ends a wait with `ok=true` and
+`state=no-checks`.
+
+On GitHub, a workflow run for the head SHA that is `queued`, `in_progress`,
+`waiting`, `requested`, or `pending` and whose check suite has no check run yet
+is reported as a pending row named
+`workflow run <id> (<workflow>) <status> with no jobs for <age>s`, with the run
+URL and creation time. The row makes `state=pending` even when other checks are
+green, so a stuck queue ends a wait as `checks_timeout`. Gate snapshots always
+read the head's workflow runs; one-shot reads do so only when the rollup is
+empty. If the runs lookup fails, a gate snapshot adds the warning
+`github_workflow_runs_unavailable` and otherwise behaves as before.
 
 With `--required-only=true`, optional skipped or neutral rows do not block a
 required gate. With `--required-only=false`, or with GitHub's
