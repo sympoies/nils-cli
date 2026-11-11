@@ -70,6 +70,7 @@ string `unknown`.
 | `next_cursor` | Resume string, or `null` at end |
 | `routine_coalescing` | Object mapping each recipient session ID whose notification policy sets a `600` routine interval to `600`; `{}` when none (see [routine coordinator wake windows](coordination-mailbox-v1.md#routine-coordinator-wake-windows)) |
 | `notification_capabilities` | Array of advertised notification capabilities, currently `["routine-coalescing-v1"]` |
+| `quota_rejections` | Bounded destination quota rejection events: sender, recipient, category, occurred_at, occurred_at_epoch, reason_code; no body or digest. Newest 32 per recipient / 256 globally, lazy 24-hour retention; independent of record pagination and healthy filtering. `null` when registry is unavailable; see [quota signals](coordination-mailbox-v1.md#quota-rejection-evidence-and-alerts) |
 | `receipt_usage` | Idempotency receipt usage: `{count, limit, principal_count, principals}`, where `principals` lists at most 16 principals by descending count as `{principal, count, limit, evicted, last_evicted_at}`; `evicted` is a cumulative count of finished receipts evicted at the cap and `last_evicted_at` (UTC RFC3339, `null` when none) is its recency signal. A principal's record persists while evictions recur less than one receipt TTL apart; once idle for a TTL it is removed lazily by a later eviction of any principal. `null` when the registry is unavailable |
 
 | Record field | Type / meaning |
@@ -118,12 +119,44 @@ host cannot establish recipient deletion.
 A `notification` is joined on recipient ID **and incarnation**, using the
 newest `(generation, updated_at_epoch)` receipt when historical entries coexist.
 It has `state`, `generation`, `notified_generation`, `queued_at`, `attempted_at`,
-`updated_at`, `next_retry_at`, and `reason_code`. States are `queued`,
+`updated_at`, `next_retry_at`, `reason_code`, and `reason_detail`. States are `queued`,
 `attempting`, `prompt_submitted`, `attempt_unknown`, `undeliverable`, or
 `unknown`. Notifications can coalesce multiple messages: the receipt is
 recipient-generation evidence, not proof that one message was read/executed.
 Notification timestamp zero/missing means `null`; the query never fabricates a
 migration time or rewrites the stored receipt.
+
+`reason_detail` is `null` unless the last reason recorded one. It is a closed
+set and carries no message or runtime content.
+
+A configuration-only Claude text wake retains its route cause while queued,
+submitted, or unknown: `notice-writers-disabled` (writers disabled at launch or
+in the daemon), `notice-provider-unsupported` (the launch could not use the
+tested provider version), or `notice-receiver-not-attached` (no receiver was
+installed for that launch). A nonempty composer keeps the wake queued and the
+draft intact; an unknown attempted generation is never resent.
+
+For `recipient-coordination-not-quiescent` it names the blocking condition:
+`active-claim` (the in-turn route only), `active-operation`,
+`uncertain-operation`, `broker-not-authoritative`, `auth-quarantined`, or
+`restart-fenced`.
+
+For `provider-not-ready` it names the branch that deferred:
+
+- `notice-writers-disabled`: the notice writer gate is disabled.
+- `notice-runtime-unavailable`: the Claude notice runtime is not ready.
+- `notice-not-prepared`: the wake notice could not be prepared for another
+  reason.
+- `prompt-control-unavailable`: no structured prompt control for the Codex
+  runtime.
+- `prompt-submission-refused`: the structured prompt submission was refused.
+  A stable refusal code from a fixed list of known codes follows as
+  `prompt-submission-refused:<code>`; any other code is reported as plain
+  `prompt-submission-refused`.
+- `notice-attempt-not-admitted`: the guarded notice send did not admit the
+  attempt.
+- `authorization-timeout`: the Claude native receiver did not authorize the
+  notice before the deadline.
 
 ## Classification and joining
 
@@ -155,8 +188,9 @@ destination ingress, delivery, mailbox and notification states separate.
 `delivered` means destination persistence; it never overrides destination
 `unread`. A stopped-target submission may remain queued/rejected at the source
 without creating any destination mail. Accepted-then-stopped mail is a separate
-inbox orphan. Ordinary local submissions rejected synchronously and never
-persisted have no audit record; callers retain the submission error themselves.
+inbox orphan. Local and destination federation quota rejections appear in the separate bounded
+`quota_rejections` log, without fabricating an admitted inbox record. Other
+synchronous local refusals have no destination audit record.
 
 Records sort by a stable metadata key containing source, message ID and both
 addresses. Cursors resume strictly after that key and bind the query filters.
@@ -172,13 +206,15 @@ scans; they must not treat a partial/failed scan as a clean host.
 
 ## Retention and compatibility
 
-Readers accept registry v1 through v6 and federation journal v1 through v6.
+Readers accept registry v1 through v7 and federation journal v1 through v6.
 Journal v5 retains quota refusal details; v6 retains destination suppression
 receipts. Registry v3 fences older writers that would erase suppression decisions;
 registry v4 is the fence written by the first worker delegation (see
 [scoped worker delegation](scoped-worker-delegation-v1.md#private-audit)).
 Registry v5 fences notification history and v6 fences routine coalescing (see
 [routine coordinator wake windows](coordination-mailbox-v1.md#routine-coordinator-wake-windows)).
+Registry v7 fences destination quota evidence and alert state.
+
 Missing stores are empty; corrupt/unreadable/unsupported stores produce `partial` with a fixed
 source code, leaving the other source observable. Store reads retain existing
 private-file checks. Federation journal reads are bounded to 38,535,168 bytes,

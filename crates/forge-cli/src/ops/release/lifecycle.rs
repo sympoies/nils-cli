@@ -1,6 +1,7 @@
 //! GitHub-only view, notes editing and guarded deletion of exact releases.
 mod api;
 mod delete;
+mod delete_asset;
 mod guards;
 mod lookup;
 mod model;
@@ -47,6 +48,9 @@ pub(super) fn run(
     command: ReleaseCommand,
     format: OutputFormat,
 ) -> Result<i32, ForgeError> {
+    if let ReleaseCommand::DeleteAsset(args) = command {
+        return delete_asset::run(global, args, format);
+    }
     let (op, tag) = match &command {
         ReleaseCommand::View(args) => ("release.view", &args.tag),
         ReleaseCommand::Edit(args) => ("release.edit", &args.tag),

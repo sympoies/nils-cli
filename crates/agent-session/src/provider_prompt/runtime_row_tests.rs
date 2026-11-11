@@ -274,7 +274,11 @@ fn codex_notice_submission_is_observable_without_a_human_prompt_event() {
         Duration::ZERO,
     )
     .unwrap();
-    let text = "Mailbox: agent-session message inbox";
+    let encoded = crate::notice::NoticeEnvelope::new("mailbox.wake", "agent-session", None)
+        .unwrap()
+        .encode("Mailbox: agent-session message inbox")
+        .unwrap();
+    let text = encoded.as_str();
     let rows = [
         json!({"type":"event_msg","payload":{"type":"user_message","message":text}}),
         json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":text}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}}}),
@@ -304,4 +308,24 @@ fn codex_notice_submission_is_observable_without_a_human_prompt_event() {
     .unwrap();
     assert!(submissions.poll_submitted_prompts().unwrap().is_empty());
     assert!(human_events.poll().unwrap().is_empty());
+}
+
+#[test]
+fn notice_canonical_snapshot_does_not_replace_real_prompt() {
+    let notice = "<!-- agent-notice:v1 kind=mailbox source=synthetic -->\n\nMailbox wake";
+    let human = json!({"type":"user","sessionId":"synthetic","message":{"role":"user","content":"real prompt"}});
+    let notice_row =
+        json!({"type":"user","sessionId":"synthetic","message":{"role":"user","content":notice}});
+    let snapshot = json!({"type":"last-prompt","sessionId":"synthetic","lastPrompt":notice});
+    let transcript = format!(
+        "{human}\n{}{snapshot}\n",
+        format!("{notice_row}\n").repeat(40)
+    );
+    let (prompt, _, _) = extract_preview(
+        transcript.as_bytes(),
+        ProviderKind::Claude,
+        "synthetic",
+        true,
+    );
+    assert_eq!(prompt.unwrap().prompt, "real prompt");
 }

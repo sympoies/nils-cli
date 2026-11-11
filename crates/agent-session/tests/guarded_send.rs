@@ -1,6 +1,10 @@
 //! Admission regressions use a modeled tmux executable and synthetic records.
+#[path = "guarded_send/cases.rs"]
+mod cases;
 #[path = "guarded_send/claude_notice.rs"]
 mod claude_notice;
+#[path = "guarded_send/completion_evidence.rs"]
+mod completion_evidence;
 #[path = "guarded_send/exit.rs"]
 mod exit;
 #[path = "guarded_send/history_command_bytes.rs"]
@@ -9,6 +13,10 @@ mod history_command_bytes;
 mod live_composer;
 #[path = "guarded_send/native_composer.rs"]
 mod native_composer;
+#[path = "guarded_send/observation_deadline.rs"]
+mod observation_deadline;
+#[path = "guarded_send/placeholder.rs"]
+mod placeholder;
 #[path = "guarded_send/repair.rs"]
 mod repair;
 use std::fs;
@@ -58,6 +66,8 @@ args = sys.argv[1:]
 with (root / 'calls').open('a') as out: out.write(json.dumps(args) + '\n')
 command = args[0]
 provider = (root / 'provider').read_text()
+if (root / 'slow-cleanup-roundtrip').exists() and (root / 'paste-completed').exists():
+    time.sleep(0.7)
 def cell_width(value):
     return sum(0 if unicodedata.combining(ch) else 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1 for ch in value)
 def print_cursor():
@@ -67,7 +77,7 @@ def print_cursor():
         prefix = text[:cursor]
         logical_rows = prefix.split('\n')
         active_row = logical_rows[-1]
-        x, y = 2 + cell_width(active_row), len(logical_rows)
+        x, y = 2 + cell_width(active_row), len(logical_rows) - (1 if provider == 'codex' else 0)
         if (root / 'wrap-80').exists() and cell_width(active_row) > 78:
             chunks = [active_row[i:i + 78] for i in range(0, len(active_row), 78)]
             if (root / 'word-wrap').exists(): chunks = textwrap.wrap(active_row, width=78, drop_whitespace=False)
@@ -99,10 +109,25 @@ def print_cursor():
         started = float((root / f'slow-right-start-{right_count}').read_text())
         delay = int((root / 'slow-right-observation-ms').read_text()) / 1000
         if time.monotonic() - started < delay: x, y = 3, 1
+    if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()):
+        label = (root / 'collapsed-label').read_text()
+        x, y = (2 if cursor == 0 else 2 + len(label) + cell_width(text[len(label):][:cursor - 1])), (0 if provider == 'codex' else 1)
     print(x, y)
 
 if command == 'capture-pane' and 'display-message' in args: atexit.register(print_cursor)
 def append_draft_after_capture():
+    if (root / 'collapse-after-exact').exists() and (root / 'paste-completed').exists() and not (root / 'collapsed-label').exists():
+        count_path = root / 'collapse-capture-count'
+        count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+        count_path.write_text(str(count))
+        if count < 2: return
+        label = '[Pasted text #1]'
+        (root / 'composer').write_text(label)
+        (root / 'collapsed-label').write_text(label)
+        (root / 'cursor').write_text('1')
+        p = root / 'state/sessions/guarded/activity.json'
+        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
+        p.write_text(json.dumps(d))
     if (root / 'replace-after-paste').exists(): return
     if (root / 'draft-after-exact').exists() and (root / 'paste-completed').exists() and not (root / 'draft-injected').exists():
         with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text() if (root / 'draft-text').exists() else ' user addition')
@@ -150,6 +175,18 @@ elif command == 'paste-buffer':
     if (root / 'late-render').exists(): (root / 'late').write_text((root / 'buffer').read_text())
     else:
         with (root / 'composer').open('a') as out: out.write((root / 'buffer').read_text())
+    if (root / 'collapse-paste').exists():
+        count = len(re.findall(r'\r\n|\r|\n', (root / 'buffer').read_text()))
+        label = '[Pasted text #1' + (f' +{count} lines' if count else '') + ']'
+        (root / 'composer').write_text(label)
+        (root / 'collapsed-label').write_text(label)
+        (root / 'cursor').write_text('1')
+    if (root / 'codex-collapse-paste').exists():
+        pasted = (root / 'buffer').read_text().replace('\r\n', '\n').replace('\r', '\n')
+        label = f'[Pasted Content {len(pasted)} chars]'
+        (root / 'composer').write_text(label)
+        (root / 'collapsed-label').write_text(label)
+        (root / 'cursor').write_text('1')
     if (root / 'fail-capture-after-paste').exists(): (root / 'capture-fails').touch()
     if (root / 'inject-draft').exists() and not (root / 'draft-after-exact').exists():
         with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text() if (root / 'draft-text').exists() else ' user addition')
@@ -163,14 +200,25 @@ elif command == 'paste-buffer':
 elif command == 'display-message':
     print_cursor()
 elif command == 'send-keys' and args[-2:] == ['Right', 'Left']:
-    cursor = int((root / 'cursor').read_text())
+    cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len((root / 'composer').read_text())
     count = int(args[args.index('-N') + 1])
-    length = len((root / 'composer').read_text())
+    text = (root / 'composer').read_text()
+    length = 1 + len(text) - len((root / 'collapsed-label').read_text()) if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()) else len(text)
     (root / 'cursor').write_text(str(max(0, min(length, cursor + count) - count)))
+elif command == 'send-keys' and args[-1] in ('Home', 'End'):
+    text = (root / 'composer').read_text()
+    cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
+    if args[-1] == 'Home': cursor = text.rfind('\n', 0, cursor) + 1
+    else:
+        end = text.find('\n', cursor)
+        cursor = len(text) if end < 0 else end
+    (root / 'cursor').write_text(str(cursor))
 elif command == 'send-keys' and args[-1] == 'Right':
-    cursor = int((root / 'cursor').read_text())
+    cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len((root / 'composer').read_text())
     count = int(args[args.index('-N') + 1])
-    (root / 'cursor').write_text(str(min(len((root / 'composer').read_text()), cursor + count)))
+    text = (root / 'composer').read_text()
+    length = 1 + len(text) - len((root / 'collapsed-label').read_text()) if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()) else len(text)
+    (root / 'cursor').write_text(str(min(length, cursor + count)))
     (root / 'right-sent').touch()
     if (root / 'slow-right-observation-ms').exists():
         count_path = root / 'slow-right-count'
@@ -186,8 +234,13 @@ elif command == 'send-keys' and args[-1] == 'Right':
         with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text())
         (root / 'captured-layout').write_text((root / 'right-layout').read_text())
         (root / 'right-draft-injected').touch()
+elif command == 'send-keys' and args[-1] == 'Left':
+    cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len((root / 'composer').read_text())
+    count = int(args[args.index('-N') + 1])
+    (root / 'cursor').write_text(str(max(0, cursor - count)))
 elif command == 'send-keys' and args[-1] == 'C-a':
     (root / 'cursor').write_text('0')
+    if (root / 'draft-on-clear-home').exists() and (root / 'entered').exists(): (root / 'composer').write_text('replacement draft')
     if (root / 'draft-on-home').exists(): (root / 'composer').write_text('replacement draft')
     if (root / 'replace-on-home').exists(): (root / 'runtime-replaced').touch()
 elif command == 'send-keys' and args[-1] in ('BSpace', 'DC'):
@@ -199,7 +252,11 @@ elif command == 'send-keys' and args[-1] in ('BSpace', 'DC'):
         count = int(args[args.index('-N') + 1]) if '-N' in args else 1
         text = (root / 'composer').read_text()
         cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
-        if args[-1] == 'DC': text = text[:cursor] + text[cursor + count:]
+        if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()) and cursor > 0:
+            label = (root / 'collapsed-label').read_text()
+            units = [label] + list(text[len(label):])
+            text = ''.join(units[:max(0, cursor - count)] + units[cursor:])
+        elif args[-1] == 'DC': text = text[:cursor] + text[cursor + count:]
         else: text = text[:max(0, cursor - count)] + text[cursor:]
         (root / 'composer').write_text(text)
         if (root / 'redraw-after-delete').exists(): (root / 'redraw-pending').touch()
@@ -212,10 +269,15 @@ elif command == 'send-keys' and args[-1] == 'Enter':
         (root / 'entered').touch(); sys.exit(0)
     if (root / 'unverified-after-enter').exists():
         (root / 'entered').touch(); sys.exit(0)
-    with (root / 'submissions').open('a') as out: out.write(json.dumps((root / 'composer').read_text()) + '\n')
+    submitted = (root / 'composer').read_text()
+    if (root / 'codex-collapse-paste').exists() and submitted == (root / 'collapsed-label').read_text():
+        submitted = (root / 'buffer').read_text().replace('\r\n', '\n').replace('\r', '\n')
+    with (root / 'submissions').open('a') as out: out.write(json.dumps(submitted) + '\n')
     (root / 'composer').write_text('')
     if (root / 'replace-after-enter').exists(): (root / 'runtime-replaced').touch()
 elif command == 'capture-pane':
+    if (root / 'slow-cleanup-capture').exists() and (root / 'paste-completed').exists():
+        time.sleep(int((root / 'slow-cleanup-capture').read_text()) / 1000)
     if (root / 'exit-after-enter').exists() and (root / 'entered').exists():
         if (root / 'exit-pending-pane').exists() and not (root / 'exit-pending-captured').exists():
             (root / 'exit-pending-captured').touch()
@@ -317,6 +379,9 @@ elif command == 'capture-pane':
             print(top + '\n❯\u00a0' + pad(shown) + '\n' + rows + '────────────────────────────\n  ' + footer)
     else:
         shown = occupied + padding if text else ('\x1b[2mAsk Codex to do anything\x1b[22m' if '-e' in args else 'Ask Codex to do anything')
+        if (root / 'notice-mode').exists() and text:
+            logical_rows = shown.split('\n')
+            shown = logical_rows[0] + ''.join('\n' + ('  ' + row if row.strip(' ') else ' ') for row in logical_rows[1:])
         print('› ' + shown + '\n' + rows + '\n  ' + footer)
 "#;
         // The model is a Python process per call; its shell fast path answers

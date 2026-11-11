@@ -36,9 +36,11 @@ ID, provider, optional configured account nickname, host `observed_at`, fixed
 source (`claude_stop_failure`, `codex_app_server`, `codex_external_refresh`, or
 `terminal_pattern`), confidence, status and notification receipts. Provider
 errors, terminal bytes, prompts, credential values and credential paths never
-enter the incident or notification body. Old-runtime incidents are retained
-privately and omitted from the current public projection. Their pending owner
-notifications continue using the current authenticated runtime; private mailbox
+enter the incident or notification body. Old-runtime incidents remain private
+unless an `auto_settle` schedule owns the current carried quarantine. That
+projection retains the incident's original runtime selectors; the schedule
+identifies the current runtime receiving rechecks. Pending owner notifications
+continue using the current authenticated runtime; private mailbox
 journals reconcile earlier submissions before any resend. The bounded history
 holds sixteen incidents and evicts only fully settled incidents. If all slots
 have pending obligations, those obligations are preserved and new incidents are
@@ -126,7 +128,8 @@ these degraded states do not establish that target or a measured p99.
 
 ### Authentication JSON fields
 
-`auth_incident` is omitted when the current runtime has no incident. When
+`auth_incident` is omitted when the current runtime has no incident or carried
+quarantine schedule. When
 present, list and board expose the same object; nullable members are present
 with JSON `null`. Consumers must ignore additive unknown members.
 
@@ -142,9 +145,10 @@ with JSON `null`. Consumers must ignore additive unknown members.
 | `source` | string | `claude_stop_failure`, `codex_app_server`, `codex_external_refresh`, or `terminal_pattern`. |
 | `confidence` | string | `authoritative`, `observed`, or `inferred`. Terminal fallback is `inferred`. |
 | `status` | string | `auth_failed`, `recovered`, `recovery_failed`, or `runtime_replaced`. |
-| `recovery_result` | string or null | `healthy`, `credentials_refreshed`, `refresh_failed`, or `runtime_replaced`; null before a final result. |
+| `recovery_result` | string or null | `healthy`, `credentials_refreshed`, `refresh_failed`, `recheck_exhausted`, or `runtime_replaced`; null before a final result. |
 | `recovery_observed_at` | timestamp string or null | Final-result observation time. |
-| `recovery_path` | string, optional | Fixed class of the settlement: `model_health` (a healthy provider turn was observed), `credential_recheck` (an explicit operator same-account recheck passed) or `controller` (an automatic refresh, failover or lifecycle result). It never carries an identity, credential or request body. A bound `account_nickname` is a binding, not evidence of healthy authentication. |
+| `recovery_path` | string, optional | Fixed class of the settlement: `model_health` (a healthy provider turn was observed), `credential_recheck` (an operator or scheduled same-account recheck passed) or `controller` (an automatic refresh, failover or lifecycle result). It never carries an identity, credential or request body. A bound `account_nickname` is a binding, not evidence of healthy authentication. |
+| `auto_settle` | object, optional | Bounded daemon same-account recheck schedule, runtime selectors, attempts and fixed refusal; see [scheduled recheck](specs/claude-auth-recovery-v1.md#scheduled-credential-recheck). |
 | `notification` | object | Initial incident notification receipt, shaped below. |
 | `recovery_notification` | object | Final-result notification receipt, with the same shape. |
 
@@ -157,7 +161,7 @@ Each notification receipt contains these four members, plus an optional
 | `delivered_at` | timestamp string or null | Time durable inbox delivery was confirmed; does not imply the owner read or accepted the message. |
 | `message_id` | string or null | Mailbox identity after submission is recorded. |
 | `degraded_reason` | string or null | `owner_unavailable`, `relay_unavailable`, `relay_pending`, `delivery_unknown`, or `identity_conflict`; null when no degradation is recorded. |
-| `escalation` | object, optional | Present only after an `owner_unavailable` attempt: `route` (`observation_spool`), `state` (`recorded` once the event was appended, `unavailable` while the spool cannot be written and the next 15-second tick retries) and `recorded_at` (timestamp or null). It never implies delivery. |
+| `escalation` | object, optional | Present only after an `owner_unavailable` attempt: `route` (`observation_spool`), `state` (`recorded` once the event was appended, `unavailable` while the spool cannot be written and the next 15-second tick retries) and `recorded_at` (timestamp or null). `delivery_unavailable` means the independent deliverable record could not be retained and will be retried. Spool recording never implies delivery; see [alert delivery](specs/auth-alert-delivery-v1.md). |
 
 Timestamps use RFC 3339 strings. `auth_detection_health` is omitted before
 observation and otherwise contains exactly one of `structured`,
@@ -424,12 +428,19 @@ Optional `diagnostic.reason` values are producer-owned allowlisted codes:
 `completion_evidence_pending`, `attention_authority_mismatch`,
 `provider_projection_unavailable`, `runtime_activity_unhealthy`,
 `activity_state_unavailable`, `interrupted_suspected`, `codex_progress_quiet`,
-and `completion_evidence_missing`. Quiet diagnostics include only bounded
+`codex_startup_idle_unverified`, and `completion_evidence_missing`. Quiet diagnostics include only bounded
 `quiet_threshold_seconds`, `quiet_since`, and `quiet_signal` fields described
 above, plus the optional allowlisted `completion_candidate_reason`. They never
 prove completion, clear attention, or authorize input.
 Free-form provider or runtime errors never cross the session-view or stream
 boundary.
+
+A managed Codex runtime still in `starting` after 30 seconds without verified
+primary-thread idle evidence projects `unknown` with inferred confidence and
+`diagnostic.reason: codex_startup_idle_unverified`. This read-only condition is
+also retained by board and activity-stream projections. It preserves the
+startup timestamp, revision and durable history; a later provider idle
+observation may still settle startup. Age never proves readiness.
 
 Optional `shadow_observation` is ordinarily diagnostics-only. It contains
 `observer_version`, a bounded `rule_id`, daemon `observed_at`, one of
@@ -587,6 +598,7 @@ notification-only waiting signal.
 | --- | --- |
 | new runtime | interrupt an open turn, preserve it as last turn, clear attention, enter authoritative `starting` |
 | primary Claude `SessionStart` with `source: "startup"` or `"resume"` | only from `starting` with no open turn, attention, or pending evidence, in the same runtime and bound provider conversation (raw or runtime-scoped projected id, as `agent-hook` forwards it with `source` regardless of model settings): enter authoritative provider-hook `waiting` |
+| primary Codex `thread/start` response reports `thread.status.type: "idle"` | after the proxy binds the exact primary thread and before forwarding the response: settle healthy, unchanged `starting` to authoritative provider-hook `waiting`, with no fabricated turn or completion; absent or active status does not settle |
 | native Codex mailbox probe observes the exact bound conversation idle | only from healthy `starting` with unchanged runtime and activity revision and no open turn, attention, or pending evidence: enter authoritative provider-hook `waiting`, preserving the preceding last turn |
 | `turn_started` | interrupt an older open turn, clear old attention, enter `working` |
 | `attention_requested` | keep current start time, add one opaque pending request, enter `needs_input`; a Claude request for another turn first interrupts the stale open turn |
@@ -807,8 +819,9 @@ agent-session activity doctor [--agent <provider>] --format json
 ```
 
 `activity setup` always forwards to the shared `agent-hook setup` owner, using
-`AGENT_HOOK_BIN` when explicitly set and otherwise resolving `agent-hook` on
-`PATH`. It maps the compatibility provider and digest options, requests the versioned
+the shared toolchain selector: an executable `AGENT_SESSION_BIN` selects its
+same-directory companion, otherwise approved absolute roots are searched. It
+never searches `PATH` or the working directory. It maps the compatibility provider and digest options, requests the versioned
 JSON contract, and adds `compatibility_owner: "agent-hook"` to the returned
 result. It never writes provider configuration itself.
 

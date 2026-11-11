@@ -39,6 +39,15 @@ def reply(status, body=None):
 
 if mode == 'network' or (mode == 'readback-fails' and state['mutated']):
     reply(503, {'message': 'fixture unavailable'})
+if path.startswith('repos/example/widget/releases/assets/'):
+    asset_id = int(path.rsplit('/', 1)[1])
+    assert method == 'DELETE'
+    if mode == 'second-asset-rejected' and asset_id == 102:
+        reply(403, {'message': 'Forbidden'})
+    state['release']['assets'] = [a for a in state['release']['assets'] if a['id'] != asset_id]
+    state['mutated'] = True
+    (root / 'state.json').write_text(json.dumps(state))
+    reply(204)
 if path.startswith('repos/example/widget/releases/'):
     suffix = unquote(path.removeprefix('repos/example/widget/releases/'))
     if suffix not in ('17', 'tags/' + state['release']['tag_name']):

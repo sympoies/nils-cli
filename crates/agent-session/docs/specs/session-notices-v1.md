@@ -80,14 +80,14 @@ summaries or sidechain records that would otherwise be excluded. Only an exact
 producer-receipt-backed native notice gets the separate machine role, apart from the
 display-only [mailbox read event](mailbox-read-events-v1.md) recorded by the daemon
 and never delivered. Ordinary
-human messages with a valid header retain their user role. Unmarked mailbox
-reminders retain their existing filtering behavior.
+human messages with a valid header retain their user role. Retired unmarked
+mailbox reminders are ordinary rows and use ordinary prompt filtering.
 
-The proposed [history row class contract](history-row-classes-v1.md) defines
-the narrowly anchored, display-only recognition of stored unmarked text.
-That design is not implemented by the codec described here and rewrites no
-transcript. It explicitly supersedes reminder filtering only in its future
-display projection; native receipt admission stays authoritative.
+The [history row class contract](history-row-classes-v1.md) defines display-only
+classification after provider admission. Legacy plain notice forms have no row
+class; current envelopes, admitted daemon events and the documented Codex
+context frames retain their classification. Neither classification nor this
+codec rewrites transcripts. Native receipt admission stays authoritative.
 
 The language-neutral [fixture corpus](../../tests/fixtures/session-notices-v1.json)
 contains exact JSON strings. Each case has `name`, `input`, and `notice`;
@@ -118,7 +118,24 @@ authentication, blocked-state, durable key, receipt and unknown-outcome rules.
 ### Terminal delivery and queue mode
 
 Codex terminal sessions use the verified terminal composer path; the complete
-envelope must be observable before Enter. `--queue` waits while the target
+envelope or its verified single paste element must be observable before Enter.
+Codex's blank composer rows can
+hide typed spaces behind layout cells. Display matching supplies a candidate;
+bounded cursor observations must also prove its logical length and row
+boundaries before Enter or removal of an owned paste. An unproved candidate
+remains unobservable, and readable owner additions are preserved.
+When Codex 0.162.1 wraps a notice header into separate captured rows, the guard
+retains their physical coordinates and verifies the header's logical start and
+end before accepting those rows as a soft wrap.
+
+For pastes longer than 1000 characters, Codex 0.162.1 can show one
+`[Pasted Content N chars]` element. Only an exact single label whose count
+matches the notice after CRLF/CR normalization and Unicode scalar counting is
+a candidate. Cursor observations must prove one atomic editing unit before
+Enter or single-unit cleanup. Extra input, multiple labels, a different count
+and a typed literal label remain refusals.
+
+`--queue` waits while the target
 reports busy and retries only a preclaim busy admission refusal. Other failures
 stop the request, including the unsupported Claude transport refusal once idle.
 The durable idempotency claim is made by the guarded send path when delivery
@@ -146,19 +163,23 @@ terminal admission remains.
 
 ### Tested Claude Code range
 
+Native acceptance: PENDING for candidate `2.1.319`. Contract checks do not
+prove native delivery. Before this draft range change may merge, attach the
+exact-version native notice acceptance and complete reviewed merge gates.
+
 The module depends on the provider's static module-loader rules and on native
 API semantics, so the supported releases are a reviewed range, not a runtime
-probe: `2.1.296` through `2.1.317` inclusive. The launch strictly parses
+probe: `2.1.296` through `2.1.319` inclusive. The launch strictly parses
 `<major>.<minor>.<patch> (Claude Code)` from `--version` and compares
 numerically. An unreadable or unparseable version is unsupported. The probed
 version is recorded in the module bootstrap; the module and readiness compare
 the provider's reported version to it, and a provider row must carry the bound
 version.
 
-The `2.1.317` upper bound passed the module contract checks; a native run on
+The `2.1.318` upper bound passed the module contract checks; a native run on
 that release is pending before merge.
 
-The previous bound, `2.1.316`, rests on the module contract checks plus a
+An earlier bound, `2.1.316`, rests on the module contract checks plus a
 native run on that release, with the same hooks, API calls and environment
 access as on `2.1.314`. The run showed: a gate-enabled fresh launch mounted the
 module, a notice after an ordinary turn was delivered as a plugin-attributed row
@@ -279,6 +300,32 @@ one original local budget; an already authorized provider call may execute or
 complete later. No remote cancellation or atomic composer guarantee is implied.
 The route never clears a new or unknown human draft.
 
+Pre-claim `notice-native-unavailable` errors carry a stable `error.details.reason`
+and include that reason in the text error. The reason contains only a fixed label:
+no notice text, request values, nonce, provider binding or filesystem path.
+
+| Reason | Refusal |
+| --- | --- |
+| `baseline-unprovable` | The provider transcript cannot be safely baselined. |
+| `listener-open` | The native endpoint could not be opened or its offer published. |
+| `authorization-timeout` | The authorization exchange exhausted the original send budget. |
+| `authorization-connection` | The authorization connection failed or closed early. |
+| `authorization-protocol` | The incoming HTTP/JSON exchange is invalid. |
+| `authorization-payload` | The authorization body does not match its required shape. |
+| `authorization-path`, `authorization-schema`, `authorization-operation` | The request path, schema or operation does not match. |
+| `authorization-binding`, `authorization-nonce` | The request does not match the offered identity or nonce. |
+| `authorization-surface`, `authorization-composer-not-empty`, `authorization-cursor` | The provider cannot attest an empty terminal composer at cursor zero. |
+| `readiness-unavailable`, `readiness-changed` | Readiness is unavailable or differs when rechecked before claim. |
+| `claim-unavailable` | The native ledger cannot admit the claim. |
+| `claim-ledger-full` | The live claim cap remains full after eligible finished claims are archived. |
+| `claim-checkpoint-initialized` | The automatic one-time archive verification and checkpoint publication completed after this send's original deadline. The caller key was not consumed; a new request can use the completed checkpoint. |
+
+Runtime setup and private-file access use operation-specific labels under
+`private-directory-*`, `private-file-*`, `socket-*`, plus `incarnation-invalid`,
+`runtime-missing`, `module-parent-missing` and `*-serialize`. These diagnostics do
+not relax file ownership/mode checks or authorize retry. After consumption, the
+existing `notice-native-unconfirmed` result and retained claim remain authoritative.
+
 The native route needs a pre-send provider transcript baseline to prove that the
 confirming row is new. A session whose bound provider conversation is
 proven to have no transcript yet, typically before its first ordinary provider
@@ -300,13 +347,161 @@ the provider session id and a working directory) returns
 `notice-native-unavailable`, because waiting for a turn cannot be assumed to fix
 it.
 
-Private notice attestations live outside managed session directories so history
-survives session deletion/archive. The initial ledger bound is 8 MiB, 4 KiB per
-record including its delimiter, with two full slots reserved for every attempt
-across sessions (at most 1,024 attempts). Unfinished attempts retain both slots.
-Capacity, corruption or unavailable storage refuses new authorization; there is
-no automatic eviction, expiry, rotation or repair. The existing caller-key
-deduplication lifetime described in [send v1](send-v1.md) is unchanged.
+Paged History accepts a header without a producer receipt only before the
+earliest confirmed live-ledger receipt for the same provider session, or the
+matching launch receipt, whichever is earlier. At or after that row, a header
+alone is ordinary user content; an exact producer-bound row remains a notice.
+When no matching live or launch receipt is found within the bound, including
+when the only receipts have been archived, the header-only fallback remains for
+the whole session. Existing receipt-store read failures still fail the History
+request. History previews, incremental History and semantic memory retain their
+content-only header classification.
+
+### Native claim lifecycle
+
+Private attestations live outside managed session directories so history survives
+session deletion/archive. The live ledger permits 1,024 claims, reserving two
+4-KiB record slots per claim in an 8-MiB data budget. Successor segments add one
+bounded header slot. Unfinished and `unknown` claims remain live. At capacity,
+a writer seals age-eligible submitted/dropped claims before admitting another
+claim. If none can leave the live set, `claim-ledger-full` refuses before key
+consumption; neither that reason nor storage failure permits plain input.
+
+Finished claims become eligible after one hour. A valid terminal timestamp is
+used when available. For an undated/invalid/future timestamp, a sweep persists
+a conservative first-observed time; eligibility starts one hour after that
+observation. Later sweeps retain that time. Archival runs only when admission
+would exceed the live cap, under the original send deadline and a stable private
+`store.lock`; readers take its shared lock. No background process is required.
+
+The archive is an append-only set of sealed segments in `history/claude-notices`.
+The genesis `ledger.jsonl` and each retired successor retain their exact bytes;
+no record is truncated, deleted or rewritten. A successor copies the still-live
+records exactly. Immutable manifests link predecessor manifests, sealed data and
+compact key-index segments by SHA-256; the successor header binds the sealed
+segment and its index. The directory stays owned `0700`; live data, index,
+manifest, pointer and lock files stay owned regular `0600` files. Retired data,
+including genesis, is sealed `0400`. All reads reject symlinks and wrong owners.
+
+Each compact index permanently retains domain-separated hashes of the managed
+session/caller-key pair and operation identity. The authenticated checkpoint
+indexes these reservations and exact row attestations. Admission checks its
+search paths and live claims before consuming a key. Archival, session deletion
+or a new runtime cannot make a retained key reusable. History looks up the
+requested history identity and physical row offset, merging identical copies
+and rejecting ambiguous bindings. Exact claim/terminal/provider-row checks
+remain; this lifecycle adds no text-based notice classification.
+
+Successor data, index and immutable manifest files are fsynced before an atomic
+`current.json` publication. Unreferenced preparation files confer no claim or
+key authority and remain untouched after interruption. Before publication, the
+prior committed segment remains authoritative; afterward, all referenced
+objects are durable. A durable `layout.json` marker precedes any unique record
+in the successor, so missing committed metadata cannot select the genesis path.
+A first publication interrupted before that marker contains copies only; the
+next writer completes the marker before writing. Missing or corrupt selected
+metadata, live state or accessed authenticated index pages fail closed before
+key consumption. An unfinished operation can finish against its unchanged claim
+hash. Full validation of checkpointed historical originals is described below.
+
+After the pointer is durable, the writer seals the retired segment before any
+unique successor write. If interrupted before sealing, the next writer verifies
+the exact published tip and completes its seal; readers reject writable archives.
+The `0400` guard rejects new older-writer opens, but cannot revoke open descriptors.
+
+Every native notice writer sharing one state directory must upgrade together.
+Stop every `serve` daemon and any `agent-session notice` process on the old binary
+for that state directory before the first new-binary write, including queued
+notice writers. Otherwise a retired segment can change and both native notices
+and Claude History reads fail until repair. Independent state directories can
+activate separately. Broker/proxy helpers and provider sessions do not write
+this ledger. Use the reviewed version for archive-aware History reads as well.
+The current implementation selects one live segment, with no dual writes or
+older-path fallback after publication. No live-state migration or release is
+part of fixture validation.
+
+### Indexed archive checkpoint and full audit
+
+The first new writer automatically verifies the entire existing manifest chain,
+archive hashes, records and key indexes under `store.lock`, then constructs an
+additive `checkpoint.json` and private `index-<uuid>.bin`. Existing archive bytes
+are never rewritten. This one-time import has a separate one-hour limit so it
+can finish even when the initiating send expires. After publication an expired
+send refuses with `claim-checkpoint-initialized` before the key callback; later
+requests use the completed index. History refuses an archived store until its
+first writer has completed the import, or the explicit audit has initialized it.
+Ordinary unarchived live ledgers remain readable during upgrade.
+
+The owned `0600` checkpoint authenticates the current manifest reference and the
+root of an append-only SHA-256 search tree. Each edge binds a page's offset,
+length and digest. Pages are at most 16 KiB, searches have a hard 32-page depth
+limit, and sorted authenticated keys prove absence as well as presence. Normal
+admission uses two reservation searches plus the bounded live ledger; History
+uses a proof search for each physical row it visits, rather than loading all
+proofs for the state directory or even all proofs for one history. No process
+cache or warm daemon is necessary for these bounds.
+
+A rotation batches at most the live claim cap into new immutable pages. It
+fsyncs those pages before atomically publishing the checkpoint root. If stopped
+after `current.json` advanced but before that root changed, a writer verifies
+the single successor generation against the prior checkpoint and recovers it;
+readers refuse the incomplete publication. Unreferenced tail pages confer no
+authority. A missing committed checkpoint is never rebuilt over the indexed
+layout marker. That new marker also makes prior writers refuse the directory;
+all writers sharing it must quiesce and upgrade together before the first import.
+
+Independent prepared-file flushes overlap in small scoped groups (at most three
+files), and all of them finish before the existing publication/directory
+barriers. A completed in-process rotation reuses its already verified live
+scan; interrupted-publication recovery independently verifies the published
+archive bytes and key index. No durability barrier is removed.
+
+Normal calls validate the checkpoint, current manifest, live segment and every
+accessed search/proof page. They **do not rescan checkpointed historical
+originals or unvisited index pages**. Therefore corruption or removal in those
+unvisited originals is detected by the explicit full audit, rather than by every
+notice or History request. This is the integrity/performance trade-off of the
+checkpoint: checking every original file on every call would still grow with
+the number of small archive generations. Original attestations remain fully
+verifiable against the retained chain.
+
+Run the full audit after a storage incident, when verifying retained provenance,
+or before treating a copied/restored store as verified:
+
+```bash
+agent-session --state-dir <state-directory> notice-store audit --format json
+```
+
+The audit verifies all original references and records, every reachable index
+page, equality of indexed reservations/proofs with those originals, and the live
+segment. Initial checkpoint construction verifies the complete original
+provenance before building the index. Existing
+corruption refuses with `notice-store-audit-failed`; the command never discards
+or repairs altered originals or an inconsistent committed checkpoint. Its
+`--timeout-seconds` defaults to 3,600 and accepts 1..86,400; the automatic first
+import can finish outside that initiating deadline, just as for other writers.
+Audit cost and initial
+import cost grow with retained provenance and are separate from normal send and
+History deadlines.
+
+Explicit synthetic scale measurements live in the ignored
+`admission_and_history_scale_measurement` test. Invoke it separately through the
+repository resource gate; it covers 10k, 100k and 1M archived claims at both 1,000
+and 20 claims per generation, with a nearly full live ledger. The targets are
+100 ms warm and 500 ms cold for ordinary pre-callback admission work and a
+History page.
+
+Rotation-triggering admission has a separate 500 ms bound warm
+and cold, including its durability barriers. The existing native send budget
+is 15 seconds: the rotation ceiling consumes at most 3.34% of a full budget,
+leaving at least 14.5 seconds for other phases. Prior phases share that budget;
+any shorter remaining deadline still refuses before key consumption. No
+deadline or durability barrier is relaxed to meet the measurements.
+
+Cold measurements use fixture-local Linux page-cache eviction advice, without
+dropping the shared host's caches; they do not claim an uncached filesystem
+metadata or device-cache worst case. The PR records observations and one-time
+import costs, separately from these targets.
 
 Initial prompts can explicitly use the same encoder:
 
@@ -318,7 +513,27 @@ agent-session start --agent claude --prompt-file prompt.txt \
 The same flags work with `--prompt` and `--prompt-stdin`, including
 `--via-console`. Encoding occurs before launch; ordinary start prompts remain
 unchanged. These flags classify only the supplied prompt, not native commands.
+For a fresh Claude launch, the runtime stores a private launch receipt on the
+target host. Console starts carry optional `notice_kind`, `notice_source`, and
+`notice_id` fields beside the already encoded `prompt`; the target validates
+the metadata and stages that prompt without encoding it again. Omitted notice
+fields mean an ordinary start, including requests from the preceding release.
+History uses it to identify the first user row by its exact prompt digest,
+including when Claude wraps the prompt in a single paste envelope.
 Keep `/compact` and other control actions in their existing command paths.
+
+Successful fresh start JSON includes `launch_notice`: `written` when the
+private Claude launch receipt was saved, `not-requested` when no notice kind
+was supplied, or `unavailable` when the provider launch cannot bind that receipt.
+It appears at `data.launch_notice` for direct starts and
+`data.session.launch_notice` for Console starts. Receipt write failures still
+fail the start through its existing cleanup path. This field contains no prompt
+or notice metadata. Upgrade the target daemon before dispatching notice starts:
+the preceding release ignores the new fields and cannot report or write the receipt.
+
+Console routing also requires the edge to forward the notice fields and return
+`session.launch_notice`; the coordinated edge change is
+[salon#406](https://github.com/sympoies/salon/issues/406).
 
 ## Shared kind-to-label table
 
@@ -355,6 +570,31 @@ prefix matching, title-casing, sender-selected label or consumer label registry
 is added. Historical title matching yields only `row_class: "notice"`, not
 invented kind/source metadata. In particular, the shared Mailbox label does not
 require choosing between the `mailbox` and `mailbox.wake` kinds for raw text.
+
+## Saved-draft residue recognition
+
+Before stashing an observed stale composer, the runtime checks its last exact
+notice/automation paste for the same session incarnation. Equal text or a
+nonempty prefix of that paste is runtime residue: clear it through the existing
+exact cleanup path without creating a saved draft. A different incarnation or
+an edited text that is no longer a prefix does not inherit that ownership.
+Restore and ordinary user-draft preservation are unchanged.
+
+When that ownership evidence is absent, this is the single fallback match table.
+Matches are anchored at the start of the first line; title words elsewhere do
+not classify user text as residue. No whitespace trimming or substring matching
+is applied.
+
+| First-line shape | Definition |
+| --- | --- |
+| Notice header | Starts with the `agent-notice:v1` HTML comment header, closed on the first line. |
+| `<Stored title>:` plus one ASCII space | A label or stored title in the shared kind-to-label table above. |
+| `Mailbox: <summary>; agent-session message inbox` | Whole first line; see [mailbox contract](coordination-mailbox-v1.md). |
+| `Read: <absolute agent-session> message inbox --session <recipient> --format json` | Recipient inbox command; followed by a `Show:` command for a message body. |
+
+Unknown titles and text that only contains a title word mid-line are user drafts
+and remain saved byte-for-byte. These rules concern composer cleanup only;
+they do not change history classification or authorize notice delivery.
 
 ## Summary writer design
 
@@ -402,8 +642,8 @@ to their current values. Preserve category order, punctuation and spacing.
 Only this internal count producer is exempt from the external CLI's 70-scalar
 summary-input bound: the existing quota-bounded count line can be longer.
 Calling `notice --kind mailbox.wake --summary ...` does not gain that exemption.
-It is not a new flag, delivery path or sender-controlled exception. The fixed
-plain reminder and compact 51-column typed count reminder are untouched.
+It is not a new flag, delivery path or sender-controlled exception. Plain fixed
+and count reminders are retired; only the encoded envelope is a mailbox wake.
 The [schema fixture](fixtures/history-row-classes-v1.json) includes exact fixed,
 single-count and all-category wake envelopes, including a line over 70 scalars.
 
@@ -434,33 +674,106 @@ The 2026-11-09 consumer fixture target is independent of this sender review.
 
 ## Rollout and remaining work
 
+### Daemon continuations and machine history
+
+Usage recovery, Codex app-server recovery and Codex capacity recovery use the
+shared encoder with kind `runtime.resume` and source `agent-session`. Their
+generated bodies, and generated mailbox wake bodies, remove ASCII spaces
+immediately before line endings before encoding. This is producer formatting;
+the shared codec and caller-supplied notice bodies remain byte-preserving.
+Bootstrap prompts and mailbox read events contain caller text and do not gain
+permission to rewrite it.
+
+The scheduler transfers its durable claim and record lock into daemon notice
+preparation. A continuation retains the exact runtime, provider conversation,
+account binding, interrupted predecessor, activity revision, recovery cause and
+logical generation. It does not cancel itself as manual input. Only the
+matching interrupted boundary is eligible; unrelated working activity,
+attention, replacement or an occupied composer refuses. Capacity recovery does
+not query usage. Its supported structured route may continue a matching
+interrupted non-idle provider; terminal non-idle delivery is unsupported.
+Operator notices retain their idle and empty-composer requirements.
+Scheduler admission never invokes operator stale-draft repair: an occupied
+composer is refused without stashing or clearing it, including a draft already
+observed as stale.
+
+Codex scheduler, mailbox controller start/steer, and operator app-server notices
+share the existing bounded attestation owner and its Codex proof variant. Existing Claude records retain their shape and interpretation.
+The Codex claim binds the full runtime/provider/account identity, canonical
+envelope digest and length, original budget, baseline and provider client id.
+An acknowledgment alone is insufficient: absent unique physical-row proof,
+the operation remains `notice-native-unconfirmed`, durably consumed and never
+replayed. Missing rows never authorize resend.
+
+At the actual Codex receiver, after the queue/record-lock handoff and before the
+single native write, repeat the preserving-draft empty-composer observation
+under the reacquired record lock and original deadline. An occupied or
+unobservable final snapshot refuses with no native input or draft repair.
+Typing or redraw after that final observation remains non-atomic, as with
+other composer admission.
+
+Codex scheduler recovery retains one 30-second original deadline through queue,
+write, physical-row confirmation and identity reacquisition. Only this additive
+scheduler claim permits `original_budget_ms` up to 30,000; other variants retain
+the 15,000-ms attestation ceiling. Claude/operator time bounds and all byte and
+storage bounds remain unchanged. No stage restarts the budget.
+
+The external source basis is Codex 0.162.1: `ResponseItem::Message` in
+`protocol/src/models.rs`, `record_user_prompt_and_emit_turn_item` in
+`core/src/session/mod.rs`, and the `UserMessageItem` event conversion in the
+protocol crate. The client id belongs to the separately
+persisted user event, rather than the visible response row. The join therefore
+uses a closed, baseline-bounded slice ending at the unique event carrying the
+claim's client id. It requires exactly one preceding physical user response
+row, exact envelope bytes and a provider turn identity matching the
+acknowledged turn. Any interleaved or ambiguous user row, duplicate client-id
+event or missing turn join rejects proof. Both physical offsets and raw-row
+digests are retained; history projects only the original response-row id.
+There is no matching-text authorization or open-ended transcript suppression.
+
+Only positively attested rows receive `role: "notice"`, complete exact envelope
+text, `human_prompt: false`, no human prompt-request association, no images and
+no exposed receipt token. A deliberate human envelope keeps its provider user
+role. Bootstrap and authenticated hook rows without authoritative association
+remain unsupported proof forms; neither a fabricated turn nor another delivery
+may supply that association. Source fixtures do not establish native acceptance.
+
+Mailbox controller start/steer and operator app-server notices retain their
+admission guards and require a bound transcript baseline before consuming an
+attempt. Both controller routes carry the claim's client id; the controller
+reacquires and revalidates the record lock through the actual native write,
+then releases it before provider ingress. A native attempt without exact proof
+stays unconfirmed and cannot be confirmed by a later text/timestamp match.
+Codex terminal-only operator notices remain available without attestation and
+retain the provider user role.
+
 All new writers require the explicit environment gate
 `AGENT_SESSION_NOTICE_WRITERS=1` in the CLI caller environment. Unset or any
 other value returns `notice-writers-disabled` before reading a body or starting
 a runtime. The default remains off until compatible readers and downstream
 mirrors are deployed. This does not enable any writer globally. The internal mailbox producer uses
-this gate; auto-resume integration is separate.
+this gate; scheduler continuations use it as well.
 
 Deploy the spec/codec first, then compatible readers and mirrors, then enable
 writers only in the intended caller environment. Roll back by unsetting the
 writer gate; retain readers for notices already stored in history. Internal mailbox reminders call the same encoder directly with kind
 `mailbox.wake`, source `agent-session` and no display id. The body is the
 coalesced live unread-count reminder, for example `Mailbox: 1 handoff, 2 report;
-agent-session message inbox`; it never
-contains message bodies or recipient identity. Idle and working Codex retain
+agent-session message inbox`, followed by the recipient read and show commands described in the
+[mailbox contract](coordination-mailbox-v1.md). It never contains message bodies. Idle and working Codex retain
 their existing start/steer paths; authenticated hook claims return the same
 notice text. Supported terminal recipients use guarded notice delivery,
 including the existing native Claude module. This preserves the mailbox's
 single generation/incarnation claim across controller and hook paths.
 
-The mailbox keeps its existing plain reminder only when the writer gate is
-off or the receiver is known to lack notice support. Missing readiness on an
-installed module is uncertain and defers; a failed or uncertain notice attempt
-never authorizes a plain fallback or a second attempt. Attempt receipts retain
+The mailbox sends nothing when the writer gate is off or the receiver lacks
+notice support. Unread mail remains available through explicit inbox reads.
+Missing readiness on an installed module is uncertain and defers; a failed or
+uncertain notice attempt never authorizes a plain fallback or a second attempt. Attempt receipts retain
 the exact envelope and `mailbox-notice.v1` format; positive observation can
-resolve an uncertain notice, while absence keeps it parked. Historical prompt
-attempts retain their original interpretation. No mailbox producer shells out
-to `notice`. Auto-resume integration remains separate.
+resolve an uncertain notice, while absence keeps it parked. Retired prompt formats are not recognized or replayed; retained attempt bytes
+are evidence only. No mailbox producer shells out
+to `notice`. Scheduler continuations reuse the same encoder and attestation owner.
 
 Readers must accept and validate the separate notice role before native writers
 are enabled. Machine notices must not acknowledge a human outbox item or become

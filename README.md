@@ -196,7 +196,9 @@ and add `<extract_dir>/bin` to your `PATH`.
 Prebuilt releases support `x86_64-unknown-linux-gnu`,
 `aarch64-unknown-linux-gnu`, and `aarch64-apple-darwin`. Intel macOS
 release artifacts are no longer supported. Each archive has a matching
-`.tar.gz.sha256` sidecar.
+`.tar.gz.sha256` sidecar. Both Linux targets require
+[glibc 2.39 or newer](scripts/ci/check-release-glibc.py)
+(Ubuntu 24.04 baseline).
 
 Release archives include the compiled binaries, shell completions, aliases,
 license file, and third-party license/notice artifacts. After extracting release

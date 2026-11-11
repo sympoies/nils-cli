@@ -17,6 +17,7 @@ const POST_PASTE_OBSERVATION_RETRY_WINDOW: Duration = Duration::from_millis(500)
 const POST_PASTE_OBSERVATION_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 
 mod clear;
+mod codex_notice;
 mod composer;
 pub(crate) mod drafts;
 pub(crate) mod response;
@@ -25,6 +26,7 @@ mod key;
 mod observation;
 mod ownership;
 mod pasted;
+pub(crate) mod placeholder;
 mod text;
 
 #[derive(Clone, Debug, Default, Args)]
@@ -95,6 +97,20 @@ impl Admission<'_> {
     }
 
     pub(crate) fn check(&self, pasted_text: Option<&str>, stage: &str) -> Result<(), CliError> {
+        self.check_with_draft_repair(pasted_text, stage, true)
+    }
+
+    /// Scheduler notices observe an empty composer without stashing or clearing a draft.
+    pub(crate) fn check_preserving_draft(&self, stage: &str) -> Result<(), CliError> {
+        self.check_with_draft_repair(None, stage, false)
+    }
+
+    fn check_with_draft_repair(
+        &self,
+        pasted_text: Option<&str>,
+        stage: &str,
+        repair_draft: bool,
+    ) -> Result<(), CliError> {
         self.timeout(stage)?;
         self.identity(stage)?;
         if (self.args.require_idle
@@ -117,8 +133,25 @@ impl Admission<'_> {
         self.idle(stage)?;
         if self.args.require_empty_composer || self.verify_composer || pasted_text.is_some() {
             let target = format!("{}:0.0", self.record.tmux_session);
-            let observed = self.observe_composer(&target, pasted_text, stage)?;
-            let stale = self.args.require_empty_composer
+            let observed = match self.observe_composer(&target, pasted_text, stage) {
+                Ok(observed) => observed,
+                Err(error) => {
+                    if repair_draft
+                        && self.args.require_empty_composer
+                        && pasted_text.is_none()
+                        && stage == "admission"
+                        && error
+                            .details()
+                            .and_then(|details| details["observation"].as_str())
+                            == Some("region-not-single-row")
+                    {
+                        drafts::observe(self.context, self.record, None)?;
+                    }
+                    return Err(error);
+                }
+            };
+            let stale = repair_draft
+                && self.args.require_empty_composer
                 && pasted_text.is_none()
                 && stage == "admission"
                 && drafts::observe(self.context, self.record, observed.as_deref())?;
@@ -204,8 +237,42 @@ impl Admission<'_> {
                     Some(input)
                 })
             } else {
-                capture_styled(self.tmux_bin, target, timeout)
-                    .and_then(|pane| observation.pasted_composer_input(&pane, pasted_text, stage))
+                let pane = capture_styled(self.tmux_bin, target, timeout);
+                if pasted_text.is_none()
+                    && self.record.agent == "claude"
+                    && pane.as_deref().is_some_and(|pane| {
+                        send_submit::direct_composer_observation("claude", pane)
+                            == Err(send_submit::Unobserved::PastePlaceholder)
+                    })
+                {
+                    let mut error = self.refusal(
+                        "send-composer-unobservable",
+                        "composer contains a paste placeholder",
+                        "empty_composer",
+                        stage,
+                    );
+                    error.0.details.as_mut().expect("guard details")["observation"] =
+                        json!("paste-placeholder");
+                    return Err(error);
+                }
+                if pasted_text.is_none()
+                    && self.record.agent == "claude"
+                    && pane.as_deref().is_some_and(|pane| {
+                        send_submit::direct_composer_observation("claude", pane)
+                            == Err(send_submit::Unobserved::RegionNotSingleRow)
+                    })
+                {
+                    let mut error = self.refusal(
+                        "send-composer-unobservable",
+                        "multi-row composer cannot be read exactly; send or clear the draft first",
+                        "empty_composer",
+                        stage,
+                    );
+                    error.0.details.as_mut().expect("guard details")["observation"] =
+                        json!("region-not-single-row");
+                    return Err(error);
+                }
+                pane.and_then(|pane| observation.pasted_composer_input(&pane, pasted_text, stage))
             };
             if input.is_some() || !retryable {
                 return Ok(input);
@@ -278,6 +345,18 @@ impl Admission<'_> {
             ));
         }
         let expected_state = crate::display_path(&self.context.state_dir);
+        let unobservable = || {
+            // A failed subprocess may have consumed the remaining observation
+            // budget. Keep that refusal distinct from unavailable identity.
+            self.timeout(stage).err().unwrap_or_else(|| {
+                self.refusal(
+                    "send-identity-unobservable",
+                    "pane runtime identity cannot be observed",
+                    "identity",
+                    stage,
+                )
+            })
+        };
         let cleanup_values = if stage == "cleanup" {
             Some(
                 observation::environment(
@@ -285,14 +364,7 @@ impl Admission<'_> {
                     &current.tmux_session,
                     self.timeout(stage)?,
                 )
-                .ok_or_else(|| {
-                    self.refusal(
-                        "send-identity-unobservable",
-                        "pane runtime identity cannot be observed",
-                        "identity",
-                        stage,
-                    )
-                })?,
+                .ok_or_else(unobservable)?,
             )
         } else {
             None
@@ -314,14 +386,7 @@ impl Admission<'_> {
                     name,
                     self.timeout(stage)?,
                 )
-                .map_err(|_| {
-                    self.refusal(
-                        "send-identity-unobservable",
-                        "pane runtime identity cannot be observed",
-                        "identity",
-                        stage,
-                    )
-                })?
+                .map_err(|_| unobservable())?
             };
             if actual != expected {
                 return Err(self.refusal(
@@ -382,7 +447,22 @@ impl Admission<'_> {
                 },
             );
         }
-        let state = activity::state_for_view(self.context, self.record)
+        let state = activity::state_for_view(self.context, self.record);
+        if state.as_ref().is_some_and(|state| {
+            state.phase == activity::TurnPhase::Unknown
+                && state
+                    .diagnostic
+                    .as_ref()
+                    .is_some_and(|diagnostic| diagnostic.reason == "completion_evidence_missing")
+        }) {
+            return Err(self.refusal(
+                "send-completion-evidence-missing",
+                "provider completion evidence is missing; inspect activity status; operator recovery: use --require-empty-composer without --require-idle after confirming the turn is idle",
+                "idle",
+                stage,
+            ));
+        }
+        let state = state
             .filter(|state| {
                 state.phase != activity::TurnPhase::Unknown
                     && state.source.kind == activity::SourceKind::ProviderHook

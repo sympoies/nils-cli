@@ -130,7 +130,7 @@ impl Origin {
             Self::Service(a) => a.stored_id(),
         }
     }
-    fn stored_id(&self) -> String {
+    pub(super) fn stored_id(&self) -> String {
         match self {
             Self::Session(a) => encode_sender(a),
             Self::Service(a) => a.stored_id(),
@@ -1704,12 +1704,11 @@ fn receive_admitted(
         .ok_or_else(unavailable)?;
     let recipient_incarnation = broker.incarnation.clone();
     let now_millis = admission_millis();
-    super::mailbox::admit_message(
-        &mut locked.registry,
-        &envelope.from.stored_id(),
+    let alert_percent = super::mailbox_quota::admit_remote(
+        context,
+        &mut locked,
+        &envelope,
         &recipient.id,
-        envelope.body.len(),
-        envelope.reply_to.as_deref(),
         now,
         now_millis,
     )?;
@@ -1751,6 +1750,14 @@ fn receive_admitted(
     let mut local_outcome = super::mailbox::message_projection(&message);
     local_outcome["notification"] = serde_json::to_value(notification).expect("notification");
     locked.registry.messages.push(message);
+    super::mailbox_quota::admitted(
+        &mut locked.registry,
+        &recipient.id,
+        &recipient_incarnation,
+        alert_percent,
+        now,
+        &mut local_outcome,
+    );
     super::store_receipt(
         &mut locked.registry,
         envelope.message_id.clone(),
@@ -3678,6 +3685,23 @@ mod tests {
             Some(
                 &json!({"quota":"recipient-messages","count":256,"limit":256,"host":"destination","side":"destination", "recovery": super::super::mailbox::quota_recovery()})
             )
+        );
+        let snapshot =
+            super::super::audit::snapshot(&context, "destination", Default::default()).unwrap();
+        assert_eq!(snapshot["quota_rejections"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            snapshot["quota_rejections"][0]["sender"],
+            json!(envelope().from)
+        );
+        assert_eq!(
+            snapshot["quota_rejections"][0]["recipient"],
+            json!(envelope().to)
+        );
+        let mut locked = lock_registry(&context).unwrap();
+        assert_eq!(locked.registry.messages.len(), 256);
+        assert!(
+            !super::super::notification::deliverable_candidates(&mut locked.registry, now_epoch())
+                .is_empty()
         );
     }
     #[test]

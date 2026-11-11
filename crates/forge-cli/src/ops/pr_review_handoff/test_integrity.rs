@@ -8,7 +8,7 @@ use crate::ops::review_state::sha256_digest;
 use crate::provider::ProviderContext;
 use serde::Deserialize;
 
-mod diff;
+pub(crate) mod diff;
 mod provenance;
 #[cfg(test)]
 mod tests;

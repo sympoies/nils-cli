@@ -30,7 +30,52 @@ _agent-session() {
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:agent-session-command-$line[1]:"
         case $line[1] in
-            (rules)
+            (auth-alert)
+_arguments "${_arguments_options[@]}" : \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_agent-session__subcmd__auth-alert_commands" \
+"*::: :->auth-alert" \
+&& ret=0
+
+    case $state in
+    (auth-alert)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agent-session-auth-alert-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+'--limit=[Maximum alerts to return, with pending delivery first]:LIMIT:_default' \
+'--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(ack)
+_arguments "${_arguments_options[@]}" : \
+'--target=[Configured target whose transport confirmed delivery]:TARGET:(person watchdog)' \
+'--receipt=[SHA-256 digest of the external delivery receipt, never its payload]:RECEIPT:_default' \
+'--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':session_id -- Session that owns the authentication alert:_default' \
+':alert_id -- Stable authentication alert identity:_default' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(rules)
 _arguments "${_arguments_options[@]}" : \
 '--format=[Show effective rules, selected file, and source]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
@@ -63,7 +108,7 @@ enforce\:"Require authenticated claims and mutation admission leases"
 off\:"Disable agent-session collision warnings and admission"))' \
 '--paste-delay-ms=[Delay before pasting the initial prompt into the tmux pane]:PASTE_DELAY_MS:_default' \
 '--operation-id=[Time-bearing UUIDv7 for a Console start; replay never creates another session]:UUID:_default' \
-'(--no-parent --role --program --issue --no-inherit-work --resume)--service=[Admitted service ID; starts a Console-owned root as that service]:ID:_default' \
+'(--resume)--service=[Admitted service ID; starts a Console-owned root as that service]:ID:_default' \
 '--service-generation=[Admitted generation of the service]:GENERATION:_default' \
 '--credential-file=[Private service credential file; never a session capability]:PATH:_files' \
 '--owner=[Console owner the service acts for]:OWNER:_default' \
@@ -85,6 +130,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '(--id --tmux-bin --agent-bin --paste-delay-ms --coordination-mode)--via-console[Start the session through Agent Console, owned by the Console owner of the managed session this command runs in. Requires AGENT_SESSION_ID, its capability, and a daemon with federation configured]' \
 '(--prompt --prompt-file --prompt-stdin --env)--reconcile[Inspect a prior Console start operation without creating a session]' \
 '--no-parent[Start a new root session\: do not record the managed session this command runs in as the parent]' \
+'(--resume)--attest-role[Operator-only attestation of this session'\''s role; never inherited by children]' \
 '--no-inherit-work[Do not inherit the parent session'\''s program and issues]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
@@ -255,6 +301,69 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ':session -- Session id or unambiguous prefix:_default' \
 && ret=0
+;;
+(notice-store)
+_arguments "${_arguments_options[@]}" : \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_agent-session__subcmd__notice-store_commands" \
+"*::: :->notice-store" \
+&& ret=0
+
+    case $state in
+    (notice-store)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agent-session-notice-store-command-$line[1]:"
+        case $line[1] in
+            (audit)
+_arguments "${_arguments_options[@]}" : \
+'--timeout-seconds=[Verification deadline in seconds; automatic first import may finish after it]:TIMEOUT_SECONDS:_default' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(drafts)
+_arguments "${_arguments_options[@]}" : \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_agent-session__subcmd__drafts_commands" \
+"*::: :->drafts" \
+&& ret=0
+
+    case $state in
+    (drafts)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agent-session-drafts-command-$line[1]:"
+        case $line[1] in
+            (discard)
+_arguments "${_arguments_options[@]}" : \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':session_id -- Session that owns the draft, independent of its current runtime:_default' \
+':draft_id -- Canonical saved-draft UUID:_default' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
 ;;
 (glance)
 _arguments "${_arguments_options[@]}" : \
@@ -1394,6 +1503,7 @@ esac
 (( $+functions[_agent-session_commands] )) ||
 _agent-session_commands() {
     local commands; commands=(
+'auth-alert:Consume and acknowledge independent authentication alerts' \
 'rules:Show or validate the shared operator rules file' \
 'start:Start an interactive tmux-backed agent session' \
 'run:Run a one-shot agent task in a tmux session and write output to a log file' \
@@ -1407,6 +1517,8 @@ _agent-session_commands() {
 'diagnose:Print the redacted control-plane diagnostic bundle' \
 'send:Send input (literal text and/or special keys) to a live session' \
 'notice:Submit a display-only notice through guarded native delivery' \
+'notice-store:Verify retained native notice archives and the authenticated checkpoint' \
+'drafts:Discard saved user drafts' \
 'glance:Capture the recent pane tail plus live status as a dashboard glance' \
 'resume:Recreate a missing tmux runtime from exact provider resume metadata' \
 'restart:Relaunch a running session in place on the installed provider binary' \
@@ -1497,6 +1609,24 @@ _agent-session__subcmd__activity__subcmd__status_commands() {
 _agent-session__subcmd__attach_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session attach commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__auth-alert_commands] )) ||
+_agent-session__subcmd__auth-alert_commands() {
+    local commands; commands=(
+'list:List durable authentication alerts without the serve daemon' \
+'ack:Record a consumer'\''s confirmed transport delivery' \
+    )
+    _describe -t commands 'agent-session auth-alert commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__auth-alert__subcmd__ack_commands] )) ||
+_agent-session__subcmd__auth-alert__subcmd__ack_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session auth-alert ack commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__auth-alert__subcmd__list_commands] )) ||
+_agent-session__subcmd__auth-alert__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session auth-alert list commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__auto-resume_commands] )) ||
 _agent-session__subcmd__auto-resume_commands() {
@@ -1615,6 +1745,18 @@ _agent-session__subcmd__delete_commands() {
 _agent-session__subcmd__diagnose_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session diagnose commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__drafts_commands] )) ||
+_agent-session__subcmd__drafts_commands() {
+    local commands; commands=(
+'discard:Permanently discard one saved draft without submitting it' \
+    )
+    _describe -t commands 'agent-session drafts commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__drafts__subcmd__discard_commands] )) ||
+_agent-session__subcmd__drafts__subcmd__discard_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session drafts discard commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__glance_commands] )) ||
 _agent-session__subcmd__glance_commands() {
@@ -1743,6 +1885,18 @@ _agent-session__subcmd__metadata__subcmd__show_commands() {
 _agent-session__subcmd__notice_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session notice commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__notice-store_commands] )) ||
+_agent-session__subcmd__notice-store_commands() {
+    local commands; commands=(
+'audit:Verify every retained archive and every reachable checkpoint page' \
+    )
+    _describe -t commands 'agent-session notice-store commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__notice-store__subcmd__audit_commands] )) ||
+_agent-session__subcmd__notice-store__subcmd__audit_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session notice-store audit commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__previews_commands] )) ||
 _agent-session__subcmd__previews_commands() {

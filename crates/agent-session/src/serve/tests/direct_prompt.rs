@@ -3,6 +3,9 @@ use super::*;
 use pretty_assertions::assert_eq;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[path = "direct_prompt/suggestion.rs"]
+mod suggestion;
+
 fn codex_pane_after_backspace(working: bool) -> String {
     format!(
         "{}› \u{1b}[2mAsk Codex to do anything\u{1b}[22m   \n\n  status",
@@ -244,7 +247,7 @@ async fn direct_unobservable_composer_refuses_without_dispatch() {
 #[tokio::test]
 async fn direct_unobservable_composer_names_the_stage_that_failed_without_pane_text() {
     let rule = "────────────────────────────";
-    let cases: [(&str, &str, Option<String>, &str); 8] = [
+    let cases: [(&str, &str, Option<String>, &str); 11] = [
         ("claude", "capture-failed", None, "capture-failed"),
         ("codex", "capture-failed", None, "capture-failed"),
         (
@@ -273,17 +276,39 @@ async fn direct_unobservable_composer_names_the_stage_that_failed_without_pane_t
         ),
         (
             "claude",
-            "row-unrecognized",
+            "paste-placeholder",
             Some(format!(
                 "{rule}\n❯ [Pasted text #1 +20 lines] PRIVATE-MARKER\n{rule}\n"
             )),
-            "row-unrecognized",
+            "paste-placeholder",
         ),
         (
             "codex",
-            "row-unrecognized",
+            "paste-placeholder",
             Some("› [Pasted Content 1234 chars] PRIVATE-MARKER\n\n  status".into()),
-            "row-unrecognized",
+            "paste-placeholder",
+        ),
+        (
+            "claude",
+            "footer-dialog-hint",
+            Some(format!(
+                "{rule}\n❯ \n{rule}\n  PRIVATE-MARKER · Enter to confirm · Esc to cancel"
+            )),
+            "footer-dialog-hint",
+        ),
+        (
+            "claude",
+            "adjacent-owner-input",
+            Some(format!("{rule}\n❯ \n  PRIVATE-MARKER\n{rule}\n  status")),
+            "region-not-single-row",
+        ),
+        (
+            "claude",
+            "unstyled-suggestion-literal",
+            Some(format!(
+                "{rule}\n❯ Try \"PRIVATE-MARKER\"\n{rule}\n  status"
+            )),
+            "suggestion-literal-unstyled",
         ),
     ];
     for (provider, label, pane, expected) in cases {
@@ -425,3 +450,6 @@ async fn direct_claude_owner_draft_beside_queued_hint_refuses() {
         }
     }
 }
+
+#[path = "direct_prompt/collapsed_paste.rs"]
+mod collapsed_paste;

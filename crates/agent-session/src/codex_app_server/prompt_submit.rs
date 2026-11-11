@@ -4,13 +4,17 @@ use super::*;
 pub(super) enum PromptResponseFailure {
     Rejected(String),
     NotConfirmed(String),
+    AuthRefresh(String),
     Other(String),
 }
 
 impl PromptResponseFailure {
     pub(super) fn into_string(self) -> String {
         match self {
-            Self::Rejected(error) | Self::NotConfirmed(error) | Self::Other(error) => error,
+            Self::Rejected(error)
+            | Self::NotConfirmed(error)
+            | Self::AuthRefresh(error)
+            | Self::Other(error) => error,
         }
     }
 }
@@ -50,6 +54,7 @@ impl ControlHandle {
     pub(crate) async fn submit_prompt(
         &self,
         message: &str,
+        client_message_id: Option<&str>,
     ) -> Result<String, PromptSubmissionFailure> {
         let (response, receive) = oneshot::channel();
         let deadline = tokio::time::Instant::now() + CONTROL_SUBMIT_TOTAL_TIMEOUT;
@@ -57,6 +62,8 @@ impl ControlHandle {
             deadline,
             self.sender.send(ControlCommand::Prompt {
                 message: message.to_string(),
+                client_message_id: client_message_id.map(str::to_owned),
+                write: None,
                 response,
             }),
         )
@@ -97,22 +104,27 @@ pub(super) async fn submit_prompt_request<S>(
     live: Option<(&CliContext, &SessionRecord, &mut FailureReducer)>,
     external_auth: Option<(&CliContext, &SessionRecord, &str, &str)>,
     timeout: Duration,
+    write_lock: Option<mailbox_notice::WriteGuard>,
 ) -> Result<String, PromptRequestFailure>
 where
     S: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
         + futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error>
         + Unpin,
 {
-    super::send_json(websocket, request)
+    let deadline = write_lock.as_ref().map(|guard| guard.deadline);
+    mailbox_notice::send(websocket, request, write_lock)
         .await
         .map_err(|_| PromptRequestFailure::Write(PromptSubmissionFailure::NotConfirmed))?;
+    let timeout = deadline.map_or(timeout, |deadline| {
+        timeout.min(deadline.saturating_duration_since(Instant::now()))
+    });
     receive_prompt_response_with_timeout(websocket, id, live, external_auth, timeout)
         .await
         .map_err(|error| match error {
             PromptResponseFailure::Rejected(_) | PromptResponseFailure::NotConfirmed(_) => {
                 PromptRequestFailure::Response(PromptSubmissionFailure::NotConfirmed)
             }
-            PromptResponseFailure::Other(_) => {
+            PromptResponseFailure::AuthRefresh(_) | PromptResponseFailure::Other(_) => {
                 PromptRequestFailure::Response(PromptSubmissionFailure::AcknowledgementUnknown)
             }
         })
@@ -144,7 +156,7 @@ where
             .map_err(PromptResponseFailure::Other)?;
         if super::respond_to_external_auth_refresh(websocket, &value, external_auth)
             .await
-            .map_err(PromptResponseFailure::Other)?
+            .map_err(PromptResponseFailure::AuthRefresh)?
         {
             continue;
         }
@@ -229,6 +241,7 @@ mod tests {
             None,
             None,
             Duration::from_millis(20),
+            None,
         )
         .await;
 
@@ -259,6 +272,7 @@ mod tests {
             None,
             None,
             Duration::from_millis(20),
+            None,
         )
         .await;
 
@@ -284,6 +298,7 @@ mod tests {
             None,
             None,
             Duration::from_secs(1),
+            None,
         )
         .await;
 
@@ -294,7 +309,7 @@ mod tests {
     #[tokio::test]
     async fn control_response_channel_close_is_not_confirmed() {
         let (handle, mut commands, _ready) = super::super::starting_control_channel();
-        let submit = tokio::spawn(async move { handle.submit_prompt("fixture").await });
+        let submit = tokio::spawn(async move { handle.submit_prompt("fixture", None).await });
         let ControlCommand::Prompt { response, .. } = commands.recv().await.unwrap() else {
             panic!("expected a prompt command");
         };
@@ -309,7 +324,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn control_response_channel_timeout_is_not_confirmed() {
         let (handle, mut commands, _ready) = super::super::starting_control_channel();
-        let submit = tokio::spawn(async move { handle.submit_prompt("fixture").await });
+        let submit = tokio::spawn(async move { handle.submit_prompt("fixture", None).await });
         let ControlCommand::Prompt { response, .. } = commands.recv().await.unwrap() else {
             panic!("expected a prompt command");
         };

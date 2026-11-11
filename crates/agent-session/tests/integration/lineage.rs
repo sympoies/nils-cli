@@ -80,6 +80,9 @@ impl Fixture {
         let mut envs = vec![
             ("AGENT_SESSION_FAKE_TMUX_LOG", self.tmux_log.as_str()),
             ("AGENT_SESSION_MACHINE", MACHINE),
+            // The fake agent never shows a composer, so start would otherwise
+            // observe the full default capture window.
+            ("AGENT_SESSION_CODEX_CAPTURE_TIMEOUT_MS", "25"),
         ];
         if let Some((session, runtime)) = caller {
             envs.push(("AGENT_SESSION_ID", session));
@@ -897,11 +900,12 @@ fn session_started_root_keeps_the_launch_initiator_only_with_a_role() {
     );
     let path = state_dir.join("sessions/alpha/session.json");
     let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    record["role"] = json!("steward");
     record["lineage"] = json!({
         "schema_version":"agent-session.session-lineage.v1", "parent":null,
         "root":{"machine":"launch-source", "session_id":"alpha", "session_created_at":record["created_at"]},
         "depth":0, "starter":{"kind":"operator", "via":"cli"},
-        "forge_context":{"initiator":"operator", "role":null}
+        "forge_context":{"initiator":"operator", "role":"steward", "attested_role":"steward"}
     });
     write_private_json(&path, &record);
     let alpha_cap = capability(&state_dir, "alpha");
@@ -940,6 +944,7 @@ fn session_started_root_keeps_the_launch_initiator_only_with_a_role() {
                 ("AGENT_SESSION_CAPABILITY_FILE", &alpha_cap),
                 ("AGENT_SESSION_MACHINE", "launch-source"),
                 ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log.to_str().unwrap()),
+                ("AGENT_SESSION_CODEX_CAPTURE_TIMEOUT_MS", "25"),
             ],
         );
         assert_eq!(out.code, 0, "{}", out.stdout_text());
@@ -966,3 +971,6 @@ fn session_started_root_keeps_the_launch_initiator_only_with_a_role() {
 
 #[path = "lineage/operator_rules.rs"]
 mod operator_rules;
+
+#[path = "lineage/role_attestation.rs"]
+mod role_attestation;

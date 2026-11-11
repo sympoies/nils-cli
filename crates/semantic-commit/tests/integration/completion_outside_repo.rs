@@ -21,6 +21,10 @@ fn completion_export_succeeds_outside_git_repo() {
     assert!(as_str(&output.stdout).contains("squash"));
     assert!(as_str(&output.stdout).contains("rebase"));
     assert!(as_str(&output.stdout).contains("--continue"));
+    assert!(as_str(&output.stdout).contains("--onto"));
+    let bash = common::run_semantic_commit_output(dir.path(), &["completion", "bash"], &[], None);
+    assert_eq!(bash.status.code(), Some(0));
+    assert!(as_str(&bash.stdout).contains("--onto"));
     assert!(as_str(&output.stdout).contains("--amend"));
     assert!(as_str(&output.stdout).contains("--body-bullet"));
 }

@@ -1,4 +1,7 @@
+pub(crate) mod auth_alert;
 pub mod broker_proof;
+pub(crate) mod dispatch;
+pub(crate) mod drafts;
 pub(crate) mod operator_rules;
 pub(crate) mod send_key;
 
@@ -67,6 +70,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Consume and acknowledge independent authentication alerts.
+    AuthAlert(auth_alert::Args),
     /// Show or validate the shared operator rules file.
     Rules(operator_rules::RulesArgs),
     /// Start an interactive tmux-backed agent session.
@@ -96,6 +101,10 @@ pub enum Command {
     Send(SendArgs),
     /// Submit a display-only notice through guarded native delivery.
     Notice(crate::notice::NoticeArgs),
+    /// Verify retained native notice archives and the authenticated checkpoint.
+    NoticeStore(crate::send::claude_notice::store::audit::Args),
+    /// Discard saved user drafts.
+    Drafts(drafts::Args),
     /// Capture the recent pane tail plus live status as a dashboard glance.
     Glance(GlanceArgs),
     /// Recreate a missing tmux runtime from exact provider resume metadata.
@@ -350,6 +359,10 @@ pub struct StartArgs {
     /// Operator-only configured initiator for forge identity binding. Managed children inherit it.
     #[arg(long, value_name = "ID", conflicts_with = "via_console")]
     pub forge_initiator: Option<String>,
+
+    /// Operator-only attestation of this session's role; never inherited by children.
+    #[arg(long, requires_all = ["forge_initiator", "role"], conflicts_with = "resume")]
+    pub attest_role: bool,
 
     /// Work-mode program tracker issue this session belongs to, as
     /// OWNER/REPO#N. Replaces the inherited program.

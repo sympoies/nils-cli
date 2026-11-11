@@ -32,14 +32,20 @@ fn saved(path: &Path) -> Result<String> {
 fn binding(command: &Command, cwd: &Path, branch: &str) -> Result<bool> {
     let args: Vec<_> = command.get_args().map(|arg| arg.to_str()).collect();
     let continuing = args == [Some("rebase"), Some("--continue")];
-    let initial = args.len() == START.len() + 1
+    let oid = |arg: Option<&str>| {
+        arg.is_some_and(|oid| {
+            matches!(oid.len(), 40 | 64) && oid.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+    };
+    let initial = (args.len() == START.len() + 1 && oid(args[START.len()])
+        || args.len() == START.len() + 3
+            && args[START.len()] == Some("--onto")
+            && oid(args[START.len() + 1])
+            && oid(args[START.len() + 2]))
         && args[..START.len()]
             .iter()
             .copied()
-            .eq(START.iter().copied().map(Some))
-        && args.last().copied().flatten().is_some_and(|oid| {
-            matches!(oid.len(), 40 | 64) && oid.bytes().all(|byte| byte.is_ascii_hexdigit())
-        });
+            .eq(START.iter().copied().map(Some));
     if command.get_program() != "git"
         || (!continuing && !initial)
         || command

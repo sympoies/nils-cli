@@ -1,6 +1,9 @@
 //! Exact stale draft preservation. Callers hold the session record lock.
+mod discard;
+pub(crate) mod residue;
 use super::{Admission, GuardArgs};
 use crate::{CliContext, CliError, SessionRecord, session_dir};
+pub(crate) use discard::discard;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -261,6 +264,19 @@ pub(crate) fn read(
 /// The caller has reached the existing mutation admission boundary. Saving
 /// never grants admission; cleanup must still prove an empty composer.
 pub(crate) fn clear(admission: &Admission<'_>, text: &str) -> Result<bool, CliError> {
+    if residue::matches(admission.context, admission.record, text)? {
+        if !admission.clear_saved_draft(text) {
+            return Ok(false);
+        }
+        observe_at(
+            admission.context,
+            admission.record,
+            Some(""),
+            0,
+            jiff::Timestamp::now().as_second(),
+        )?;
+        return Ok(true);
+    }
     let drafts = list(admission.context, admission.record)?;
     let root = root(admission.context, admission.record);
     private_dir(&root)?;
@@ -332,34 +348,6 @@ pub(crate) fn clear_observed(
         },
         text,
     )
-}
-
-/// Called only after the mailbox's existing quiescence fence and attachment,
-/// identity and activity admission, immediately before its paste.
-pub(crate) fn clear_pending(
-    context: &CliContext,
-    record: &SessionRecord,
-    tmux_bin: &Path,
-    deadline: Instant,
-) -> Result<(), CliError> {
-    let target = format!("{}:0.0", record.tmux_session);
-    let input = super::capture_styled(tmux_bin, &target, crate::PANE_OBSERVATION_COMMAND_TIMEOUT)
-        .and_then(|pane| crate::send_submit::exact_composer_input(&record.agent, &pane));
-    let stale = observe(context, record, input.as_deref())?;
-    if input.as_deref() == Some("") {
-        return Ok(());
-    }
-    if let Some(input) = input
-        && stale
-        && clear_observed(context, record, tmux_bin, &input, deadline)?
-    {
-        return Ok(());
-    }
-    Err(CliError::data(
-        "composer-not-empty",
-        "composer does not permit guarded input",
-        None,
-    ))
 }
 
 pub(crate) fn latest(context: &CliContext, id: &str) -> Result<Option<Value>, CliError> {

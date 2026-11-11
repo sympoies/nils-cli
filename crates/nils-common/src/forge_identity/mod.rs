@@ -1,8 +1,10 @@
 //! Optional, metadata-only forge identity policy shared by managed API and Git runners.
 //! Configured sessions resolve the principal from authenticated immutable launch context.
 mod git;
+mod https;
 mod policy;
 mod probe;
+mod rate_limit;
 mod replay;
 pub mod session;
 pub use git::{
@@ -191,14 +193,23 @@ impl LoadedPolicy {
                     .map(|s| s.trim().to_string())
             }
         }
-        .filter(|v| {
-            !v.is_empty()
-                && v.len() <= 16384
-                && !v
-                    .bytes()
-                    .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
-        })
         .ok_or(Error::new("identity_credential_missing"))?;
+        self.verify_token(selection, gh, token)
+    }
+    fn verify_token(
+        &self,
+        selection: &Selection,
+        gh: &std::ffi::OsStr,
+        token: String,
+    ) -> Result<Authorization> {
+        if token.is_empty()
+            || token.len() > 16384
+            || token
+                .bytes()
+                .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
+        {
+            return Err(Error::new("identity_credential_missing"));
+        }
         let mut auth = Authorization {
             selection: selection.clone(),
             actor: String::new(),
@@ -466,8 +477,14 @@ impl Authorization {
                 }
                 error
             })?;
+            if let Some(error) = rate_limit::classify(&output.stdout, &self.selection.profile) {
+                return Err(error);
+            }
             if args.contains(&"--paginate") {
-                parse_paginated_actor_probe_response(&output)
+                parse_paginated_actor_probe_response_with_profile(
+                    &output,
+                    Some(&self.selection.profile),
+                )
             } else {
                 parse_actor_probe_response(&output)
             }
@@ -554,7 +571,15 @@ fn parse_actor_probe_response(output: &Output) -> Result<serde_json::Value> {
         .map_err(|_| actor_probe_error("response_decode", "invalid_json", None, None, false))
 }
 
+#[cfg(test)]
 fn parse_paginated_actor_probe_response(output: &Output) -> Result<serde_json::Value> {
+    parse_paginated_actor_probe_response_with_profile(output, None)
+}
+
+fn parse_paginated_actor_probe_response_with_profile(
+    output: &Output,
+    profile: Option<&Profile>,
+) -> Result<serde_json::Value> {
     let mut remaining = output.stdout.as_slice();
     let mut pages = Vec::new();
     while !remaining.is_empty() {
@@ -563,6 +588,9 @@ fn parse_paginated_actor_probe_response(output: &Output) -> Result<serde_json::V
         }
         if remaining.is_empty() {
             break;
+        }
+        if let Some(error) = profile.and_then(|profile| rate_limit::classify(remaining, profile)) {
+            return Err(error);
         }
         let (status, retry_after, request_id, body) = parse_included_http_response(remaining);
         let Some(status) = status else {

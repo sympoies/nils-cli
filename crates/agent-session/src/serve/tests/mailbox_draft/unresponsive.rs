@@ -1,6 +1,18 @@
 use super::*;
 use pretty_assertions::{assert_eq, assert_ne};
 
+fn attempt_shared_clear(fixture: &WakeFixture) -> Result<(), CliError> {
+    let text = "owner draft";
+    fs::write(fixture.temp.path().join("composer"), text).unwrap();
+    fs::write(fixture.temp.path().join("cursor-x"), (2 + text.len()).to_string()).unwrap();
+    fixture.check_draft().expect_err("a fresh draft is preserved");
+    let path = fixture.temp.path().join("sessions/beta/drafts/observation.json");
+    let mut observed: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    observed["unchanged_since"] = json!(1);
+    fs::write(path, serde_json::to_vec(&observed).unwrap()).unwrap();
+    fixture.check_draft()
+}
+
 async fn waiting_fixture(agent: AgentKind) -> WakeFixture {
     let fixture = WakeFixture::new(agent).await;
     let path = fixture.temp.path().join("sessions/beta/activity.json");
@@ -37,7 +49,7 @@ async fn unresponsive_guarded_pane_reports_status_event_and_clears_on_change() {
         let fixture = waiting_fixture(agent).await;
         fs::write(fixture.temp.path().join("swallow-every-enter"), "").unwrap();
         fs::write(fixture.temp.path().join("ignore-clear"), "").unwrap();
-        assert!(fixture.start().is_err());
+        assert!(attempt_shared_clear(&fixture).is_err());
         age_key_observation(&fixture);
         assert_eq!(phase(&fixture), "unresponsive", "{agent:?}");
         let board = crate::board::snapshot(
@@ -94,14 +106,14 @@ async fn unresponsive_observation_excludes_responsive_unobservable_and_busy_pane
     let _lock = GlobalStateLock::new();
     for agent in [AgentKind::Claude, AgentKind::Codex] {
         let responsive = waiting_fixture(agent).await;
-        responsive.start().unwrap();
+        attempt_shared_clear(&responsive).unwrap();
         age_key_observation(&responsive);
         assert_eq!(phase(&responsive), "waiting");
 
         let fixture = waiting_fixture(agent).await;
         fs::write(fixture.temp.path().join("swallow-every-enter"), "").unwrap();
         fs::write(fixture.temp.path().join("ignore-clear"), "").unwrap();
-        assert!(fixture.start().is_err());
+        assert!(attempt_shared_clear(&fixture).is_err());
         age_key_observation(&fixture);
         fs::write(fixture.temp.path().join("capture-unavailable"), "").unwrap();
         assert_eq!(phase(&fixture), "waiting");
@@ -111,7 +123,7 @@ async fn unresponsive_observation_excludes_responsive_unobservable_and_busy_pane
         let busy = waiting_fixture(agent).await;
         fs::write(busy.temp.path().join("swallow-every-enter"), "").unwrap();
         fs::write(busy.temp.path().join("ignore-clear"), "").unwrap();
-        assert!(busy.start().is_err());
+        assert!(attempt_shared_clear(&busy).is_err());
         age_key_observation(&busy);
         let path = busy.temp.path().join("sessions/beta/activity.json");
         let mut state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -158,22 +170,8 @@ async fn observer_failure_does_not_block_shared_clear() {
             if fail_write {
                 fs::create_dir(fixture.temp.path().join("sessions/beta/pane-response.json")).unwrap();
             }
-            let text = "owned prompt";
-            fs::write(fixture.temp.path().join("composer"), text).unwrap();
-            fs::write(fixture.temp.path().join("cursor-x"), (2 + text.len()).to_string()).unwrap();
-            let record = load_session_record(&fixture.state.context, "beta").unwrap();
-            let args = crate::send_guard::GuardArgs { require_empty_composer: true, ..Default::default() };
-            let admission = crate::send_guard::Admission {
-                context: &fixture.state.context, record: &record, args: &args,
-                tmux_bin: &fixture.state.tmux_bin, verify_composer: true,
-                deadline: Instant::now() + Duration::from_secs(10),
-            };
-            let error = admission.report_pasted_input(
-                CliError::runtime("fixture-refusal", "existing guard refusal", None), text, true,
-            );
-            assert_eq!(error.code(), "fixture-refusal");
-            assert_eq!(error.0.details.as_ref().unwrap()["cleared"], true,
-                "passive observer failure must not block the existing cleanup");
+            attempt_shared_clear(&fixture)
+                .expect("passive observer failure must not block shared stale-draft cleanup");
             let calls = fs::read_to_string(fixture.temp.path().join("calls")).unwrap();
             assert_eq!(calls.matches("\"BSpace\"").count(), 1);
             assert_eq!(fs::read_to_string(fixture.temp.path().join("composer")).unwrap(), "");

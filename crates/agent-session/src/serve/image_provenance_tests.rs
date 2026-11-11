@@ -37,6 +37,10 @@ fn assert_metadata(message: &Value, origins: &[Option<&str>]) {
         assert_eq!(image["origin"].as_str(), *origin);
         assert_eq!(part["origin"], image["origin"]);
         assert_eq!(part["attachment_ref"], image["attachment_ref"]);
+        assert_eq!(part.get("upload_path"), image.get("upload_path"));
+        if *origin != Some("user_attachment") {
+            assert!(image.get("upload_path").is_none());
+        }
         assert_eq!(part["ref"], image["id"]);
         if origin.is_none() {
             assert!(image.get("origin").is_none());
@@ -88,8 +92,12 @@ async fn claude_quoted_owned_upload_caption_projects_without_rewriting_transcrip
 async fn owned_upload_metadata_correlates_user_tool_and_paged_reads_for_both_providers() {
     for provider in ["codex", "claude"] {
         let fixture = Fixture::for_provider(provider);
-        let first = fixture.upload("own", "same.png", &fixture.png).await;
-        let second = fixture.upload("own", "same.png", &fixture.png).await;
+        let first = fixture
+            .upload("own", "same%20photo.png", &fixture.png)
+            .await;
+        let second = fixture
+            .upload("own", "same%20photo.png", &fixture.png)
+            .await;
         assert_ne!(first, second);
         let reread = first
             .parent()
@@ -109,6 +117,34 @@ async fn owned_upload_metadata_correlates_user_tool_and_paged_reads_for_both_pro
         let page = fixture.refresh().await;
         let messages = page["data"]["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 2);
+        for (image, path) in messages[0]["images"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip([&first, &second])
+        {
+            assert_eq!(image["upload_path"], path.to_str().unwrap());
+            let part = messages[0]["parts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|part| part["kind"] == "image" && part["ref"] == image["id"])
+                .unwrap();
+            let mut frozen: Value = serde_json::from_str(include_str!(
+                "../../docs/specs/fixtures/history-image-descriptor-v1.json"
+            ))
+            .unwrap();
+            frozen["images"][0]["id"] = image["id"].clone();
+            frozen["parts"][0]["id"] = part["id"].clone();
+            frozen["parts"][0]["ref"] = image["id"].clone();
+            for key in ["images", "parts"] {
+                frozen[key][0]["attachment_ref"] = image["attachment_ref"].clone();
+                frozen[key][0]["original_name"] = json!("same photo.png");
+                frozen[key][0]["upload_path"] = json!(path.to_str().unwrap());
+            }
+            assert_eq!(*image, frozen["images"][0]);
+            assert_eq!(*part, frozen["parts"][0]);
+        }
         let reference = messages[0]["images"][0]["attachment_ref"]
             .as_str()
             .expect("owned user reference");
@@ -116,6 +152,26 @@ async fn owned_upload_metadata_correlates_user_tool_and_paged_reads_for_both_pro
         assert_ne!(messages[0]["images"][1]["attachment_ref"], reference);
         assert!(messages[0]["images"][1]["attachment_ref"].is_string());
         assert!(messages[1]["images"][1].get("attachment_ref").is_none());
+        for (message, count) in [(&messages[0], 2), (&messages[1], 1)] {
+            let images = message["images"].as_array().unwrap();
+            let parts: Vec<_> = message["parts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|part| part["kind"] == "image")
+                .collect();
+            for (index, image) in images.iter().enumerate() {
+                assert_eq!(
+                    image.get("original_name"),
+                    parts[index].get("original_name")
+                );
+                if index < count {
+                    assert_eq!(image["original_name"], "same photo.png");
+                } else {
+                    assert!(image.get("original_name").is_none());
+                }
+            }
+        }
         assert_ne!(
             messages[0]["images"][0]["id"],
             messages[1]["images"][0]["id"]
@@ -369,4 +425,98 @@ async fn nonhuman_claude_compact_summary_omits_user_origin() {
 #[tokio::test]
 async fn nonhuman_claude_transcript_only_omits_user_origin() {
     assert_nonhuman_claude_image_origin("isVisibleInTranscriptOnly", json!(true)).await;
+}
+
+#[tokio::test]
+async fn user_image_upload_paths_require_owned_regular_raster_files() {
+    for provider in ["codex", "claude"] {
+        let fixture = Fixture::for_provider(provider);
+        let own = fixture.upload("own", "image.png", &fixture.png).await;
+        let foreign = fixture.upload("other", "image.png", &fixture.png).await;
+        let outside = fixture._temp.path().join("outside.png");
+        fs::write(&outside, &fixture.png).unwrap();
+        let linked = own.parent().unwrap().join("linked.png");
+        std::os::unix::fs::symlink(&outside, &linked).unwrap();
+        let relative = own
+            .strip_prefix(fixture._temp.path())
+            .unwrap()
+            .to_path_buf();
+        let paths = [&foreign, &outside, &linked, &relative];
+        let mut blocks: Vec<_> = paths
+            .iter()
+            .map(|path| {
+                if provider == "claude" {
+                    json!({"type":"image","source":{"type":"file","path":path}})
+                } else {
+                    json!({"type":"input_image","path":path})
+                }
+            })
+            .collect();
+        blocks
+            .push(json!({"type":"input_image","image_url":format!("data:image/png;base64,{PNG}")}));
+        if provider == "claude" {
+            blocks[4] = json!({"type":"image","source":{"type":"base64","media_type":"image/png","data":PNG}});
+            fixture.claude_row(json!(blocks), "user");
+        } else {
+            fixture.append(json!(blocks));
+        }
+        let page = fixture.refresh().await;
+        let message = &page["data"]["messages"][0];
+        assert_metadata(message, &[Some("user_attachment"); 5]);
+        for image in message["images"].as_array().unwrap() {
+            assert!(image.get("upload_path").is_none());
+        }
+        // Keep the accepted attachment layout, but replace a parent with a symlink.
+        let attachments = own.parent().unwrap();
+        let moved = attachments.with_file_name("moved-attachments");
+        fs::rename(attachments, &moved).unwrap();
+        std::os::unix::fs::symlink(&moved, attachments).unwrap();
+        if provider == "claude" {
+            fixture.claude_row(
+                json!([{"type":"image","source":{"type":"file","path":own}}]),
+                "user",
+            );
+        } else {
+            fixture.append(json!([{"type":"input_image","path":own}]));
+        }
+        let page = fixture.refresh().await;
+        let message = &page["data"]["messages"][1];
+        assert_metadata(message, &[Some("user_attachment")]);
+        assert!(message["images"][0].get("upload_path").is_none());
+    }
+}
+
+#[tokio::test]
+async fn upload_path_omits_non_normalized_spellings_without_rewriting_them() {
+    for provider in ["codex", "claude"] {
+        let fixture = Fixture::for_provider(provider);
+        let own = fixture.upload("own", "image.png", &fixture.png).await;
+        let parent = own.parent().unwrap().to_str().unwrap();
+        let name = own.file_name().unwrap().to_str().unwrap();
+        let aliases = [format!("{parent}//{name}"), format!("{parent}/./{name}")];
+        for alias in aliases {
+            let blocks = if provider == "claude" {
+                json!([{"type":"text","text":format!("'{alias}'")},
+                    {"type":"image","source":{"type":"file","path":alias}}])
+            } else {
+                json!([{"type":"input_text","text":format!("'{alias}'")},
+                    {"type":"input_image","path":alias}])
+            };
+            if provider == "claude" {
+                fixture.claude_row(blocks, "user");
+            } else {
+                fixture.append(blocks);
+            }
+        }
+        let page = fixture.refresh().await;
+        let messages = page["data"]["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        for message in messages {
+            assert_metadata(message, &[Some("user_attachment"); 2]);
+            for image in message["images"].as_array().unwrap() {
+                assert!(image["attachment_ref"].is_string());
+                assert!(image.get("upload_path").is_none());
+            }
+        }
+    }
 }

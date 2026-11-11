@@ -1,5 +1,7 @@
-//! Terminal send delivery; opt-in guards preserve unguarded delivery.
+//! Terminal input delivery and guarded provider submission.
 pub(crate) mod claude_notice;
+pub(crate) mod codex_notice;
+pub(crate) mod daemon_notice;
 pub(crate) mod input;
 mod native;
 use std::cell::Cell;
@@ -47,7 +49,7 @@ pub(crate) struct SendResult {
 // Native dispatch keeps its short deadline so provider event waiters can run.
 // Terminal admission and each guarded Enter require several tmux round trips;
 // reserve those checks as well as the swallowed-Enter confirmation interval.
-fn guarded_hold_budget(record: &SessionRecord, terminal_command: bool) -> Duration {
+pub(crate) fn guarded_hold_budget(record: &SessionRecord, terminal_command: bool) -> Duration {
     if codex_app_server::runtime_is_supported(record) && !terminal_command {
         send_submit::HOLD_BUDGET
     } else {
@@ -156,6 +158,17 @@ fn send_observing(
         ));
     }
     crate::restart::ensure_not_fenced(context, &record)?;
+    let claude_empty_admission = record.agent == "claude"
+        && carries_literal_text(text.as_deref())
+        && args.keys == [SpecialKey::Enter]
+        && !args.guards.require_empty_composer;
+    if claude_empty_admission {
+        if args.guards.enabled() {
+            args.guards.require_empty_composer = true;
+        } else {
+            send_guard::placeholder::admit(&record, &tmux_bin)?;
+        }
+    }
     if args.guards.enabled() {
         let admission = send_guard::Admission {
             context,
@@ -166,7 +179,22 @@ fn send_observing(
             deadline: guard_started + guarded_hold_budget(&record, owner_command.is_some()),
         };
         admission.check_key()?;
-        admission.check(None, "admission")?;
+        if claude_empty_admission {
+            let mut identity_args = args.guards.clone();
+            identity_args.require_empty_composer = false;
+            send_guard::Admission {
+                args: &identity_args,
+                verify_composer: false,
+                ..admission
+            }
+            .check(None, "admission")?;
+            send_guard::placeholder::admit(&record, &tmux_bin)?;
+        }
+        if notification.is_some_and(|candidate| candidate.is_text_wake()) {
+            admission.check_preserving_draft("admission")?;
+        } else {
+            admission.check(None, "admission")?;
+        }
     }
     // Only input that types characters is gated. Special keys — including the
     // `enter` that confirms a highlighted choice — stay admitted, because
@@ -194,7 +222,9 @@ fn send_observing(
             codex_account::authorize_terminal_input_locked(context, &mut record)?;
         }
     }
-    if let Some(candidate) = notification {
+    if record.agent != "claude"
+        && let Some(candidate) = notification
+    {
         crate::serve::begin_mailbox_notice(context, &record, &tmux_bin, candidate)?;
     }
     if args.guards.enabled() {
@@ -209,6 +239,8 @@ fn send_observing(
                 started: guard_started,
                 acknowledged,
                 terminal_command: owner_command.is_some(),
+                recovery: None,
+                notification,
             },
         );
     }
@@ -311,6 +343,16 @@ fn confirm_prompt_submission(
         manual_input.arm(context, record)?;
         send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
     };
+    if record.agent == "claude" {
+        return send_guard::placeholder::submit_after_empty(
+            context,
+            record,
+            text,
+            tmux_bin,
+            hold_started + guarded_hold_budget(record, false),
+            press_enter,
+        );
+    }
     let probe = if notice_envelope {
         send_submit::notice_probe(text)
     } else {
@@ -482,7 +524,17 @@ fn guarded(
         deadline: hold_started + guarded_hold_budget(&record, attempt.terminal_command),
     };
     admission.check_key()?;
-    admission.check(None, "admission")?;
+    let text_wake = attempt
+        .notification
+        .filter(|candidate| candidate.is_text_wake());
+    let check_empty = || {
+        if text_wake.is_some() {
+            admission.check_preserving_draft("admission")
+        } else {
+            admission.check(None, "admission")
+        }
+    };
+    check_empty()?;
     if !attempt.terminal_command
         && args.guards.notice_envelope
         && record.agent == "claude"
@@ -545,27 +597,34 @@ fn guarded(
             PANE_INPUT_COMMAND_TIMEOUT,
             PasteMode::Bracketed,
             || {
-                admission.check(None, "admission")?;
+                check_empty()?;
                 admission.claim_key()?;
                 admission.check(None, "claimed")?;
+                if let Some(candidate) = text_wake {
+                    crate::serve::begin_mailbox_notice(context, &record, tmux_bin, candidate)?;
+                }
                 prepare_guarded_input(context, &mut record, submits, &mut input_prepared)
             },
         );
         let _ = fs::remove_file(temp);
         delivered?;
+        if args.guards.notice_envelope {
+            send_guard::drafts::residue::remember(context, &record, text)?;
+        }
     } else {
         admission.claim_key()?;
         admission.check(None, "claimed")?;
     }
     // Mixed-prefix recovery needs an exact-paste observation before a conflict.
     let mut observed_paste = false;
+    let mut owned_placeholder = None;
     let command_ui = Cell::new(false);
     // From here the pasted text sits in the input: a refusal must report it.
     let mut after_paste = || -> Result<Option<send_submit::SubmitReport>, CliError> {
         if let Some(text) = literal
             && !args.keys.is_empty()
         {
-            observed_paste = admission.settle_paste(text);
+            observed_paste = admission.settle_paste(text, &mut owned_placeholder);
         }
         let submits_prompt = literal.is_some() && args.keys == [SpecialKey::Enter];
         if submits_prompt {
@@ -577,6 +636,9 @@ fn guarded(
             };
             let mut press_enter = || {
                 manual_input.arm(context, &record)?;
+                if owned_placeholder.is_some() {
+                    admission.bind_placeholder(&mut owned_placeholder)?;
+                }
                 admission.check(Some(text), "submit")?;
                 admission.send_key(SpecialKey::Enter)
             };
@@ -639,7 +701,12 @@ fn guarded(
     let submission = match (after_paste(), literal) {
         (Ok(submission), _) => submission,
         (Err(error), Some(text)) => {
-            return Err(admission.report_pasted_input(error, text, observed_paste));
+            return Err(admission.report_owned_input(
+                error,
+                text,
+                observed_paste,
+                owned_placeholder.as_deref(),
+            ));
         }
         (Err(error), None) => return Err(error),
     };
@@ -662,10 +729,11 @@ fn guarded(
             Some(json!({"id": record.id, "outcome": report.outcome,
                 "enter_presses": report.enter_presses, "atomic": false})),
         );
-        return Err(admission.report_pasted_input(
+        return Err(admission.report_owned_input(
             error,
             literal.expect("unconfirmed literal prompt"),
             observed_paste,
+            owned_placeholder.as_deref(),
         ));
     }
     Ok(SendResult {

@@ -130,6 +130,15 @@ pub(crate) fn terminate_tmux_session_inner(
         record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
         return Ok(());
     }
+    #[cfg(target_os = "linux")]
+    if crate::persisted_tmux_termination_state(record)?.is_some()
+        && let Some(identity) = crate::persisted_tmux_runtime_identity(record)?
+        && crate::delete_recovery::codex_daemons::shared_scope(&identity)?
+    {
+        // A retained transaction must never replay a whole-cgroup kill over
+        // provider infrastructure that is now proven shared.
+        return Err(SessionTerminationFailure::RuntimeIdentityUnavailable);
+    }
     crate::recover_interrupted_tmux_termination_locked(context, record)?;
     let mut identity_changes = 0;
     let mut initial_identity = initial_identity;
@@ -218,6 +227,28 @@ pub(crate) fn terminate_tmux_session_inner(
         if identity_changes >= DELETE_TERMINATION_IDENTITY_RETRY_LIMIT {
             return Err(SessionTerminationFailure::RuntimeIdentityChanged);
         }
+        #[cfg(target_os = "linux")]
+        if terminate_process_group
+            && crate::delete_recovery::codex_daemons::shared_scope(&identity)?
+        {
+            match crate::tmux_kill_identity_with_timeout(tmux_bin, &identity, kill_timeout)? {
+                TmuxIdentityKillOutcome::IdentityChanged => {
+                    identity_changes += 1;
+                    continue;
+                }
+                TmuxIdentityKillOutcome::KillConfirmed => {
+                    // This path never freezes or signals the cgroup, so it has
+                    // no cgroup kill/thaw transaction to persist or replay.
+                    crate::verify_stopped_tmux_runtime(
+                        tmux_bin,
+                        &record.tmux_session,
+                        &identity,
+                        verify_timeout,
+                    )?;
+                    return Ok(());
+                }
+            }
+        }
         if terminate_process_group {
             match crate::terminate_verified_process_runtime_transaction(
                 context,
@@ -287,6 +318,11 @@ pub(crate) fn prepare_process_runtime(
 ) -> Result<PinnedProcessRuntime, SessionTerminationFailure> {
     #[cfg(target_os = "linux")]
     {
+        // Orphan maintenance calls the common transaction directly, without
+        // the live-tmux wrapper. Refuse before pinning or freezing its cgroup.
+        if crate::delete_recovery::codex_daemons::shared_scope(identity)? {
+            return Err(SessionTerminationFailure::RuntimeIdentityUnavailable);
+        }
         let process_session_id = identity
             .process_session_id
             .filter(|session_id| *session_id > 1 && *session_id != unsafe { libc::getsid(0) })

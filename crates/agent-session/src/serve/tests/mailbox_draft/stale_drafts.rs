@@ -2,7 +2,7 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
-async fn stale_draft_is_saved_before_wake_for_both_providers() {
+async fn stale_draft_is_saved_before_shared_clear_for_both_providers() {
     let _lock = GlobalStateLock::new();
     for agent in [AgentKind::Claude, AgentKind::Codex] {
         let fixture = WakeFixture::new(agent).await;
@@ -10,12 +10,7 @@ async fn stale_draft_is_saved_before_wake_for_both_providers() {
         fs::write(fixture.temp.path().join("composer"), draft).unwrap();
         // The abandoned draft's caret is at its start, not the paste endpoint.
         fs::write(fixture.temp.path().join("cursor-x"), "2").unwrap();
-        assert!(matches!(
-            fixture.start(),
-            Err(TerminalNotificationStartError::Known(
-                "recipient-composer-not-empty"
-            ))
-        ));
+        assert_eq!(fixture.check_draft().unwrap_err().code(), "composer-not-empty");
         let observed = fixture
             .temp
             .path()
@@ -26,20 +21,12 @@ async fn stale_draft_is_saved_before_wake_for_both_providers() {
         .unwrap();
         observation["unchanged_since"] = json!(1);
         fs::write(&observed, serde_json::to_vec(&observation).unwrap()).unwrap();
-        fixture.start().expect("stale draft permits the wake");
+        fixture.check_draft().expect("stale draft permits shared admission");
         assert_eq!(
             fs::read_to_string(fixture.temp.path().join("composer")).unwrap(),
             ""
         );
-        let submissions = fs::read_to_string(fixture.temp.path().join("submissions")).unwrap();
-        let submitted: Vec<String> = submissions
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        assert_eq!(
-            submitted,
-            [crate::coordination::notification_prompt(&fixture.candidate)]
-        );
+        assert!(!fixture.temp.path().join("submissions").exists());
         let drafts = fs::read_dir(fixture.temp.path().join("sessions/beta/drafts/saved"))
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -110,7 +97,7 @@ async fn edited_draft_restarts_age_for_both_providers() {
     for agent in [AgentKind::Claude, AgentKind::Codex] {
         let fixture = WakeFixture::new(agent).await;
         fs::write(fixture.temp.path().join("composer"), "first draft").unwrap();
-        assert!(fixture.start().is_err());
+        assert!(fixture.check_draft().is_err());
         let observed = fixture
             .temp
             .path()
@@ -120,7 +107,7 @@ async fn edited_draft_restarts_age_for_both_providers() {
         observation["unchanged_since"] = json!(1);
         fs::write(&observed, serde_json::to_vec(&observation).unwrap()).unwrap();
         fs::write(fixture.temp.path().join("composer"), "edited draft").unwrap();
-        assert!(fixture.start().is_err());
+        assert!(fixture.check_draft().is_err());
         assert_eq!(
             fs::read_to_string(fixture.temp.path().join("composer")).unwrap(),
             "edited draft"
@@ -134,7 +121,7 @@ async fn unobservable_pane_never_inherits_stale_draft_age() {
     let _lock = GlobalStateLock::new();
     let fixture = WakeFixture::new(AgentKind::Claude).await;
     fs::write(fixture.temp.path().join("composer"), "owner draft").unwrap();
-    assert!(fixture.start().is_err());
+    assert!(fixture.check_draft().is_err());
     let observed = fixture
         .temp
         .path()
@@ -144,12 +131,7 @@ async fn unobservable_pane_never_inherits_stale_draft_age() {
     observation["unchanged_since"] = json!(1);
     fs::write(&observed, serde_json::to_vec(&observation).unwrap()).unwrap();
     fs::write(fixture.temp.path().join("capture-unavailable"), "").unwrap();
-    assert!(matches!(
-        fixture.start(),
-        Err(TerminalNotificationStartError::Known(
-            "recipient-composer-unobservable"
-        ))
-    ));
+    assert_eq!(fixture.check_draft().unwrap_err().code(), "composer-unobservable");
     assert_eq!(
         fs::read_to_string(fixture.temp.path().join("composer")).unwrap(),
         "owner draft"
@@ -177,12 +159,7 @@ async fn zero_bound_keeps_owner_draft_ineligible() {
             )
             .unwrap()
         );
-        assert!(matches!(
-            fixture.start(),
-            Err(TerminalNotificationStartError::Known(
-                "recipient-composer-not-empty"
-            ))
-        ));
+        assert_eq!(fixture.check_draft().unwrap_err().code(), "composer-not-empty");
         assert_eq!(
             fs::read_to_string(fixture.temp.path().join("composer")).unwrap(),
             draft
@@ -210,7 +187,7 @@ async fn full_draft_store_refuses_before_cleanup_keys() {
     let _lock = GlobalStateLock::new();
     let fixture = WakeFixture::new(AgentKind::Codex).await;
     fs::write(fixture.temp.path().join("composer"), "owner draft").unwrap();
-    assert!(fixture.start().is_err());
+    assert!(fixture.check_draft().is_err());
     let root = fixture.temp.path().join("sessions/beta/drafts");
     let observed = root.join("observation.json");
     let mut observation: Value = serde_json::from_slice(&fs::read(&observed).unwrap()).unwrap();
@@ -227,7 +204,7 @@ async fn full_draft_store_refuses_before_cleanup_keys() {
         )
         .unwrap();
     }
-    assert!(fixture.start().is_err());
+    assert!(fixture.check_draft().is_err());
     assert_eq!(
         fs::read_to_string(fixture.temp.path().join("composer")).unwrap(),
         "owner draft"
@@ -248,7 +225,7 @@ async fn changed_draft_after_stash_is_never_erased_or_submitted() {
     for agent in [AgentKind::Claude, AgentKind::Codex] {
         let fixture = WakeFixture::new(agent).await;
         fs::write(fixture.temp.path().join("composer"), "owner draft").unwrap();
-        assert!(fixture.start().is_err());
+        assert!(fixture.check_draft().is_err());
         let observed = fixture
             .temp
             .path()
@@ -257,7 +234,7 @@ async fn changed_draft_after_stash_is_never_erased_or_submitted() {
         observation["unchanged_since"] = json!(1);
         fs::write(&observed, serde_json::to_vec(&observation).unwrap()).unwrap();
         fs::write(fixture.temp.path().join("edit-after-stash"), "").unwrap();
-        assert!(fixture.start().is_err());
+        assert!(fixture.check_draft().is_err());
         assert_eq!(
             fs::read_to_string(fixture.temp.path().join("composer")).unwrap(),
             "owner  draft"
@@ -353,8 +330,8 @@ async fn hidden_trailing_spaces_keep_the_composer_untouched() {
     let _lock = GlobalStateLock::new();
     let fixture = WakeFixture::new(AgentKind::Claude).await;
     let draft = "owner draft  ";
-    fs::write(fixture.temp.path().join("composer"), draft).unwrap();
-    assert!(fixture.start().is_err());
+    fs::write(fixture.temp.path().join("composer"), draft.trim_end()).unwrap();
+    assert!(fixture.check_draft().is_err());
     let observed = fixture
         .temp
         .path()
@@ -362,7 +339,8 @@ async fn hidden_trailing_spaces_keep_the_composer_untouched() {
     let mut observation: Value = serde_json::from_slice(&fs::read(&observed).unwrap()).unwrap();
     observation["unchanged_since"] = json!(1);
     fs::write(&observed, serde_json::to_vec(&observation).unwrap()).unwrap();
-    assert!(fixture.start().is_err());
+    fs::write(fixture.temp.path().join("composer"), draft).unwrap();
+    assert!(fixture.check_draft().is_err());
     assert_eq!(
         fs::read_to_string(fixture.temp.path().join("composer")).unwrap(),
         draft

@@ -10,6 +10,7 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
     let data = err.into_inner();
     let status = match data.code.as_str() {
         "session-not-found"
+        | "draft-not-found"
         | "message-not-found"
         | "retitle-v3-operation-not-found"
         | "history-session-not-found" => StatusCode::NOT_FOUND,
@@ -63,7 +64,7 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         "board-relay-unavailable" | "board-relay-unauthorized" | "console-start-unavailable" => {
             StatusCode::BAD_GATEWAY
         }
-        "retitle-v3-history-unavailable" | "retitle-v3-history-degraded" => {
+        "console-start-busy" | "retitle-v3-history-unavailable" | "retitle-v3-history-degraded" => {
             StatusCode::SERVICE_UNAVAILABLE
         }
         // Provider account conditions share one status across providers.

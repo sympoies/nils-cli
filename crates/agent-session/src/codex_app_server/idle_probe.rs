@@ -54,3 +54,23 @@ pub(crate) fn probe_idle_conversation(
         Ok(thread_id)
     }).map_err(|_| CliError::runtime("conversation-live-identity-unverified", "live Codex conversation is busy, ambiguous, or unavailable; no binding was changed", Some(json!({"id":record.id}))))
 }
+
+/// Called only after a successful primary thread/start response has been bound,
+/// and before it reaches the TUI. Startup readiness does not finish a turn.
+pub(super) async fn settle_startup(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Result<(), String> {
+    let context = context.clone();
+    let record = record.clone();
+    tokio::task::spawn_blocking(move || {
+        let Some(state) = crate::activity::controller_state_for_record(&context, &record) else {
+            return Ok(false);
+        };
+        crate::activity::settle_starting(&context, &record, Some(state.revision))
+    })
+    .await
+    .map_err(|_| "Codex startup observation worker failed".to_string())?
+    .map_err(|error: CliError| format!("Codex startup observation failed: {}", error.code()))?;
+    Ok(())
+}

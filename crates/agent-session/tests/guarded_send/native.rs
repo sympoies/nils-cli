@@ -39,6 +39,7 @@ impl Server {
             .map(|b| format!("{b:02x}"))
             .collect::<String>();
         fs::write(fixture.root().join("cx.attached"), binding).unwrap();
+        let notice_root = fixture.root().to_owned();
         let claim_dir = fixture.root().join("state/sessions/guarded");
         let requests = Arc::new(Mutex::new(Vec::new()));
         let observed = requests.clone();
@@ -57,6 +58,7 @@ impl Server {
                     };
                     let observed = observed.clone();
                     let claim_dir = claim_dir.clone();
+                    let notice_root = notice_root.clone();
                     tokio::spawn(async move {
                         let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
                         while let Some(Ok(Message::Text(text))) = socket.next().await {
@@ -104,6 +106,17 @@ impl Server {
                                         assert!(!confirmation_lock::record_available(&claim_dir), "admission lock must cover dispatch");
                                     }
                                     if mode == "disconnect" { break; }
+                                    if notice_root.join("notice-mode").exists() {
+                                        use std::io::Write;
+                                        let path = notice_root.join("codex-home/sessions/rollout.jsonl");
+                                        let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
+                                        let text = &request["params"]["input"][0]["text"];
+                                        writeln!(file, "{}", json!({"type":"response_item","payload":{"type":"message","role":"user",
+                                            "content":[{"type":"input_text","text":text}],"internal_chat_message_metadata_passthrough":{"turn_id":"turn-one"}}})).unwrap();
+                                        let event = json!({"type":"event_msg","payload":{"type":"user_message","client_id":request["params"]["clientUserMessageId"],"message":text}});
+                                        if mode != "notice-missing" { writeln!(file, "{event}").unwrap(); }
+                                        if mode == "notice-duplicate" { writeln!(file, "{event}").unwrap(); }
+                                    }
                                     json!({"turn":{"id":if mode == "invalid-ack" {""} else {"turn-one"},"status":"inProgress","items":[]}})
                                 }
                                 "thread/compact/start" => json!({}),

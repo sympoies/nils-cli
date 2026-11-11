@@ -1,7 +1,12 @@
 #[cfg(test)]
 use history_images::normalize_message;
+mod catalog_scan;
+use catalog_scan::scan_catalog;
+mod exact_lookup;
 pub(crate) mod history_images;
+use exact_lookup::inspect_history_file;
 pub(crate) use history_images::HistoryMessage;
+#[cfg(test)]
 use history_images::read_messages_incremental_from_reader;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -138,7 +143,7 @@ pub(crate) struct HistorySession {
     #[serde(skip)]
     pub(crate) archived_title_state: Option<crate::SessionTitleState>,
     #[serde(skip)]
-    transcript_path: PathBuf,
+    pub(crate) transcript_path: PathBuf,
     #[serde(skip)]
     incremental_catalog_stamp: String,
 }
@@ -302,6 +307,7 @@ struct CatalogCache {
     refreshed_at: Option<Instant>,
     snapshot: Option<Arc<CatalogSnapshot>>,
     latest_prompt_previews: HashMap<PathBuf, LatestPromptCacheEntry>,
+    direct_sessions: HashMap<String, HistorySession>,
 }
 
 #[derive(Debug, Default)]
@@ -453,12 +459,21 @@ impl HistoryCatalog {
                 }
             }
         }
-        let snapshot = scan_catalog(&self.sources, &[], &self.archives_root, &self.stars_root);
+        let snapshot = scan_catalog(
+            &self.sources,
+            &[],
+            &self.archives_root,
+            &self.stars_root,
+            self.session_state_dir.as_deref(),
+        );
         if let Some(session) = snapshot
             .sessions
             .into_iter()
             .find(|session| session.id == history_id)
         {
+            return Ok(session);
+        }
+        if let Some(session) = self.fresh_direct_session(history_id) {
             return Ok(session);
         }
         if snapshot.truncated || dsh_unavailable {
@@ -489,6 +504,11 @@ impl HistoryCatalog {
         limit: usize,
         managed_titles: &BTreeMap<String, String>,
     ) -> Result<HistoryPage, HistoryError> {
+        if let Some(page) =
+            self.exact_claude_page(machine, query, provider, cursor, limit, managed_titles)?
+        {
+            return Ok(page);
+        }
         let mut snapshot = (*self.snapshot()).clone();
         apply_title_overrides(&mut snapshot.sessions, managed_titles);
         let mut page = paginate_snapshot(snapshot, machine, query, provider, cursor, limit)?;
@@ -502,7 +522,7 @@ impl HistoryCatalog {
             }
             cache.latest_prompt_previews.clone()
         };
-        enrich_latest_prompt_previews(&mut page.sessions, &mut prompt_cache);
+        self.enrich_previews(&mut page.sessions, &mut prompt_cache);
         if enrich_dsh_session_summaries(&self.dsh_sources, &mut page.sessions).is_err() {
             page.truncated = true;
         }
@@ -538,16 +558,12 @@ impl HistoryCatalog {
         history_id: &str,
         starred_at: Option<&str>,
     ) -> Result<Option<String>, HistoryError> {
-        let snapshot = self.snapshot();
-        let session = snapshot
-            .sessions
-            .iter()
-            .find(|session| session.id == history_id)
-            .ok_or(HistoryError::NotFound)?;
+        let id = self.star_target(history_id)?;
         let stored = match starred_at {
-            Some(starred_at) => write_star(&self.stars_root, &session.id, starred_at)
-                .map(|record| Some(record.starred_at)),
-            None => remove_star(&self.stars_root, &session.id).map(|()| None),
+            Some(starred_at) => {
+                write_star(&self.stars_root, &id, starred_at).map(|record| Some(record.starred_at))
+            }
+            None => remove_star(&self.stars_root, &id).map(|()| None),
         };
         self.invalidate();
         stored
@@ -579,83 +595,6 @@ impl HistoryCatalog {
             applied_message_ids,
             max_bytes,
         )
-    }
-
-    fn incremental_messages_from_snapshot(
-        &self,
-        mut snapshot: Arc<CatalogSnapshot>,
-        history_id: &str,
-        cursor: Option<&IncrementalHistoryCursor>,
-        applied_message_ids: &[String],
-        max_bytes: usize,
-    ) -> Result<IncrementalHistoryPage, HistoryError> {
-        if max_bytes == 0 {
-            return Err(HistoryError::InvalidCursor);
-        }
-        if snapshot
-            .incremental_segments
-            .get(history_id)
-            .is_some_and(|segments| incremental_catalog_generation_changed(segments))
-        {
-            // Creating, removing or renaming a provider segment changes an
-            // ancestor directory, while ordinary appends do not. Refresh on
-            // that generation change so the general 30-second history-list
-            // cache cannot hide a just-created resume/rotation segment.
-            self.invalidate();
-            snapshot = self.snapshot();
-        }
-        let segments = snapshot
-            .incremental_segments
-            .get(history_id)
-            .ok_or(HistoryError::NotFound)?;
-        let source_id = incremental_source_id(&segments[0]);
-        let resolved = resolve_incremental_segment(segments, cursor, &source_id)?;
-        let session = &segments[resolved.index];
-        let mut file =
-            fs::File::open(&session.transcript_path).map_err(|_| HistoryError::NotFound)?;
-        let file_len = file.metadata().map_err(|_| HistoryError::Io)?.len();
-        let page = read_messages_incremental_from_reader(
-            session,
-            &mut file,
-            file_len,
-            resolved.offset,
-            max_bytes,
-            resolved.discarding_oversized_line,
-        )?;
-        let continuity_hash = incremental_continuity_hash(&mut file, page.next_offset)?;
-        let generation = incremental_file_generation(&file, file_len)?;
-        let prefix_integrity = extend_or_compute_prefix_integrity(
-            &mut file,
-            cursor,
-            &resolved,
-            page.next_offset,
-            &generation,
-        )?;
-        let applied = applied_message_ids
-            .iter()
-            .map(String::as_str)
-            .collect::<HashSet<_>>();
-        let mut emitted = HashSet::new();
-        let messages = page
-            .messages
-            .into_iter()
-            .filter(|message| {
-                !applied.contains(message.id.as_str()) && emitted.insert(message.id.clone())
-            })
-            .collect();
-        Ok(IncrementalHistoryPage {
-            messages,
-            cursor: IncrementalHistoryCursor {
-                source_id,
-                segment_id: resolved.segment_id,
-                offset: page.next_offset,
-                continuity_hash,
-                discarding_oversized_line: page.discarding_oversized_line,
-                prefix_integrity: Some(prefix_integrity),
-            },
-            caught_up: page.next_offset == file_len && resolved.index + 1 == segments.len(),
-            discontinuity: resolved.discontinuity,
-        })
     }
 
     /// Compatibility lookup for callers that predate profile-aware identity.
@@ -742,6 +681,7 @@ impl HistoryCatalog {
             &self.dsh_sources,
             &self.archives_root,
             &self.stars_root,
+            self.session_state_dir.as_deref(),
         ));
         cache.refreshed_at = Some(Instant::now());
         cache.snapshot = Some(Arc::clone(&snapshot));
@@ -939,7 +879,7 @@ pub(crate) fn list(
     limit: usize,
 ) -> Result<HistoryPage, HistoryError> {
     let mut page = paginate_snapshot(
-        scan_catalog(sources, &[], roots.archives, roots.stars),
+        scan_catalog(sources, &[], roots.archives, roots.stars, None),
         machine,
         query,
         provider,
@@ -1066,153 +1006,6 @@ fn parse_list_cursor(value: &str) -> Result<ListCursor, HistoryError> {
 
 fn session_is_after_cursor(session: &HistorySession, cursor: &ListCursor) -> bool {
     compare_list_keys(&list_key(session), cursor) == std::cmp::Ordering::Greater
-}
-
-fn scan_catalog(
-    sources: &[HistorySource],
-    dsh_sources: &[DshHistorySource],
-    archives_root: &Path,
-    stars_root: &Path,
-) -> CatalogSnapshot {
-    let deadline = Instant::now() + SCAN_MAX_DURATION;
-    let mut truncated = false;
-    let archives = read_archives(archives_root, deadline, &mut truncated);
-    let stars = read_stars(stars_root, deadline, &mut truncated);
-    let mut visited = 0usize;
-    let mut sessions = Vec::new();
-    let mut incremental_segments = BTreeMap::<String, Vec<HistorySession>>::new();
-    let mut seen = HashSet::new();
-    // Configured roots may overlap through symlinks (for example a Claude
-    // account directory whose `projects/` links to the shared tree), so each
-    // physical transcript is attributed to the first source that reaches it.
-    let mut seen_transcripts = HashSet::new();
-    let mut catalog_stamps = IncrementalCatalogStampCache::default();
-
-    for source in sources {
-        let mut paths = Vec::new();
-        collect_jsonl(
-            &source.root,
-            if source.provider == "codex" { 6 } else { 2 },
-            0,
-            &mut paths,
-            &mut visited,
-            deadline,
-            &mut truncated,
-        );
-        paths.sort();
-        for path in paths {
-            if Instant::now() >= deadline {
-                truncated = true;
-                break;
-            }
-            let physical = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-            if !seen_transcripts.insert(physical) {
-                continue;
-            }
-            let Some(mut session) =
-                inspect_history_file(source, &path, deadline, &mut catalog_stamps, &mut truncated)
-            else {
-                continue;
-            };
-            let archive = archives.get(&session.id);
-            if let Some(archive) = archive {
-                session.id = archive.history_id.clone();
-                session.agent_profile = archive.agent_profile.clone();
-                session.title = archive.title.clone();
-                session.archived_session_id = archive.session_id.clone();
-                session.archived_title_state = archive.title_state.clone();
-                session.archived_title_mode = archive.title_mode;
-                session.cwd = archive.cwd.clone();
-                session.repo_name = repo_name(&archive.cwd);
-                session.archived_at = Some(archive.archived_at.clone());
-            }
-            session.starred_at = stars.get(&session.id).cloned();
-            incremental_segments
-                .entry(session.id.clone())
-                .or_default()
-                .push(session.clone());
-            if !seen.insert(session.id.clone()) {
-                continue;
-            }
-            sessions.push(session);
-            if Instant::now() >= deadline {
-                truncated = true;
-                break;
-            }
-        }
-        if truncated {
-            break;
-        }
-    }
-
-    for source in dsh_sources {
-        let remaining = SCAN_MAX_ENTRIES.saturating_sub(visited);
-        if remaining == 0 || Instant::now() >= deadline {
-            truncated = true;
-            break;
-        }
-        let Ok(mut listed) = list_dsh_sessions(source) else {
-            truncated = true;
-            continue;
-        };
-        if listed.len() > remaining {
-            listed.truncate(remaining);
-            truncated = true;
-        }
-        visited += listed.len();
-        for item in listed {
-            if !valid_dsh_catalog_item(&item) {
-                truncated = true;
-                continue;
-            }
-            let id = stable_history_id(
-                "dsh",
-                Some(&source.agent_profile),
-                &item.provider_session_id,
-            );
-            if !seen.insert(id.clone()) {
-                continue;
-            }
-            sessions.push(HistorySession {
-                archived_title_mode: Default::default(),
-                id: id.clone(),
-                provider: "dsh".to_string(),
-                provider_version: None,
-                provider_session_id: item.provider_session_id,
-                agent_profile: Some(source.agent_profile.clone()),
-                title: None,
-                prompt_preview: None,
-                first_user_prompt_preview: None,
-                last_user_prompt_preview: None,
-                repo_name: repo_name(&item.cwd),
-                cwd: item.cwd,
-                created_at: item.created_at,
-                updated_at: item.updated_at,
-                archived_at: archives.get(&id).map(|archive| archive.archived_at.clone()),
-                starred_at: stars.get(&id).cloned(),
-                resumable: false,
-                archived_session_id: None,
-                archived_title_state: None,
-                transcript_path: source.root.clone(),
-                incremental_catalog_stamp: item.revision,
-            });
-        }
-    }
-
-    for segments in incremental_segments.values_mut() {
-        segments.sort_by(|left, right| {
-            left.created_at
-                .cmp(&right.created_at)
-                .then_with(|| left.transcript_path.cmp(&right.transcript_path))
-        });
-        segments.dedup_by(|left, right| left.transcript_path == right.transcript_path);
-    }
-
-    CatalogSnapshot {
-        sessions,
-        incremental_segments,
-        truncated,
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1540,9 +1333,14 @@ fn find_session(sources: &[HistorySource], history_id: &str) -> Option<HistorySe
                 truncated = true;
                 break;
             }
-            let Some(session) =
-                inspect_history_file(source, &path, deadline, &mut catalog_stamps, &mut truncated)
-            else {
+            let Some(session) = inspect_history_file(
+                source,
+                &path,
+                deadline,
+                &mut catalog_stamps,
+                &mut truncated,
+                true,
+            ) else {
                 continue;
             };
             if session.id == history_id {
@@ -1596,72 +1394,6 @@ fn collect_jsonl(
             output.push(entry.path());
         }
     }
-}
-
-fn inspect_history_file(
-    source: &HistorySource,
-    path: &Path,
-    deadline: Instant,
-    catalog_stamps: &mut IncrementalCatalogStampCache,
-    truncated: &mut bool,
-) -> Option<HistorySession> {
-    if Instant::now() >= deadline {
-        return None;
-    }
-    let metadata = fs::metadata(path).ok()?;
-    let updated_at = format_system_time(metadata.modified().ok()?);
-    let (provider_session_id, cwd, created_at, provider_version) = match source.provider.as_str() {
-        "codex" => {
-            let meta = nils_provider_resume::read_codex_resumable_session_meta(path)?;
-            (
-                meta.session_id,
-                meta.cwd,
-                format_system_time(meta.created_at),
-                history_images::provider_version(path, "codex"),
-            )
-        }
-        "claude" => {
-            let id = path.file_stem()?.to_str()?.to_string();
-            let cwd = nils_provider_resume::read_claude_session_cwd(path, &id)?;
-            (id, cwd, updated_at.clone(), None)
-        }
-        _ => return None,
-    };
-    let id = stable_history_id(
-        &source.provider,
-        source.agent_profile.as_deref(),
-        &provider_session_id,
-    );
-    let first_user_prompt_preview =
-        first_prompt(path, &source.provider, &provider_session_id, deadline);
-    Some(HistorySession {
-        archived_title_mode: Default::default(),
-        id,
-        provider: source.provider.clone(),
-        provider_version,
-        provider_session_id,
-        agent_profile: source.agent_profile.clone(),
-        title: None,
-        prompt_preview: first_user_prompt_preview.clone(),
-        first_user_prompt_preview,
-        last_user_prompt_preview: None,
-        repo_name: repo_name(&cwd),
-        cwd,
-        created_at,
-        updated_at,
-        archived_at: None,
-        starred_at: None,
-        resumable: true,
-        archived_session_id: None,
-        archived_title_state: None,
-        transcript_path: path.to_path_buf(),
-        incremental_catalog_stamp: incremental_catalog_stamp(
-            path,
-            catalog_stamps,
-            deadline,
-            truncated,
-        ),
-    })
 }
 
 fn first_prompt(
@@ -2589,6 +2321,8 @@ fn truncate_chars(value: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[path = "exact_lookup.rs"]
+    mod exact_lookup;
     #[path = "native_notice_paging.rs"]
     mod native_notice_paging;
     use super::*;
@@ -4991,7 +4725,6 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             })
             .to_string()
         };
-        let mailbox = "Coordination mailbox has unread messages; run agent-session message inbox --session s --state unread --limit 50 --format json.";
         let lines = [
             serde_json::json!({"sessionId": "claude-id", "cwd": "/work/claude", "type": "user", "promptSource": "typed", "message": {"role": "user", "content": "first"}}).to_string(),
             queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": "queued human"}), false),
@@ -5002,10 +4735,8 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "isMeta": true, "prompt": "meta prompt"}), false),
             queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": "<task-notification>\n<task-id>t</task-id>"}), false),
             queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": "<cross-session-message from=\"x\">hi</cross-session-message>"}), false),
-            queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": mailbox}), false),
             queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": "sidechain prompt"}), true),
             queued(serde_json::json!({"type": "hook_success", "content": "hook output"}), false),
-            serde_json::json!({"sessionId": "claude-id", "cwd": "/work/claude", "type": "user", "promptSource": "typed", "message": {"role": "user", "content": mailbox}}).to_string(),
             serde_json::json!({"sessionId": "claude-id", "cwd": "/work/claude", "type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "answer"}]}}).to_string(),
         ];
         fs::write(root.join("claude-id.jsonl"), lines.join("\n") + "\n").unwrap();

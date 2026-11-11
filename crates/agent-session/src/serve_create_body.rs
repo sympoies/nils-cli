@@ -30,6 +30,8 @@ pub(super) struct CreateBody {
     pub(super) title_state: Option<SessionTitleStateInput>,
     pub(super) id: Option<String>,
     pub(super) prompt: Option<String>,
+    #[serde(flatten)]
+    pub(super) notice: crate::notice::StartNoticeArgs,
     #[serde(default, alias = "resume_id")]
     pub(super) provider_resume_id: Option<String>,
     /// Account-bound new-record resume; accepted only by the versioned resume route.
@@ -46,6 +48,8 @@ pub(super) struct CreateBody {
     #[serde(default)]
     pub(super) codex_account: Option<String>,
     #[serde(default)]
+    pub(super) account: Option<String>,
+    #[serde(default)]
     pub(super) claude_account: Option<String>,
     /// `session-lineage-work-v1`: who started this session, as the caller
     /// (Agent Console) states it. Absent: an operator root over HTTP.
@@ -59,11 +63,47 @@ pub(super) struct CreateBody {
     pub(super) role: Option<Value>,
 }
 
+/// Preserve key presence while decoding account fields; remove with #3468.
+pub(super) struct CheckedCreateBody(pub(super) CreateBody);
+
+impl<'de> Deserialize<'de> for CheckedCreateBody {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        if let Some(object) = value.as_object()
+            && ["account", "codex_account", "claude_account"]
+                .iter()
+                .any(|key| object.get(*key).is_some_and(Value::is_null))
+        {
+            let mut fields = object.clone();
+            crate::coordination::resume_preflight::normalize_account(&mut fields)
+                .map_err(|_| serde::de::Error::custom("conflicting account fields"))?;
+        }
+        serde_json::from_value(value)
+            .map(Self)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 fn default_origin() -> Value {
     serde_json::json!({"parent":null})
 }
 
 impl CreateBody {
+    /// Translate the prior resume wire fields during the #3468 transition.
+    pub(super) fn normalize_resume_account(&mut self) -> Result<(), CliError> {
+        let codex = self.codex_account.take();
+        let claude = self.claude_account.take();
+        if codex.is_some() && claude.is_some()
+            || self.account.is_some() && (codex.is_some() || claude.is_some())
+            || codex.is_some() && self.agent != "codex"
+            || claude.is_some() && self.agent != "claude"
+        {
+            return Err(crate::start_resume::refusal("resume-unsupported"));
+        }
+        self.account = self.account.take().or(codex).or(claude);
+        Ok(())
+    }
+
     pub(super) fn operation(&self) -> &'static str {
         if self.provider_resume_id.is_some() {
             "import"
@@ -183,4 +223,26 @@ pub(super) fn validate_create_accounts(
         }
     }
     Ok(())
+}
+
+/// Capabilities of the daemon session list and its related routes.
+pub(super) fn session_capabilities() -> Value {
+    serde_json::json!({
+        "profile_resume_import": true,
+        "managed_resume_command": false,
+        "resume_blocked_reason": true,
+        "last_prompt": true,
+        "last_message": true,
+        "history": true,
+        "archive": true,
+        "group_archive": true,
+        "history_star": true,
+        "managed_account_handoff": crate::codex_app_server::MANAGED_ACCOUNT_HANDOFF_CAPABILITY,
+        "claude_account_switch": crate::claude_account::broker_is_configured(),
+        "codex_account_switch": crate::codex_account::broker_is_configured(),
+        "session_retitle_v2": true,
+        "session_retitle_v3": true,
+        "session_retitle_v3_receipts": true,
+        "session_account_field": true,
+    })
 }

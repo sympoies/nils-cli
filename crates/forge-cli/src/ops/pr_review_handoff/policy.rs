@@ -2,6 +2,9 @@
 use std::process::Command;
 use std::time::Duration;
 
+mod attestation;
+pub use attestation::SupervisorAttestation;
+
 use super::{diagnostics, fail};
 use crate::config::ForgeConfig;
 use crate::error::ForgeError;
@@ -80,11 +83,17 @@ pub(super) fn trusted_supervisor_policy(
     ))
 }
 
-/// Only a supervisor configured at the provider base may take over. An empty
+/// Match a session digest or authenticated attested role at the provider base. An empty
 /// list is named separately so the operator knows to configure one.
-pub(super) fn require_supervisor(supervisors: &[String], actor: &str) -> Result<(), ForgeError> {
+pub(super) fn require_supervisor(
+    supervisors: &[String],
+    actor: &str,
+) -> Result<Option<SupervisorAttestation>, ForgeError> {
     if supervisors.iter().any(|supervisor| supervisor == actor) {
-        return Ok(());
+        return Ok(None);
+    }
+    if supervisors.iter().any(|s| s.starts_with("role:")) {
+        return attestation::authenticate(supervisors, actor).map(Some);
     }
     Err(fail(
         "review_writer_conflict",

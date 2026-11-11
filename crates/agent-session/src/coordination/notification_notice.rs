@@ -1,38 +1,125 @@
-//! Mailbox notice bytes share generation ownership with plain reminder attempts.
-use super::{CliContext, NotificationCandidate, Registry, coalescing, observation};
+//! Current mailbox notice bytes share generation and delivery ownership.
+use super::{CliContext, NotificationCandidate, Registry, coalescing};
 use crate::{CliError, SessionRecord, notice::NoticeEnvelope};
 
 pub(super) const FORMAT: &str = "mailbox-notice.v1";
 
 pub(super) fn encode_counts(
+    context: &CliContext,
     registry: &Registry,
     session: &str,
     incarnation: &str,
     now: i64,
-) -> String {
-    let summary = coalescing::explained_summary(registry.messages.iter().filter(|item| {
-        item.recipient_session_id == session
-            && item.recipient_incarnation == incarnation
-            && item.state == "unread"
-            && !item.notification_suppressed
-            && item.expires_at_epoch > now
-    }));
-    let body = crate::notice::render_summary("mailbox.wake", &summary, "");
-    NoticeEnvelope::new("mailbox.wake", "agent-session", None)
+) -> Option<String> {
+    if super::super::mailbox_quota::has_pending(registry, session, incarnation, now) {
+        return Some(nils_common::coordination_projection::MAILBOX_QUOTA_ALERT_NOTICE.into());
+    }
+    let messages: Vec<_> = registry
+        .messages
+        .iter()
+        .filter(|item| {
+            item.recipient_session_id == session
+                && item.recipient_incarnation == incarnation
+                && item.state == "unread"
+                && !item.notification_suppressed
+                && item.expires_at_epoch > now
+        })
+        .collect();
+    let summary = coalescing::explained_summary(messages.iter().copied());
+    let relations = crate::load_session_record(context, session)
+        .ok()
+        .map(|record| super::super::mailbox_sender_relation::SenderRelations::new(context, &record))
+        .unwrap_or_default();
+    let executable = trusted_executable()?;
+    let path = shell_words::quote(executable.to_str()?);
+    let recipient = shell_words::quote(session);
+    let guidance = format!(
+        "Read: {path} message inbox --session {recipient} --format json\nShow: {path} message show --session {recipient} --message MESSAGE_ID --format json\n{}",
+        relations.notice_guidance(&messages)
+    );
+    let body = crate::notice::render_summary("mailbox.wake", &summary, &guidance);
+    let notice = NoticeEnvelope::new("mailbox.wake", "agent-session", None)
         .expect("fixed mailbox notice metadata")
-        .encode(&body)
-        .expect("nonempty count reminder")
+        .encode(&crate::notice::generated::body(&body))
+        .expect("nonempty count reminder");
+    (notice.len() <= 4096).then_some(notice)
 }
 
-pub(super) fn attempt_format(prompt: Option<&str>) -> &'static str {
-    match prompt {
-        Some(text) if crate::notice::parse_notice(text).is_some() => FORMAT,
-        Some(_) => "mailbox-counts.v1",
-        None => observation::PROMPT_FORMAT,
+fn trusted_executable() -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let executable = |path: &std::path::Path| {
+        path.is_absolute()
+            && std::fs::metadata(path)
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    };
+    if let Some(path) = std::env::var_os("AGENT_SESSION_BIN")
+        .map(std::path::PathBuf::from)
+        .filter(|p| executable(p))
+    {
+        return Some(path);
     }
+    if let Some(roots) = std::env::var_os("AGENT_RUNTIME_TRUSTED_CLI_ROOT")
+        && let Some(path) = std::env::split_paths(&roots)
+            .find_map(|root| nils_common::session_binary::trusted_root(&root))
+    {
+        return Some(path);
+    }
+    #[cfg(test)]
+    return crate::resolve_agent_session_executable().ok();
+    #[cfg(not(test))]
+    let current = std::env::current_exe().ok()?;
+    #[cfg(not(test))]
+    crate::stable_executable::launch_executable_from(&current, &[])
+        .ok()
+        .map(|launch| launch.path)
+}
+
+pub(super) fn encode_summary(summary: &str, session: &str) -> Option<String> {
+    let executable = trusted_executable()?;
+    let path = shell_words::quote(executable.to_str()?);
+    let recipient = shell_words::quote(session);
+    let guidance = format!(
+        "Read: {path} message inbox --session {recipient} --format json\nShow: {path} message show --session {recipient} --message MESSAGE_ID --format json\nsender_relation=peer\n{}",
+        nils_common::mailbox_notice::VERIFY_GUIDANCE
+    );
+    let body = crate::notice::render_summary("mailbox.wake", summary, &guidance);
+    let notice = NoticeEnvelope::new("mailbox.wake", "agent-session", None)
+        .ok()?
+        .encode(&crate::notice::generated::body(&body))
+        .ok()?;
+    (notice.len() <= 4096).then_some(notice)
 }
 
 impl NotificationCandidate {
+    pub(crate) fn text_wake_prompt(&self) -> String {
+        format!(
+            "Unread mailbox messages; run {} message inbox",
+            crate::executable()
+        )
+    }
+
+    pub(crate) fn is_text_wake(&self) -> bool {
+        self.prompt.as_deref() == Some(self.text_wake_prompt().as_str())
+    }
+
+    /// Preserve the selected route's configuration cause on both queued and
+    /// consumed receipts, without changing their scheduling or attempt state.
+    pub(crate) fn record_text_wake_reason(
+        &self,
+        context: &CliContext,
+        reason: &str,
+    ) -> Result<(), CliError> {
+        let mut locked = super::super::lock_registry(context)?;
+        let key = super::receipt_key(&self.target_session_id, &self.target_incarnation);
+        if let Some(receipt) = locked.registry.notifications.get_mut(&key)
+            && receipt.generation == self.generation
+        {
+            receipt.last_reason_detail = Some(reason.to_owned());
+            locked.save()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn is_notice(&self) -> bool {
         self.prompt
             .as_deref()
@@ -47,23 +134,34 @@ impl NotificationCandidate {
         record: &SessionRecord,
     ) -> Result<(), CliError> {
         if !crate::notice::writers_enabled() {
-            return Ok(());
+            return Err(CliError::unavailable(
+                "notice-writers-disabled",
+                "notice writers are disabled",
+                None,
+            ));
         }
         if record.agent == "claude"
             && crate::send::claude_notice::runtime::readiness(context, record).is_none()
         {
-            if crate::send::claude_notice::attach::known_unsupported(context, record) {
-                return Ok(());
-            }
             return Err(crate::send::claude_notice::runtime::unavailable());
         }
         let locked = super::super::lock_registry_observational(context)?;
-        self.prompt = Some(encode_counts(
-            &locked.registry,
-            &self.target_session_id,
-            &self.target_incarnation,
-            jiff::Timestamp::now().as_second(),
-        ));
+        self.prompt = Some(
+            encode_counts(
+                context,
+                &locked.registry,
+                &self.target_session_id,
+                &self.target_incarnation,
+                jiff::Timestamp::now().as_second(),
+            )
+            .ok_or_else(|| {
+                CliError::unavailable(
+                    "mailbox-helper-unavailable",
+                    "trusted agent-session executable unavailable",
+                    None,
+                )
+            })?,
+        );
         Ok(())
     }
 }
@@ -75,11 +173,53 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn mailbox_wake_bytes_match_merged_contract_including_long_counts() {
+    fn generated_mailbox_summary_prevents_trailing_ascii_spaces_before_encoding() {
+        let encoded =
+            encode_summary("generated reminder \nnext line \r\nlast line", "recipient").unwrap();
+        let parsed = crate::notice::parse_notice(&encoded).unwrap();
+        assert_eq!(
+            parsed.body.lines().take(3).collect::<Vec<_>>().join("\n"),
+            "Mailbox: generated reminder\nnext line\nlast line"
+        );
+    }
+
+    #[test]
+    fn mailbox_wake_includes_recipient_read_command() {
+        let temp = tempfile::tempdir().unwrap();
+        let context = CliContext {
+            state_dir: temp.path().into(),
+            host: None,
+        };
+        let encoded = encode_counts(
+            &context,
+            &Registry::default(),
+            "recipient",
+            "incarnation",
+            100,
+        )
+        .unwrap();
+        let path = trusted_executable().unwrap();
+        let executable = shell_words::quote(path.to_str().unwrap());
+        assert!(encoded.contains(&format!(
+            "Read: {executable} message inbox --session recipient --format json"
+        )));
+        assert!(encoded.contains(&format!(
+            "Show: {executable} message show --session recipient --message MESSAGE_ID --format json"
+        )));
+        assert!(encoded.len() <= 4096);
+    }
+
+    #[test]
+    fn mailbox_wake_preserves_summary_bytes_including_long_counts() {
         let corpus: serde_json::Value = serde_json::from_str(include_str!(
             "../../docs/specs/fixtures/history-row-classes-v1.json"
         ))
         .unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let context = CliContext {
+            state_dir: temp.path().into(),
+            host: None,
+        };
         for case in corpus["mailbox_byte_invariance"].as_array().unwrap() {
             let mut registry = Registry::default();
             let categories: &[&str] = match case["name"].as_str().unwrap() {
@@ -116,10 +256,15 @@ mod tests {
                     ))
                     .unwrap()
             } else {
-                encode_counts(&registry, "recipient", "incarnation", 100)
+                encode_counts(&context, &registry, "recipient", "incarnation", 100).unwrap()
             };
             assert_eq!(
-                encoded.as_bytes(),
+                encoded
+                    .lines()
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .as_bytes(),
                 case["before"].as_str().unwrap().as_bytes(),
                 "{}",
                 case["name"]

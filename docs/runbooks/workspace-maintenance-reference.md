@@ -476,12 +476,12 @@ Notes:
 - Because doctests are not included in nextest, the entrypoint also runs
   `cargo test --workspace --doc` when `NILS_CLI_TEST_RUNNER=nextest`.
 - `NILS_CLI_SKIP_DOCTESTS=1` skips that doc run in both the `nextest` and
-  `llvm-cov` runner modes. CI sets it only on `test_macos` (llvm-cov runner),
-  because the Linux `test` job already runs the same doc tests. It does not
+  `llvm-cov` runner modes. The scoped checks honor it; it does not
   affect the trailing doc run of `--with-coverage`.
-- `NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS=1` skips the stale-test and completion
-  freshness/parity audits, whose result does not depend on the OS. CI sets it
-  only on `test_macos`; the Linux `test` job runs them.
+- `NILS_CLI_NEXTEST_PARTITION=count:M/N` (with `llvm-cov`) runs only that
+  instrumented nextest partition and writes its LCOV report; no audit, script
+  test, fmt, clippy, doc test or floor runs. CI sets it on `test_macos_partition`
+  and merges the reports with `scripts/ci/merge-lcov.py`.
 
 ### 3.4 Full coverage flow (CI gate / explicit local parity)
 
@@ -489,8 +489,10 @@ The full coverage gate is mandatory for nightly, manual full CI and releases
 (total workspace line coverage stays `>= 85.00%`). The shared
 `.github/workflows/full-validation.yml` runs full Linux tests and doctests,
 Linux containment and dependency policy alongside full instrumented macOS
-tests. `test_macos` enforces the floor with `NILS_CLI_TEST_RUNNER=llvm-cov`;
-`coverage` requires its nonempty LCOV and publishes the summary. The final gate
+tests. Two `test_macos_partition` jobs run the instrumented tests
+(`NILS_CLI_TEST_RUNNER=llvm-cov`) and `test_macos` merges their LCOV reports and
+enforces the floor; `coverage` requires the merged nonempty LCOV and publishes
+the summary. The final gate
 requires every lane to succeed. Release builds cannot start before that gate
 passes on the exact tagged SHA.
 
@@ -512,6 +514,19 @@ The maintainer applies the ruleset migration
 in the [delivery flow](delivery-and-releases.md). Full macOS has 75 minutes.
 See [the CI consumption contract](../specs/affected-scope-ci-consumption-v1.md)
 for candidate bindings and receipts.
+
+Hosted macOS acquisition failures remain gate failures. Before rejecting an
+unsuccessful macOS lane, the Linux queue check and full-validation gate inspect
+the current run attempt through read-only Actions and Checks APIs. They report
+`hosted runner capacity (not acquired)` only for a cancelled expected macOS job
+with no steps, `runner_id=0`, an empty runner name, and GitHub's exact failure
+annotation: `The job was not acquired by Runner of type hosted even after multiple attempts`.
+Queue timestamps alone are not proof that a runner executed a job. Real test
+failures, timeouts, ordinary cancellations, and unavailable evidence retain
+their failing status. Both macOS lanes stay on hosted Apple Silicon runners;
+there is no automatic retry, alternate architecture, or validation exemption.
+After a capacity-only failure, the maintainer can re-enqueue the merge group
+when hosted capacity recovers. See [the capacity analysis in #3332](https://github.com/sympoies/nils-cli/issues/3332).
 
 Normal local development does not need to run coverage before opening a PR:
 
@@ -560,6 +575,8 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `node scripts/ci/tests/release-ci-gate.test.cjs`
 - `node scripts/ci/tests/full-validation-gate.test.cjs`
 - `node scripts/ci/tests/nightly-tracker.test.cjs`
+- `python3 scripts/ci/tests/slow-test-ratchet.test.py` and `python3 scripts/ci/slow-test-ratchet.py --check-baseline`
+  (advisory slow-test ratchet; `scripts/ci/slow-test-baseline.tsv` may only shrink)
 - `python3 scripts/ci/tests/delivery-workflow.test.py`
 - `python3 scripts/ci/tests/macos-clippy.test.py` (queue scope and compile/lint-only contract)
 - `bash scripts/ci/tests/dependabot-third-party-workflow-contract.test.sh`
@@ -788,6 +805,12 @@ at the same commit or an identical tree
 (`.github/scripts/release-validation-reuse.cjs`). Only that admits release
 builds; ordinary PR or scoped queue checks cannot substitute. It then builds exactly three release tarballs: Linux x86_64/aarch64 and macOS
 aarch64. Intel macOS release artifacts are no longer supported.
+
+Both Linux targets use Ubuntu 24.04 runners and support glibc 2.39 or newer.
+Before artifact upload,
+[the glibc gate](../../scripts/ci/check-release-glibc.py) checks every packaged
+Linux binary with `readelf --version-info` and rejects symbol requirements newer
+than its single declared glibc baseline.
 
 Release tarballs include:
 

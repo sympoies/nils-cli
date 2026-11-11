@@ -70,6 +70,25 @@ class DeliveryTests(unittest.TestCase):
         for event in ('pull_request', 'merge_group'):
             self.assertIn('--ci-merge-plan', fixture.dispatch('test', event))
 
+    def test_capacity_diagnostics_reach_both_strict_gates(self):
+        linux = job(workflow('ci.yml'), 'test')
+        gate = job(workflow('full-validation.yml'), 'gate')
+        diagnostic = '      - name: Diagnose unacquired macOS runner\n'
+        for body, condition in ((linux, "github.event_name == 'merge_group' && needs.macos_clippy.result != 'success'"),
+                                (gate, "needs.test_macos.result != 'success'")):
+            step = body.split(diagnostic, 1)[1].split('\n      - name:', 1)[0]
+            self.assertIn(f'if: {condition}', step)
+            self.assertIn("require('./.github/scripts/macos-runner-capacity.cjs').reportMacosCapacity({github, context, core})", step)
+            self.assertIn('actions: read', body)
+            self.assertRegex(body, r'checks: (read|write)')
+        self.assertLess(linux.index('name: Checkout'), linux.index(diagnostic))
+        self.assertLess(linux.index(diagnostic), linux.index('name: Require macOS queue compile and Clippy'))
+        self.assertIn('id: macos_capacity', gate)
+        self.assertIn("MACOS_JOBS: ${{ steps.macos_capacity.outputs.jobs || '[]' }}", gate)
+        self.assertIn('macosJobs: JSON.parse(process.env.MACOS_JOBS)', gate)
+        for filename in ('ci.yml', 'release.yml'):
+            self.assertIn('actions: read', job(workflow(filename), 'full_validation'))
+
     def test_release_build_depends_on_full_validation_of_authorized_sha(self):
         release = workflow('release.yml')
         verify = job(release, 'verify_ci')
@@ -100,20 +119,26 @@ class DeliveryTests(unittest.TestCase):
         self.assertNotIn('--docs-only', full)
         self.assertNotIn('release_only', full)
         self.assertNotIn('PR_DEFER_FULL', full)
-        for name in ('test', 'test_containment', 'test_macos', 'cargo_deny', 'coverage', 'gate'):
+        for name in ('test', 'test_containment', 'test_macos_partition', 'test_macos', 'cargo_deny', 'coverage', 'gate'):
             body = job(full, name)
             self.assertIn('ref: ${{ github.sha }}', body)
             self.assertIn('persist-credentials: false', body)
             self.assertIn('timeout-minutes:', body)
-        macos = job(full, 'test_macos')
-        self.assertIn('runs-on: macos-15', macos)
-        self.assertIn('timeout-minutes: 75', macos)
-        self.assertIn('NILS_CLI_COVERAGE_FAIL_UNDER_LINES: "85"', macos)
-        self.assertIn('NILS_CLI_TEST_RUNNER: llvm-cov', macos)
+        partition = job(full, 'test_macos_partition')
+        self.assertIn('runs-on: macos-15', partition)
+        self.assertIn('partition: [1, 2]', partition)
+        self.assertIn('NILS_CLI_NEXTEST_PARTITION: count:${{ matrix.partition }}/2', partition)
+        self.assertIn('NILS_CLI_TEST_RUNNER: llvm-cov', partition)
+        self.assertNotIn('fail-under', partition)
+        merge = job(full, 'test_macos')
+        self.assertIn('needs: test_macos_partition', merge)
+        self.assertIn('NILS_CLI_COVERAGE_FAIL_UNDER_LINES: "85"', merge)
+        self.assertIn('scripts/ci/merge-lcov.py', merge)
+        self.assertIn('Full validation marker', merge)
         self.assertIn('test -s target/coverage/lcov.info', job(full, 'coverage'))
         gate = job(full, 'gate')
         self.assertIn('if: always()', gate)
-        self.assertIn('needs: [test, test_macos, coverage, test_containment, cargo_deny]', gate)
+        self.assertIn('needs: [test, test_macos, coverage, test_containment, cargo_deny, isolation_guard]', gate)
         self.assertIn('requireFullValidation', gate)
         self.assertIn('toJSON(needs)', gate)
         self.assertIn('git rev-parse HEAD', gate)
@@ -122,15 +147,13 @@ class DeliveryTests(unittest.TestCase):
     def test_full_checks_have_fragment_validator_prerequisites(self):
         full = workflow('full-validation.yml')
         self.assertIn('DEVLOG_LAYOUT: fragments', full)
-        for name in ('test', 'test_macos'):
-            body = job(full, name)
-            self.assertIn('cargo build --locked -p nils-devlog', body)
-            self.assertLess(body.index('Build devlog validator'), body.index('Nils CLI checks'))
+        body = job(full, 'test')
+        self.assertIn('cargo build --locked -p nils-devlog', body)
+        self.assertLess(body.index('Build devlog validator'), body.index('Nils CLI checks'))
 
     def test_validator_setup_exposes_only_devlog_to_later_steps(self):
         setups = (('ci.yml', 'test', 'Build repository devlog checker'),
-                  ('full-validation.yml', 'test', 'Build devlog validator'),
-                  ('full-validation.yml', 'test_macos', 'Build devlog validator'))
+                  ('full-validation.yml', 'test', 'Build devlog validator'))
         for filename, name, step_name in setups:
             with self.subTest(workflow=filename, job=name), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)

@@ -14,6 +14,7 @@ pub(crate) mod attach;
 mod bridge;
 #[cfg(test)]
 mod module_contract;
+mod refusal;
 pub(crate) mod runtime;
 pub(crate) mod store;
 pub(crate) mod version;
@@ -46,7 +47,7 @@ impl Launch {
             generation: record
                 .runtime
                 .as_ref()
-                .ok_or_else(runtime::unavailable)?
+                .ok_or_else(|| refusal::unavailable("runtime-missing"))?
                 .generation,
             profile: crate::session_agent_profile(record).map(str::to_string),
         })
@@ -59,8 +60,10 @@ pub(crate) struct Binding {
     pub(crate) launch: Launch,
     pub(crate) provider: String,
     pub(crate) provider_session_id: String,
-    pub(crate) provider_version: String,
-    pub(crate) module_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) provider_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) module_sha256: Option<String>,
 }
 
 fn unconfirmed(record: &SessionRecord, stage: &str) -> CliError {
@@ -96,6 +99,14 @@ pub(super) fn deliver(
         verify_composer: true,
         deadline,
     };
+    let preserve_draft = attempt.recovery.is_some();
+    let check = |stage| {
+        if preserve_draft {
+            admission.check_preserving_draft(stage)
+        } else {
+            admission.check(None, stage)
+        }
+    };
     if text.len() > crate::provider_prompt::MAX_PROVIDER_PROMPT_BYTES
         || text.contains('\r')
         || crate::notice::parse_notice(&text).is_none()
@@ -112,7 +123,7 @@ pub(super) fn deliver(
         crate::provider_prompt::native_notice::Baseline::capture(&record).map_err(|error| {
             match error {
                 CaptureError::NoTranscript => runtime::baseline_unavailable(&record),
-                CaptureError::Unavailable => runtime::unavailable(),
+                CaptureError::Unavailable => refusal::unavailable("baseline-unprovable"),
             }
         })?;
     let dir = runtime::module_dir(&context.state_dir, &record)?;
@@ -121,37 +132,27 @@ pub(super) fn deliver(
         if error.kind() == std::io::ErrorKind::WouldBlock {
             CliError::runtime("send-session-not-idle", "another native notice is in progress",
                 Some(json!({"id":record.id,"guard":"idle","stage":"admission","atomic":false,"pasted":false,"submitted":false})))
-        } else { runtime::unavailable() }
+        } else { refusal::unavailable("listener-open") }
     })?;
     let consumed = Cell::new(false);
     let mut token = None;
     let mut stage = "admission";
     let mut failure_reason = store::Reason::Guard;
     let result = (|| {
-        let connection = listener
-            .receive(deadline)
-            .map_err(|_| runtime::unavailable())?;
-        let request: bridge::Authorize = connection.parse().map_err(|_| runtime::unavailable())?;
-        if connection.path != "/authorize"
-            || request.schema_version != "agent-session.claude-notice-authorize.v1"
-            || request.op != op
-            || request.binding != ready.binding
-            || request.nonce != bootstrap.nonce
-            || !request.terminal
-            || !request.box_empty
-            || request.cursor != 0
-        {
-            return Err(runtime::unavailable());
-        }
+        let connection = listener.receive(deadline).map_err(refusal::receive)?;
+        let request: bridge::Authorize = connection
+            .parse()
+            .map_err(|_| refusal::unavailable("authorization-payload"))?;
+        refusal::authorize(&connection.path, &request, &op, &bootstrap, &ready)?;
         // A live, exact native request is necessary before consuming any key.
         admission.check_key()?;
-        admission.check(None, "admission")?;
-        if runtime::readiness(context, &record)
-            .is_none_or(|(boot, now)| boot.nonce != bootstrap.nonce || now.binding != ready.binding)
-        {
-            return Err(runtime::unavailable());
+        check("admission")?;
+        let (boot, now) = runtime::readiness(context, &record)
+            .ok_or_else(|| refusal::unavailable("readiness-unavailable"))?;
+        if boot.nonce != bootstrap.nonce || now.binding != ready.binding {
+            return Err(refusal::unavailable("readiness-changed"));
         }
-        let claim = store::Claim::new(
+        let mut claim = store::Claim::new(
             op.clone(),
             ready.binding.clone(),
             &text,
@@ -159,18 +160,38 @@ pub(super) fn deliver(
             baseline.stamp.clone(),
             deadline.saturating_duration_since(attempt.started),
         );
-        token = Some(store::consume(context, claim, deadline, || {
-            consumed.set(true);
-            admission.claim_key()
-        })?);
+        claim.recovery = attempt.recovery.clone();
+        token = Some(
+            store::consume(context, claim, deadline, || {
+                consumed.set(true);
+                admission.claim_key()
+            })
+            .map_err(|error| {
+                if error.code() == "notice-native-unavailable"
+                    && error
+                        .details()
+                        .and_then(|details| details.get("reason"))
+                        .is_none()
+                {
+                    refusal::unavailable("claim-unavailable")
+                } else {
+                    error
+                }
+            })?,
+        );
         stage = "claimed";
-        admission.check(None, "claimed")?;
+        check("claimed")?;
         let mut prepared = false;
-        super::prepare_guarded_input(context, &mut record, true, &mut prepared)?;
+        if attempt.recovery.is_none() {
+            super::prepare_guarded_input(context, &mut record, true, &mut prepared)?;
+        }
         record.updated_at = jiff::Zoned::now().timestamp().to_string();
         crate::write_session_record(context, &record)?;
-        admission.check(None, "claimed")?;
+        check("claimed")?;
         bridge::remaining(deadline).map_err(|_| runtime::unavailable())?;
+        if let Some(candidate) = attempt.notification {
+            crate::serve::begin_mailbox_notice(context, &record, tmux, candidate)?;
+        }
         // Required synchronous provider hooks must be able to acquire this
         // record lock BEFORE the module enters prompt.submit.
         drop(manual.record_lock.take());

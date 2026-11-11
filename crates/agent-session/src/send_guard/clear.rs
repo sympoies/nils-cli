@@ -14,17 +14,13 @@ const CLEAR_POLL: Duration = Duration::from_millis(100);
 const CLEAR_SETTLE: Duration = Duration::from_millis(300);
 
 impl Admission<'_> {
-    /// Report a failure that happened after the send pasted `text`. The text is
-    /// removed only when its ownership is observable: an exact match or a
-    /// countable-cell prefix of a line admitted with an empty composer. An appended
-    /// draft is preserved. Every outcome includes a fresh input observation.
-    pub(crate) fn report_pasted_input(
+    pub(super) fn report_cleared_input(
         &self,
         mut error: CliError,
         text: &str,
         observed_paste: bool,
+        (remaining, cleared): (Option<String>, bool),
     ) -> CliError {
-        let (remaining, cleared) = self.clear_pasted(text, observed_paste);
         let remaining_input = match remaining.as_deref() {
             Some("") => "empty",
             Some(input) if send_submit::composer_holds(&self.record.agent, input, text) => {
@@ -64,9 +60,15 @@ impl Admission<'_> {
         error
     }
 
-    fn clear_pasted(&self, text: &str, observed_paste: bool) -> (Option<String>, bool) {
+    pub(super) fn clear_pasted(&self, text: &str, observed_paste: bool) -> (Option<String>, bool) {
         let cleanup = Admission {
-            deadline: Instant::now() + CLEAR_BUDGET,
+            deadline: Instant::now()
+                + if self.record.agent == "codex" && self.args.notice_envelope {
+                    // The wrapped notice proof needs multiple cursor observations.
+                    crate::send::guarded_hold_budget(self.record, true)
+                } else {
+                    CLEAR_BUDGET
+                },
             context: self.context,
             record: self.record,
             args: self.args,
@@ -88,6 +90,9 @@ impl Admission<'_> {
     fn clear(&self, text: &str, observed_paste: bool, exact_draft: bool) -> Option<(String, bool)> {
         let target = format!("{}:0.0", self.record.tmux_session);
         let observe = |stage: &str| {
+            if !exact_draft && self.record.agent == "codex" && self.args.notice_envelope {
+                return self.codex_notice_input(text, stage);
+            }
             let pane = capture_styled(self.tmux_bin, &target, self.timeout(stage).ok()?)?;
             send_submit::cleanup_composer_input(&self.record.agent, &pane, Some(text))
         };
@@ -258,13 +263,22 @@ impl Admission<'_> {
         }
         self.identity("cleanup").ok()?;
         // One repeated-key command keeps long pastes inside the cleanup budget.
+        let characters =
+            if !exact_draft && self.record.agent == "codex" && self.args.notice_envelope {
+                let pane = capture_styled(self.tmux_bin, &target, self.timeout("cleanup").ok()?)?;
+                // A collapsed Codex paste is one atomic editing unit, regardless
+                // of its expanded size. Reobserve before selecting deletion keys.
+                send_submit::codex_notice_cursor_path(&pane, text)?.characters
+            } else {
+                text.chars().count()
+            };
         let mut command = std::process::Command::new(self.tmux_bin);
         command.args([
             "send-keys",
             "-t",
             &target,
             "-N",
-            &text.chars().count().to_string(),
+            &characters.to_string(),
             "BSpace",
         ]);
         let timeout = self.timeout("cleanup").ok()?;

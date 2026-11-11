@@ -26,14 +26,17 @@ pub(super) async fn enrich_last_prompts(
         if session.status == "stopped" || !matches!(session.agent.as_str(), "codex" | "claude") {
             continue;
         }
-        let context = context.clone();
+        let owned = context.clone();
         let id = session.id.clone();
         let Ok(Ok(record)) =
-            tokio::task::spawn_blocking(move || load_session_record(&context, &id)).await
+            tokio::task::spawn_blocking(move || load_session_record(&owned, &id)).await
         else {
             continue;
         };
-        if let Some(projection) = registry.last_prompt_projection(&record).await {
+        if let Some(projection) = registry
+            .last_prompt_projection(&record, Some(&context.state_dir))
+            .await
+        {
             session.previews = crate::provider_prompt::SessionPreviews {
                 last_prompt_state: Some(projection.state),
                 last_prompt_continuity: projection.continuity,

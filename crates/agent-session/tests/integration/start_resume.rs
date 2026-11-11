@@ -2,6 +2,36 @@ use nils_test_support::cmd::{CmdOptions, run_resolved};
 use pretty_assertions::assert_eq;
 
 #[test]
+fn fresh_direct_start_with_account_reports_usage_refusal_without_creating_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let state = tmp.path().join("state");
+    let out = run_resolved(
+        "agent-session",
+        &[
+            "--state-dir",
+            state.to_str().unwrap(),
+            "start",
+            "--agent",
+            "codex",
+            "--account",
+            "example",
+            "--format",
+            "json",
+        ],
+        &CmdOptions::new().with_env_remove_prefix("AGENT_SESSION_"),
+    );
+    assert_eq!(out.code, 64);
+    let response = out.stdout_json();
+    assert_eq!(response["error"]["code"], "start-account-unsupported");
+    assert_eq!(
+        response["error"]["message"],
+        "--account is only supported with --via-console or --resume"
+    );
+    assert_eq!(response["error"]["details"]["session_created"], false);
+    assert!(!state.exists());
+}
+
+#[test]
 fn missing_resume_history_is_a_terminal_read_only_admission_refusal() {
     let tmp = tempfile::tempdir().unwrap();
     for check in [true, false] {
@@ -50,15 +80,11 @@ fn missing_resume_history_is_a_terminal_read_only_admission_refusal() {
 }
 
 #[test]
-fn malformed_resume_and_unsupported_provider_are_typed_before_creation() {
+fn malformed_provider_resume_ids_are_typed_before_creation() {
     let tmp = tempfile::tempdir().unwrap();
     for (agent, id, code) in [
         ("claude", "../invalid", "resume-unsupported"),
-        (
-            "codex",
-            "00000000-0000-4000-8000-000000000007",
-            "resume-unsupported",
-        ),
+        ("codex", "../invalid", "resume-unsupported"),
     ] {
         let state = tmp.path().join(agent);
         let out = run_resolved(
@@ -495,3 +521,6 @@ fn held_conversation_lock_is_a_terminal_precreate_refusal() {
 mod console;
 #[path = "start_resume/deleted_source.rs"]
 mod deleted_source;
+
+#[path = "start_resume/codex.rs"]
+mod codex;

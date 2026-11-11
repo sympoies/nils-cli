@@ -42,6 +42,7 @@ impl ResumedFixture {
             resume_args: vec![], extra: BTreeMap::new(),
         });
         crate::write_session_record(&state.context, &record).unwrap();
+        record = fixture::bind(&state.context, "beta", temp.path(), "resumed-thread");
         let starting = crate::activity::activate_runtime(&state.context, &record).unwrap();
         assert_eq!(starting.phase, activity::TurnPhase::Starting);
         assert!(starting.current_turn.is_none());
@@ -111,17 +112,20 @@ impl Drop for ResumedFixture {
 
 #[tokio::test]
 async fn resumed_codex_without_turn_end_delivers_one_wake_after_observed_idle() {
-    let _lock = GlobalStateLock::new();
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let mut fixture = ResumedFixture::new("idle").await;
     let state = fixture.state.clone();
     let drain = tokio::spawn(async move { drain_coordination_notifications(state).await });
     tokio::select! {
         biased;
         result = fixture.commands.recv() => {
-            let Some(codex_app_server::ControlCommand::Prompt { message, response }) = result else {
+            let Some(codex_app_server::ControlCommand::Prompt { message, client_message_id, response, .. }) = result else {
                 panic!("expected one wake");
             };
-            assert_eq!(message, "Mailbox: agent-session message inbox");
+            assert!(crate::notice::parse_notice(&message).is_some());
+            assert!(!message.contains("notification reconciliation fixture"));
+            fixture::append(&fixture::path(fixture.temp.path(), "beta"), &message, client_message_id.as_deref().unwrap(), "wake-turn");
             response.send(Ok("wake-turn".into())).unwrap();
         }
         () = async { while !drain.is_finished() { tokio::task::yield_now().await; } } => {}
@@ -141,7 +145,8 @@ async fn resumed_codex_without_turn_end_delivers_one_wake_after_observed_idle() 
 
 #[tokio::test]
 async fn resumed_codex_busy_or_loading_without_turn_end_defers_wake() {
-    let _lock = GlobalStateLock::new();
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     for status in ["active", "loading", "pending"] {
         let mut fixture = ResumedFixture::new(status).await;
         for _ in 0..2 {
@@ -149,7 +154,11 @@ async fn resumed_codex_busy_or_loading_without_turn_end_defers_wake() {
             drain_coordination_notifications(fixture.state.clone()).await;
             assert_eq!(notification_fixture(fixture.temp.path())["notified_generation"], 0);
             assert!(fixture.commands.try_recv().is_err());
-            assert_eq!(activity::state_for_view(&fixture.state.context, &fixture.record).unwrap().phase,
+            // This generation's fixture start predates the observation window.
+            let published = activity::state_for_view(&fixture.state.context, &fixture.record).unwrap();
+            assert_eq!(published.phase, activity::TurnPhase::Unknown);
+            assert_eq!(published.diagnostic.as_ref().unwrap().reason, "codex_startup_idle_unverified");
+            assert_eq!(activity::controller_state_for_record(&fixture.state.context, &fixture.record).unwrap().phase,
                 activity::TurnPhase::Starting);
         }
     }

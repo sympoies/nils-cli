@@ -16,8 +16,12 @@ mod compact_tests;
 mod image_provenance;
 mod incremental;
 mod row_classes;
+mod upload_ownership;
 use crate::provider_prompt::row_classes::{Compaction, RowClass};
+#[cfg(test)]
 pub(super) use incremental::read_messages_incremental_from_reader;
+pub(super) use incremental::read_messages_incremental_with_notices;
+use upload_ownership::UploadOwnership;
 pub(super) mod native_notices;
 #[path = "upload_references.rs"]
 mod upload_references;
@@ -25,6 +29,8 @@ mod upload_references;
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct HistoryMessage {
     pub(crate) id: String,
+    #[serde(skip)]
+    pub(crate) paging_offset: u64,
     #[serde(skip)]
     pub(crate) history_turn_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -230,9 +236,16 @@ pub(super) fn read_messages(
         if text.trim().is_empty() && images.is_empty() && parts.is_empty() {
             continue;
         }
-        let (text, row_class) = row_classes::text(&session.provider, &role, &text, &value);
+        let (text, row_class) = row_classes::text_with_receipts(
+            &session.provider,
+            &role,
+            &text,
+            &value,
+            notices.legacy_header(line_offset),
+        );
         messages.push(HistoryMessage {
             id: format!("{}-{line_offset}", session.id),
+            paging_offset: line_offset,
             history_turn_id: projected_history_turn_id(&session.provider, &value, &role),
             prompt_request: None,
             role,
@@ -315,11 +328,28 @@ pub(super) fn read_extended_line<R: Read + Seek>(
     }
 }
 
+#[cfg(test)]
 pub(super) fn push_incremental_message(
     session: &HistorySession,
     line: &[u8],
     line_offset: u64,
     messages: &mut Vec<HistoryMessage>,
+) -> bool {
+    push_incremental_message_with_notices(
+        session,
+        line,
+        line_offset,
+        messages,
+        &native_notices::Bindings::default(),
+    )
+}
+
+fn push_incremental_message_with_notices(
+    session: &HistorySession,
+    line: &[u8],
+    line_offset: u64,
+    messages: &mut Vec<HistoryMessage>,
+    notices: &native_notices::Bindings,
 ) -> bool {
     let Ok(value) = serde_json::from_slice::<Value>(line) else {
         return false;
@@ -332,6 +362,14 @@ pub(super) fn push_incremental_message(
         row_classes::Projection::Pending => return true,
         row_classes::Projection::Hidden => return false,
         row_classes::Projection::Ordinary => {}
+    }
+    match notices.project(session, line_offset, line, &value, false) {
+        native_notices::Decision::Notice(message) => {
+            messages.push(*message);
+            return false;
+        }
+        native_notices::Decision::Rejected => return false,
+        native_notices::Decision::NotBound => {}
     }
     if line.len() > MAX_LINE_BYTES
         && image_sources(&value).is_empty()
@@ -366,7 +404,13 @@ pub(super) fn push_incremental_message(
     } else {
         digest_parts(&[base_id.as_bytes(), row_key(&value).as_bytes()])
     };
-    let (text, row_class) = row_classes::text(&session.provider, &role, &text, &value);
+    let (text, row_class) = row_classes::text_with_receipts(
+        &session.provider,
+        &role,
+        &text,
+        &value,
+        notices.legacy_header(line_offset),
+    );
     let id = if row_class.is_some() {
         format!("{}-{line_offset}", session.id)
     } else {
@@ -374,6 +418,7 @@ pub(super) fn push_incremental_message(
     };
     messages.push(HistoryMessage {
         id,
+        paging_offset: line_offset,
         history_turn_id: projected_history_turn_id(&session.provider, &value, &role),
         prompt_request: None,
         role,
@@ -462,9 +507,16 @@ pub(super) fn push_reverse_message(
     if text.trim().is_empty() && images.is_empty() && parts.is_empty() {
         return;
     }
-    let (text, row_class) = row_classes::text(&session.provider, &role, &text, &value);
+    let (text, row_class) = row_classes::text_with_receipts(
+        &session.provider,
+        &role,
+        &text,
+        &value,
+        notices.legacy_header(line_offset),
+    );
     messages.push(HistoryMessage {
         id: format!("{}-{line_offset}", session.id),
+        paging_offset: line_offset,
         history_turn_id: projected_history_turn_id(&session.provider, &value, &role),
         prompt_request: None,
         role,
@@ -693,6 +745,10 @@ pub(crate) struct HistoryImage {
     pub(crate) origin: Option<image_provenance::ImageOrigin>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) attachment_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) original_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) upload_path: Option<String>,
 }
 
 const MAX_IMAGES: usize = 16;
@@ -839,6 +895,8 @@ fn descriptors(session: &HistorySession, offset: u64, value: &Value) -> Vec<Hist
             id: format!("{segment}.{offset}.{index}.{row}"),
             origin: origins.get(index).copied().flatten(),
             attachment_ref: None,
+            original_name: None,
+            upload_path: None,
         })
         .collect()
 }
@@ -877,6 +935,8 @@ pub(crate) enum ImageReadError {
     Deleted,
     Unavailable,
     OutsideAllowedRoots,
+    /// An `http(s)` reference the daemon never fetches; carries a validated `scheme://host` if any.
+    RemoteUrlNotFetched(Option<String>, Option<String>),
 }
 pub(crate) struct ImageBytes {
     pub(crate) mime: &'static str,
@@ -915,15 +975,26 @@ impl HistoryCatalog {
                     .ok_or(ImageReadError::Unavailable)?,
             )
         };
-        let snapshot = self.snapshot();
-        let sessions = snapshot
-            .incremental_segments
-            .get(history_id)
-            .ok_or(ImageReadError::Deleted)?;
-        let session = sessions
-            .iter()
-            .find(|s| segment_key(s) == parts[0])
-            .ok_or(ImageReadError::Deleted)?;
+        let direct = self.direct_session(history_id);
+        let matched_direct = direct
+            .as_ref()
+            .filter(|session| segment_key(session) == parts[0]);
+        let snapshot = matched_direct.is_none().then(|| self.snapshot());
+        let session = if let Some(session) = matched_direct {
+            session
+        } else {
+            snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.incremental_segments.get(history_id))
+                .ok_or(ImageReadError::Unavailable)?
+                .iter()
+                .find(|s| segment_key(s) == parts[0])
+                .ok_or(if direct.is_some() {
+                    ImageReadError::Unavailable
+                } else {
+                    ImageReadError::Deleted
+                })?
+        };
         let mut file = fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
@@ -971,7 +1042,13 @@ impl HistoryCatalog {
                     .strip_prefix("data:")
                     .and_then(|v| v.split_once(";base64,"))
                 else {
-                    return Err(ImageReadError::Unavailable);
+                    return Err(match remote_url_source(url) {
+                        Some(origin) => ImageReadError::RemoteUrlNotFetched(
+                            origin,
+                            (url.len() <= 2048).then(|| (*url).to_owned()),
+                        ),
+                        None => ImageReadError::Unavailable,
+                    });
                 };
                 decode_image(mime, encoded)
             }
@@ -1039,21 +1116,25 @@ impl HistoryCatalog {
 
     fn image_filename(&self, session: &HistorySession, path: &Path) -> Option<String> {
         if let Ok((root, relative)) = self.attachment_root(session, path) {
-            let metadata = crate::attachment_filename::metadata_path(&relative)?;
-            let mut file = open_beneath(&root, &metadata).ok()?;
-            let info = file.metadata().ok()?;
-            if !info.is_file() || info.len() > 4096 {
-                return None;
-            }
-            let mut bytes = Vec::new();
-            file.by_ref().take(4097).read_to_end(&mut bytes).ok()?;
-            if bytes.len() > 4096 {
-                return None;
-            }
-            let name: String = serde_json::from_slice(&bytes).ok()?;
-            return crate::attachment_filename::sanitize_download_filename(&name);
+            return Self::managed_original_name(&root, &relative);
         }
         crate::attachment_filename::sanitize_download_filename(path.file_name()?.to_str()?)
+    }
+
+    fn managed_original_name(root: &Path, relative: &Path) -> Option<String> {
+        let metadata = crate::attachment_filename::metadata_path(relative)?;
+        let mut file = open_beneath(root, &metadata).ok()?;
+        let info = file.metadata().ok()?;
+        if !info.is_file() || info.len() > 4096 {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        file.by_ref().take(4097).read_to_end(&mut bytes).ok()?;
+        if bytes.len() > 4096 {
+            return None;
+        }
+        let name: String = serde_json::from_slice(&bytes).ok()?;
+        crate::attachment_filename::sanitize_download_filename(&name)
     }
 
     fn attachment_root(
@@ -1061,41 +1142,7 @@ impl HistoryCatalog {
         session: &HistorySession,
         path: &Path,
     ) -> Result<(PathBuf, PathBuf), ImageReadError> {
-        let state = self
-            .archives_root
-            .parent()
-            .and_then(Path::parent)
-            .ok_or(ImageReadError::Unavailable)?;
-        let relative = path
-            .strip_prefix(state)
-            .map_err(|_| ImageReadError::Unavailable)?;
-        let parts: Vec<_> = relative.components().collect();
-        if parts.len() != 4
-            || parts[0].as_os_str() != "sessions"
-            || parts[2].as_os_str() != "attachments"
-        {
-            return Err(ImageReadError::Unavailable);
-        }
-        let id = parts[1]
-            .as_os_str()
-            .to_str()
-            .ok_or(ImageReadError::Unavailable)?;
-        let archived = read_archive(&self.archives_root, &session.id)
-            .and_then(|a| a.session_id)
-            .is_some_and(|s| s == id);
-        let context = crate::CliContext::resolve(Some(state.to_path_buf()), None)
-            .map_err(|_| ImageReadError::Unavailable)?;
-        let live = crate::load_session_record(&context, id)
-            .ok()
-            .is_some_and(|r| {
-                r.provider_resume.is_some_and(|p| {
-                    p.provider == session.provider && p.session_id == session.provider_session_id
-                })
-            });
-        if !archived && !live {
-            return Err(ImageReadError::Deleted);
-        }
-        Ok((state.to_path_buf(), relative.to_path_buf()))
+        UploadOwnership::new(self, session).attachment_root(path)
     }
 }
 
@@ -1144,6 +1191,41 @@ fn open_beneath(root: &Path, relative: &Path) -> Result<fs::File, ImageReadError
         directory = unsafe { fs::File::from_raw_fd(fd) };
     }
     Ok(directory)
+}
+
+/// For an `http(s)` URL, `Some(origin)` where origin is `scheme://host` only when the host is
+/// strictly valid (otherwise `None`); `None` for any other scheme. Credentials, port, path,
+/// query and fragment are never part of the origin.
+fn remote_url_source(url: &str) -> Option<Option<String>> {
+    let (scheme, rest) = url.split_once("://")?;
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    Some(valid_origin(&scheme, rest))
+}
+
+fn valid_origin(scheme: &str, rest: &str) -> Option<String> {
+    let authority = rest.split(['/', '\\', '?', '#']).next()?;
+    let host_port = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let (host, port) = if let Some(inner) = host_port.strip_prefix('[') {
+        let (literal, after) = inner.split_once(']')?;
+        let ip: std::net::Ipv6Addr = literal.parse().ok()?;
+        (format!("[{ip}]"), after.strip_prefix(':').unwrap_or(after))
+    } else {
+        let (host, port) = host_port.split_once(':').unwrap_or((host_port, ""));
+        let valid = !host.is_empty()
+            && host.len() <= 253
+            && host
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.');
+        (valid.then(|| host.to_ascii_lowercase())?, port)
+    };
+    port.bytes()
+        .all(|b| b.is_ascii_digit())
+        .then(|| format!("{scheme}://{host}"))
 }
 
 fn decode_image(mime: &str, encoded: &str) -> Result<ImageBytes, ImageReadError> {
@@ -1380,14 +1462,7 @@ pub(super) fn read_messages_reverse_from_reader<R: Read + Seek>(
     }
 
     for message in &messages {
-        let Some(offset) = message
-            .id
-            .rsplit('-')
-            .next()
-            .and_then(|value| value.parse().ok())
-        else {
-            continue;
-        };
+        let offset = message.paging_offset;
         oldest_offset = Some(oldest_offset.map_or(offset, |current: u64| current.min(offset)));
     }
     messages.reverse();
@@ -1419,6 +1494,7 @@ mod image_tests {
     fn parts_query_serializes_empty_array_while_legacy_shape_omits_field() {
         let message = HistoryMessage {
             id: "message".to_string(),
+            paging_offset: 0,
             history_turn_id: None,
             prompt_request: None,
             row_class: None,

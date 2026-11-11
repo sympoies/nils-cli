@@ -100,8 +100,22 @@ impl Default for ChildLineage {
     }
 }
 
+#[cfg(test)]
+static CLIENT_BUILDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 pub(super) fn client() -> Result<reqwest::blocking::Client, CliError> {
-    reqwest::blocking::Client::builder()
+    // Keep the system roots loaded at first use until the process restarts.
+    static CLIENT: std::sync::Mutex<Option<reqwest::blocking::Client>> =
+        std::sync::Mutex::new(None);
+    let mut client = CLIENT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(client) = client.as_ref() {
+        return Ok(client.clone());
+    }
+    #[cfg(test)]
+    CLIENT_BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let built = reqwest::blocking::Client::builder()
         .timeout(REQUEST_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -113,7 +127,9 @@ pub(super) fn client() -> Result<reqwest::blocking::Client, CliError> {
                 true,
                 true,
             )
-        })
+        })?;
+    *client = Some(built.clone());
+    Ok(built)
 }
 
 /// A bounded, single-line, non-empty diagnostic string, or `None`.
@@ -167,6 +183,8 @@ fn forwarded(code: Option<&str>, message: &Value) -> CliError {
         | "work-ref-invalid"
         | "workspace-invalid"
         | "origin-invalid"
+        | "invalid-notice-field"
+        | "launch-notice-invalid"
         | "launch-env-key-refused"
         | "launch-env-allowlist-invalid"
         | "launch-env-too-many"
@@ -220,7 +238,8 @@ fn checked_request(body: &Value) -> Option<(Option<&str>, ChildLineage, &Map<Str
         None | Some(Value::Null) => {}
         Some(value) => child.role = lineage::role_from_request(Some(value.as_str()?)).ok()?,
     }
-    Some((machine, child, request.get("session")?.as_object()?))
+    let session = request.get("session")?.as_object()?;
+    Some((machine, child, session))
 }
 
 /// The child's `lineage` and resolved `work`, from the caller's own record on
@@ -233,6 +252,7 @@ fn child_session(
     session: &Map<String, Value>,
 ) -> Result<Map<String, Value>, CliError> {
     let mut session = session.clone();
+    super::resume_preflight::normalize_account(&mut session)?;
     session.remove("lineage");
     session.remove("work");
     session.remove("role");
@@ -248,6 +268,7 @@ fn child_session(
             seed.set_forge_context(crate::forge_identity::context_of(caller)?.map(|context| {
                 nils_common::forge_identity::session::LaunchContext {
                     role: None,
+                    attested_role: None,
                     ..context
                 }
             }));
@@ -379,7 +400,7 @@ fn relay_operation(
                 "resume_account_explicit".into(),
                 json!(request.account.is_some()),
             );
-            child.insert("claude_account".into(), data["account"].clone());
+            child.insert("account".into(), data["account"].clone());
         }
         let source = json!({"source_session_id": session, "source_incarnation": incarnation});
         relay_create(config, source, machine, child, operation_id)
@@ -475,17 +496,34 @@ fn relay_create(
         ));
     }
     let error = &body["error"];
-    if error["code"] == UNAVAILABLE_CODE {
+    let created_id = error["details"]["created_session_id"]
+        .as_str()
+        .filter(|id| {
+            !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        });
+    if error["code"] == UNAVAILABLE_CODE
+        || (error["code"] == "create-outcome-unknown" && created_id.is_some())
+    {
         let message = bounded_line(&error["message"]).unwrap_or(
             "the console aggregator reported an unavailable start; inspect Console before retrying",
         );
-        return Err(unavailable(
+        let mut failure = unavailable(
             "aggregator_response",
             "upstream_unavailable",
             message,
             false,
             false,
-        ));
+        );
+        // A lost start answer does not erase creation evidence. Persist this
+        // allowlisted id in the operation receipt so reconciliation can return it.
+        if let Some(id) = created_id {
+            failure.details_mut().as_mut().unwrap()["created_session_id"] = json!(id);
+        }
+        return Err(failure);
     }
     let mut failure = start_failure::forward(error)
         .unwrap_or_else(|| forwarded(error["code"].as_str(), &error["message"]));
@@ -627,7 +665,9 @@ fn cli_request(
     let requested_pinned = session["title_mode"] == "pinned";
     let requested_launch_env = crate::launch_env::from_json(session.get("launch_env"))?;
     let request = match &service {
-        Some(service) => service::cli_body(service, machine, session, operation_id, reconcile)?,
+        Some(service) => {
+            service::cli_body(service, machine, session, operation_id, reconcile, lineage)?
+        }
         None => {
             let mut request = json!({ "session": session });
             if let Some(machine) = machine {
@@ -717,7 +757,17 @@ fn cli_request(
             });
     }
     let error = &body["error"];
-    let mut failure = if error["code"] == UNAVAILABLE_CODE {
+    let mut failure = if error["code"] == "console-start-busy"
+        && status.as_u16() == 503
+        && error["details"]["retryable"] == true
+        && error["details"]["recovery"]["safe_to_retry"] == true
+    {
+        CliError::unavailable(
+            "console-start-busy",
+            "service console start workers are busy",
+            Some(json!({"retryable": true, "recovery": {"safe_to_retry": true}})),
+        )
+    } else if error["code"] == UNAVAILABLE_CODE {
         unavailable_from_details(&error["message"], &error["details"])
     } else {
         start_failure::forward(error)
@@ -848,13 +898,13 @@ mod tests {
     fn console_root_inherits_the_launch_initiator_only_with_a_role() {
         let caller: crate::SessionRecord = serde_json::from_value(json!({
             "schema_version":"agent-session.session.v1", "id":"caller", "agent":"codex", "mode":"interactive", "title":null,
-            "cwd":".", "tmux_session":"fixture", "prompt_file":null, "log_file":null,
+            "cwd":".", "tmux_session":"fixture", "prompt_file":null, "log_file":null, "role":"steward",
             "created_at":"2030-01-01T00:00:00Z", "updated_at":"2030-01-01T00:00:00Z",
             "lineage": {
                 "schema_version":"agent-session.session-lineage.v1", "machine":"caller-host", "parent":null,
                 "root":{"machine":"caller-host", "session_id":"caller", "session_created_at":"2030-01-01T00:00:00Z"},
                 "depth":0, "starter":{"kind":"operator", "via":"cli"},
-                "forge_context":{"initiator":"operator", "role":null}
+                "forge_context":{"initiator":"operator", "role":"steward", "attested_role":"steward"}
             }
         }))
         .unwrap();
@@ -929,8 +979,10 @@ mod tests {
     }
 
     #[test]
-    fn launch_env_forwarded_validation_preserves_usage_errors() {
+    fn create_metadata_forwarded_validation_preserves_usage_errors() {
         for code in [
+            "invalid-notice-field",
+            "launch-notice-invalid",
             "launch-env-key-refused",
             "launch-env-allowlist-invalid",
             "launch-env-too-many",
@@ -991,5 +1043,41 @@ mod tests {
                 "{code:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod client_reuse_tests {
+    #[test]
+    fn repeated_console_requests_build_client_once() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for _ in 0..8 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0; 4096];
+                assert!(stream.read(&mut request).unwrap() > 0);
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .unwrap();
+            }
+        });
+        for _ in 0..8 {
+            assert!(
+                super::client()
+                    .unwrap()
+                    .get(format!("http://{address}/"))
+                    .send()
+                    .unwrap()
+                    .status()
+                    .is_success()
+            );
+        }
+        server.join().unwrap();
+        assert_eq!(
+            super::CLIENT_BUILDS.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 }

@@ -10,5 +10,6 @@ pub mod open;
 pub mod prompt;
 pub mod publish;
 pub mod reset;
+mod transport;
 pub mod utils;
 pub mod worktree;

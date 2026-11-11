@@ -1,11 +1,9 @@
-//! Operator-initiated settlement of a Claude authentication quarantine.
-//! A model turn is the only automatic exit, and none can be admitted while
-//! quarantined, so a same-account switch re-runs the credential preflight and
-//! records `credentials_refreshed` only when the credentials are usable again.
+//! Same-account credential preflight for operator and scheduled Claude rechecks.
+//! Records `credentials_refreshed` only when the credentials are usable again.
 use super::*;
 use crate::claude_account::generation;
 
-fn refused(record: &SessionRecord, reason: &str) -> CliError {
+pub(super) fn refused(record: &SessionRecord, reason: &str) -> CliError {
     CliError::data(
         "claude-account-recheck-refused",
         "the account credentials could not be confirmed; the authentication quarantine was left unchanged",
@@ -15,7 +13,7 @@ fn refused(record: &SessionRecord, reason: &str) -> CliError {
 
 /// Incidents that currently fence input for this runtime: each clause mirrors
 /// one input guard, so an incident the guard no longer enforces is not owned.
-fn quarantining(incident: &AuthIncident, record: &SessionRecord) -> bool {
+pub(super) fn quarantining(incident: &AuthIncident, record: &SessionRecord) -> bool {
     let current = same_runtime(incident, record);
     current && incident.status == "auth_failed"
         || incident
@@ -57,12 +55,30 @@ pub(crate) fn settle(
     crate::claude_account::materialize(account).map_err(|e| refused(record, e.code()))?;
     // Materialization is never evidence of repair: when the failed launch's
     // publication is known, a newer one must exist for the same account.
-    let baseline = owned.iter().find_map(|&i| {
+    let receipt_baseline = |i: usize| {
         store.incidents[i]
             .same_account_recovery
             .as_ref()
-            .and_then(|r| r.baseline.clone())
-    });
+            .and_then(|receipt| receipt.baseline.clone())
+    };
+    let current_failed = owned
+        .iter()
+        .any(|&i| same_runtime(&store.incidents[i], record));
+    let baseline = if current_failed {
+        // A predecessor must never weaken the current failed launch's proof.
+        // Its receipt may not exist yet when the first daemon tick is delayed.
+        generation::baseline(record).or_else(|| {
+            owned
+                .iter()
+                .copied()
+                .filter(|&i| same_runtime(&store.incidents[i], record))
+                .find_map(receipt_baseline)
+        })
+    } else {
+        // With carried-only quarantine, the failed predecessor owns the proof;
+        // the replacement's publication is not itself evidence of a new fault.
+        owned.iter().copied().find_map(receipt_baseline)
+    };
     if let Some(baseline) = baseline
         && !generation::published(account)
             .ok()
@@ -85,4 +101,110 @@ pub(crate) fn settle(
         incident.recovery_notification = Notification::default();
     }
     save(context, record, &store)
+}
+
+pub(crate) struct CodexSnapshot {
+    account: String,
+    incident_ids: Vec<String>,
+    failure_key: Option<String>,
+}
+
+/// Snapshot only incidents belonging to the selected account before a queued
+/// Codex repair begins. Later incidents must never be settled by this apply.
+pub(crate) fn codex_snapshot(
+    context: &CliContext,
+    id: &str,
+    launch: &str,
+) -> Result<Option<CodexSnapshot>, CliError> {
+    let _lock = crate::acquire_session_record_lock(context, id)?;
+    let record = crate::load_session_record(context, id)?;
+    if record.agent != "codex"
+        || record.runtime.as_ref().map(|r| r.launch_id.as_str()) != Some(launch)
+    {
+        return Ok(None);
+    }
+    let Some(account) = crate::codex_account::selected_account(&record) else {
+        return Ok(None);
+    };
+    let store = read(context, &record)?;
+    let ids = store
+        .incidents
+        .iter()
+        .filter(|i| {
+            quarantining(i, &record)
+                && i.account_nickname.as_deref() == Some(account.as_str())
+                && !i
+                    .failover
+                    .as_ref()
+                    .is_some_and(failover::Receipt::in_flight)
+                && !i
+                    .same_account_recovery
+                    .as_ref()
+                    .is_some_and(recovery::active)
+        })
+        .map(|i| i.incident_id.clone())
+        .collect::<Vec<_>>();
+    Ok((!ids.is_empty()).then_some(CodexSnapshot {
+        account,
+        incident_ids: ids,
+        failure_key: store.last_failure_key,
+    }))
+}
+
+/// A confirmed live Codex bind settles only the incidents captured before it.
+pub(crate) fn settle_codex(
+    context: &CliContext,
+    id: &str,
+    launch: &str,
+    account: &str,
+    revision: u64,
+    snapshot: CodexSnapshot,
+) -> Result<(), CliError> {
+    if snapshot.account != account {
+        return Ok(());
+    }
+    let _lock = crate::acquire_session_record_lock(context, id)?;
+    let record = crate::load_session_record(context, id)?;
+    let view = crate::codex_account::view_for_record(&record);
+    if record.runtime.as_ref().map(|r| r.launch_id.as_str()) != Some(launch)
+        || view.state != "bound"
+        || view.selected_account.as_deref() != Some(account)
+        || view.applied_runtime_id.as_deref() != Some(launch)
+        || view.revision != revision
+    {
+        return Ok(());
+    }
+    let mut store = read(context, &record)?;
+    if store.last_failure_key != snapshot.failure_key {
+        return Err(CliError::runtime(
+            "codex-account-recheck-superseded",
+            "a newer authentication failure occurred during account recheck",
+            None,
+        ));
+    }
+    let at = jiff::Timestamp::now().to_string();
+    let mut changed = false;
+    for incident in &mut store.incidents {
+        if !snapshot.incident_ids.contains(&incident.incident_id)
+            || !quarantining(incident, &record)
+            || incident.account_nickname.as_deref() != Some(account)
+            || incident
+                .failover
+                .as_ref()
+                .is_some_and(failover::Receipt::in_flight)
+        {
+            continue;
+        }
+        if let Some(r) = incident.failover.as_mut().filter(|r| r.quarantines()) {
+            r.mark_credentials_refreshed();
+        }
+        incident.status = "recovered".into();
+        incident.settle(PATH_CREDENTIAL_RECHECK, "credentials_refreshed", &at);
+        incident.recovery_notification = Notification::default();
+        changed = true;
+    }
+    if changed {
+        save(context, &record, &store)?;
+    }
+    Ok(())
 }

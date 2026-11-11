@@ -12,7 +12,17 @@ pub(crate) enum Unobserved {
     PaneUnparsable,
     /// No input region was found, as when a dialog or picker replaces the composer.
     ComposerNotLocated,
-    /// An input region was found, but its row does not prove the exact input.
+    /// The input region spans more than one row.
+    RegionNotSingleRow,
+    /// A dialog hint sits in the footer below the input region.
+    FooterDialogHint,
+    /// A queued-reply hint where the caller does not admit one.
+    QueuedHintNotAdmitted,
+    /// The input row shows a paste placeholder.
+    PastePlaceholder,
+    /// The input row is a suggestion's wording without dim styling.
+    SuggestionLiteralUnstyled,
+    /// The region's row does not start with the prompt glyph or cannot be located.
     RowUnrecognized,
 }
 
@@ -22,6 +32,11 @@ impl Unobserved {
             Self::CaptureFailed => "capture-failed",
             Self::PaneUnparsable => "pane-unparsable",
             Self::ComposerNotLocated => "composer-not-located",
+            Self::RegionNotSingleRow => "region-not-single-row",
+            Self::FooterDialogHint => "footer-dialog-hint",
+            Self::QueuedHintNotAdmitted => "queued-hint-not-admitted",
+            Self::PastePlaceholder => "paste-placeholder",
+            Self::SuggestionLiteralUnstyled => "suggestion-literal-unstyled",
             Self::RowUnrecognized => "row-unrecognized",
         }
     }

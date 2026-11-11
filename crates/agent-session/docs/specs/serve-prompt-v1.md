@@ -2,6 +2,10 @@
 
 Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply here.
 
+The proposed [owner prompt intent design](owner-prompt-intent.md) requires
+explicit caller intent and a coordinated wire migration. It is design only;
+the contract below describes implemented behavior.
+
 ## Authenticated writes and prompt submission
 
 - `POST /sessions` (create), `PATCH /sessions/{id}` (title update), `POST /sessions/{id}/send`,
@@ -53,13 +57,29 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   A `composer-unobservable` refusal also names the observation step that
   failed, as `observation` in `error.details` for the unkeyed route and in the
   refused receipt (`error.details.receipt.observation`) for the keyed route.
-  The value is one of `capture-failed` (the terminal capture failed),
-  `pane-unparsable` (the capture holds a sequence the reader rejects),
-  `composer-not-located` (no input region, as when a dialog or picker replaces
-  the composer) or `row-unrecognized` (a region exists but its row does not
-  prove the exact input). It is a fixed word and never carries pane text, a
-  path or raw output. The field is additive and absent for other refusals and
-  for receipts written before it existed; the code and status are unchanged.
+  A multi-row Claude composer that cannot be read exactly is refused with a
+  message asking the owner to send or clear the draft first; it is not saved or
+  cleared by the refusal.
+  The value is one of:
+
+  - `capture-failed`: the terminal capture failed.
+  - `pane-unparsable`: the capture holds a sequence the reader rejects.
+  - `composer-not-located`: no input region, as when a dialog or picker
+    replaces the composer.
+  - `region-not-single-row`: the input region spans more than one row, as with
+    adjacent owner input.
+  - `footer-dialog-hint`: a dialog hint sits below the region.
+  - `queued-hint-not-admitted`: a queued-reply hint where it is not admitted.
+  - `paste-placeholder`: the row shows a paste placeholder.
+  - `suggestion-literal-unstyled`: the row holds a suggestion's wording
+    without dim styling.
+  - `row-unrecognized`: the row cannot be located or does not start with the
+    prompt glyph.
+
+  The label names the rule that failed. It is a fixed word and never carries
+  pane text, a path or raw output. The field is additive and absent for other
+  refusals and for receipts written before it existed; the code and status are
+  unchanged.
 
   A Claude queued-reply hint is empty only when its sole input row is the
   native dim-styled hint and contains no owner text. A second direct reply is
@@ -72,6 +92,14 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   request ID after a keyed refusal. Unreadable panes still refuse, and refusals
   leave recovery armed. An empty composer behind a working Codex turn remains
   admitted, subject to the existing provider controls.
+
+  A request-bound Claude paste stays inside bounded composer confirmation after
+  admission, including a transient first post-paste capture. A lone opaque paste
+  marker uses the same send-local logical-end proof and verified cleanup as
+  [Send v1](send-v1.md#claude-submitted-paste-ownership). Unconfirmed owned markers
+  are cleared only after that proof; mixed owner input remains untouched. Normal
+  direct prompts retain their provider acknowledgement and image-label handling.
+  Initial creation prompts retain their separate accepted-before-render contract.
 
   An explicit owner clear followed by another submission remains available.
   Stale-draft admission saves the exact observation durably before using the
@@ -143,7 +171,8 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   input dispatch. The proof survives daemon restart and is not returned by the
   API. This does not add history waiting to ordinary immediate native input.
 
-  A keyed idle-only native dispatch also sends a provider-visible client message
+  A keyed native dispatch, including a busy reply through the control handle,
+  sends a provider-visible client message
   id derived from the dispatch-time session identity (runtime, provider thread,
   account binding) and the request id. Lookup computes the id from the identity
   current at lookup, so a changed runtime, thread or account computes a

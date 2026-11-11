@@ -35,6 +35,11 @@ pub(crate) fn require_empty_composer(
     };
     let (code, message) = if unobserved.is_none() {
         ("composer-not-empty", "composer contains an owner draft")
+    } else if record.agent == "claude" && unobserved == Some(Unobserved::RegionNotSingleRow) {
+        (
+            "composer-unobservable",
+            "multi-row composer cannot be read exactly; send or clear the draft first",
+        )
     } else {
         (
             "composer-unobservable",

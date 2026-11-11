@@ -20,6 +20,8 @@ const COMMANDS = [
   "$SANDBOX/bin/claude --version",
   "$CONTRACT_TEST_BINARY send::claude_notice::module_contract:: --nocapture (call-shape scan and claude plugin validate)",
 ];
+const candidateBranch = (version) => `ci/claude-range-${version}`;
+const failureMarker = (version) => `<!-- claude-release-failure:${version} -->`;
 const sha = (text) => crypto.createHash("sha256").update(text).digest("hex");
 const read = (root, file) => fs.readFileSync(path.join(root, file), "utf8");
 const stable = (text) => /^(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})$/.test(text || "");
@@ -238,8 +240,28 @@ function intactBody(body, marker, exact = false) {
   const match = /^<!-- sha256:([a-f0-9]{64}) -->\n([\s\S]*)\n$/.exec(segment);
   return !!match && sha(match[2]) === match[1] && (!exact || (start === 0 && end + END.length === body.length));
 }
+// Runs before any Rust setup, compile or install. A candidate PR or failure issue
+// for the newest version means a rerun would add nothing: the PR is never updated
+// and the failure issue keeps its first evidence. An orphan branch without a PR is
+// not a record; the full check still runs so publication can recover or report it.
+async function planReleaseCheck({ github, context, core, root = process.cwd(), discoverRelease = discover }) {
+  const release = metadata(await discoverRelease(), PACKAGE);
+  let skip = false;
+  if (compare(release.version, range(root).max) > 0) {
+    const pulls = await github.paginate(github.rest.pulls.list, { ...context.repo, state: "all",
+      head: `${context.repo.owner}:${candidateBranch(release.version)}`, per_page: 100 });
+    skip = pulls.length > 0;
+    if (!skip) {
+      const issues = await github.paginate(github.rest.issues.listForRepo, { ...context.repo, state: "all",
+        creator: "github-actions[bot]", per_page: 100 });
+      skip = issues.some(x => !x.pull_request && x.body?.includes(failureMarker(release.version)));
+    }
+  }
+  core.setOutput("skip", String(skip));
+  return { version: release.version, skip };
+}
 async function failureIssue({ github, context, result }) {
-  const marker = `<!-- claude-release-failure:${result.newest} -->`;
+  const marker = failureMarker(result.newest);
   const issues = await github.paginate(github.rest.issues.listForRepo, { ...context.repo, state: "all", per_page: 100 });
   const matches = issues.filter(x => !x.pull_request && x.body?.includes(marker));
   if (matches.length > 1) throw new Error("duplicate failure issues; maintainer reconciliation required");
@@ -255,7 +277,7 @@ async function failureIssue({ github, context, result }) {
   return item.html_url;
 }
 async function prepareDraft({ github, context, root, result }) {
-  const branch = `ci/claude-range-${result.newest}`;
+  const branch = candidateBranch(result.newest);
   const marker = `<!-- claude-release-candidate:${result.newest} -->`;
   const title = `ci(agent-session): prepare Claude Code ${result.newest} range extension`;
   const changes = candidateChanges(root, result.newest);
@@ -284,7 +306,7 @@ async function prepareDraft({ github, context, root, result }) {
     // Recover only our exact immutable orphan commit after failed PR creation.
     const commit = (await github.rest.git.getCommit({ ...context.repo, commit_sha: ref })).data;
     if (commit.message !== message || commit.parents?.length !== 1 || commit.parents[0].sha !== context.sha)
-      throw new Error("candidate branch occupied; maintainer reconciliation required");
+      throw new Error("candidate branch occupied; maintainer reconciliation required: see docs/runbooks/delivery-and-releases.md#orphan-candidate-branch");
   } else {
     const base = (await github.rest.git.getCommit({ ...context.repo, commit_sha: context.sha })).data;
     const tree = (await github.rest.git.createTree({ ...context.repo, base_tree: base.tree.sha,
@@ -298,7 +320,7 @@ async function prepareDraft({ github, context, root, result }) {
     return { status: "draft", url: (await github.rest.pulls.create({ ...context.repo, head: branch, base: "main", title, body, draft: true })).data.html_url };
   } catch { throw new Error(CREATION_UNAVAILABLE); }
 }
-async function runReleaseCheck({ github, context, core, root = process.cwd(), checked, patch, fetchJSON = getJSON,
+async function runReleaseCheck({ github, issueGithub, context, core, root = process.cwd(), checked, patch, fetchJSON = getJSON,
   artifactDir = "claude-release-check", writeResult = (result) => {
     fs.mkdirSync(artifactDir, { recursive: true }); fs.writeFileSync(path.join(artifactDir, "result.json"), `${JSON.stringify(result, null, 2)}\n`);
   } }) {
@@ -316,7 +338,7 @@ async function runReleaseCheck({ github, context, core, root = process.cwd(), ch
       result.check = checked.check;
       if (!result.check.passed) {
         result.status = "failed"; result.action = "Isolated installation or module contract failed; inspect command artifacts and keep the current range.";
-        result.issue_url = await failureIssue({ github, context, result });
+        result.issue_url = await failureIssue({ github: issueGithub, context, result });
         core.setFailed(result.action);
       } else {
         result.status = "draft";
@@ -331,12 +353,12 @@ async function runReleaseCheck({ github, context, core, root = process.cwd(), ch
   } catch (error) {
     result.status = "error";
     const safe = ["default-branch-only execution required", "source revision moved; rerun on default branch",
-      "candidate branch occupied; maintainer reconciliation required", "duplicate candidate PRs; maintainer reconciliation required",
+      "candidate branch occupied; maintainer reconciliation required: see docs/runbooks/delivery-and-releases.md#orphan-candidate-branch", "duplicate candidate PRs; maintainer reconciliation required",
       "duplicate failure issues; maintainer reconciliation required", "human-owned failure evidence; maintainer reconciliation required"];
     result.action = safe.includes(error.message) || error.message.startsWith("candidate creation unavailable;")
       ? error.message : "Release preparation failed; maintainer must inspect the retained artifacts and retry without changing the current range.";
     if (result.newest && compare(result.newest, current.max) > 0 && context.ref === "refs/heads/main") {
-      try { result.issue_url = await failureIssue({ github, context, result }); }
+      try { result.issue_url = await failureIssue({ github: issueGithub, context, result }); }
       catch { result.action += " Failure issue unavailable or human-owned; maintainer must reconcile it manually."; }
     }
     core.setFailed(result.action);
@@ -345,4 +367,4 @@ async function runReleaseCheck({ github, context, core, root = process.cwd(), ch
   }
   return result;
 }
-module.exports = { collectReleaseCheck, range, compare, discover, verifyIntegrity, isolatedEnvironment, candidateChanges, checkCandidate, runReleaseCheck };
+module.exports = { collectReleaseCheck, range, compare, discover, verifyIntegrity, isolatedEnvironment, candidateChanges, checkCandidate, planReleaseCheck, runReleaseCheck };

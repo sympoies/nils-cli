@@ -19,16 +19,20 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   projected turn fence back to the matching raw active turn id; raw ids never enter session documents or
   API projections. Notice-capable recipients receive the canonical `mailbox.wake`
   envelope under the existing writer gate, with coalesced unread counts.
-  Explicitly unsupported recipients retain the plain reminder; failed/uncertain
+  Disabled writers and unsupported notice routes send nothing; failed/uncertain
   notice attempts never fall back or repeat. Long-running work observes the body-free reminder at the provider's next model
-  checkpoint. Both paths retain the exact incarnation and no-claim/no-operation generation fence.
+  checkpoint. Controller and hook delivery retain the exact incarnation and
+  no-operation generation fence. The in-turn path also defers while the recipient
+  holds an active claim; an idle recipient holding only its own claim is woken.
 
-  Terminal-backed Codex and Claude runtimes use the same notification-generation CAS plus exact
-  incarnation, idle-turn, live-runtime, and detached-session rechecks before one fixed body-free prompt
-  and a single Enter. The terminal attempt boundary additionally requires an authoritative broker with no
-  active claim or active/uncertain operation. Its durable per-session `attempting` state fences new claim
-  and operation admission through submission without holding the global coordination registry lock across
-  terminal I/O. Transcript observation determines acknowledged versus unknown outcome.
+  Supported terminal-backed runtimes use the same notification-generation CAS
+  with exact incarnation, idle-turn, live-runtime and detached-session rechecks.
+  Native Claude dispatch uses its notice module; Codex terminal dispatch uses the
+  guarded multiline envelope. Admission requires an authoritative broker with no
+  active/uncertain operation; the recipient's own claim does not defer it. The durable per-session attempt
+  fences new claim and operation admission without holding the global registry
+  lock across I/O. Acknowledgement or exact positive notice observation resolves
+  an attempt; absent history keeps uncertainty parked.
 - A daemon configured with `[auto_resume] default_enabled = true` (or
   `AGENT_SESSION_AUTO_RESUME_DEFAULT_POLICY`; see the
   [serve daemon runbook](../runbooks/serve-daemon.md#configuration-file))
@@ -82,8 +86,8 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   The daemon consumes the live metadata-only protocol and requires an exact bound thread/turn with
   terminal `status == "failed"` plus `codexErrorInfo == "usageLimitExceeded"` or the internal
   `serverOverloaded` capacity cause. Capacity recovery preserves the public v1 projection, waits 30, 60,
-  120, 300, and 600 seconds across at most five submitted attempts, and uses this fixed control-channel
-  message: `The selected model was at capacity, interrupting the previous turn. Please continue from
+  120, 300, and 600 seconds across at most five submitted attempts, and uses a canonical `runtime.resume`
+  notice with this fixed body: `The selected model was at capacity, interrupting the previous turn. Please continue from
   where you stopped.` Standalone/raw Codex TUI, imported Codex conversations, and resumed pre-app-server
   Codex sessions remain unsupported. Terminal text and assistant output are never treated as authority.
 
@@ -108,10 +112,14 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   only when the latest transition records a safe operational reason.
 - The daemon owns scheduling. It waits for the latest reset among all exhausted windows, adds bounded
   deterministic jitter, re-collects usage at wake, checks that the session activity revision is still
-  eligible, and durably claims the submission before sending one fixed product-owned continuation
-  message. Capacity recovery skips usage collection but retains the same runtime, binding, activity
+  eligible, and durably claims the submission before sending one product-owned continuation notice
+  through the shared encoder and attestation owner. Capacity recovery skips usage collection but retains the same runtime, binding, activity
   revision, pending-attention, manual-input, health, and durable pre-submit fences. An indeterminate
-  control submission is terminal and is never replayed after restart.
+  control submission is terminal and is never replayed after restart. A live attempt retains a separate
+  process-held fence while its record lock is released for native ingress; another tick stays inert,
+  while process termination releases the fence and preserves crash-left unknown handling. See
+  [session notices](session-notices-v1.md#daemon-continuations-and-machine-history) for the bounded
+  physical-row proof, original deadline and system-history role.
 
   When an authoritative Claude rate limit has no exhausted percentage window or future reset timestamp,
   the daemon keeps the claim scheduled and uses a low-frequency continuation probe (backing off through

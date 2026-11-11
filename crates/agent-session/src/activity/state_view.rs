@@ -1,6 +1,8 @@
 use super::*;
 #[path = "completion_uncertainty.rs"]
 mod completion_uncertainty;
+#[path = "runtime_stopped.rs"]
+mod runtime_stopped;
 #[path = "session_ready.rs"]
 mod session_ready;
 pub(crate) use session_ready::settle_starting;
@@ -58,10 +60,12 @@ fn read_state(context: &CliContext, record: &SessionRecord, quiet: bool) -> Opti
                 &mut document,
             );
             if quiet {
+                session_ready::project_unverified(record, &mut document.state, &now());
                 completion_uncertainty::project(&mut document.state, &now());
                 super::codex_quiet::project(record, &mut document.state, &now());
                 crate::send_guard::response::project(context, record, &mut document.state);
             }
+            runtime_stopped::project(context, record, &mut document.state);
             Some(document.state)
         }
         Ok(_) | Err(_) => Some(unknown_state_with_reason(

@@ -45,8 +45,11 @@ async fn target_check(
     }
     let request: Request = match body
         .ok()
-        .and_then(|Json(body)| serde_json::from_value(body).ok())
-    {
+        .and_then(|Json(body)| body.as_object().cloned())
+        .and_then(|mut body| {
+            crate::coordination::resume_preflight::normalize_account(&mut body).ok()?;
+            serde_json::from_value(Value::Object(body)).ok()
+        }) {
         Some(request) => request,
         None => return response(Err(refusal("resume-unsupported"))),
     };
@@ -98,18 +101,22 @@ async fn relay_check(
 async fn create(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
-    body: Result<Json<CreateBody>, JsonRejection>,
+    body: Result<Json<create_body::CheckedCreateBody>, JsonRejection>,
 ) -> Response {
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
     }
-    let Ok(Json(body)) = body else {
+    let Ok(Json(create_body::CheckedCreateBody(mut body))) = body else {
         return envelope_err(refusal("resume-unsupported"));
     };
+    if body.normalize_resume_account().is_err() {
+        return envelope_err(refusal("resume-unsupported"));
+    }
     if body.resume.is_none()
         || body.provider_resume_id.is_some()
         || body.agent_profile.is_some()
         || body.codex_account.is_some()
+        || body.claude_account.is_some()
     {
         return envelope_err(refusal("resume-unsupported"));
     }
@@ -117,7 +124,7 @@ async fn create(
         agent: body.agent.clone(),
         resume: body.resume.clone().unwrap(),
         cwd: body.cwd.as_ref().map(PathBuf::from),
-        account: body.claude_account.clone(),
+        account: body.account.clone(),
         agent_profile: body.agent_profile.clone(),
         agent_args: body.agent_args.clone(),
     };
@@ -151,4 +158,29 @@ async fn console_create(
         return envelope_err(refusal("resume-unsupported"));
     }
     super::console_start_handler(State(state), headers, AxPath(id), Ok(Json(body))).await
+}
+
+/// Resolve the retained account before ordinary create decides whether to defer
+/// the bootstrap prompt and wait for app-server account binding. The engine
+/// rechecks this exact pin under its conversation/source guards before creation.
+pub(super) async fn resolve_codex_account(
+    state: &ServeState,
+    request: Request,
+) -> Result<(Option<String>, Option<String>), CliError> {
+    if request.agent != "codex" {
+        return Ok((None, None));
+    }
+    let context = state.context.clone();
+    let tmux = state.tmux_bin.clone();
+    let machine = state.machine.clone();
+    let data = tokio::task::spawn_blocking(move || {
+        crate::start_resume::preflight(&context, &request, &tmux, &machine)
+    })
+    .await
+    .map_err(|_| refusal("resume-source-unknown"))??;
+    let account = data["account"]
+        .as_str()
+        .ok_or_else(|| refusal("resume-source-unknown"))?
+        .to_string();
+    Ok((Some(account), Some("explicit".into())))
 }

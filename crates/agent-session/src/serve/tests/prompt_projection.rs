@@ -323,3 +323,131 @@ async fn sessions_list_reports_explicit_last_prompt_state_during_recovery() {
         "current without a prompt authoritatively represents an empty transcript"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_large_claude_list_refresh_recovers_real_prompt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut record = provider_discovery_record("large-preview", "synthetic-runtime", "launch", 1);
+    let provider_id = record.provider_resume.as_ref().unwrap().session_id.clone();
+    let old_config = tmp.path().join("account-a");
+    let new_config = tmp.path().join("account-b");
+    for config in [&old_config, &new_config] {
+        fs::create_dir_all(config.join("projects/project")).unwrap();
+    }
+    let old_path = old_config.join(format!("projects/project/{provider_id}.jsonl"));
+    let new_path = new_config.join(format!("projects/project/{provider_id}.jsonl"));
+    let mut file = fs::File::create(&old_path).unwrap();
+    writeln!(
+        file,
+        "{}",
+        json!({"type":"user", "sessionId":provider_id, "cwd":"/repo",
+        "promptSource":"typed", "message":{"role":"user", "content":"initial request"}})
+    )
+    .unwrap();
+    // The real prompt is inside the existing cold window of a transcript that
+    // exceeds it; synthetic provider traffic and notices follow the prompt.
+    writeln!(
+        file,
+        "{}",
+        json!({"type":"progress", "padding":"x".repeat(
+        crate::provider_prompt::MAX_LAST_PROMPT_RECOVERY_BYTES + 1024)})
+    )
+    .unwrap();
+    writeln!(
+        file,
+        "{}",
+        json!({"type":"user", "sessionId":provider_id,
+        "promptSource":"typed", "message":{"role":"user", "content":"latest real request"}})
+    )
+    .unwrap();
+    let notice = json!({"type":"user", "sessionId":provider_id, "promptSource":"system",
+        "message":{"role":"user", "content":format!(
+            "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n{}", "x".repeat(64 * 1024))}});
+    for _ in 0..180 {
+        writeln!(file, "{notice}").unwrap();
+    }
+    drop(file);
+    fs::hard_link(&old_path, &new_path).unwrap();
+    record.runtime.as_mut().unwrap().extra.insert(
+        "agent_profile_provider_config_dir".into(),
+        json!(old_config),
+    );
+    let old_source = ProviderPromptTail::resolve_source(&record).unwrap();
+    let mut tracker = ProviderLastPromptTracker::open_source(old_source.clone()).unwrap();
+    let ProviderLastPromptRefresh::Current(Some(prompt)) = tracker.refresh() else {
+        panic!("the required shape alone should recover within the existing bounds");
+    };
+    assert_eq!(prompt.text, "latest real request");
+
+    let key = ProviderPromptDiscoveryKey::from_record(&record).unwrap();
+    let tracker_cell = Arc::new(StdMutex::new(Some(tracker)));
+    let slot = Arc::new(tokio::sync::Mutex::new(ProviderPromptDiscoverySlot {
+        source: Some(old_source),
+        last_prompt_tracker: tracker_cell.clone(),
+        ..Default::default()
+    }));
+    let registry = Arc::new(ProviderPromptDiscoveryRegistry::default());
+    registry
+        .entries
+        .lock()
+        .await
+        .insert(key.clone(), slot.clone());
+    // Switch the configured path in place while retaining the same file.
+    record.runtime.as_mut().unwrap().extra.insert(
+        "agent_profile_provider_config_dir".into(),
+        json!(new_config),
+    );
+    assert_eq!(
+        ProviderPromptDiscoveryKey::from_record(&record).unwrap(),
+        key
+    );
+    let new_source = ProviderPromptTail::resolve_source(&record).unwrap();
+    assert_eq!(new_source.path(), new_path);
+    assert!(new_source.validated_path().is_some());
+    writeln!(
+        fs::OpenOptions::new().append(true).open(&new_path).unwrap(),
+        "{notice}"
+    )
+    .unwrap();
+
+    // Hold the tracker to deterministically cancel a list request while its
+    // bounded cached refresh is awaiting blocking work, without timing sleeps.
+    let (locked_tx, locked_rx) = tokio::sync::oneshot::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let held_cell = tracker_cell.clone();
+    let held = tokio::task::spawn_blocking(move || {
+        let _guard = held_cell.lock().unwrap();
+        locked_tx.send(()).unwrap();
+        let _ = released.recv();
+    });
+    locked_rx.await.unwrap();
+    let request = tokio::spawn({
+        let registry = registry.clone();
+        let record = record.clone();
+        async move { registry.last_prompt_projection(&record, None).await }
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !slot.lock().await.last_prompt_in_flight {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("refresh started");
+    request.abort();
+    assert!(request.await.unwrap_err().is_cancelled());
+    drop(release);
+    held.await.unwrap();
+
+    let recovered = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let projection = registry.last_prompt_projection(&record, None).await.unwrap();
+            if projection.state == LastPromptState::Current {
+                break projection;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("a cancelled list refresh must not strand the preview pending");
+    assert_eq!(recovered.prompt.unwrap().text, "latest real request");
+}

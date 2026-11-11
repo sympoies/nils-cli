@@ -34,7 +34,7 @@ esac
     f
 }
 
-fn snapshot(root: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
+pub(super) fn snapshot(root: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
     fn walk(root: &Path, path: &Path, rows: &mut Vec<(PathBuf, Option<Vec<u8>>)>) {
         let directory = path.is_dir();
         rows.push((

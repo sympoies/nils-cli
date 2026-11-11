@@ -13,6 +13,8 @@ pub enum ReleaseCommand {
     Create(ReleaseCreateArgs),
     /// Upload files to an existing release.
     Upload(ReleaseUploadArgs),
+    /// Delete named assets from an existing release.
+    DeleteAsset(ReleaseDeleteAssetArgs),
     /// Read a release, its resolved target commit and assets.
     View(ReleaseViewArgs),
     /// Replace notes and optionally the title, then verify readback.
@@ -76,4 +78,14 @@ pub struct ReleaseDeleteArgs {
     /// Permit deleting a canonical SemVer tag's release (optional leading v).
     #[arg(long)]
     pub allow_version_tag: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ReleaseDeleteAssetArgs {
+    pub tag: String,
+    #[arg(required = true)]
+    pub assets: Vec<String>,
+    /// Require the provider SHA-256 digest for a named asset (NAME=DIGEST).
+    #[arg(long, value_name = "NAME=DIGEST")]
+    pub expect_sha256: Vec<String>,
 }

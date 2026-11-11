@@ -66,8 +66,13 @@ pub(super) fn eligible(
     }
     // Resume emits no new turn completion. A retained last turn must not keep
     // startup stuck after the exact bound conversation is observed idle.
-    state.phase != activity::TurnPhase::Starting
-        || activity::settle_starting(context, record, Some(state.revision)).unwrap_or(false)
+    let startup = state.phase == activity::TurnPhase::Starting
+        || (state.phase == activity::TurnPhase::Unknown
+            && state
+                .diagnostic
+                .as_ref()
+                .is_some_and(|diagnostic| diagnostic.reason == "codex_startup_idle_unverified"));
+    !startup || activity::settle_starting(context, record, Some(state.revision)).unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -83,6 +88,8 @@ mod tests {
         for (candidate, status) in [
             ("starting", "idle"),
             ("starting", "active"),
+            ("unverified", "idle"),
+            ("unverified", "active"),
             ("quiet", "idle"),
             ("quiet", "active"),
         ] {
@@ -151,6 +158,11 @@ mod tests {
                     "reason":"codex_progress_quiet", "quiet_threshold_seconds":300,
                     "quiet_since":"2000-01-01T00:00:00Z", "quiet_signal":"current_turn.last_progress_at"
                 });
+            }
+            if candidate == "unverified" {
+                value["phase"] = json!("unknown");
+                value["source"]["confidence"] = json!("inferred");
+                value["diagnostic"] = json!({"reason":"codex_startup_idle_unverified"});
             }
             let state = serde_json::from_value(value).unwrap();
             assert!(activity::codex_notification_maybe_idle(&state));

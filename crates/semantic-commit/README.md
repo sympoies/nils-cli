@@ -116,6 +116,7 @@ Message-construction options:
 
 ```text
 semantic-commit rebase <upstream> [--repo <path>]
+semantic-commit rebase --onto <new-base> <old-base> [--repo <path>]
 semantic-commit rebase --continue [--repo <path>]
 ```
 
@@ -125,6 +126,8 @@ backend and the configured, authenticated forge identity for the committer and
 signer. Original authors and messages remain intact. Signing configuration is
 applied to this operation only; the command never writes Git configuration.
 An identity policy and cached remote default-branch metadata are required.
+Use `--onto <new-base> <old-base>` to replay only commits after the old base
+onto the new base, for example after a dependency was squash-merged.
 
 After a conflict, inspect the files, resolve the conflict, stage the resolution,
 and run `semantic-commit rebase --continue`. Each invocation authenticates the

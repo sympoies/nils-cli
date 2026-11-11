@@ -33,9 +33,10 @@ provider-backed dispatch workflow.
   digest of `AGENT_SESSION_RUNTIME_ID`; replacement removes the prior
   incarnation's file. This file is a private data-transfer boundary, not a
   credential, and does not relax checkpoint authentication or revision fences.
-- Peer summaries and mailbox bodies are authenticated as peer-supplied data but
-  remain untrusted. They cannot authorize commands, approvals, scope changes,
-  credential access, or secret disclosure.
+- Peer summaries and mailbox bodies carry cooperating-session messages.
+  Recipients apply the [verification guidance](coordination-mailbox-v1.md#recipient-guidance)
+  before acting: check the trusted sender list and start-prompt scope, or ask
+  the sender once while continuing other in-scope work.
 - The optional HTTP server has separate operator authentication. Knowing its
   bearer token does not manufacture a session capability, and knowing a
   session capability does not grant server-operator authority.
@@ -455,6 +456,14 @@ See [Cross-host mailbox federation v1](coordination-federation-v1.md#cross-host-
 
 ## Owned child sessions v1
 
+For Console resume preflight refusals, `error.details.reason` is one of the
+following closed set when a transport or binding branch supplies it:
+`daemon-route-missing`, `daemon-answer-unreadable`, `preflight-schema-mismatch`,
+`preflight-binding-mismatch`, `relay-config-missing`, `relay-request-invalid`,
+`console-route-missing`, or `console-answer-invalid`. The public error code
+remains `resume-unsupported`, with `session_created:false` and
+`safe_to_retry:false`. Reasons contain no upstream response content or credentials.
+
 `agent-session start --via-console [--machine MACHINE]` starts a session through Agent Console instead of
 launching tmux locally. Agent Console owns the new session for the same principal that owns the calling
 managed session, so the child appears in that owner's console list and board and can be attached. The
@@ -465,9 +474,11 @@ command runs inside a managed session, with a scoped worker delegation, or as an
 
 It sends `agent`, the absolute `cwd` (default: the current directory), and the optional `title`, prompt
 (`--prompt`, `--prompt-file`, or `--prompt-stdin`), `--agent-arg` values (for example a model),
-`--agent-profile` as `agent_profile`, and `--account` as `codex_account` for `--agent codex` or
-`claude_account` for `--agent claude`; `--account` with another agent fails with
-`console-start-account-unsupported`. `--id`, `--tmux-bin`, `--agent-bin`, `--paste-delay-ms`, and
+`--agent-profile` as `agent_profile`, and `--account` as `account` for Codex or Claude; `--account` with another agent fails with
+`console-start-account-unsupported`. The target daemon advertises this field as
+`data.capabilities.session_account_field: true` in `GET /sessions`; consumers use this
+capability to select the request contract during a mixed-version rollout. Previous
+provider-specific account keys remain accepted inbound until nils-cli#3468. `--id`, `--tmux-bin`, `--agent-bin`, `--paste-delay-ms`, and
 `--coordination-mode` conflict with `--via-console`, because Agent Console assigns the session id and the
 target daemon owns the launch.
 
@@ -502,6 +513,17 @@ caller's record and sets them in `session`, replacing any the caller supplied
 field that names an owner: the aggregator takes the owner from the caller's
 exact Console grant. With federation unconfigured the route fails with
 `console-start-disabled` (HTTP 409).
+
+Notice starts add optional `notice_kind`, `notice_source`, and `notice_id` to
+`session`, alongside the already encoded `prompt`. Both managed-session and
+admitted-service starts forward these fields to the target create handler.
+Omitting them is a valid ordinary start. The target writes the private Claude
+launch receipt and returns `session.launch_notice` as `written`, `not-requested`,
+or `unavailable`; see [initial prompt notices](session-notices-v1.md).
+Upgrade target daemons first: a preceding-release target ignores the notice
+fields, so it creates the session without the launch receipt or outcome field.
+The edge must forward the notice fields and return `session.launch_notice`;
+the coordinated edge change is [salon#406](https://github.com/sympoies/salon/issues/406).
 
 On success the daemon answers HTTP 201 with `{"schema_version": "agent-session.console-start.v1",
 "machine", "session"}`, where `machine` is the requested machine or the daemon's own and `session` is the
@@ -547,7 +569,8 @@ agent-session start --via-console --service ID --service-generation GENERATION \
 ```
 
 `--service` requires `--via-console`, `--service-generation`, `--credential-file` and `--owner`, and
-conflicts with `--no-parent`, `--role`, `--program`, `--issue`, `--no-inherit-work` and `--resume`.
+conflicts with `--resume`. The root accepts `--no-parent`, `--role`, `--program`, `--issue` and
+`--no-inherit-work` with the same validation as a direct start.
 `--machine` and `--expires-at` are required to create and are refused with `--reconcile`. The other
 session options are those of [Owned child sessions v1](#owned-child-sessions-v1). The credential is
 read from a private file, never from argv or the environment.
@@ -591,14 +614,17 @@ body rejects unknown members:
 {
   "service_id": "integration", "service_generation": "generation-1", "owner": "owner-a",
   "operation_id": "UUIDv7", "machine": "host-a", "expires_at": "2030-01-01T00:10:00Z",
+  "no_parent": true, "role": "coordinator",
+  "work": {"issues": [{"provider": "github", "repository": "example/project", "number": 42}]},
   "session": {"agent": "claude", "cwd": "/abs/path", "title": "...", "prompt": "..."}
 }
 ```
 
 `session` may set only `agent`, `cwd`, `workspace`, `launch_env`, `title_mode`, `title`, `prompt`,
-`agent_args`, `agent_profile`, `codex_account` and `claude_account`. The daemon sets the lineage: a
+`agent_args`, `agent_profile` and `account`. The daemon sets the lineage: a
 root with `parent: null` and `starter {"kind": "console", "via": "console"}`, no forge context and no
-origin parent. A reconcile body is exactly `service_id`, `service_generation`, `owner`,
+origin parent. Optional `no_parent`, `role`, and `work` use the direct start validation;
+work resolves without a parent. A reconcile body is exactly `service_id`, `service_generation`, `owner`,
 `operation_id` and `reconcile: true`.
 
 A request is authorized only when, in this order and before any receipt or network call, the body is
@@ -607,17 +633,26 @@ its `owners`; `machine` is in its `machines`; and `expires_at` is in the future 
 `max_lifetime_seconds`. With federation unconfigured the route fails with `console-start-disabled`.
 Owner resolution stays with the aggregator.
 
-| Code | Class | HTTP | Cause |
-| --- | --- | --- | --- |
-| `console-start-service-unauthorized` | data/65 | 401 | disabled, missing or invalid admission, unknown service or generation, wrong or shared credential, non-loopback peer, or a session capability |
-| `console-start-service-owner-denied` | data/65 | 422 | `owner` not admitted for the service |
-| `console-start-service-target-denied` | data/65 | 422 | `machine` not admitted for the service |
-| `console-start-service-expired` | data/65 | 422 | `expires_at` past or beyond the admitted lifetime |
-| `console-start-service-invalid` | usage/64 | 400 | unknown or missing member, forbidden `session` member, malformed selector, UUIDv7 or timestamp |
+| Code | Class | HTTP | Cause | Safe to retry? |
+| --- | --- | --- | --- | --- |
+| `console-start-busy` | unavailable/69 | 503 | All start workers are occupied; no operation, session, or runtime is created. | Yes; retry the same request. |
+| `console-start-service-unauthorized` | data/65 | 401 | disabled, missing or invalid admission, unknown service or generation, wrong or shared credential, non-loopback peer, or a session capability | Yes after admission is fixed; this request created nothing. |
+| `console-start-service-owner-denied` | data/65 | 422 | `owner` not admitted for the service | Yes after admission is fixed; this request created nothing. |
+| `console-start-service-target-denied` | data/65 | 422 | `machine` not admitted for the service | Yes after admission is fixed; this request created nothing. |
+| `console-start-service-expired` | data/65 | 422 | `expires_at` past or beyond the admitted lifetime | Yes with a valid expiry; this request created nothing. |
+| `console-start-service-invalid` | usage/64 | 400 | unknown or missing member, forbidden `session` member, malformed selector, UUIDv7 or timestamp | Yes after correcting the request; this request created nothing. |
+| `console-start-disabled` | runtime/1 | 409 | Federation is not configured. | Yes after configuration is fixed; this request created nothing. |
+| `console-start-operation-conflict` | usage/64 | 400 | The operation ID is bound to another request. | Do not submit a different request under this ID; reconcile the original operation. |
+| `console-start-operation-not-found` | usage/64 | 400 | No matching operation is available to reconcile. | Reconciliation is read-only; inspect the operation before creating a new one. |
+| `console-start-operation-expired` | usage/64 | 400 | The operation ID expired or its receipt was evicted. | No; inspect Console for the earlier child before using a fresh ID. |
+| `console-start-unavailable` | runtime/1 | 502 | The start answer could not be confirmed; `created_session_id` identifies a known creation when available. | No; reconcile the operation before retrying. |
+| `create-outcome-unknown` | runtime/1 | 502 | Upstream cannot establish whether creation happened and supplies no valid created ID. | No; reconcile the operation; absence of candidates does not prove no creation. |
 
 Refusals are content-free: they never echo paths, credentials, prompts or upstream text, and the
-unauthorized code does not say which check failed. The existing `console-start-operation-conflict`,
-`-not-found`, `-expired`, `console-start-disabled` and `console-start-unavailable` codes apply unchanged.
+unauthorized code does not say which check failed. For other forwarded failures, use the operation
+receipt and its `safe_to_retry` value; if the outcome cannot be established, reconcile before retrying.
+The CLI can also emit `console-start-unavailable` before contacting the daemon; its typed
+`recovery.safe_to_retry` field distinguishes definite pre-dispatch failures from unknown outcomes.
 
 ### Aggregator contract
 
@@ -648,8 +683,14 @@ session-scoped call:
 - Any typed usage- or data-class aggregator code, including those and a rejection of the request
   shape such as `invalid-request`, is forwarded with its own code and records the operation
   `not_created` with `safe_to_retry: true`.
-- Only a missing or unreadable answer is `console-start-unavailable`; it leaves the operation
-  `ambiguous`, to be reconciled.
+- A missing or unreadable answer is `console-start-unavailable`; it leaves the operation
+  `ambiguous`, to be reconciled. An upstream `create-outcome-unknown` without a known created ID
+  also remains ambiguous.
+- If an upstream `console-start-unavailable` or `create-outcome-unknown` carries a valid
+  `error.details.created_session_id`, the daemon returns `console-start-unavailable` with that ID
+  and records `created`. The creation outcome is known even though the start answer is unavailable;
+  it never reports `create-outcome-unknown` for that known creation. Only the bounded ID is retained,
+  not arbitrary upstream details. Creation evidence does not attest provider readiness.
 
 ### Receipt and idempotency
 
@@ -661,7 +702,7 @@ the owner it was started for: reconciling it under another owner is `console-sta
 - The first request stores an `ambiguous` receipt under the store lock, then makes at most one
   aggregator create call.
 - A retry must resend the identical request, including `expires_at`: the fingerprint covers `owner`,
-  `machine`, `expires_at` and `session`, and not the operation ID or the service generation. A
+  `machine`, `expires_at`, `session`, `no_parent`, `role` and `work`, and not the operation ID or the service generation. A
   different request under the same operation ID fails `console-start-operation-conflict`.
 - Repeating the request returns the stored outcome and never posts again, including after `expires_at`
   has passed; expiry is checked only for an operation with no receipt. An `ambiguous` repeat returns
@@ -676,6 +717,7 @@ Every success, replay and reconciliation carries `receipt`:
   "service_id": "integration", "service_generation": "generation-1", "owner": "owner-a",
   "machine": "host-a", "operation_id": "UUIDv7",
   "state": "created", "safe_to_retry": false,
+  "identity": {"no_parent": true, "role": "coordinator", "work": {"program": null, "issues": [{"provider": "github", "repository": "example/project", "number": 42}], "inherited": false}},
   "session": {"id": "...", "agent": "claude", "session_incarnation": "..."}
 }
 ```
@@ -684,6 +726,46 @@ Every success, replay and reconciliation carries `receipt`:
 A consumer keeps its previous session unless `state` is `created` with a session ID, and rebinds its
 route only then. Operation diagnostics and the 7-day receipt retention are those of
 [Operation diagnostics and reconciliation](coordination-runtime-v1.md#operation-diagnostics-and-reconciliation).
+
+### Recovering a lost start response
+
+Generate and retain a UUIDv7 `operation_id` **before** submitting a service start. After a timeout,
+disconnect, or a warning that the session was created, use the same service ID, admitted generation,
+owner and operation ID against the same relaying daemon:
+
+```sh
+agent-session start --via-console --service integration --service-generation generation-1 \
+  --credential-file FILE --owner owner-a --operation-id UUIDV7 --reconcile --format json
+```
+
+The HTTP equivalent is `POST /coordination/services/console-start/v1` with the service bearer and
+exactly this body; despite the POST method, reconciliation performs only reads:
+
+```json
+{
+  "service_id": "integration", "service_generation": "generation-1", "owner": "owner-a",
+  "operation_id": "UUIDv7", "reconcile": true
+}
+```
+
+The lookup reuses the existing operation receipt; it never starts a session, resubmits a create,
+cleans up a child, or adopts a board candidate. It survives daemon restart within receipt retention.
+The start error's `details.operation_id` and `hint` point to this lookup. For a known creation,
+`details.created_session_id` also names the child directly, and the lookup reads its retained receipt
+without an aggregator call. Every successful start also returns `operation_id` and `receipt`.
+
+| Lookup result | Creation evidence | Retry safety |
+| --- | --- | --- |
+| `receipt.state: created` | `receipt.session.id` and top-level `session.id` are the exact created child. | Do not create again; inspect the identified session if its start answer was unavailable. |
+| `receipt.state: not_created` | The service recorded a definitive refusal before creation. | Follow `receipt.safe_to_retry`; when true, a deliberate new start may use a fresh UUIDv7 and current expiry. Reusing this ID only replays its receipt. |
+| `receipt.state: ambiguous` | Unknown or still in flight; `session` is null. Board candidates are suggestions, not proof. | `safe_to_retry: false`; never infer not-created from an empty or unavailable scan. |
+| `receipt.state: start_failed` | Creation and a startup failure were recorded; the receipt names the child. | Follow its typed failure and `safe_to_retry`; do not treat it as a missing creation. |
+
+`console-start-operation-not-found` and `console-start-operation-expired` are lookup failures,
+not definitive not-created results. They do not authorize a fresh start: receipts may be absent or
+past their retention fence. Reconcile while the receipt is retained (seven days), and retain the
+returned child identity. A genuinely unreadable upstream result can remain unknown; the service
+does not guess an ID from titles or board candidates.
 
 ## Service-origin submission
 

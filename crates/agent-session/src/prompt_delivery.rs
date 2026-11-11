@@ -28,7 +28,7 @@ fn paste_prompt_file_observing(
     prompt_file: &Path,
     pane_ready_deadline: Duration,
     before_enter: Option<&mut dyn FnMut(&str)>,
-    response_context: Option<&CliContext>,
+    response_context: Option<(&CliContext, &str)>,
 ) -> Result<PromptDeliveryObservation, CliError> {
     let buffer_name = format!("{}-prompt", record.id);
     let target = format!("{}:0.0", record.tmux_session);
@@ -62,14 +62,42 @@ fn paste_prompt_file_observing(
         },
         proof: "tmux-pane-digest-before-submit",
     };
+    let mut represented_text = response_context.map(|(_, text)| text.to_owned());
     if let Some(observe) = before_enter
         && let Some(pane) = capture_visible_pane(tmux_bin, &target)
     {
         observe(&pane);
+        if let Some(label) = composer_image_label(&pane) {
+            represented_text = Some(label);
+        }
+    }
+    if let Some((context, text)) = response_context
+        && record.agent == "claude"
+    {
+        send_guard::placeholder::submit_after_empty(
+            context,
+            record,
+            represented_text.as_deref().unwrap_or(text),
+            tmux_bin,
+            Instant::now() + send::guarded_hold_budget(record, false),
+            || {
+                send_guard::response::watch(
+                    context,
+                    record,
+                    tmux_bin,
+                    send_guard::response::Operation::Submit,
+                    || send_tmux_key(tmux_bin, &target, SpecialKey::Enter),
+                )
+            },
+        )?;
+        return Ok(PromptDeliveryObservation {
+            schema_version: "agent-session.prompt-delivery-observation.v1",
+            composer,
+        });
     }
     let mut enter = ProcessCommand::new(tmux_bin);
     enter.arg("send-keys").arg("-t").arg(&target).arg("Enter");
-    if let Some(context) = response_context {
+    if let Some((context, _)) = response_context {
         send_guard::response::watch(
             context,
             record,
@@ -159,7 +187,7 @@ pub(crate) fn deliver_claude_structured_prompt_locked(
         &staged,
         CLAUDE_STRUCTURED_PROMPT_PANE_READY_DEADLINE,
         image_path.then_some(&mut observe as &mut dyn FnMut(&str)),
-        Some(context),
+        Some((context, text)),
     );
     let _ = fs::remove_file(&staged);
     delivered?;

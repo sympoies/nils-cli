@@ -29,7 +29,7 @@ fn authenticated_forge_identity_projection_is_read_only_and_refuses_cross_sessio
         "schema_version":"agent-session.session-lineage.v1", "parent":null,
         "root":{"machine":"launch-source", "session_id":"alpha", "session_created_at":record["created_at"]},
         "depth":0,"starter":{"kind":"operator", "via":"cli"},
-        "forge_context":{"initiator":"operator", "role":"reviewer"}
+        "forge_context":{"initiator":"operator", "role":"reviewer", "attested_role":"reviewer"}
     });
     write_private_json(&path, &record);
     let registry_path = state_dir.join("coordination/registry.json");
@@ -61,9 +61,26 @@ fn authenticated_forge_identity_projection_is_read_only_and_refuses_cross_sessio
     assert_eq!(valid.code, 0, "{}", valid.stdout_text());
     assert_eq!(data(&valid)["initiator"], "operator");
     assert_eq!(data(&valid)["role"], "reviewer");
+    assert_eq!(data(&valid)["attested_role"], "reviewer");
+    // Attestation audit tuple: configured attestor, creation time, role and subject.
+    assert_eq!(data(&valid)["session_id"], "alpha");
+    assert_eq!(data(&valid)["session_created_at"], record["created_at"]);
     assert_eq!(data(&valid)["session_incarnation"], "incarnation-alpha");
     assert_eq!(fs::read(&registry_path).unwrap(), registry_before);
     assert_eq!(fs::read(&path).unwrap(), record_before);
+    // Existing immutable bindings without operator provenance remain usable.
+    record["lineage"]["forge_context"]
+        .as_object_mut()
+        .unwrap()
+        .remove("attested_role");
+    write_private_json(&path, &record);
+    let unattested = project(&alpha_cap, "incarnation-alpha");
+    assert_eq!(unattested.code, 0, "{}", unattested.stdout_text());
+    assert!(data(&unattested).get("attested_role").is_none());
+    write_private_json(
+        &path,
+        &serde_json::from_slice::<serde_json::Value>(&record_before).unwrap(),
+    );
     let (tmux, tmux_log) = fake_tmux(tmp.path());
     let agent = fake_agent(tmp.path(), "codex");
     let child = run_with_env(
@@ -109,6 +126,11 @@ fn authenticated_forge_identity_projection_is_read_only_and_refuses_cross_sessio
     assert_eq!(child_record["lineage"]["forge_context"]["role"], "tester");
     assert_eq!(child_record["lineage"]["parent"]["session_id"], "alpha");
     assert_eq!(child_record["role"], "tester");
+    assert!(
+        child_record["lineage"]["forge_context"]
+            .get("attested_role")
+            .is_none()
+    );
     let crossed = project(&capability(&state_dir, "beta"), "incarnation-alpha");
     assert_eq!(
         crossed.stdout_json()["error"]["code"],

@@ -78,10 +78,13 @@ fn current_deleted_producer_recovers_after_staleness_and_reassigns_at_exact_tip(
         retained["last_terminal_activity_at"]
     );
     let board_output = stub.tempdir.path().join("producer-board.json");
+    let activity_text = retained["last_terminal_activity_at"].as_str().unwrap();
     let adapter = stub.write_stub("producer-board", r#"#!/bin/sh
 unset AGENT_SESSION_ID AGENT_SESSION_RUNTIME_ID AGENT_SESSION_CAPABILITY_FILE AGENT_SESSION_CHECKPOINT_FILE
 "$DELETED_PRODUCER_BIN" --state-dir "$DELETED_PRODUCER_STATE" "$@" > "$DELETED_PRODUCER_BOARD"
 result=$?
+sed "s|$DELETED_PRODUCER_ACTIVITY_FROM|$DELETED_PRODUCER_ACTIVITY_TO|g" "$DELETED_PRODUCER_BOARD" > "$DELETED_PRODUCER_BOARD.aged"
+mv "$DELETED_PRODUCER_BOARD.aged" "$DELETED_PRODUCER_BOARD"
 cat "$DELETED_PRODUCER_BOARD"
 exit "$result"
 "#);
@@ -90,6 +93,8 @@ exit "$result"
         .env("DELETED_PRODUCER_BIN", producer.to_string_lossy())
         .env("DELETED_PRODUCER_STATE", state.to_string_lossy())
         .env("DELETED_PRODUCER_BOARD", board_output.to_string_lossy())
+        .env("DELETED_PRODUCER_ACTIVITY_FROM", activity_text)
+        .env("DELETED_PRODUCER_ACTIVITY_TO", activity_text)
         .env("AGENT_SESSION_TMUX_BIN", tmux.to_string_lossy())
         .env("AGENT_SESSION_MACHINE", "source")
         .env("AGENT_SESSION_ID", "successor-session")
@@ -126,17 +131,28 @@ exit "$result"
     let board: Value = serde_json::from_slice(&fs::read(&board_output).unwrap()).unwrap();
     assert_eq!(&board["data"]["board"]["records"][0], produced_row);
 
-    // Use the minimum supported policy and real elapsed time, not a rewritten
-    // terminal timestamp or a production clock/trust override. The extra second
-    // clears the consumer's whole-second boundary deterministically.
-    std::thread::sleep(std::time::Duration::from_secs(61));
-    assert!(jiff::Timestamp::now().as_second() - activity.as_second() >= 60);
+    // Age the producer's terminal activity by the minimum supported policy
+    // plus one second instead of sleeping, so no production clock or trust
+    // override is needed. The adapter rewrites only the board output the
+    // consumer reads; the extra second clears the whole-second boundary.
+    let aged_text = activity
+        .checked_sub(jiff::SignedDuration::from_secs(61))
+        .unwrap()
+        .to_string();
+    let mut aged_row = produced_row.clone();
+    aged_row["last_terminal_activity_at"] = json!(aged_text);
+    assert!(
+        jiff::Timestamp::now().as_second()
+            - aged_text.parse::<jiff::Timestamp>().unwrap().as_second()
+            >= 60
+    );
     let repo = stub.tempdir.path().join("repo");
     let base = nils_test_support::git::git(&repo, &["rev-parse", "HEAD"]);
     let base = base.trim();
     let stub = stub
         .env("PROVIDER_BASE", base)
-        .env("PROVIDER_BASE_REF", "main");
+        .env("PROVIDER_BASE_REF", "main")
+        .env("DELETED_PRODUCER_ACTIVITY_TO", &aged_text);
     let args: Vec<_> = recover_args
         .iter()
         .map(|arg| if *arg == OLD { base } else { *arg })
@@ -163,10 +179,10 @@ exit "$result"
     assert_eq!(recovered["handoff"]["base_sha"], base);
     assert_eq!(
         recovered["handoff"]["coordinator_transfer"]["retirement_evidence"]["last_activity_at"],
-        retained["last_terminal_activity_at"]
+        json!(aged_text)
     );
     let board: Value = serde_json::from_slice(&fs::read(&board_output).unwrap()).unwrap();
-    assert_eq!(&board["data"]["board"]["records"][0], produced_row);
+    assert_eq!(&board["data"]["board"]["records"][0], &aged_row);
     let still_retained: Value =
         serde_json::from_slice(&fs::read(state.join("board/closed-ledger.json")).unwrap()).unwrap();
     assert_eq!(still_retained, ledger);

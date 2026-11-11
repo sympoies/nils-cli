@@ -64,6 +64,7 @@ pub(super) fn run(
     });
     if let Err(error) = &mut result {
         let action = match error.code() {
+            "console-start-busy" => "retry the same submission".to_string(),
             "console-start-operation-expired" => {
                 "inspect Console for the earlier child before using a fresh UUIDv7".to_string()
             }

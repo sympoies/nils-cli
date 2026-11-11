@@ -38,6 +38,7 @@ pub mod pr_pending_review;
 pub mod pr_ready;
 pub mod pr_review;
 pub mod pr_review_dismiss;
+mod pr_review_edit;
 pub mod pr_review_get;
 pub mod pr_review_handoff;
 pub mod pr_review_loop;
@@ -45,12 +46,14 @@ mod pr_review_recovery;
 pub mod pr_review_thread_reply;
 pub mod pr_review_thread_resolve;
 pub mod pr_review_threads;
+mod pr_review_validate;
 pub mod pr_reviews;
 pub mod pr_state;
 pub mod pr_tasks;
 pub mod pr_view;
 pub mod pr_wait_checks;
 pub mod repo_bootstrap;
+pub(crate) mod repo_bootstrap_abandon;
 pub mod repo_freeze;
 pub mod repo_push_default;
 pub mod repo_view;
@@ -61,6 +64,7 @@ pub mod review_sync_carry_over;
 pub mod search;
 
 pub mod comment;
+pub mod comment_edit;
 pub(crate) mod github_write;
 pub mod release;
 pub mod repo_list;
@@ -69,4 +73,5 @@ pub mod workflow;
 
 pub(crate) mod stacked_branch;
 
+pub mod run_approve;
 pub mod run_rerun;

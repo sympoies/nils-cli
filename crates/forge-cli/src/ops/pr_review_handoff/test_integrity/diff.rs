@@ -7,7 +7,7 @@ use super::{ForgeError, incomplete, limit};
 mod skip_calls;
 
 #[derive(Debug, serde::Serialize, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct Finding {
+pub(crate) struct Finding {
     pub path: String,
     pub kind: &'static str,
 }
@@ -21,7 +21,7 @@ struct File {
     after: Vec<String>,
 }
 
-pub(super) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
+pub(crate) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
     if patch.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -145,32 +145,15 @@ fn test_path(path: &str) -> bool {
         || name.ends_with("Test.java")
 }
 
+pub(crate) const SOURCE_EXTENSIONS: &[&str] = &[
+    "rs", "py", "js", "jsx", "cjs", "mjs", "ts", "tsx", "cts", "mts", "go", "java", "kt", "sh",
+    "bash", "zsh", "rb", "cs", "cpp", "cc", "c",
+];
+
 pub(super) fn source(path: &str) -> bool {
-    matches!(
-        path.rsplit('.').next(),
-        Some(
-            "rs" | "py"
-                | "js"
-                | "jsx"
-                | "cjs"
-                | "mjs"
-                | "ts"
-                | "tsx"
-                | "cts"
-                | "mts"
-                | "go"
-                | "java"
-                | "kt"
-                | "sh"
-                | "bash"
-                | "zsh"
-                | "rb"
-                | "cs"
-                | "cpp"
-                | "cc"
-                | "c"
-        )
-    )
+    path.rsplit('.')
+        .next()
+        .is_some_and(|ext| SOURCE_EXTENSIONS.contains(&ext))
 }
 
 fn finish(file: &File, found: &mut BTreeSet<Finding>) {

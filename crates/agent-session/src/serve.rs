@@ -22,7 +22,7 @@ mod session_info;
 mod structured_prompt;
 #[cfg(test)]
 use structured_prompt::submit_claude_structured_prompt;
-use structured_prompt::submit_structured_prompt_locked;
+use structured_prompt::{StructuredPromptGuards, submit_structured_prompt_locked};
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 #[path = "serve/codex_quiet.rs"]
@@ -199,8 +199,6 @@ const COORDINATION_WAIT_WORKER_LIMIT: usize = 16;
 const COORDINATION_NOTIFICATION_CONCURRENCY: usize = 8;
 const COORDINATION_NOTIFICATION_RETRY: i64 = 1;
 const CLAUDE_NOTIFICATION_STOP_DEBOUNCE: Duration = activity::CLAUDE_NOTIFICATION_STOP_DEBOUNCE;
-const CLAUDE_NOTIFICATION_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(5);
-const CLAUDE_NOTIFICATION_OBSERVATION_POLL: Duration = Duration::from_millis(100);
 const RESET_AT_KEYS: &[&str] = &["reset_at", "resetAt", "resets_at", "resetsAt"];
 const RESET_AT_EPOCH_KEYS: &[&str] = &[
     "reset_at_epoch",
@@ -259,13 +257,6 @@ struct ManagedHistoryTitleCache {
 #[derive(Clone)]
 struct CoordinationNotificationFence {
     candidate: crate::coordination::NotificationCandidate,
-}
-
-#[derive(Default)]
-struct StructuredPromptGuards<'a> {
-    expected_session_incarnation: Option<&'a str>,
-    expected_binding: Option<(&'a str, u64)>,
-    notification: Option<CoordinationNotificationFence>,
 }
 
 #[derive(Clone)]
@@ -5162,23 +5153,7 @@ async fn list_handler(State(state): State<Arc<ServeState>>) -> Response {
                 "sessions": sessions,
                 "agent_profiles": agent_profiles,
                 "coordination": {"remote_messaging_supported":state.federation.is_some()},
-                "capabilities": {
-                    "profile_resume_import": true,
-                    "managed_resume_command": false,
-                    "resume_blocked_reason": true,
-                    "last_prompt": true,
-                    "last_message": true,
-                    "history": true,
-                    "archive": true,
-                    "group_archive": true,
-                    "history_star": true,
-                    "managed_account_handoff": crate::codex_app_server::MANAGED_ACCOUNT_HANDOFF_CAPABILITY,
-                    "claude_account_switch": crate::claude_account::broker_is_configured(),
-                    "codex_account_switch": crate::codex_account::broker_is_configured(),
-                    "session_retitle_v2": true,
-                    "session_retitle_v3": true,
-                    "session_retitle_v3_receipts": true,
-                },
+                "capabilities": create_body::session_capabilities(),
             }))
         }
         Ok(Err(err)) => envelope_err(err),
@@ -6698,7 +6673,7 @@ async fn session_account_handler_inner(
                     &finish_launch_id,
                     &finish_account,
                     revision,
-                    Err("apply_failed"),
+                    Err("control_apply_unconfirmed"),
                 )
             })
             .await;
@@ -7141,12 +7116,6 @@ fn coordination_notification_provider_unsupported(record: &crate::SessionRecord)
 
 mod terminal_notification;
 use terminal_notification::dispatch_coordination_notification;
-#[cfg(test)]
-use terminal_notification::{
-    TerminalNotificationStartError, dispatch_terminal_coordination_notification,
-    start_terminal_coordination_notification,
-};
-
 fn terminal_notification_waiting(
     context: &CliContext,
     record: &SessionRecord,
@@ -7190,21 +7159,6 @@ fn tmux_session_attached(tmux_bin: &Path, tmux_session: &str) -> Result<bool, ()
         .parse::<u64>()
         .map_err(|_| ())?;
     Ok(attached != 0)
-}
-
-fn observe_terminal_coordination_prompt(mut tail: ProviderPromptTail, prompt: &str) -> bool {
-    let deadline = Instant::now() + CLAUDE_NOTIFICATION_OBSERVATION_TIMEOUT;
-    loop {
-        match tail.poll_submitted_prompts() {
-            Ok(prompts) if prompts.iter().any(|submitted| submitted == prompt) => return true,
-            Ok(_) => {}
-            Err(_) => return false,
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(CLAUDE_NOTIFICATION_OBSERVATION_POLL);
-    }
 }
 
 async fn update_notification_deferred(
@@ -7333,170 +7287,9 @@ async fn process_codex_capacity_auto_resume_ids(
     }
 }
 
-async fn process_codex_capacity_auto_resume_id(
-    state: Arc<ServeState>,
-    target: CodexAutoResumeTarget,
-) {
-    let control = state
-        .codex_controls
-        .lock()
-        .ok()
-        .and_then(|controls| controls.get(&target.id).cloned());
-    let Some(control) = control else {
-        record_codex_scheduler_error_for_runtime(
-            state.context.clone(),
-            target.id,
-            target.launch_id,
-            "control_unavailable",
-        )
-        .await;
-        return;
-    };
-    if control.launch_id != target.launch_id {
-        record_codex_scheduler_error_for_runtime(
-            state.context.clone(),
-            target.id,
-            target.launch_id,
-            "control_unavailable",
-        )
-        .await;
-        return;
-    }
-    let context = state.context.clone();
-    let runtime = tokio::runtime::Handle::current();
-    let handle = control.handle.clone();
-    let expected_launch_id = target.launch_id;
-    let id = target.id;
-    tokio::task::spawn_blocking(move || {
-        let now_epoch = jiff::Timestamp::now().as_second();
-        if let Err(err) = auto_resume::tick_for_runtime_and_binding(
-            &context,
-            &id,
-            &expected_launch_id,
-            auto_resume::RuntimeBindingTick {
-                binding: &target.binding,
-                failover_account: None,
-            },
-            now_epoch,
-            &UsageSnapshot {
-                authoritative: false,
-                has_exhausted_windows: false,
-                exhausted_reset_epochs: Vec::new(),
-                soonest_reset_epoch: None,
-            },
-            |_| {
-                runtime
-                    .block_on(handle.submit(auto_resume::CAPACITY_CONTINUATION_MESSAGE))
-                    .map(|_| ())
-                    .map_err(|_| {
-                        CliError::runtime(
-                            "codex-app-server-submit-unknown",
-                            "Codex capacity continuation submission outcome is unknown",
-                            Some(json!({ "id": id })),
-                        )
-                    })
-            },
-        ) {
-            eprintln!(
-                "warning: Codex capacity auto-resume tick failed: {}",
-                err.code()
-            );
-        }
-    })
-    .await
-    .ok();
-}
-
-async fn process_codex_auto_resume_id(state: Arc<ServeState>, target: CodexAutoResumeTarget) {
-    let control = state
-        .codex_controls
-        .lock()
-        .ok()
-        .and_then(|controls| controls.get(&target.id).cloned());
-    let Some(control) = control else {
-        record_codex_scheduler_error_for_runtime(
-            state.context.clone(),
-            target.id,
-            target.launch_id,
-            "usage_unavailable",
-        )
-        .await;
-        return;
-    };
-    if control.launch_id != target.launch_id {
-        record_codex_scheduler_error_for_runtime(
-            state.context.clone(),
-            target.id,
-            target.launch_id,
-            "usage_unavailable",
-        )
-        .await;
-        return;
-    }
-    let usage = match control.handle.usage().await {
-        Ok(usage) => usage,
-        Err(_) => {
-            record_codex_scheduler_error_for_runtime(
-                state.context.clone(),
-                target.id,
-                target.launch_id,
-                "usage_unavailable",
-            )
-            .await;
-            return;
-        }
-    };
-    let context = state.context.clone();
-    let runtime = tokio::runtime::Handle::current();
-    let handle = control.handle.clone();
-    let expected_launch_id = target.launch_id;
-    let id = target.id;
-    tokio::task::spawn_blocking(move || {
-        let now_epoch = jiff::Timestamp::now().as_second();
-        let failover_account = auto_resume::failover_selection_request(
-            &context,
-            &id,
-            &expected_launch_id,
-            &target.binding,
-            usage.has_exhausted_windows,
-        )
-        .ok()
-        .flatten()
-        .and_then(|request| {
-            crate::codex_account::select_next_account(&request.after, &request.excluded)
-                .ok()
-                .flatten()
-        })
-        .map(|account| account.account);
-        if let Err(err) = auto_resume::tick_for_runtime_and_binding(
-            &context,
-            &id,
-            &expected_launch_id,
-            auto_resume::RuntimeBindingTick {
-                binding: &target.binding,
-                failover_account: failover_account.as_deref(),
-            },
-            now_epoch,
-            &usage,
-            |_| {
-                runtime
-                    .block_on(handle.submit(auto_resume::CONTINUATION_MESSAGE))
-                    .map(|_| ())
-                    .map_err(|_| {
-                        CliError::runtime(
-                            "codex-app-server-submit-unknown",
-                            "Codex continuation submission outcome is unknown",
-                            Some(json!({ "id": id })),
-                        )
-                    })
-            },
-        ) {
-            eprintln!("warning: Codex auto-resume tick failed: {}", err.code());
-        }
-    })
-    .await
-    .ok();
-}
+#[path = "serve/continuation_notices.rs"]
+mod continuation_notices;
+use continuation_notices::{process_codex_auto_resume_id, process_codex_capacity_auto_resume_id};
 
 async fn record_codex_scheduler_error_for_runtime(
     context: CliContext,
@@ -7717,9 +7510,17 @@ async fn process_auto_resume_ids_with_usage(
         let tmux = state.tmux_bin.clone();
         tasks.spawn_blocking(move || {
             let now_epoch = jiff::Timestamp::now().as_second();
-            if let Err(err) = auto_resume::tick(&context, &id, now_epoch, &usage, |record| {
-                send_auto_resume_input(&context, record, auto_resume::CONTINUATION_MESSAGE, &tmux)
-            }) {
+            if let Err(err) =
+                auto_resume::tick(&context, &id, now_epoch, &usage, |record, record_lock| {
+                    send_auto_resume_input(
+                        &context,
+                        record,
+                        record_lock,
+                        auto_resume::CONTINUATION_MESSAGE,
+                        &tmux,
+                    )
+                })
+            {
                 eprintln!("warning: auto-resume tick failed: {}", err.code());
                 if let Err(record_err) =
                     auto_resume::record_scheduler_error(&context, &id, now_epoch, "scheduler_error")
@@ -8551,14 +8352,12 @@ struct ProviderPromptDiscoveryRegistry {
     >,
     resolver: Arc<ProviderPromptSourceResolver>,
     scan_permits: Arc<tokio::sync::Semaphore>,
-    tracker_opener: Arc<ProviderLastPromptTrackerOpener>,
+    tracker_opener: Arc<prompt_scan::projection::ProviderLastPromptTrackerOpener>,
     recovery_permits: Arc<tokio::sync::Semaphore>,
 }
 
 type ProviderPromptSourceResolver =
     dyn Fn(&crate::SessionRecord) -> Option<ProviderPromptSource> + Send + Sync;
-type ProviderLastPromptTrackerOpener =
-    dyn Fn(ProviderPromptSource) -> Option<ProviderLastPromptTracker> + Send + Sync;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -8682,7 +8481,7 @@ impl Default for ProviderPromptDiscoveryRegistry {
             scan_permits: Arc::new(tokio::sync::Semaphore::new(
                 PROVIDER_PROMPT_DISCOVERY_MAX_CONCURRENT_SCANS,
             )),
-            tracker_opener: Arc::new(ProviderLastPromptTracker::open_source),
+            tracker_opener: Arc::new(ProviderLastPromptTracker::open_source_with_binding),
             recovery_permits: Arc::new(tokio::sync::Semaphore::new(
                 PROVIDER_PROMPT_RECOVERY_MAX_CONCURRENT_SCANS,
             )),
@@ -8717,26 +8516,7 @@ impl ProviderPromptDiscoveryRegistry {
             scan_permits: Arc::new(tokio::sync::Semaphore::new(
                 PROVIDER_PROMPT_DISCOVERY_MAX_CONCURRENT_SCANS,
             )),
-            tracker_opener: Arc::new(ProviderLastPromptTracker::open_source),
-            recovery_permits: Arc::new(tokio::sync::Semaphore::new(
-                PROVIDER_PROMPT_RECOVERY_MAX_CONCURRENT_SCANS,
-            )),
-        }
-    }
-
-    #[cfg(test)]
-    fn with_resolver_and_tracker_opener<F, G>(resolver: F, tracker_opener: G) -> Self
-    where
-        F: Fn(&crate::SessionRecord) -> Option<ProviderPromptSource> + Send + Sync + 'static,
-        G: Fn(ProviderPromptSource) -> Option<ProviderLastPromptTracker> + Send + Sync + 'static,
-    {
-        Self {
-            entries: tokio::sync::Mutex::new(HashMap::new()),
-            resolver: Arc::new(resolver),
-            scan_permits: Arc::new(tokio::sync::Semaphore::new(
-                PROVIDER_PROMPT_DISCOVERY_MAX_CONCURRENT_SCANS,
-            )),
-            tracker_opener: Arc::new(tracker_opener),
+            tracker_opener: Arc::new(ProviderLastPromptTracker::open_source_with_binding),
             recovery_permits: Arc::new(tokio::sync::Semaphore::new(
                 PROVIDER_PROMPT_RECOVERY_MAX_CONCURRENT_SCANS,
             )),
@@ -8758,11 +8538,6 @@ impl ProviderPromptDiscoveryRegistry {
             state.next_scan_at = None;
             state.backoff = PROVIDER_PROMPT_PENDING_POLL_INTERVAL;
         }
-    }
-
-    async fn continuity_for_key(&self, key: &ProviderPromptDiscoveryKey) -> Option<String> {
-        let slot = self.entries.lock().await.get(key).cloned()?;
-        Some(slot.lock().await.last_prompt_continuity.clone())
     }
 
     async fn evict_session_if_matches(&self, fence: &SessionRegistryFence) {

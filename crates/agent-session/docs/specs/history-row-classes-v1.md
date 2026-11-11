@@ -58,6 +58,13 @@ widens a send/command admission policy.
 
 ## Runtime command table
 
+The native machine-notice role includes Codex rows joined through the bounded
+producer attestation defined in [session notices](session-notices-v1.md#daemon-continuations-and-machine-history).
+The original physical response row supplies identity and paging order. A
+client id is a causality token, and receives no display authority without the
+exact positive row proof. Human messages containing the same envelope retain
+their provider role.
+
 Each provider adapter owns one small exact-token table. These are display
 recognizers, not aliases or executable command definitions. They recognize only
 commands actually recorded by that provider; no row is synthesized from a send
@@ -84,6 +91,12 @@ row is distinct from the single compaction event below: requesting compaction
 and completing a context replacement are different facts. Do not manufacture a
 compaction event for an unsuccessful command.
 
+Multiple compact command-markup echoes following one nonautomatic boundary and
+summary belong to that same invocation until the next non-echo logical record
+or boundary. Use the first echo for the command content and suppress later
+echoes. A separate compaction or a command not attached to that pair remains a
+separate invocation, even when its command text is identical.
+
 ## Compaction summary and paging
 
 Expose exactly one `row_class: "compaction"` row per provider compaction.
@@ -95,7 +108,8 @@ supplies `text`. Missing summaries yield the empty string, not invented prose.
 An unrelated continuation notice has class `notice`, not `compaction`.
 
 The compaction row uses the existing history-id/physical-offset row-id format,
-anchored at the boundary or `compacted` record, and that record's timestamp when
+anchored at the boundary or `compacted` record, except for a paired Claude
+command and compaction as described below. Use that record's timestamp when
 available. It adds `compaction: {"summary_truncated": false}`. Retain the first
 65,536 Unicode scalar values of the provider summary without trimming; set
 `summary_truncated: true` only when more summary text exists. This is the
@@ -105,8 +119,21 @@ summary-derived cursor. `compaction` is absent on every other class.
 
 Forward, latest/older, live transcript and card-preview projections use the same
 classifier. Normalized ids, classes, text and compaction metadata must agree.
-A summary on another raw line does not consume a second visible row or move the
-event.
+A summary on another raw line does not consume a second visible row. A Claude
+boundary/summary followed by its adjacent compact command echo projects the
+command first, then the compaction. The command uses the boundary offset for its
+id and the echo timestamp; the compaction uses the echo offset for its id and the
+boundary timestamp. Paging uses those same positions, so pages of size one retain
+both rows once. Claude Code 2.1.317 local-command metadata caveats between the
+summary and echo do not end the association. Literal
+duplicate suppression remains unchanged; other rows keep file order. Card
+previews retain the compaction when that adjacent echo arrives.
+
+The cursor grammar remains a decimal byte offset. A traversal spanning the
+ordering upgrade can repeat or miss a command/compaction at one pair boundary
+when an old reverse cursor points to the echo. That offset remains valid; it
+now excludes the compaction at the echo position and includes the command at
+the earlier boundary position. Restart the traversal for an exact result.
 
 The Claude summary must be the next complete logical provider record
 after its boundary; intervening bookkeeping records may be skipped, but another
@@ -122,11 +149,31 @@ second version of the same event. A Claude boundary alone at EOF remains pending
 a complete Codex `compacted` record can be returned immediately even without
 a summary. No full-transcript scan is required.
 
+For Claude Code transcript boundaries with `compactMetadata.trigger: "manual"`,
+publication waits further for a complete command echo or a following complete
+logical record. Forward polling keeps its cursor at the pending boundary,
+including while the echo lacks its final newline; when it completes, the command
+precedes the compaction exactly once. A following non-echo message releases an
+unpaired compaction. Card previews wait for the same manual association.
+
+Automatic, missing and unknown triggers keep immediate summary publication at
+idle EOF. Missing/unknown trigger metadata cannot promise causal order across a
+late echo append. A live poller can receive the compaction before the echo, then
+receive that same compaction id again when the echo arrives, without receiving
+the command in that ongoing cursor traversal. Restart after the pair completes
+to read the command followed by its compaction. Claude Code 2.1.296 boundaries
+include the trigger metadata.
+
+The transcript trigger shape was checked in Claude Code 2.1.296; the official
+[SDK boundary reference](https://code.claude.com/docs/en/agent-sdk/typescript#sdkcompactboundarymessage)
+also defines manual/auto triggers, under the stream adapter's separate
+`compact_metadata` field.
+
 ## Notice recognition
 
 The sole kind-to-label table is in
 [Session notices v1](session-notices-v1.md#shared-kind-to-label-table).
-The summary renderer and the history recognizer use that same table.
+The summary renderer uses that table; unmarked titles do not classify history rows.
 There must not be a separate consumer title list or private producer registry
 in the daemon. Recognize only logical input or an already-admitted daemon
 notice, after exact provider-wrapper handling, before human preview selection.
@@ -140,13 +187,6 @@ titles have no class. Recognizing text does not admit excluded provider rows.
 
 | Form | Exact recognition rule | Kind used for table lookup |
 | --- | --- | --- |
-| Stored notice title | At byte zero, `※` + ASCII space + an exact current or stored title from the shared table + `：`; at least one body character follows. No indentation, ASCII colon, partial title or interior-line match. Subsequent body lines are preserved. | The matched table row |
-| Fixed mailbox line | Entire input is `Mailbox: agent-session message inbox`. | `mailbox.wake` |
-| Dated mailbox line | Entire input is `Mailbox: <UTC>; agent-session message inbox`; `<UTC>` is canonical second-precision `YYYY-MM-DDTHH:MM:SSZ` and a valid date. | `mailbox.wake` |
-| Compact count line | Entire input is `Mailbox:` + ASCII space + space-separated unique `b`, `d`, `h`, `p`, `r`, `u` keys with `=<count>`; each count is canonical decimal 1..256; total at most 51 ASCII bytes. Key order is unrestricted. | `mailbox.wake` |
-| Explained count line | Entire input is `Mailbox: <count> <category>[, <count> <category>…]; agent-session message inbox`; categories are unique and ordered blocker, decision, handoff, progress, report, uncategorized; each count is canonical decimal 1..256. | `mailbox.wake` |
-| Earlier unread sentence | Entire input is `Coordination mailbox has unread messages; run agent-session message inbox.` or the same with ASCII space + `(newest queued <UTC>)` immediately before the semicolon. `<UTC>` follows the dated-line rule. | `mailbox.wake` |
-| Earlier compaction continuation | Entire input is `壓縮完成；執行自己角色的 session-start，接著續做。` | `compact.resume` |
 | Codex instruction frame without kinds | Entire input is `# AGENTS.md instructions for <title>` + LF LF + `<INSTRUCTIONS>` + LF + nonempty content + LF + `</INSTRUCTIONS>`, optionally final LF; `<title>` is a nonempty single line. | No envelope kind is invented |
 | Codex environment frame without kinds | Entire input is `<environment_context>` + LF + nonempty content + LF + `</environment_context>`, optionally final LF. | No envelope kind is invented |
 
@@ -158,18 +198,29 @@ class from these rules.
 
 The earlier bootstrap form containing a private producer sentinel is a known
 gap: this public contract neither publishes nor recognizes it. It remains an
-ordinary unclassified prompt. A public anchored `※ Dispatch start：` input and
-a valid `dispatch.bootstrap` envelope are recognized. There is no configurable
+ordinary unclassified prompt. A valid `dispatch.bootstrap` envelope is
+recognized; an unmarked `※ Dispatch start：` input is retired like every other
+stored-title form. There is no configurable
 private-form hook. This is an explicit scope decision for #3226, not permission
 to guess at bootstrap-like prose.
 
-These rules read already stored provider input and known plain-text outcomes;
-they add no writer, send retry, unmarked delivery mode or alias. Classifying a
-plain row changes only its class; it preserves all logical text bytes, including
-line endings, indentation inside the body and trailing whitespace. A known
-title without the exact shape, a quoted reminder, an unknown `※` title and
-arbitrary `Monitoring: …` text have no class. Consumers never repeat these
-recognizers themselves.
+The legacy plain-text forms are retired: `※ <title>：` stored-title rows,
+fixed and dated `Mailbox:` lines, compact letter counts, total unread counts,
+explained category counts, the earlier coordination unread sentence (with or
+without its queue date), and the earlier compaction continuation sentence.
+They have no `row_class` and render as ordinary provider rows, including when
+already stored. History rows retain their logical text bytes; ordinary prompt
+preview normalization applies. Consumers must
+repin the fixture when adopting this change and never repeat text matching.
+
+The Codex instruction and environment frames remain recognized as provider
+context, independently of notice formats. Envelopes, admitted daemon notice
+events, runtime commands and provider compaction metadata retain their rules.
+
+Mailbox producers emit only current notice envelopes through supported routes.
+When the writer gate is off or a route cannot deliver a notice, they send
+nothing; unread mail remains available to explicit inbox reads and a queued
+generation is not claimed by a disabled hook. There is no plain-text fallback.
 
 ## Fixture pin and implementation acceptance
 

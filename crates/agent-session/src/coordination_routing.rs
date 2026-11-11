@@ -8,11 +8,14 @@ use crate::cli::{self, Command};
 
 pub(crate) fn command_name(command: &Command) -> Option<&'static str> {
     match command {
+        Command::AuthAlert(args) => Some(cli::auth_alert::name(args)),
         Command::Rules(_) => Some("rules"),
         Command::AutoResume(_) => Some("auto-resume"),
         Command::Title(args) => Some(crate::session_title::name(args)),
         Command::Notice(_) => Some("notice"),
         Command::Previews(_) => Some("previews"),
+        Command::NoticeStore(_) => Some("notice-store.audit"),
+        Command::Drafts(_) => Some(cli::drafts::COMMAND),
         Command::Workspace(_) => Some("workspace-set"),
         Command::Readiness(_) => Some("readiness"),
         Command::Delegation(args) => Some(crate::coordination::delegation::name(args)),
@@ -80,6 +83,7 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             b"rules" => return Some("rules"),
             b"auto-resume" => return Some("auto-resume"),
             b"notice" => return Some("notice"),
+            b"notice-store" => return Some("notice-store.audit"),
             b"readiness" => return Some("readiness"),
             _ => break,
         }
@@ -88,6 +92,9 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
         let group = pair[0].to_str()?;
         let leaf = pair[1].to_str()?;
         match (group, leaf) {
+            ("auth-alert", "list") => Some("auth-alert.list"),
+            ("auth-alert", "ack") => Some("auth-alert.ack"),
+            ("drafts", "discard") => Some(cli::drafts::COMMAND),
             ("work-context", "status") => Some("work-context-status"),
             ("work-context", "set") => Some("work-context-set"),
             ("work-context", "clear") => Some("work-context-clear"),
@@ -135,6 +142,7 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
 
 pub(crate) fn command_format(command: &Command) -> OutputFormat {
     match command {
+        Command::AuthAlert(args) => cli::auth_alert::format(args),
         Command::Rules(args) => args.format,
         Command::Workspace(args) => crate::origin::format(args),
         Command::Readiness(args) => args.format,
@@ -151,6 +159,8 @@ pub(crate) fn command_format(command: &Command) -> OutputFormat {
         Command::Diagnose(args) => args.format,
         Command::Send(args) => args.format,
         Command::Notice(args) => args.format,
+        Command::NoticeStore(args) => args.format(),
+        Command::Drafts(args) => args.format(),
         Command::Glance(args) => args.format,
         Command::Resume(args) => args.format,
         Command::Restart(args) => args.format,

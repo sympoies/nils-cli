@@ -1,4 +1,4 @@
-//! Authenticated saved-draft inventory and byte-exact read access.
+//! Authenticated saved-draft inventory, byte-exact reads, and explicit discard.
 use super::*;
 use crate::send_guard::drafts;
 
@@ -6,6 +6,7 @@ pub(super) fn routes() -> Router<Arc<ServeState>> {
     Router::new()
         .route("/sessions/{id}/drafts", get(list))
         .route("/sessions/{id}/drafts/{draft_id}", get(read))
+        .route("/sessions/{id}/drafts/{draft_id}/discard", post(discard))
 }
 
 async fn list(
@@ -59,6 +60,31 @@ async fn read(
             text,
         )
             .into_response(),
+        Ok(Err(error)) => envelope_err(error),
+        Err(_) => join_err(),
+    }
+}
+
+async fn discard(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath((id, draft_id)): AxPath<(String, String)>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let context = state.context.clone();
+    match tokio::task::spawn_blocking(move || {
+        let _lock = crate::acquire_session_record_lock(&context, &id)?;
+        let record = load_session_record(&context, &id)?;
+        drafts::discard(&context, &record, &draft_id)
+    })
+    .await
+    {
+        Ok(Ok(mut result)) => {
+            result["machine"] = json!(state.machine);
+            envelope_ok(result)
+        }
         Ok(Err(error)) => envelope_err(error),
         Err(_) => join_err(),
     }

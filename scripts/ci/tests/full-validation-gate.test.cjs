@@ -24,6 +24,13 @@ for (const name of names) {
     });
   }
 }
+test('the isolation guard is required only when requested', () => {
+  const needs = { ...fixture(), isolation_guard: { result: 'skipped' } };
+  assert.equal(requireFullValidation({ expected: sha, actual: sha, needs }), true);
+  assert.throws(() => requireFullValidation({ expected: sha, actual: sha, needs, isolationGuard: true }), /isolation_guard/);
+  needs.isolation_guard.result = 'success';
+  assert.equal(requireFullValidation({ expected: sha, actual: sha, needs, isolationGuard: true }), true);
+});
 test('a different or missing commit fails closed', () => {
   for (const actual of ['b'.repeat(40), '', undefined]) {
     assert.throws(() => requireFullValidation({ expected: sha, actual, needs: fixture() }), /commit/i);

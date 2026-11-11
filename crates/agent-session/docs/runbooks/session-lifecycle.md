@@ -88,19 +88,49 @@ and account handoff preserve both fields. See the
 [session record contract](../specs/session-lineage-work-v1.md#origin-and-workspace)
 for cross-host inheritance and nullable JSON details.
 
-## New managed record from a provider conversation
+## Operator-attested launch role
 
-For a Claude conversation with a retained, account-bound managed source,
-or a deleted source with an explicitly selected broker account:
+The trusted non-session launcher can attest the role of a new supervisor:
 
 ```bash
+agent-session start --agent codex --forge-initiator operator --role steward --attest-role
+```
+
+Both `--forge-initiator` and `--role` are required. The attestation belongs to
+that session alone; every managed child, including a new-root local or Console
+launch, loses it. Choosing an ordinary role label does not grant attested role
+authority. Managed callers and generic HTTP cannot assert provenance. Resume
+cannot add it to an existing session; launch each replacement explicitly.
+
+Read `agent-session broker identity --session SESSION_ID --format json` with
+the session's own broker capability and current runtime incarnation. The
+binding's audit tuple identifies who attested (`initiator`, the configured
+operator-launcher identity), when (`session_created_at`), which role
+(`attested_role`), and which session/runtime (`session_id`,
+`session_incarnation`). The attestation is created with the session record and
+is immutable. No attested-role field means no operator-attested authority.
+
+This uses the existing same-OS-user trusted-launcher boundary. It does not
+defend against a same-user process deliberately removing its managed environment,
+replacing the broker executable, or modifying the private registry. It provides
+no credential isolation. See the [launch-context contract](../specs/session-lineage-work-v1.md#forge-launch-context).
+
+## New managed record from a provider conversation
+
+For a Codex or Claude conversation with a retained, account-bound managed
+source, or a deleted Claude source with an explicitly selected broker account:
+
+```bash
+agent-session start --agent codex --resume PROVIDER_SESSION_ID --check-resume --format json
+agent-session start --agent codex --resume PROVIDER_SESSION_ID --account ACCOUNT --format json
 agent-session start --agent claude --resume PROVIDER_SESSION_ID --check-resume --format json
 agent-session start --agent claude --resume PROVIDER_SESSION_ID --account ACCOUNT --format json
 ```
 
 `--resume` creates a new managed ID and retains the exact provider conversation
-ID. It uses the shared import resolver and canonical `--resume ID` arguments,
-without generating a conflicting `--session-id`. Ordinary workspace, parent,
+ID. It uses the shared import resolver and canonical provider metadata:
+Codex uses `resume ID --cd CWD --no-alt-screen`; Claude uses `--resume ID`
+without a conflicting generated `--session-id`. Ordinary workspace, parent,
 role, work refs, title mode, provider arguments and initial prompt behavior apply.
 Reserved raw resume/session arguments remain refused.
 
@@ -116,11 +146,22 @@ refuses with `resume-source-unknown`.
 For retained sources, an omitted account resolves from the unique original
 binding; `--account` cannot rebind that source to another account. Missing or
 ambiguous account/ownership evidence refuses; the host login is never a
-fallback. A queued or failed switch requires an explicit selection of the
+fallback. A queued or failed Claude switch requires an explicit selection of the
 bound account to cancel it; otherwise admission returns
 `resume-account-transition-pending`. Read-only checks never settle an intent.
 
-After a managed source is deleted, an explicit account selects the execution
+Codex requires a retained source with a settled broker binding. Every matching
+source must agree on the original account, provider root and cwd; an unknown,
+unbound or pending account transition refuses. The selected account must still
+be listed by the Codex broker and the target Codex must advertise the ordinary
+app-server account capability. Checks probe that capability without preparing
+socket directories or resolving credentials. Start prepares the ordinary runtime
+and binds the same account; daemon creation waits for that binding before
+delivering a deferred bootstrap prompt. Codex checks emit exactly the four
+required data fields below, with `agent` set to `codex`. Deleted Codex sources
+cannot establish original account authority from shared rollout history alone.
+
+After a managed Claude source is deleted, an explicit account selects the execution
 account. Recovery requires the broker's read-only `history-root`
 verb to resolve its existing configuration root and declare the history scope
 as `account` or `shared`. Exactly one matching `PROVIDER_SESSION_ID.jsonl` file
@@ -135,7 +176,7 @@ Auth-quarantined sources continue through the existing recovery flow in
 
 A successful JSON check retains the v1 envelope and its four required data
 fields. `history_scope` is an optional additive v1 field, emitted consistently
-by this implementation for retained and deleted sources. Consumers must accept
+by this implementation for retained and deleted Claude sources. Consumers must accept
 it when present; its absence in an older response does not establish a history
 scope:
 
@@ -166,6 +207,14 @@ this supported rejection. `resume-account-transition-pending` requires an
 explicit bound-account selection or recovery of the existing account transition;
 Console preserves that code and its terminal pre-create details.
 
+For Console resume preflight refusals, `error.details.reason` is one of the
+following closed set when a transport or binding branch supplies it:
+`daemon-route-missing`, `daemon-answer-unreadable`, `preflight-schema-mismatch`,
+`preflight-binding-mismatch`, `relay-config-missing`, `relay-request-invalid`,
+`console-route-missing`, or `console-answer-invalid`. The public error code
+remains `resume-unsupported`, with `session_created:false` and
+`safe_to_retry:false`. Reasons contain no upstream response content or credentials.
+
 Start rechecks admission under conversation and source locks before creating its
 record, including after credential preparation. It rechecks the resolved root,
 exact history and every remaining matching source, including sources that first
@@ -192,7 +241,7 @@ its current caller incarnation and calls Console's
 and target grant before forwarding the prompt-free `session` request to the
 target daemon's authenticated `POST /resume-preflight/v1`. The relay request
 carries `source_session_id`, `source_incarnation`, `machine`, and `session`;
-the session carries `agent`, `resume`, and optional `cwd`, `claude_account`,
+the session carries `agent`, `resume`, and optional `cwd`, `account`,
 `agent_profile`, and `agent_args`. Every hop checks the exact preflight schema
 and target/conversation/account binding. No check creates an operation, writes
 an authentication audit, reads a prompt, or materializes credentials.
@@ -205,7 +254,7 @@ unavailable. First submissions still check the target through the read-only
 Console preflight before submitting a create, and target creation rechecks
 admission under the conversation and source guards.
 
-A Console start forwards `session.resume` and the resolved `claude_account`
+A Console start forwards `session.resume` and the resolved `account`
 through ordinary owner, origin/workspace, lineage, work, role, title, provider
 arguments and prompt handling. It also carries `session.resume_account_explicit`,
 a boolean derived from the original requested account before resolving that pin.
@@ -218,7 +267,7 @@ resolved-account equality check.
 
 Relays preserve this boolean, including `false`; it is not a preflight field. A present
 nonboolean value or a flag without `resume` refuses. Direct target clients that
-omit the flag retain the explicit selection semantics of `claude_account`.
+omit the flag retain the explicit selection semantics of `account`.
 
 The origin daemon retains its at-most-once
 operation receipt and checks the target before submission. Console must send
@@ -230,9 +279,9 @@ Terminal admission refusals retain `session_created:false` and
 `safe_to_retry:false`, including when their operation is replayed.
 
 Console support requires both the daemon routes and the matching Console relay
-implementation; installing only one side does not enable the path. Codex and
-unsupported profiles continue to return `resume-unsupported`;
-[#3011](https://github.com/sympoies/nils-cli/issues/3011) tracks canonical Codex
+implementation; installing only one side does not enable the path.
+Unsupported profiles continue to return `resume-unsupported`.
+[#3011](https://github.com/sympoies/nils-cli/issues/3011) defines canonical Codex
 resume. Disposable real-provider recall and Console ownership/role acceptance
 remain a separate release acceptance gate under
 [#3007](https://github.com/sympoies/nils-cli/issues/3007).
@@ -575,11 +624,11 @@ Human success output reports the verified stopped state; the v1 JSON
 Its `termination_scope: "recorded-boundaries"` describes the verified recorded
 runtime boundary; it does not certify that no escaped process exists.
 Observed processes carrying both runtime markers block ordinary deletion and
-retain the session record, with one narrow Linux exemption: a shared `sccache`
+retain the session record, with narrow shared-daemon exemptions. Linux recognizes a shared `sccache`
 server whose executable basename is `sccache`, whose parent is PID 1, and whose
 command line has no work arguments. The executable is checked through `/proc`,
 not the process display name. Missing inspection data does not grant an exemption.
-Attached cache processes, compiler wrappers, and all other survivors still block.
+Attached cache processes, compiler wrappers, and unproven survivors still block.
 Recorded process-boundary verification remains required before this exemption is
 considered; a daemon still inside that boundary does not bypass termination.
 
@@ -593,6 +642,22 @@ and in the optional `process_inventory.retained_shared_daemons` array in JSON:
   ]
 }
 ```
+
+Linux also recognizes Codex 0.162.1 provider-managed app-server and updater
+processes. Deletion must run with the owning `CODEX_HOME` (or default Codex
+home). The proof binds that independently selected home, the current provider
+package executable, the daemon command, and the provider PID record's boot ID
+and native process start time. A candidate process's environment or display
+name cannot choose its own exemption. The inventory names retained processes
+`codex-app-server` and `codex-daemon-updater`.
+
+These provider daemons are shared per provider home and excluded from session
+marker and recorded cgroup liveness checks. A cgroup containing proven shared
+infrastructure is not frozen or killed: deletion terminates the verified tmux
+target and still refuses if other session processes survive. An interrupted
+whole-cgroup termination is retained for inspection if replay would target a
+proven shared provider daemon. Session-private app-servers with private listen
+sockets remain ordinary session work.
 
 The same inventory field reports retained servers when another survivor blocks
 deletion. Retaining a shared daemon never grants signaling authority over it.
@@ -902,10 +967,12 @@ after creation; inspect the created session before retrying. Configure the
 same allowlist on the caller and target daemon for custom switches. Resume,
 account switching, clear/rebind, and runtime recreation retain the saved map;
 a recreated provider receives the same overrides. Recreation revalidates the
-current allowlist and refuses a saved key that is no longer approved. The
-daemon pins its managed Codex account roster into each new or resumed pane so a
-long-lived tmux server cannot supply a stale value. An already-running pane
-keeps the environment it inherited when it was created; stop and resume that
+current allowlist and refuses a saved key that is no longer approved.
+
+The daemon pins `PATH`, `CODEX_AUTH_PROFILE_NAMES`, `AGENT_SESSION_BIN`, and
+`AGENT_RUNTIME_TRUSTED_CLI_ROOT` into each new or resumed pane so a long-lived
+tmux server cannot supply stale values. An unset roster or trust root is pinned
+as an empty value. An already-running pane keeps the environment it inherited when it was created; stop and resume that
 managed session (or create a new one) to refresh it.
 
 ## Keep secrets out of commands

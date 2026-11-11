@@ -234,7 +234,7 @@ async fn runtime_commands_follow_the_pinned_fixture_through_http_paging() {
 }
 
 #[tokio::test]
-async fn one_and_two_compactions_keep_boundary_identity_and_summary_in_every_direction() {
+async fn one_and_two_compactions_keep_ordered_identity_and_summary_in_every_direction() {
     for provider in ["claude", "codex"] {
         for count in [1, 2] {
             let mut records = Vec::new();
@@ -283,7 +283,11 @@ async fn one_and_two_compactions_keep_boundary_identity_and_summary_in_every_dir
                     Some((offset, line))
                 })
                 .filter(|(_, line)| {
-                    line.contains("compact_boundary") || line.contains("\"compacted\"")
+                    if provider == "claude" {
+                        line.contains("<command-name>")
+                    } else {
+                        line.contains("\"compacted\"")
+                    }
                 })
                 .map(|(offset, _)| format!("{}-{offset}", f.history))
                 .collect::<Vec<_>>();
@@ -677,7 +681,7 @@ async fn queued_runtime_commands_do_not_become_first_history_previews() {
 async fn unmarked_notices_match_history_paging_and_card() {
     for provider in ["claude", "codex"] {
         let mut cases = vec![
-            ("※ Mailbox：body", true),
+            ("※ Mailbox：body", false),
             ("※ Unknown：body", false),
             ("Mailbox：body", false),
             ("※ Mailbox:body", false),
@@ -690,13 +694,13 @@ async fn unmarked_notices_match_history_paging_and_card() {
             ("Quoted: Mailbox: agent-session message inbox", false),
             (
                 "Coordination mailbox has unread messages; run agent-session message inbox.",
-                true,
+                false,
             ),
-            ("壓縮完成；執行自己角色的 session-start，接著續做。", true),
+            ("壓縮完成；執行自己角色的 session-start，接著續做。", false),
         ];
         if provider == "codex" {
-            cases.push(("Mailbox: agent-session message inbox", true));
-            cases.push(("Mailbox: b=1 h=2", true));
+            cases.push(("Mailbox: agent-session message inbox", false));
+            cases.push(("Mailbox: b=1 h=2", false));
             cases.push((
                 "<environment_context>\ncontext\n</environment_context>",
                 true,
@@ -718,7 +722,12 @@ async fn unmarked_notices_match_history_paging_and_card() {
                     .iter()
                     .any(|p| p == provider)
             })
-            .map(|case| (case["input"].as_str().unwrap(), true));
+            .map(|case| {
+                (
+                    case["input"].as_str().unwrap(),
+                    case["expected"]["row_class"] == "notice",
+                )
+            });
         cases.extend(fixture_cases);
         cases.extend(
             fixture["unclassified"]
@@ -773,7 +782,12 @@ async fn unmarked_notices_match_history_paging_and_card() {
                 crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
             tracker.refresh();
             let card = serde_json::to_value(tracker.last_message().unwrap()).unwrap();
-            assert_eq!(card["text"], row["text"]);
+            let expected = if notice {
+                text.to_owned()
+            } else {
+                text.replace("\r\n", "\n")
+            };
+            assert_eq!(card["text"], expected);
             assert_eq!(card["row_class"], row["row_class"]);
         }
     }
@@ -781,9 +795,9 @@ async fn unmarked_notices_match_history_paging_and_card() {
 
 #[tokio::test]
 async fn notice_preserves_admission_and_stays_out_of_human_previews() {
-    let marked = crate::notice::NoticeEnvelope::new("mailbox", "scheduler", None)
+    let marked = crate::notice::NoticeEnvelope::new("mailbox.wake", "agent-session", None)
         .unwrap()
-        .encode("Exact body\n")
+        .encode("Mailbox: 1 report; agent-session message inbox\nRead: /opt/bin/agent-session message inbox --session recipient --format json\nShow: /opt/bin/agent-session message show --session recipient --message MESSAGE_ID --format json")
         .unwrap();
     for provider in ["claude", "codex"] {
         let mut records = vec![user(provider, &marked), user(provider, "actual human")];
@@ -854,4 +868,459 @@ async fn notice_preserves_admission_and_stays_out_of_human_previews() {
         assert_eq!(card["text"], marked);
         assert_eq!(card["row_class"], "notice");
     }
+}
+
+#[tokio::test]
+async fn compact_command_precedes_its_boundary_in_both_paging_directions() {
+    let records = vec![
+        user("claude", "/compact keep focus"),
+        json!({"type":"system","subtype":"compact_boundary","timestamp":"2026-10-01T00:00:37Z"}),
+        json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+        command("claude", "/compact keep focus"),
+        user("claude", "after"),
+    ];
+    let preview_fixture = Fixture::new("claude", &records[..4]);
+    let source = crate::provider_prompt::ProviderPromptSource::for_history(
+        "claude",
+        "synthetic",
+        preview_fixture.file.clone(),
+    )
+    .unwrap();
+    let mut tracker =
+        crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
+    tracker.refresh();
+    let card = serde_json::to_value(tracker.last_message().unwrap()).unwrap();
+    let f = Fixture::new("claude", &records);
+    let rows = f.all(false, false).await;
+    assert_eq!(rows, f.all(true, false).await);
+    let visible = rows
+        .iter()
+        .map(|row| (row["row_class"].as_str(), row["text"].as_str().unwrap()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        visible,
+        vec![
+            (None, "human opening"),
+            (Some("runtime_command"), "/compact keep focus"),
+            (Some("compaction"), "summary"),
+            (None, "after")
+        ]
+    );
+    assert_eq!(card["row_class"], "compaction");
+}
+
+#[tokio::test]
+async fn codex_compaction_keeps_file_order() {
+    let f = Fixture::new(
+        "codex",
+        &[
+            user("codex", "before"),
+            json!({"type":"compacted","payload":{"message":"summary"}}),
+            command("codex", "/compact"),
+            user("codex", "after"),
+        ],
+    );
+    let rows = f.all(false, false).await;
+    assert_eq!(rows, f.all(true, false).await);
+    let visible = rows
+        .iter()
+        .map(|row| (row["row_class"].as_str(), row["text"].as_str().unwrap()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        visible,
+        vec![
+            (None, "before"),
+            (Some("compaction"), "summary"),
+            (Some("runtime_command"), "/compact"),
+            (None, "after")
+        ]
+    );
+}
+
+#[tokio::test]
+async fn compact_post_summary_echo_only_keeps_order_and_identity() {
+    let f = Fixture::new(
+        "claude",
+        &[
+            json!({"type":"system","subtype":"compact_boundary"}),
+            json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+            command("claude", "/compact keep focus"),
+            user("claude", "after"),
+        ],
+    );
+    for parts in [false, true] {
+        let rows = f.all(false, parts).await;
+        assert_eq!(rows, f.all(true, parts).await);
+        assert_eq!(
+            rows.iter()
+                .map(|r| r["text"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["human opening", "/compact keep focus", "summary", "after"]
+        );
+        let contents = fs::read_to_string(&f.file).unwrap();
+        let offsets = contents
+            .split_inclusive('\n')
+            .scan(0usize, |offset, line| {
+                let start = *offset;
+                *offset += line.len();
+                Some(start)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(rows[1]["id"], format!("{}-{}", f.history, offsets[1]));
+        assert_eq!(rows[2]["id"], format!("{}-{}", f.history, offsets[3]));
+        // A reverse cursor issued before the ordering fix at the echo remains
+        // a valid byte boundary. Restart paging to reconcile an upgrade mid-pair.
+        let old_cursor_page = f
+            .page(&format!(
+                "direction=older&cursor={}&limit=1{}",
+                offsets[3],
+                if parts { "&parts=v1" } else { "" }
+            ))
+            .await;
+        assert_eq!(old_cursor_page["messages"][0], rows[1]);
+    }
+}
+
+#[test]
+fn compact_post_summary_echo_keeps_compaction_card_preview() {
+    use std::io::Write;
+    let f = Fixture::new(
+        "claude",
+        &[
+            json!({"type":"system","subtype":"compact_boundary"}),
+            json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+        ],
+    );
+    let source = crate::provider_prompt::ProviderPromptSource::for_history(
+        "claude",
+        "synthetic",
+        f.file.clone(),
+    )
+    .unwrap();
+    let mut tracker =
+        crate::provider_prompt::ProviderLastPromptTracker::open_source(source.clone()).unwrap();
+    tracker.refresh();
+    writeln!(
+        fs::OpenOptions::new().append(true).open(&f.file).unwrap(),
+        "{}",
+        command("claude", "/compact")
+    )
+    .unwrap();
+    tracker.refresh();
+    let card = serde_json::to_value(tracker.last_message().unwrap()).unwrap();
+    assert_eq!(card["row_class"], "compaction");
+    assert_eq!(card["text"], "summary");
+    let mut cold = crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
+    cold.refresh();
+    assert_eq!(cold.last_message(), tracker.last_message());
+}
+
+#[tokio::test]
+async fn manual_compact_polling_waits_for_the_echo_without_losing_either_row() {
+    use std::io::Write;
+    let f = Fixture::new(
+        "claude",
+        &[
+            user("claude", "/compact"),
+            json!({"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","preTokens":1000}}),
+            json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+        ],
+    );
+    let source = crate::provider_prompt::ProviderPromptSource::for_history(
+        "claude",
+        "synthetic",
+        f.file.clone(),
+    )
+    .unwrap();
+    let mut tracker =
+        crate::provider_prompt::ProviderLastPromptTracker::open_source(source.clone()).unwrap();
+    tracker.refresh();
+    assert_eq!(tracker.last_message().unwrap().text, "human opening");
+    let first = f.page("limit=1").await;
+    let cursor = first["next_cursor"].as_str().unwrap();
+    let pending = f.page(&format!("cursor={cursor}&limit=1")).await;
+    assert_eq!(pending["messages"], json!([]));
+    let cursor = pending["next_cursor"].as_str().unwrap();
+    let echo = command("claude", "/compact").to_string();
+    let mut file = fs::OpenOptions::new().append(true).open(&f.file).unwrap();
+    file.write_all(echo.as_bytes()).unwrap();
+    tracker.refresh();
+    assert_eq!(tracker.last_message().unwrap().text, "human opening");
+    assert_eq!(
+        f.page(&format!("cursor={cursor}&limit=1")).await["messages"],
+        json!([])
+    );
+    file.write_all(b"\n").unwrap();
+    tracker.refresh();
+    assert_eq!(tracker.last_message().unwrap().text, "summary");
+    let mut cold = crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
+    cold.refresh();
+    assert_eq!(cold.last_message(), tracker.last_message());
+    let command = f.page(&format!("cursor={cursor}&limit=1")).await;
+    assert_eq!(command["messages"][0]["row_class"], "runtime_command");
+    let compaction = f
+        .page(&format!(
+            "cursor={}&limit=1",
+            command["next_cursor"].as_str().unwrap()
+        ))
+        .await;
+    assert_eq!(compaction["messages"][0]["row_class"], "compaction");
+    assert_eq!(compaction["messages"][0]["text"], "summary");
+    let end = f
+        .page(&format!(
+            "cursor={}&limit=1",
+            compaction["next_cursor"].as_str().unwrap()
+        ))
+        .await;
+    assert_eq!(end["messages"], json!([]));
+    assert_eq!(f.all(false, true).await, f.all(true, true).await);
+}
+
+#[tokio::test]
+async fn nonmanual_compaction_at_idle_eof_still_publishes_immediately() {
+    for trigger in [json!("auto"), json!("unknown"), Value::Null] {
+        let f = Fixture::new(
+            "claude",
+            &[
+                json!({"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":trigger}}),
+                json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+            ],
+        );
+        let page = f.page("direction=latest&limit=1").await;
+        assert_eq!(page["messages"][0]["row_class"], "compaction");
+        assert_eq!(page["messages"][0]["text"], "summary");
+    }
+}
+
+#[tokio::test]
+async fn manual_compaction_without_an_echo_resolves_at_the_next_message() {
+    let f = Fixture::new(
+        "claude",
+        &[
+            json!({"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual"}}),
+            json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+            user("claude", "after"),
+        ],
+    );
+    let rows = f.all(false, false).await;
+    assert_eq!(rows, f.all(true, false).await);
+    assert_eq!(
+        rows.iter()
+            .map(|row| row["text"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["human opening", "summary", "after"]
+    );
+}
+
+#[tokio::test]
+async fn automatic_compaction_does_not_borrow_a_later_compact_command() {
+    let f = Fixture::new(
+        "claude",
+        &[
+            json!({"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"auto"}}),
+            json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"automatic summary"}}),
+            command("claude", "/compact"),
+        ],
+    );
+    let rows = f.all(false, true).await;
+    assert_eq!(rows, f.all(true, true).await);
+    assert_eq!(
+        rows.iter()
+            .map(|row| row["text"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["human opening", "automatic summary", "/compact"]
+    );
+    let source = crate::provider_prompt::ProviderPromptSource::for_history(
+        "claude",
+        "synthetic",
+        f.file.clone(),
+    )
+    .unwrap();
+    let mut tracker =
+        crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
+    tracker.refresh();
+    assert_eq!(
+        serde_json::to_value(tracker.last_message().unwrap()).unwrap()["row_class"],
+        "runtime_command"
+    );
+}
+
+#[tokio::test]
+async fn compact_pair_repeated_echo_is_hidden_in_history_and_card() {
+    use std::io::Write;
+    let f = Fixture::new(
+        "claude",
+        &[
+            json!({"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual"}}),
+            json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+            command("claude", "/compact keep focus"),
+        ],
+    );
+    let before = f.page("limit=3").await;
+    let cursor = before["next_cursor"].as_str().unwrap().to_owned();
+    let expected_plain = before["messages"].as_array().unwrap().clone();
+    let expected_parts = f.all(false, true).await;
+    assert_eq!(
+        expected_plain
+            .iter()
+            .map(|row| row["text"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["human opening", "/compact keep focus", "summary"]
+    );
+    let source = crate::provider_prompt::ProviderPromptSource::for_history(
+        "claude",
+        "synthetic",
+        f.file.clone(),
+    )
+    .unwrap();
+    let mut tracker =
+        crate::provider_prompt::ProviderLastPromptTracker::open_source(source.clone()).unwrap();
+    tracker.refresh();
+    let expected_card = tracker.last_message().unwrap();
+    writeln!(
+        fs::OpenOptions::new().append(true).open(&f.file).unwrap(),
+        "{}",
+        command("claude", "/compact keep focus")
+    )
+    .unwrap();
+
+    for (parts, expected) in [(false, expected_plain), (true, expected_parts)] {
+        assert_eq!(f.all(false, parts).await, expected);
+        assert_eq!(f.all(true, parts).await, expected);
+    }
+    assert_eq!(
+        f.page(&format!("cursor={cursor}&limit=1")).await["messages"],
+        json!([])
+    );
+    tracker.refresh();
+    assert_eq!(tracker.last_message().as_ref(), Some(&expected_card));
+    let mut cold = crate::provider_prompt::ProviderLastPromptTracker::open_source(source).unwrap();
+    cold.refresh();
+    assert_eq!(cold.last_message().as_ref(), Some(&expected_card));
+}
+
+#[tokio::test]
+async fn compact_pair_suppression_keeps_distinct_invocations() {
+    let pair = vec![
+        json!({"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual"}}),
+        json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}),
+        command("claude", "/compact keep focus"),
+        command("claude", "/compact keep focus"),
+    ];
+    for separate_boundary in [false, true] {
+        let mut records = pair.clone();
+        if separate_boundary {
+            records.extend(pair.clone());
+        } else {
+            records.push(user("claude", "after"));
+            records.push(command("claude", "/compact keep focus"));
+        }
+        let f = Fixture::new("claude", &records);
+        let rows = f.all(false, true).await;
+        assert_eq!(rows, f.all(true, true).await);
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row["row_class"] == "runtime_command")
+                .map(|row| row["text"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["/compact keep focus", "/compact keep focus"]
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row["row_class"] == "compaction")
+                .count(),
+            if separate_boundary { 2 } else { 1 }
+        );
+    }
+}
+
+#[tokio::test]
+async fn claude_2_1_317_compact_caveat_keeps_order_and_monotonic_ids() {
+    let f = Fixture::new(
+        "claude",
+        &[
+            json!({"type":"user","uuid":"input","isMeta":false,"timestamp":"2026-10-01T00:00:01Z","message":{"role":"user","content":"/compact"}}),
+            json!({"type":"system","uuid":"boundary","parentUuid":"input","subtype":"compact_boundary","compactMetadata":{"trigger":"manual"},"timestamp":"2026-10-01T00:00:13Z"}),
+            json!({"type":"user","uuid":"summary","parentUuid":"boundary","isCompactSummary":true,"isVisibleInTranscriptOnly":true,"timestamp":"2026-10-01T00:00:13Z","message":{"role":"user","content":"summary"}}),
+            json!({"type":"user","uuid":"caveat","parentUuid":"summary","isMeta":true,"timestamp":"2026-10-01T00:00:01.006Z","message":{"role":"user","content":"<local-command-caveat>Local command</local-command-caveat>"}}),
+            json!({"type":"user","uuid":"echo","parentUuid":"caveat","isMeta":false,"timestamp":"2026-10-01T00:00:01.006Z","message":{"role":"user","content":"<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>"}}),
+            json!({"type":"user","parentUuid":"echo","message":{"role":"user","content":"<local-command-stdout>done</local-command-stdout>"}}),
+            json!({"type":"attachment","attachment":{"type":"fixture"}}),
+        ],
+    );
+    for parts in [false, true] {
+        let rows = f.all(false, parts).await;
+        assert_eq!(rows, f.all(true, parts).await);
+        assert_eq!(rows, f.all(false, parts).await);
+        let pair: Vec<_> = rows
+            .iter()
+            .filter(|r| {
+                matches!(
+                    r["row_class"].as_str(),
+                    Some("runtime_command" | "compaction")
+                )
+            })
+            .collect();
+        assert_eq!(
+            pair.iter()
+                .map(|r| r["row_class"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["runtime_command", "compaction"]
+        );
+        let offset = |r: &Value| {
+            r["id"]
+                .as_str()
+                .unwrap()
+                .rsplit('-')
+                .next()
+                .unwrap()
+                .parse::<u64>()
+                .unwrap()
+        };
+        assert!(offset(pair[0]) < offset(pair[1]));
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn synthetic_large_compaction_page_measurement() {
+    let mut records = Vec::new();
+    for _ in 0..150 {
+        records.push(json!({"type":"progress","data":"x".repeat(200_000)}));
+        records.push(json!({"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual"}}));
+        records.push(json!({"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}));
+        records.push(command("claude", "/compact"));
+    }
+    let f = Fixture::new("claude", &records);
+    let read_bytes = || -> u64 {
+        fs::read_to_string("/proc/thread-self/io")
+            .unwrap()
+            .lines()
+            .find_map(|line| line.strip_prefix("rchar: "))
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let before = read_bytes();
+    let started = std::time::Instant::now();
+    let page = f
+        .catalog
+        .messages(
+            &f.history,
+            None,
+            100,
+            provider_history::HistoryMessageDirection::Latest,
+        )
+        .unwrap();
+    let bytes = read_bytes() - before;
+    let rows = page.messages.len();
+    eprintln!(
+        "synthetic compaction page: {rows} rows in {:?}",
+        started.elapsed()
+    );
+    eprintln!("synthetic compaction page: {bytes} bytes read");
+    assert!(
+        bytes < 100_000_000,
+        "page repeatedly read the preceding window: {bytes} bytes"
+    );
 }

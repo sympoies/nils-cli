@@ -278,7 +278,7 @@ fn verify_local_identity(cwd: Option<&Path>, profile: &Profile) -> Result<()> {
     }
     Ok(())
 }
-const HELPER: &str = "!f() { test \"$1\" = get || exit 0; p= h= r=; while IFS= read -r line; do case \"$line\" in protocol=*) p=${line#protocol=};; host=*) h=${line#host=};; path=*) r=${line#path=};; esac; done; test \"$p\" = https && test \"$h\" = \"$FORGE_IDENTITY_HOST\" && test \"$r\" = \"$FORGE_IDENTITY_REPO.git\" || exit 1; printf 'username=x-access-token\\npassword=%s\\n' \"$FORGE_IDENTITY_TOKEN\"; }; f";
+const HELPER: &str = "!f() { test \"$1\" = get || exit 0; p= h= r=; while IFS= read -r line; do case \"$line\" in protocol=*) p=${line#protocol=};; host=*) h=${line#host=};; path=*) r=${line#path=};; esac; done; test \"$p\" = https && test \"$h\" = \"$FORGE_IDENTITY_HOST\" && test \"$r\" = \"$FORGE_IDENTITY_PATH\" || exit 1; printf 'username=x-access-token\\npassword=%s\\n' \"$FORGE_IDENTITY_TOKEN\"; }; f";
 
 fn commit_override(args: &[&str]) -> bool {
     let mut args = args.iter().skip(1);
@@ -385,7 +385,14 @@ fn prepare_git_inner(
     };
     let (target, url) = target_for_remote(cwd, &remote, op != Operation::GitRead)?;
     let path = managed_path(cwd)?;
-    let auth = policy.authorize(&target, Some(&path), op, std::ffi::OsStr::new("gh"))?;
+    if op != Operation::Commit {
+        super::https::reject_local_transport(cwd)?;
+    }
+    let auth = if op != Operation::Commit && url.starts_with("https://") {
+        policy.authorize_https(&target, &path, cwd, &url, op)?
+    } else {
+        policy.authorize(&target, Some(&path), op, std::ffi::OsStr::new("gh"))?
+    };
     let mut config: Vec<(String, String)> = Vec::new();
     if op == Operation::Commit {
         // History-producing commands require dedicated contracts; do not let rebase,
@@ -438,9 +445,30 @@ fn prepare_git_inner(
         {
             return Err(Error::new("identity_transport_override"));
         }
-        let https = format!("https://{}/{}.git", target.host, target.repo);
+        let canonical = format!("https://{}/{}.git", target.host, target.repo);
+        let https = if url.starts_with("https://") {
+            &url
+        } else {
+            &canonical
+        };
+        let (host, credential_path) = https
+            .trim_start_matches("https://")
+            .split_once('/')
+            .ok_or(Error::new("identity_target_invalid"))?;
+        if !host.eq_ignore_ascii_case(&target.host) {
+            return Err(Error::new("identity_transport_override"));
+        }
+        if !url.starts_with("https://") {
+            config.push((format!("url.{canonical}.insteadOf"), url.clone()));
+        }
         config.extend([
-            (format!("url.{https}.insteadOf"), url),
+            // Suppress core.hooksPath, core.fsmonitor, and core.alternateRefsCommand;
+            // local/worktree http.proxy, http.sslCAInfo, http.sslCAPath (including
+            // URL forms), and remote.<name>.proxy were refused before authorization.
+            // Other repository-configured commands remain operator-owned.
+            (String::from("core.hooksPath"), String::from("/dev/null")),
+            (String::from("core.fsmonitor"), String::from("false")),
+            (String::from("core.alternateRefsCommand"), String::new()),
             (String::from("credential.helper"), String::new()),
             (String::from("credential.helper"), HELPER.to_string()),
             (String::from("credential.useHttpPath"), String::from("true")),
@@ -450,18 +478,10 @@ fn prepare_git_inner(
             (String::from("http.extraHeader"), String::new()),
         ]);
         command
-            .env("FORGE_IDENTITY_HOST", &target.host)
-            .env("FORGE_IDENTITY_REPO", &target.repo)
-            .env("FORGE_IDENTITY_TOKEN", &auth.token)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env_remove("GIT_SSL_NO_VERIFY")
-            .env("GIT_ASKPASS", "false");
-        for (key, _) in std::env::vars_os() {
-            if key.to_string_lossy().starts_with("GIT_TRACE") {
-                command.env_remove(key);
-            }
-        }
-        command.env_remove("GIT_CURL_VERBOSE");
+            .env("FORGE_IDENTITY_HOST", host)
+            .env("FORGE_IDENTITY_PATH", credential_path)
+            .env("FORGE_IDENTITY_TOKEN", &auth.token);
+        super::https::protect(command);
     }
     command.env("GIT_CONFIG_COUNT", config.len().to_string());
     for (i, (key, value)) in config.iter().enumerate() {

@@ -113,6 +113,30 @@ fn read(context: &CliContext, session: &SessionRecord) -> Option<Recorded> {
     })
 }
 
+/// A known launch/configuration absence permits the mailbox's guarded text
+/// wake. An installed module with missing readiness remains uncertain.
+pub(crate) fn mailbox_text_reason(
+    context: &CliContext,
+    session: &SessionRecord,
+) -> Option<&'static str> {
+    if session.agent != "claude" {
+        return None;
+    }
+    if !crate::notice::writers_enabled() {
+        return Some("notice-writers-disabled");
+    }
+    if let Some(recorded) = read(context, session) {
+        return Some(match recorded.reason {
+            Reason::WritersDisabled => "notice-writers-disabled",
+            Reason::ProviderVersionUnsupported | Reason::ProviderVersionUnreadable => {
+                "notice-provider-unsupported"
+            }
+        });
+    }
+    let dir = runtime::module_dir(&context.state_dir, session).ok()?;
+    (!dir.try_exists().ok()?).then_some("notice-receiver-not-attached")
+}
+
 /// The admission refusal for a Claude notice that has no attached native
 /// module. It precedes every claim and input and adds no retry or fallback
 /// permission; the code separates a version problem from every other cause.
@@ -152,14 +176,4 @@ pub(crate) fn refusal(context: &CliContext, session: &SessionRecord) -> CliError
                 "supported_min":min.to_string(),"supported_max":max.to_string()}}),
         ),
     )
-}
-
-/// Only known absence of the module permits the mailbox's existing plain route.
-/// An installed module with missing/invalid readiness remains uncertain.
-pub(crate) fn known_unsupported(context: &CliContext, session: &SessionRecord) -> bool {
-    read(context, session).is_some()
-        || runtime::module_dir(&context.state_dir, session).is_ok_and(|dir| {
-            std::fs::symlink_metadata(dir)
-                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
-        })
 }

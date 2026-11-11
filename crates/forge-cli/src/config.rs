@@ -214,8 +214,8 @@ pub struct ForgeConfig {
     /// global bot list unless that global layer enables the monotonic safety
     /// gate; `None` inherits it.
     pub review_convergence_bots: Option<Vec<ReviewConvergenceBot>>,
-    /// Repository-only allow-list of hashed session identities permitted to
-    /// take over retired review coordinators. Never inherited globally.
+    /// Repository-only allow-list of session digests or operator-attested roles
+    /// permitted to take over retired coordinators. Never inherited globally.
     pub review_handoff_supervisors: Option<Vec<String>>,
     /// Minimum inactivity age for coordinator retirement proof.
     pub review_handoff_stale_after: Option<Duration>,
@@ -916,18 +916,28 @@ fn parse_review_handoff(table: &toml::map::Map<String, Value>, cfg: &mut ForgeCo
                 let mut supervisors = Vec::new();
                 let mut valid = true;
                 for (index, item) in items.iter().enumerate() {
-                    let Some(digest) = item.as_str() else {
+                    let Some(selector) = item.as_str() else {
                         valid = false;
                         cfg.warnings.push(format!(
                             "invalid-config-value:review_handoff.supervisors.{index}"
                         ));
                         continue;
                     };
-                    let hex = digest.strip_prefix("sha256:").unwrap_or_default();
-                    if hex.len() != 64
-                        || !hex
-                            .bytes()
-                            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                    let hex = selector.strip_prefix("sha256:").unwrap_or_default();
+                    let role = selector.strip_prefix("role:").is_some_and(|role| {
+                        nils_common::forge_identity::session::LaunchContext {
+                            initiator: "operator".into(),
+                            role: Some(role.into()),
+                            attested_role: Some(role.into()),
+                        }
+                        .validate()
+                        .is_ok()
+                    });
+                    if !role
+                        && (hex.len() != 64
+                            || !hex
+                                .bytes()
+                                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
                     {
                         valid = false;
                         cfg.warnings.push(format!(
@@ -935,7 +945,7 @@ fn parse_review_handoff(table: &toml::map::Map<String, Value>, cfg: &mut ForgeCo
                         ));
                         continue;
                     }
-                    supervisors.push(digest.to_string());
+                    supervisors.push(selector.to_string());
                 }
                 if valid {
                     supervisors.sort();
@@ -1133,6 +1143,22 @@ mod tests {
         let path = dir.join(CONFIG_FILE_NAME);
         fs::write(&path, body).expect("write config");
         path
+    }
+
+    #[test]
+    fn review_handoff_supervisor_roles_require_bounded_exact_identifiers() {
+        use pretty_assertions::assert_eq;
+        let parse = |source: &str| parse_value(&toml::from_str::<Value>(source).unwrap());
+        let repo =
+            parse("[review_handoff]\nsupervisors = [\"role:steward\", \"role:coordinator\"]");
+        assert_eq!(
+            repo.review_handoff_supervisors,
+            Some(vec!["role:coordinator".into(), "role:steward".into()])
+        );
+        for selector in ["role:", "role:invalid role", "initiator:operator"] {
+            let invalid = parse(&format!("[review_handoff]\nsupervisors = [\"{selector}\"]"));
+            assert!(invalid.review_handoff_supervisors.is_none());
+        }
     }
 
     #[test]

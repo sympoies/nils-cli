@@ -78,6 +78,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/agent-runtime/docs/determinism.md`
 - `crates/agent-session/docs/provider-turn-signal-evidence.md`
 - `crates/agent-session/docs/reports/agent-session-completion-migration-contract.md`
+- `crates/agent-session/docs/runbooks/auth-quarantine-acceptance.md`
 - `crates/agent-session/docs/runbooks/codex-account-recovery-acceptance.md`
 - `crates/agent-session/docs/runbooks/lifecycle-journal.md`
 - `crates/agent-session/docs/runbooks/operator-rules.md`
@@ -88,9 +89,11 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/agent-session/docs/specs/control-plane-observation-v1.md`
 - `crates/agent-session/docs/specs/mail-audit-v1.md`
 - `crates/agent-session/docs/specs/native-busy-replies.md`
+- `crates/agent-session/docs/specs/owner-prompt-intent.md`
 - `crates/agent-session/docs/specs/send-v1.md`
 - `crates/agent-session/docs/specs/claude-auth-recovery-v1.md`
 - `crates/agent-session/docs/specs/auth-failover-v1.md`
+- `crates/agent-session/docs/specs/auth-alert-delivery-v1.md`
 - `crates/agent-session/docs/specs/serve-api-v1.md`
 - `crates/agent-session/docs/specs/broker-evidence-v1.md`
 - `crates/agent-session/docs/specs/coordination-federation-v1.md`
@@ -139,6 +142,8 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/codex-cli/docs/specs/codex-cli-diag-rate-limits-and-auth-json-contract-v1.md`
 - `crates/codex-cli/docs/specs/execution-capsule-v1.md`
 - `crates/forge-cli/docs/runbooks/pr-head-repair-loop.md`
+- `crates/forge-cli/docs/runbooks/retired-coordinator-recovery.md`
+- `crates/forge-cli/docs/runbooks/unavailable-review-publisher.md`
 - `crates/forge-cli/docs/specs/checks-scope-and-deadline-v1.md`
 - `crates/forge-cli/docs/specs/forge-cli-spec-v1.md`
 - `crates/forge-cli/docs/specs/forge-publication-admin-v1.md`
@@ -153,6 +158,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/forge-cli/docs/specs/pr-lifecycle-v1.md`
 - `crates/forge-cli/docs/specs/search-completions-v1.md`
 - `crates/git-cli/docs/specs/dirty-checkout-adoption-json-contract-v1.md`
+- `crates/git-cli/docs/runbooks/governed-https-transport.md`
 - `crates/git-cli/docs/specs/git-cli-remote-surfaces.md`
 - `crates/git-cli/docs/specs/git-cli-worktree-convention.md`
 - `crates/macos-agent/docs/runbooks/backend-upgrade-v1.md`

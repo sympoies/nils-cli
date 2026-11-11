@@ -39,11 +39,11 @@ fn guarded_send_confirms_submission_when_the_runtime_exits_after_enter() {
 
 #[test]
 fn an_unknown_runtime_probe_does_not_confirm_submission() {
-    for guards in [vec![], vec!["--require-empty-composer"]] {
+    crate::cases::for_each_case(&[vec![], vec!["--require-empty-composer"]], |guards| {
         let fixture = Fixture::new("claude");
         fs::write(fixture.root().join("exit-after-enter"), "").unwrap();
         fs::write(fixture.root().join("probe-unknown-after-enter"), "").unwrap();
-        let output = fixture.send_text(Some("/exit"), &guards);
+        let output = fixture.send_text(Some("/exit"), guards);
         if guards.is_empty() {
             assert_eq!(
                 output.stdout_json()["data"]["submission"]["outcome"],
@@ -62,7 +62,7 @@ fn an_unknown_runtime_probe_does_not_confirm_submission() {
                 .count(),
             1
         );
-    }
+    });
 }
 
 #[test]

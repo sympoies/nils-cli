@@ -29,6 +29,28 @@ transport, not a provider setting change. Inspect the provider before and after
 with `glance` to verify model and effort. No provider menu is inferred and no
 configuration file is written by this operation.
 
+## Claude submitted-paste ownership
+
+A Claude text send with exactly one `enter` requires an observable empty composer
+before paste, including a plain send or a send carrying only a runtime guard.
+A pre-existing paste placeholder refuses with `observation: "paste-placeholder"`;
+owner input is preserved. Text-only composer editing keeps its existing behavior.
+
+After that empty admission, a lone `[Pasted text #N]` or
+`[Pasted text #N +L lines]` belongs only to the current send. Before Enter, the
+send verifies its runtime and the complete logical input: C-a reaches the start,
+one Right crosses the atomic marker, Right/Left returns to the start, and Right
+returns to the endpoint. Repeated matching cursor reads allow redraws to settle.
+This proof rejects an owner suffix even when it is hidden by renderer padding.
+A changed marker or adjacent owner input refuses without Enter.
+
+The send uses bounded submission confirmation and never repeats the paste.
+If its placeholder remains unconfirmed, cleanup repeats the same ownership and
+navigation proof before one Backspace and verifies the resulting empty composer.
+Unexpected input, identity changes and unobservable navigation are preserved and
+reported through the existing cleanup details. Ownership is not retained across
+sends or used to recover an admission-time placeholder. Codex behavior is unchanged.
+
 ## Opt-in continuation guards
 
 ```bash
@@ -77,6 +99,12 @@ that exact terminal runtime also confirms `submission.outcome: "submitted"`
 pane or unknown runtime status alone does not confirm submission. If a turn
 starts or the composer changes after paste, it refuses without Enter. It
 then attempts to remove only the text it pasted and verifies the result.
+
+Claude plain text-and-Enter sends also use the fifteen-second terminal budget,
+including the cursor proof for an owned opaque paste and confirmation after
+Enter. Owned opaque-paste cleanup has a fresh fifteen-second budget, with up
+to two seconds per cursor position to obtain two stable observations. Pane and
+identity observations retain their one-second command cap and identity fences.
 
 An exact paste can be removed; with Claude, a provable countable-cell paste
 prefix can also be removed when admission required an empty composer and an earlier
@@ -353,6 +381,7 @@ included in refusal output. Use `--format json` to consume `error.code` and
 | `send-session-not-idle` | A provider-reported phase or current turn is not idle. |
 | `send-provider-event-pending` | Provider event ingestion is queued/in progress. |
 | `send-idle-unobservable` | Provider-reported activity or ingress status cannot be observed. |
+| `send-completion-evidence-missing` | A Stop lacks provider completion evidence after the quiet window; inspect activity status and choose operator recovery. |
 | `send-composer-not-empty` | A visible draft exists before paste. |
 | `send-composer-unobservable` | The composer cannot be read exactly. |
 | `send-composer-mismatch` | After paste, the composer differs from the submitted text. |
@@ -366,6 +395,14 @@ included in refusal output. Use `--format json` to consume `error.code` and
 | `send-native-unconfirmed` | Native dispatch or subsequent exact-input confirmation is uncertain; the key is retained. |
 | `send-submit-stuck` | Text remains after at most two guarded Enter presses; the claim is retained. |
 | `send-submit-unconfirmed` | Pane observations cannot prove submission; the claim is retained. |
+
+When activity is unknown because `completion_evidence_missing` follows a Stop,
+`--require-idle` returns `send-completion-evidence-missing`. It does not infer
+idle or deliver input. The operator can inspect `activity status`, confirm the
+turn is idle, and explicitly send with `--require-empty-composer` without
+`--require-idle`, retaining identity and idempotency guards. The CLI never
+performs this recovery automatically. Draft and unconfirmed-submission
+protections still apply.
 
 Observation refusals include the failed `guard` and `stage` (`admission`,
 `claimed` for the recheck right after the idempotency claim, or `submit`),
@@ -408,7 +445,7 @@ Navigation and deletion are allowed to settle within the cleanup budget;
 only a fresh post-deletion observation can establish restoration.
 
 Mixed input without proof of an empty admitted composer, mixed drafts with
-zero-width or control characters, blank continuation rows, dialogs, paste
+zero-width or control characters, blank continuation rows, dialogs, unowned paste
 placeholders, unexpected cursor positions and unreadable captures are
 preserved and reported. Cleanup batches only the three identity variables it needs and pairs each pane/cursor read in
 one tmux invocation, reducing subprocess round trips within the same budget.

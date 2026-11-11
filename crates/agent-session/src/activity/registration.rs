@@ -12,6 +12,34 @@ use crate::{Envelope, run_output_with_timeout_and_strict_cap, valid_sha256};
 
 const AGENT_HOOK_DOCTOR_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const AGENT_HOOK_DISPATCH_TIMEOUT_SECONDS: i64 = 60;
+const ENTRYPOINT_UNAVAILABLE: &[u8] = b"agent-hook-entrypoint-unavailable\n";
+
+fn readiness_command() -> ProcessCommand {
+    let script = nils_common::provider_entrypoint::selector(true).replace(
+        "exit 127",
+        "printf 'agent-hook-entrypoint-unavailable\\n' >&2; exit 127",
+    );
+    let mut command = ProcessCommand::new("/bin/sh");
+    command.args(["-c", &script, "provider-entrypoint"]);
+    command
+}
+
+fn entrypoint_unavailable(output: &std::process::Output) -> bool {
+    output.status.code() == Some(127) && output.stderr == ENTRYPOINT_UNAVAILABLE
+}
+
+pub(super) fn owned_command(agent: AgentKind, event: Option<&str>) -> String {
+    let name = nils_common::provider_entrypoint::command(
+        false,
+        &["activity", "hook", "--agent", agent.as_str()],
+    );
+    match event {
+        Some("PermissionRequest") if agent == AgentKind::Codex => format!(
+            "if [ \"${{AGENT_SESSION_ATTENTION_AUTHORITY:-hook}}\" = protocol ]; then exit 0; fi; exec {name}"
+        ),
+        _ => name,
+    }
+}
 
 pub(super) struct ClaudeRegistrationReadiness {
     pub(super) configured: bool,
@@ -60,8 +88,7 @@ fn config_dir(variable: &str, fallback: PathBuf) -> PathBuf {
 }
 
 pub(super) fn agent_hook_codex_configured() -> Result<bool, &'static str> {
-    let binary = std::env::var_os("AGENT_HOOK_BIN").unwrap_or_else(|| "agent-hook".into());
-    let mut command = ProcessCommand::new(binary);
+    let mut command = readiness_command();
     command.args(["doctor", "--product", "codex", "--format", "json"]);
     let output = run_output_with_timeout_and_strict_cap(
         command,
@@ -75,6 +102,9 @@ pub(super) fn agent_hook_codex_configured() -> Result<bool, &'static str> {
             "agent-hook-doctor-unavailable"
         }
     })?;
+    if entrypoint_unavailable(&output) {
+        return Err("agent-hook-doctor-unavailable");
+    }
     let envelope: Envelope<Vec<agent_hook::setup::DoctorResult>> =
         serde_json::from_slice(&output.stdout).map_err(|_| "agent-hook-doctor-output-invalid")?;
     if !output.status.success()
@@ -106,8 +136,7 @@ pub(super) fn agent_hook_codex_configured() -> Result<bool, &'static str> {
 pub(super) fn agent_hook_claude_readiness(
     path: &Path,
 ) -> Result<ClaudeRegistrationReadiness, &'static str> {
-    let binary = std::env::var_os("AGENT_HOOK_BIN").unwrap_or_else(|| "agent-hook".into());
-    let mut command = ProcessCommand::new(binary);
+    let mut command = readiness_command();
     command.args([
         "setup",
         "--product",
@@ -128,6 +157,9 @@ pub(super) fn agent_hook_claude_readiness(
             "agent-hook-setup-unavailable"
         }
     })?;
+    if entrypoint_unavailable(&output) {
+        return Err("agent-hook-setup-unavailable");
+    }
     let envelope: Envelope<agent_hook::setup::SetupResult> =
         serde_json::from_slice(&output.stdout).map_err(|_| "agent-hook-setup-output-invalid")?;
     if !output.status.success()
@@ -191,7 +223,13 @@ fn is_owned_dispatch(handler: &Value) -> bool {
     handler.as_object().is_some_and(|object| object.len() == 3)
         && handler.get("type").and_then(Value::as_str) == Some("command")
         && handler.get("command").and_then(Value::as_str)
-            == Some("agent-hook dispatch --product claude")
+            == Some(
+                nils_common::provider_entrypoint::command(
+                    true,
+                    &["dispatch", "--product", "claude"],
+                )
+                .as_str(),
+            )
         && handler.get("timeout").and_then(Value::as_i64)
             == Some(AGENT_HOOK_DISPATCH_TIMEOUT_SECONDS)
 }
@@ -206,7 +244,7 @@ mod tests {
     fn claude_dispatch_group_requires_exact_matcher_and_handler() {
         let expected = json!({
             "type": "command",
-            "command": "agent-hook dispatch --product claude",
+            "command": nils_common::provider_entrypoint::command(true, &["dispatch", "--product", "claude"]),
             "timeout": 60
         });
         let exact = json!({

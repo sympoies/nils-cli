@@ -1,6 +1,5 @@
 {
   "schema_version": "agent-session.mailbox-notification-fixture.v1",
-  "prompt_template": "Mailbox: agent-session message inbox",
   "states": [
     "queued",
     "attempting",

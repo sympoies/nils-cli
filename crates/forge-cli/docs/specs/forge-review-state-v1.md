@@ -194,7 +194,8 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   cannot change it.
 
   Assigned delivery and merge enforce the persisted policy, including explicit
-  merge review opt-out. `final-approval` requires a canonical passing native
+  merge review opt-out, until an explicit `publisher-unavailable` recovery
+  releases the assignment's merge gate as described below. `final-approval` requires a canonical passing native
   `APPROVED` report on the current provider head. `check` accepts the same flag
   to demand stricter approval for that invocation; it cannot weaken the
   assignment. A source pass under a strict policy returns DATA 65,
@@ -307,8 +308,8 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   <reviewer-unreachable|reviewer-closed|reviewer-declined|reviewer-timeout>` is
   an explicit original-coordinator revocation that advances the assignment
   generation. The parent owns mailbox transport, bounded waits, and liveness
-  evidence; the CLI never guesses reviewer availability. Surrendered or revoked
-  control fails with `designated_reviewer_unavailable`, never self-review.
+  evidence; the CLI never guesses reviewer availability. Surrendered or
+  reviewer-revoked control fails with `designated_reviewer_unavailable`, never self-review.
   Recovery captures the current provider head/base even after base drift.
   The current recorded coordinator may assign the next generation using the
   durable `state_tip_digest` returned by recovery or fresh inspection.
@@ -318,14 +319,35 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   or `--reason coordinator-retired`. Assignment-time validation of a remote
   reviewer session's publishing author remains unavailable: the identity
   policy authenticates the calling session, not an arbitrary remote reviewer.
+- `recover <id> --reason publisher-unavailable --expected-head <sha>
+  --expected-state <digest>` releases an assignment whose review publisher is
+  unavailable. Only the recorded original coordinator may call it, using the
+  same identity and head/tip CAS rules as reviewer recovery. It appends a trusted
+  handoff with `returned_reason: publisher-unavailable`, advances the assignment
+  generation, and captures the current provider head/base. It does not publish
+  a review or create an observation.
+
+  The latest released handoff no longer gates `pr merge`, even when its policy
+  is `final-approval` or the assignment environment remains set. The repository's
+  non-assigned policy applies: `--review-convergence=false` permits merge without
+  an observation as for an unassigned PR. Existing observations, blocking
+  findings, head/base and chain CAS, required checks, holds, threads, tasks and
+  provider gates retain their ordinary enforcement. Default or enforced review
+  convergence still requires its ordinary ledger evidence. Designated `check`
+  and review publication remain unavailable under revoked ownership; this
+  recovery grants no review verdict or self-review authority. Other recovery
+  reasons and surrender retain their existing behavior. A later `assign` by the
+  recorded coordinator starts a fresh generation and restores the designated gate.
+  See the [publisher recovery runbook](../runbooks/unavailable-review-publisher.md).
 - Successor takeover uses `recover <id> --reason coordinator-retired
   [--coordinator-session <recorded-session-id>[@machine]] --base-sha <current-base>
   --expected-head <current-head> --expected-state <exact-tip>`. The selector
   when supplied must hash to the recorded coordinator; otherwise the selector
   is resolved from the stored coordinator digest in a fresh, complete
   `agent-session board --state all --format json` read. Only a repository
-  configured handoff supervisor may take over, as listed by `sha256:` digest in
-  `[review_handoff].supervisors` at the exact provider base. The selected
+  configured handoff supervisor may take over, as listed by `sha256:` session
+  digest or `role:<attested-role>` in `[review_handoff].supervisors` at the exact
+  provider base. The selected
   remote must match provider host/repository and its base-tracking ref must
   resolve to that base SHA; invalid explicit `stale_after` refuses takeover.
   The list is
@@ -342,6 +364,22 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   The opaque source digest binds the final proof read without publishing its
   machine name. Source configuration remains owned by `agent-session`;
   `FORGE_CLI_AGENT_SESSION_BIN` selects its executable (including test adapters).
+- A `role:` supervisor entry matches only `attested_role` from a fresh
+  authenticated `agent-session broker identity` binding. The broker verifies
+  the caller capability and current runtime incarnation; the consumer requires
+  its session/incarnation to match the acting managed session. The trusted
+  operator launcher must have requested `--attest-role` for that specific
+  session. Children cannot inherit or self-assign this provenance. Ordinary
+  roles, board labels, titles, and inherited initiators confer no supervisor
+  authority. The role name survives session replacement; each replacement
+  requires its own operator attestation.
+
+  This uses agent-session's existing
+  same-OS-user trusted-launcher boundary, not credential isolation from code
+  that can modify the private registry. Digest entries do not require a role
+  binding; an exact digest match takes precedence in a mixed allow-list.
+  The supervisor must remain distinct from both recorded coordinator and
+  assigned reviewer, regardless of how it matches the policy.
 - A `review_coordinator_unproven` refusal carries `details.prerequisite`,
   `details.retryable` and `details.next_action`; its message states the remedy.
   Policy prerequisites: `checkout_unavailable`, `remote_unavailable`,
@@ -394,8 +432,9 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   authority remains unresolved rather than becoming automatic takeover.
 - Takeover appends a handoff recovery with `coordinator_transfer` containing
   `old_coordinator_digest`, `new_coordinator_digest`, `lifecycle_source_digest`,
-  `reason` (`coordinator-retired`), `supervisor_digest`, and
-  `retirement_evidence` (`machine_digest`, `session_status`,
+  `reason` (`coordinator-retired`), `supervisor_digest`, optional
+  `supervisor_attestation` (`role` and `binding_digest` of the complete
+  authenticated session/incarnation launch binding), and `retirement_evidence` (`machine_digest`, `session_status`,
   `last_activity_at`, and `stale_after_seconds`). This optional field is omitted on ordinary records,
   preserving their existing digest bytes. The assignment generation advances,
   the current head/base are captured, reviewer identity and public author stay
@@ -405,7 +444,8 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   observation. Coordinator publication remains prohibited.
 - Takeover requires exact provider head/base and the caller's retained ledger
   tip, including `--dry-run`. Before a live append, the CLI rereads tip,
-  ownership, session lifecycle, and provider head/base. A recovery racing an
+  ownership, session lifecycle, and provider head/base. Role authorization is
+  reauthenticated and must match the retained attestation before append. A recovery racing an
   old-generation reviewer write follows the existing recovery-wins rule;
   competing takeovers fail closed. Dry-run emits prospective transfer metadata
   without a provider write or refreshed durable tip.
@@ -611,6 +651,21 @@ for deleted tests, assertion changes and new skips in the PR comparison.
   open-finding cardinality is mechanical progress. Stable-fingerprint collisions, reopens, no progress,
   and the round limit fail closed as typed terminal errors. An extendable error
   first appends a durable hard-stop receipt, so a restart returns the same stop.
+- At the no-progress ceiling with an open blocking finding and no durable stop,
+  `inspect` reports `ceiling_proposal`: the stop code, budget field, increment,
+  proposal digest, and exact approval marker bound to the current state tip.
+  Inspection is read-only. An authorized maintainer may post the exact marker
+  as a new PR comment after that state. The assigned writer consumes it with:
+
+  ```sh
+  forge-cli pr review-loop extend <pr> --expected-head <current-head> --expected-state <state-tip> --stop-code review_no_progress --budget-field max_no_progress_rounds --increment 1 --proposal-digest <proposal-digest> --approval-comment <comment-id>
+  ```
+
+  This appends one extension, retaining the finding inventory and history. A
+  stale head, state, proposal, or approval is refused. If the state advances,
+  inspect again and obtain a fresh approval. No duplicate review observation
+  is needed. `observe --dry-run` is a prediction, not a durable observation;
+  an actual extendable stop follows the separate post-stop flow below.
 - A durable terminal budget error includes an exact extension proposal, but
   never extends itself. `extend` is a separate action requiring the stopped state tip,
   expected head, proposal digest, field/increment, stop code, and a newer

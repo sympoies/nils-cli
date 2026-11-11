@@ -1637,15 +1637,12 @@ fn user_prompt_agent_memory(
 
 const MAILBOX_REMINDER_SCHEMA: &str = "cli.agent-session.message-reminder.v1";
 
-/// The fixed mailbox reminder for the authenticated managed DSH session, if
-/// `agent-session` has a live unread generation to announce.
+/// The current mailbox wake envelope for an authenticated managed DSH session.
 ///
-/// DSH has no serve prompt route, so this prompt-time hook is its delivery
-/// channel (sympoies/nils-cli#2011). `agent-session message reminder` owns the
-/// generation and receipt state and claims each generation once; the hook
-/// only carries the fixed body-free text. An unmanaged session, a missing or
-/// untrusted companion, a refusal, a timeout, or any text that is not the
-/// fixed reminder yields nothing, so a reminder can never block the step.
+/// DSH has no serve prompt route; its hook carries the notice at a model-step
+/// boundary. The companion owns claims, generations and receipts. Recipient and
+/// schema checks below bind the reply. Missing trust, refusal or timeout yields
+/// no context, so an unavailable reminder cannot block the step.
 fn mailbox_reminder(
     run_child: &mut dyn FnMut(Command) -> Result<Output, HookError>,
 ) -> Option<String> {
@@ -1661,7 +1658,7 @@ fn mailbox_reminder(
         env_value("AGENT_SESSION_STATE_DIR").filter(|path| Path::new(path).is_absolute())?;
     let executable = trusted_sibling(nils_common::session_binary::NAME).ok()?;
     let mut command = Command::new(executable);
-    sanitize_companion_env(&mut command, &[]);
+    sanitize_companion_env(&mut command, &["AGENT_SESSION_NOTICE_WRITERS"]);
     command
         .env("HOME", "/nonexistent")
         .args([
@@ -1694,8 +1691,7 @@ fn mailbox_reminder(
         return None;
     }
     let reminder = data.get("reminder")?.as_str()?;
-    let fixed = mailbox_reminder::is_fixed(reminder, &session_id);
-    fixed.then(|| reminder.to_string())
+    mailbox_reminder::is_mailbox_notice(reminder).then(|| reminder.to_string())
 }
 
 /// Bounded, redacted startup memory from the release `agent-memory`.

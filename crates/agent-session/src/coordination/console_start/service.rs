@@ -31,7 +31,7 @@ const MAX_LISTED: usize = 64;
 const MAX_LIFETIME_SECONDS: u64 = 86400;
 /// The members a service may set in `session`; lineage, work, role, resume and
 /// origin belong to the daemon or are not available to a service.
-const SESSION_MEMBERS: [&str; 11] = [
+const SESSION_MEMBERS: [&str; 15] = [
     "agent",
     "cwd",
     "workspace",
@@ -39,14 +39,18 @@ const SESSION_MEMBERS: [&str; 11] = [
     "title_mode",
     "title",
     "prompt",
+    "notice_kind",
+    "notice_source",
+    "notice_id",
     "agent_args",
     "agent_profile",
+    "account",
     "codex_account",
     "claude_account",
 ];
 
 /// `start --via-console` as an admitted service. The members are required
-/// together, and none combines with a parent, role, work or resume.
+/// together; service starts cannot resume an existing session.
 #[derive(ClapArgs, Debug, Clone, Default)]
 pub struct ServiceArgs {
     /// Admitted service ID; starts a Console-owned root as that service.
@@ -54,7 +58,7 @@ pub struct ServiceArgs {
         long,
         value_name = "ID",
         requires_all = ["via_console", "service_generation", "credential_file", "owner"],
-        conflicts_with_all = ["no_parent", "role", "program", "issues", "no_inherit_work", "resume"]
+        conflicts_with = "resume"
     )]
     pub service: Option<String>,
     /// Admitted generation of the service.
@@ -267,6 +271,9 @@ struct Request {
     machine: Option<String>,
     expires_at: Option<String>,
     session: Option<Map<String, Value>>,
+    no_parent: Option<bool>,
+    role: Option<Value>,
+    work: Option<Value>,
 }
 
 impl Request {
@@ -276,7 +283,12 @@ impl Request {
         let request: Self = serde_json::from_value(body.clone())
             .map_err(|_| invalid("the service console start request is invalid"))?;
         let shape = if request.reconcile {
-            request.machine.is_none() && request.expires_at.is_none() && request.session.is_none()
+            request.machine.is_none()
+                && request.expires_at.is_none()
+                && request.session.is_none()
+                && request.no_parent.is_none()
+                && request.role.is_none()
+                && request.work.is_none()
         } else {
             request.machine.as_deref().is_some_and(machine_name)
                 && request.expires_at.as_deref().and_then(epoch).is_some()
@@ -319,6 +331,8 @@ fn require_live(expires_at: &str, max_lifetime_seconds: u64) -> Result<(), CliEr
 fn child_session(
     machine: &str,
     session: &Map<String, Value>,
+    role: Option<&str>,
+    work: &lineage::WorkRequest,
 ) -> Result<Map<String, Value>, CliError> {
     if let Some(workspace) = session.get("workspace").filter(|value| !value.is_null()) {
         crate::origin::validate_workspace(
@@ -328,10 +342,20 @@ fn child_session(
         )?;
     }
     let mut session = session.clone();
+    crate::coordination::resume_preflight::normalize_account(&mut session)?;
     session.insert(
         "lineage".into(),
         LineageSeed::root(machine, lineage::STARTER_CONSOLE, lineage::VIA_CONSOLE).to_create_json(),
     );
+    if let Some(role) = role {
+        session.insert("role".into(), json!(role));
+    }
+    if let Some(work) = work.resolve(None) {
+        session.insert(
+            "work".into(),
+            json!({"program": work.program, "issues": work.issues, "inherited": work.inherited}),
+        );
+    }
     Ok(session)
 }
 
@@ -347,6 +371,7 @@ fn owner_receipt(receipt: &Receipt, operation_id: &str) -> Value {
         "operation_id": operation_id,
         "state": value["state"],
         "safe_to_retry": value["safe_to_retry"],
+        "identity": value["identity"],
         "session": value.get("session").cloned().unwrap_or(Value::Null)
     })
 }
@@ -396,7 +421,7 @@ fn relay_operation(
         return Err(super::disabled());
     };
     let operation_id = request.operation_id.as_str();
-    let origin = Origin::service(
+    let mut origin = Origin::service(
         &config.machine,
         &request.service_id,
         &request.service_generation,
@@ -430,14 +455,24 @@ fn relay_operation(
     if !entry.machines.iter().any(|admitted| admitted == machine) {
         return Err(target_denied());
     }
-    let child = child_session(&config.machine, &session)?;
+    let role = lineage::role_from_create_body(request.role.as_ref())?;
+    let work = match request.work.as_ref() {
+        None | Some(Value::Null) => lineage::WorkRequest::from_flags(None, &[], false)?,
+        Some(value) => lineage::WorkRequest::from_request_json(value)?,
+    };
+    let no_parent = request.no_parent.unwrap_or(false);
+    lineage::require_root_for_role(role.as_deref(), !no_parent)?;
+    let child = child_session(&config.machine, &session, role.as_deref(), &work)?;
+    let identity = json!({"no_parent": no_parent, "role": role, "work": child.get("work")});
+    origin.set_identity(identity);
     // An already admitted operation replays its stored outcome, even after expiry.
     if !Receipt::exists(context, &origin, operation_id)? {
         require_live(expires_at, entry.max_lifetime_seconds)?;
     }
     let fingerprint = json!({
         "operation_id": operation_id, "owner": request.owner, "machine": machine,
-        "expires_at": expires_at, "session": session
+        "expires_at": expires_at, "session": session, "no_parent": no_parent,
+        "role": role, "work": work.to_request_json()
     });
     let (mut receipt, submit) =
         Receipt::begin(context, &origin, operation_id, &fingerprint, machine)?;
@@ -464,6 +499,7 @@ pub(super) fn cli_body(
     session: Value,
     operation_id: &str,
     reconcile: bool,
+    lineage: &super::ChildLineage,
 ) -> Result<Value, CliError> {
     let mut body = json!({
         "service_id": service.service,
@@ -483,5 +519,14 @@ pub(super) fn cli_body(
     body["machine"] = json!(machine);
     body["expires_at"] = json!(expires_at);
     body["session"] = session;
+    if lineage.no_parent {
+        body["no_parent"] = json!(true);
+    }
+    if let Some(role) = &lineage.role {
+        body["role"] = json!(role);
+    }
+    if let Some(work) = lineage.work.to_request_json() {
+        body["work"] = work;
+    }
     Ok(body)
 }
