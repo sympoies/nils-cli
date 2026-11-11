@@ -5129,7 +5129,7 @@ async fn activity_broker_notification_refresh_matches_stateful_shared_poll_sourc
         } else {
             "source-after"
         };
-        crate::list_sessions(context, Some(tmux_bin)).map(|sessions| {
+        crate::session_views::list_sessions(context, Some(tmux_bin)).map(|sessions| {
             sessions
                 .into_iter()
                 .filter(|session| session.id == expected_id)
@@ -5205,7 +5205,7 @@ async fn activity_broker_notification_storm_with_slow_scans_converges_final_revi
         } else {
             "storm-before"
         };
-        crate::list_sessions(context, Some(tmux_bin)).map(|sessions| {
+        crate::session_views::list_sessions(context, Some(tmux_bin)).map(|sessions| {
             sessions
                 .into_iter()
                 .filter(|session| session.id == expected_id)
@@ -5467,7 +5467,7 @@ async fn activity_refresh_manual_time_slow_scan_retains_dirty_final_revision() {
         } else {
             "slow-final"
         };
-        crate::list_sessions(context, Some(tmux_bin)).map(|sessions| {
+        crate::session_views::list_sessions(context, Some(tmux_bin)).map(|sessions| {
             sessions
                 .into_iter()
                 .filter(|session| session.id == expected_id)

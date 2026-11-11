@@ -76,7 +76,7 @@ mod session_title;
 use session_title::normalize_title;
 mod session_record;
 mod session_views;
-use session_views::{list_sessions, list_sessions_for_serve, visit_session_views};
+use session_views::{list_sessions_for_serve, visit_session_views};
 mod usage;
 
 #[cfg(test)]
@@ -16463,7 +16463,7 @@ fi
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
 
-        let views = super::list_sessions(&context, Some(&tmux)).unwrap();
+        let views = super::session_views::list_sessions(&context, Some(&tmux)).unwrap();
         assert_eq!(views.len(), 2);
         assert_eq!(fs::read_to_string(calls).unwrap(), "list-windows\n");
     }
@@ -16480,7 +16480,7 @@ fi
         fs::write(&tmux, "#!/bin/sh\nexit 1\n").unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
 
-        let views = super::list_sessions(&context, Some(&tmux)).unwrap();
+        let views = super::session_views::list_sessions(&context, Some(&tmux)).unwrap();
         assert_eq!(views.len(), 1);
         assert_eq!(views[0].agent, "hermes");
     }
@@ -16526,7 +16526,7 @@ fi
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
 
-        let views = super::list_sessions(&context, Some(&tmux)).unwrap();
+        let views = super::session_views::list_sessions(&context, Some(&tmux)).unwrap();
 
         assert_eq!(views.len(), 1);
         assert_eq!(views[0].status, "running");
