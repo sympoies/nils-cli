@@ -336,7 +336,7 @@ jobs:
 
       - name: Install zsh + xvfb + ripgrep + tmux + bubblewrap
         if: needs.changes.outputs.release_only != 'true'
-        run: sudo apt-get update && sudo apt-get install -y zsh xvfb xauth ripgrep tmux bubblewrap
+        run: bash scripts/ci/apt-install-retry.sh zsh xvfb xauth ripgrep tmux bubblewrap
 
       - name: Install cargo-nextest
         if: needs.changes.outputs.release_only != 'true'
@@ -490,7 +490,7 @@ jobs:
 
       - name: Install zsh + xvfb + ripgrep + tmux + bubblewrap
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        run: sudo apt-get update && sudo apt-get install -y zsh xvfb xauth ripgrep tmux bubblewrap
+        run: bash scripts/ci/apt-install-retry.sh zsh xvfb xauth ripgrep tmux bubblewrap
 
       # Keep identical to the copy in the test job.
       - name: Provision systemd user scopes
