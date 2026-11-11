@@ -77,6 +77,9 @@ pub enum Command {
     AutoResume(AutoResumeArgs),
     /// List recorded agent sessions.
     List(ListArgs),
+    /// Print one session's `last_prompt` and History START/LATEST preview rows,
+    /// read locally from the same projection `serve` uses (no daemon or token).
+    Previews(PreviewsArgs),
     /// Show which sessions exist, where they run, and what they are doing,
     /// including recently closed ones (session board v1).
     Board(BoardArgs),
@@ -423,6 +426,30 @@ pub struct ListArgs {
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct PreviewsArgs {
+    /// Session id or unambiguous id prefix.
+    #[arg(value_name = "ID")]
+    pub id: String,
+
+    /// Maximum History rows to return from each end (START and LATEST).
+    #[arg(long, value_name = "N", default_value_t = 50)]
+    pub rows: usize,
+
+    /// Request the `parts` History row shape served by `?parts=v1`.
+    #[arg(long, value_enum, value_name = "VERSION")]
+    pub parts: Option<HistoryParts>,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum HistoryParts {
+    V1,
 }
 
 #[derive(Debug, Args)]

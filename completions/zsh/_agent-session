@@ -137,6 +137,19 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(previews)
+_arguments "${_arguments_options[@]}" : \
+'--rows=[Maximum History rows to return from each end (START and LATEST)]:N:_default' \
+'--parts=[Request the \`parts\` History row shape served by \`?parts=v1\`]:VERSION:(v1)' \
+'--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Session id or unambiguous id prefix:_default' \
+&& ret=0
+;;
 (board)
 _arguments "${_arguments_options[@]}" : \
 '--state=[Only records in this state\: live, stopped, closed, or all]:STATE:_default' \
@@ -1386,6 +1399,7 @@ _agent-session_commands() {
 'run:Run a one-shot agent task in a tmux session and write output to a log file' \
 'auto-resume:Inspect or opt a session into daemon-owned automatic recovery' \
 'list:List recorded agent sessions' \
+'previews:Print one session'\''s \`last_prompt\` and History START/LATEST preview rows, read locally from the same projection \`serve\` uses (no daemon or token)' \
 'board:Show which sessions exist, where they run, and what they are doing, including recently closed ones (session board v1)' \
 'command:Print the attach command for a session' \
 'attach:Attach to a tmux session from the current terminal' \
@@ -1729,6 +1743,11 @@ _agent-session__subcmd__metadata__subcmd__show_commands() {
 _agent-session__subcmd__notice_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session notice commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__previews_commands] )) ||
+_agent-session__subcmd__previews_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session previews commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__readiness_commands] )) ||
 _agent-session__subcmd__readiness_commands() {

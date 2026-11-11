@@ -305,7 +305,8 @@ fn dispatch(cli: Cli) -> i32 {
     match cli.command {
         Command::Start(args) => run_start(&context, *args),
         Command::Run(args) => run_one_shot(&context, args),
-        Command::List(args) => run_list(&context, args),
+        Command::List(args) => session_views::run_list(&context, args),
+        Command::Previews(args) => serve::run_previews(&context, args),
         Command::Board(args) => board::run(&context, args),
         Command::Show(args) => session_model::refresh::run_show(&context, args),
         Command::Refresh(args) => session_model::refresh::run(&context, args),
@@ -420,17 +421,6 @@ fn run_one_shot(context: &CliContext, args: cli::RunArgs) -> i32 {
             render_single_success(RUN_COMMAND, view.format, &view.result, render_started_text)
         }
         Err(err) => render_error(RUN_COMMAND, format, err),
-    }
-}
-
-fn run_list(context: &CliContext, args: cli::ListArgs) -> i32 {
-    match list_sessions(context, None) {
-        Ok(results) => render_list_success(
-            args.format,
-            &results,
-            &board::machine_identity(None, context),
-        ),
-        Err(err) => render_error(LIST_COMMAND, args.format, err),
     }
 }
 

@@ -179,3 +179,29 @@ key or value fails with HTTP 400 `invalid-query`. On success
 `GET /sessions` advertises additive `history`, `archive`, `group_archive`, and
 `history_star` capabilities. Older daemons omit them and do not serve these
 routes.
+
+### Local preview read
+
+`agent-session previews <id> [--rows N] [--parts v1] [--format json]` prints one
+session's list `last_prompt` projection and its History START and LATEST rows
+without the daemon or a serve credential. It reads only local state, makes no
+writes, and returns nothing beyond what serve already projects.
+
+The command shares serve's code. The `last_prompt`, `last_message` and
+`last_prompt_state` fields come from the same enrichment that `GET /sessions`
+runs, with the same eligibility (a running Codex or Claude session) and the same
+bounds. The CLI waits up to 15 seconds for a `pending` cold recovery to become
+`current`, then reports the state it has. `last_prompt_continuity` is a
+per-process token and differs between the CLI and a running daemon.
+
+`start` holds the first `--rows` rows (default 50, bounded like the route) in
+transcript order, and `latest` the newest `--rows` rows. Both come from the call
+behind `GET /history/sessions/{id}/messages` with `direction=forward` and
+`direction=latest`, so each row keeps its `role` and `row_class`
+(user, notice, runtime command, compaction). `--parts v1` adds the `parts` shape
+that `?parts=v1` returns. A session without a captured provider session id
+returns empty `start` and `latest`; an unreadable transcript sets
+`history_error`.
+
+This is a separate command because `show` is already the attach-command printer
+(`command`), and `list` is a bulk read whose output mirrors `GET /sessions`.
