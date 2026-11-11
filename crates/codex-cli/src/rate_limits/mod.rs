@@ -341,6 +341,7 @@ fn collect_json_result_for_secret(
                         windows: Some(windows),
                         reset_credits: reset_credits_from_usage(&usage.json),
                         limit_resets: None,
+                        limit_resets_checked_at: None,
                         raw_usage: Some(project_safe_usage_json(&usage.json)),
                         error: None,
                     }
@@ -1190,6 +1191,7 @@ fn run_single_mode(
             windows: Some(windows),
             reset_credits: reset_credits_from_usage(&usage.json),
             limit_resets: None,
+            limit_resets_checked_at: None,
             raw_usage: Some(project_safe_usage_json(&usage.json)),
             error: None,
         };
