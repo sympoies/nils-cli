@@ -112,7 +112,7 @@ fn render_usage(
     Some(line)
 }
 
-fn remaining_percent(utilization: f64) -> i64 {
+pub(crate) fn remaining_percent(utilization: f64) -> i64 {
     let remaining = 100.0 - utilization.round();
     remaining.clamp(0.0, 100.0) as i64
 }

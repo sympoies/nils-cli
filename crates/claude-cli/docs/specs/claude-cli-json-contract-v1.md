@@ -244,6 +244,26 @@ Claude limit-reset programs. Results from `--cached` or a cache fallback, and
 failed results, omit it. A network body without either program reports both
 as `null`, so absence always means the value was not read.
 
+Each `weekly_scoped` entry of the usage response's `limits[]` (a per-model
+weekly limit, read from `scope.model.display_name`, `percent` as the used
+percentage, and `resets_at`) adds one more `windows[]` item after `5h` and
+`Weekly`, in response order. Its `label` is `weekly_scoped:<model>`;
+`window_minutes` is `10080` and `used_percent`, `remaining_percent` and
+`reset_at_epoch` (omitted without a reset time) match the existing windows.
+A scoped window also carries three additive fields; existing windows never do:
+
+- `kind`: `"weekly_scoped"`
+- `model`: the scope's model display name
+- `allowance_percent_of_weekly`: the `allowance_percent_of_weekly` of the
+  `weekly_scoped_shares[]` entry whose `limit_index` is the entry's position in
+  `limits[]`, or `null` when no share matches
+
+Entries without a model name or a numeric `percent` are skipped. A response
+without `limits[]` or without a scoped entry yields the same windows as
+before, and `summary` and the one-line output do not include scoped windows.
+Cached results (`--cached` and cache fallback) keep the scoped windows stored
+with the cache entry they read, including `allowance_percent_of_weekly`.
+
 A live rate limit or active shared cooldown preserves eligible cached diagnostic
 windows with `source: cache-fallback` and `reason_code: rate_limited`.
 `--cached` remains offline and carries the same reason while cooldown is active.

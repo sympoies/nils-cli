@@ -13,6 +13,7 @@
 mod cache;
 mod cached;
 mod observation;
+pub(crate) mod scoped;
 pub(crate) mod status;
 
 use anyhow::Result;
@@ -208,11 +209,12 @@ impl RateLimitsProvider for ClaudeRateLimits {
         match fetch(target) {
             Fetch::Windows {
                 values,
+                windows,
                 owner_key,
                 fetched_at,
                 ..
             } => {
-                write_cache(&name, &values, owner_key.as_deref(), fetched_at);
+                write_cache(&name, &values, &windows, owner_key.as_deref(), fetched_at);
                 OneLineFetch {
                     line: shared_values::one_line_from_values(&values, format_local_datetime)
                         .map(normalize_one_line),
@@ -261,11 +263,12 @@ impl RateLimitsProvider for ClaudeRateLimits {
         match fetch(target) {
             Fetch::Windows {
                 values,
+                windows,
                 owner_key,
                 fetched_at,
                 ..
             } => {
-                write_cache(&name, &values, owner_key.as_deref(), fetched_at);
+                write_cache(&name, &values, &windows, owner_key.as_deref(), fetched_at);
                 OneLineFetch {
                     line: shared_values::one_line_from_values(&values, format_local_datetime),
                     ..Default::default()
@@ -496,7 +499,7 @@ fn json_result(
             owner_key,
             fetched_at,
         } => {
-            write_cache(&name, &values, owner_key.as_deref(), fetched_at);
+            write_cache(&name, &values, &windows, owner_key.as_deref(), fetched_at);
             let summary = schema::summary_from_weekly_values(&values, format_local_with_offset);
             let mut result = sanitize(RateLimitResult::ok(identity, "network", summary, windows));
             result.limit_resets = Some(limit_resets);
@@ -545,12 +548,10 @@ fn from_cache(
         cache::read_allow_stale(name, now_epoch()).map(|read| read.entry)
     };
     match entry {
-        Ok(entry) => sanitize(RateLimitResult::from_cache(
-            identity,
-            source,
-            &entry,
-            format_local_with_offset,
-        )),
+        Ok(entry) => with_cached_scoped(
+            RateLimitResult::from_cache(identity, source, &entry, format_local_with_offset),
+            name,
+        ),
         Err(message) => {
             RateLimitResult::error(identity, source, "cache-read-failed", message, None, None)
         }
@@ -573,12 +574,15 @@ fn from_owned_cache(target: &Path, identity: TargetIdentity, name: &str) -> Rate
         );
     };
     match cache::read_allow_stale_owned(name, &owner_key, now_epoch()) {
-        Ok(read) => sanitize(RateLimitResult::from_cache(
-            identity,
-            "cache-fallback",
-            &read.entry,
-            format_local_with_offset,
-        )),
+        Ok(read) => with_cached_scoped(
+            RateLimitResult::from_cache(
+                identity,
+                "cache-fallback",
+                &read.entry,
+                format_local_with_offset,
+            ),
+            name,
+        ),
         Err(message) => RateLimitResult::error(
             identity,
             "cache-fallback",
@@ -588,6 +592,14 @@ fn from_owned_cache(target: &Path, identity: TargetIdentity, name: &str) -> Rate
             None,
         ),
     }
+}
+
+/// A cached result keeps the scoped windows its entry was read with.
+fn with_cached_scoped(mut result: RateLimitResult, name: &str) -> RateLimitResult {
+    if let Some(windows) = result.windows.as_mut() {
+        windows.extend(cache::read_scoped(name));
+    }
+    sanitize(result)
 }
 
 /// Adds the fixed Claude window lengths and drops a missing weekly reset.
@@ -608,6 +620,7 @@ fn window_minutes(label: &str) -> Option<i64> {
     match label {
         FIVE_HOUR_LABEL => Some(FIVE_HOUR_MINUTES),
         WEEKLY_LABEL => Some(WEEKLY_MINUTES),
+        _ if label.starts_with(scoped::LABEL_PREFIX) => Some(WEEKLY_MINUTES),
         _ => None,
     }
 }
@@ -657,11 +670,17 @@ fn stale_one_line_for_target(
     }
 }
 
-fn write_cache(name: &str, values: &WeeklyValues, owner_key: Option<&str>, fetched_at: i64) {
+fn write_cache(
+    name: &str,
+    values: &WeeklyValues,
+    windows: &[RateLimitWindow],
+    owner_key: Option<&str>,
+    fetched_at: i64,
+) {
     if let Some(owner_key) = owner_key {
-        let _ = cache::write_owned(name, fetched_at, values, owner_key);
+        let _ = cache::write_owned(name, fetched_at, values, windows, owner_key);
     } else {
-        let _ = cache::write(name, fetched_at, values);
+        let _ = cache::write(name, fetched_at, values, windows);
     }
 }
 
@@ -763,7 +782,7 @@ fn parse_usage_body(body: &str) -> Fetch {
             .as_ref()
             .map(|window| window_values(window, FIVE_HOUR_LABEL)),
     };
-    let windows = [
+    let mut windows: Vec<RateLimitWindow> = [
         (usage.five_hour.as_ref(), FIVE_HOUR_LABEL, FIVE_HOUR_MINUTES),
         (usage.seven_day.as_ref(), WEEKLY_LABEL, WEEKLY_MINUTES),
     ]
@@ -776,9 +795,17 @@ fn parse_usage_body(body: &str) -> Fetch {
             used_percent: schema::percent_i64(window.used_percent),
             remaining_percent: window.remaining_percent,
             reset_at_epoch: reset_epoch(window),
+            kind: None,
+            model: None,
+            allowance_percent_of_weekly: None,
         })
     })
     .collect();
+    windows.extend(
+        scoped::parse_weekly_scoped(&value)
+            .iter()
+            .map(|limit| limit.window(WEEKLY_MINUTES)),
+    );
     Fetch::Windows {
         values,
         windows,
