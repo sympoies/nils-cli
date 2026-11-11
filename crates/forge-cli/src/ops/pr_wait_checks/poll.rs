@@ -101,7 +101,9 @@ pub(super) fn poll_until_terminal_or_timeout<R: BackendRunner, C: Clock>(
         last = with_duration(snapshot, ms_between(start, admitted_at));
         ever_saw_a_check |= !crate::ops::required_check_gate::nothing_was_checked(&last);
         if is_terminal(&last, presence) {
-            return Ok(if last.state == "success" {
+            // Reaching here with `no-checks` means the caller opted out of
+            // check presence, so the empty set is an accepted terminal result.
+            return Ok(if matches!(last.state, "success" | pr_checks::NO_CHECKS) {
                 WaitOutcome::Success(last)
             } else {
                 WaitOutcome::Failed(last)

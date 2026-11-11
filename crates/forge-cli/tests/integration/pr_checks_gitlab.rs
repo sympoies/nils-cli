@@ -190,9 +190,9 @@ fn pr_checks_glab_pending_only_reports_pending() {
 }
 
 #[test]
-fn pr_checks_glab_empty_pipeline_is_success_zero_count() {
+fn pr_checks_glab_empty_pipeline_is_no_checks_zero_count() {
     let (_, env) = run_checks(VERSION_OK, EMPTY_PIPELINE, "feat/sample", &[]);
-    assert_eq!(env["data"]["state"], "success");
+    assert_eq!(env["data"]["state"], "no-checks");
     assert_eq!(env["data"]["required_count"], 0);
     assert!(env["data"]["checks"].as_array().unwrap().is_empty());
 }
@@ -266,7 +266,7 @@ exit 99
 }
 
 #[test]
-fn pr_checks_glab_no_pipeline_is_success_zero_count() {
+fn pr_checks_glab_no_pipeline_is_no_checks_zero_count() {
     let stub = StubEnv::new().glab_stub(&glab_stub_no_pipeline(VERSION_OK));
     let argv = vec![
         "--provider",
@@ -281,8 +281,11 @@ fn pr_checks_glab_no_pipeline_is_success_zero_count() {
     let cwd = stub.tempdir.path().to_path_buf();
     let out = run_forge_cli_in(&stub, &argv, Some(&cwd));
     let env = parse_envelope(&out.stdout);
-    assert_eq!(out.code, 0, "no-pipeline should be success, got {env:?}");
-    assert_eq!(env["data"]["state"], "success");
+    assert_eq!(
+        out.code, 0,
+        "no-pipeline is a readable no-checks state, got {env:?}"
+    );
+    assert_eq!(env["data"]["state"], "no-checks");
     assert_eq!(env["data"]["required_count"], 0);
     assert!(env["data"]["checks"].as_array().unwrap().is_empty());
 }

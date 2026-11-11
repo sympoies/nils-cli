@@ -751,9 +751,9 @@ fn pr_checks_cancelled_marks_failure_lane() {
 }
 
 #[test]
-fn pr_checks_empty_array_is_success_zero_count() {
+fn pr_checks_empty_array_is_no_checks_zero_count() {
     let (_, env) = run_checks(FIXTURE_EMPTY, FIXTURE_EMPTY, &[]);
-    assert_eq!(env["data"]["state"], "success");
+    assert_eq!(env["data"]["state"], "no-checks");
     assert_eq!(env["data"]["required_count"], 0);
     assert_eq!(env["data"]["success_count"], 0);
     assert!(env["data"]["checks"].as_array().unwrap().is_empty());

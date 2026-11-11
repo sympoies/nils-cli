@@ -312,7 +312,7 @@ fn with_duration(mut snapshot: PrChecksPayload, duration_ms: u64) -> PrChecksPay
 /// An empty set is not a terminal pass. `gh pr checks --required` reports "no
 /// required checks reported" during the provider's check-registration window
 /// after a push or force-with-lease, which [`pr_checks`] normalizes to an empty
-/// successful snapshot; polling through that window is the entire point of this
+/// `no-checks` snapshot; polling through that window is the entire point of this
 /// atom, so it keeps waiting instead of declaring the head green. A repository
 /// that configures no checks passes [`CheckPresence::Optional`] so the loop
 /// still terminates immediately.
@@ -561,6 +561,9 @@ mod tests {
         if endpoint.contains("/status?") {
             return Some(r#"{"statuses":[],"total_count":0}"#.into());
         }
+        if endpoint.contains("/actions/runs?") {
+            return Some(r#"{"workflow_runs":[],"total_count":0}"#.into());
+        }
         None
     }
     fn gate_runs(body: &str) -> String {
@@ -717,8 +720,8 @@ mod tests {
             required_only: true,
         };
         let snapshot = pr_checks::snapshot(&runner, &global, &ctx, &args).unwrap();
-        // The read surface still reports "nothing is failing" — that stays true.
-        assert_eq!(snapshot.state, "success");
+        // The read surface reports the distinct no-checks state, never success.
+        assert_eq!(snapshot.state, "no-checks");
         assert_eq!(snapshot.required_count, 0);
         // The wait loop must not accept it as a terminal pass.
         assert!(
