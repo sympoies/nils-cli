@@ -51,7 +51,11 @@ pub(in crate::serve) async fn dispatch_coordination_notification(
         return;
     }
     if crate::send::claude_notice::attach::mailbox_text_reason(&state.context, &record).is_some() {
-        candidate.prompt = Some(candidate.text_wake_prompt());
+        let Some(prompt) = candidate.text_wake_prompt() else {
+            defer_provider_not_ready(&state, &candidate, "notice-runtime-unavailable").await;
+            return;
+        };
+        candidate.prompt = Some(prompt);
         super::native_notice::dispatch(state, record, candidate).await;
         return;
     }

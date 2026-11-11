@@ -122,7 +122,14 @@ async fn mailbox_notice_unattached_claude_delivers_once() {
     assert_eq!(receipt["notified_generation"], 1);
     assert_eq!(receipt["last_reason_detail"], "notice-receiver-not-attached");
     drain_coordination_notifications(fixture.state.clone()).await;
-    assert_eq!(fs::read_to_string(fixture.temp.path().join("submissions")).unwrap().lines().count(), 1);
+    let submissions: Vec<String> = fs::read_to_string(fixture.temp.path().join("submissions"))
+        .unwrap().lines().map(|row| serde_json::from_str(row).unwrap()).collect();
+    assert_eq!(submissions.len(), 1);
+    let wake = &submissions[0];
+    assert!(!wake.contains('\n'), "{wake}");
+    let (_, command) = wake.split_once("run ").expect("run command");
+    assert!(command.starts_with('/'), "absolute path: {wake}");
+    assert!(command.ends_with(" message inbox --session beta --format json"), "{wake}");
 }
 
 #[tokio::test]
