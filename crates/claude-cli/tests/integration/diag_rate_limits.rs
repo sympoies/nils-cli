@@ -946,3 +946,104 @@ fn diag_rate_limits_user_agent_follows_the_installed_claude_code_version() {
         "custom-agent/1"
     );
 }
+
+const SCOPED_USAGE: &str = r#"{
+  "five_hour": { "utilization": 25.0, "resets_at": "2023-11-14T22:13:20.000000+00:00" },
+  "seven_day": { "utilization": 40.0, "resets_at": "2023-11-20T17:06:40+00:00" },
+  "limits": [
+    { "kind": "five_hour", "percent": 25, "resets_at": "2023-11-14T22:13:20+00:00" },
+    {
+      "kind": "weekly_scoped",
+      "scope": { "model": { "display_name": "Model A" } },
+      "percent": 30.4,
+      "resets_at": "2023-11-21T17:06:40+00:00"
+    },
+    {
+      "kind": "weekly_scoped",
+      "scope": { "model": { "display_name": "Model B" } },
+      "percent": 5,
+      "resets_at": null
+    }
+  ],
+  "weekly_scoped_shares": [
+    { "limit_index": 1, "used_percent_of_weekly": 15, "allowance_percent_of_weekly": 50 }
+  ]
+}"#;
+
+const UNSCOPED_LIMITS_USAGE: &str = r#"{
+  "five_hour": { "utilization": 25.0, "resets_at": "2023-11-14T22:13:20.000000+00:00" },
+  "seven_day": { "utilization": 40.0, "resets_at": "2023-11-20T17:06:40+00:00" },
+  "limits": [{ "kind": "five_hour", "percent": 25 }]
+}"#;
+
+fn scoped_windows() -> Vec<Value> {
+    vec![
+        json!({
+            "label": "weekly_scoped:Model A",
+            "window_minutes": 10080,
+            "used_percent": 30,
+            "remaining_percent": 70,
+            "reset_at_epoch": 1_700_586_400,
+            "kind": "weekly_scoped",
+            "model": "Model A",
+            "allowance_percent_of_weekly": 50
+        }),
+        json!({
+            "label": "weekly_scoped:Model B",
+            "window_minutes": 10080,
+            "used_percent": 5,
+            "remaining_percent": 95,
+            "kind": "weekly_scoped",
+            "model": "Model B",
+            "allowance_percent_of_weekly": null
+        }),
+    ]
+}
+
+#[test]
+fn diag_rate_limits_adds_a_window_per_weekly_scoped_limit_and_cache_keeps_it() {
+    let fx = Fixture::new();
+    fx.write_profile("alpha", "access-alpha", FUTURE_MS);
+    let server = resets_server(SCOPED_USAGE);
+    let options = resets_options(&fx, &server, "");
+
+    let output = run(
+        &["diag", "rate-limits", "alpha", "--format", "json"],
+        &options,
+    );
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    let mut expected = alpha_result("network")["windows"].clone();
+    expected
+        .as_array_mut()
+        .expect("windows")
+        .extend(scoped_windows());
+    assert_eq!(payload["result"]["windows"], expected);
+
+    let output = run(
+        &["diag", "rate-limits", "--async", "--json", "--cached"],
+        &options,
+    );
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["results"][0]["source"], "cache");
+    assert_eq!(payload["results"][0]["windows"], expected);
+}
+
+#[test]
+fn diag_rate_limits_ignores_limits_without_a_weekly_scoped_entry() {
+    let fx = Fixture::new();
+    fx.write_profile("alpha", "access-alpha", FUTURE_MS);
+    let server = resets_server(UNSCOPED_LIMITS_USAGE);
+
+    let output = run(
+        &["diag", "rate-limits", "alpha", "--format", "json"],
+        &resets_options(&fx, &server, ""),
+    );
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(
+        payload["result"]["windows"],
+        alpha_result("network")["windows"]
+    );
+}

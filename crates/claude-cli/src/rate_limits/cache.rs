@@ -3,9 +3,10 @@
 //! The entry format and freshness policy are the shared `diag rate-limits`
 //! ones. The cache never holds a token.
 
+use super::scoped;
 use nils_common::fs as shared_fs;
 use nils_common::rate_limits::values as shared_values;
-use nils_common::rate_limits::{CacheEntry, WeeklyValues};
+use nils_common::rate_limits::{CacheEntry, RateLimitWindow, WeeklyValues};
 use nils_common::usage_cache_policy;
 use std::io::ErrorKind;
 use std::path::PathBuf;
@@ -130,6 +131,13 @@ pub fn read_allow_stale_owned(
     Ok(StaleCacheRead { entry, stale })
 }
 
+/// The scoped weekly windows stored beside the entry `name` last wrote.
+pub(super) fn read_scoped(name: &str) -> Vec<RateLimitWindow> {
+    read_content(name)
+        .map(|content| scoped::windows_from_cache(&content, super::WEEKLY_MINUTES))
+        .unwrap_or_default()
+}
+
 /// Diagnostic age remains useful even when windows exceed the display ceiling.
 pub(super) fn owned_age(name: &str, token_key: &str, now_epoch: i64) -> Option<i64> {
     let content = read_content(name).ok()?;
@@ -144,10 +152,16 @@ pub(super) fn owned_age(name: &str, token_key: &str, now_epoch: i64) -> Option<i
     Some(now_epoch.saturating_sub(fetched_at).max(0))
 }
 
-pub fn write(name: &str, fetched_at_epoch: i64, values: &WeeklyValues) -> Result<(), String> {
-    let Some(data) = shared_values::render_cache_entry(fetched_at_epoch, values) else {
+pub fn write(
+    name: &str,
+    fetched_at_epoch: i64,
+    values: &WeeklyValues,
+    windows: &[RateLimitWindow],
+) -> Result<(), String> {
+    let Some(mut data) = shared_values::render_cache_entry(fetched_at_epoch, values) else {
         return Ok(());
     };
+    data.push_str(&scoped::cache_lines(windows));
     let path = cache_file(name)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
@@ -160,11 +174,13 @@ pub fn write_owned(
     name: &str,
     fetched_at_epoch: i64,
     values: &WeeklyValues,
+    windows: &[RateLimitWindow],
     token_key: &str,
 ) -> Result<(), String> {
     let Some(mut data) = shared_values::render_cache_entry(fetched_at_epoch, values) else {
         return Ok(());
     };
+    data.push_str(&scoped::cache_lines(windows));
     data.push_str(&format!("\nowner_token_key={token_key}"));
     let path = cache_file(name)?;
     if let Some(parent) = path.parent() {
@@ -212,7 +228,7 @@ mod tests {
             "CLAUDE_PROMPT_SEGMENT_CACHE_DIR",
             tmp.path().to_str().unwrap(),
         );
-        write("alpha", 1_900_000_000, &values()).unwrap();
+        write("alpha", 1_900_000_000, &values(), &[]).unwrap();
         assert!(cache_file("alpha").unwrap().is_file());
         let unrelated = tmp.path().join("prompt-segment.kv");
         std::fs::write(&unrelated, "kept").unwrap();
@@ -242,7 +258,7 @@ mod tests {
             "CLAUDE_PROMPT_SEGMENT_CACHE_DIR",
             tmp.path().to_str().unwrap(),
         );
-        write_owned("active", 1_900_000_000, &values(), "token-account-a").unwrap();
+        write_owned("active", 1_900_000_000, &values(), &[], "token-account-a").unwrap();
 
         assert!(read_allow_stale_owned("active", "token-account-a", 1_900_000_000).is_ok());
         assert!(read_allow_stale_owned("active", "token-account-b", 1_900_000_000).is_err());

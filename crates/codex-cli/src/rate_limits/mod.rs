@@ -531,6 +531,9 @@ fn windows_from_usage_values(
             used_percent: shared_schema::percent_i64(window.used_percent),
             remaining_percent: rendered.remaining,
             reset_at_epoch: Some(rendered.reset_epoch).filter(|epoch| *epoch > 0),
+            kind: None,
+            model: None,
+            allowance_percent_of_weekly: None,
         })
     })
     .collect()
