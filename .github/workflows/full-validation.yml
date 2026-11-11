@@ -100,7 +100,7 @@ jobs:
         run: python3 -m pip install 'jsonschema==4.26.0'
 
       - name: Install zsh + xvfb + ripgrep + tmux + bubblewrap
-        run: sudo apt-get update && sudo apt-get install -y zsh xvfb xauth ripgrep tmux bubblewrap
+        run: bash scripts/ci/apt-install-retry.sh zsh xvfb xauth ripgrep tmux bubblewrap
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -244,7 +244,7 @@ jobs:
           node-version: "20"
 
       - name: Install zsh + xvfb + ripgrep + tmux + bubblewrap
-        run: sudo apt-get update && sudo apt-get install -y zsh xvfb xauth ripgrep tmux bubblewrap
+        run: bash scripts/ci/apt-install-retry.sh zsh xvfb xauth ripgrep tmux bubblewrap
 
       # Keep identical to the copy in the test job.
       - name: Provision systemd user scopes
@@ -308,7 +308,7 @@ jobs:
         run: python3 -m pip install 'jsonschema==4.26.0'
 
       - name: Install zsh + ripgrep + tmux + bubblewrap
-        run: sudo apt-get update && sudo apt-get install -y zsh ripgrep tmux bubblewrap
+        run: bash scripts/ci/apt-install-retry.sh zsh ripgrep tmux bubblewrap
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
