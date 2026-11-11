@@ -54,6 +54,29 @@ fn recovery(mut error: CliError, action: &str, outcome: &str) -> CliError {
     error
 }
 
+/// A busy registry says nothing about a mailbox request that may already be queued;
+/// name the safe next step instead of leaving the caller to guess.
+pub(crate) fn mailbox_error(mut error: CliError, next_action: &str) -> CliError {
+    if !is_busy(&error) {
+        return error;
+    }
+    let executable = crate::command_identity::executable();
+    let hint = if next_action == "retry-delivery-check" {
+        format!(
+            "The registry was busy and the message is unchanged; run `{executable} message delivery --message <id>` again after a short wait."
+        )
+    } else {
+        format!(
+            "The registry was busy and the message may already be queued; retry the same send with the same idempotency key, or run `{executable} message delivery --message <id>` with the id from the first send response."
+        )
+    };
+    let details = error.details_mut().get_or_insert_with(|| json!({}));
+    details["retryable"] = json!(true);
+    details["next_action"] = json!(next_action);
+    details["recovery"] = json!({ "kind": "mailbox-contention" });
+    error.with_hint(hint)
+}
+
 pub(crate) fn create_error(error: CliError) -> CliError {
     recovery(error, "retry-create", "not_created")
 }

@@ -4,7 +4,8 @@ use serde_json::Value;
 
 use crate::{CliContext, CliError};
 
-use super::{authenticate_token, invalid, lock_journal, lock_registry, now_epoch, projection};
+use super::super::delegation;
+use super::{invalid, lock_journal, lock_registry, now_epoch, projection};
 
 pub(crate) fn delivery(
     context: &CliContext,
@@ -12,7 +13,13 @@ pub(crate) fn delivery(
     token: &str,
     id: &str,
 ) -> Result<Value, CliError> {
-    let (_, current) = authenticate_token(context, session, token)?;
+    // Remote ids live in the federation journal, so the lookup needs no registry lock.
+    let (_, current) = delegation::authenticate_snapshot_first(
+        context,
+        session,
+        token,
+        delegation::Use::CapabilityOnly,
+    )?;
     let locked = lock_journal(context)?;
     if let Some(item) = locked.registry.find(|item| {
         item.message_id == id

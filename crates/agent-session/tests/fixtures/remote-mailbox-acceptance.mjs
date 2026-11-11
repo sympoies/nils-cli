@@ -11,6 +11,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { writeHeartbeat } from './remote-mailbox-heartbeat.mjs';
 import { assertHeartbeatWriterBoundary } from './remote-mailbox-heartbeat.test.mjs';
 import { replyDeadlineAcceptance } from './remote-mailbox-reply-deadline.mjs';
+import { registryContentionAcceptance } from './remote-mailbox-registry-contention.mjs';
 
 const index = process.argv.indexOf('--agent-session-bin');
 assert(index >= 0 && process.argv[index + 1], 'requires --agent-session-bin exact binary');
@@ -172,6 +173,7 @@ const original=await inspect
   const replyReplay=await cli(beta,['reply','--session',beta.session,'--message',initial.message_id,'--if-revision',String(original.revision),'--body-file',bodyFile('reply','reply'),'--idempotency-key','reply-0001']);assert.equal(replyReplay.message_id,replied.message_id);
 checks.push('bidirectional-reply-show-status');
 await replyDeadlineAcceptance({alpha,beta,cli,bodyFile,delivered,inspect,checks});
+await registryContentionAcceptance({alpha,beta,cli,bodyFile,delivered,waitFor,checks,relay:{block:()=>{blockRelay=true;},release:()=>{blockRelay=false;relayReleases.splice(0).forEach(release=>release());},blocked:()=>relayBlocked}});
   // Source -> coordinator -> third recipient: no category loss or source consumption.
   const categoryBody=bodyFile('category-progress','category forwarding body');
   const categorySend=['send','--from',alpha.session,'--to-machine',beta.machine,'--to',beta.session,'--body-file',categoryBody,'--category','progress','--idempotency-key','category-progress-0001'];

@@ -48,3 +48,56 @@ pub(crate) fn cli_peers(
         None,
     )
 }
+pub(super) fn local_request(
+    context: &CliContext,
+    session: &str,
+    capability: Option<&Path>,
+    path: &str,
+    body: Option<Value>,
+) -> Result<Value, CliError> {
+    let next_action = if path.ends_with("/delivery/v1") {
+        Some("retry-delivery-check")
+    } else {
+        body.as_ref().map(|_| "retry-same-idempotency-key")
+    };
+    request_daemon(context, session, capability, path, body).map_err(|error| match next_action {
+        Some(action) => crate::contention::mailbox_error(error, action),
+        None => error,
+    })
+}
+fn request_daemon(
+    context: &CliContext,
+    session: &str,
+    capability: Option<&Path>,
+    path: &str,
+    body: Option<Value>,
+) -> Result<Value, CliError> {
+    let capability = super::super::mailbox::resolve_capability_file(capability)?;
+    super::super::delegation::authenticate_remote_request(
+        context,
+        session,
+        &capability,
+        path,
+        body.as_ref(),
+    )?;
+    let token = String::from_utf8(
+        super::super::read_private_file(&capability, 256)
+            .map_err(|_| super::super::unauthorized())?,
+    )
+    .map_err(|_| super::super::unauthorized())?;
+    let url = daemon_url(context)?;
+    let client = client()?;
+    let request = match body {
+        Some(body) => client
+            .post(format!("{}{path}", url.as_str().trim_end_matches('/')))
+            .json(&body),
+        None => client.get(format!("{}{path}", url.as_str().trim_end_matches('/'))),
+    };
+    response_json(
+        request
+            .bearer_auth(token.trim())
+            .send()
+            .map_err(|_| unavailable())?,
+        Responder::LocalDaemon,
+    )
+}

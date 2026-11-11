@@ -180,8 +180,18 @@ successor schema rather than reading the new retained shape under an old version
 owner-checked file locking rules as the registry. Authorization uses session then registry then journal
 lock order. Federation delivery and retry operations read the journal first; an
 unmatched delivery ID is checked against the local mailbox registry so accepted
-same-machine messages remain inspectable. The journal is saved atomically and no
-lock spans HTTP. Unsupported or corrupt journal versions fail closed without
+same-machine messages remain inspectable.
+
+A delivery lookup and a same-key `message send` replay
+authenticate from the committed registry snapshot without taking the registry lock (a refused
+snapshot reruns the locking authentication), so a queued remote message stays answerable while the
+registry is contended. Only a first submit, a reply and the same-machine fallback take the registry
+lock; their bounded `coordination-lock-timeout` adds `error.details.retryable`, `next_action`
+(`retry-same-idempotency-key` or `retry-delivery-check`) and `recovery.kind` `mailbox-contention`.
+Such a timeout means the state is unknown, not failed: rerun the same request, or `message delivery`
+with the id from the first send response.
+
+The journal is saved atomically and no lock spans HTTP. Unsupported or corrupt journal versions fail closed without
 rewriting state.
 
 Remote and local ingress share the existing mailbox admission rules, including
