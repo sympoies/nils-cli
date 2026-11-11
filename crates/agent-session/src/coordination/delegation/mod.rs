@@ -290,6 +290,18 @@ pub(crate) fn authenticate_read_only(
     Ok((caller, incarnation))
 }
 
+/// Authenticate without the registry lock when the committed snapshot verifies the caller.
+/// A refusal reruns the locking path, so refusal diagnostics and delegation audit are unchanged.
+pub(crate) fn authenticate_snapshot_first(
+    context: &CliContext,
+    session: &str,
+    token: &str,
+    usage: Use<'_>,
+) -> Result<(SessionRecord, String), CliError> {
+    authenticate_read_only(context, Some(session), token, usage)
+        .or_else(|_| authenticate_token(context, Some(session), token, usage, false))
+}
+
 pub(crate) fn authenticate_token(
     context: &CliContext,
     session: Option<&str>,

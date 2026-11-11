@@ -758,8 +758,9 @@ pub(crate) fn submit(
         )?;
         return Err(super::delegation::scope_denied());
     }
+    // Snapshot-first: a same-key retry is answered from the journal without the registry lock.
     let (_, source_incarnation) =
-        super::delegation::authenticate_token(context, Some(session), token, usage, true)?;
+        super::delegation::authenticate_snapshot_first(context, session, token, usage)?;
     submit_origin(
         context,
         config,
@@ -889,6 +890,19 @@ where
             reply_obligation::replay(context, args.reply_to.as_deref())?;
             return Ok(outcome);
         }
+    }
+    // Only a first submit uses the credential, so only it takes the audited, locked admission.
+    if let Some(token) = token {
+        super::delegation::authenticate_token(
+            context,
+            Some(session),
+            token,
+            super::delegation::Use::MessageSend {
+                machine: &args.to_machine,
+                recipient: &args.to_session,
+            },
+            true,
+        )?;
     }
     let forward_source = if let Some(request) = &args.forward {
         let Origin::Session(actor) = &origin else {
@@ -1836,41 +1850,6 @@ pub(crate) fn daemon_url(context: &CliContext) -> Result<reqwest::Url, CliError>
     }
     Ok(url)
 }
-fn local_request(
-    context: &CliContext,
-    session: &str,
-    capability: Option<&Path>,
-    path: &str,
-    body: Option<Value>,
-) -> Result<Value, CliError> {
-    let capability = super::mailbox::resolve_capability_file(capability)?;
-    super::delegation::authenticate_remote_request(
-        context,
-        session,
-        &capability,
-        path,
-        body.as_ref(),
-    )?;
-    let token = String::from_utf8(
-        super::read_private_file(&capability, 256).map_err(|_| super::unauthorized())?,
-    )
-    .map_err(|_| super::unauthorized())?;
-    let url = daemon_url(context)?;
-    let client = client()?;
-    let request = match body {
-        Some(body) => client
-            .post(format!("{}{path}", url.as_str().trim_end_matches('/')))
-            .json(&body),
-        None => client.get(format!("{}{path}", url.as_str().trim_end_matches('/'))),
-    };
-    response_json(
-        request
-            .bearer_auth(token.trim())
-            .send()
-            .map_err(|_| unavailable())?,
-        Responder::LocalDaemon,
-    )
-}
 fn envelope_version(origin: &Origin, extended: bool) -> &str {
     if !extended {
         return origin.wire_version();
@@ -1911,6 +1890,7 @@ pub(crate) fn cli_forward(
 
 #[path = "remote_cli.rs"]
 mod cli_requests;
+use cli_requests::local_request;
 pub(crate) use cli_requests::{cli_peers, cli_reply, cli_send};
 
 pub(crate) fn cli_delivery(
