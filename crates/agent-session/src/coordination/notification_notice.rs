@@ -90,21 +90,24 @@ pub(super) fn encode_summary(summary: &str, session: &str) -> Option<String> {
     (notice.len() <= 4096).then_some(notice)
 }
 
+fn text_wake_line(executable: Option<&std::path::Path>, session: &str) -> Option<String> {
+    let path = shell_words::quote(executable?.to_str()?);
+    Some(format!(
+        "Unread mailbox messages; run {path} message inbox --session {} --format json",
+        shell_words::quote(session)
+    ))
+}
+
 impl NotificationCandidate {
     /// One line: the Claude paste guard refuses multi-line notices, so the
     /// wake carries the exact read command instead of a notice envelope.
-    pub(crate) fn text_wake_prompt(&self) -> String {
-        let command = trusted_executable()
-            .and_then(|path| Some(shell_words::quote(path.to_str()?).into_owned()))
-            .unwrap_or_else(|| crate::executable().to_owned());
-        format!(
-            "Unread mailbox messages; run {command} message inbox --session {} --format json",
-            shell_words::quote(&self.target_session_id)
-        )
+    /// Without a trusted absolute helper there is no wake to submit.
+    pub(crate) fn text_wake_prompt(&self) -> Option<String> {
+        text_wake_line(trusted_executable().as_deref(), &self.target_session_id)
     }
 
     pub(crate) fn is_text_wake(&self) -> bool {
-        self.prompt.as_deref() == Some(self.text_wake_prompt().as_str())
+        self.prompt.is_some() && self.prompt == self.text_wake_prompt()
     }
 
     /// Preserve the selected route's configuration cause on both queued and
@@ -176,6 +179,21 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use serde_json::json;
+
+    #[test]
+    fn text_wake_requires_a_trusted_absolute_helper() {
+        assert_eq!(text_wake_line(None, "recipient"), None);
+        assert_eq!(
+            text_wake_line(
+                Some(std::path::Path::new("/trusted/agent-session")),
+                "recipient"
+            )
+            .as_deref(),
+            Some(
+                "Unread mailbox messages; run /trusted/agent-session message inbox --session recipient --format json"
+            )
+        );
+    }
 
     #[test]
     fn generated_mailbox_summary_prevents_trailing_ascii_spaces_before_encoding() {
