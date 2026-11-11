@@ -91,10 +91,15 @@ pub(super) fn encode_summary(summary: &str, session: &str) -> Option<String> {
 }
 
 impl NotificationCandidate {
+    /// One line: the Claude paste guard refuses multi-line notices, so the
+    /// wake carries the exact read command instead of a notice envelope.
     pub(crate) fn text_wake_prompt(&self) -> String {
+        let command = trusted_executable()
+            .and_then(|path| Some(shell_words::quote(path.to_str()?).into_owned()))
+            .unwrap_or_else(|| crate::executable().to_owned());
         format!(
-            "Unread mailbox messages; run {} message inbox",
-            crate::executable()
+            "Unread mailbox messages; run {command} message inbox --session {} --format json",
+            shell_words::quote(&self.target_session_id)
         )
     }
 
