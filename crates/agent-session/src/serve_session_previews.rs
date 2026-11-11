@@ -104,8 +104,9 @@ fn collect(context: &CliContext, args: &cli::PreviewsArgs) -> Result<PreviewsRes
                 None,
             )
         })?;
-    let mut views = crate::list_sessions(context, None)?;
-    views.retain(|view| view.id == record.id);
+    // One record, no all-session traversal: list reconciliation and resume backfill
+    // persist session.json, which a read-only command must not do.
+    let mut views = vec![crate::session_view(context, &record, None, None)];
     let registry = ProviderPromptDiscoveryRegistry::default();
     let deadline = Instant::now() + PREVIEW_WAIT;
     runtime.block_on(async {

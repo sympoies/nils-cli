@@ -265,3 +265,48 @@ async fn cli_last_prompt_equals_the_serve_list_projection() {
         provider_history::stable_history_id("codex", None, provider_id)
     );
 }
+
+#[test]
+fn cli_previews_read_does_not_write_unrelated_session_records() {
+    let lock = GlobalStateLock::new();
+    let temp = tempfile::tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let session_json = |id: &str, extra: Value| {
+        let dir = state_dir.join("sessions").join(id);
+        fs::create_dir_all(&dir).unwrap();
+        let mut record = json!({"schema_version":"agent-session.session.v1","id":id,
+            "agent":"claude","mode":"interactive","title":null,"cwd":"/tmp",
+            "tmux_session":format!("hs-{id}"),"prompt_file":null,"log_file":null,
+            "created_at":"2000-01-01T00:00:00Z","updated_at":"2000-01-01T00:00:00Z"});
+        record
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let path = dir.join("session.json");
+        fs::write(&path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        path
+    };
+    session_json("previews-target", json!({}));
+    // A stale `starting` record the list traversal would reconcile to `ready` and write.
+    let unrelated = session_json(
+        "previews-unrelated",
+        json!({"startup":{"schema_version":"agent-session.startup.v1","state":"starting",
+            "stage":"tmux","started_at":"2000-01-01T00:00:00Z"}}),
+    );
+    let before = fs::read(&unrelated).unwrap();
+    let tmux = fake_tmux(temp.path(), &state_dir, "previews-unrelated");
+    let _tmux = EnvGuard::set(&lock, "AGENT_SESSION_TMUX_BIN", tmux.to_str().unwrap());
+    let _profiles = EnvGuard::remove(&lock, "AGENT_SESSION_LAUNCH_PROFILES");
+    let context = CliContext {
+        state_dir,
+        host: None,
+    };
+    let args = cli::PreviewsArgs {
+        id: "previews-target".into(),
+        rows: 5,
+        parts: None,
+        format: OutputFormat::Json,
+    };
+    collect(&context, &args).unwrap();
+    assert_eq!(fs::read(&unrelated).unwrap(), before);
+}
