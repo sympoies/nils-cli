@@ -13,7 +13,7 @@ Install/update the Rust toolchain and repo-required cargo tooling:
   - cargo-llvm-cov
 
 Options:
-  --toolchain CHANNEL  Rust toolchain channel (default: from rust-toolchain.toml, fallback: stable)
+  --toolchain CHANNEL  Rust toolchain channel (default: from rust-toolchain.toml, fallback: 1.99.1)
   --force              Force re-install cargo tools
   -h, --help           Show this help
 USAGE
@@ -21,7 +21,7 @@ USAGE
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-default_toolchain="stable"
+default_toolchain="1.99.1"
 apt_updated=0
 os_name="$(uname -s)"
 linux_id=""
