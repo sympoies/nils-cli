@@ -80,8 +80,14 @@ fn warn_names_the_fix_once_keeps_the_run_and_audits_caller_only() {
         let audit = f.audit();
         assert_eq!(audit.lines().count(), 1, "{audit}");
         assert!(audit.contains("unasserted_noninteractive_warned"));
-        for secret in [CANARY, "SESSION_CANARY_91", f.home.path().to_str().unwrap()] {
-            assert!(!audit.contains(secret) && !err.contains(secret), "{secret}");
+        for (index, secret) in [CANARY, "SESSION_CANARY_91", f.home.path().to_str().unwrap()]
+            .into_iter()
+            .enumerate()
+        {
+            assert!(
+                !audit.contains(secret) && !err.contains(secret),
+                "output leaked value #{index}"
+            );
         }
     }
 }
