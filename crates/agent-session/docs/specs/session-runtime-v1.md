@@ -96,20 +96,22 @@ Each requirement uses RFC 2119 terms.
 
 The spike measured, once (n=1, Claude Code 2.1.317, **[F]**), that Claude
 provides no session lock: a stream-json resume succeeded while a terminal UI
-held the same session open, neither side saw the other's turn, and the later
-resume followed one branch so the other turn left the effective context. One
-run does not bound how often or how silently this happens, so the rule below
-is a requirement, not a tuned mitigation. The runtime therefore owns it:
+held the same session open, the terminal UI did not see the stream-json turn
+(its own answer denied it; the stream-json side was not asked), and the later
+stream-json resume followed the terminal UI's branch, so the stream-json turn
+left the effective context. One run does not bound how often or how silently
+this happens, so the rule below is a requirement, not a tuned mitigation. The
+runtime therefore owns it:
 
 | Part | Requirement |
 | --- | --- |
-| Lease | One ownership lease per provider session id in the session registry. It names the writer kind and process. |
+| Lease | One ownership lease per provider session id, in a durable per-session record owned by `agent-session` (its exact location is an open question). It names the writer kind and process. |
 | Acquire | Before any resume or attach, check the lease and the provider's live-process listing for the session id. Refuse when another writer holds it. |
 | Handoff | An explicit command: stop the current writer, verify its process has exited, release the lease, then start the next writer. |
-| Notification | The registry records the handoff. The outgoing writer learns by its own exit; the incoming writer by acquiring the lease. |
+| Notification | The lease record notes the handoff. The outgoing writer learns by its own exit; the incoming writer by acquiring the lease. |
 | Codex | The app-server is the writer for its running threads. The TUI and control-channel clients attach to that process as views; no separate process resumes a copy of a running thread. |
 
-Stale leases after a crash and the exact registry location are open questions
+Stale leases after a crash and the exact lease location are open questions
 below.
 
 ## Provider signal map
