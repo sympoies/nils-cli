@@ -1,6 +1,8 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+#[path = "key_tests.rs"]
+mod key_tests;
 #[path = "ordinary_tests.rs"]
 mod ordinary_tests;
 #[path = "provenance_tests.rs"]

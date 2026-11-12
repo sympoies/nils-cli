@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{ForgeError, incomplete, limit};
 
+mod cases;
 mod skip_calls;
 
 #[derive(Debug, serde::Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -87,6 +88,8 @@ pub(crate) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
         } else if line.starts_with("deleted file mode ") {
             file.deleted = true;
         } else if line.starts_with("@@ ") {
+            file.before.push(cases::HUNK.into());
+            file.after.push(cases::HUNK.into());
             let mut parts = line.split_whitespace();
             parts.next();
             remaining = (range(parts.next(), '-')?, range(parts.next(), '+')?);
@@ -209,10 +212,10 @@ fn removed(old: &Counts, new: &Counts) -> bool {
     removed_keys(old, new).next().is_some()
 }
 
-/// Count key for one case. A one-line `#[test] fn name() {}` is keyed from its
-/// `fn` so attribute colons cannot merge siblings, and a JS case by its full
-/// quoted title.
-fn case_key(line: &str, compact: &str) -> String {
+/// Count key for a non-JavaScript case. A one-line `#[test] fn name() {}` is
+/// keyed from its `fn` so attribute colons cannot merge siblings; `prefix` is
+/// the enclosing Rust module path.
+fn case_key(line: &str, compact: &str, prefix: &str) -> String {
     let inline_fn = line
         .starts_with("#[")
         .then(|| {
@@ -231,37 +234,29 @@ fn case_key(line: &str, compact: &str) -> String {
         }
         None => compact,
     };
-    let title_end = source
-        .split_once('(')
-        .and_then(|(call, rest)| {
-            let quote = rest
-                .chars()
-                .next()
-                .filter(|c| matches!(c, '\'' | '"' | '`'))?;
-            let close = rest[1..].find(quote)?;
-            Some(call.len() + 1 + 1 + close + 1)
-        })
-        .filter(|_| inline_fn.is_none());
-    match title_end {
-        Some(end) => source[..end].to_string(),
-        None => source
-            .split(['{', ':'])
-            .next()
-            .unwrap_or(source)
-            .to_string(),
-    }
+    let name = source.split(['{', ':']).next().unwrap_or(source);
+    format!("{prefix}{name}")
 }
 
 /// Whitespace-free test label for a case key: the declared function name when
-/// the key starts with a compacted Rust, Python or Go declaration keyword.
-fn case_name(key: &str) -> &str {
-    let key = key.strip_prefix("#[cfg(test)]").unwrap_or(key);
+/// the key starts with a compacted Rust, Python or Go declaration keyword,
+/// preceded by its Rust module path.
+fn case_name(key: &str) -> String {
+    // JavaScript titles may contain `::`; only Rust keys carry a module path.
+    if ["it(", "it.", "test(", "test."]
+        .iter()
+        .any(|call| key.starts_with(call))
+    {
+        return key.to_string();
+    }
+    let (path, rest) = key.split_at(key.rfind("::").map_or(0, |i| i + 2));
+    let rest = rest.strip_prefix("#[cfg(test)]").unwrap_or(rest);
     let name = ["asyncfn", "pubfn", "fn", "asyncdef", "def", "func"]
         .iter()
-        .find_map(|prefix| key.strip_prefix(prefix));
+        .find_map(|prefix| rest.strip_prefix(prefix));
     match name {
-        Some(name) => name.split(['(', '<']).next().unwrap_or(name),
-        None => key,
+        Some(name) => format!("{path}{}", name.split(['(', '<']).next().unwrap_or(name)),
+        None => format!("{path}{rest}"),
     }
 }
 
@@ -272,7 +267,16 @@ fn signals(lines: &[String], test_path: bool) -> (Counts, Counts, Counts) {
     let mut test_attribute = false;
     let mut assertion = String::new();
     let mut depth = 0i32;
+    let mut modules = cases::Modules::default();
+    let mut pending: Option<cases::Pending> = None;
     for raw in lines {
+        if raw == cases::HUNK {
+            if let Some(open) = pending.take() {
+                *cases.entry(open.untitled()).or_default() += 1;
+            }
+            modules.reset();
+            continue;
+        }
         let line = raw.trim();
         if line.starts_with(['/', '*'])
             || (line.starts_with('#') && !line.starts_with("#[") && !line.starts_with("#!["))
@@ -280,6 +284,23 @@ fn signals(lines: &[String], test_path: bool) -> (Counts, Counts, Counts) {
             continue;
         }
         let compact: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+        if compact.is_empty() {
+            continue;
+        }
+        let mut titled = false;
+        if let Some(open) = pending.take() {
+            match open.resume(&compact) {
+                cases::Step::Done(key) => {
+                    *cases.entry(key).or_default() += 1;
+                    titled = true;
+                }
+                cases::Step::Untitled(key) => *cases.entry(key).or_default() += 1,
+                cases::Step::Wait(open) => {
+                    pending = Some(open);
+                    titled = true;
+                }
+            }
+        }
         let rust_test =
             line.starts_with("#[") && (compact.contains("test]") || compact.contains("test("));
         if rust_test || line.starts_with("@Test") {
@@ -309,13 +330,27 @@ fn signals(lines: &[String], test_path: bool) -> (Counts, Counts, Counts) {
                 "test.skip(",
                 "it.only(",
                 "test.only(",
+                "it.each(",
+                "it.each`",
+                "test.each(",
+                "test.each`",
             ]
             .iter()
             .any(|p| compact.starts_with(p));
-        if case {
-            *cases.entry(case_key(line, &compact)).or_default() += 1;
+        if case && !titled {
+            match cases::javascript(&compact) {
+                Some(cases::Step::Wait(open)) => pending = Some(open),
+                Some(cases::Step::Done(key) | cases::Step::Untitled(key)) => {
+                    *cases.entry(key).or_default() += 1;
+                }
+                None => {
+                    let key = case_key(line, &compact, &modules.prefix());
+                    *cases.entry(key).or_default() += 1;
+                }
+            }
             test_attribute = false;
         }
+        modules.feed(line);
         if !assertion.is_empty()
             || compact.contains("assert")
             || compact.contains("expect(")
@@ -358,6 +393,9 @@ fn signals(lines: &[String], test_path: bool) -> (Counts, Counts, Counts) {
         {
             *skips.entry(compact).or_default() += 1;
         }
+    }
+    if let Some(open) = pending {
+        *cases.entry(open.untitled()).or_default() += 1;
     }
     if !assertion.is_empty() {
         *assertions.entry(assertion).or_default() += 1;

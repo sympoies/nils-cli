@@ -22,7 +22,7 @@ Each finding names an exact repository-relative file and one of:
 | Kind | Signal |
 | --- | --- |
 | `deleted-test` | Deleted test source file or rename of an old test source path |
-| `deleted-test:<name>` | One removed recognizable test signature or Rust test-module declaration, in any source file including inline `#[cfg(test)]` modules; `<name>` is the function name (for example `deleted-test:extend_applies_one_increment`) or, for other syntaxes, the compacted signature (JavaScript cases: the quoted title) |
+| `deleted-test:<name>` | One removed recognizable test signature or Rust test-module declaration, in any source file including inline `#[cfg(test)]` modules; `<name>` is the function name (for example `deleted-test:extend_applies_one_increment`) or, for other syntaxes, the compacted signature (JavaScript cases: the quoted title, which may start on a later line and may contain escaped quotes). A Rust test inside inline `mod` blocks is named by its module path, for example `deleted-test:outer::inner::same_name`, so same-named tests in different modules need separate rows. The path comes from `mod name {` lines visible in the diff hunk; a module opened outside the hunk context cannot be named. A JavaScript `it.each`/`test.each` table is one row named by the table's title (`deleted-test:it.each('adds%i'`); removing a single case from a surviving table is not flagged |
 | `assertion-change` | Removed or edited assertion, including potential weakening |
 | `new-skip` | Added skip, ignore or expected-failure marker |
 | `import-addition` | A declared new mapped file has no upstream counterpart; inspect its complete ordinary patch |
@@ -62,7 +62,7 @@ forge-cli pr review-handoff test-changes 123 --expected-head <full-head-sha>
 It requires no assignment or existing review and writes no provider state. Text
 output prints exact file/kind rows and `Test changes confirmed: sha256:<digest>`.
 With `--format json`, `data` contains `number`, `head_sha`, `base_sha`, `findings`
-(`path`/`kind` objects), `digest`, `confirmation` and nullable `provenance_import`.
+(`path`/`kind` objects), `warnings` (strings), `digest`, `confirmation` and nullable `provenance_import`.
 The latter contains the upstream source, mappings, adaptation and addition paths, complete
 file count, verified-file count, manifest digest, comparison digest and declaration
 digest when the mode below is active. Reconstructed old sides also expose their
@@ -72,8 +72,14 @@ and digest calculation as admission.
 
 For every flagged file/kind, add a row under the level-two `Test changes`
 heading in the PR body. Use one `deleted-test:<name>` row per removed test;
-a row never covers a sibling test. Give a concrete reason and describe the retained
-coverage or replacement owner. The reason must contain at least 12 characters.
+a row never covers a sibling test, and a file-level `deleted-test` row never
+covers per-test removals in a file that still exists (retired form; the
+`test_changes_undeclared` diagnostic names it). Rows that match no finding are
+listed as stale in the same diagnostic. Retired and stale rows are also warnings
+when every finding is covered: the preview prints them and lists them in
+`warnings`, and admission writes them to standard error; they never fail an
+otherwise declared comparison. Give a concrete reason and describe the
+retained coverage or replacement owner. The reason must contain at least 12 characters.
 The diagnostic lists the required rows.
 
 ```markdown
