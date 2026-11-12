@@ -83,7 +83,17 @@ pub(crate) fn echoes_notice(value: &Value, text: &str) -> bool {
         Some("queue-operation") if value["operation"] == "enqueue" => value["content"].as_str(),
         _ => None,
     };
-    echoed.and_then(unwrap_paste) == Some(text)
+    echoed.is_some_and(|echoed| unwrap_paste(echoed) == Some(text) || truncated_echo(echoed, text))
+}
+
+/// Claude's display echo flattens newlines to spaces and cuts long text to
+/// about 200 characters plus `…`, so only a prefix of the notice survives. The
+/// prefix must cover the whole header line to count as the bound notice.
+fn truncated_echo(echoed: &str, text: &str) -> bool {
+    let Some(prefix) = echoed.strip_suffix('…') else {
+        return false;
+    };
+    prefix.contains("-->") && text.replace('\n', " ").starts_with(prefix)
 }
 
 pub(crate) fn bound_row(
