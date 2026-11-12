@@ -30,6 +30,10 @@ const STATE_FAILED_ID: &str = "00000000-0000-4000-8000-000000000015";
 const STATE_STOPPED_ID: &str = "00000000-0000-4000-8000-000000000016";
 const STATE_UNKNOWN_ID: &str = "00000000-0000-4000-8000-000000000017";
 
+fn state_for(record: &SessionRecord) -> Result<AgentState, Unavailable> {
+    super::state_for(record).map(|(state, _)| state)
+}
+
 /// Writes an executable stub. A sibling test's fork can hold the write
 /// descriptor until it execs, which makes the first exec fail with ETXTBSY and
 /// the adapter report `Failed`. Running the stub once through the shared retry
@@ -471,31 +475,6 @@ fn sampler_prefers_the_structured_state_over_the_screen() {
 }
 
 #[test]
-fn unavailable_structured_state_falls_through_to_the_screen_and_says_so() {
-    let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
-    let (bin, _) = counting_claude(tmp.path());
-    for (pinned, session, reason) in [
-        (tmp.path().join("absent"), BUSY_ID, "binary_missing"),
-        (bin, "00000000-0000-4000-8000-0000000000ff", "unmatched"),
-    ] {
-        let _bin = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_BIN", pinned.to_str().unwrap());
-        let _config = EnvGuard::remove(&lock, "CLAUDE_CONFIG_DIR");
-        let sampled = running_turn(session);
-
-        sampled.collect(true);
-        let document = sampled.wait_for_document(|_| true);
-
-        assert_eq!(document.observation.rule_id, "claude_prompt_visible");
-        assert_eq!(
-            document.observation.extra.get(UNAVAILABLE_KEY),
-            Some(&json!(reason))
-        );
-        assert!(sampled.captures.exists());
-    }
-}
-
-#[test]
 fn idle_provider_state_over_an_open_turn_is_sustained_uncertainty() {
     let lock = GlobalStateLock::new();
     let tmp = tempfile::TempDir::new().unwrap();
@@ -598,25 +577,6 @@ fn sampler_reads_state_over_status_end_to_end() {
     assert_eq!(document.observation.rule_id, "claude_agents_busy");
     assert_eq!(document.observation.projection, "working");
     assert!(!sampled.captures.exists(), "the screen was sampled anyway");
-}
-
-#[test]
-fn unknown_state_falls_through_to_the_screen_and_says_so() {
-    let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
-    let (bin, _) = counting_claude_printing(tmp.path(), WITH_STATE);
-    let _bin = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_BIN", bin.to_str().unwrap());
-    let _config = EnvGuard::remove(&lock, "CLAUDE_CONFIG_DIR");
-    let sampled = running_turn(STATE_UNKNOWN_ID);
-
-    sampled.collect(true);
-    let document = sampled.wait_for_document(|_| true);
-
-    assert_eq!(document.observation.rule_id, "claude_prompt_visible");
-    assert_eq!(
-        document.observation.extra.get(UNAVAILABLE_KEY),
-        Some(&json!("unknown_state"))
-    );
 }
 
 #[test]
@@ -737,4 +697,208 @@ fn the_call_is_bounded_to_one_and_a_half_seconds() {
         Some(Unavailable::Timeout),
         "a call beyond the bound is cut off"
     );
+}
+
+// Each unavailable cause must fail safe without consulting the terminal.
+fn assert_unavailable_activity(reason: &str) {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let bin = tmp.path().join("claude");
+    let body = match reason {
+        "failed" => "exit 1".to_string(), // includes an old CLI rejecting agents --json
+        "timeout" => "sleep 5".to_string(),
+        "malformed" => "printf 'not-json'".to_string(),
+        "unknown_state" => format!(
+            "printf '%s' '{}'",
+            json!([{"sessionId":BUSY_ID, "state":"unknown"}])
+        ),
+        "conflicting_entries" => format!(
+            "printf '%s' '{}'",
+            json!([
+            {"sessionId":BUSY_ID, "status":"idle"}, {"sessionId":BUSY_ID, "status":"busy"}])
+        ),
+        _ => "printf '[]'".to_string(),
+    };
+    if reason != "binary_missing" {
+        write_script(&bin, &body);
+    }
+    let _bin = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_BIN", bin.to_str().unwrap());
+    let _config = EnvGuard::remove(&lock, "CLAUDE_CONFIG_DIR");
+    let mut sampled = running_turn(BUSY_ID);
+    if reason == "no_provider_session" {
+        sampled.record.provider_resume = None;
+    }
+    let before = activity::state_for_view(&sampled.context, &sampled.record).unwrap();
+    let observation = super::super::sample(&sampled.record, &sampled.tmux, &before.phase);
+    assert_eq!(observation.observer_version, OBSERVER_VERSION);
+    assert_eq!(observation.rule_id, "claude_agents_unavailable");
+    assert_eq!(observation.projection, "unknown");
+    assert_eq!(observation.extra.get(UNAVAILABLE_KEY), Some(&json!(reason)));
+    let document = ShadowDocument {
+        schema_version: super::super::SHADOW_DOCUMENT_VERSION.to_string(),
+        runtime_id: "launch-a".to_string(),
+        runtime_generation: 1,
+        activity_revision: Some(before.revision),
+        interrupt_since: None,
+        observation,
+    };
+    fs::write(sampled.path(), serde_json::to_vec(&document).unwrap()).unwrap();
+    let state = sampled.collect(false);
+    assert_eq!(state.phase, activity::TurnPhase::Unknown);
+    assert_eq!(state.current_turn, before.current_turn);
+    assert_eq!(state.last_turn, before.last_turn);
+    let status = activity::activity_status(&sampled.context, &sampled.record.id).unwrap();
+    assert_eq!(status.turn_state.phase, activity::TurnPhase::Unknown);
+    assert_eq!(
+        activity::controller_state_for_record(&sampled.context, &sampled.record)
+            .unwrap()
+            .phase,
+        activity::TurnPhase::Working,
+        "presentation failure must not expire active work"
+    );
+    let diagnostic = state.diagnostic.unwrap();
+    assert_eq!(diagnostic.reason, "claude_agents_unavailable");
+    assert_eq!(diagnostic.extra.get(UNAVAILABLE_KEY), Some(&json!(reason)));
+    assert!(
+        !sampled.captures.exists(),
+        "unavailability consulted the pane"
+    );
+}
+
+#[test]
+fn missing_binary_activity_is_unknown() {
+    assert_unavailable_activity("binary_missing");
+}
+#[test]
+fn failed_or_old_binary_activity_is_unknown() {
+    assert_unavailable_activity("failed");
+}
+#[test]
+fn timed_out_listing_activity_is_unknown() {
+    assert_unavailable_activity("timeout");
+}
+#[test]
+fn malformed_listing_activity_is_unknown() {
+    assert_unavailable_activity("malformed");
+}
+#[test]
+fn missing_provider_identity_activity_is_unknown() {
+    assert_unavailable_activity("no_provider_session");
+}
+#[test]
+fn unmatched_provider_identity_activity_is_unknown() {
+    assert_unavailable_activity("unmatched");
+}
+#[test]
+fn unknown_provider_state_activity_is_unknown() {
+    assert_unavailable_activity("unknown_state");
+}
+#[test]
+fn conflicting_provider_entries_activity_is_unknown() {
+    assert_unavailable_activity("conflicting_entries");
+}
+
+#[test]
+fn pre_stop_cached_idle_is_not_retimestamped_as_completion_evidence() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (bin, _) = counting_claude(tmp.path());
+    let _bin = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_BIN", bin.to_str().unwrap());
+    let _config = EnvGuard::remove(&lock, "CLAUDE_CONFIG_DIR");
+    let sampled = running_turn(IDLE_ID);
+    let before = super::super::sample(
+        &sampled.record,
+        &sampled.tmux,
+        &activity::TurnPhase::Working,
+    );
+    let stop: activity::TurnEvent = serde_json::from_value(json!({
+        "schema_version":"agent-session.turn-event.v1", "event_id":"stop",
+        "runtime_id":"launch-a", "provider":"claude", "provider_turn_id":"turn-1",
+        "provider_session_id":IDLE_ID, "kind":"stop_observed", "completion_candidate":true,
+        "confidence":"observed", "source_kind":"provider_hook"
+    }))
+    .unwrap();
+    let stopped = activity::ingest_event(&sampled.context, &sampled.record.id, stop).unwrap();
+    let cached = super::super::sample(&sampled.record, &sampled.tmux, &stopped.turn_state.phase);
+    assert_eq!(
+        cached.observed_at, before.observed_at,
+        "a cache read invented a new observation"
+    );
+    let document = ShadowDocument {
+        schema_version: super::super::SHADOW_DOCUMENT_VERSION.to_string(),
+        runtime_id: "launch-a".into(),
+        runtime_generation: 1,
+        activity_revision: Some(stopped.turn_state.revision),
+        interrupt_since: None,
+        observation: cached,
+    };
+    fs::write(sampled.path(), serde_json::to_vec(&document).unwrap()).unwrap();
+    let state = activity::state_for_view(&sampled.context, &sampled.record).unwrap();
+    assert_eq!(state.phase, activity::TurnPhase::Working);
+    assert!(state.current_turn.is_some());
+    assert!(state.last_turn.is_none());
+    assert!(!sampled.captures.exists());
+}
+
+#[test]
+fn sustained_structured_idle_uncertainty_keeps_runtime_revision_and_attention_fences() {
+    let sampled = running_turn(IDLE_ID);
+    let before = activity::state_for_view(&sampled.context, &sampled.record).unwrap();
+    let earlier = Timestamp::now()
+        .checked_sub(jiff::SignedDuration::from_secs(20))
+        .unwrap()
+        .to_string();
+    let original = json!({
+        "schema_version":super::super::SHADOW_DOCUMENT_VERSION,
+        "runtime_id":"launch-a", "runtime_generation":1,
+        "activity_revision":before.revision, "interrupt_since":earlier,
+        "observation":{"observer_version":OBSERVER_VERSION,"rule_id":"claude_agents_idle",
+            "observed_at":super::super::now(),"projection":"waiting","disagrees":true}
+    });
+    for case in [
+        "current",
+        "revision",
+        "runtime",
+        "generation",
+        "attention",
+        "busy",
+        "stale",
+    ] {
+        let mut fixture = original.clone();
+        let mut state = before.clone();
+        match case {
+            "revision" => fixture["activity_revision"] = json!(before.revision + 1),
+            "runtime" => fixture["runtime_id"] = json!("another-launch"),
+            "generation" => fixture["runtime_generation"] = json!(2),
+            "attention" => state.current_turn.as_mut().unwrap().attention = Some(serde_json::from_value(json!({
+                "kind":"approval", "requested_at":super::super::now(), "pending_count":1, "correlation":"conservative"
+            })).unwrap()),
+            "busy" => fixture["observation"]["rule_id"] = json!("claude_agents_busy"),
+            "stale" => fixture["observation"]["observed_at"] = json!("2000-01-01T00:00:00Z"),
+            _ => {}
+        }
+        fs::write(sampled.path(), serde_json::to_vec(&fixture).unwrap()).unwrap();
+        let view = annotate_for_view(
+            &sampled.context,
+            &sampled.record,
+            "running",
+            &sampled.tmux,
+            state,
+            false,
+        );
+        assert_eq!(
+            view.phase,
+            if case == "current" {
+                activity::TurnPhase::Unknown
+            } else {
+                activity::TurnPhase::Working
+            },
+            "{case}"
+        );
+        assert_eq!(
+            view.current_turn.as_ref().unwrap().provider_turn_id,
+            before.current_turn.as_ref().unwrap().provider_turn_id
+        );
+        assert_eq!(view.last_turn, before.last_turn);
+    }
 }

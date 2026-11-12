@@ -1810,15 +1810,6 @@ pub(crate) fn refuse_if_blocked(
     ))
 }
 
-/// Read-only scheduling hint for the same runtime-fenced completion projection.
-/// A refresh at this deadline still re-reads state, so later hooks can cancel it.
-pub(crate) fn completion_deadline_for_view(
-    context: &CliContext,
-    record: &SessionRecord,
-) -> Option<jiff::Timestamp> {
-    claude_completion::completion_deadline_for_view(context, record)
-}
-
 /// The turn identity observed immediately before a terminal-delivered prompt.
 /// Acknowledging that prompt means seeing a turn this snapshot did not already
 /// contain, so progress on a turn that was already running can never be
@@ -2812,7 +2803,9 @@ fn ingest_event_with_lock(
             duplicate: true,
         });
     }
-    claude_completion::settle_claude_completion(&mut document, &received_at);
+    if event.kind != TurnEventKind::StopObserved {
+        claude_completion::settle_claude_completion(context, &record, &mut document);
+    }
     let applied = completion_receipts::allows_reconciliation(&journal_path, &document, &event) && {
         codex_completion::restore_progress_turn(&journal_path, &mut document, &event);
         reduce(&mut document, &event, &received_at)
@@ -3705,7 +3698,7 @@ pub(crate) fn doctor(
                 ),
                 AgentKind::Claude => (
                     "partial",
-                    "qualifying Stop completes after a one-second quiet window; idle_prompt confirms completion; general PreToolUse reactivates continued work and SubagentStop is ignored",
+                    "qualifying Stop requires current runtime/revision-bound claude agents --json idle; unavailable structured state is unknown with claude_agents_unavailable diagnostics; StopFailure and idle_prompt complete immediately; PreToolUse reactivates work and SubagentStop is ignored",
                     "AskUserQuestion uses exact runtime-scoped tool_use_id correlation; Elicitation uses exact elicitation_id when both callbacks provide it and otherwise latches conservatively; other PermissionRequest and configured notification signals remain conservative latches",
                     "Claude settings hooks compose additively and execute with the user's permissions",
                     "Run activity setup --agent claude --dry-run and then --apply",

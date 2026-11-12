@@ -54,7 +54,7 @@ fn read_state(context: &CliContext, record: &SessionRecord, quiet: bool) -> Opti
             if activity_matches_runtime(&document, record)
                 && replay_matches_document(&dir, &document) =>
         {
-            super::claude_completion::settle_claude_completion(&mut document, &now());
+            super::claude_completion::settle_claude_completion(context, record, &mut document);
             super::codex_completion::recover_completed_snapshot(
                 &dir.join(ACTIVITY_JOURNAL_FILE),
                 &mut document,
@@ -64,6 +64,7 @@ fn read_state(context: &CliContext, record: &SessionRecord, quiet: bool) -> Opti
                 completion_uncertainty::project(&mut document.state, &now());
                 super::codex_quiet::project(record, &mut document.state, &now());
                 crate::send_guard::response::project(context, record, &mut document.state);
+                super::shadow::project_claude_unavailable(context, record, &mut document.state);
             }
             runtime_stopped::project(context, record, &mut document.state);
             Some(document.state)

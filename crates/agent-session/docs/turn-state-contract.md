@@ -452,7 +452,7 @@ never confirms completion, clears attention, or authorizes automation.
 ### Claude structured state source
 
 For a running Claude session the shadow sampler reads the provider's own
-state first and uses screen rules only when it is unavailable. The source is
+state without activity screen fallback. The source is
 `claude agents --json` of the installed `claude` binary (resolved like other
 provider binaries, never from a session record). Provider facts are pinned to
 the research-preview agent view; see
@@ -466,7 +466,7 @@ the research-preview agent view; see
   it lists `state` for background sessions only and documents no minimum
   version; interactive entries captured from 2.1.317 carry `status` and no
   `state`. The `state` fixtures are synthetic. A version that
-  reports neither field value set reads as `unknown_state` and falls through.
+  reports neither field value set reads as `unknown_state` and projects unknown.
 - **Call.** One call per provider config directory serves every session
   sampled within a 2-second window; sessions sharing a directory never spawn
   per session. Each config directory has its own registry, so a session with
@@ -493,45 +493,47 @@ the research-preview agent view; see
   `rule_id` of `claude_agents_busy`, `claude_agents_idle`,
   `claude_agents_waiting_permission_prompt` or `claude_agents_waiting_other`.
   The `disagrees` flag compares the projection with the hook-derived phase. An
-  idle reading over an open turn is sustained like the screen interrupt
-  marker below, without the screen marker's composer check.
-- **Fallthrough.** When the binary is missing, the call times out or fails,
-  the output is malformed, the session has no provider session id, no entry
-  matches, entries for it conflict, the `state` is present but not one of
-  the five values above (its `status` is then not consulted), or the status
-  of an entry without `state` is not `idle`, `busy` or `waiting`, the screen
-  rules decide. The resulting observation (`observer_version: terminal-shadow.v1`)
-  carries `claude_agents_unavailable` with one of `binary_missing`, `timeout`,
-  `failed`, `malformed`, `no_provider_session`, `unmatched`,
-  `conflicting_entries` or `unknown_state`. The activity stream carries `rule_id` and
-  `observer_version` only; the reason appears in session views.
+  idle reading over an open turn is sustained as uncertainty below, unless
+  a qualifying Stop plus current structured idle establishes completion.
+- **Unavailable.** Claude Code 2.1.317 is the minimum supported version for
+  this listing integration (the audited version, not a claim about when the
+  provider first shipped it). A missing/older binary, timeout, failed command,
+  malformed output, missing provider identity, unmatched session, conflicting
+  entries or unknown state produces an observation with
+  `observer_version: claude-agents.v1`, `rule_id: claude_agents_unavailable`
+  and `projection: unknown`. Its `claude_agents_unavailable` metadata reason
+  is `binary_missing`, `timeout`, `failed`, `malformed`,
+  `no_provider_session`, `unmatched`, `conflicting_entries` or `unknown_state`.
+  Session views project `unknown` with that reason in both the observation and
+  activity diagnostic; the open turn, last outcome and durable hook state are
+  preserved. The activity stream carries the fixed diagnostic and rule metadata.
+  `activity doctor` describes the structured-state dependency. No Claude pane
+  fallback or fallback switch exists.
 
 The `waiting` and `waitingFor` fixtures follow the provider spike and were
-not live captured; only the `idle` and `busy` entries match output captured
-from the installed CLI. The `state` fixtures are synthetic and follow the
-provider documentation.
+not live captured; only `idle` and `busy` match captured CLI output.
+The `state` fixtures are synthetic and follow provider documentation.
 
-Screen rules stay in place as the fallback; removing them is tracked
-separately.
+The [rule inventory](specs/session-runtime-v1.md#claude-rule-inventory-for-3592)
+names every removed activity screen rule and each retained terminal guard.
 
-For Claude and Codex, two consecutive samples of the provider interrupt marker,
-at least 15 seconds apart, may project `phase: unknown` with
-`diagnostic.reason: interrupted_suspected` and inferred terminal-heuristic
-provenance. This is uncertainty, not confirmed `interrupted` or `waiting`: the
-open turn and last-turn outcome remain intact.
+For Claude, two consecutive structured idle observations at least 15 seconds
+apart over an otherwise open turn may still project `unknown` with
+`interrupted_suspected`. This is conservative uncertainty: generic idle groups
+done, failed and stopped states, and no interrupt hook identifies the cause.
+It never confirms completion, clears attention or changes the last outcome.
+A qualifying current-turn Stop plus fresh structured idle instead completes
+under the rule below. Both observations remain runtime/revision-fenced;
+new work, attention, busy state or unavailable evidence prevents inference.
+No pane, marker or empty-composer requirement participates.
 
-Runtime launch/generation and activity revision fence both samples; a new
-prompt or any newer hook invalidates them. Claude samples the current viewport
-rather than scrollback, and a nonempty prompt row after its latest interrupt
-marker invalidates that marker. An earlier turn's marker cannot establish
-idleness for a fresh turn. Claude requires an empty idle composer; its drafts
-cannot produce this projection.
+For Codex, two consecutive interrupt-marker samples at least 15 seconds apart
+retain the same runtime/revision and current-turn/attention fences. They project
+uncertainty rather than a confirmed interrupted or waiting outcome.
 
 Codex uses the `Conversation interrupted` marker; plain composer
 text cannot distinguish a placeholder from a draft and supplies no completion
-or waiting evidence. Claude also recognizes a Running tool status below the
-latest interrupt marker as Working evidence; an earlier tool status cannot mask
-a newer interrupt. A working indicator, attention, missing marker, stale sample,
+or waiting evidence. A working indicator, attention, missing marker, stale sample,
 or runtime replacement cannot produce this projection. A ready serve
 activity broker refreshes on a 15-second timer even without
 hooks or HTTP polling, and completed shadow writes refresh stream snapshots.
@@ -638,35 +640,29 @@ callback to active parent work; a late background callback must not resurrect a
 genuinely waiting parent turn. Positive progress never clears pending attention.
 
 Completion candidates use Claude `Stop` with explicit `stop_hook_active: false`
-and an empty `background_tasks` array.
+and an empty `background_tasks` array. Missing/malformed fields, active Stop
+hooks and background tasks remain non-final.
 
-- After one second without a newer accepted event, session views project observed
-  `waiting` and a completed last turn, including when the composer contains a draft.
-- Missing or malformed fields, active stop hooks, and background tasks remain
-  non-final. `StopFailure` remains immediately terminal and authoritative.
-- Reads use a deterministic deadline and do not write activity. The next accepted
-  event materializes the settled state before reduction. Any event inside the
-  window cancels the candidate; later continuation progress reopens `working`.
-- `idle_prompt` is late observed confirmation, not the completion dependency. The
-  confidence stays observed because another concurrent hook can continue after
-  the quiet window.
-- The support floor is Claude Code 2.1.206; the hooks contract was checked through
-  2.1.289 against the [official reference](https://code.claude.com/docs/en/hooks#stop).
+A candidate completes only with a fresh `claude-agents.v1`
+`claude_agents_idle` observation in the same runtime launch, generation and
+accepted activity revision. Fresh means the actual provider fetch must not
+precede the accepted Stop; a cache hit retains its original fetch timestamp.
+Once established, this revision-bound completion proof does not expire with the
+poll interval or get overwritten by a sample of the projected completed revision.
+Only newer accepted activity or a runtime boundary invalidates it. There is no one-second quiet timer or
+completion wakeup deadline. Reads project completion without writing activity;
+the next accepted event materializes the same settled state before reduction.
+Later accepted work or a reentrant/parallel Stop invalidates the earlier revision.
 
-The one-second window remains because Stop hook data cannot prove that the turn
-ended. Claude runs every matching `Stop` hook in parallel and any of them may
-continue the turn, and the payload (`stop_hook_active`, `background_tasks`,
-`session_crons`, `last_assistant_message`, `prompt_id`) says nothing about the
-other hooks. A continuing hook's next `Stop` carries `stop_hook_active: true`,
-which is non-final, so completing at once would project `waiting` while Claude
-works until a late `idle_prompt`. Immediate completion is therefore limited to
-payloads that prove it: `StopFailure` and `idle_prompt`.
-
-The structured source that removes the window is the `claude agents --json` idle state
-([#3590](https://github.com/sympoies/nils-cli/issues/3590)); the screen rules
-go after both land ([#3592](https://github.com/sympoies/nils-cli/issues/3592)).
-No settings reader is added to prove that no other Stop hook exists: plugin,
-`--settings` and skill-frontmatter hooks are not enumerable from the hook.
+Busy, blocked, unavailable, stale, pre-Stop or mismatched observations never
+settle the candidate. With no structured idle, the turn stays open/pending until
+fresh matching idle, `StopFailure`, `Notification(idle_prompt)`, the next prompt
+or a runtime boundary. `StopFailure` and `idle_prompt` retain immediate completion.
+A raw Stop alone cannot prove other concurrently running Stop hooks will not
+continue the turn. Hooks from plugins, settings and skills are not enumerated
+or treated as proof of finality. These rules are covered with structured fixtures,
+including continued work and parallel/reentrant Stop hooks; no new live probe
+is claimed.
 
 The coordination notification controller applies a narrower input-safety rule:
 an exact-runtime `Stop` may authorize only the fixed body-free mailbox prompt
@@ -938,18 +934,16 @@ Provider hook and notification normalization lives behind the
 `activity/provider.rs` adapter boundary. The central module retains the typed
 reducer, persistence, replay, and public projection.
 
-The `activity/shadow.rs` observer samples only running Claude or Codex sessions
-whose structured evidence is unknown, at least five minutes old, or has been
-missing for at least five minutes, plus open Claude or Codex working turns for
-the interrupt-uncertainty rule. The long-lived serve collector schedules
-sampling in detached bounded workers and immediately returns cached metadata;
-one-shot CLI views only read that cache and never start work that could be lost
-at process exit. Sampling runs outside the activity-ingestion lock, uses a
-process-wide concurrency cap of four, and is cached for 15 seconds. Each tmux
-metadata/capture command is bounded to 250 ms and 16 KiB, and only the
-metadata-only observation sidecar is persisted. Pane titles and capture bytes
-are discarded in memory. Each sidecar is fenced by runtime launch identity and
-generation, with the active record revalidated immediately before persistence.
+The `activity/shadow.rs` sampler reads structured state for running Claude
+sessions and terminal metadata for Codex. It samples unknown/stale evidence,
+open working turns and pending Claude Stop observations. The serve collector
+uses detached bounded workers, a concurrency cap of four and a 15-second
+per-runtime cache. One-shot views only read cached observations. Structured
+unavailability is visible as unknown; no Claude activity pane is captured.
+Codex tmux metadata/capture commands remain bounded to 250 ms and 16 KiB.
+Only metadata sidecars persist; runtime identity/generation and accepted
+activity revision fence their use and persistence. The completion projection
+uses a fresh structured sidecar and the normal snapshot refresh path.
 
 `provider-prompt.v1` is a separate, advisory attach/title protocol. It is not a
 turn event source, it is not persisted into activity files, and a prompt-event

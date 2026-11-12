@@ -1,6 +1,6 @@
 use super::*;
 
-/// The activity clock. Tests freeze it to cross the quiet window without sleeping.
+/// The activity clock; tests freeze it to exercise time-dependent views.
 pub(super) fn now() -> String {
     #[cfg(test)]
     if let Some(frozen) = super::tests::test_clock::frozen_now() {
@@ -9,58 +9,30 @@ pub(super) fn now() -> String {
     Zoned::now().timestamp().to_string()
 }
 
-pub(crate) fn completion_deadline_for_view(
+/// A qualifying Stop needs current structured idle, never elapsed time.
+/// Reads do not write activity. The next accepted event materializes the same
+/// projection before reduction; intervening accepted work invalidates its revision.
+pub(super) fn settle_claude_completion(
     context: &CliContext,
     record: &SessionRecord,
-) -> Option<jiff::Timestamp> {
-    let dir = session_dir(context, &record.id);
-    if let Some(runtime) = &record.runtime
-        && !matches!(
-            runtime_unhealthy_marker(&dir, &runtime.launch_id, runtime.generation),
-            RuntimeUnhealthyStatus::Absent
-        )
-    {
-        return None;
-    }
-    let document = read_document(&dir.join(ACTIVITY_FILE)).ok()?;
-    if !activity_matches_runtime(&document, record) || !replay_matches_document(&dir, &document) {
-        return None;
-    }
-    claude_completion_deadline(&document)
-}
-
-fn claude_completion_deadline(document: &ActivityDocument) -> Option<jiff::Timestamp> {
-    document
-        .pending_completion
-        .as_ref()?
-        .received_at
-        .parse::<jiff::Timestamp>()
-        .ok()?
-        .checked_add(jiff::SignedDuration::from_secs(1))
-        .ok()
-}
-
-/// Completion is a deterministic projection of the latest qualifying Stop.
-/// Reads never write activity; the next accepted event materializes the same
-/// settled state before reduction. Any event inside the quiet window cancels it.
-pub(super) fn settle_claude_completion(document: &mut ActivityDocument, at: &str) {
+    document: &mut ActivityDocument,
+) {
     let Some(pending) = document.pending_completion.as_ref() else {
         return;
     };
-    let Some(deadline) = claude_completion_deadline(document) else {
+    let Some(observed_at) = super::shadow::completion_observed_at(
+        context,
+        record,
+        document.state.revision,
+        &pending.received_at,
+    ) else {
         return;
     };
-    if !at
-        .parse::<jiff::Timestamp>()
-        .is_ok_and(|time| time >= deadline)
-    {
-        return;
-    }
     let mut completion = pending.event.clone();
     completion.kind = TurnEventKind::TurnCompleted;
     completion.completion_candidate = false;
     completion.completion_candidate_reason = None;
-    reduce(document, &completion, &deadline.to_string());
+    reduce(document, &completion, &observed_at);
     document.state.diagnostic = None;
 }
 
@@ -89,7 +61,7 @@ pub(super) fn observe_stop(document: &mut ActivityDocument, event: &TurnEvent, a
         }
     }
     // Matching Stop hooks run concurrently. Only an inactive Stop with
-    // no background tasks is a candidate, and later events cancel it.
+    // no background tasks is a candidate; later accepted events cancel it.
     if event.completion_candidate
         && document.state.current_turn.as_ref().is_some_and(|turn| {
             event.provider_turn_id.is_none()

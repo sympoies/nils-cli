@@ -4,8 +4,8 @@
 //! `working`, `blocked`, `done`, `failed` or `stopped` when the provider
 //! reports one, and otherwise with a `status` of `idle`, `busy` or `waiting`
 //! (plus `waitingFor`). The shadow sampler prefers
-//! this provider-owned signal over screen rules and falls through to the
-//! screen only when it is unavailable, recording why. One call per provider
+//! this provider-owned signal. Unavailability projects unknown and records
+//! why, without sampling the terminal. One call per provider
 //! config directory serves every session within a short window, because each
 //! config directory has its own session registry.
 
@@ -22,8 +22,7 @@ use crate::SessionRecord;
 use crate::cli::AgentKind;
 
 pub(super) const OBSERVER_VERSION: &str = "claude-agents.v1";
-/// Key in the observation of a screen-sampled Claude session: why the
-/// structured source was not used.
+/// Fixed unavailability reason in session activity diagnostics.
 pub(super) const UNAVAILABLE_KEY: &str = "claude_agents_unavailable";
 
 const FETCH_TIMEOUT: Duration = Duration::from_millis(1500);
@@ -79,11 +78,14 @@ impl Unavailable {
 }
 
 #[derive(Debug)]
-pub(super) struct Snapshot(HashMap<String, Result<AgentState, Unavailable>>);
+pub(super) struct Snapshot {
+    sessions: HashMap<String, Result<AgentState, Unavailable>>,
+    observed_at: String,
+}
 
 impl Snapshot {
     pub(super) fn state(&self, provider_session_id: &str) -> Result<AgentState, Unavailable> {
-        self.0
+        self.sessions
             .get(provider_session_id)
             .copied()
             .unwrap_or(Err(Unavailable::Unmatched))
@@ -133,7 +135,10 @@ pub(super) fn parse(output: &[u8]) -> Result<Snapshot, Unavailable> {
         };
         sessions.insert(session_id.to_string(), state);
     }
-    Ok(Snapshot(sessions))
+    Ok(Snapshot {
+        sessions,
+        observed_at: super::super::now(),
+    })
 }
 
 pub(super) fn fetch(
@@ -202,7 +207,7 @@ fn snapshot(bin: PathBuf, config_dir: Option<PathBuf>) -> Fetched {
 }
 
 /// Structured state of one Claude session, matched by provider session id.
-pub(super) fn state_for(record: &SessionRecord) -> Result<AgentState, Unavailable> {
+pub(super) fn state_for(record: &SessionRecord) -> Result<(AgentState, String), Unavailable> {
     let provider_session_id = record
         .provider_resume
         .as_ref()
@@ -213,7 +218,11 @@ pub(super) fn state_for(record: &SessionRecord) -> Result<AgentState, Unavailabl
     let config_dir = crate::session_effective_provider_config_dir(record)
         .or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from));
     let bin = crate::agent_bin::resolve_agent_bin(AgentKind::Claude, None);
-    snapshot(bin, config_dir)?.state(provider_session_id)
+    let snapshot = snapshot(bin, config_dir)?;
+    Ok((
+        snapshot.state(provider_session_id)?,
+        snapshot.observed_at.clone(),
+    ))
 }
 
 pub(super) fn observation(state: AgentState, phase: &TurnPhase) -> ShadowObservationView {
@@ -232,6 +241,17 @@ pub(super) fn observation(state: AgentState, phase: &TurnPhase) -> ShadowObserva
         projection: projection.to_string(),
         disagrees: super::disagrees(phase, projection),
         extra: serde_json::Map::new(),
+    }
+}
+
+pub(super) fn unavailable_observation(reason: Unavailable) -> ShadowObservationView {
+    ShadowObservationView {
+        observer_version: OBSERVER_VERSION.to_string(),
+        rule_id: "claude_agents_unavailable".to_string(),
+        observed_at: super::super::now(),
+        projection: "unknown".to_string(),
+        disagrees: false,
+        extra: serde_json::Map::from_iter([(UNAVAILABLE_KEY.into(), reason.code().into())]),
     }
 }
 

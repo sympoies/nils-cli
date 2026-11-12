@@ -133,7 +133,7 @@ contract until implemented and tested. Basis per cell:
 
 | Need | Claude (TUI in tmux) | Codex (app-server) |
 | --- | --- | --- |
-| Turn state | `claude agents --json` `state` (`working`, `blocked`, `done`, `failed`, `stopped`) when present, else `status` (`idle`, `busy`, `waiting`), and `waitingFor`; `Stop` hook, completing after a one-second quiet window | `turn/started`, `turn/completed` notifications |
+| Turn state | `claude agents --json` `state` (`working`, `blocked`, `done`, `failed`, `stopped`) when present, else `status` (`idle`, `busy`, `waiting`), and `waitingFor`; qualifying `Stop` plus fresh same-runtime/revision structured idle | `turn/started`, `turn/completed` notifications |
 | Approval request | `PermissionRequest` hook, bound to its `PreToolUse` call by turn, tool name and input digest; cleared by that call's result hook | Server requests with JSON-RPC ids |
 | Approval answer | Hook decision, while the terminal dialog stays visible | JSON-RPC response |
 | Interrupt | Keystroke, observed through `agents --json` | `turn/interrupt` |
@@ -144,12 +144,12 @@ Hook signals as implemented by
 [#3591](https://github.com/sympoies/nils-cli/issues/3591), under the
 [Turn state contract](../turn-state-contract.md):
 
-- **Stop window.** The one-second quiet window after a qualifying `Stop` stays.
-  Claude runs matching `Stop` hooks in parallel and any can continue the turn,
-  and the `Stop` payload cannot show that none will **[F]** (official
-  contract). `claude agents --json` idle (#3590) is the structured source that
-  removes the window, and the screen rules follow in #3592 after both land.
-  Immediate completion remains limited to `StopFailure` and `idle_prompt`.
+- **Stop completion.** A qualifying current-turn `Stop` needs fresh structured
+  idle from the same runtime and accepted revision. No quiet timer completes
+  it. Busy, blocked or unavailable state leaves it pending; later accepted
+  work or a parallel/reentrant Stop invalidates earlier evidence. The payload
+  alone cannot prove no concurrent hook will continue. `StopFailure` and
+  `idle_prompt` still complete immediately.
 - **Approval correlation.** `PermissionRequest` carries `tool_name` and the
   call's `tool_input` but no call id **[F]**. It is bound to the open
   `PreToolUse` call of the same turn with the same tool name and input digest
@@ -162,21 +162,18 @@ Hook signals as implemented by
 - **Not answered here.** The hook only records; the terminal dialog stays the
   answerer. Answering through the hook is staging step 3.
 - **Without hooks.** A session whose managed hooks are absent or incomplete
-  keeps the existing evidence: approvals stay `conservative`, completion
-  waits for `idle_prompt`, and `activity doctor` reports the missing events.
+  uses structured state observations without inferring completion from
+  generic idle alone; approvals stay conservative, and `activity doctor`
+  reports the missing events.
 
 ## Staging
 
 Order only; each step is its own issue.
 
-1. Claude state reader over `claude agents --json`, replacing the post-Stop
-   quiet window and two-sample interrupt checks. Implemented as the state
-   source first ([#3590](https://github.com/sympoies/nils-cli/issues/3590),
-   see [Claude structured state source](../turn-state-contract.md#claude-structured-state-source)):
-   the structured state outranks the screen rules, which remain as the
-   fallback until their removal lands as its own change
-   ([#3592](https://github.com/sympoies/nils-cli/issues/3592)), so the two
-   are side by side only between those changes.
+1. Claude structured activity state and hook correlation are implemented
+   (#3590, #3607, #3591 and #3592). Activity pane fallback and elapsed-time
+   Stop completion are removed. The [inventory](#claude-rule-inventory-for-3592)
+   names the retained rules that have no structured equivalent.
 2. Single-writer lease, handoff command and pre-attach liveness check.
 3. Approval answers through the `PermissionRequest` hook with id correlation.
 4. Codex slices #3582, #3583 and #3584 under this document.
@@ -186,10 +183,10 @@ need its own maintainer decision and would reuse the single-writer rule.
 
 ## Open questions
 
-- Agent view is a provider research preview. What provider version window does
-  the state reader support? Outside it the failure behavior is decided: an
-  unavailable call, malformed output, an unmatched session or an unknown
-  status falls through to the screen rules and is recorded.
+- Agent view is a provider research preview. This integration requires Claude
+  Code 2.1.317 or newer (audited at 2.1.317). Missing or older binaries and
+  unavailable/unknown listings project unknown with a fixed diagnostic reason,
+  without pane fallback. Future provider changes still need auditing.
 - A manual approval denial and an interrupt emit no Claude hook. Which
   structured source ends the recorded wait sooner than the next prompt: the
   `claude agents --json` state (#3590), or the transcript?
@@ -208,19 +205,20 @@ need its own maintainer decision and would reuse the single-writer rule.
 
 ## Claude rule inventory for #3592
 
-This removal inventory is pending lead approval. Production rules remain in place.
+This inventory was approved before production deletions. It records the
+implemented removals and the retained requirements.
 Matching uses `sessionId` in the session's provider configuration directory;
 `state` decides when present, otherwise `status` decides.
 
-| Existing rule and owner | Structured replacement or retained requirement | Proposed action |
+| Existing rule and owner | Structured replacement or retained requirement | Action |
 | --- | --- | --- |
-| `shadow::classify`: `claude_working_indicator` (`esc to interrupt`, current Running tool) | `state=working` or `status=busy`; `UserPromptSubmit` starts a turn and `PreToolUse` supplies progress. | Remove Claude working screen arm and Running-tool helper. |
-| `claude_prompt_visible` (last three rows) | `state=done/failed/stopped` or `status=idle` supplies idleness; primary `SessionStart(startup/resume)` supplies initial readiness. Idle alone does not identify a completed turn. | Remove screen idle/prompt arm. |
-| `claude_permission_form` (proceed/allow text) | `state=blocked` or `status=waiting`, with `waitingFor=permission prompt`, supplies approval-wait observation. `PermissionRequest` records attention; matched `PostToolUse`/`PostToolUseFailure` resolves its tool call. | Remove activity dialog detection; retain hook correlation and conservative attention where resolution is unproven. |
-| `claude_interrupt_marker`, empty composer, latest-marker/current-viewport/Running-tool guards | `state=stopped` and provider idleness replace pane evidence. The reader groups `done/failed/stopped` as idle; `status=idle` cannot identify an interrupt. Manual denial and interrupt emit no hook (#3599). | Remove screen marker and composer/history guards. Retain uncertainty for an open turn without qualifying completion; generic idle does not prove an outcome. |
-| `project_interrupt_uncertainty`/`interrupt_since`: two samples at least 15 seconds apart | Inputs can be structured idle observations only. Generic idle and hooks do not prove why an unmatched open turn stopped. | Remove screen-marker input. Retain runtime/revision-fenced sustained structured-idle uncertainty, except where a qualifying Stop establishes completion. This delay is conservative inference, not confirmed interrupt. |
-| `claude_completion`: one-second post-Stop window | Same-runtime, same-revision structured idle plus the qualifying current-turn Stop can confirm idleness without a quiet timer. `StopFailure` and `Notification(idle_prompt)` already complete immediately. Raw Stop cannot prove other hooks will not continue. | Remove timer completion and deadline-driven wakeups. Keep candidate identity/cancellation fences; missing/busy/blocked state cannot settle it. |
-| Structured-reader failure falling through to Claude screen arms | No structured state is available; missing binary, timeout, malformed/unknown entry or unmatched identity does not justify pane inference. | Remove Claude pane fallback; report metadata-only unavailability and retain semantic hook state. No fallback switch. |
+| `shadow::classify`: `claude_working_indicator` (`esc to interrupt`, current Running tool) | `state=working` or `status=busy`; `UserPromptSubmit` starts a turn and `PreToolUse` supplies progress. | Removed Claude working screen arm and Running-tool helper. |
+| `claude_prompt_visible` (last three rows) | `state=done/failed/stopped` or `status=idle` supplies idleness; primary `SessionStart(startup/resume)` supplies initial readiness. Idle alone does not identify a completed turn. | Removed screen idle/prompt arm. |
+| `claude_permission_form` (proceed/allow text) | `state=blocked` or `status=waiting`, with `waitingFor=permission prompt`, supplies approval-wait observation. `PermissionRequest` records attention; matched `PostToolUse`/`PostToolUseFailure` resolves its tool call. | Removed activity dialog detection; retain hook correlation and conservative attention where resolution is unproven. |
+| `claude_interrupt_marker`, empty composer, latest-marker/current-viewport/Running-tool guards | `state=stopped` and provider idleness replace pane evidence. The reader groups `done/failed/stopped` as idle; `status=idle` cannot identify an interrupt. Manual denial and interrupt emit no hook (#3599). | Removed screen marker and composer/history guards. Retain uncertainty for an open turn without qualifying completion; generic idle does not prove an outcome. |
+| `project_interrupt_uncertainty`/`interrupt_since`: two samples at least 15 seconds apart | Inputs can be structured idle observations only. Generic idle and hooks do not prove why an unmatched open turn stopped. | Removed screen-marker input. Retain runtime/revision-fenced sustained structured-idle uncertainty, except where a qualifying Stop establishes completion. This delay is conservative inference, not confirmed interrupt. |
+| `claude_completion`: one-second post-Stop window | Same-runtime, same-revision structured idle plus the qualifying current-turn Stop can confirm idleness without a quiet timer. `StopFailure` and `Notification(idle_prompt)` already complete immediately. Raw Stop cannot prove other hooks will not continue. | Removed timer completion and deadline-driven wakeups. Keep candidate identity/cancellation fences; missing/busy/blocked state cannot settle it. |
+| Structured-reader failure falling through to Claude screen arms | No structured state is available; missing binary, timeout, malformed/unknown entry or unmatched identity does not justify pane inference. | Removed Claude pane fallback; project unknown with an unavailable diagnostic while preserving durable hook state. No fallback switch. |
 | `send_submit`/`composer` and send guards: editor boundaries, drafts, pasted/queued text, dialog exclusion, Enter readback | Neither listing nor hooks reveal editor contents, cursor position, exact submitted bytes, or whether Enter answers a dialog. `SessionStart` supplies initial readiness only. | Still required for safe terminal input; retain checks/tests. They do not determine activity completion. |
 | Terminal authentication-pattern detection | `StopFailure.error=authentication_failed` covers emitted failures, but generic structured state does not identify an unreported terminal authentication incident. | Still required for terminal-only incidents under the separate health/recovery contract; retain bounded recognition. |
 
