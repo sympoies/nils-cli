@@ -22,6 +22,11 @@ use crate::{
     load_session_record, mutate_session_record, session_dir,
 };
 
+#[path = "activity/claude_attention.rs"]
+mod claude_attention;
+use claude_attention::{
+    claude_attention_supersedes_open_turn, late_claude_attention_for_closed_turn,
+};
 #[path = "activity/claude_completion.rs"]
 mod claude_completion;
 mod claude_session_start;
@@ -367,6 +372,11 @@ struct ActivityDocument {
     runtime_unhealthy_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     operator_provider_turn_receipts: Vec<OperatorProviderTurnReceipt>,
+    #[serde(
+        default,
+        skip_serializing_if = "claude_attention::OpenToolCalls::is_empty"
+    )]
+    open_tool_calls: claude_attention::OpenToolCalls,
     #[serde(default, flatten)]
     extra: Map<String, Value>,
 }
@@ -461,6 +471,8 @@ pub(crate) struct TurnEvent {
     attention_correlation_ambiguous: bool,
     #[serde(skip)]
     attention_correlation_exact: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tool_call: Option<agent_hook::tool_call::ToolCallEvidence>,
     pub(crate) confidence: Confidence,
     #[serde(default)]
     pub(crate) source_kind: SourceKind,
@@ -527,6 +539,7 @@ pub(crate) fn ingest_codex_app_server_failure_with_kind(
             attention_kind: None,
             attention_correlation_ambiguous: false,
             attention_correlation_exact: false,
+            tool_call: None,
             completion_candidate: false,
             completion_candidate_reason: None,
             confidence: Confidence::Authoritative,
@@ -594,6 +607,7 @@ pub(crate) fn ingest_codex_app_server_attention(
             attention_kind,
             attention_correlation_ambiguous: false,
             attention_correlation_exact: true,
+            tool_call: None,
             completion_candidate: false,
             completion_candidate_reason: None,
             confidence: Confidence::Authoritative,
@@ -1206,6 +1220,7 @@ fn semantic_event_key(event: &TurnEvent) -> String {
         turn_event_kind_name(&event.kind),
         event.attention_kind.as_deref().unwrap_or(""),
         correlated_attention_id,
+        &claude_attention::semantic_discriminator(event),
     ] {
         digest.update(value.as_bytes());
         digest.update(b"\0");
@@ -1408,6 +1423,7 @@ fn activity_document_for_runtime(
         pending_completion: None,
         runtime_unhealthy_reason: None,
         operator_provider_turn_receipts: Vec::new(),
+        open_tool_calls: Default::default(),
         extra,
     })
 }
@@ -4557,41 +4573,6 @@ fn json_has_spec(value: &Value, agent: AgentKind, spec: ProviderSpec) -> bool {
 #[cfg(test)]
 mod tests;
 
-/// Claude runs one turn at a time and names it with `prompt_id`, but a turn
-/// whose `UserPromptSubmit` was never recorded (a lost or refused hook
-/// delivery) is never announced. An attention request from another turn
-/// therefore proves the open turn is stale rather than that the request is
-/// foreign, so it supersedes that turn instead of being refused
-/// (sympoies/nils-cli#1962). Other providers keep the exact turn binding.
-fn claude_attention_supersedes_open_turn(provider: &str) -> bool {
-    provider == AgentKind::Claude.as_str()
-}
-
-/// A Claude attention request for the most recently closed turn, while a
-/// different identified turn is open. Superseding on it would reopen an older
-/// turn. In every other case the request is live and is reduced normally:
-/// Claude keeps stamping hooks with a prompt that `idle_prompt` already closed
-/// while a background subagent is still working under it.
-fn late_claude_attention_for_closed_turn(document: &ActivityDocument, event: &TurnEvent) -> bool {
-    let Some(event_turn) = event.provider_turn_id.as_ref() else {
-        return false;
-    };
-    event.kind == TurnEventKind::AttentionRequested
-        && claude_attention_supersedes_open_turn(event.provider.as_str())
-        && document
-            .state
-            .last_turn
-            .as_ref()
-            .and_then(|turn| turn.provider_turn_id.as_ref())
-            == Some(event_turn)
-        && document
-            .state
-            .current_turn
-            .as_ref()
-            .and_then(|turn| turn.provider_turn_id.as_ref())
-            .is_some_and(|open| open != event_turn)
-}
-
 /// Close any open turn as interrupted and open `provider_turn_id` in its place.
 fn open_provider_turn(document: &mut ActivityDocument, provider_turn_id: Option<String>, at: &str) {
     if let Some(current) = document.state.current_turn.take() {
@@ -4697,6 +4678,7 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) -> bool 
                     });
                 }
             }
+            claude_attention::observe_permission(document, event);
             refresh_attention(document);
             document.state.phase = TurnPhase::NeedsInput;
         }
@@ -4736,6 +4718,7 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) -> bool 
             {
                 advance_last_progress_at(current, at);
             }
+            claude_attention::observe_tool_progress(document, event);
             if document.pending_attention.is_empty() && document.overflow_attention.is_none() {
                 document.state.phase = TurnPhase::Working;
             }

@@ -36,6 +36,7 @@ pub mod session_metadata;
 pub mod setup;
 pub mod stop_completion;
 mod strict_json;
+pub mod tool_call;
 mod trace;
 mod workspace_lease;
 mod workspace_recovery;

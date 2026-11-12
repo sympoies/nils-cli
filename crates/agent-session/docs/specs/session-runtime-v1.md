@@ -131,12 +131,37 @@ contract until implemented and tested. Basis per cell:
 
 | Need | Claude (TUI in tmux) | Codex (app-server) |
 | --- | --- | --- |
-| Turn state | `claude agents --json` `status` (`idle`, `busy`, `waiting`) and `waitingFor`; `Stop` hook | `turn/started`, `turn/completed` notifications |
-| Approval request | `PermissionRequest` hook; `PreToolUse` carries the tool call id | Server requests with JSON-RPC ids |
+| Turn state | `claude agents --json` `status` (`idle`, `busy`, `waiting`) and `waitingFor`; `Stop` hook, completing after a one-second quiet window | `turn/started`, `turn/completed` notifications |
+| Approval request | `PermissionRequest` hook, bound to its `PreToolUse` call by turn, tool name and input digest; cleared by that call's result hook | Server requests with JSON-RPC ids |
 | Approval answer | Hook decision, while the terminal dialog stays visible | JSON-RPC response |
 | Interrupt | Keystroke, observed through `agents --json` | `turn/interrupt` |
 | Input and images | Keystrokes and file references | `turn/start` input items |
 | Resume and fork | `claude --resume`, `--fork-session` | `thread/resume`, `thread/fork` (a thread needs one turn first) |
+
+Hook signals as implemented by
+[#3591](https://github.com/sympoies/nils-cli/issues/3591), under the
+[Turn state contract](../turn-state-contract.md):
+
+- **Stop window.** The one-second quiet window after a qualifying `Stop` stays.
+  Claude runs matching `Stop` hooks in parallel and any can continue the turn,
+  and the `Stop` payload cannot show that none will **[F]** (official
+  contract). `claude agents --json` idle (#3590) is the structured source that
+  removes the window, and the screen rules follow in #3592 after both land.
+  Immediate completion remains limited to `StopFailure` and `idle_prompt`.
+- **Approval correlation.** `PermissionRequest` carries `tool_name` and the
+  call's `tool_input` but no call id **[F]**. It is bound to the open
+  `PreToolUse` call of the same turn with the same tool name and input digest
+  when exactly one matches, and then cleared by that call's `PostToolUse`,
+  `PostToolUseFailure` or `PermissionDenied`. Otherwise it keeps the
+  conservative latch. The tool name is recorded; the input never is.
+- **No hook on denial.** A manual denial and an interrupt emit no hook **[F]**
+  (n=1 each), so a recorded wait ends only at the next prompt, a same-turn
+  `Stop` or a runtime boundary until a structured state source observes it.
+- **Not answered here.** The hook only records; the terminal dialog stays the
+  answerer. Answering through the hook is staging step 3.
+- **Without hooks.** A session whose managed hooks are absent or incomplete
+  keeps the existing evidence: approvals stay `conservative`, completion
+  waits for `idle_prompt`, and `activity doctor` reports the missing events.
 
 ## Staging
 
@@ -155,8 +180,9 @@ need its own maintainer decision and would reuse the single-writer rule.
 
 - Agent view is a provider research preview. What provider version window does
   the state reader support, and what is the failure behavior outside it?
-- The `PermissionRequest` hook payload carries no tool call id. What
-  correlation rule with `PreToolUse` is sufficient and testable?
+- A manual approval denial and an interrupt emit no Claude hook. Which
+  structured source ends the recorded wait sooner than the next prompt: the
+  `claude agents --json` state (#3590), or the transcript?
 - Each `claude agents --json` call took about a third of a second. What polling
   cadence, or event source, keeps cost acceptable across many sessions?
 - Can `claude --bg` sessions with `attach` be a better live-view base, given

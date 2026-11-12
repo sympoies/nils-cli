@@ -152,10 +152,110 @@ fn claude_permission_denial_is_observational_without_tool_metadata() {
         let event: serde_json::Value = serde_json::from_str(&serialized).unwrap();
         assert!(event.get("attention_tool_id").is_none());
         assert!(!serialized.contains("private-command"));
-        assert!(!serialized.contains("Bash"));
+        // Only the approval names its tool, so the session view can say what
+        // is waited on. Results without a tool_use_id carry no tool metadata.
+        match name {
+            "PermissionRequest" => {
+                assert_eq!(event["tool_call"]["phase"], "permission");
+                assert_eq!(event["tool_call"]["tool_name"], "Bash");
+            }
+            _ => assert!(!serialized.contains("Bash"), "{name}"),
+        }
         if name == "PermissionDenied" {
             assert_eq!(event["kind"], "progress");
         }
+    }
+}
+
+const TOOL_CALL_POLICY: &str = r#"schema_version = "agent-hook.policy.v1"
+bundle_id = "runtime-kit"
+version = "2026.07.20.1"
+
+[[rules]]
+id = "session.activity"
+products = ["claude"]
+events = ["PreToolUse", "PermissionRequest", "PostToolUse", "PostToolUseFailure"]
+priority = 10
+mode = "enforce"
+failure_posture = "closed"
+override_class = "locked"
+capability = { id = "agent-session.activity.v1", reason_code = "activity-recorded" }
+"#;
+
+#[test]
+fn claude_tool_call_evidence_correlates_without_leaking_content() {
+    let fixture = Fixture::new(TOOL_CALL_POLICY);
+    let fake = fixture.root.join("agent-session-fake");
+    let input = fixture.root.join("activity.json");
+    fs::write(
+        &fake,
+        "#!/bin/sh\nif [ \"$2\" = hook ]; then exit 0; fi\ndd of=\"$CAPTURE_STDIN\" status=none\n",
+    )
+    .unwrap();
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o700)).unwrap();
+    let dispatch = |name: &str, tool_use_id: Option<&str>, command: &str| {
+        let mut payload = serde_json::json!({
+            "hook_event_name": name, "session_id": "session-1", "prompt_id": "turn-1",
+            "tool_name": "Bash", "tool_input": {"command": command, "description": "private-text"},
+        });
+        if let Some(id) = tool_use_id {
+            payload["tool_use_id"] = serde_json::json!(id);
+        }
+        let result = fixture.run_with_env(
+            &["dispatch", "--product", "claude", "--format", "json"],
+            Some(&payload.to_string()),
+            &[
+                ("AGENT_SESSION_BIN", fake.to_str().unwrap()),
+                ("AGENT_SESSION_ID", "managed-session"),
+                ("AGENT_SESSION_RUNTIME_ID", "managed-runtime"),
+                ("CAPTURE_STDIN", input.to_str().unwrap()),
+            ],
+        );
+        assert_eq!(result.code, 0, "{}", result.stderr_text());
+        let serialized = fs::read_to_string(&input).unwrap();
+        for private in [
+            "private-command",
+            "other-command",
+            "private-text",
+            "toolu-secret",
+        ] {
+            assert!(!serialized.contains(private), "{name} leaked {private}");
+        }
+        serde_json::from_str::<serde_json::Value>(&serialized).unwrap()
+    };
+
+    let started = dispatch("PreToolUse", Some("toolu-secret"), "private-command");
+    let requested = dispatch("PermissionRequest", None, "private-command");
+    let other = dispatch("PermissionRequest", None, "other-command");
+    let finished = dispatch("PostToolUse", Some("toolu-secret"), "private-command");
+    let failed = dispatch(
+        "PostToolUseFailure",
+        Some("toolu-secret"),
+        "private-command",
+    );
+
+    assert_eq!(started["kind"], "progress");
+    assert_eq!(started["tool_call"]["phase"], "started");
+    assert_eq!(requested["kind"], "attention_requested");
+    assert_eq!(requested["tool_call"]["phase"], "permission");
+    assert_eq!(requested["tool_call"]["tool_name"], "Bash");
+    // The request has no call id; it matches its call by the input digest.
+    assert!(requested["tool_call"].get("call_id").is_none());
+    assert_eq!(
+        requested["tool_call"]["input_digest"],
+        started["tool_call"]["input_digest"]
+    );
+    assert_ne!(
+        other["tool_call"]["input_digest"],
+        started["tool_call"]["input_digest"]
+    );
+    for result in [&finished, &failed] {
+        assert_eq!(result["tool_call"]["phase"], "finished");
+        assert_eq!(
+            result["tool_call"]["call_id"],
+            started["tool_call"]["call_id"]
+        );
+        assert!(result["tool_call"].get("input_digest").is_none());
     }
 }
 

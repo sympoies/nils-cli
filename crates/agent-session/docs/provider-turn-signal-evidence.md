@@ -70,7 +70,7 @@ created.
 | Provider | Audited floor | Classification | Start | Completion | Attention | Failure | Setup |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Codex | 0.144.1 baseline; exact-attention versions 0.144.1, 0.144.3 and 0.162.1; capacity enum re-audited at 0.153.4 | supported; exact attention and structured failure recovery require an audited agent-session app-server v2 runtime | `UserPromptSubmit`, observed | matching `agent-turn-complete`, authoritative; raw `Stop` remains journal evidence only | managed protocol authority: typed exact request/resolution; raw/unmanaged hook authority: `PermissionRequest` conservative latch | live app-server terminal `failed` + exact `usageLimitExceeded` or `serverOverloaded`, authoritative; raw TUI remains unavailable | additive hooks/notify plus capability-probed private Unix app-server runtime for fresh sessions |
-| Claude Code | 2.1.206 baseline; Elicitation audit 2.1.210; prompt-identity audit 2.1.285 | partial; usage failure supported; Elicitation exact only when both callbacks carry the same non-empty id | `UserPromptSubmit`, observed; general `PreToolUse` provides observed progress/reactivation; `SubagentStop` is ignored | qualifying `Stop`, observed after a one-second quiet window; `idle_prompt` is late confirmation | exact `AskUserQuestion`; conditional exact `Elicitation`; `PermissionRequest`/notification conservative latch | structured `StopFailure.error`, authoritative; only `rate_limit` can arm auto-resume | additive merge into `CLAUDE_CONFIG_DIR/settings.json` when the override is absolute; otherwise `~/.claude/settings.json` |
+| Claude Code | 2.1.206 baseline; Elicitation audit 2.1.210; prompt-identity audit 2.1.285 | partial; usage failure supported; Elicitation exact only when both callbacks carry the same non-empty id | `UserPromptSubmit`, observed; general `PreToolUse` provides observed progress/reactivation; `SubagentStop` is ignored | qualifying `Stop`, observed after a one-second quiet window; `idle_prompt` is late confirmation | exact `AskUserQuestion`; conditional exact `Elicitation`; `PermissionRequest` bound to its tool call when unambiguous (exact), otherwise conservative latch; notification conservative latch | structured `StopFailure.error`, authoritative; only `rate_limit` can arm auto-resume | additive merge into `CLAUDE_CONFIG_DIR/settings.json` when the override is absolute; otherwise `~/.claude/settings.json` |
 
 Versions below the audited floor remain usable. `activity doctor` reports them
 as unverified and session views retain optional-field/activity fallback rather
@@ -463,12 +463,58 @@ confirms completion or waiting. Claude retains its empty-composer requirement.
 The [official hooks reference](https://code.claude.com/docs/en/hooks#permissionrequest),
 checked on 2026-10-07 through Claude Code 2.1.289, exposes no approval-resolved
 hook and no tool_use_id on PermissionRequest. Tool progress cannot safely clear
-a conservative latch: parallel calls can share both tool name and input. Known
+an uncorrelated latch: parallel calls can share both tool name and input. Known
 approvals clear at same-turn Stop; mismatched or missing prompt identity,
 clarification and ambiguous overflow remain conservative. StopFailure is terminal.
 PermissionDenied reports only auto-mode denial; a manual dialog denial has no
 resolution hook. Observing denial cannot resolve an unrelated open approval.
-No tool-name or input fingerprint is retained. Clearance is bounded by the
-earliest unambiguous terminal signal, not elapsed time from approval during a
-long tool. Managed policy must register observational PermissionDenied alongside
-its supporting decoder before deployment.
+Managed policy must register observational PermissionDenied alongside its
+supporting decoder before deployment.
+
+The 2026-11-12 addendum below supersedes
+the earlier statement that no tool-name or input fingerprint is retained: an
+approval that matches exactly one open call is now cleared by that call's own
+result.
+
+## Claude approval correlation addendum
+
+Audited on 2026-11-12 against Claude Code 2.1.317 for
+[issue #3591](https://github.com/sympoies/nils-cli/issues/3591). Labels follow
+the [session runtime](specs/session-runtime-v1.md#evidence-basis) document:
+**[F]** measured, **[I]** inference, **[N]** not measured.
+
+Method **[F]**: one interactive Claude session in an isolated tmux server, hook
+recorders on `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`,
+`PostToolUse`, `PostToolUseFailure`, `PermissionDenied`, `Stop` and
+`Notification`, default permission mode, a file-creating Bash command that
+needs approval. One approved run (n=1, a failing command so the failure hook
+fired) and one manually denied run (n=1). Payload values below are shapes only;
+no prompt, command or path text is retained.
+
+- **[F]** `PermissionRequest` carries `session_id`, `prompt_id`, `tool_name`, a
+  `tool_input` identical to the preceding `PreToolUse` for the same call, and
+  `permission_suggestions`. It carries no `tool_use_id`.
+- **[F]** `PreToolUse` preceded `PermissionRequest` for the same call
+  (about 2 s earlier in both runs, hook delivery time). `PreToolUse` and the
+  result hooks carry `tool_use_id`.
+- **[F]** After approval, `PostToolUseFailure` for the same `tool_use_id`
+  followed the failing command and repeated `tool_input`. `PostToolUse` with the
+  same shape was seen only for an auto-allowed call, not after a dialog **[N]**.
+- **[F]** After a manual denial from the dialog no hook fired: no
+  `PermissionDenied`, `PostToolUseFailure`, `PostToolUse` or `Stop`. The TUI
+  showed the turn as interrupted. This agrees with the spike observation on
+  #3585 that `Stop` does not fire on interrupt.
+- **[I]** Because `PreToolUse` hooks complete before Claude decides on a
+  permission prompt, the start of a call is recorded before its request when
+  hook delivery succeeds. A lost `PreToolUse` leaves the request uncorrelated,
+  never wrongly correlated.
+- **[N]** Parallel calls with different inputs and with identical inputs were
+  not run live; the rules for them (bind on a unique digest match, otherwise
+  keep the conservative latch) are covered by synthetic payload tests only. MCP
+  tools, subagent calls, `bypassPermissions` and auto mode were not exercised.
+
+The `tool_call` rules, the bounded `tool_name` and the limits are normative in
+the [turn-state contract](turn-state-contract.md#approval-and-tool-call-correlation).
+The one-second Stop window is unchanged by this audit: no payload field shows
+that no other Stop hook will continue the turn (see the Claude Code finality
+findings above).
