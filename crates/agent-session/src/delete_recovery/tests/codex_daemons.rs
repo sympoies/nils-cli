@@ -212,6 +212,41 @@ fn provider_owned_codex_daemon_pair_survives_successful_session_delete() {
     }
 }
 
+/// The `systemd-run` command that hosts the mixed-scope fixture: a worker shell that starts the fixture daemon in
+/// the background and then waits. The daemon writes its own pid to the file named by `FIXTURE_DAEMON_PID_FILE`, and
+/// the worker is the spawned process itself (`systemd-run --scope` runs the shell in place), so the argument list
+/// needs no `$`: systemd 258 and newer expand `$` there (`$$` becomes `$`), older systemd does not.
+fn mixed_scope_fixture_command(unit: &str, bin: &Path) -> Command {
+    let mut command = Command::new("systemd-run");
+    command.args(["--user", "--scope", "--quiet", "--collect", "--unit", unit]);
+    if let Ok(slice) = std::env::var("NILS_CLI_GATE_SLICE") {
+        command.arg("--slice").arg(slice);
+    }
+    let bin = bin.to_string_lossy().replace('\'', "'\\''");
+    command.args([
+        "--".to_string(),
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!("'{bin}' app-server --listen unix:// --managed-daemon & exec sleep 60"),
+    ]);
+    command
+}
+
+#[test]
+fn mixed_scope_fixture_command_has_no_dollar_for_systemd_run_to_expand() {
+    // systemd 258 and newer expand `$` in the command line of `systemd-run --scope` by default (`$$` becomes `$`),
+    // while 255 does not, so a `$` in the argument list means different scripts on different hosts.
+    let command = mixed_scope_fixture_command(
+        "tmux-spawn-fixture.scope",
+        Path::new("/tmp/provider-home/bin/codex"),
+    );
+    let with_dollar: Vec<_> = command
+        .get_args()
+        .filter(|arg| arg.to_string_lossy().contains('$'))
+        .collect();
+    assert_eq!(with_dollar, Vec::<&std::ffi::OsStr>::new());
+}
+
 #[test]
 fn orphan_maintenance_preparation_refuses_a_mixed_shared_provider_scope() {
     let lock = GlobalStateLock::new();
@@ -222,7 +257,7 @@ fn orphan_maintenance_preparation_refuses_a_mixed_shared_provider_scope() {
     let source = tmp.path().join("daemon.c");
     fs::write(
         &source,
-        "#include <unistd.h>\nint main(void) { setsid(); for (;;) pause(); }\n",
+        "#include <stdio.h>\n#include <stdlib.h>\n#include <unistd.h>\nint main(void) {\n  setsid();\n  const char *path = getenv(\"FIXTURE_DAEMON_PID_FILE\");\n  if (path) {\n    FILE *file = fopen(path, \"w\");\n    if (file) {\n      fprintf(file, \"%d\\n\", (int)getpid());\n      fclose(file);\n    }\n  }\n  for (;;) pause();\n}\n",
     )
     .unwrap();
     assert!(
@@ -243,20 +278,18 @@ fn orphan_maintenance_preparation_refuses_a_mixed_shared_provider_scope() {
     fs::create_dir(&pid_dir).unwrap();
     let _home = EnvGuard::set(&lock, "CODEX_HOME", home.to_str().unwrap());
     let daemon_pid_file = tmp.path().join("provider.pid");
-    let worker_pid_file = tmp.path().join("worker.pid");
     let unit = format!("tmux-spawn-{}.scope", uuid::Uuid::new_v4());
-    let mut command = Command::new("systemd-run");
-    command.args(["--user", "--scope", "--quiet", "--collect", "--unit", &unit]);
-    if let Ok(slice) = std::env::var("NILS_CLI_GATE_SLICE") {
-        command.arg("--slice").arg(slice);
-    }
-    command.args(["--", "/bin/sh", "-c",
-        "\"$1\" app-server --listen unix:// --managed-daemon & printf '%s\\n' \"$!\" > \"$2\"; printf '%s\\n' \"$$\" > \"$3\"; exec sleep 60",
-        "fixture"])
-        .arg(&bin).arg(&daemon_pid_file).arg(&worker_pid_file)
+    let mut command = mixed_scope_fixture_command(&unit, &bin);
+    command
+        .env("FIXTURE_DAEMON_PID_FILE", &daemon_pid_file)
         .env("AGENT_SESSION_ID", &record.id)
-        .env("AGENT_SESSION_RUNTIME_ID", &record.runtime.as_ref().unwrap().launch_id)
-        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        .env(
+            "AGENT_SESSION_RUNTIME_ID",
+            &record.runtime.as_ref().unwrap().launch_id,
+        )
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     unsafe {
         command.pre_exec(|| {
             if libc::setsid() < 0 {
@@ -290,14 +323,15 @@ fn orphan_maintenance_preparation_refuses_a_mixed_shared_provider_scope() {
             .ok()
             .and_then(|text| text.trim().parse::<libc::pid_t>().ok())
     };
-    let (daemon_pid, worker_pid) = loop {
-        if let (Some(daemon), Some(worker)) =
-            (read_pid(&daemon_pid_file), read_pid(&worker_pid_file))
+    // `systemd-run --scope` runs the worker shell in place, so the spawned process is the worker.
+    let worker_pid = scope.child.id() as libc::pid_t;
+    let daemon_pid = loop {
+        if let Some(daemon) = read_pid(&daemon_pid_file)
             && read_linux_process_identity(daemon)
                 .unwrap()
                 .is_some_and(|identity| identity.session_id == daemon)
         {
-            break (daemon, worker);
+            break daemon;
         }
         assert!(
             scope.child.try_wait().unwrap().is_none(),
