@@ -26,6 +26,7 @@ mod integration {
     mod local_path_guard;
     mod merge_review_opt_out;
     mod operation_effect;
+    mod org_hook;
     mod parity;
     mod pr_checks_github;
     mod pr_checks_gitlab;
@@ -53,6 +54,7 @@ mod integration {
     mod repo_bootstrap_github;
     mod repo_bootstrap_gitlab;
     mod repo_freeze;
+    mod repo_hook;
     mod repo_push_default;
     mod repo_security;
     mod repo_view;

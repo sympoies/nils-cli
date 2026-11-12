@@ -217,6 +217,17 @@ an undeclared host refuses with `identity_repository_unknown` before credential
 lookup or actor probing. Credentials and actors are verified as usual. Host-only audit targets
 omit `repo`, and App coverage checks apply only to concrete repository targets.
 With `--repo`, these commands use normal repository and managed-path rules.
+
+Organization-level API calls (`forge-cli org hook ...`, GitHub organization webhooks)
+use an organization target (`Target::organization`, audited as `host/ORG/`). It may
+authorize `api_read` and `api_write`, but only through an `org` rule for that
+organization: a repository rule, a managed-path rule (refused with
+`identity_path_conflict`, since its allowlist never names the organization), and a
+principal default repository never match it (`identity_repository_unknown`). A selected
+App profile is refused with `identity_org_app_unsupported`, because an installation
+token has no organization-level authority here. Credentials and actors are verified
+as usual.
+
 `search issues/prs/refs-to` and `activity feed` always use their repository context,
 including a remote-derived repository when `--repo` is absent. Inbox provider and
 query threads preserve the invocation's identity scope. Inbox cache reads and

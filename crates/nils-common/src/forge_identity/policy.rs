@@ -132,6 +132,23 @@ impl Target {
             repo: String::new(),
         })
     }
+    /// Organization scope for organization-level API calls (such as webhooks).
+    /// Unlike `cross_repository`, it may authorize writes, but only through an
+    /// `org` rule for this organization: no repository rule, path rule, or
+    /// principal default repository can match it.
+    pub fn organization(host: &str, org: &str) -> Result<Self> {
+        if !identifier(org) || org == "." || org == ".." {
+            return Err(Error::new("identity_target_invalid"));
+        }
+        Ok(Self {
+            host: canonical_host(host)?,
+            repo: format!("{}/", org.to_ascii_lowercase()),
+        })
+    }
+    /// Whether this is an organization scope made by `organization`.
+    pub fn is_organization(&self) -> bool {
+        self.repo.ends_with('/')
+    }
     pub fn key(&self) -> String {
         if self.repo.is_empty() {
             self.host.clone()
@@ -457,6 +474,11 @@ impl Policy {
             )
         };
         let profile = self.profiles.get(&profile_id).unwrap().clone();
+        // An App installation token is scoped to repositories, so it has no
+        // organization-level authority to select.
+        if target.is_organization() && profile.app_slug.is_some() {
+            return Err(Error::new("identity_org_app_unsupported"));
+        }
         if !profile.operations.contains(&operation) {
             return Err(Error::new("identity_operation_denied"));
         }

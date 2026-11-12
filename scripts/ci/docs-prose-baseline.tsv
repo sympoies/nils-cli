@@ -25,6 +25,6 @@ crates/forge-cli/docs/specs/forge-publication-admin-v1.md	2	17
 crates/forge-cli/docs/specs/forge-review-publication-v1.md	7	31
 crates/forge-cli/docs/specs/forge-review-state-v1.md	9	39
 crates/git-cli/README.md	1	15
-crates/nils-common/docs/specs/forge-identity-policy-v1.md	4	25
+crates/nils-common/docs/specs/forge-identity-policy-v1.md	4	24
 docs/runbooks/workspace-maintenance-reference.md	1	28
 docs/specs/test-temp-directory-policy.md	1	15

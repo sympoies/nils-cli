@@ -35,6 +35,8 @@ cargo run -p nils-forge-cli -- pr pending-review resume-submit 123 --review PRR_
 cargo run -p nils-forge-cli -- pr pending-review delete 123 --review PRR_pending --expected-head <sha> --expected-commit <sha> --expected-body-file review.md --confirm-abandoned --dry-run --format json
 cargo run -p nils-forge-cli -- pr merge 123 --expected-head <reviewed-sha> --review-convergence --format json
 cargo run -p nils-forge-cli -- repo freeze status --format json
+cargo run -p nils-forge-cli -- repo hook list --repo OWNER/NAME --format json
+cargo run -p nils-forge-cli -- org hook list --org ORG --format json
 cargo run -p nils-forge-cli -- issue tracker lint 123 --check-state --format json
 cargo run -p nils-forge-cli -- issue tracker graph 123 --write --format json
 cargo run -p nils-forge-cli -- issue tracker tick 123 --item S2 --pr owner/repo#45 --comment-file note.md --format json
@@ -275,6 +277,17 @@ immediately before the merge or enqueue, so a freeze started while the gates
 ran still blocks. `pr deliver` has no freeze bypass; a freeze holder merges with
 `pr merge --allow-merge-freeze`. A GitHub Enterprise Server whose schema has no
 merge queue is treated as queueless, and only its freeze list is read.
+
+On GitHub, `repo hook` and `org hook` list webhooks (secret redacted) and
+change only a hook's URL (`set-url`) or active flag (`set-active`). Each
+write is a compare-and-swap on the current value, so a rerun reports
+`already_set` and a rollback swaps the values.
+
+`hook batch --file rows.json` applies many rows, validated up front and reported
+per row. `org hook create` takes the secret only from `--secret-env`.
+Organization hooks need an owner token with `admin:org_hook`. The contract is in
+[webhook commands](docs/specs/forge-webhooks-v1.md); before a real migration,
+run the [smoke procedure](docs/runbooks/webhook-migration-smoke.md) once.
 
 PR/MR labels `state::do-not-merge`, `do-not-merge`, and `control::hold` block
 both direct merge and queue enqueue with `pr_hold_active`, independently of

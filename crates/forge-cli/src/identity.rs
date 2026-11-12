@@ -1,8 +1,8 @@
 //! CLI adapter and explicit invocation scope for the shared identity resolver.
 use crate::backend::{BackendCall, BackendProgram};
 use crate::cli::{
-    ActivityArgs, ActivityCommand, BINARY, Cli, Command, GlobalFlags, IdentityCommand, RepoArgs,
-    RepoCommand, SearchArgs,
+    ActivityArgs, ActivityCommand, BINARY, Cli, Command, GlobalFlags, IdentityCommand, OrgArgs,
+    OrgCommand, OrgHookCommand, RepoArgs, RepoCommand, RepoHookCommand, SearchArgs,
 };
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
@@ -103,6 +103,41 @@ fn target_for_context(
         Provider::Local => Err(identity::Error::new("identity_provider_unsupported")),
     }
 }
+/// A hook batch names a target per row, so each row enters its own scope (see
+/// `webhook::batch`) instead of one process-wide target.
+fn is_hook_batch(command: &Option<Command>) -> bool {
+    match command {
+        Some(Command::Repo(RepoArgs {
+            command: Some(RepoCommand::Hook(hook)),
+        })) => matches!(hook.command, RepoHookCommand::Batch(_)),
+        Some(Command::Org(OrgArgs {
+            command: OrgCommand::Hook(hook),
+            ..
+        })) => matches!(hook.command, OrgHookCommand::Batch(_)),
+        _ => false,
+    }
+}
+/// Organization commands authorize against the organization, never a checkout.
+fn org_target(cli: &Cli, global: &GlobalFlags) -> Result<Option<Target>, ForgeError> {
+    let Some(Command::Org(args)) = &cli.command else {
+        return Ok(None);
+    };
+    let org = args.org.as_deref().ok_or_else(|| {
+        ForgeError::validation(
+            schema_version_for(BINARY, "identity", 1),
+            "org_required",
+            "--org is required",
+            None,
+        )
+    })?;
+    let ctx = detect_unscoped(global.provider_hint(), &global.remote, None, git_remote_url)?;
+    if ctx.provider != Provider::GitHub {
+        return Err(error(identity::Error::new("identity_provider_unsupported")));
+    }
+    Target::organization(&ctx.host, org)
+        .map(Some)
+        .map_err(error)
+}
 pub fn scope(cli: &Cli, global: &GlobalFlags) -> Result<Scope, ForgeError> {
     let none = || Scope(None);
     if matches!(
@@ -114,6 +149,7 @@ pub fn scope(cli: &Cli, global: &GlobalFlags) -> Result<Scope, ForgeError> {
                 | Command::OperationEffect(_)
         ) | None
     ) || global.is_local()
+        || is_hook_batch(&cli.command)
     {
         return Ok(none());
     }
@@ -143,7 +179,9 @@ pub fn scope(cli: &Cli, global: &GlobalFlags) -> Result<Scope, ForgeError> {
             }))
     ) && global.repo.is_none()
         || matches!(&cli.command, Some(Command::Search(SearchArgs { command: Some(command) })) if global.repo.is_none() && crate::ops::search::query_scoped(command));
-    let target = if cross_repository {
+    let target = if let Some(org) = org_target(cli, global)? {
+        org
+    } else if cross_repository {
         let host = if matches!(&cli.command, Some(Command::Inbox(_))) {
             if global
                 .provider
