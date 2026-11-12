@@ -1,6 +1,7 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -29,9 +30,22 @@ const STATE_FAILED_ID: &str = "00000000-0000-4000-8000-000000000015";
 const STATE_STOPPED_ID: &str = "00000000-0000-4000-8000-000000000016";
 const STATE_UNKNOWN_ID: &str = "00000000-0000-4000-8000-000000000017";
 
+/// Writes an executable stub. A sibling test's fork can hold the write
+/// descriptor until it execs, which makes the first exec fail with ETXTBSY and
+/// the adapter report `Failed`. Running the stub once through the shared retry
+/// (it exits at once when probed) outlasts every such fork, because a fork made
+/// after this write no longer inherits the descriptor.
 fn write_script(path: &Path, body: &str) {
-    fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    fs::write(
+        path,
+        format!("#!/bin/sh\n[ -n \"$STUB_PROBE\" ] && exit 0\n{body}\n"),
+    )
+    .unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    nils_test_support::cmd::retry_executable_file_busy(|| {
+        ProcessCommand::new(path).env("STUB_PROBE", "1").status()
+    })
+    .unwrap();
 }
 
 /// A stub `claude` that counts calls and prints the mixed fixture.

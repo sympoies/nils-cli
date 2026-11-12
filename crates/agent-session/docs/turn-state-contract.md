@@ -463,8 +463,9 @@ the research-preview agent view; see
   2.1.317. The `state` shape (`working`, `blocked`, `done`, `failed`,
   `stopped`) is read from the provider's current documentation of
   `claude agents --json` ([agent view](https://code.claude.com/docs/en/agent-view));
-  it documents no minimum version, and public reports show `state` alongside
-  `status` from 2.1.310. The `state` fixtures are synthetic. A version that
+  it lists `state` for background sessions only and documents no minimum
+  version; interactive entries captured from 2.1.317 carry `status` and no
+  `state`. The `state` fixtures are synthetic. A version that
   reports neither field value set reads as `unknown_state` and falls through.
 - **Call.** One call per provider config directory serves every session
   sampled within a 2-second window; sessions sharing a directory never spawn

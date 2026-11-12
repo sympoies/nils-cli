@@ -643,10 +643,10 @@ mod tests {
         // A newly written script can exceed the observer deadline on its first
         // macOS invocation. Initialize the fixture before sampling so this test
         // checks viewport selection under the unchanged production deadline.
-        let prewarm = ProcessCommand::new(&tmux)
-            .arg("display-message")
-            .output()
-            .expect("initialize fake tmux");
+        let prewarm = nils_test_support::cmd::retry_executable_file_busy(|| {
+            ProcessCommand::new(&tmux).arg("display-message").output()
+        })
+        .expect("initialize fake tmux");
         assert!(
             prewarm.status.success(),
             "fake tmux setup failed: {prewarm:?}"
