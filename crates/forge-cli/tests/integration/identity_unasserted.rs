@@ -62,6 +62,9 @@ impl Fixture {
     }
     /// Run with no automation marker, giving the child a pseudo-terminal on the named streams.
     fn run_with_terminal(&self, terminal: &str) -> Output {
+        self.run_with_terminal_and_marker(terminal, false)
+    }
+    fn run_with_terminal_and_marker(&self, terminal: &str, marker: bool) -> Output {
         let base = self.base();
         let mut command = Command::new("python3");
         command.args([
@@ -76,8 +79,11 @@ impl Fixture {
                 None => command.env_remove(key),
             };
         }
-        for marker in ["INVOCATION_ID", "GITHUB_ACTIONS", "AGENT_SESSION_ID"] {
-            command.env_remove(marker);
+        for name in ["INVOCATION_ID", "GITHUB_ACTIONS", "AGENT_SESSION_ID"] {
+            command.env_remove(name);
+        }
+        if marker {
+            command.env("AGENT_SESSION_ID", "SESSION_CANARY_91");
         }
         command.output().unwrap()
     }
@@ -178,6 +184,30 @@ fn terminals_on_both_streams_are_silent_and_one_terminal_still_warns() {
             "{terminal}"
         );
     }
+}
+
+#[test]
+fn terminals_on_both_streams_still_warn_under_an_automation_marker() {
+    let f = Fixture::new("");
+    let out = f.run_with_terminal_and_marker("both", true);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(stderr(&out).contains("FORGE_IDENTITY_PRINCIPAL"));
+    assert!(f.audit().contains("unasserted_noninteractive_warned"));
+}
+
+#[test]
+fn a_stderr_pipe_whose_reader_exited_never_fails_a_warned_run() {
+    let f = Fixture::new("");
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let mut command = f.base();
+    let out = command
+        .env("AGENT_SESSION_ID", "SESSION_CANARY_91")
+        .stderr(writer)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(f.audit().contains("unasserted_noninteractive_warned"));
 }
 
 #[test]
