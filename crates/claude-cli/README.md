@@ -363,6 +363,14 @@ normalized windows, and an optional provider-neutral `reason_code`. Provider
 responses, terminal errors, and credentials are classified locally and never
 forwarded.
 
+A live OAuth read also reports the per-model weekly windows
+(`weekly_scoped:<model>`) and a `Limit resets` section (`limit_resets` in JSON):
+the session-reset program and one entry per grant, with grant kind taken from
+what it clears. It reads through the same client identity as
+`diag rate-limits`. The cache source keeps the scoped windows; the CLI probe
+does not report them. The shape is in the
+[JSON contract](docs/specs/claude-cli-json-contract-v1.md#usage-scoped-windows-and-limit-resets).
+
 ## Diagnostics: rate limits
 
 `diag rate-limits` reports Claude OAuth rate limits in the shared
