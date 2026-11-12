@@ -132,6 +132,9 @@ fn doctor_and_dispatch_use_ordered_roots_without_path_fallback() {
     let roots = std::env::join_paths([&first, &second]).unwrap();
     let options = CmdOptions::new()
         .without_ambient_managed_session_env()
+        // `fixture.run` drops these provider config roots for setup; doctor
+        // must read the same fixture config, not a host's.
+        .with_env_remove_many(&["CLAUDE_CONFIG_DIR", "CODEX_HOME"])
         .with_env("HOME", fixture.home.to_str().unwrap())
         .with_env("XDG_CONFIG_HOME", fixture.config_home.to_str().unwrap())
         .with_env("XDG_STATE_HOME", fixture.state_home.to_str().unwrap())
