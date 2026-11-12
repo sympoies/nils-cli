@@ -3,8 +3,8 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `4ac269e9a2dd1882b6f77705661bcb8c1b72dc361db0f699f30aea9c2cc5153b`
-- Third-party crates (`source != null`): 493
+- Cargo.lock SHA256: `26d4beb851e9df8960b0ec880a0dba9a1edfd58128c21304363ddfc432c25f09`
+- Third-party crates (`source != null`): 487
 - Workspace crates (`source == null`, excluded below): 42
 
 ## Notes
@@ -17,12 +17,12 @@ This file documents third-party Rust crate licenses used by this workspace.
 
 | License Expression | Crate Count |
 | --- | ---: |
-| MIT OR Apache-2.0 | 238 |
+| MIT OR Apache-2.0 | 233 |
 | MIT | 100 |
 | Apache-2.0 OR MIT | 41 |
 | Zlib OR Apache-2.0 OR MIT | 21 |
 | Unicode-3.0 | 18 |
-| MIT/Apache-2.0 | 13 |
+| MIT/Apache-2.0 | 12 |
 | Unlicense OR MIT | 9 |
 | ISC | 6 |
 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | 5 |
@@ -89,7 +89,6 @@ This file documents third-party Rust crate licenses used by this workspace.
 | base64 | 0.23.1 | MIT OR Apache-2.0 | crates.io |
 | bit-set | 0.8.0 | Apache-2.0 OR MIT | crates.io |
 | bit-vec | 0.8.0 | Apache-2.0 OR MIT | crates.io |
-| bitflags | 1.3.2 | MIT/Apache-2.0 | crates.io |
 | bitflags | 2.13.0 | MIT OR Apache-2.0 | crates.io |
 | block-buffer | 0.10.4 | MIT OR Apache-2.0 | crates.io |
 | block-buffer | 0.12.1 | MIT OR Apache-2.0 | crates.io |
@@ -135,9 +134,6 @@ This file documents third-party Rust crate licenses used by this workspace.
 | darling_macro | 0.24.1 | MIT | crates.io |
 | data-encoding | 2.11.0 | MIT | crates.io |
 | data-url | 0.3.2 | MIT OR Apache-2.0 | crates.io |
-| defmt | 1.1.0 | MIT OR Apache-2.0 | crates.io |
-| defmt-macros | 1.1.0 | MIT OR Apache-2.0 | crates.io |
-| defmt-parser | 1.0.0 | MIT OR Apache-2.0 | crates.io |
 | deranged | 0.5.8 | MIT OR Apache-2.0 | crates.io |
 | diff | 0.1.13 | MIT OR Apache-2.0 | crates.io |
 | digest | 0.10.7 | MIT OR Apache-2.0 | crates.io |
@@ -186,7 +182,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | getrandom | 0.4.3 | MIT OR Apache-2.0 | crates.io |
 | gif | 0.14.2 | MIT OR Apache-2.0 | crates.io |
 | git2 | 0.21.0 | MIT OR Apache-2.0 | crates.io |
-| graphql-tools | 0.5.11 | MIT | crates.io |
+| graphql-tools | 0.5.12 | MIT | crates.io |
 | harfrust | 0.12.0 | MIT | crates.io |
 | hashbrown | 0.12.3 | MIT OR Apache-2.0 | crates.io |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 | crates.io |
@@ -230,9 +226,9 @@ This file documents third-party Rust crate licenses used by this workspace.
 | jaq-core | 3.1.2 | MIT | crates.io |
 | jaq-json | 2.0.3 | MIT | crates.io |
 | jaq-std | 3.0.4 | MIT | crates.io |
-| jiff | 0.2.38 | Unlicense OR MIT | crates.io |
-| jiff-core | 0.1.0 | Unlicense OR MIT | crates.io |
-| jiff-static | 0.2.38 | Unlicense OR MIT | crates.io |
+| jiff | 0.2.43 | Unlicense OR MIT | crates.io |
+| jiff-core | 0.1.5 | Unlicense OR MIT | crates.io |
+| jiff-static | 0.2.43 | Unlicense OR MIT | crates.io |
 | jiff-tzdb | 0.1.6 | Unlicense OR MIT | crates.io |
 | jiff-tzdb-platform | 0.1.3 | Unlicense OR MIT | crates.io |
 | jni | 0.22.4 | MIT OR Apache-2.0 | crates.io |
@@ -266,12 +262,12 @@ This file documents third-party Rust crate licenses used by this workspace.
 | micromap | 0.3.0 | MIT | crates.io |
 | mime | 0.3.17 | MIT OR Apache-2.0 | crates.io |
 | mime_guess | 2.0.5 | MIT | crates.io |
-| minijinja | 3.0.5 | Apache-2.0 | crates.io |
+| minijinja | 3.1.0 | Apache-2.0 | crates.io |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | crates.io |
 | mio | 1.2.1 | MIT | crates.io |
 | moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 | crates.io |
 | nix | 0.31.3 | MIT | crates.io |
-| notify | 8.2.1 | CC0-1.0 | crates.io |
+| notify | 8.2.2 | CC0-1.0 | crates.io |
 | notify-types | 2.1.0 | MIT OR Apache-2.0 | crates.io |
 | nu-ansi-term | 0.50.3 | MIT | crates.io |
 | num | 0.4.3 | MIT OR Apache-2.0 | crates.io |
@@ -328,8 +324,6 @@ This file documents third-party Rust crate licenses used by this workspace.
 | ppv-lite86 | 0.2.21 | MIT OR Apache-2.0 | crates.io |
 | pretty_assertions | 1.4.1 | MIT OR Apache-2.0 | crates.io |
 | proc-macro-crate | 3.5.0 | MIT OR Apache-2.0 | crates.io |
-| proc-macro-error-attr2 | 2.0.0 | MIT OR Apache-2.0 | crates.io |
-| proc-macro-error2 | 2.0.1 | MIT OR Apache-2.0 | crates.io |
 | proc-macro2 | 1.0.106 | MIT OR Apache-2.0 | crates.io |
 | pxfm | 0.1.29 | BSD-3-Clause OR Apache-2.0 | crates.io |
 | quick-error | 2.0.1 | MIT/Apache-2.0 | crates.io |
@@ -472,7 +466,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | usvg | 0.49.0 | Apache-2.0 OR MIT | crates.io |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | crates.io |
 | utf8parse | 0.2.2 | Apache-2.0 OR MIT | crates.io |
-| uuid | 1.29.0 | Apache-2.0 OR MIT | crates.io |
+| uuid | 1.29.2 | Apache-2.0 OR MIT | crates.io |
 | uuid-simd | 0.8.0 | MIT | crates.io |
 | valuable | 0.1.1 | MIT | crates.io |
 | vcpkg | 0.2.15 | MIT/Apache-2.0 | crates.io |

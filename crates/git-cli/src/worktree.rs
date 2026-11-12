@@ -13,6 +13,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 mod build_dir;
+mod cargo_layout;
 pub mod dirty_checkout_adoption;
 mod removal;
 
