@@ -5,8 +5,9 @@
 
 - Added the session runtime v1 direction record: structured sources by default,
   real terminal takeover kept, an explicit single-writer rule, and a
-  per-provider signal map. Claude keeps the TUI in tmux with official
-  structured sources; Codex uses the app-server with a remote TUI.
+  per-provider signal map. Codex uses the app-server with a remote TUI. For
+  Claude, TUI in tmux with official structured sources is proposed, pending
+  maintainer decision.
 
 ### Why / context
 

@@ -21,19 +21,24 @@ session in the real provider terminal UI.
 | Provider | Session runtime | Structured sources | Takeover and live view |
 | --- | --- | --- | --- |
 | Codex | `codex app-server` owns the thread | JSON-RPC turn, interrupt, steer and approval requests | Codex TUI attached to the same app-server |
-| Claude | Claude TUI in tmux (option C) | `claude agents --json` state, hook events, transcript | The tmux pane itself |
+| Claude | Claude TUI in tmux (option C, proposed) | `claude agents --json` state, hook events, transcript | The tmux pane itself |
 
-Decisions recorded from the spike (comment on #3585):
+The Claude row is **proposed, pending maintainer decision**. The Codex row and
+the requirements below do not depend on that decision.
 
-- **Full Claude Agent SDK runtime (option A): not adopted** as a default. It
-  gives structured turn, interrupt and approval signals, but Claude offers no
-  supported way to attach a live terminal UI to an SDK or stream-json session.
-- **Mode-switch hybrid (option B): deferred.** A switch between an SDK process
-  and the terminal UI costs a few seconds and loses runtime state such as the
-  permission mode. It may return later as an opt-in runtime for unattended
-  sessions.
-- **TUI plus structured sources (option C): chosen for Claude.** It keeps the
-  live view and replaces heuristics with official signals.
+Options evaluated in the spike (comment on #3585) and the spike's recommendation:
+
+- **Full Claude Agent SDK runtime (option A): not recommended** as a default.
+  It gives structured turn, interrupt and approval signals, but Claude offers
+  no supported way to attach a live terminal UI to an SDK or stream-json
+  session.
+- **Mode-switch hybrid (option B): deferred in the recommendation.** A switch
+  between an SDK process and the terminal UI costs a few seconds and loses
+  runtime state such as the permission mode. It may return later as an opt-in
+  runtime for unattended sessions.
+- **TUI plus structured sources (option C): recommended for Claude, proposed.**
+  It keeps the live view and replaces heuristics with official signals. This
+  document changes when the maintainer decides otherwise.
 
 ## Requirements
 
@@ -101,8 +106,9 @@ is not a contract until implemented and tested.
 
 Order only; each step is its own issue.
 
-1. Claude state reader over `claude agents --json`, replacing the post-Stop
-   quiet window and two-sample interrupt checks in the same change.
+1. Once the Claude option is decided, and if it is option C: a state reader
+   over `claude agents --json`, replacing the post-Stop quiet window and
+   two-sample interrupt checks in the same change.
 2. Single-writer lease, handoff command and pre-attach liveness check.
 3. Approval answers through the `PermissionRequest` hook with id correlation.
 4. Codex slices #3582, #3583 and #3584 under this document.
