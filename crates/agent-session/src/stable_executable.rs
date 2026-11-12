@@ -207,23 +207,11 @@ fn invocation_path(argv0: &OsStr, path_env: Option<&OsStr>) -> Option<PathBuf> {
 
 pub(crate) fn launch_executable() -> io::Result<LaunchExecutable> {
     let current_executable = env::current_exe()?;
-    // Unit tests call launch helpers from the hashed `deps` harness; bind those
-    // calls to Cargo's same-profile binary without changing production lookup.
+    // Unit tests call launch helpers from the hashed Cargo test harness; bind
+    // those calls to Cargo's same-profile binary without changing production
+    // lookup. The shared helper knows both Cargo test-executable layouts.
     #[cfg(test)]
-    if current_executable
-        .parent()
-        .and_then(Path::file_name)
-        .is_some_and(|name| name == OsStr::new("deps"))
-    {
-        let profile_dir = current_executable
-            .parent()
-            .and_then(Path::parent)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "test executable has no Cargo profile directory",
-                )
-            })?;
+    if let Some(profile_dir) = nils_test_support::bin::profile_dir(&current_executable) {
         let test_binary = profile_dir.join(format!("agent-session{}", env::consts::EXE_SUFFIX));
         return launch_executable_from(&test_binary, &[]);
     }

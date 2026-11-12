@@ -61,10 +61,38 @@ fn select(bin_name: &str) -> Option<(PathBuf, Origin)> {
     }
 
     let exe = std::env::current_exe().expect("current exe");
-    let target_dir = exe.parent().and_then(|p| p.parent()).expect("target dir");
     let bin_file = format!("{bin_name}{}", std::env::consts::EXE_SUFFIX);
-    let bin = target_dir.join(bin_file);
-    bin.exists().then_some((bin, Origin::ProfileDir))
+    profile_binary(&exe, &bin_file).map(|bin| (bin, Origin::ProfileDir))
+}
+
+/// The Cargo profile directory (`target/<profile>`) a test executable was built
+/// into, or `None` when the executable is not in a layout Cargo produces.
+///
+/// Only the two known shapes are matched, so a lookup can never reach a
+/// directory above the profile directory:
+///
+/// - before Cargo 1.100: `<profile>/deps/<exe>`
+/// - from Cargo 1.100: `<profile>/build/<package>/<hash>/out/<exe>`
+pub fn profile_dir(exe: &Path) -> Option<PathBuf> {
+    let dir = exe.parent()?;
+    match dir.file_name()?.to_str()? {
+        "deps" => dir.parent().map(Path::to_path_buf),
+        "out" => {
+            let build = dir.parent()?.parent()?.parent()?;
+            if build.file_name()? == "build" {
+                build.parent().map(Path::to_path_buf)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// A built binary next to `exe`'s profile directory, checked to exist.
+fn profile_binary(exe: &Path, bin_file: &str) -> Option<PathBuf> {
+    let bin = profile_dir(exe)?.join(bin_file);
+    bin.exists().then_some(bin)
 }
 
 /// Whether a workspace binary another package owns can be used by this test run.
@@ -264,7 +292,8 @@ fn env_names(bin_name: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Origin, Sibling, WORKSPACE_RELEASE, env_names, required_sibling, resolve_optional, sibling,
+        Origin, Sibling, WORKSPACE_RELEASE, env_names, profile_binary, profile_dir,
+        required_sibling, resolve_optional, sibling,
     };
     use crate::{EnvGuard, GlobalStateLock, write_exe};
     use tempfile::TempDir;
@@ -293,6 +322,75 @@ mod tests {
         );
         write_exe(dir, bin_name, &script);
         dir.join(bin_name)
+    }
+
+    /// Where Cargo places a test executable: before 1.100 in `<profile>/deps`,
+    /// from 1.100 in `<profile>/build/<package>/<hash>/out`.
+    fn executable_in(profile: &std::path::Path, layout: &str) -> std::path::PathBuf {
+        let dir = match layout {
+            "deps" => profile.join("deps"),
+            "build" => profile.join("build/nils-pkg/0123456789abcdef/out"),
+            other => panic!("unknown layout {other}"),
+        };
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("pkg-0123456789abcdef");
+        std::fs::write(&exe, "").unwrap();
+        exe
+    }
+
+    #[test]
+    fn profile_dir_is_found_for_both_cargo_test_layouts() {
+        let temp = TempDir::new().unwrap();
+        let profile = temp.path().join("target/debug");
+        for layout in ["deps", "build"] {
+            assert_eq!(
+                profile_dir(&executable_in(&profile, layout)),
+                Some(profile.clone()),
+                "{layout} layout"
+            );
+        }
+    }
+
+    #[test]
+    fn profile_dir_is_absent_for_an_executable_outside_a_cargo_layout() {
+        let temp = TempDir::new().unwrap();
+        let exe = temp.path().join("tools/bin/pkg");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, "").unwrap();
+        assert_eq!(profile_dir(&exe), None);
+    }
+
+    #[test]
+    fn a_built_binary_is_found_in_the_profile_dir_for_both_layouts() {
+        let temp = TempDir::new().unwrap();
+        let profile = temp.path().join("target/debug");
+        std::fs::create_dir_all(&profile).unwrap();
+        write_exe(&profile, "tool", "#!/bin/sh\n");
+        for layout in ["deps", "build"] {
+            assert_eq!(
+                profile_binary(&executable_in(&profile, layout), "tool"),
+                Some(profile.join("tool")),
+                "{layout} layout"
+            );
+        }
+    }
+
+    #[test]
+    fn a_binary_above_or_beside_the_profile_dir_is_never_selected() {
+        let temp = TempDir::new().unwrap();
+        let profile = temp.path().join("target/debug");
+        let exe = executable_in(&profile, "build");
+        // Decoys in every ancestor of the executable, including the directory
+        // two levels up that an older derivation treated as the target.
+        for ancestor in exe.ancestors().skip(1) {
+            if ancestor == profile {
+                break;
+            }
+            write_exe(ancestor, "tool", "#!/bin/sh\n");
+        }
+        write_exe(profile.parent().unwrap(), "tool", "#!/bin/sh\n");
+        write_exe(temp.path(), "tool", "#!/bin/sh\n");
+        assert_eq!(profile_binary(&exe, "tool"), None);
     }
 
     #[test]
