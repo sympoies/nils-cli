@@ -1030,25 +1030,16 @@ fn parse_cli_usage_output(raw: &str) -> Option<render::Usage> {
             continue;
         }
         let lower = trimmed.to_ascii_lowercase();
-        if lower.contains("fable") {
-            current = None;
+        if lower.starts_with("current ") {
+            current = classify_window_line(&lower);
             continue;
         }
-        if let Some(kind) = classify_window_line(&lower) {
-            current = Some(kind);
-        }
-
-        let kind = classify_window_line(&lower).or(current);
-        if let Some(kind) = kind {
-            if let Some(used_percent) = parse_used_percent(trimmed) {
-                target_window(kind, &mut five_hour, &mut seven_day).used_percent =
-                    Some(used_percent);
-            }
-            if lower.contains("reset")
-                && let Some(resets_at) = parse_reset_value(trimmed)
-            {
-                target_window(kind, &mut five_hour, &mut seven_day).resets_at = Some(resets_at);
-            }
+        let Some(kind) = current else { continue };
+        let window = target_window(kind, &mut five_hour, &mut seven_day);
+        if window.used_percent.is_none() && lower.contains("% used") {
+            window.used_percent = parse_used_percent(trimmed);
+        } else if window.resets_at.is_none() && lower.starts_with("resets") {
+            window.resets_at = parse_reset_value(trimmed);
         }
     }
 
@@ -1063,18 +1054,16 @@ fn parse_cli_usage_output(raw: &str) -> Option<render::Usage> {
     })
 }
 
+// Claude Code 2.1.317 `/usage`: only these headings open a rate-limit window;
+// per-model weekly sub-windows such as "Current week (Fable)" are ignored.
 fn classify_window_line(lower: &str) -> Option<WindowKind> {
-    if lower.contains("week") || lower.contains("7-day") || lower.contains("7 day") {
-        return Some(WindowKind::SevenDay);
+    if lower.starts_with("current session") {
+        Some(WindowKind::FiveHour)
+    } else if lower.starts_with("current week (all models)") {
+        Some(WindowKind::SevenDay)
+    } else {
+        None
     }
-    if lower.contains("5-hour")
-        || lower.contains("5 hour")
-        || lower.contains("5h")
-        || lower.contains("session")
-    {
-        return Some(WindowKind::FiveHour);
-    }
-    None
 }
 
 fn target_window<'a>(
@@ -1274,24 +1263,23 @@ mod tests {
     }
 
     #[test]
-    fn cli_usage_parser_reads_used_and_remaining_lines() {
-        let usage = parse_cli_usage_output(
-            "\x1b[32mCurrent session\x1b[0m\n\
-             5-hour limit: 25% used, 75% remaining\n\
-             Resets at 2026-01-01T00:00:00+00:00\n\
-             Current week\n\
-             Weekly limit: 50% left\n",
-        )
-        .expect("usage");
+    fn cli_usage_parser_reads_current_usage_screen() {
+        let usage =
+            parse_cli_usage_output(include_str!("../../tests/fixtures/claude_usage_screen.txt"))
+                .expect("usage");
 
         let five = usage.five_hour.expect("five hour");
-        assert_eq!(five.used_percent, 25.0);
-        assert_eq!(five.remaining_percent, 75);
-        assert_eq!(five.resets_at.as_deref(), Some("2026-01-01T00:00:00+00:00"));
+        assert_eq!(five.used_percent, 42.0);
+        assert_eq!(five.remaining_percent, 58);
+        assert_eq!(five.resets_at.as_deref(), Some("4:59am (Example/Zone)"));
 
         let weekly = usage.seven_day.expect("weekly");
-        assert_eq!(weekly.used_percent, 50.0);
-        assert_eq!(weekly.remaining_percent, 50);
+        assert_eq!(weekly.used_percent, 61.0);
+        assert_eq!(weekly.remaining_percent, 39);
+        assert_eq!(
+            weekly.resets_at.as_deref(),
+            Some("Nov 15, 8:59pm (Example/Zone)")
+        );
     }
 
     #[test]
@@ -1562,32 +1550,5 @@ mod tests {
     #[test]
     fn platform_script_flavor_is_util_linux_on_other_targets() {
         assert_eq!(platform_script_flavor(), ScriptFlavor::UtilLinux);
-    }
-
-    #[test]
-    fn cli_usage_parser_ignores_fable_weekly_subwindow() {
-        let usage = parse_cli_usage_output(
-            "Current session\n\
-             98%used\n\
-             Resets6:20am(Asia/Taipei)\n\
-             Current week (all models)\n\
-             67% used\n\
-             Resets Jul 12, 9pm (Asia/Taipei)\n\
-             Current week (Fable)\n\
-             12% used\n\
-             Resets Jul 12, 8:59pm (Asia/Taipei)\n",
-        )
-        .expect("usage");
-
-        let five = usage.five_hour.expect("five hour");
-        assert_eq!(five.used_percent, 98.0);
-        assert_eq!(five.resets_at.as_deref(), Some("6:20am(Asia/Taipei)"));
-
-        let weekly = usage.seven_day.expect("weekly");
-        assert_eq!(weekly.used_percent, 67.0);
-        assert_eq!(
-            weekly.resets_at.as_deref(),
-            Some("Jul 12, 9pm (Asia/Taipei)")
-        );
     }
 }
