@@ -33,9 +33,7 @@ pub(super) fn forward_activity_setup_to_agent_hook(
     // not running under the configured name also falls through to them.
     if std::env::var_os("AGENT_SESSION_BIN").is_none_or(|value| value.is_empty())
         && let Ok(current) = std::env::current_exe()
-        && nils_common::session_binary::is_owner_controlled_executable(
-            &current.with_file_name("agent-hook"),
-        )
+        && sibling_hook_is_selectable(&current)
     {
         command.env("AGENT_SESSION_BIN", current);
     }
@@ -170,4 +168,15 @@ pub(super) fn forward_activity_setup_to_agent_hook(
         Value::String("agent-hook".to_string()),
     );
     Ok(Value::Object(result))
+}
+
+/// The hook the selector would run beside `current`: owner-controlled and
+/// resolving into the same directory (a link elsewhere makes it exit 127).
+fn sibling_hook_is_selectable(current: &std::path::Path) -> bool {
+    let hook = current.with_file_name("agent-hook");
+    nils_common::session_binary::is_owner_controlled_executable(&hook)
+        && match (std::fs::canonicalize(&hook), std::fs::canonicalize(current)) {
+            (Ok(hook), Ok(session)) => hook.parent() == session.parent(),
+            _ => false,
+        }
 }

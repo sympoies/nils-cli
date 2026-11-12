@@ -186,3 +186,45 @@ fn activity_setup_ignores_a_group_or_world_writable_sibling_hook() {
         assert_eq!(run_setup(&session, temp.path(), None), "root", "{mode:o}");
     }
 }
+
+#[test]
+fn activity_setup_treats_an_empty_pin_as_unset_next_to_a_sibling_hook() {
+    let temp = tempfile::tempdir().unwrap();
+    let installed = temp.path().join("installed");
+    fs::create_dir_all(&installed).unwrap();
+    executable(
+        &installed.join("agent-hook"),
+        "#!/bin/sh\nprintf sibling > \"$MARKER\"\nexit 69\n",
+    );
+    let session = installed.join(nils_common::session_binary::NAME);
+    fs::copy(env!("CARGO_BIN_EXE_agent-session"), &session).unwrap();
+    assert_eq!(run_setup(&session, temp.path(), Some("")), "sibling");
+}
+
+#[test]
+fn activity_setup_ignores_a_sibling_that_is_not_a_usable_hook() {
+    let temp = tempfile::tempdir().unwrap();
+    let installed = temp.path().join("installed");
+    fs::create_dir_all(&installed).unwrap();
+    let session = installed.join(nils_common::session_binary::NAME);
+    fs::copy(env!("CARGO_BIN_EXE_agent-session"), &session).unwrap();
+    let hook = installed.join("agent-hook");
+    // A directory named like the hook.
+    fs::create_dir(&hook).unwrap();
+    assert_eq!(run_setup(&session, temp.path(), None), "root");
+    fs::remove_dir(&hook).unwrap();
+    // A non-executable file.
+    executable(&hook, "#!/bin/sh\nprintf sibling > \"$MARKER\"\n");
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(run_setup(&session, temp.path(), None), "root");
+    fs::remove_file(&hook).unwrap();
+    // A link into another directory: the selector would refuse it.
+    let elsewhere = temp.path().join("elsewhere");
+    fs::create_dir_all(&elsewhere).unwrap();
+    executable(
+        &elsewhere.join("agent-hook"),
+        "#!/bin/sh\nprintf linked > \"$MARKER\"\n",
+    );
+    std::os::unix::fs::symlink(elsewhere.join("agent-hook"), &hook).unwrap();
+    assert_eq!(run_setup(&session, temp.path(), None), "root");
+}
