@@ -130,7 +130,8 @@ pub(super) fn preview<R: BackendRunner>(
     let (subject, patch, findings) = comparison(runner, ctx, number, head)?;
     let digest = digest(&subject, &patch);
     let confirmation = format!("Test changes confirmed: {digest}");
-    let payload = serde_json::json!({"number": number, "head_sha": head, "base_sha": subject.base, "findings": findings, "digest": digest, "confirmation": confirmation, "provenance_import": provenance::summary(&patch)});
+    let warnings = row_warnings(&findings, &declared_rows(&declarations(&subject.body)));
+    let payload = serde_json::json!({"warnings": warnings, "number": number, "head_sha": head, "base_sha": subject.base, "findings": findings, "digest": digest, "confirmation": confirmation, "provenance_import": provenance::summary(&patch)});
     Ok(crate::envelope::emit_success(
         super::schema(),
         payload,
@@ -151,6 +152,9 @@ pub(super) fn preview<R: BackendRunner>(
                 );
             }
             println!("{}", p["confirmation"].as_str().unwrap());
+            for warning in p["warnings"].as_array().unwrap() {
+                println!("warning: {}", warning.as_str().unwrap());
+            }
         },
     ))
 }
@@ -165,20 +169,12 @@ pub(super) fn ensure<R: BackendRunner>(
     report: &str,
 ) -> Result<(), ForgeError> {
     let (subject, patch, findings) = comparison(runner, ctx, number, head)?;
+    let declarations = declarations(&subject.body);
+    let rows = declared_rows(&declarations);
     if findings.is_empty() && provenance::summary(&patch).is_none() {
+        warn(&row_warnings(&findings, &rows));
         return Ok(());
     }
-    let declarations = declarations(&subject.body);
-    let rows: Vec<_> = declarations
-        .lines()
-        .filter_map(|line| {
-            let row = line.trim().strip_prefix("- ")?;
-            let (path, rest) = row.split_once(" | ")?;
-            let (kind, reason) = rest.split_once(" | ")?;
-            (reason.trim().len() >= 12)
-                .then_some((path.strip_prefix("allow ").unwrap_or(path), kind))
-        })
-        .collect();
     let missing: Vec<_> = findings
         .iter()
         .filter(|f| {
@@ -193,7 +189,10 @@ pub(super) fn ensure<R: BackendRunner>(
             .map(|f| format!("- {} | {} | <reason and retained coverage>", f.path, f.kind))
             .collect::<Vec<_>>()
             .join("\n");
-        let notes = stale_notes(&findings, &rows);
+        let notes = row_warnings(&findings, &rows)
+            .iter()
+            .map(|w| format!("\n{w}"))
+            .collect::<String>();
         return Err(error(
             "test_changes_undeclared",
             "test changes require explicit PR-body declarations under ## Test changes",
@@ -202,6 +201,7 @@ pub(super) fn ensure<R: BackendRunner>(
             )),
         ));
     }
+    warn(&row_warnings(&findings, &rows));
     let digest = digest(&subject, &patch);
     let confirmation = format!("Test changes confirmed: {digest}");
     if subject.author.eq_ignore_ascii_case(review_author)
@@ -218,9 +218,22 @@ pub(super) fn ensure<R: BackendRunner>(
     Ok(())
 }
 
+fn declared_rows(declarations: &str) -> Vec<(&str, &str)> {
+    declarations
+        .lines()
+        .filter_map(|line| {
+            let row = line.trim().strip_prefix("- ")?;
+            let (path, rest) = row.split_once(" | ")?;
+            let (kind, reason) = rest.split_once(" | ")?;
+            (reason.trim().len() >= 12)
+                .then_some((path.strip_prefix("allow ").unwrap_or(path), kind))
+        })
+        .collect()
+}
+
 /// Declared rows that cover no finding are stale. A file-level `deleted-test`
 /// row for a file whose removed tests are reported per test is the retired form.
-fn stale_notes(findings: &[diff::Finding], rows: &[(&str, &str)]) -> String {
+fn row_warnings(findings: &[diff::Finding], rows: &[(&str, &str)]) -> Vec<String> {
     let per_test = |path: &str| {
         findings
             .iter()
@@ -238,20 +251,26 @@ fn stale_notes(findings: &[diff::Finding], rows: &[(&str, &str)]) -> String {
             stale.push(row);
         }
     }
-    let mut notes = String::new();
+    let mut notes = Vec::new();
     if !retired.is_empty() {
-        notes.push_str(&format!(
-            "\nRetired file-level form: a file-level `deleted-test` row no longer covers removed tests in a file that still exists; declare one `deleted-test:<name>` row per removed test instead:\n{}",
+        notes.push(format!(
+            "Retired file-level form: a file-level `deleted-test` row no longer covers removed tests in a file that still exists; declare one `deleted-test:<name>` row per removed test instead:\n{}",
             retired.join("\n")
         ));
     }
     if !stale.is_empty() {
-        notes.push_str(&format!(
-            "\nDeclared rows that match no finding (stale; fix the path/kind or remove them):\n{}",
+        notes.push(format!(
+            "Declared rows that match no finding (stale; fix the path/kind or remove them):\n{}",
             stale.join("\n")
         ));
     }
     notes
+}
+
+fn warn(warnings: &[String]) {
+    for warning in warnings {
+        eprintln!("warning: {warning}");
+    }
 }
 
 fn declarations(body: &str) -> String {

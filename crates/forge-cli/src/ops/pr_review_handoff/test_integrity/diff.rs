@@ -242,6 +242,13 @@ fn case_key(line: &str, compact: &str, prefix: &str) -> String {
 /// the key starts with a compacted Rust, Python or Go declaration keyword,
 /// preceded by its Rust module path.
 fn case_name(key: &str) -> String {
+    // JavaScript titles may contain `::`; only Rust keys carry a module path.
+    if ["it(", "it.", "test(", "test."]
+        .iter()
+        .any(|call| key.starts_with(call))
+    {
+        return key.to_string();
+    }
     let (path, rest) = key.split_at(key.rfind("::").map_or(0, |i| i + 2));
     let rest = rest.strip_prefix("#[cfg(test)]").unwrap_or(rest);
     let name = ["asyncfn", "pubfn", "fn", "asyncdef", "def", "func"]

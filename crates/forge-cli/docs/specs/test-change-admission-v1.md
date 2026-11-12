@@ -62,7 +62,7 @@ forge-cli pr review-handoff test-changes 123 --expected-head <full-head-sha>
 It requires no assignment or existing review and writes no provider state. Text
 output prints exact file/kind rows and `Test changes confirmed: sha256:<digest>`.
 With `--format json`, `data` contains `number`, `head_sha`, `base_sha`, `findings`
-(`path`/`kind` objects), `digest`, `confirmation` and nullable `provenance_import`.
+(`path`/`kind` objects), `warnings` (strings), `digest`, `confirmation` and nullable `provenance_import`.
 The latter contains the upstream source, mappings, adaptation and addition paths, complete
 file count, verified-file count, manifest digest, comparison digest and declaration
 digest when the mode below is active. Reconstructed old sides also expose their
@@ -75,7 +75,10 @@ heading in the PR body. Use one `deleted-test:<name>` row per removed test;
 a row never covers a sibling test, and a file-level `deleted-test` row never
 covers per-test removals in a file that still exists (retired form; the
 `test_changes_undeclared` diagnostic names it). Rows that match no finding are
-listed as stale in the same diagnostic. Give a concrete reason and describe the
+listed as stale in the same diagnostic. Retired and stale rows are also warnings
+when every finding is covered: the preview prints them and lists them in
+`warnings`, and admission writes them to standard error; they never fail an
+otherwise declared comparison. Give a concrete reason and describe the
 retained coverage or replacement owner. The reason must contain at least 12 characters.
 The diagnostic lists the required rows.
 
