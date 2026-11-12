@@ -673,7 +673,7 @@ for deleted tests, assertion changes and new skips in the PR comparison.
   the exact approval marker. The stop code must map to its canonical budget
   field and the proposal must match the active receipt. Each proposal is
   consumable once; retry and delivery paths cannot silently increase a budget.
-  `--expected-head` is always the current provider head. At the no-progress
+- `--expected-head` is always the current provider head. At the no-progress
   ceiling (no durable hard stop), a repair pushed after the last observation makes
   that head differ from the ledger head; `extend` then requires the provider to
   prove it descends from the ledger head, binds the extension record to the ledger
