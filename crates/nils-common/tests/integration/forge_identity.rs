@@ -1163,3 +1163,75 @@ fn operator_attested_role_must_match_the_launch_role() {
         assert_eq!(context.validate().is_ok(), valid);
     }
 }
+
+#[test]
+fn identity_organization_scope_is_authorized_only_by_an_org_rule() {
+    let p = Policy::parse(FIXTURE).unwrap();
+    let org = Target::organization("github.com", "Sandbox").unwrap();
+    for operation in [Operation::ApiRead, Operation::ApiWrite] {
+        let selection = p.resolve("contributor", &org, None, operation).unwrap();
+        assert_eq!(selection.matched_rule, "contributor-org");
+    }
+    // The coordinator has a repository rule and a default repository in this
+    // organization, but no org rule: neither can authorize organization scope.
+    assert_eq!(
+        p.resolve("coordinator", &org, None, Operation::ApiWrite)
+            .unwrap_err()
+            .code,
+        "identity_repository_unknown"
+    );
+    for bad in ["", "..", "a/b", "bad name"] {
+        assert_eq!(
+            Target::organization("github.com", bad).unwrap_err().code,
+            "identity_target_invalid",
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn identity_organization_scope_refuses_path_rules_and_app_profiles() {
+    let org = Target::organization("github.com", "sandbox").unwrap();
+    // A managed-path rule whose allowlist names repositories cannot authorize
+    // organization scope: its allowlist never contains the organization.
+    let checkout = tempfile::tempdir().unwrap();
+    let with_path = format!(
+        "{FIXTURE}\n[[rules]]\nid = \"contributor-path\"\nprincipal = \"contributor\"\npath = {:?}\nrepositories = [\"github.com/sandbox/widget\"]\nprofile = \"account-a\"\n",
+        checkout.path().canonicalize().unwrap()
+    );
+    let p = Policy::parse(&with_path).unwrap();
+    assert_eq!(
+        p.resolve(
+            "contributor",
+            &org,
+            Some(&checkout.path().canonicalize().unwrap()),
+            Operation::ApiWrite
+        )
+        .unwrap_err()
+        .code,
+        "identity_path_conflict"
+    );
+    // The organization rule selects an App profile: refused, since an App
+    // installation token has no organization-level authority here.
+    let app = FIXTURE.replace(
+        "expected_login = \"account-b\"",
+        "expected_app_id = 42\napp_slug = \"fixture-app\"",
+    );
+    let p = Policy::parse(&app).unwrap();
+    assert_eq!(
+        p.resolve("contributor", &org, None, Operation::ApiWrite)
+            .unwrap_err()
+            .code,
+        "identity_org_app_unsupported"
+    );
+    // The same App profile still works for a repository it is selected for.
+    assert!(
+        p.resolve(
+            "contributor",
+            &Target::new("github.com", "sandbox/other").unwrap(),
+            None,
+            Operation::ApiWrite
+        )
+        .is_ok()
+    );
+}

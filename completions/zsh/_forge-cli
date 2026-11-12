@@ -2976,6 +2976,131 @@ esac
     ;;
 esac
 ;;
+(hook)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_forge-cli__subcmd__repo__subcmd__hook_commands" \
+"*::: :->hook" \
+&& ret=0
+
+    case $state in
+    (hook)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-repo-hook-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(set-url)
+_arguments "${_arguments_options[@]}" : \
+'--hook=[Webhook id (see \`hook list\`)]:ID:_default' \
+'--from=[URL the hook must currently have; any other current URL is refused]:URL:_default' \
+'--to=[URL to switch the hook to]:URL:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(set-active)
+_arguments "${_arguments_options[@]}" : \
+'--hook=[Webhook id (see \`hook list\`)]:ID:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--active[Activate the hook (it must currently be inactive)]' \
+'--inactive[Deactivate the hook (it must currently be active)]' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(batch)
+_arguments "${_arguments_options[@]}" : \
+'--file=[JSON array of \`{"target","hook","action","from","to"}\` rows. \`action\` is \`set-url\` (string \`from\`/\`to\`) or \`set-active\` (boolean \`from\`/\`to\`); \`target\` is \`OWNER/NAME\` for \`repo hook\` and the organization for \`org hook\`]:FILE:_files' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__repo__subcmd__hook__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-repo-hook-help-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-url)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-active)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(batch)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 ":: :_forge-cli__subcmd__repo__subcmd__help_commands" \
@@ -3025,6 +3150,276 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(hook)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__repo__subcmd__help__subcmd__hook_commands" \
+"*::: :->hook" \
+&& ret=0
+
+    case $state in
+    (hook)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-repo-help-hook-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-url)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-active)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(batch)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(org)
+_arguments "${_arguments_options[@]}" : \
+'--org=[Organization login the command acts on]:ORG:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_forge-cli__subcmd__org_commands" \
+"*::: :->org" \
+&& ret=0
+
+    case $state in
+    (org)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-org-command-$line[1]:"
+        case $line[1] in
+            (hook)
+_arguments "${_arguments_options[@]}" : \
+'--org=[Organization login the command acts on]:ORG:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_forge-cli__subcmd__org__subcmd__hook_commands" \
+"*::: :->hook" \
+&& ret=0
+
+    case $state in
+    (hook)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-org-hook-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+'--org=[Organization login the command acts on]:ORG:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(create)
+_arguments "${_arguments_options[@]}" : \
+'--url=[URL the payloads are delivered to]:URL:_default' \
+'*--events=[Comma-separated events to subscribe to (\`*\` for all)]:EVENTS:_default' \
+'--content-type=[Payload content type]:CONTENT_TYPE:(json form)' \
+'--secret-env=[Environment variable holding the webhook secret. The secret is never accepted on the command line and never printed]:VAR:_default' \
+'--org=[Organization login the command acts on]:ORG:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--active[Create the hook active (default)]' \
+'--inactive[Create the hook inactive]' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(set-url)
+_arguments "${_arguments_options[@]}" : \
+'--hook=[Webhook id (see \`hook list\`)]:ID:_default' \
+'--from=[URL the hook must currently have; any other current URL is refused]:URL:_default' \
+'--to=[URL to switch the hook to]:URL:_default' \
+'--org=[Organization login the command acts on]:ORG:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(set-active)
+_arguments "${_arguments_options[@]}" : \
+'--hook=[Webhook id (see \`hook list\`)]:ID:_default' \
+'--org=[Organization login the command acts on]:ORG:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--active[Activate the hook (it must currently be inactive)]' \
+'--inactive[Deactivate the hook (it must currently be active)]' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(batch)
+_arguments "${_arguments_options[@]}" : \
+'--file=[JSON array of \`{"target","hook","action","from","to"}\` rows. \`action\` is \`set-url\` (string \`from\`/\`to\`) or \`set-active\` (boolean \`from\`/\`to\`); \`target\` is \`OWNER/NAME\` for \`repo hook\` and the organization for \`org hook\`]:FILE:_files' \
+'--org=[Organization login the command acts on]:ORG:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__org__subcmd__hook__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-org-hook-help-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-url)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-active)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(batch)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__org__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-org-help-command-$line[1]:"
+        case $line[1] in
+            (hook)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__org__subcmd__help__subcmd__hook_commands" \
+"*::: :->hook" \
+&& ret=0
+
+    case $state in
+    (hook)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-org-help-hook-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-url)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-active)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(batch)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -4114,6 +4509,90 @@ _arguments "${_arguments_options[@]}" : \
     ;;
 esac
 ;;
+(hook)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__help__subcmd__repo__subcmd__hook_commands" \
+"*::: :->hook" \
+&& ret=0
+
+    case $state in
+    (hook)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-help-repo-hook-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-url)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-active)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(batch)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(org)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__help__subcmd__org_commands" \
+"*::: :->org" \
+&& ret=0
+
+    case $state in
+    (org)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-help-org-command-$line[1]:"
+        case $line[1] in
+            (hook)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__help__subcmd__org__subcmd__hook_commands" \
+"*::: :->hook" \
+&& ret=0
+
+    case $state in
+    (hook)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-help-org-hook-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-url)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-active)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(batch)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
         esac
     ;;
 esac
@@ -4258,6 +4737,7 @@ _forge-cli_commands() {
 'inbox:Personal cross-repo work inbox' \
 'search:Full-text, completion-fact, and reverse-reference search over issues and PRs' \
 'repo:Repository helpers' \
+'org:Organization helpers (webhooks)' \
 'security:GitHub security alert and configuration reads' \
 'identity:Explain or verify context-based forge identity selection' \
 'auth:Backend authentication helpers' \
@@ -4440,6 +4920,7 @@ _forge-cli__subcmd__help_commands() {
 'inbox:Personal cross-repo work inbox' \
 'search:Full-text, completion-fact, and reverse-reference search over issues and PRs' \
 'repo:Repository helpers' \
+'org:Organization helpers (webhooks)' \
 'security:GitHub security alert and configuration reads' \
 'identity:Explain or verify context-based forge identity selection' \
 'auth:Backend authentication helpers' \
@@ -4680,6 +5161,49 @@ _forge-cli__subcmd__help__subcmd__label__subcmd__list_commands() {
 _forge-cli__subcmd__help__subcmd__operation-effect_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help operation-effect commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__org_commands] )) ||
+_forge-cli__subcmd__help__subcmd__org_commands() {
+    local commands; commands=(
+'hook:Organization webhooks (needs an organization owner token with \`admin\:org_hook\`)' \
+    )
+    _describe -t commands 'forge-cli help org commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__org__subcmd__hook_commands] )) ||
+_forge-cli__subcmd__help__subcmd__org__subcmd__hook_commands() {
+    local commands; commands=(
+'list:List the organization'\''s webhooks. The secret is never printed' \
+'create:Create a webhook; the secret is read only from \`--secret-env\`' \
+'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
+'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
+'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+    )
+    _describe -t commands 'forge-cli help org hook commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__batch_commands] )) ||
+_forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__batch_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help org hook batch commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__create_commands] )) ||
+_forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help org hook create commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__list_commands] )) ||
+_forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help org hook list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__set-active_commands] )) ||
+_forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__set-active_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help org hook set-active commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__set-url_commands] )) ||
+_forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__set-url_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help org hook set-url commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__pr_commands] )) ||
 _forge-cli__subcmd__help__subcmd__pr_commands() {
@@ -5012,6 +5536,7 @@ _forge-cli__subcmd__help__subcmd__repo_commands() {
 'bootstrap:Create or adopt an empty GitHub repository, or create a private Forgejo repository' \
 'push-default:Deliver one signed commit to the default branch with a normal fast-forward push' \
 'freeze:Start, end, or report a GitHub merge freeze (an open \`merge-freeze\` issue)' \
+'hook:List GitHub repository webhooks or switch one'\''s URL safely' \
     )
     _describe -t commands 'forge-cli help repo commands' commands "$@"
 }
@@ -5043,6 +5568,36 @@ _forge-cli__subcmd__help__subcmd__repo__subcmd__freeze__subcmd__start_commands()
 _forge-cli__subcmd__help__subcmd__repo__subcmd__freeze__subcmd__status_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help repo freeze status commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__repo__subcmd__hook_commands] )) ||
+_forge-cli__subcmd__help__subcmd__repo__subcmd__hook_commands() {
+    local commands; commands=(
+'list:List the repository'\''s webhooks. The secret is never printed' \
+'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
+'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
+'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+    )
+    _describe -t commands 'forge-cli help repo hook commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__repo__subcmd__hook__subcmd__batch_commands] )) ||
+_forge-cli__subcmd__help__subcmd__repo__subcmd__hook__subcmd__batch_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help repo hook batch commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__repo__subcmd__hook__subcmd__list_commands] )) ||
+_forge-cli__subcmd__help__subcmd__repo__subcmd__hook__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help repo hook list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__repo__subcmd__hook__subcmd__set-active_commands] )) ||
+_forge-cli__subcmd__help__subcmd__repo__subcmd__hook__subcmd__set-active_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help repo hook set-active commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__repo__subcmd__hook__subcmd__set-url_commands] )) ||
+_forge-cli__subcmd__help__subcmd__repo__subcmd__hook__subcmd__set-url_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help repo hook set-url commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__repo__subcmd__list_commands] )) ||
 _forge-cli__subcmd__help__subcmd__repo__subcmd__list_commands() {
@@ -5528,6 +6083,142 @@ _forge-cli__subcmd__label__subcmd__list_commands() {
 _forge-cli__subcmd__operation-effect_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli operation-effect commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org_commands] )) ||
+_forge-cli__subcmd__org_commands() {
+    local commands; commands=(
+'hook:Organization webhooks (needs an organization owner token with \`admin\:org_hook\`)' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli org commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__help_commands] )) ||
+_forge-cli__subcmd__org__subcmd__help_commands() {
+    local commands; commands=(
+'hook:Organization webhooks (needs an organization owner token with \`admin\:org_hook\`)' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli org help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__help__subcmd__help_commands] )) ||
+_forge-cli__subcmd__org__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org help help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__help__subcmd__hook_commands] )) ||
+_forge-cli__subcmd__org__subcmd__help__subcmd__hook_commands() {
+    local commands; commands=(
+'list:List the organization'\''s webhooks. The secret is never printed' \
+'create:Create a webhook; the secret is read only from \`--secret-env\`' \
+'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
+'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
+'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+    )
+    _describe -t commands 'forge-cli org help hook commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__help__subcmd__hook__subcmd__batch_commands] )) ||
+_forge-cli__subcmd__org__subcmd__help__subcmd__hook__subcmd__batch_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org help hook batch commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__help__subcmd__hook__subcmd__create_commands] )) ||
+_forge-cli__subcmd__org__subcmd__help__subcmd__hook__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org help hook create commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__help__subcmd__hook__subcmd__list_commands] )) ||
+_forge-cli__subcmd__org__subcmd__help__subcmd__hook__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org help hook list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__help__subcmd__hook__subcmd__set-active_commands] )) ||
+_forge-cli__subcmd__org__subcmd__help__subcmd__hook__subcmd__set-active_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org help hook set-active commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__help__subcmd__hook__subcmd__set-url_commands] )) ||
+_forge-cli__subcmd__org__subcmd__help__subcmd__hook__subcmd__set-url_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org help hook set-url commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__hook_commands] )) ||
+_forge-cli__subcmd__org__subcmd__hook_commands() {
+    local commands; commands=(
+'list:List the organization'\''s webhooks. The secret is never printed' \
+'create:Create a webhook; the secret is read only from \`--secret-env\`' \
+'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
+'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
+'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli org hook commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__batch_commands] )) ||
+_forge-cli__subcmd__org__subcmd__hook__subcmd__batch_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org hook batch commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__create_commands] )) ||
+_forge-cli__subcmd__org__subcmd__hook__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org hook create commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__help_commands] )) ||
+_forge-cli__subcmd__org__subcmd__hook__subcmd__help_commands() {
+    local commands; commands=(
+'list:List the organization'\''s webhooks. The secret is never printed' \
+'create:Create a webhook; the secret is read only from \`--secret-env\`' \
+'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
+'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
+'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli org hook help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__batch_commands] )) ||
+_forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__batch_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org hook help batch commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__create_commands] )) ||
+_forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org hook help create commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__help_commands] )) ||
+_forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org hook help help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__list_commands] )) ||
+_forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org hook help list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__set-active_commands] )) ||
+_forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__set-active_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org hook help set-active commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__set-url_commands] )) ||
+_forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__set-url_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org hook help set-url commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__list_commands] )) ||
+_forge-cli__subcmd__org__subcmd__hook__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org hook list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__set-active_commands] )) ||
+_forge-cli__subcmd__org__subcmd__hook__subcmd__set-active_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org hook set-active commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__set-url_commands] )) ||
+_forge-cli__subcmd__org__subcmd__hook__subcmd__set-url_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org hook set-url commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__pr_commands] )) ||
 _forge-cli__subcmd__pr_commands() {
@@ -6389,6 +7080,7 @@ _forge-cli__subcmd__repo_commands() {
 'bootstrap:Create or adopt an empty GitHub repository, or create a private Forgejo repository' \
 'push-default:Deliver one signed commit to the default branch with a normal fast-forward push' \
 'freeze:Start, end, or report a GitHub merge freeze (an open \`merge-freeze\` issue)' \
+'hook:List GitHub repository webhooks or switch one'\''s URL safely' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'forge-cli repo commands' commands "$@"
@@ -6461,6 +7153,7 @@ _forge-cli__subcmd__repo__subcmd__help_commands() {
 'bootstrap:Create or adopt an empty GitHub repository, or create a private Forgejo repository' \
 'push-default:Deliver one signed commit to the default branch with a normal fast-forward push' \
 'freeze:Start, end, or report a GitHub merge freeze (an open \`merge-freeze\` issue)' \
+'hook:List GitHub repository webhooks or switch one'\''s URL safely' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'forge-cli repo help commands' commands "$@"
@@ -6499,6 +7192,36 @@ _forge-cli__subcmd__repo__subcmd__help__subcmd__help_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli repo help help commands' commands "$@"
 }
+(( $+functions[_forge-cli__subcmd__repo__subcmd__help__subcmd__hook_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__help__subcmd__hook_commands() {
+    local commands; commands=(
+'list:List the repository'\''s webhooks. The secret is never printed' \
+'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
+'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
+'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+    )
+    _describe -t commands 'forge-cli repo help hook commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__help__subcmd__hook__subcmd__batch_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__help__subcmd__hook__subcmd__batch_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo help hook batch commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__help__subcmd__hook__subcmd__list_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__help__subcmd__hook__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo help hook list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__help__subcmd__hook__subcmd__set-active_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__help__subcmd__hook__subcmd__set-active_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo help hook set-active commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__help__subcmd__hook__subcmd__set-url_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__help__subcmd__hook__subcmd__set-url_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo help hook set-url commands' commands "$@"
+}
 (( $+functions[_forge-cli__subcmd__repo__subcmd__help__subcmd__list_commands] )) ||
 _forge-cli__subcmd__repo__subcmd__help__subcmd__list_commands() {
     local commands; commands=()
@@ -6513,6 +7236,73 @@ _forge-cli__subcmd__repo__subcmd__help__subcmd__push-default_commands() {
 _forge-cli__subcmd__repo__subcmd__help__subcmd__view_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli repo help view commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__hook_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__hook_commands() {
+    local commands; commands=(
+'list:List the repository'\''s webhooks. The secret is never printed' \
+'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
+'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
+'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli repo hook commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__hook__subcmd__batch_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__hook__subcmd__batch_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo hook batch commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__hook__subcmd__help_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__hook__subcmd__help_commands() {
+    local commands; commands=(
+'list:List the repository'\''s webhooks. The secret is never printed' \
+'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
+'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
+'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli repo hook help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__batch_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__batch_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo hook help batch commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__help_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo hook help help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__list_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo hook help list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__set-active_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__set-active_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo hook help set-active commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__set-url_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__set-url_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo hook help set-url commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__hook__subcmd__list_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__hook__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo hook list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__hook__subcmd__set-active_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__hook__subcmd__set-active_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo hook set-active commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__hook__subcmd__set-url_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__hook__subcmd__set-url_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo hook set-url commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__repo__subcmd__list_commands] )) ||
 _forge-cli__subcmd__repo__subcmd__list_commands() {

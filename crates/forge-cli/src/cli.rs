@@ -18,6 +18,12 @@ use crate::provider::ProviderHint;
 mod release;
 pub use release::*;
 
+mod hook;
+pub use hook::*;
+
+mod repo;
+pub use repo::*;
+
 mod security;
 pub use security::*;
 
@@ -269,6 +275,8 @@ pub enum Command {
     Search(SearchArgs),
     /// Repository helpers.
     Repo(RepoArgs),
+    /// Organization helpers (webhooks).
+    Org(OrgArgs),
     /// GitHub security alert and configuration reads.
     Security(SecurityArgs),
     /// Explain or verify context-based forge identity selection.
@@ -1810,6 +1818,8 @@ pub enum RepoCommand {
     PushDefault(RepoPushDefaultArgs),
     /// Start, end, or report a GitHub merge freeze (an open `merge-freeze` issue).
     Freeze(RepoFreezeArgs),
+    /// List GitHub repository webhooks or switch one's URL safely.
+    Hook(RepoHookArgs),
 }
 
 /// GitHub organization repository inventory filters.
@@ -1827,36 +1837,6 @@ pub struct RepoListArgs {
     /// Maximum matching repositories to return.
     #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..))]
     pub limit: u32,
-}
-
-/// `repo freeze` arguments.
-#[derive(Args, Debug, Clone)]
-pub struct RepoFreezeArgs {
-    #[command(subcommand)]
-    pub command: RepoFreezeCommand,
-}
-
-/// `repo freeze` subcommands.
-#[derive(Subcommand, Debug, Clone)]
-pub enum RepoFreezeCommand {
-    /// Open a merge freeze. `pr merge` refuses to merge while it is open.
-    Start {
-        /// Why merges are frozen; becomes the freeze issue title.
-        #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
-        reason: String,
-        /// Expected end of the freeze, recorded in the issue body.
-        #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
-        until: Option<String>,
-    },
-    /// End a merge freeze by closing its issue. Without `--issue`, ends the
-    /// single active freeze.
-    End {
-        /// Freeze issue number to close.
-        #[arg(long)]
-        issue: Option<u64>,
-    },
-    /// Report the active merge freezes.
-    Status,
 }
 
 /// `auth` subtree.
@@ -1999,6 +1979,10 @@ pub(crate) fn dispatch_parsed(cli: Cli) -> i32 {
         Some(Command::Repo(RepoArgs {
             command: Some(RepoCommand::Freeze(args)),
         })) => ops::repo_freeze::run(&global, args.command, format),
+        Some(Command::Repo(RepoArgs {
+            command: Some(RepoCommand::Hook(args)),
+        })) => ops::repo_hook::run(&global, args.command, format),
+        Some(Command::Org(args)) => ops::org_hook::run(&global, args, format),
         Some(Command::Pr(PrArgs {
             command: Some(PrCommand::Create(args)),
         })) => ops::pr_create::run(&global, args, format),

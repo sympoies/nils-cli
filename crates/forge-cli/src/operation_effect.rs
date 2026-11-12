@@ -8,10 +8,10 @@ use nils_common::execution_effect::{
 use crate::cli::{
     ActivityArgs, AuthArgs, AuthCommand, Cli, Command, CommentCommand, IdentityArgs,
     IdentityCommand, InboxArgs, InboxCommand, IssueArgs, IssueCommand, IssueTrackerCommand,
-    LabelArgs, LabelCommand, PrArgs, PrCommand, PrPendingReviewCommand, PrReviewCommand,
-    PrReviewHandoffCommand, PrReviewLoopCommand, ReleaseCommand, RepoArgs, RepoCommand,
-    ReviewThreadsCommand, SearchArgs, SecurityAlertsCommand, SecurityArgs, SecurityCommand,
-    WorkflowCommand,
+    LabelArgs, LabelCommand, OrgArgs, OrgCommand, OrgHookCommand, PrArgs, PrCommand,
+    PrPendingReviewCommand, PrReviewCommand, PrReviewHandoffCommand, PrReviewLoopCommand,
+    ReleaseCommand, RepoArgs, RepoCommand, RepoHookCommand, ReviewThreadsCommand, SearchArgs,
+    SecurityAlertsCommand, SecurityArgs, SecurityCommand, WorkflowCommand,
 };
 
 pub fn run(argv: Vec<OsString>, format: OutputFormat) -> i32 {
@@ -127,6 +127,24 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
             SecurityCommand::Settings(_) => {
                 ("security.settings.view", read, network, vec!["provider"])
             }
+        },
+        Some(Command::Repo(RepoArgs {
+            command: Some(RepoCommand::Hook(args)),
+        })) => match args.command {
+            RepoHookCommand::List => ("repo.hook.list", read, network, vec!["provider"]),
+            RepoHookCommand::SetUrl(_) => hook_write("repo.hook.set-url"),
+            RepoHookCommand::SetActive(_) => hook_write("repo.hook.set-active"),
+            RepoHookCommand::Batch(_) => hook_write("repo.hook.batch"),
+        },
+        Some(Command::Org(OrgArgs {
+            command: OrgCommand::Hook(args),
+            ..
+        })) => match args.command {
+            OrgHookCommand::List => ("org.hook.list", read, network, vec!["provider"]),
+            OrgHookCommand::Create(_) => hook_write("org.hook.create"),
+            OrgHookCommand::SetUrl(_) => hook_write("org.hook.set-url"),
+            OrgHookCommand::SetActive(_) => hook_write("org.hook.set-active"),
+            OrgHookCommand::Batch(_) => hook_write("org.hook.batch"),
         },
         Some(Command::Repo(RepoArgs {
             command: Some(RepoCommand::Bootstrap(_)),
@@ -344,6 +362,17 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
     }
 }
 
+fn hook_write(
+    operation: &'static str,
+) -> (&'static str, Effect, ProviderEffect, Vec<&'static str>) {
+    (
+        operation,
+        Effect::Mutation,
+        ProviderEffect::NetworkWrite,
+        vec!["provider", "identity_policy"],
+    )
+}
+
 /// A tracker command that contacts no provider for writing: a draft is local
 /// input, an issue is a provider read.
 fn tracker_read(
@@ -423,6 +452,7 @@ mod tests {
     fn provider_reads_are_classified_as_read_only_network_calls() {
         assert_network_read(&["auth", "status"], "auth.status", &["provider_auth"]);
         assert_network_read(&["repo", "view"], "repo.view", &["git_remote", "provider"]);
+        assert_network_read(&["repo", "hook", "list"], "repo.hook.list", &["provider"]);
         assert_network_read(&["pr", "view", "7"], "pr.view", &["provider"]);
         assert_network_read(&["pr", "list"], "pr.list", &["provider"]);
         assert_network_read(&["pr", "comments", "7"], "pr.comments", &["provider"]);
@@ -438,6 +468,82 @@ mod tests {
             "label.audit",
             &["provider"],
         );
+    }
+
+    #[test]
+    fn hook_writes_are_network_mutations_and_hook_lists_are_reads() {
+        assert_network_read(
+            &["org", "hook", "list", "--org", "acme"],
+            "org.hook.list",
+            &["provider"],
+        );
+        let url = [
+            "--hook",
+            "7",
+            "--from",
+            "https://a.test/h",
+            "--to",
+            "https://b.test/h",
+        ];
+        for (argv, operation) in [
+            (
+                [&["repo", "hook", "set-url"][..], &url].concat(),
+                "repo.hook.set-url",
+            ),
+            (
+                vec!["repo", "hook", "set-active", "--hook", "7", "--active"],
+                "repo.hook.set-active",
+            ),
+            (
+                vec!["repo", "hook", "batch", "--file", "rows.json"],
+                "repo.hook.batch",
+            ),
+            (
+                [&["org", "hook", "set-url", "--org", "acme"][..], &url].concat(),
+                "org.hook.set-url",
+            ),
+            (
+                vec![
+                    "org",
+                    "hook",
+                    "set-active",
+                    "--org",
+                    "acme",
+                    "--hook",
+                    "7",
+                    "--inactive",
+                ],
+                "org.hook.set-active",
+            ),
+            (
+                vec!["org", "hook", "batch", "--file", "rows.json"],
+                "org.hook.batch",
+            ),
+            (
+                vec![
+                    "org",
+                    "hook",
+                    "create",
+                    "--org",
+                    "acme",
+                    "--url",
+                    "https://a.test/h",
+                    "--events",
+                    "push",
+                    "--content-type",
+                    "json",
+                    "--secret-env",
+                    "HOOK_SECRET",
+                ],
+                "org.hook.create",
+            ),
+        ] {
+            let (name, effect, provider, reads) = classify_argv(&argv);
+            assert_eq!(name, operation, "{argv:?}");
+            assert_eq!(effect, Effect::Mutation, "{argv:?}");
+            assert_eq!(provider, ProviderEffect::NetworkWrite, "{argv:?}");
+            assert_eq!(reads, vec!["provider", "identity_policy"], "{argv:?}");
+        }
     }
 
     #[test]
