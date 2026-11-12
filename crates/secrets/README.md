@@ -45,12 +45,27 @@ secret-producer | secrets set service TOKEN --value-stdin
 Stdin must be non-terminal UTF-8, read through EOF, at most 1 MiB. Empty input
 sets an empty string. Every byte is significant: a final LF is part of the
 value, so producers must choose their newline behavior deliberately. NUL, CR,
-and control characters other than LF and TAB are refused. Values become
-single-line, double-quoted dotenv assignments: quotes, backslashes, dollar
-signs, LF, and TAB are escaped as `\"`, `\\`, `\$`, `\n`, and `\t`. There is
-no shell evaluation. Terminal input is refused before reading to prevent echo;
-there is no interactive prompt, value argument, or plaintext input file.
-Existing decrypted documents and SOPS output are limited to 16 MiB.
+and control characters other than LF and TAB are refused. Terminal input is
+refused before reading to prevent echo; there is no interactive prompt, value
+argument, or plaintext input file. There is no shell evaluation. Existing
+decrypted documents and SOPS output are limited to 16 MiB.
+
+The value is stored bare, exactly like entries written by `secrets add` from a
+`KEY=value` file: `KEY=<value>` with no wrapping quotes and no escaping, so a
+plain `sops -d --input-type dotenv` consumer reads back the input. SOPS dotenv
+keeps quotes, backslashes, `$`, `#`, TAB, and leading/trailing spaces as
+written; a reader that trims or strips quotes or comments itself changes such
+values. The only encoding is LF, written as the two characters `\n` (the SOPS
+dotenv newline form, decoded back to LF by SOPS). Because SOPS decodes every
+`\n` pair that way, a value containing a literal backslash followed by `n` is
+refused. A backslash before LF is stored as `\\n` and round-trips.
+
+Entries written by earlier `secrets set` releases hold the value wrapped in
+double quotes with `\"`, `\\`, `\$`, `\n`, and `\t` escapes; they are not read
+back specially. To migrate, run `secrets set <entry> <KEY> --value-stdin` once
+per such key with the real value; this rewrites it bare, then deliver the store
+change as usual. Keys still holding the old form are visible as values that
+start and end with `"`.
 
 Before reading stdin or writing, `set` requires the selected store root to be
 a clean linked worktree reported as managed by `git-cli worktree list`, on an
