@@ -106,6 +106,9 @@ fn usage_backoff_oauth_429_never_launches_cli_probe() {
     let options = base_options(tmp.path())
         .with_fake_claude(&bin_dir)
         .with_env("PROBE_MARKER", &path_str(&marker))
+        // The status identity would otherwise run `claude --version`, which
+        // is this fake binary.
+        .with_env("CLAUDE_RATE_LIMITS_CLAUDE_CODE_VERSION", "9.8.7")
         .with_env("CLAUDE_PROMPT_SEGMENT_ACCESS_TOKEN", "fixture-token")
         .with_env("CLAUDE_PROMPT_SEGMENT_CLAUDE_PTY_STARTUP_DELAY_MS", "1")
         .with_env("CLAUDE_PROMPT_SEGMENT_CLAUDE_PTY_USAGE_DELAY_MS", "1")

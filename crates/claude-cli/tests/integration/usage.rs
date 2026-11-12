@@ -90,13 +90,14 @@ fn usage_oauth_classifies_past_due_billing_without_forwarding_provider_body() {
     assert_eq!(payload["result"]["reason_code"], "billing_past_due");
     assert!(!stdout(&output).contains("overdue invoice"));
     assert!(!stdout(&output).contains("secret-token-billing"));
-    // OAuth consumers share the status-query superset; the caller keeps its agent.
+    // The usage read uses the status query and identity of `diag rate-limits`;
+    // the missing Claude Code binary falls back to the pinned default version.
     let requests = server.take_requests();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].query.as_deref(), Some("at_wall=1&skip_spend=1"));
     assert_eq!(
         requests[0].header_value("user-agent").as_deref(),
-        Some("claude-code/2.1.0")
+        Some("claude-cli/2.1.284 (external, cli)")
     );
 }
 
