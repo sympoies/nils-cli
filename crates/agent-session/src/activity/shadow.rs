@@ -15,6 +15,8 @@ use super::{
     CliContext, SessionRecord, ShadowObservationView, TurnPhase, TurnState, now, session_dir,
 };
 
+mod claude_agents;
+
 pub(crate) const SHADOW_FILE: &str = "activity.shadow.json";
 const SHADOW_LOCK_FILE: &str = ".activity.shadow.lock";
 const SHADOW_VERSION: &str = "terminal-shadow.v1";
@@ -102,11 +104,13 @@ pub(crate) fn annotate_for_view(
     state
 }
 
-fn interrupt_rule(provider: &str) -> Option<&'static str> {
+/// Rules whose sustained reading over an open turn is interrupt uncertainty.
+/// For Claude the provider's own idle state counts like the screen marker.
+fn is_interrupt_rule(provider: &str, rule_id: &str) -> bool {
     match provider {
-        "claude" => Some("claude_interrupt_marker"),
-        "codex" => Some("codex_interrupt_marker"),
-        _ => None,
+        "claude" => matches!(rule_id, "claude_interrupt_marker" | "claude_agents_idle"),
+        "codex" => rule_id == "codex_interrupt_marker",
+        _ => false,
     }
 }
 
@@ -115,7 +119,7 @@ fn project_interrupt_uncertainty(
     cached: &ShadowDocument,
     state: &mut TurnState,
 ) {
-    if interrupt_rule(&record.agent) != Some(cached.observation.rule_id.as_str())
+    if !is_interrupt_rule(&record.agent, &cached.observation.rule_id)
         || state.phase != TurnPhase::Working
         || cached.activity_revision != Some(state.revision)
         || !is_recent(&cached.observation.observed_at, SAMPLE_INTERVAL_SECONDS * 2)
@@ -196,21 +200,20 @@ fn schedule_sample(
         {
             return;
         }
-        let interrupt_since = (interrupt_rule(&record.agent) == Some(observation.rule_id.as_str()))
-            .then(|| {
-                previous
-                    .as_ref()
-                    .filter(|previous| {
-                        previous.activity_revision == Some(state.revision)
-                            && previous.observation.rule_id == observation.rule_id
-                            && is_recent(
-                                &previous.observation.observed_at,
-                                SAMPLE_INTERVAL_SECONDS * 2,
-                            )
-                    })
-                    .and_then(|previous| previous.interrupt_since.clone())
-                    .unwrap_or_else(|| observation.observed_at.clone())
-            });
+        let interrupt_since = is_interrupt_rule(&record.agent, &observation.rule_id).then(|| {
+            previous
+                .as_ref()
+                .filter(|previous| {
+                    previous.activity_revision == Some(state.revision)
+                        && previous.observation.rule_id == observation.rule_id
+                        && is_recent(
+                            &previous.observation.observed_at,
+                            SAMPLE_INTERVAL_SECONDS * 2,
+                        )
+                })
+                .and_then(|previous| previous.interrupt_since.clone())
+                .unwrap_or_else(|| observation.observed_at.clone())
+        });
         let document = ShadowDocument {
             schema_version: SHADOW_DOCUMENT_VERSION.to_string(),
             runtime_id: runtime.launch_id.clone(),
@@ -285,12 +288,13 @@ fn read_current(path: &Path, record: &SessionRecord) -> Option<ShadowDocument> {
 }
 
 fn valid_observation(observation: &ShadowObservationView) -> bool {
-    observation.observer_version == SHADOW_VERSION
-        && matches!(
-            observation.projection.as_str(),
-            "working" | "needs_input" | "waiting" | "unknown"
-        )
-        && observation.observed_at.parse::<Timestamp>().is_ok()
+    matches!(
+        observation.observer_version.as_str(),
+        SHADOW_VERSION | claude_agents::OBSERVER_VERSION
+    ) && matches!(
+        observation.projection.as_str(),
+        "working" | "needs_input" | "waiting" | "unknown"
+    ) && observation.observed_at.parse::<Timestamp>().is_ok()
         && observation.rule_id.len() <= 64
         && observation.rule_id.bytes().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
@@ -312,6 +316,16 @@ fn is_older_than(value: &str, seconds: i64) -> bool {
 }
 
 fn sample(record: &SessionRecord, tmux_bin: &Path, phase: &TurnPhase) -> ShadowObservationView {
+    // The provider's structured state outranks screen rules. When it is
+    // unavailable the screen decides and the observation says why.
+    let unavailable = if record.agent == "claude" {
+        match claude_agents::state_for(record) {
+            Ok(state) => return claude_agents::observation(state, phase),
+            Err(reason) => Some(reason),
+        }
+    } else {
+        None
+    };
     let target = crate::managed_tmux_pane_target(&record.tmux_session);
     let title = command_output(
         tmux_bin,
@@ -332,13 +346,17 @@ fn sample(record: &SessionRecord, tmux_bin: &Path, phase: &TurnPhase) -> ShadowO
         (Some(title), Some(bottom)) => classify(&record.agent, &title, &bottom),
         _ => ("unknown", "observer_unavailable"),
     };
+    let mut extra = serde_json::Map::new();
+    if let Some(reason) = unavailable {
+        extra.insert(claude_agents::UNAVAILABLE_KEY.into(), reason.code().into());
+    }
     ShadowObservationView {
         observer_version: SHADOW_VERSION.to_string(),
         rule_id: rule_id.to_string(),
         observed_at: now(),
         projection: projection.to_string(),
         disagrees: disagrees(phase, projection),
-        extra: serde_json::Map::new(),
+        extra,
     }
 }
 
