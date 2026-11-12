@@ -949,11 +949,12 @@ fn designated_assignment_cannot_observe_without_explicit_handoff() {
     );
 }
 
-#[test]
-fn ceiling_inspect_explains_the_supported_next_step_without_writing() {
+/// A chain of three observations of one open blocking finding: the
+/// no-progress ceiling.
+fn ceiling_records() -> Vec<forge_cli::ops::review_state::ReviewStateRecord> {
     use forge_cli::ops::review_state::{
         ReviewFindingObservation, ReviewFindingStatus, ReviewStatePayload, ReviewStateRecord,
-        observe_review_loop, render_state_comment_body,
+        observe_review_loop,
     };
     let rows = vec![ReviewFindingObservation {
         fingerprint: "correctness:review-loop:ceiling".into(),
@@ -982,6 +983,13 @@ fn ceiling_inspect_explains_the_supported_next_step_without_writing() {
         previous = Some(state);
         records.push(record);
     }
+    records
+}
+
+#[test]
+fn ceiling_inspect_explains_the_supported_next_step_without_writing() {
+    use forge_cli::ops::review_state::render_state_comment_body;
+    let records = ceiling_records();
     let stub = StubEnv::new();
     let bodies: Vec<_> = records
         .iter()
@@ -1027,6 +1035,64 @@ fn ceiling_inspect_explains_the_supported_next_step_without_writing() {
     assert_eq!(envelope["data"]["appended"], false);
     let calls = fs::read_to_string(stub.tempdir.path().join("gh-args.log")).unwrap();
     assert!(!calls.contains("--method POST"), "{calls}");
+}
+
+#[test]
+fn ceiling_extend_dry_run_emits_its_own_schema_without_writing() {
+    use forge_cli::ops::review_state::render_state_comment_body;
+    let records = ceiling_records();
+    let tip = records.last().unwrap().record_digest.clone();
+    let proposal = forge_cli::ops::review_state::extension_proposal_digest(
+        &tip,
+        "review_no_progress",
+        "max_no_progress_rounds",
+        1,
+    )
+    .unwrap();
+    let stub = StubEnv::new();
+    let bodies: Vec<_> = records
+        .iter()
+        .map(|record| render_state_comment_body(record, None).unwrap())
+        .collect();
+    let body = gh_stub_with_ledger(&stub, "head-3", &bodies);
+    let stub = stub.gh_stub(&body);
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "--dry-run",
+            "pr",
+            "review-loop",
+            "extend",
+            "7",
+            "--expected-head",
+            "head-3",
+            "--expected-state",
+            &tip,
+            "--stop-code",
+            "review_no_progress",
+            "--budget-field",
+            "max_no_progress_rounds",
+            "--proposal-digest",
+            &proposal,
+            "--approval-comment",
+            "42",
+        ],
+    );
+    assert_eq!(out.code, 0, "{} {}", out.stderr, out.stdout);
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(
+        envelope["schema_version"],
+        "cli.forge-cli.pr.review-loop.extend.v1"
+    );
+    let calls = fs::read_to_string(stub.tempdir.path().join("gh-args.log")).unwrap();
+    assert!(!calls.contains("--method POST"), "{calls}");
+    assert!(!calls.contains("issues/comments/42"), "{calls}");
 }
 
 #[test]
