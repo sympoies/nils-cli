@@ -398,6 +398,7 @@ impl BackendRunner for ProcessRunner {
 
         if let Some(identity) = identity {
             identity.redact_output(&mut output);
+            identity.observe_output(&output);
             identity
                 .finish(output.status.success(), None)
                 .map_err(|e| ForgeError::validation(schema(), e.code, e.to_string(), None))?;

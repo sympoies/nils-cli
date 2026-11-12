@@ -31,18 +31,19 @@ impl LoadedPolicy {
             _ => error,
         });
         match &result {
-            Ok(auth) => self.audit(
+            Ok((auth, verification)) => self.audit_verified(
                 Some(&auth.selection),
                 target,
                 operation,
                 "authorized",
                 Some(&auth.actor),
+                Some(verification),
             )?,
             Err(error) => {
                 self.audit(selected.as_ref().ok(), target, operation, error.code, None)?
             }
         }
-        result
+        result.map(|(auth, _)| auth)
     }
 }
 

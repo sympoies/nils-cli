@@ -7,6 +7,7 @@ mod probe;
 mod rate_limit;
 mod replay;
 pub mod session;
+mod verified_cache;
 pub use git::{
     authoring_remote, prepare_git, prepare_git_with_deadline, target_for_remote, verify_key,
 };
@@ -22,6 +23,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::Duration;
+use verified_cache::ActorVerification;
 
 pub const PRINCIPAL_ENV: &str = "FORGE_IDENTITY_PRINCIPAL";
 pub const SESSION_ENV: &str = "FORGE_IDENTITY_SESSION";
@@ -148,18 +150,23 @@ impl LoadedPolicy {
             .map_err(Clone::clone)
             .and_then(|s| self.verify(s, gh));
         match &result {
-            Ok(auth) => self.audit(
+            Ok((auth, verification)) => self.audit_verified(
                 Some(&auth.selection),
                 target,
                 op,
                 "authorized",
                 Some(&auth.actor),
+                Some(verification),
             )?,
             Err(e) => self.audit(selected.as_ref().ok(), target, op, e.code, None)?,
         }
-        result
+        result.map(|(auth, _)| auth)
     }
-    fn verify(&self, selection: &Selection, gh: &std::ffi::OsStr) -> Result<Authorization> {
+    fn verify(
+        &self,
+        selection: &Selection,
+        gh: &std::ffi::OsStr,
+    ) -> Result<(Authorization, ActorVerification)> {
         let credential = self
             .policy
             .credentials
@@ -201,7 +208,7 @@ impl LoadedPolicy {
         selection: &Selection,
         gh: &std::ffi::OsStr,
         token: String,
-    ) -> Result<Authorization> {
+    ) -> Result<(Authorization, ActorVerification)> {
         if token.is_empty()
             || token.len() > 16384
             || token
@@ -216,6 +223,15 @@ impl LoadedPolicy {
             token,
             policy_digest: self.digest.clone(),
         };
+        let mut _flight = None;
+        let hit = verified_cache::lookup(&auth).or_else(|| {
+            _flight = Some(verified_cache::single_flight());
+            verified_cache::lookup(&auth)
+        });
+        if let Some((actor, verification)) = hit {
+            auth.actor = actor;
+            return Ok((auth, verification));
+        }
         let actor = if let Some(expected) = &selection.profile.expected_login {
             let data = auth.probe(gh, &["api", "user"])?;
             let login = data["login"]
@@ -270,7 +286,8 @@ impl LoadedPolicy {
             expected
         };
         auth.actor = actor;
-        Ok(auth)
+        let verification = verified_cache::store(&auth);
+        Ok((auth, verification))
     }
     pub fn audit(
         &self,
@@ -279,6 +296,17 @@ impl LoadedPolicy {
         operation: Operation,
         outcome: &str,
         actor: Option<&str>,
+    ) -> Result<()> {
+        self.audit_verified(selection, target, operation, outcome, actor, None)
+    }
+    fn audit_verified(
+        &self,
+        selection: Option<&Selection>,
+        target: &Target,
+        operation: Operation,
+        outcome: &str,
+        actor: Option<&str>,
+        actor_verification: Option<&ActorVerification>,
     ) -> Result<()> {
         #[derive(Serialize)]
         struct Record<'a> {
@@ -294,6 +322,8 @@ impl LoadedPolicy {
             matched_rule: Option<&'a str>,
             signer: Option<&'a str>,
             actor: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            actor_verification: Option<&'a ActorVerification>,
             outcome: &'a str,
             session_binding: Option<session::SessionBinding>,
             matched_launch_rule: Option<String>,
@@ -337,6 +367,7 @@ impl LoadedPolicy {
                 .filter(|s| s.operation == Operation::Commit)
                 .map(|s| s.profile.signing_fingerprint.as_str()),
             actor,
+            actor_verification,
             outcome,
             session_binding: binding,
             matched_launch_rule: decision.map(|(_, d)| d.matched_launch_rule),
@@ -350,12 +381,15 @@ impl LoadedPolicy {
     }
 }
 
-fn append_audit(record: &impl Serialize) -> Result<()> {
-    let state = std::env::var_os("XDG_STATE_HOME")
+fn state_home() -> Option<PathBuf> {
+    std::env::var_os("XDG_STATE_HOME")
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
-        .ok_or(Error::new("identity_audit_unavailable"))?;
+}
+
+fn append_audit(record: &impl Serialize) -> Result<()> {
+    let state = state_home().ok_or(Error::new("identity_audit_unavailable"))?;
     let dir = state.join("forge-cli");
     fs::create_dir_all(&dir).map_err(|_| Error::new("identity_audit_unavailable"))?;
     let mut options = OpenOptions::new();

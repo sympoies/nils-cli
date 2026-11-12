@@ -335,6 +335,30 @@ and diagnostics have a finite 30-second probe budget. Each probe bounds captured
 stdout and stderr to 8 MiB, kills its process group on refusal, and reaps its leader;
 probe errors contain stable codes rather than captured child output.
 
+## Actor verification reuse
+
+A successful actor verification is reused for the life of the process, so a
+long-running command (`pr wait-checks`, the `pr merge` queue poll) probes the
+actor once instead of before every managed `gh` call. The reuse is process-local
+and in memory only; nothing is written to disk.
+
+- **What is cached:** the verified actor and the time it was verified, keyed by a
+  one-way SHA-256 digest of the credential, host, expected login (for an App
+  profile also the app slug, app id and the repository whose installation
+  coverage was checked) and the audit state root. The credential itself is never
+  stored or logged.
+- **Only success is cached.** An actor mismatch, missing coverage or any probe
+  failure leaves no entry and is verified again on the next call.
+- **Invalidation:** an entry expires after 10 minutes; a different credential,
+  host, expected identity or state root is a different key and verifies again; and
+  a managed `gh` call that fails with HTTP 401 or 403 drops the entry so the next
+  call re-verifies. Concurrent managed calls in one process share one probe.
+- **Audit:** the `authorized` record carries `actor_verification` with `cached`
+  (`true` when a prior verification was reused) and `verified_at`, the time of the
+  verification that was used.
+
+Separate processes do not share verifications; each probes once.
+
 ## Diagnostics and audit
 
 ```text
@@ -353,6 +377,7 @@ Both support JSON envelopes `cli.forge-cli.identity.explain.v1` and
 Private audit is `${XDG_STATE_HOME:-$HOME/.local/state}/forge-cli/identity-audit.jsonl`
 (mode 0600). Records use `forge.identity.audit.v1`, with policy version/digest,
 principal/session reference, repository, operation, rule/profile, observed actor,
+how the actor was verified (`actor_verification`, on `authorized` records),
 selected signer, and authorization/refusal/execution outcome. Captured successful
 new commits include the commit SHA. Refusals before target resolution have a null
 target. No credential values, raw source lines, subprocess arguments, URLs with

@@ -179,6 +179,53 @@ esac
     }
 
     #[test]
+    fn identity_several_managed_calls_in_one_command_verify_the_actor_once() {
+        let f = cross_repo_fixture(&single_profile_policy());
+        fs::write(
+            &f.gh,
+            r#"#!/bin/sh
+case "$1:$2" in
+ api:user) printf 'probe\n' >> "$FIXTURE_PROBE_LOG"; printf '{"login":"account-a"}'; exit 0;;
+esac
+printf 'managed call\n' >> "$FIXTURE_CALL_LOG"
+case "$1:$2" in
+ api:graphql) printf '{"data":{"user":{"contributionsCollection":{"totalCommitContributions":0,"commitContributionsByRepository":[]}},"repository":{"issueOrPullRequest":{"timelineItems":{"nodes":[]}}}}}';;
+ *) printf '[]';;
+esac
+"#,
+        )
+        .unwrap();
+        let out = f
+            .bare_command()
+            .current_dir(f.home.path())
+            .env("FIXTURE_PROBE_LOG", f.home.path().join("probes"))
+            .env("FORGE_CLI_INBOX_NO_CACHE", "1")
+            .args(["--provider", "github", "inbox", "list"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let lines = |name: &str| {
+            fs::read_to_string(f.home.path().join(name))
+                .unwrap()
+                .lines()
+                .count()
+        };
+        assert!(
+            lines("calls") >= 2,
+            "the command must make several managed calls"
+        );
+        assert_eq!(lines("probes"), 1);
+        let audit = f.audit();
+        assert!(audit.contains("\"cached\":true"));
+        assert!(!audit.contains(CANARY));
+    }
+
+    #[test]
     fn identity_cross_repo_hosts_are_authorized_before_credential_probes() {
         let f = cross_repo_fixture(&single_profile_policy());
         fs::write(
