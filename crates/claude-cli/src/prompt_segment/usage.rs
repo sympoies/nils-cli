@@ -1024,22 +1024,30 @@ fn parse_cli_usage_output(raw: &str) -> Option<render::Usage> {
     let mut five_hour = ParsedWindow::default();
     let mut seven_day = ParsedWindow::default();
 
+    // A window is the heading plus the two lines under it (percent, then reset).
+    // A blank line, the next heading or a third line closes it, so text from a
+    // later section is never attributed to it.
+    let mut body_lines = 0;
     for line in normalized.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
+            current = None;
             continue;
         }
         let lower = trimmed.to_ascii_lowercase();
         if lower.starts_with("current ") {
             current = classify_window_line(&lower);
+            body_lines = 0;
             continue;
         }
         let Some(kind) = current else { continue };
+        body_lines += 1;
         let window = target_window(kind, &mut five_hour, &mut seven_day);
-        if window.used_percent.is_none() && lower.contains("% used") {
-            window.used_percent = parse_used_percent(trimmed);
-        } else if window.resets_at.is_none() && lower.starts_with("resets") {
-            window.resets_at = parse_reset_value(trimmed);
+        match body_lines {
+            1 if lower.contains("% used") => window.used_percent = parse_used_percent(trimmed),
+            2 if lower.starts_with("resets") => window.resets_at = parse_reset_value(trimmed),
+            1 | 2 => {}
+            _ => current = None,
         }
     }
 
@@ -1550,5 +1558,44 @@ mod tests {
     #[test]
     fn platform_script_flavor_is_util_linux_on_other_targets() {
         assert_eq!(platform_script_flavor(), ScriptFlavor::UtilLinux);
+    }
+
+    #[test]
+    fn cli_usage_parser_never_attributes_later_lines_to_a_window() {
+        let usage = parse_cli_usage_output(
+            "Current session\n\
+             42% used\n\
+             Resets 4:59am (Example/Zone)\n\
+             99% used of context\n\
+             Current week (all models)\n\
+             61%used\n\
+             99% used of context\n",
+        )
+        .expect("usage");
+
+        assert_eq!(usage.five_hour.expect("five hour").used_percent, 42.0);
+        assert!(usage.seven_day.is_none());
+    }
+
+    #[test]
+    fn cli_usage_parser_rejects_loose_openers_and_per_model_weekly() {
+        let usage = parse_cli_usage_output(
+            "Current week (Fable)\n\
+             77% used\n\
+             Resets Nov 15, 9pm (Example/Zone)\n\
+             \n\
+             Last session 5h ago\n\
+             88% used\n\
+             \n\
+             Current session\n\
+             42% used\n\
+             30% used\n",
+        )
+        .expect("usage");
+
+        let five = usage.five_hour.expect("five hour");
+        assert_eq!(five.used_percent, 42.0);
+        assert_eq!(five.resets_at, None);
+        assert!(usage.seven_day.is_none());
     }
 }
