@@ -216,3 +216,82 @@ fn https_repo_local_helper_is_never_executed() {
         scenario("account-a", false, local_kind);
     }
 }
+
+#[test]
+fn https_verification_is_not_cached_when_its_authorization_could_not_be_audited() {
+    let lock = GlobalStateLock::new();
+    let home = tempfile::tempdir().unwrap();
+    let repo = init_repo_main();
+    let bins = StubBinDir::new();
+    let actual_git = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let actual_git = String::from_utf8(actual_git.stdout).unwrap();
+    let actual_git = actual_git.trim();
+    fs::create_dir_all(home.path().join("forge-cli")).unwrap();
+    fs::write(home.path().join("forge-cli/identity.toml"), POLICY).unwrap();
+    raw_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/sandbox/widget.git",
+        ],
+    );
+    let global = home.path().join("git/config");
+    fs::create_dir_all(global.parent().unwrap()).unwrap();
+    for args in [
+        vec!["credential.helper", ""],
+        vec![
+            "--add",
+            "credential.helper",
+            "!f() { test \"$1\" = get || exit 0; cat >/dev/null; printf 'username=fixture\\npassword=%s\\n' \"$FIXTURE_HTTPS_TOKEN\"; }; f",
+        ],
+    ] {
+        let mut config = vec!["config", "--file", global.to_str().unwrap()];
+        config.extend(args);
+        raw_git(repo.path(), &config);
+    }
+    bins.write_exe(
+        "gh",
+        "#!/bin/sh\nprintf 'probe\\n' >> \"$FIXTURE_PROBE_LOG\"\nprintf '{\"login\":\"account-a\"}'\n",
+    );
+    bins.write_exe(
+        "git",
+        &format!(
+            "#!/bin/sh\ncase \"$1\" in\nfetch) printf 'transport-ok\\n';;\n*) exec '{actual_git}' \"$@\";;\nesac\n"
+        ),
+    );
+    let state = home.path().join("state");
+    let audit = state.join("forge-cli/identity-audit.jsonl");
+    let probes = home.path().join("probes");
+    let _config = EnvGuard::set(&lock, "XDG_CONFIG_HOME", home.path().to_str().unwrap());
+    let _global = EnvGuard::set(&lock, "GIT_CONFIG_GLOBAL", global.to_str().unwrap());
+    let _state = EnvGuard::set(&lock, "XDG_STATE_HOME", state.to_str().unwrap());
+    let _principal = EnvGuard::set(&lock, "FORGE_IDENTITY_PRINCIPAL", "contributor");
+    let _token = EnvGuard::set(&lock, "FIXTURE_HTTPS_TOKEN", "FIXTURE_HTTPS_AUDIT_TOKEN");
+    let _probe_log = EnvGuard::set(&lock, "FIXTURE_PROBE_LOG", probes.to_str().unwrap());
+    let _profile = EnvGuard::remove(&lock, "FIXTURE_ACCOUNT_A_CREDENTIAL");
+    let _path = prepend_path(&lock, bins.path());
+    let probe_count = || {
+        fs::read_to_string(&probes)
+            .map(|text| text.lines().count())
+            .unwrap_or(0)
+    };
+
+    fs::create_dir_all(&audit).unwrap();
+    let err = git::run_output_in(repo.path(), &["fetch", "origin"]).unwrap_err();
+    assert!(
+        err.to_string().contains("identity_audit_unavailable"),
+        "{err}"
+    );
+    assert_eq!(probe_count(), 1);
+    fs::remove_dir(&audit).unwrap();
+    git::run_output_in(repo.path(), &["fetch", "origin"]).unwrap();
+    assert_eq!(probe_count(), 2);
+    let audit = fs::read_to_string(audit).unwrap();
+    assert!(audit.contains("\"cached\":false"));
+    assert!(!audit.contains("\"cached\":true"));
+}

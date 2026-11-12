@@ -210,3 +210,22 @@ fn a_verification_is_not_reused_under_a_different_audit_state_root() {
     let record = &read_audit(&other.join("forge-cli/identity-audit.jsonl"))[0];
     assert_eq!(record["actor_verification"]["cached"], false);
 }
+
+#[test]
+fn a_verification_is_not_cached_when_its_authorization_could_not_be_audited() {
+    let h = Harness::new();
+    let audit = h.home.path().join("state/forge-cli/identity-audit.jsonl");
+    // A directory in place of the audit log makes the authorized record unwritable.
+    fs::create_dir_all(&audit).unwrap();
+    assert_eq!(
+        h.authorize().err().unwrap().code,
+        "identity_audit_unavailable"
+    );
+    assert_eq!(h.probes(), 1);
+    fs::remove_dir(&audit).unwrap();
+    assert_eq!(h.authorize().unwrap().actor, "account-a");
+    assert_eq!(h.probes(), 2);
+    let records = h.audit();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["actor_verification"]["cached"], false);
+}

@@ -21,6 +21,23 @@ pub(super) type Key = [u8; 32];
 pub(super) struct ActorVerification {
     pub cached: bool,
     pub verified_at: String,
+    /// A fresh verification, remembered by [`ActorVerification::commit`].
+    #[serde(skip)]
+    pending: Option<(Key, String)>,
+    /// Held until the verification is dropped, so concurrent callers wait for the
+    /// commit instead of probing again.
+    #[serde(skip)]
+    _flight: Option<MutexGuard<'static, ()>>,
+}
+
+impl ActorVerification {
+    /// Remember a fresh verification. Call it only once its `authorized` audit
+    /// record is written, so a cached verification was always audited.
+    pub(super) fn commit(&self) {
+        if let Some((key, actor)) = &self.pending {
+            store_at(*key, actor, &self.verified_at, probe::now());
+        }
+    }
 }
 
 struct Entry {
@@ -32,8 +49,8 @@ struct Entry {
 static CACHE: LazyLock<Mutex<BTreeMap<Key, Entry>>> = LazyLock::new(Default::default);
 static VERIFYING: Mutex<()> = Mutex::new(());
 
-/// Held while a missing verification is probed, so concurrent managed calls in one
-/// process wait for it and reuse the result instead of each probing the actor.
+/// Held while a missing verification is probed and audited, so concurrent managed
+/// calls in one process wait for it and reuse the result instead of each probing.
 pub(super) fn single_flight() -> MutexGuard<'static, ()> {
     VERIFYING.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -98,18 +115,23 @@ pub(super) fn lookup(auth: &Authorization) -> Option<(String, ActorVerification)
             ActorVerification {
                 cached: true,
                 verified_at,
+                pending: None,
+                _flight: None,
             },
         )
     })
 }
 
-/// Remember a successful verification and report it as a fresh probe.
-pub(super) fn store(auth: &Authorization) -> ActorVerification {
-    let verified_at = jiff::Timestamp::now().to_string();
-    store_at(key(auth), &auth.actor, &verified_at, probe::now());
+/// Report a successful probe. It is cached only when the caller commits it.
+pub(super) fn fresh(
+    auth: &Authorization,
+    flight: Option<MutexGuard<'static, ()>>,
+) -> ActorVerification {
     ActorVerification {
         cached: false,
-        verified_at,
+        verified_at: jiff::Timestamp::now().to_string(),
+        pending: Some((key(auth), auth.actor.clone())),
+        _flight: flight,
     }
 }
 
@@ -189,7 +211,7 @@ mod tests {
     }
 
     fn reused(stored: &Authorization, other: &Authorization) -> bool {
-        store(stored);
+        fresh(stored, None).commit();
         lookup(other).is_some()
     }
 

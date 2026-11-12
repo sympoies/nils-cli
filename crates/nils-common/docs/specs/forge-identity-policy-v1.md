@@ -348,7 +348,10 @@ and in memory only; nothing is written to disk.
   coverage was checked) and the audit state root. The credential itself is never
   stored or logged.
 - **Only success is cached.** An actor mismatch, missing coverage or any probe
-  failure leaves no entry and is verified again on the next call.
+  failure leaves no entry and is verified again on the next call. A verification
+  is remembered only after its `authorized` audit record is written, so a cached
+  verification was always audited; if that write fails the call is refused and
+  the next call probes again.
 - **Invalidation:** an entry expires after 10 minutes; a different credential,
   host, expected identity or state root is a different key and verifies again; and
   a managed `gh` call that fails with HTTP 401 or 403 drops the entry so the next

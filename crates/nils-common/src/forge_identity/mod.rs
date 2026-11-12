@@ -150,14 +150,17 @@ impl LoadedPolicy {
             .map_err(Clone::clone)
             .and_then(|s| self.verify(s, gh));
         match &result {
-            Ok((auth, verification)) => self.audit_verified(
-                Some(&auth.selection),
-                target,
-                op,
-                "authorized",
-                Some(&auth.actor),
-                Some(verification),
-            )?,
+            Ok((auth, verification)) => {
+                self.audit_verified(
+                    Some(&auth.selection),
+                    target,
+                    op,
+                    "authorized",
+                    Some(&auth.actor),
+                    Some(verification),
+                )?;
+                verification.commit();
+            }
             Err(e) => self.audit(selected.as_ref().ok(), target, op, e.code, None)?,
         }
         result.map(|(auth, _)| auth)
@@ -286,7 +289,7 @@ impl LoadedPolicy {
             expected
         };
         auth.actor = actor;
-        let verification = verified_cache::store(&auth);
+        let verification = verified_cache::fresh(&auth, _flight.take());
         Ok((auth, verification))
     }
     pub fn audit(
