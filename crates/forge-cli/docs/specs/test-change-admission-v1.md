@@ -22,7 +22,7 @@ Each finding names an exact repository-relative file and one of:
 | Kind | Signal |
 | --- | --- |
 | `deleted-test` | Deleted test source file or rename of an old test source path |
-| `deleted-test:<name>` | One removed recognizable test signature or Rust test-module declaration, in any source file including inline `#[cfg(test)]` modules; `<name>` is the function name (for example `deleted-test:extend_applies_one_increment`) or the compacted signature for other syntaxes |
+| `deleted-test:<name>` | One removed recognizable test signature or Rust test-module declaration, in any source file including inline `#[cfg(test)]` modules; `<name>` is the function name (for example `deleted-test:extend_applies_one_increment`) or, for other syntaxes, the compacted signature (JavaScript cases: the quoted title) |
 | `assertion-change` | Removed or edited assertion, including potential weakening |
 | `new-skip` | Added skip, ignore or expected-failure marker |
 | `import-addition` | A declared new mapped file has no upstream counterpart; inspect its complete ordinary patch |

@@ -209,6 +209,49 @@ fn removed(old: &Counts, new: &Counts) -> bool {
     removed_keys(old, new).next().is_some()
 }
 
+/// Count key for one case. A one-line `#[test] fn name() {}` is keyed from its
+/// `fn` so attribute colons cannot merge siblings, and a JS case by its full
+/// quoted title.
+fn case_key(line: &str, compact: &str) -> String {
+    let inline_fn = line
+        .starts_with("#[")
+        .then(|| {
+            line.match_indices("fn ")
+                .find(|(i, _)| line[..*i].ends_with(' '))
+        })
+        .flatten();
+    let compact_fn;
+    let source = match inline_fn {
+        Some((index, _)) => {
+            compact_fn = line[index..]
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>();
+            compact_fn.as_str()
+        }
+        None => compact,
+    };
+    let title_end = source
+        .split_once('(')
+        .and_then(|(call, rest)| {
+            let quote = rest
+                .chars()
+                .next()
+                .filter(|c| matches!(c, '\'' | '"' | '`'))?;
+            let close = rest[1..].find(quote)?;
+            Some(call.len() + 1 + 1 + close + 1)
+        })
+        .filter(|_| inline_fn.is_none());
+    match title_end {
+        Some(end) => source[..end].to_string(),
+        None => source
+            .split(['{', ':'])
+            .next()
+            .unwrap_or(source)
+            .to_string(),
+    }
+}
+
 /// Whitespace-free test label for a case key: the declared function name when
 /// the key starts with a compacted Rust, Python or Go declaration keyword.
 fn case_name(key: &str) -> &str {
@@ -270,12 +313,7 @@ fn signals(lines: &[String], test_path: bool) -> (Counts, Counts, Counts) {
             .iter()
             .any(|p| compact.starts_with(p));
         if case {
-            let key = compact
-                .split(['{', ':'])
-                .next()
-                .unwrap_or(&compact)
-                .to_string();
-            *cases.entry(key).or_default() += 1;
+            *cases.entry(case_key(line, &compact)).or_default() += 1;
             test_attribute = false;
         }
         if !assertion.is_empty()

@@ -137,3 +137,34 @@ fn an_undeclared_inline_test_deletion_fails_even_when_a_sibling_is_declared() {
         "test_changes_undeclared"
     );
 }
+
+fn deleted_kinds(path: &str, before: &str, after: &str) -> Vec<String> {
+    diff::detect(&patch(path, before, after))
+        .unwrap()
+        .iter()
+        .map(|finding| finding.kind.to_string())
+        .collect()
+}
+
+#[test]
+fn one_line_test_forms_are_named_by_their_own_function() {
+    let tokio = "#[tokio::test] async fn keeps() {}\n#[tokio::test] async fn drops_one() {}\n#[tokio::test] async fn drops_two() {}";
+    assert_eq!(
+        deleted_kinds("src/lib.rs", tokio, "#[tokio::test] async fn keeps() {}"),
+        vec!["deleted-test:drops_one", "deleted-test:drops_two"]
+    );
+    let plain = "#[test] fn a1() {}\n#[test] fn a2() {}\n#[test] fn a3() {}";
+    assert_eq!(
+        deleted_kinds("src/lib.rs", plain, "#[test] fn a1() {}"),
+        vec!["deleted-test:a2", "deleted-test:a3"]
+    );
+}
+
+#[test]
+fn javascript_cases_are_named_by_their_full_title() {
+    let before = "it('a: x', () => {});\nit('a: y', () => {});\nit('a: z', () => {});";
+    assert_eq!(
+        deleted_kinds("tests/api.test.ts", before, "it('a: x', () => {});"),
+        vec!["deleted-test:it('a:y'", "deleted-test:it('a:z'"]
+    );
+}

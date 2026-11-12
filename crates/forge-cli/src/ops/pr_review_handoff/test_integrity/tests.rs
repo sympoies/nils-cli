@@ -45,7 +45,7 @@ fn detects_deleted_files_cases_inline_tests_and_weakened_multiline_assertions() 
     );
     assert_eq!(
         kinds(&patch("tests/api.test.ts", "it('contract', () => {});", "")),
-        vec!["deleted-test:it('contract',()=>"]
+        vec!["deleted-test:it('contract'"]
     );
     assert_eq!(
         kinds(&patch(
@@ -203,7 +203,7 @@ fn javascript_module_test_sources_include_all_module_extensions() {
         let path = format!("api.test.{extension}");
         assert_eq!(
             kinds(&patch(&path, "test('contract', () => {});", "")),
-            vec!["deleted-test:test('contract',()=>"]
+            vec!["deleted-test:test('contract'"]
         );
         let deleted = format!(
             "diff --git a/{path} b/{path}\ndeleted file mode 100644\n--- a/{path}\n+++ /dev/null\n@@ -1 +0,0 @@\n-// no recognizable case signature\n"
