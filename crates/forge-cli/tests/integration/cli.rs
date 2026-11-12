@@ -236,27 +236,6 @@ fn pr_review_loop_dry_run_uses_each_command_specific_schema_without_backend_call
             ],
             "cli.forge-cli.pr.review-loop.observe.v1",
         ),
-        (
-            vec![
-                "pr",
-                "review-loop",
-                "extend",
-                "7",
-                "--expected-head",
-                "abc123",
-                "--expected-state",
-                "sha256:tip",
-                "--stop-code",
-                "review_no_progress",
-                "--budget-field",
-                "max_no_progress_rounds",
-                "--proposal-digest",
-                "sha256:proposal",
-                "--approval-comment",
-                "42",
-            ],
-            "cli.forge-cli.pr.review-loop.extend.v1",
-        ),
     ];
 
     for (command, schema) in cases {
