@@ -454,6 +454,11 @@ async fn busy_manual_cancellation_rejects_only_the_turn_and_keeps_proxy_alive() 
         host: None,
     };
     let mut record = record_with_runtime("busy-input", &upstream);
+    record.cwd = tmp
+        .path()
+        .join("private-cwd-sentinel")
+        .to_string_lossy()
+        .into_owned();
     record.extra.insert(
         "codex_account_binding".to_owned(),
         json!({
@@ -558,7 +563,7 @@ async fn busy_manual_cancellation_rejects_only_the_turn_and_keeps_proxy_alive() 
     assert_eq!(receipt["result"]["cause"]["retryable"], true);
     assert_eq!(receipt["result"]["cause"]["binding_state"], "bound");
     assert_eq!(receipt["result"]["cause"]["binding_revision"], 7);
-    assert!(!receipt.to_string().contains("/repo"));
+    assert!(!receipt.to_string().contains(&record.cwd));
     drop(lock);
     tui.send(Message::Text(
         json!({ "id": 2, "method": "thread/read", "params": {} })

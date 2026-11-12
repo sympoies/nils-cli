@@ -355,8 +355,7 @@ fn process_supervisor_capability_boundaries_are_independent_and_fail_closed() {
 fn process_supervisor_rejects_capability_from_non_parent_peer() {
     use std::os::unix::net::UnixListener;
 
-    let root = tempfile::TempDir::new().expect("wrong-peer capability root");
-    let socket_path = root.path().join("capability.sock");
+    let (_root, socket_path) = nils_test_support::short_socket_path("capability.sock");
     let listener = UnixListener::bind(&socket_path).expect("bind wrong-peer capability socket");
     let mut sender = Command::new(env::current_exe().expect("current test executable"))
         .arg("process_supervisor_wrong_peer_sender_test_fixture")
