@@ -731,9 +731,7 @@ fn provider_readiness(config: &RetitleConfig) -> RetitleReadiness {
                 let strategy = config.account_selection.as_deref().expect("validated");
                 match crate::codex_account::select_account(strategy) {
                     Ok(summary) => summary,
-                    Err(_) => {
-                        return RetitleReadiness::unavailable("account_missing", "select_account");
-                    }
+                    Err(error) => return account_readiness::selection_failure(&error),
                 }
             };
             readiness.account = Some(summary.account);
@@ -1134,6 +1132,8 @@ fn context_unavailable() -> CliError {
 #[path = "retitle/history_pairing.rs"]
 mod history_pairing;
 use history_pairing::pair_turns;
+#[path = "retitle/account_readiness.rs"]
+mod account_readiness;
 
 fn select_turns(
     mut turns: Vec<TitleContextTurn>,
