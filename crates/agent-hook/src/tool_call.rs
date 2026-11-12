@@ -1,4 +1,4 @@
-//! Content-free tool-call evidence shared by raw and dispatched Claude hooks.
+//! Tool-call evidence without raw content, shared by raw and dispatched Claude hooks.
 //!
 //! Claude's `PermissionRequest` payload names the tool and carries the same
 //! `tool_input` as the `PreToolUse` that preceded it, but has no `tool_use_id`.

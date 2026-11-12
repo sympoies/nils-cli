@@ -702,7 +702,7 @@ Claude PermissionDenied is observational progress and is registered by managed
 Claude setup. It reports auto-mode denial, not a manual dialog denial. For
 Claude `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PostToolUseFailure`
 and `PermissionDenied` (except `AskUserQuestion`), the activity event carries a
-content-free `tool_call` member built by `agent_hook::tool_call::evidence`: the
+`tool_call` member without raw content, built by `agent_hook::tool_call::evidence`: the
 phase, a runtime-scoped projection of `tool_use_id`, a runtime-scoped
 projection of the tool name and `tool_input`, and a bounded tool name. The
 input and the raw ids never leave the hook, and malformed optional fields omit

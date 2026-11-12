@@ -648,7 +648,7 @@ turn, and runtime boundaries clear all attention.
 
 ### Approval and tool-call correlation
 
-The optional event member `tool_call` carries content-free evidence for Claude
+The optional event member `tool_call` carries evidence without raw content for Claude
 `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PostToolUseFailure` and
 `PermissionDenied` events other than `AskUserQuestion`, which stays exact
 through its own `tool_use_id`. Its fields are `phase` (`started`, `permission`
@@ -693,10 +693,27 @@ Limits:
 - Two open calls with the same tool and input are ambiguous by construction;
   the approval is not bound and a result for either call does not clear it.
 - A result clears the approval when the tool runs after approval, including
-  when the tool itself then fails. Hooks that fail open and drop a `started`
-  leave the approval conservative, never wrongly cleared.
-- Producers and consumers must be upgraded together before using `tool_call`;
-  an older `agent-session` rejects the unknown event key.
+  when the tool itself then fails.
+- A dropped hook delivery is invisible. If the `PreToolUse` of the call that
+  asks is lost while an identical call is open, that open call is the only
+  candidate: the request binds to it as `exact` and its result clears the
+  approval early. No payload field shows a drop, so this cannot be detected;
+  the case needs a lost hook and an identical open call.
+- An evicted open call (the 64-call cap) keeps the `exact` mark of the
+  approval bound to it, though no result can clear it any more.
+- No input summary is recorded. The redaction rules exclude tool input, so the
+  approval carries the tool name and nothing else about the call.
+- `input_digest` is SHA-256 over the runtime id, tool name and full input with
+  no secret. It is stored only in the private activity document and journal
+  and is never public, but a short, guessable input can be confirmed offline
+  by a reader of those files; the evidence holds no raw content, not no
+  derivative.
+- Producers and consumers must be upgraded together before using `tool_call`.
+  An older `agent-session` rejects the unknown event key
+  (`activity-event-invalid`). The hook then reports `session-activity-failed`,
+  which only warns for read-only, advisory or off operations and blocks other
+  operations under enforce coordination. Install `agent-session` no later than
+  `agent-hook`, or both in one step.
 
 User-owned or previously configured `permission_prompt` notification reporters
 normalize to the same conservative latch, but the managed setup does not

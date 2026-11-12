@@ -188,7 +188,8 @@ fn an_approval_binds_only_to_a_call_of_the_same_tool() {
         let mut document = document();
         let mut request = json!({
             "hook_event_name": "PermissionRequest", "session_id": "session-1",
-            "prompt_id": "turn-1", "tool_input": {"command": COMMAND_A},
+            "prompt_id": "turn-1",
+            "tool_input": {"command": COMMAND_A, "description": "free text"},
         });
         if let Some(tool) = tool {
             request["tool_name"] = json!(tool);
@@ -223,6 +224,145 @@ fn an_approval_binds_only_to_a_call_of_the_same_tool() {
         );
         assert_eq!(document.state.phase, TurnPhase::NeedsInput, "{name}");
     }
+}
+
+#[test]
+fn a_request_does_not_bind_a_call_left_over_from_another_turn() {
+    let mut document = document();
+    run(
+        &mut document,
+        [
+            start("turn-1"),
+            hook("PreToolUse", "turn-1", Some("call-old"), "Bash", COMMAND_A),
+            start("turn-2"),
+            hook("PermissionRequest", "turn-2", None, "Bash", COMMAND_A),
+        ],
+    );
+    assert_eq!(
+        attention(&document).unwrap().certainty,
+        AttentionCertainty::Conservative
+    );
+}
+
+#[test]
+fn starting_a_call_in_a_new_turn_drops_the_calls_of_the_old_turn() {
+    let mut document = document();
+    run(
+        &mut document,
+        [
+            start("turn-1"),
+            hook("PreToolUse", "turn-1", Some("call-old"), "Bash", COMMAND_A),
+            start("turn-2"),
+            hook("PreToolUse", "turn-2", Some("call-new"), "Bash", COMMAND_B),
+        ],
+    );
+    let stored = serde_json::to_value(&document).unwrap();
+    assert_eq!(stored["open_tool_calls"].as_array().map(Vec::len), Some(1));
+}
+
+#[test]
+fn a_second_identical_request_does_not_rebind_a_bound_call() {
+    let mut document = document();
+    run(
+        &mut document,
+        [
+            start("turn-1"),
+            hook("PreToolUse", "turn-1", Some("call-1"), "Bash", COMMAND_A),
+            hook("PermissionRequest", "turn-1", None, "Bash", COMMAND_A),
+            hook("PermissionRequest", "turn-1", None, "Bash", COMMAND_A),
+        ],
+    );
+    assert_eq!(attention(&document).unwrap().pending_count, 2);
+
+    // The result clears the approval bound to its call; the second request
+    // had no call of its own and must remain, conservative.
+    run(
+        &mut document,
+        [hook(
+            "PostToolUse",
+            "turn-1",
+            Some("call-1"),
+            "Bash",
+            COMMAND_A,
+        )],
+    );
+    let remaining = attention(&document).expect("the unbound request remains");
+    assert_eq!(remaining.pending_count, 1);
+    assert_eq!(remaining.certainty, AttentionCertainty::Conservative);
+}
+
+#[test]
+fn an_identical_call_started_later_gets_its_own_binding() {
+    let mut document = document();
+    run(
+        &mut document,
+        [
+            start("turn-1"),
+            hook("PreToolUse", "turn-1", Some("call-1"), "Bash", COMMAND_A),
+            hook("PermissionRequest", "turn-1", None, "Bash", COMMAND_A),
+            hook("PreToolUse", "turn-1", Some("call-2"), "Bash", COMMAND_A),
+            hook("PermissionRequest", "turn-1", None, "Bash", COMMAND_A),
+        ],
+    );
+    run(
+        &mut document,
+        [hook(
+            "PostToolUse",
+            "turn-1",
+            Some("call-1"),
+            "Bash",
+            COMMAND_A,
+        )],
+    );
+    let remaining = attention(&document).expect("the second approval remains");
+    assert_eq!(remaining.pending_count, 1);
+    assert_eq!(remaining.certainty, AttentionCertainty::Exact);
+
+    run(
+        &mut document,
+        [hook(
+            "PostToolUse",
+            "turn-1",
+            Some("call-2"),
+            "Bash",
+            COMMAND_A,
+        )],
+    );
+    assert_eq!(document.state.phase, TurnPhase::Working);
+}
+
+#[test]
+fn a_lost_pre_tool_use_can_bind_the_request_to_an_identical_open_call() {
+    // Known limit, documented in the turn-state contract: when the
+    // PreToolUse of the call that asks is lost, an identical open call is the
+    // only candidate, so the request binds to it and that call's result
+    // clears the approval early. No hook payload shows that a delivery was
+    // dropped, so this cannot be detected.
+    let mut document = document();
+    run(
+        &mut document,
+        [
+            start("turn-1"),
+            hook("PreToolUse", "turn-1", Some("call-a1"), "Bash", COMMAND_A),
+            // The identical second call's PreToolUse never arrives.
+            hook("PermissionRequest", "turn-1", None, "Bash", COMMAND_A),
+        ],
+    );
+    assert_eq!(
+        attention(&document).unwrap().certainty,
+        AttentionCertainty::Exact
+    );
+    run(
+        &mut document,
+        [hook(
+            "PostToolUse",
+            "turn-1",
+            Some("call-a1"),
+            "Bash",
+            COMMAND_A,
+        )],
+    );
+    assert_eq!(document.state.phase, TurnPhase::Working);
 }
 
 #[test]
