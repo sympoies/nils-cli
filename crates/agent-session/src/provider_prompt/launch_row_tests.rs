@@ -135,7 +135,7 @@ fn pasted_header_without_a_binding_still_shows() {
     let path = tmp.path().join("synthetic.jsonl");
     launched(&path);
     let truncated = long_notice_echo();
-    for echo in [wrapped(), truncated] {
+    for echo in [wrapped(), truncated, short_notice_echo()] {
         append(
             &path,
             json!({"type":"last-prompt", "sessionId":"synthetic", "lastPrompt":echo}),
@@ -203,4 +203,76 @@ fn truncated_text_that_is_not_a_notice_prefix_stays_visible_under_a_binding() {
     );
     let mut cold = open(&path, &binding);
     assert_eq!(current(&mut cold), Some(other));
+}
+
+/// A notice shorter than the echo limit is echoed whole, newlines flattened
+/// to spaces and no ellipsis.
+fn short_notice_echo() -> String {
+    NOTICE.replace('\n', " ")
+}
+
+#[test]
+fn short_flattened_launch_row_echoes_do_not_become_the_last_prompt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("synthetic.jsonl");
+    let binding = launched(&path);
+    let flat = short_notice_echo();
+    assert!(flat.chars().count() < 200);
+    let echoes = [
+        json!({"type":"last-prompt", "sessionId":"synthetic", "lastPrompt":flat}),
+        json!({"type":"last-prompt", "sessionId":"synthetic", "lastPrompt":flat.trim()}),
+        json!({"type":"queue-operation", "operation":"enqueue", "sessionId":"synthetic",
+        "content":flat}),
+    ];
+    for echo in echoes {
+        append(&path, echo.clone());
+        let mut cold = open(&path, &binding);
+        assert_eq!(current(&mut cold), None, "cold: {echo}");
+        let mut live = open(&path, &binding);
+        append(&path, echo.clone());
+        assert_eq!(current(&mut live), None, "live: {echo}");
+    }
+}
+
+#[test]
+fn flattened_text_that_differs_from_the_notice_stays_visible_under_a_binding() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("synthetic.jsonl");
+    let binding = launched(&path);
+    let other = short_notice_echo().replace("Synthetic task", "Different task");
+    append(
+        &path,
+        json!({"type":"last-prompt", "sessionId":"synthetic", "lastPrompt":other}),
+    );
+    let mut cold = open(&path, &binding);
+    assert_eq!(current(&mut cold), Some(other));
+}
+
+/// Each guard of the truncated-prefix predicate, alone, keeps a non-echo
+/// visible under a binding.
+#[test]
+fn truncated_prefix_guards_each_keep_a_non_echo_visible_under_a_binding() {
+    let notice = long_notice();
+    let flat = notice.replace('\n', " ");
+    let cut = |skip: usize, take: usize| flat.chars().skip(skip).take(take).collect::<String>();
+    let cases = [
+        // Ellipsis required: the same prefix without `…` is not an echo.
+        ("no ellipsis", cut(0, 200)),
+        // Header check: a prefix that stops before the header closes.
+        ("short of the header", format!("{}…", cut(0, 20))),
+        // Prefix anchoring: a header-bearing slice from the middle of the text.
+        ("not anchored", format!("{}…", cut(1, 200))),
+    ];
+    for (name, echo) in cases {
+        assert!(flat.contains(echo.trim_end_matches('…')), "{name}");
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("synthetic.jsonl");
+        let binding = launched_notice(&path, &notice);
+        append(
+            &path,
+            json!({"type":"last-prompt", "sessionId":"synthetic", "lastPrompt":echo}),
+        );
+        let mut cold = open(&path, &binding);
+        assert_eq!(current(&mut cold), Some(echo), "{name}");
+    }
 }

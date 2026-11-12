@@ -311,7 +311,7 @@ fn run_inner(
         IdentityCommand::Explain { operation } => (false, operation.operation()),
         IdentityCommand::Doctor { operation } => (true, operation.operation()),
     };
-    let policy = identity::load().map_err(error)?;
+    let policy = identity::load_ungated().map_err(error)?;
     let mut payload = Explanation {
         enforced: policy.is_some(),
         selection: None,

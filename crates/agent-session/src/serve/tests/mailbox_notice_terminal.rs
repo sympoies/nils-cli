@@ -433,3 +433,29 @@ async fn stale_codex_wake_saves_draft_and_delivers_once() {
         1
     );
 }
+
+#[tokio::test]
+async fn mailbox_notice_unbound_terminal_codex_settles_without_unbounded_retry() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let fixture = WakeFixture::new(AgentKind::Codex).await;
+    let record = load_session_record(&fixture.state.context, "beta").unwrap();
+    assert!(
+        record.provider_resume.is_none(),
+        "fixture models a terminal-started record with no provider binding"
+    );
+    drain_coordination_notifications(fixture.state.clone()).await;
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_ne!(receipt["state"], "queued", "{receipt}");
+    assert_ne!(
+        receipt["last_reason"], "provider-observation-unavailable",
+        "{receipt}"
+    );
+    assert_eq!(receipt["attempted_generation"], 1, "{receipt}");
+    drain_coordination_notifications(fixture.state.clone()).await;
+    assert_eq!(
+        notification_fixture(fixture.temp.path()),
+        receipt,
+        "a settled wake is not retried"
+    );
+}

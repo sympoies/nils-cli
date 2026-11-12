@@ -134,3 +134,42 @@ fn governed_https_fetch_reports_account_mismatch_and_fix_hint() {
     );
     assert!(!rendered.contains("FIXTURE_CLI_HELPER_CANARY"));
 }
+
+#[test]
+fn transport_ignores_the_unasserted_noninteractive_gate() {
+    use nils_test_support::cmd::run_with;
+    use std::fs;
+
+    let harness = GitCliHarness::new();
+    let repo = init_repo();
+    git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:example/project.git",
+        ],
+    );
+    let policy = include_str!("../../../nils-common/tests/fixtures/identity/policy.toml");
+    fs::create_dir_all(harness.xdg_config_home().join("forge-cli")).unwrap();
+    fs::write(
+        harness.xdg_config_home().join("forge-cli/identity.toml"),
+        format!("activation='asserted-only'\nunasserted_noninteractive='deny'\n{policy}"),
+    )
+    .unwrap();
+    let state = harness.xdg_config_home().join("state");
+    let options = harness
+        .cmd_options(repo.path())
+        .with_env("XDG_STATE_HOME", &state.to_string_lossy())
+        .with_env("AGENT_SESSION_ID", "example-session")
+        .with_env_remove("FORGE_IDENTITY_PRINCIPAL");
+    let out = run_with(
+        &harness.git_cli_bin(),
+        &["transport", "status", "--format", "json"],
+        &options,
+    );
+    assert_eq!(out.code, 0, "{}", out.stderr_text());
+    assert!(!out.stderr_text().contains("FORGE_IDENTITY_PRINCIPAL"));
+    assert!(!state.exists());
+}

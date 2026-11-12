@@ -12,6 +12,7 @@ pub(crate) mod delegation;
 pub(crate) mod delete;
 mod forwarding;
 mod heartbeat_state;
+mod lock_holder;
 pub mod mailbox;
 mod mailbox_quota;
 mod mailbox_sender_relation;
@@ -166,12 +167,16 @@ struct IdempotencyReceipt {
 
 pub(crate) struct LockedRegistry {
     _lock: File,
+    holder: Option<lock_holder::PublishedHolder>,
     path: PathBuf,
     pub registry: Registry,
 }
 
 impl Drop for LockedRegistry {
     fn drop(&mut self) {
+        // Retire the descriptor while still holding the lock, so a successor's
+        // descriptor is never removed.
+        drop(self.holder.take());
         // SAFETY: the descriptor remains owned by `_lock` for this call.
         unsafe {
             libc::flock(self._lock.as_raw_fd(), libc::LOCK_UN);
@@ -903,7 +908,12 @@ pub(crate) fn authenticate_reminder_from_file(
     }
     let record = load_session_record(context, session_id).map_err(|_| unauthorized())?;
     let incarnation = incarnation(&record)?;
-    let locked = lock_registry_within(context, RegistryMaintenance::Full, REMINDER_LOCK_TIMEOUT)?;
+    let locked = lock_registry_within(
+        context,
+        RegistryMaintenance::Full,
+        lock_holder::HolderClass::Reminder,
+        REMINDER_LOCK_TIMEOUT,
+    )?;
     verify_capability_token(context, &locked.registry, &record, &incarnation, &token)?;
     Ok((record, incarnation, locked))
 }
@@ -1075,6 +1085,7 @@ pub(crate) fn lock_registry_for_lifecycle(
         lock_registry_within(
             context,
             RegistryMaintenance::Full,
+            lock_holder::HolderClass::Lifecycle,
             remaining.min(LOCK_TIMEOUT),
         )
     })
@@ -1131,16 +1142,23 @@ fn lock_registry_with_maintenance(
     context: &CliContext,
     maintenance: RegistryMaintenance,
 ) -> Result<LockedRegistry, CliError> {
-    lock_registry_within(context, maintenance, LOCK_TIMEOUT)
+    let class = match maintenance {
+        RegistryMaintenance::Full => lock_holder::HolderClass::FullMaintenance,
+        RegistryMaintenance::Observational => lock_holder::HolderClass::Observational,
+    };
+    lock_registry_within(context, maintenance, class, LOCK_TIMEOUT)
 }
 
 fn lock_registry_within(
     context: &CliContext,
     maintenance: RegistryMaintenance,
+    class: lock_holder::HolderClass,
     timeout: Duration,
 ) -> Result<LockedRegistry, CliError> {
     let root = coordination_root(context)?;
-    let lock = lock_private_store_within(context, REGISTRY_LOCK, timeout)?;
+    let lock = lock_private_store_within(context, REGISTRY_LOCK, timeout)
+        .map_err(|error| lock_holder::annotate_timeout(&root, error))?;
+    let holder = lock_holder::PublishedHolder::publish(&root, class);
     let path = root.join(REGISTRY_FILE);
     let mut registry = match read_private_file(&path, MAX_REGISTRY_BYTES) {
         Ok(bytes) => {
@@ -1279,6 +1297,7 @@ fn lock_registry_within(
     }
     let mut locked = LockedRegistry {
         _lock: lock,
+        holder,
         path,
         registry,
     };
@@ -2943,3 +2962,6 @@ mod receipt_byte_budget_tests {
 
 #[cfg(test)]
 mod contention_tests;
+
+#[cfg(test)]
+mod lock_holder_tests;

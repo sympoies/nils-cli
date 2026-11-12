@@ -263,6 +263,10 @@ impl GitCliHarness {
         }
     }
 
+    pub fn xdg_config_home(&self) -> &Path {
+        &self.xdg_config_home
+    }
+
     pub fn git_cli_bin(&self) -> PathBuf {
         self.git_cli_path.clone()
     }
