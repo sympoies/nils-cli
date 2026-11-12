@@ -83,7 +83,17 @@ pub(crate) fn echoes_notice(value: &Value, text: &str) -> bool {
         Some("queue-operation") if value["operation"] == "enqueue" => value["content"].as_str(),
         _ => None,
     };
-    echoed.is_some_and(|echoed| unwrap_paste(echoed) == Some(text) || truncated_echo(echoed, text))
+    echoed.is_some_and(|echoed| {
+        unwrap_paste(echoed) == Some(text)
+            || flattened_echo(echoed, text)
+            || truncated_echo(echoed, text)
+    })
+}
+
+/// Claude flattens a notice shorter than its echo limit to single-line text
+/// without an ellipsis, so the whole notice survives with whitespace changed.
+fn flattened_echo(echoed: &str, text: &str) -> bool {
+    echoed.split_whitespace().eq(text.split_whitespace())
 }
 
 /// Claude's display echo flattens newlines to spaces and cuts long text to

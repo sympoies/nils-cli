@@ -30,6 +30,9 @@ pub struct Policy {
     pub gitlab_hosts: Vec<String>,
     #[serde(default)]
     pub activation: Activation,
+    /// Only consulted when `activation = "asserted-only"` and no principal is asserted.
+    #[serde(default)]
+    pub unasserted_noninteractive: super::UnassertedMode,
     #[serde(default)]
     pub require_session_binding: bool,
     #[serde(default)]

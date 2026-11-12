@@ -1,4 +1,6 @@
-use super::{Authorization, Error, Operation, Profile, Result, Target, load, managed_path};
+use super::{
+    Authorization, Error, Operation, Profile, Result, Target, load, load_ungated, managed_path,
+};
 use std::path::Path;
 use std::process::Command;
 
@@ -181,7 +183,8 @@ pub fn target_for_remote(cwd: Option<&Path>, remote: &str, push: bool) -> Result
     let parsed =
         crate::git::parse_git_remote_url(url).ok_or(Error::new("identity_target_unknown"))?;
     let parsed_host = crate::git::canonical_git_host(&parsed.host);
-    let policy = load()?;
+    // Only reads the configured GitLab hosts: no provider account is used, so no unasserted gate.
+    let policy = load_ungated()?;
     let is_gitlab = parsed_host == "gitlab.com"
         || policy.as_ref().is_some_and(|policy| {
             policy

@@ -69,6 +69,12 @@ recorded in `sympoies/nils-cli#1409`.
   Accepted Claude `queue-operation` enqueue records and human `queued_command` attachments update
   both cold and incremental previews immediately, including input accepted during a running turn.
   Stale `last-prompt` markers cannot replace a newer human prompt.
+  For a Claude session started with a launch notice, `last-prompt` and queued-input echoes of the
+  receipt-bound notice never become `last_prompt`. An echo counts as the notice when it equals it
+  (including inside the paste envelope), equals it after whitespace flattening with no ellipsis (a notice
+  under the provider's echo limit), or is a flattened prefix that ends in `…` and covers the whole header
+  line. Matching is keyed to the launch binding: without it, or for text that differs from the bound
+  notice, the same text stays visible. A later queued notice is not covered.
 
   `data.capabilities.last_message: true` advertises an optional `last_message` object:
   `{ role: "user" | "assistant" | "notice", text, submitted_at?, truncated, row_class?, compaction? }`.

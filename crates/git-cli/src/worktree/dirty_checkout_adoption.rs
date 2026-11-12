@@ -1503,13 +1503,7 @@ fn snapshot_worker_executable() -> Result<SnapshotWorkerExecutable> {
         let executable_dir = current
             .parent()
             .context("current executable has no parent directory")?;
-        let target_dir = if executable_dir.file_name() == Some(OsStr::new("deps")) {
-            executable_dir
-                .parent()
-                .context("test executable directory has no parent")?
-        } else {
-            executable_dir
-        };
+        let target_dir = super::cargo_layout::profile_dir(executable_dir);
         fs::canonicalize(target_dir.join("git-cli"))
             .context("dirty snapshot worker executable is unavailable")?
     };
@@ -5973,24 +5967,24 @@ fn trusted_git_executable() -> Result<PathBuf> {
 }
 
 fn trusted_system_git_owner(uid: u32) -> bool {
-    if uid == 0 {
-        return true;
-    }
+    uid == 0 || trusted_unmapped_host_root_owner(uid)
+}
 
-    #[cfg(target_os = "linux")]
-    {
-        let Ok(overflow_uid) = read_linux_overflow_uid() else {
-            return false;
-        };
-        let Ok(uid_map) =
-            read_bounded_proc_text(Path::new(LINUX_UID_MAP_PATH), MAX_LINUX_UID_MAP_BYTES)
-        else {
-            return false;
-        };
-        linux_overflow_uid_proves_unmapped_host_root(uid, overflow_uid, &uid_map)
-    }
+#[cfg(target_os = "linux")]
+fn trusted_unmapped_host_root_owner(uid: u32) -> bool {
+    let Ok(overflow_uid) = read_linux_overflow_uid() else {
+        return false;
+    };
+    let Ok(uid_map) =
+        read_bounded_proc_text(Path::new(LINUX_UID_MAP_PATH), MAX_LINUX_UID_MAP_BYTES)
+    else {
+        return false;
+    };
+    linux_overflow_uid_proves_unmapped_host_root(uid, overflow_uid, &uid_map)
+}
 
-    #[cfg(not(target_os = "linux"))]
+#[cfg(not(target_os = "linux"))]
+fn trusted_unmapped_host_root_owner(_uid: u32) -> bool {
     false
 }
 
