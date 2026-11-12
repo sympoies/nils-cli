@@ -117,7 +117,7 @@ pub struct AddArgs {
 
 #[derive(Args, Debug)]
 #[command(
-    after_help = "STDIN: non-terminal UTF-8 through EOF; final LF is part of the value. Empty is allowed; NUL and CR are refused. Quotes, backslashes, dollars and LF are escaped in a double-quoted dotenv value. No shell evaluation. Requires a clean governed non-default managed store worktree. Encrypted write success leaves signed commit/PR delivery pending; follow the returned next_actions in the selected store."
+    after_help = "STDIN: non-terminal UTF-8 through EOF; final LF is part of the value. Empty is allowed; NUL and CR are refused. The value is stored bare as KEY=value; only LF is encoded, as \\n. A literal backslash followed by n is refused. No shell evaluation. Requires a clean governed non-default managed store worktree. Encrypted write success leaves signed commit/PR delivery pending; follow the returned next_actions in the selected store."
 )]
 pub struct SetArgs {
     /// Selected entry, using the same name resolution as pull/which
