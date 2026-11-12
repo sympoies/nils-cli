@@ -182,9 +182,9 @@ fn termination_fails_closed_when_scope_removal_cannot_be_read() {
 
     let terminated = scoped.terminate();
 
-    // Forget the stale descriptor so it is never closed a second time.
+    // Release the stale descriptor without closing it a second time.
     let group = scoped.runtime.control_group.as_mut().unwrap();
-    std::mem::forget(std::mem::replace(&mut group.directory_fd, live_directory));
+    let _released = std::mem::replace(&mut group.directory_fd, live_directory).into_raw_fd();
     assert_eq!(
         terminated,
         Err(SessionTerminationFailure::VerificationFailed)
