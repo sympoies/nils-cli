@@ -18,7 +18,9 @@
   caller (argv0 and parent) per hour, tracked by a stamp file under
   `forge-cli/unasserted-callers` in the state root, so scheduled automation
   writes at most 24 lines a day per caller. The decision is local (environment
-  and policy file): no identity probe and no provider call is added.
+  and policy file): no identity probe and no provider call is added. The cap
+  holds for sequential runs; parallel first runs can each record, and under
+  `deny` the generic refusal record is uncapped.
 - Runs that assert a principal, `identity explain`/`doctor`, and raw `gh`
   callers are unaffected.
 

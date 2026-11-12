@@ -165,3 +165,28 @@ fn audit_records_are_capped_to_one_per_caller_per_hour() {
     assert!(identity::load().unwrap().is_none());
     assert_eq!(env.audit().unwrap().lines().count(), 2);
 }
+
+#[test]
+fn deny_honours_the_audit_cap_but_still_refuses() {
+    let env = Env::new(Some("deny"));
+    for _ in 0..2 {
+        assert_eq!(
+            identity::load().err().unwrap().code,
+            "identity_unasserted_noninteractive"
+        );
+    }
+    assert_eq!(env.audit().unwrap().lines().count(), 1);
+}
+
+#[test]
+fn distinct_callers_each_get_a_record() {
+    let env = Env::new(Some("warn"));
+    assert!(identity::load().unwrap().is_none());
+    let stamps = env.root.path().join("state/forge-cli/unasserted-callers");
+    let entry = fs::read_dir(&stamps).unwrap().next().unwrap().unwrap();
+    // A different caller has no stamp yet: removing this one models it.
+    fs::remove_file(entry.path()).unwrap();
+    identity::reset_unasserted_notice_for_tests();
+    assert!(identity::load().unwrap().is_none());
+    assert_eq!(env.audit().unwrap().lines().count(), 2);
+}

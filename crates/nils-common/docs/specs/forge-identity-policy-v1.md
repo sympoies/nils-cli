@@ -117,12 +117,14 @@ pass-through, where no principal is asserted.
 - Audit volume: at most one record per caller (argv0 and parent) per hour, tracked
   by a stamp file under `forge-cli/unasserted-callers` in the state root; the
   warning itself prints once per process. The decision is local and adds no
-  identity probe or provider call.
+  identity probe or provider call. The cap holds for sequential runs; parallel first
+  runs of one caller can each record before the stamp exists, and under `deny` the
+  generic refusal record is uncapped.
 - The record's `outcome` is `unasserted_noninteractive_warned` or
   `unasserted_noninteractive_denied`. It holds only `caller.argv0` and
   `caller.parent` (base names), never environment values, tokens or paths.
 - A run that asserts a principal, including the shared account's own, is unaffected,
-  as are `identity explain`, `identity doctor` and raw `gh` callers.
+  as are `identity explain`, `identity doctor`, `git-cli transport` and raw `gh` callers.
 
 ## Authenticated launch binding
 

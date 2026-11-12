@@ -29,7 +29,7 @@ impl Fixture {
         fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).unwrap();
         Self { home }
     }
-    fn run(&self, principal: Option<&str>) -> Output {
+    fn base(&self) -> Command {
         let mut command = Command::new(resolve("forge-cli"));
         command
             .args([
@@ -49,10 +49,35 @@ impl Fixture {
             .env("FORGE_CLI_RATE_LIMIT_GATE", "off")
             .env("FIXTURE_CREDENTIAL", CANARY)
             .env("FIXTURE_CALL_LOG", self.home.path().join("calls"))
-            .env("AGENT_SESSION_ID", "SESSION_CANARY_91")
             .env_remove("FORGE_IDENTITY_PRINCIPAL");
+        command
+    }
+    fn run(&self, principal: Option<&str>) -> Output {
+        let mut command = self.base();
+        command.env("AGENT_SESSION_ID", "SESSION_CANARY_91");
         if let Some(principal) = principal {
             command.env("FORGE_IDENTITY_PRINCIPAL", principal);
+        }
+        command.output().unwrap()
+    }
+    /// Run with no automation marker, giving the child a pseudo-terminal on the named streams.
+    fn run_with_terminal(&self, terminal: &str) -> Output {
+        let base = self.base();
+        let mut command = Command::new("python3");
+        command.args([
+            "-c",
+            "import subprocess,sys,pty\nm,s=pty.openpty()\nmode=sys.argv[1]\np=subprocess.run(sys.argv[2:],stdin=s if mode in('both','stdin') else subprocess.DEVNULL,stdout=s if mode in('both','stdout') else subprocess.PIPE,stderr=subprocess.PIPE,timeout=20)\nsys.stderr.buffer.write(p.stderr)\nsys.exit(p.returncode)\n",
+            terminal,
+        ]);
+        command.arg(base.get_program()).args(base.get_args());
+        for (key, value) in base.get_envs() {
+            match value {
+                Some(value) => command.env(key, value),
+                None => command.env_remove(key),
+            };
+        }
+        for marker in ["INVOCATION_ID", "GITHUB_ACTIONS", "AGENT_SESSION_ID"] {
+            command.env_remove(marker);
         }
         command.output().unwrap()
     }
@@ -135,4 +160,71 @@ fn warn_and_deny_add_no_provider_calls() {
     assert!(allow > 0);
     assert_eq!(calls("unasserted_noninteractive='warn'\n"), allow);
     assert_eq!(calls("unasserted_noninteractive='deny'\n"), 0);
+}
+
+#[test]
+fn terminals_on_both_streams_are_silent_and_one_terminal_still_warns() {
+    let f = Fixture::new("");
+    let out = f.run_with_terminal("both");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("FORGE_IDENTITY_PRINCIPAL"));
+    assert_eq!(f.audit(), "");
+    for terminal in ["stdin", "stdout", "none"] {
+        let f = Fixture::new("");
+        let out = f.run_with_terminal(terminal);
+        assert_eq!(out.status.code(), Some(0), "{terminal}: {}", stderr(&out));
+        assert!(
+            stderr(&out).contains("FORGE_IDENTITY_PRINCIPAL"),
+            "{terminal}"
+        );
+    }
+}
+
+#[test]
+fn a_closed_stderr_or_unwritable_audit_never_fails_a_warned_run() {
+    let f = Fixture::new("");
+    let base = f.base();
+    let out = Command::new("sh")
+        .args(["-c", "exec \"$0\" \"$@\" 2>&-"])
+        .arg(base.get_program())
+        .args(base.get_args())
+        .envs(base.get_envs().filter_map(|(k, v)| v.map(|v| (k, v))))
+        .env_remove("FORGE_IDENTITY_PRINCIPAL")
+        .env("AGENT_SESSION_ID", "SESSION_CANARY_91")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+
+    let f = Fixture::new("");
+    fs::write(f.home.path().join("state"), b"not a directory").unwrap();
+    let out = f.run(None);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(stderr(&out).contains("FORGE_IDENTITY_PRINCIPAL"));
+}
+
+#[test]
+fn identity_diagnostics_are_not_gated_under_deny() {
+    let f = Fixture::new("unasserted_noninteractive='deny'\n");
+    for command in ["explain", "doctor"] {
+        let base = f.base();
+        let out = Command::new(base.get_program())
+            .args([
+                "--format",
+                "json",
+                "--repo",
+                "sandbox/widget",
+                "identity",
+                command,
+            ])
+            .envs(base.get_envs().filter_map(|(k, v)| v.map(|v| (k, v))))
+            .env("AGENT_SESSION_ID", "SESSION_CANARY_91")
+            .env_remove("FORGE_IDENTITY_PRINCIPAL")
+            .output()
+            .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&out.stdout).contains("identity_unasserted_noninteractive"),
+            "{command}"
+        );
+    }
+    assert!(!f.audit().contains("unasserted_noninteractive"));
 }

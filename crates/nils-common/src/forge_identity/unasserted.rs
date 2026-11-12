@@ -2,7 +2,7 @@
 //! asserting a principal, so they would otherwise silently use the host's default `gh` account.
 use super::{Error, Result, append_audit, state_home};
 use serde::Deserialize;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Environment variables whose presence marks a run as automation regardless of TTYs.
@@ -37,18 +37,24 @@ pub fn is_noninteractive() -> bool {
 /// At most one audit record per caller (argv0 and parent) per window, so scheduled
 /// automation that runs unasserted many times an hour writes a bounded number of lines.
 const AUDIT_WINDOW: std::time::Duration = std::time::Duration::from_secs(3600);
+fn stamp_name(argv0: &str, parent: &str) -> String {
+    format!("{argv0}.{parent}")
+}
+fn within_window(age: std::time::Duration) -> bool {
+    age < AUDIT_WINDOW
+}
 /// True when this caller has no record inside the window; claims the window when it does.
 fn claim_audit_window(argv0: &str, parent: &str) -> bool {
     let Some(state) = state_home() else {
         return true;
     };
     let dir = state.join("forge-cli/unasserted-callers");
-    let stamp = dir.join(format!("{argv0}.{parent}"));
+    let stamp = dir.join(stamp_name(argv0, parent));
     let fresh = std::fs::metadata(&stamp)
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.elapsed().ok())
-        .is_some_and(|age| age < AUDIT_WINDOW);
+        .is_some_and(within_window);
     if fresh {
         return false;
     }
@@ -137,7 +143,9 @@ pub(super) fn gate(mode: Mode) -> Result<()> {
             FIX_TEXT.into(),
         ));
     }
-    eprintln!(
+    // A closed stderr pipe must not fail (or panic) the run.
+    let _ = writeln!(
+        std::io::stderr(),
         "warning: forge identity: no principal asserted in a non-interactive run; {FIX_TEXT}"
     );
     // A warning must not fail the run; an unwritable audit trail only loses the record.
@@ -145,4 +153,28 @@ pub(super) fn gate(mode: Mode) -> Result<()> {
         let _ = append_audit(&record);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn audit_window_covers_one_hour() {
+        assert!(within_window(Duration::from_secs(59 * 60)));
+        assert!(!within_window(Duration::from_secs(61 * 60)));
+    }
+    #[test]
+    fn each_caller_pair_has_its_own_stamp() {
+        let all = [
+            stamp_name("forge-cli", "systemd"),
+            stamp_name("forge-cli", "bash"),
+            stamp_name("git-cli", "systemd"),
+        ];
+        assert_eq!(
+            all.iter().collect::<std::collections::BTreeSet<_>>().len(),
+            3
+        );
+    }
 }
