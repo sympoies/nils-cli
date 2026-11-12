@@ -99,6 +99,27 @@ no alternate profile or active-account fallback occurs.
 key matching that exact fingerprint. API reads/writes and Git transport do not
 require the signer; `doctor` checks both credential and signing readiness.
 
+## Unasserted non-interactive runs
+
+Optional root-level `unasserted_noninteractive = "allow" | "warn" | "deny"`
+(default `warn`). It applies only to the `activation = "asserted-only"`
+pass-through, where no principal is asserted.
+
+- Non-interactive: stdin or stdout is not a TTY, or `INVOCATION_ID`,
+  `GITHUB_ACTIONS` or `AGENT_SESSION_ID` is set. Interactive runs are never affected.
+- `warn`: one stderr line per process names the fix (set `FORGE_IDENTITY_PRINCIPAL`,
+  or set `unasserted_noninteractive = "allow"` to keep the shared default account
+  on purpose), an audit record is appended, and the run continues. A failed audit
+  append does not fail the run.
+- `deny`: the audit record is appended and the run refuses with
+  `identity_unasserted_noninteractive` (DATA, exit 65) carrying the same fix text.
+- `allow`: silent.
+- The record's `outcome` is `unasserted_noninteractive_warned` or
+  `unasserted_noninteractive_denied`. It holds only `caller.argv0` and
+  `caller.parent` (base names), never environment values, tokens or paths.
+- A run that asserts a principal, including the shared account's own, is unaffected,
+  as are `identity explain`, `identity doctor` and raw `gh` callers.
+
 ## Authenticated launch binding
 
 `require_session_binding = true` opts managed calls into the authenticated launch
@@ -390,7 +411,7 @@ partial success if an execution completed before a subsequent append failed.
 
 Typed refusal codes include `identity_policy_invalid`, `identity_policy_version`,
 `identity_principal_missing`, `identity_principal_unknown`,
-`identity_repository_unknown`, `identity_rule_ambiguous`, `identity_path_conflict`,
+`identity_repository_unknown`, `identity_unasserted_noninteractive`, `identity_rule_ambiguous`, `identity_path_conflict`,
 `identity_operation_denied`, `identity_target_unknown`, `identity_target_ambiguous`,
 `identity_gitlab_host_not_configured_add_gitlab_hosts`,
 `identity_credential_missing`, `identity_actor_unavailable`,

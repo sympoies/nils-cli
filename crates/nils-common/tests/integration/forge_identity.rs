@@ -969,7 +969,11 @@ fn identity_asserted_only_unset_passthrough_and_asserted_strict_without_credenti
     let _principal = EnvGuard::remove(&lock, "FORGE_IDENTITY_PRINCIPAL");
     fs::create_dir(home.path().join("forge-cli")).unwrap();
     let path = home.path().join("forge-cli/identity.toml");
-    fs::write(&path, format!("activation='asserted-only'\n{FIXTURE}")).unwrap();
+    fs::write(
+        &path,
+        format!("activation='asserted-only'\nunasserted_noninteractive='allow'\n{FIXTURE}"),
+    )
+    .unwrap();
     assert!(identity::load().unwrap().is_none());
     // These are protected operations whose ordinary invocation/config must be
     // left intact, irrespective of provider, remote, repository or signing.

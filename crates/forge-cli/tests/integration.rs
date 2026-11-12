@@ -69,3 +69,6 @@ mod integration {
 }
 #[path = "integration/identity.rs"]
 mod identity;
+#[cfg(unix)]
+#[path = "integration/identity_unasserted.rs"]
+mod identity_unasserted;
