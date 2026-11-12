@@ -3,6 +3,8 @@ use crate::*;
 #[cfg(target_os = "linux")]
 pub(crate) mod cgroup_membership;
 pub(crate) mod split_scope;
+#[cfg(all(test, target_os = "linux"))]
+mod vanished_cgroup_tests;
 
 #[cfg(target_os = "linux")]
 pub(super) const CGROUP_MEMBERSHIP_OBSERVATION_DURATION: Duration = Duration::from_millis(100);
@@ -125,7 +127,17 @@ pub(super) fn terminate_captured_process_runtime(
                 control_group.thaw_on_drop = false;
                 thaw_after_kill
             });
-        kill_pinned_control_group(pinned_runtime)?;
+        match kill_pinned_control_group(pinned_runtime) {
+            Ok(()) => {}
+            // The tmux kill can end every member first, and the manager then
+            // removes the empty scope: its files fail with ENODEV. The pinned
+            // directory proves that stop; the checks below still verify it.
+            Err(SessionTerminationFailure::VerificationFailed)
+                if pinned_runtime.control_group.as_ref().is_some_and(|group| {
+                    pinned_control_group_was_removed(&group.directory_fd).unwrap_or(false)
+                }) => {}
+            Err(reason) => return Err(reason),
+        }
         signal_pinned_process_runtime(pinned_runtime, libc::SIGKILL)?;
         if thaw_after_kill {
             let control_group = pinned_runtime
