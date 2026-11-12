@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `3bdb5872d9a085679f06344001c4da5623cbd11f73e4a890a69d802cbca7f95c`
+- Cargo.lock SHA256: `8e246fcff355b05cec9d00dd844bea7f62c2af2e2374d798cf41bb21355c32f3`
 - Third-party crates (`source != null`): 493
 - Workspace crates (`source == null`, excluded below): 42
 
@@ -71,7 +71,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | arrayvec | 0.7.8 | MIT OR Apache-2.0 | crates.io |
 | async-broadcast | 0.7.2 | MIT OR Apache-2.0 | crates.io |
 | async-channel | 2.5.0 | Apache-2.0 OR MIT | crates.io |
-| async-executor | 1.14.0 | Apache-2.0 OR MIT | crates.io |
+| async-executor | 1.14.1 | Apache-2.0 OR MIT | crates.io |
 | async-io | 2.6.0 | Apache-2.0 OR MIT | crates.io |
 | async-lock | 3.4.2 | Apache-2.0 OR MIT | crates.io |
 | async-process | 2.5.0 | Apache-2.0 OR MIT | crates.io |
@@ -186,7 +186,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | getrandom | 0.4.3 | MIT OR Apache-2.0 | crates.io |
 | gif | 0.14.2 | MIT OR Apache-2.0 | crates.io |
 | git2 | 0.21.0 | MIT OR Apache-2.0 | crates.io |
-| graphql-tools | 0.5.10 | MIT | crates.io |
+| graphql-tools | 0.5.11 | MIT | crates.io |
 | harfrust | 0.12.0 | MIT | crates.io |
 | hashbrown | 0.12.3 | MIT OR Apache-2.0 | crates.io |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 | crates.io |
@@ -363,7 +363,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | roxmltree | 0.21.2 | MIT OR Apache-2.0 | crates.io |
 | rustc-hash | 2.1.2 | Apache-2.0 OR MIT | crates.io |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 | crates.io |
-| rustix | 1.1.4 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io |
+| rustix | 1.1.6 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io |
 | rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT | crates.io |
 | rustls-native-certs | 0.8.4 | Apache-2.0 OR ISC OR MIT | crates.io |
 | rustls-pki-types | 1.14.1 | MIT OR Apache-2.0 | crates.io |

@@ -123,7 +123,7 @@ try {
   const inboxResponse = await fetch(source.url + `/sessions/${source.session}/messages/v1`, { headers: { Authorization: `Bearer ${source.operator}`, 'X-Agent-Session-Capability': source.capability } });
   const inbox = await inboxResponse.json(); assert(!JSON.stringify(inbox).includes('PRIVATE-SERVICE-BODY-CANARY'));
   const showResponse = await fetch(source.url + `/sessions/${source.session}/messages/${local.message_id}/v1`, { headers: { Authorization: `Bearer ${source.operator}`, 'X-Agent-Session-Capability': source.capability } });
-  const show = await showResponse.json(); assert.equal(show.data.coordination.body.classification, 'untrusted_service_data'); assert.equal(show.data.coordination.body.text, row.body);
+  const show = await showResponse.json(); assert.equal(show.data.coordination.body.classification, 'service_message'); assert.equal(show.data.coordination.body.text, row.body);
   assert.equal(show.data.coordination.sender.machine, source.machine);
   const replyResponse = await fetch(source.url + `/sessions/${source.session}/messages/${local.message_id}/reply/v1`, { method: 'POST', headers: { Authorization: `Bearer ${source.operator}`, 'X-Agent-Session-Capability': source.capability, 'Content-Type': 'application/json' }, body: JSON.stringify({ body: 'reply', idempotency_key: 'service-reply-unsupported', if_revision: show.data.coordination.revision }) });
   const reply = await replyResponse.json(); assert.equal(reply.error.code, 'mailbox-service-reply-unsupported');
@@ -224,7 +224,7 @@ try {
   const serviceShownResponse = await fetch(target.url + `/sessions/${target.session}/messages/${serviceCopyId}/v1`, { headers: { Authorization: `Bearer ${target.operator}`, 'X-Agent-Session-Capability': target.capability } });
   assert.equal(serviceShownResponse.status, 200);
   const serviceShown = (await serviceShownResponse.json()).data.coordination;
-  assert.equal(serviceShown.body.classification, 'untrusted_service_data');
+  assert.equal(serviceShown.body.classification, 'service_message');
   assert.equal(serviceShown.forwarding.original_sender.service_id, service.id);
   assert.equal(serviceShown.sender.session_id, source.session);assert.equal(serviceShown.category, 'progress');
   checks.push('service-categories-forward-provenance-preserve-authority');

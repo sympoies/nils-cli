@@ -132,7 +132,7 @@ fn compacted_unknown_attempt_does_not_hide_a_new_remote_generation() {
     assert_eq!(
         crate::provider_prompt::prompt_observed_after(
             &source,
-            &notification::fixed_prompt("recipient", old.queued_at_epoch),
+            &notification::fixed_prompt("target"),
             &old.attempted_at.as_deref().unwrap().parse().unwrap()
         ),
         None,
@@ -205,6 +205,8 @@ fn newer_remote_generation_survives_an_in_flight_attempt_becoming_unknown() {
 
 #[test]
 fn same_generation_unknown_outcome_does_not_authorize_a_duplicate_wake() {
+    let lock = nils_test_support::GlobalStateLock::new();
+    let _writers = nils_test_support::EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let (_temp, context) = tests::fixture();
     let old = old_unknown_attempt(&context);
     assert!(notification::pending(&context).unwrap().is_empty());
@@ -215,6 +217,7 @@ fn same_generation_unknown_outcome_does_not_authorize_a_duplicate_wake() {
     let mut locked = lock_registry(&context).unwrap();
     assert!(
         notification::claim_hook_reminder(
+            &context,
             &mut locked.registry,
             "recipient",
             "recipient-incarnation",
@@ -226,11 +229,14 @@ fn same_generation_unknown_outcome_does_not_authorize_a_duplicate_wake() {
 
 #[test]
 fn drained_remote_mail_suppresses_serve_and_hook_delivery_after_compaction() {
+    let lock = nils_test_support::GlobalStateLock::new();
+    let _writers = nils_test_support::EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let (_temp, context) = tests::fixture();
     let envelope = tests::envelope();
     receive(&context, "destination", envelope.clone()).unwrap();
     let mut locked = lock_registry(&context).unwrap();
     let attempted = notification::claim_hook_reminder(
+        &context,
         &mut locked.registry,
         "recipient",
         "recipient-incarnation",
@@ -251,7 +257,7 @@ fn drained_remote_mail_suppresses_serve_and_hook_delivery_after_compaction() {
     assert_eq!(
         crate::provider_prompt::prompt_observed_after(
             &source,
-            &notification::fixed_prompt("recipient", attempted.queued_at_epoch),
+            &notification::fixed_prompt("target"),
             &attempted.attempted_at.as_deref().unwrap().parse().unwrap()
         ),
         None
@@ -287,6 +293,7 @@ fn drained_remote_mail_suppresses_serve_and_hook_delivery_after_compaction() {
     assert!(notification::deliverable_candidates(&mut locked.registry, now_epoch()).is_empty());
     assert!(
         notification::claim_hook_reminder(
+            &context,
             &mut locked.registry,
             "recipient",
             "recipient-incarnation",

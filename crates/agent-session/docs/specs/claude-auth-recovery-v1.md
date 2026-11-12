@@ -43,8 +43,8 @@ readiness check completes; a failed readiness check leaves it quarantined.
 
 ## Operator recheck
 
-No turn can be admitted while quarantined, so a repaired credential needs an
-explicit exit. `account switch` to the account the session is already bound to
+No turn can be admitted while quarantined. A repaired credential can settle
+through the daemon schedule below or an explicit same-account recheck. `account switch` to the account the session is already bound to
 queues nothing; on a quarantined session it re-runs the broker credential
 preflight and, when the failed launch's publication is known, requires a newer
 publication for that account. Only then it settles the owning incidents as
@@ -52,6 +52,46 @@ publication for that account. Only then it settles the owning incidents as
 `claude-account-recheck-refused` and leaves every receipt unchanged. A recovery or
 failover operation still in flight is never overridden (`recovery_in_progress`),
 and a later authentication failure quarantines the runtime again.
+
+## Scheduled credential recheck
+
+On the existing 15-second observation loop, the daemon schedules same-account
+credential rechecks at +30 seconds, +2 minutes and +10 minutes from the
+incident's observation. Each tick runs at most one due attempt. A delayed daemon
+may run a due attempt on its next tick; it never launches a separate timer.
+The recheck uses the same credential preflight and publication proof as the
+operator recheck. It does not switch accounts, restart the runtime, submit input
+or change the failover policy gate. Existing controller-owned recovery is never
+overridden; `recovery_in_progress` is a recorded refusal.
+
+The session-record lock covers runtime/account validation, credential preflight
+and settlement. Any next-account intent, including an intent on the same runtime,
+cancels this schedule with `next_account_queued`; a changed or missing applied
+account cancels it with `account_changed`. Account selection and queued intent
+remain unchanged. A stale daemon runtime snapshot is refused with
+`runtime_changed`. A successful recheck records `credentials_refreshed` and
+`recovery_path: credential_recheck`, then stops. A later authentication failure
+starts a new incident and schedule. A model-health settlement also stops probes.
+
+`auth_incident.auto_settle` exposes the scheduled runtime incarnation/generation,
+`started_at_epoch`, state (`scheduled`, `settled`, `cancelled`, `exhausted`), fixed
+`refusal` or null, and up to three attempts with `attempted_at_epoch` and a fixed
+`result` (`started`, `credentials_refreshed`, `recovery_in_progress`,
+`credentials_not_republished`, `credential_preflight_refused`, or
+`recheck_unavailable`). Broker details are never copied into this result.
+An attempt is committed as `started` before credential work; a daemon
+crash consumes that attempt, so restarting the daemon cannot repeat it without
+bound. After the last refusal (or an interrupted last attempt), the quarantine
+remains and `recovery_result: recheck_exhausted` triggers the existing final-result
+notification and owner-unavailable escalation. Recording an alert is distinct
+from delivery.
+
+If an incident still fences an in-place replacement runtime on the same account,
+the daemon applies a fresh schedule from that runtime's `started_at`, retaining
+the original incident identity and failed-publication proof. Its projection stays
+visible with the schedule's current runtime selectors. Rebuilding the daemon
+without replacing the runtime preserves the consumed budget. An unrelated
+replacement that is no longer quarantined gets no schedule.
 
 ## Publication prerequisite
 

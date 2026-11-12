@@ -83,7 +83,11 @@ fn versioned_keg(path: &Path) -> Option<VersionedKeg> {
 }
 
 fn binary_name() -> String {
-    format!("agent-session{}", env::consts::EXE_SUFFIX)
+    format!(
+        "{}{}",
+        nils_common::session_binary::NAME,
+        env::consts::EXE_SUFFIX
+    )
 }
 
 fn is_executable_file(path: &Path) -> bool {

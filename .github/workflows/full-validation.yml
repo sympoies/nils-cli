@@ -100,7 +100,7 @@ jobs:
         run: python3 -m pip install 'jsonschema==4.26.0'
 
       - name: Install zsh + xvfb + ripgrep + tmux + bubblewrap
-        run: sudo apt-get update && sudo apt-get install -y zsh xvfb xauth ripgrep tmux bubblewrap
+        run: bash scripts/ci/apt-install-retry.sh zsh xvfb xauth ripgrep tmux bubblewrap
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -173,13 +173,6 @@ jobs:
           path: ${{ env.NILS_CLI_REPORT_DIR }}/nextest/performance/junit.xml
           if-no-files-found: warn
 
-      # Re-run representative tests under a poisoned environment and fail if any
-      # sentinel changes. Only the nightly and manual call in ci.yml sets the
-      # input; release validation and the merge queue never run it.
-      - name: Test isolation guard
-        if: inputs.isolation_guard
-        run: bash scripts/ci/test-env-isolation-guard.sh
-
       - name: Full validation marker
         run: true
 
@@ -251,7 +244,7 @@ jobs:
           node-version: "20"
 
       - name: Install zsh + xvfb + ripgrep + tmux + bubblewrap
-        run: sudo apt-get update && sudo apt-get install -y zsh xvfb xauth ripgrep tmux bubblewrap
+        run: bash scripts/ci/apt-install-retry.sh zsh xvfb xauth ripgrep tmux bubblewrap
 
       # Keep identical to the copy in the test job.
       - name: Provision systemd user scopes
@@ -276,9 +269,84 @@ jobs:
             tests::delete_kills_a_detached_descendant_inside_a_pinned_tmux_control_group \
             -- --exact --nocapture
 
-  test_macos:
+  # Re-run representative tests under a poisoned environment and fail if any
+  # sentinel changes. It runs beside `test` so its 10-12 minutes do not share
+  # that job's time limit. Only the nightly and manual call in ci.yml sets the
+  # input; release validation and the merge queue never run it, and the gate
+  # does not expect it there.
+  isolation_guard:
+    name: Test isolation guard
+    if: inputs.isolation_guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Restore the `test` job's main cache; only that job saves it.
+          shared-key: linux-test
+          save-if: false
+
+      - name: Set up Python for schema fixtures
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install schema fixture dependency
+        run: python3 -m pip install 'jsonschema==4.26.0'
+
+      - name: Install zsh + ripgrep + tmux + bubblewrap
+        run: bash scripts/ci/apt-install-retry.sh zsh ripgrep tmux bubblewrap
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      # Keep identical to the copy in the test job.
+      - name: Provision systemd user scopes
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            # Ubuntu 24.04 denies capabilities inside unprivileged user namespaces
+            # by default; this ephemeral runner must exercise bubblewrap itself.
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          uid="$(id -u)"
+          sudo loginctl enable-linger "${USER}"
+          sudo systemctl start "user@${uid}.service"
+          echo "XDG_RUNTIME_DIR=/run/user/${uid}" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus" >> "$GITHUB_ENV"
+          test -S "/run/user/${uid}/systemd/private"
+
+      - name: Test isolation guard
+        run: bash scripts/ci/test-env-isolation-guard.sh
+
+  # The instrumented macOS suite runs as two nextest partitions on separate
+  # runners. Repository audits, script tests, fmt, clippy and doc tests are not
+  # repeated here: the Linux `test` job runs all of them on the same commit and
+  # `macos_clippy` lints the macOS build on every queue entry. Only the tests
+  # and their coverage data run per partition; `test_macos` merges the data and
+  # enforces the floor.
+  test_macos_partition:
+    name: test_macos_partition (${{ matrix.partition }}/2)
     runs-on: macos-15
-    timeout-minutes: 75
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2]
     permissions:
       contents: read
       checks: write
@@ -297,7 +365,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy, llvm-tools-preview
+          components: llvm-tools-preview
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -311,7 +379,7 @@ jobs:
           # Only main saves. rust-cache stores dependencies, not workspace
           # crates, so a PR copy (~1 GB) adds nothing over main's and just
           # evicts the main caches every run restores.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.partition == 1 }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -345,57 +413,23 @@ jobs:
             cargo-llvm-cov
             cargo-nextest
 
-      # The full lane runs the workspace tests once, instrumented, and enforces
-      # the coverage floor here (NILS_CLI_TEST_RUNNER=llvm-cov). The `coverage`
-      # job then reports from this run's LCOV instead of repeating the whole
-      # suite on a second macOS runner.
-      - name: Build devlog validator
-        run: |
-          cargo build --locked -p nils-devlog
-          devlog_bin_dir="$(mktemp -d "${RUNNER_TEMP}/devlog-bin.XXXXXX")"
-          cp target/debug/devlog "${devlog_bin_dir}/devlog"
-          echo "${devlog_bin_dir}" >> "$GITHUB_PATH"
-
-      - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, docs-prose-audit, tempdir-leak-audit, test-stale-audit, file-size-audit)
+      - name: Nextest partition (instrumented)
         id: validation
         env:
           NILS_CLI_RUNNER_MAX: "2"
           NILS_CLI_TEST_RUNNER: llvm-cov
-          # The stale-test and completion freshness/parity audits give the same
-          # answer on every OS, and the Linux `test` job runs them. Here they
-          # cost ~2-3 min, mostly a debug build of every binary.
-          NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS: "1"
-          NILS_CLI_COVERAGE_FAIL_UNDER_LINES: "85"
-          # The Linux lane runs the workspace doc tests. Here they cost ~85 s,
-          # because llvm-cov builds into its own target directory and the doc
-          # run rebuilds the workspace un-instrumented.
-          NILS_CLI_SKIP_DOCTESTS: "1"
+          NILS_CLI_NEXTEST_PARTITION: count:${{ matrix.partition }}/2
           # A skip here would mean a lane that builds every binary lost coverage
           # silently; make it fatal instead. See `bin::sibling_or_skip`.
           NILS_TEST_REQUIRE_SIBLING_BINS: "1"
         run: /opt/homebrew/bin/bash scripts/ci/nils-cli-checks-entrypoint.sh
 
-      - name: Full validation marker
-        run: true
-
-      - name: Generate HTML coverage report
-        if: always() && hashFiles('target/coverage/lcov.info') != ''
-        run: cargo llvm-cov report --html --output-dir target/coverage
-
-      - name: Upload coverage LCOV
+      - name: Upload partition LCOV
         if: always() && hashFiles('target/coverage/lcov.info') != ''
         uses: actions/upload-artifact@v7
         with:
-          name: coverage-lcov
+          name: coverage-lcov-partition-${{ matrix.partition }}
           path: target/coverage/lcov.info
-          retention-days: 7
-
-      - name: Upload coverage HTML
-        if: always() && hashFiles('target/coverage/html/index.html') != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-html
-          path: target/coverage/html
           retention-days: 7
 
       - name: Cleanup coverage outputs (avoid bloating cache)
@@ -416,7 +450,7 @@ jobs:
         uses: mikepenz/action-junit-report@v6
         with:
           token: ${{ github.token }}
-          check_name: JUnit Test Report (macOS)
+          check_name: JUnit Test Report (macOS ${{ matrix.partition }}/2)
           report_paths: ${{ env.NILS_CLI_REPORT_DIR }}/nextest/ci/junit.xml
           # Keep the job summary bounded; the JUnit artifact and failure
           # annotations retain the detailed test results.
@@ -429,12 +463,73 @@ jobs:
         if: always() && steps.junit-report.outputs.present == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: junit-nextest-macos
+          name: junit-nextest-macos-${{ matrix.partition }}
           path: ${{ env.NILS_CLI_REPORT_DIR }}/nextest/ci/junit.xml
 
-  # The coverage floor is enforced by test_macos's instrumented test run; this
-  # job keeps the required `coverage` check by proving that run produced its
-  # LCOV report and by publishing the summary. It needs no macOS runner.
+  # Both macOS partitions must pass before this job runs, so its success is the
+  # required macOS result. It merges their LCOV reports and enforces the same
+  # workspace line floor the single instrumented run enforced. It needs no macOS
+  # runner. The HTML report is built only for nightly and manual runs
+  # (`isolation_guard`), not for release validation.
+  test_macos:
+    needs: test_macos_partition
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download partition LCOV
+        uses: actions/download-artifact@v8
+        with:
+          pattern: coverage-lcov-partition-*
+          path: target/partitions
+
+      - name: Merge partition coverage and enforce the floor
+        env:
+          NILS_CLI_COVERAGE_FAIL_UNDER_LINES: "85"
+        run: |
+          [ "$(find target/partitions -name lcov.info | wc -l)" -eq 2 ]
+          mkdir -p target/coverage
+          python3 scripts/ci/merge-lcov.py target/partitions/*/lcov.info \
+            --output target/coverage/lcov.info \
+            --fail-under-lines "$NILS_CLI_COVERAGE_FAIL_UNDER_LINES"
+
+      - name: Full validation marker
+        run: true
+
+      - name: Upload coverage LCOV
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-lcov
+          path: target/coverage/lcov.info
+          retention-days: 7
+
+      - name: Generate HTML coverage report
+        if: inputs.isolation_guard
+        run: |
+          sudo apt-get update && sudo apt-get install -y lcov
+          # The LCOV source paths point into the macOS runner workspace, which
+          # this checkout lacks, so the report is built without source text.
+          genhtml target/coverage/lcov.info --synthesize-missing \
+            --ignore-errors source --output-directory target/coverage/html
+
+      - name: Upload coverage HTML
+        if: inputs.isolation_guard
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-html
+          path: target/coverage/html
+          retention-days: 7
+
+  # The coverage floor is enforced by test_macos on the merged partition data;
+  # this job keeps the required `coverage` check by proving that merge produced
+  # its LCOV report and by publishing the summary. It needs no macOS runner.
 
   coverage:
     needs: test_macos
@@ -459,21 +554,34 @@ jobs:
         run: bash scripts/ci/coverage-summary.sh target/coverage/lcov.info
 
   gate:
-    needs: [test, test_macos, coverage, test_containment, cargo_deny]
+    needs: [test, test_macos, coverage, test_containment, cargo_deny, isolation_guard]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: read
+      contents: read
     steps:
       - name: Checkout exact validated commit
         uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Diagnose unacquired macOS runner
+        id: macos_capacity
+        if: needs.test_macos.result != 'success'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            await require('./.github/scripts/macos-runner-capacity.cjs').reportMacosCapacity({github, context, core});
       - name: Require all full-validation lanes
         env:
           EXPECTED_COMMIT: ${{ inputs.commit }}
+          ISOLATION_GUARD: ${{ inputs.isolation_guard }}
           VALIDATION_NEEDS: ${{ toJSON(needs) }}
+          MACOS_JOBS: ${{ steps.macos_capacity.outputs.jobs || '[]' }}
         run: |
           ACTUAL_COMMIT="$(git rev-parse HEAD)"
           export ACTUAL_COMMIT
-          node -e 'require("./.github/scripts/full-validation-gate.cjs").requireFullValidation({expected: process.env.EXPECTED_COMMIT, actual: process.env.ACTUAL_COMMIT, needs: JSON.parse(process.env.VALIDATION_NEEDS)})'
+          node -e 'require("./.github/scripts/full-validation-gate.cjs").requireFullValidation({expected: process.env.EXPECTED_COMMIT, actual: process.env.ACTUAL_COMMIT, isolationGuard: process.env.ISOLATION_GUARD === "true", needs: JSON.parse(process.env.VALIDATION_NEEDS), macosJobs: JSON.parse(process.env.MACOS_JOBS)})'

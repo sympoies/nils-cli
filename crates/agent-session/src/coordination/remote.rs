@@ -130,7 +130,7 @@ impl Origin {
             Self::Service(a) => a.stored_id(),
         }
     }
-    fn stored_id(&self) -> String {
+    pub(super) fn stored_id(&self) -> String {
         match self {
             Self::Session(a) => encode_sender(a),
             Self::Service(a) => a.stored_id(),
@@ -758,8 +758,9 @@ pub(crate) fn submit(
         )?;
         return Err(super::delegation::scope_denied());
     }
+    // Snapshot-first: a same-key retry is answered from the journal without the registry lock.
     let (_, source_incarnation) =
-        super::delegation::authenticate_token(context, Some(session), token, usage, true)?;
+        super::delegation::authenticate_snapshot_first(context, session, token, usage)?;
     submit_origin(
         context,
         config,
@@ -889,6 +890,19 @@ where
             reply_obligation::replay(context, args.reply_to.as_deref())?;
             return Ok(outcome);
         }
+    }
+    // Only a first submit uses the credential, so only it takes the audited, locked admission.
+    if let Some(token) = token {
+        super::delegation::authenticate_token(
+            context,
+            Some(session),
+            token,
+            super::delegation::Use::MessageSend {
+                machine: &args.to_machine,
+                recipient: &args.to_session,
+            },
+            true,
+        )?;
     }
     let forward_source = if let Some(request) = &args.forward {
         let Origin::Session(actor) = &origin else {
@@ -1704,12 +1718,11 @@ fn receive_admitted(
         .ok_or_else(unavailable)?;
     let recipient_incarnation = broker.incarnation.clone();
     let now_millis = admission_millis();
-    super::mailbox::admit_message(
-        &mut locked.registry,
-        &envelope.from.stored_id(),
+    let alert_percent = super::mailbox_quota::admit_remote(
+        context,
+        &mut locked,
+        &envelope,
         &recipient.id,
-        envelope.body.len(),
-        envelope.reply_to.as_deref(),
         now,
         now_millis,
     )?;
@@ -1751,6 +1764,14 @@ fn receive_admitted(
     let mut local_outcome = super::mailbox::message_projection(&message);
     local_outcome["notification"] = serde_json::to_value(notification).expect("notification");
     locked.registry.messages.push(message);
+    super::mailbox_quota::admitted(
+        &mut locked.registry,
+        &recipient.id,
+        &recipient_incarnation,
+        alert_percent,
+        now,
+        &mut local_outcome,
+    );
     super::store_receipt(
         &mut locked.registry,
         envelope.message_id.clone(),
@@ -1836,41 +1857,6 @@ pub(crate) fn daemon_url(context: &CliContext) -> Result<reqwest::Url, CliError>
     }
     Ok(url)
 }
-fn local_request(
-    context: &CliContext,
-    session: &str,
-    capability: Option<&Path>,
-    path: &str,
-    body: Option<Value>,
-) -> Result<Value, CliError> {
-    let capability = super::mailbox::resolve_capability_file(capability)?;
-    super::delegation::authenticate_remote_request(
-        context,
-        session,
-        &capability,
-        path,
-        body.as_ref(),
-    )?;
-    let token = String::from_utf8(
-        super::read_private_file(&capability, 256).map_err(|_| super::unauthorized())?,
-    )
-    .map_err(|_| super::unauthorized())?;
-    let url = daemon_url(context)?;
-    let client = client()?;
-    let request = match body {
-        Some(body) => client
-            .post(format!("{}{path}", url.as_str().trim_end_matches('/')))
-            .json(&body),
-        None => client.get(format!("{}{path}", url.as_str().trim_end_matches('/'))),
-    };
-    response_json(
-        request
-            .bearer_auth(token.trim())
-            .send()
-            .map_err(|_| unavailable())?,
-        Responder::LocalDaemon,
-    )
-}
 fn envelope_version(origin: &Origin, extended: bool) -> &str {
     if !extended {
         return origin.wire_version();
@@ -1911,6 +1897,7 @@ pub(crate) fn cli_forward(
 
 #[path = "remote_cli.rs"]
 mod cli_requests;
+use cli_requests::local_request;
 pub(crate) use cli_requests::{cli_peers, cli_reply, cli_send};
 
 pub(crate) fn cli_delivery(
@@ -3678,6 +3665,23 @@ mod tests {
             Some(
                 &json!({"quota":"recipient-messages","count":256,"limit":256,"host":"destination","side":"destination", "recovery": super::super::mailbox::quota_recovery()})
             )
+        );
+        let snapshot =
+            super::super::audit::snapshot(&context, "destination", Default::default()).unwrap();
+        assert_eq!(snapshot["quota_rejections"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            snapshot["quota_rejections"][0]["sender"],
+            json!(envelope().from)
+        );
+        assert_eq!(
+            snapshot["quota_rejections"][0]["recipient"],
+            json!(envelope().to)
+        );
+        let mut locked = lock_registry(&context).unwrap();
+        assert_eq!(locked.registry.messages.len(), 256);
+        assert!(
+            !super::super::notification::deliverable_candidates(&mut locked.registry, now_epoch())
+                .is_empty()
         );
     }
     #[test]

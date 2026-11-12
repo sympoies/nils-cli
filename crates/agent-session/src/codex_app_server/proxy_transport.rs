@@ -54,7 +54,27 @@ impl Oversized {
 }
 
 pub(super) fn contain_oversized(message: &Message) -> Result<Option<Oversized>, String> {
-    contain_over(message, MAX_FORWARDED_MESSAGE_BYTES)
+    contain_over(message, forwarding_limit())
+}
+
+#[cfg(not(test))]
+fn forwarding_limit() -> usize {
+    MAX_FORWARDED_MESSAGE_BYTES
+}
+
+// Tests run each proxy on their own current-thread runtime, so a thread-local
+// lets a test shrink the limit without streaming tens of MiB over a socket.
+#[cfg(test)]
+thread_local! {
+    static FORWARDING_LIMIT_OVERRIDE: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn forwarding_limit() -> usize {
+    FORWARDING_LIMIT_OVERRIDE
+        .with(std::cell::Cell::get)
+        .unwrap_or(MAX_FORWARDED_MESSAGE_BYTES)
 }
 
 fn contain_over(message: &Message, limit: usize) -> Result<Option<Oversized>, String> {

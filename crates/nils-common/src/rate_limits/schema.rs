@@ -39,6 +39,16 @@ pub struct RateLimitWindow {
     pub remaining_percent: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reset_at_epoch: Option<i64>,
+    /// Window class, set only for provider windows beyond the base ones.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Model a scoped window applies to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Share of the weekly allowance: absent outside scoped windows, and
+    /// `Some(None)` (JSON `null`) when a scoped window has no share.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowance_percent_of_weekly: Option<Option<serde_json::Number>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -66,6 +76,9 @@ pub struct RateLimitResult {
     /// Provider-owned limit-reset status (Claude only); absent elsewhere.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit_resets: Option<Value>,
+    /// Epoch seconds of the network read that supplied `limit_resets`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit_resets_checked_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_usage: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,6 +113,7 @@ impl RateLimitResult {
             windows: Some(windows),
             reset_credits: None,
             limit_resets: None,
+            limit_resets_checked_at: None,
             raw_usage: None,
             error: None,
         }
@@ -126,6 +140,7 @@ impl RateLimitResult {
             windows: None,
             reset_credits: None,
             limit_resets: None,
+            limit_resets_checked_at: None,
             raw_usage: None,
             error: Some(ErrorEnvelope {
                 code: code.to_string(),
@@ -149,6 +164,7 @@ impl RateLimitResult {
             windows: Some(Vec::new()),
             reset_credits,
             limit_resets: None,
+            limit_resets_checked_at: None,
             raw_usage: None,
             error: None,
         }
@@ -260,6 +276,9 @@ pub fn windows_from_cache(entry: &CacheEntry) -> Vec<RateLimitWindow> {
             used_percent: remaining_to_used_percent(remaining),
             remaining_percent: remaining,
             reset_at_epoch: entry.non_weekly_reset_epoch,
+            kind: None,
+            model: None,
+            allowance_percent_of_weekly: None,
         });
     }
     if let (Some(remaining), Some(reset_epoch)) = (entry.weekly_remaining, entry.weekly_reset_epoch)
@@ -270,6 +289,9 @@ pub fn windows_from_cache(entry: &CacheEntry) -> Vec<RateLimitWindow> {
             used_percent: remaining_to_used_percent(remaining),
             remaining_percent: remaining,
             reset_at_epoch: Some(reset_epoch).filter(|epoch| *epoch > 0),
+            kind: None,
+            model: None,
+            allowance_percent_of_weekly: None,
         });
     }
     windows

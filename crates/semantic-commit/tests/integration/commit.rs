@@ -830,6 +830,51 @@ fn commit_amend_no_edit_reuses_head_message() {
 }
 
 #[test]
+fn commit_amend_no_edit_preserves_trailer_message() {
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+    let message = "fix(core): preserve message\n\n- Preserve the original content.\n\nRefs: #123";
+    let first = common::run_semantic_commit_output(
+        repo.path(),
+        &["commit", "--message", message, "--no-summary"],
+        &[],
+        None,
+    );
+    assert_eq!(first.status.code(), Some(0), "{}", as_str(&first.stderr));
+    let before = common::git(repo.path(), &["cat-file", "commit", "HEAD"]);
+    stage_file(repo.path(), "b.txt", "world\n");
+    let amend = common::run_semantic_commit_output(
+        repo.path(),
+        &["commit", "--amend", "--no-edit", "--no-summary"],
+        &[],
+        None,
+    );
+    assert_eq!(amend.status.code(), Some(0), "{}", as_str(&amend.stderr));
+    let after = common::git(repo.path(), &["cat-file", "commit", "HEAD"]);
+    assert_eq!(
+        before.split_once("\n\n").unwrap().1,
+        after.split_once("\n\n").unwrap().1
+    );
+}
+
+#[test]
+fn commit_validate_only_rejects_blank_line_between_bullets() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let output = common::run_semantic_commit_output(
+        dir.path(),
+        &[
+            "commit",
+            "--validate-only",
+            "--message",
+            "fix(core): preserve rules\n\n- First bullet.\n\n- Second bullet.\n\nRefs: #123",
+        ],
+        &[],
+        None,
+    );
+    assert_eq!(output.status.code(), Some(4));
+}
+
+#[test]
 fn commit_message_only_amend_updates_message_without_staged_changes() {
     let repo = common::init_repo();
     stage_file(repo.path(), "a.txt", "hello\n");

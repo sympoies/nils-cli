@@ -1742,7 +1742,7 @@ async fn queued_steer_waits_for_handler_so_its_durable_fence_cannot_expire_early
     let (handle, mut commands) = control_channel();
     let task = tokio::spawn(async move {
         handle
-            .steer_prompt("mailbox checkpoint", "projected-active-turn")
+            .steer_prompt("mailbox checkpoint", "projected-active-turn", None, None)
             .await
     });
     let command = commands.recv().await.expect("queued steer");
@@ -1759,24 +1759,6 @@ async fn queued_steer_waits_for_handler_so_its_durable_fence_cannot_expire_early
         .send(Ok("projected-active-turn".to_string()))
         .expect("complete steer");
     assert_eq!(task.await.unwrap().unwrap(), "projected-active-turn");
-}
-
-#[tokio::test(start_paused = true)]
-async fn submit_timeout_covers_resume_plus_turn_acknowledgement_budget() {
-    let (handle, mut commands) = control_channel();
-    let responder = tokio::spawn(async move {
-        let Some(ControlCommand::Continue { response, .. }) = commands.recv().await else {
-            panic!("continuation command was not delivered");
-        };
-        tokio::time::sleep(Duration::from_secs(20)).await;
-        let _ = response.send(Ok("acknowledged-turn".to_string()));
-    });
-
-    assert_eq!(
-        handle.submit("fixed continuation").await.unwrap(),
-        "acknowledged-turn"
-    );
-    responder.await.unwrap();
 }
 
 async fn respond<S>(socket: &mut S, request: &Value, result: Value)
@@ -4686,7 +4668,7 @@ async fn control_reconnect_applies_external_auth_before_thread_discovery() {
     assert!(usage.unwrap().authoritative);
     assert_eq!(
         handle
-            .submit_prompt("next selected-account prompt")
+            .submit_prompt("next selected-account prompt", None)
             .await
             .unwrap(),
         "selected-account-turn"
@@ -5616,7 +5598,7 @@ async fn submit_prompt_rejects_response_without_acknowledged_turn_id() {
     let control = tokio::spawn(run_control(context, record, commands, ready));
 
     let error = handle
-        .submit_prompt("must require an acknowledged turn id")
+        .submit_prompt("must require an acknowledged turn id", None)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -5939,7 +5921,7 @@ async fn tui_turn_start_cancels_a_scheduled_resume_before_forwarding() {
                 exhausted_reset_epochs: vec![1_893_456_600],
                 soonest_reset_epoch: None,
             },
-            |_| panic!("blocked usage must not submit"),
+            |_, _lock| panic!("blocked usage must not submit"),
         )
         .unwrap(),
         crate::auto_resume::TickOutcome::Scheduled
@@ -7849,7 +7831,7 @@ async fn proxy_observer_failure_does_not_interrupt_later_tui_frames() {
             exhausted_reset_epochs: vec![1_893_456_600],
             soonest_reset_epoch: None,
         },
-        |_| panic!("blocked usage must not submit"),
+        |_, _lock| panic!("blocked usage must not submit"),
     )
     .unwrap();
     bind_thread(&record, "thread-a").unwrap();
@@ -8048,7 +8030,7 @@ async fn unix_control_recovers_raw_active_turn_after_reconnect_before_steering()
     .expect("project recovered active turn");
     assert_eq!(
         handle
-            .steer_prompt("mailbox checkpoint", &projected_turn_id)
+            .steer_prompt("mailbox checkpoint", &projected_turn_id, None, None)
             .await
             .unwrap(),
         projected_turn_id
@@ -8210,10 +8192,6 @@ async fn unix_control_projects_live_failure_and_acknowledges_exact_turn_without_
             }),
         )
         .await;
-        let resume = receive_json(&mut socket).await;
-        assert_eq!(resume["method"], "thread/resume");
-        assert_eq!(resume["params"]["threadId"], "raw-thread-a");
-        respond(&mut socket, &resume, json!({})).await;
         let continuation = receive_json(&mut socket).await;
         assert_eq!(continuation["method"], "turn/start");
         assert_eq!(continuation["params"]["threadId"], "raw-thread-a");
@@ -8248,7 +8226,10 @@ async fn unix_control_projects_live_failure_and_acknowledges_exact_turn_without_
     assert!(usage.has_exhausted_windows);
     assert_eq!(usage.exhausted_reset_epochs, vec![1_900_000_000]);
     assert_eq!(
-        handle.submit("private continuation").await.unwrap(),
+        handle
+            .submit_prompt("private continuation", None)
+            .await
+            .unwrap(),
         "acknowledged-turn"
     );
     assert_eq!(
@@ -8264,7 +8245,7 @@ async fn unix_control_projects_live_failure_and_acknowledges_exact_turn_without_
             .expect("project active turn id");
     assert_eq!(
         handle
-            .steer_prompt("mailbox checkpoint", &projected_turn_id)
+            .steer_prompt("mailbox checkpoint", &projected_turn_id, None, None)
             .await
             .unwrap(),
         projected_turn_id

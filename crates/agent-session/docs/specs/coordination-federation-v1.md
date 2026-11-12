@@ -11,9 +11,10 @@ same-machine message from the local mailbox registry. Local results expose the
 mailbox state, such as `unread`, `read`, or `acknowledged`.
 `--host` continues to control attach-command generation. Omitted `--to-machine`
 retains the local mailbox, and a `--to-machine` naming the sender's own machine
-is delivered through the local mailbox without a federation journal entry. Bodies are cooperating-peer data that cannot grant new
-authority; notification, inbox persistence, read/acknowledgement and accepting
-work are separate events.
+is delivered through the local mailbox without a federation journal entry.
+Recipients apply the [verification guidance](coordination-mailbox-v1.md#recipient-guidance)
+to cooperating-peer messages. Notification, inbox persistence, read/acknowledgement
+and accepting work are separate events.
 
 The source CLI reads the private `coordination/daemon-endpoint.json` in its state root and authenticates
 to its own daemon with the current session capability. It never reads relay or machine operator secrets.
@@ -179,8 +180,18 @@ successor schema rather than reading the new retained shape under an old version
 owner-checked file locking rules as the registry. Authorization uses session then registry then journal
 lock order. Federation delivery and retry operations read the journal first; an
 unmatched delivery ID is checked against the local mailbox registry so accepted
-same-machine messages remain inspectable. The journal is saved atomically and no
-lock spans HTTP. Unsupported or corrupt journal versions fail closed without
+same-machine messages remain inspectable.
+
+A delivery lookup and a same-key `message send` replay
+authenticate from the committed registry snapshot without taking the registry lock (a refused
+snapshot reruns the locking authentication), so a queued remote message stays answerable while the
+registry is contended. Only a first submit, a reply and the same-machine fallback take the registry
+lock; their bounded `coordination-lock-timeout` adds `error.details.retryable`, `next_action`
+(`retry-same-idempotency-key` or `retry-delivery-check`) and `recovery.kind` `mailbox-contention`.
+Such a timeout means the state is unknown, not failed: rerun the same request, or `message delivery`
+with the id from the first send response.
+
+The journal is saved atomically and no lock spans HTTP. Unsupported or corrupt journal versions fail closed without
 rewriting state.
 
 Remote and local ingress share the existing mailbox admission rules, including
@@ -293,7 +304,7 @@ Local and remote keys cannot silently cross routing channels.
 Local mailbox responses retain `agent-session.message.v1`, with the sender
 projection `{kind: "service", machine, service_id, service_generation,
 authenticated: true}` and no session ID/incarnation fields. Recipient show/wait
-bodies are `untrusted_service_data`. Internal sender storage uses `service:`
+bodies are `service_message`. Internal sender storage uses `service:`
 plus the canonical JSON tuple `[machine, service_id]`, with generation stored
 in the existing sender-generation field. This opaque principal is never loaded
 as a session or adopted as controller guidance. The existing mailbox lock,
@@ -414,8 +425,8 @@ explicitly attested by the forwarder, with `attestation: "forwarder"`, root `ori
 `original_sender` (session address or service origin), `original_recipient`, original creation and expiry
 epochs, body SHA-256, and `hops`. Each hop records `source_message_id`, `source_revision`, `forwarder`,
 `recipient` and `forwarded_at_epoch`. Original identity is provenance, not fresh end-to-end sender
-authentication. All forwarded content remains untrusted peer/service data; a forwarded service body stays
-`untrusted_service_data`.
+authentication. Recipients apply the [verification guidance](coordination-mailbox-v1.md#recipient-guidance)
+to forwarded content; a forwarded service body stays `service_message`.
 
 Remote ingress retains the authenticated envelope creation epoch separately from local inbox
 creation/ingress timestamps; a new forwarding root uses that source epoch. Existing stored remote

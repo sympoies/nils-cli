@@ -54,7 +54,7 @@ fn claude_setup_writes_settings_to_the_absolute_config_dir_override() {
         .expect("settings JSON");
     assert_eq!(
         document["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
-        "agent-hook dispatch --product claude"
+        nils_common::provider_entrypoint::command(true, &["dispatch", "--product", "claude"])
     );
     assert!(
         !fixture.home.join(".claude/settings.json").exists(),

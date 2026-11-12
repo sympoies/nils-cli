@@ -234,16 +234,16 @@ fn strict_existing_failure_and_pending_are_not_passing() {
 }
 
 #[test]
-fn strict_empty_snapshot_is_pending_while_default_remains_successful() {
+fn empty_snapshot_is_no_checks_and_strict_refuses_it() {
     let empty = include_str!("fixtures/github/pr_checks/empty.json");
     let stub = backend(empty.trim(), empty.trim());
     let out = checks(&stub, &["--format", "json", "--strict"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
     let envelope = parse_envelope(&out.stdout);
     assert_eq!(envelope["ok"], false);
-    assert_eq!(envelope["error"]["code"], "checks_pending");
-    assert_eq!(envelope["data"]["state"], "pending");
-    assert_eq!(envelope["data"]["gate_state"], "pending");
+    assert_eq!(envelope["error"]["code"], "checks_not_registered");
+    assert_eq!(envelope["data"]["state"], "no-checks");
+    assert_eq!(envelope["data"]["gate_state"], "no-checks");
     assert_eq!(envelope["data"]["required_count"], 0);
     assert_eq!(envelope["data"]["checks"], json!([]));
 
@@ -251,7 +251,7 @@ fn strict_empty_snapshot_is_pending_while_default_remains_successful() {
     assert_eq!(default.code, 0, "{}", default.stderr);
     let envelope = parse_envelope(&default.stdout);
     assert_eq!(envelope["ok"], true);
-    assert_eq!(envelope["data"]["state"], "success");
+    assert_eq!(envelope["data"]["state"], "no-checks");
 }
 
 #[test]

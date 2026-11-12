@@ -20,10 +20,6 @@ use super::{Registry, now_epoch};
 use crate::{CliContext, CliError};
 
 const NOTIFICATION_VERSION: &str = "agent-session.notification-generation.v1";
-/// Transcript readers recognize both the current short reminder and prior releases.
-const PROMPT_PREFIX: &str = "Mailbox: ";
-const LEGACY_PROMPT_PREFIX: &str = "Coordination mailbox has unread messages";
-pub(super) const HISTORICAL_SHORT_PROMPT: &str = "Mailbox: agent-session message inbox";
 const REASON_PENDING: &str = "notification-pending";
 const REASON_ATTEMPTING: &str = "notification-attempting";
 const REASON_MIGRATED_UNKNOWN: &str = "migrated-attempt-outcome-unknown";
@@ -52,20 +48,20 @@ pub(crate) struct NotificationReceipt {
     pub attempted_at_epoch: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempted_at: Option<String>,
-    /// Only a known attempt format can prove absence from a transcript.
+    /// Only the current notice format admits exact positive observation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempted_prompt_format: Option<String>,
-    /// Exact body-free reminder text from an uncertain terminal attempt. A
-    /// later generation may remove it only after observing it alone in the
-    /// composer.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub composer_recovery_prompt: Option<String>,
     pub updated_at_epoch: i64,
     pub next_attempt_at_epoch: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_reason: Option<String>,
+    /// The deferral branch or the configuration cause selecting a text wake.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_reason_detail: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attempt_history: Vec<NotificationAttempt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) quota: Option<super::mailbox_quota::State>,
     pub routine_interval_seconds: i64,
     pub routine_last_submitted_at_epoch: i64,
     pub urgent_generation: u64,
@@ -120,120 +116,44 @@ pub(crate) struct NotificationCandidate {
     pub attempted_at: Option<String>,
 }
 
-impl NotificationCandidate {
-    pub(crate) fn recovery_prompt(&self, context: &CliContext) -> Result<Option<String>, CliError> {
-        let locked = super::lock_registry_observational(context)?;
-        Ok(locked
-            .registry
-            .notifications
-            .get(&receipt_key(
-                &self.target_session_id,
-                &self.target_incarnation,
-            ))
-            .filter(|receipt| receipt.state == "queued" && receipt.generation == self.generation)
-            .and_then(|receipt| receipt.composer_recovery_prompt.clone()))
-    }
-
-    pub(crate) fn clear_recovery_prompt(
-        &self,
-        context: &CliContext,
-        prompt: &str,
-    ) -> Result<bool, CliError> {
-        let mut locked = super::lock_registry(context)?;
-        let Some(receipt) = locked.registry.notifications.get_mut(&receipt_key(
-            &self.target_session_id,
-            &self.target_incarnation,
-        )) else {
-            return Ok(false);
-        };
-        if receipt.generation != self.generation
-            || receipt.composer_recovery_prompt.as_deref() != Some(prompt)
-        {
-            return Ok(false);
-        }
-        receipt.composer_recovery_prompt = None;
-        receipt.updated_at_epoch = now_epoch();
-        locked.save()?;
-        Ok(true)
-    }
-
-    pub(crate) fn mark_unknown_after_paste(
-        &self,
-        context: &CliContext,
-        reason: &str,
-    ) -> Result<bool, CliError> {
-        update_attempt(context, |registry, now| {
-            if !transition_unknown(registry, self, reason, now) {
-                return false;
-            }
-            let Some(receipt) = registry.notifications.get_mut(&receipt_key(
-                &self.target_session_id,
-                &self.target_incarnation,
-            )) else {
-                return false;
-            };
-            receipt.composer_recovery_prompt.get_or_insert_with(|| {
-                self.prompt
-                    .clone()
-                    .unwrap_or_else(|| fixed_prompt(&self.target_session_id, self.queued_at_epoch))
-            });
-            true
-        })
-    }
-}
-
-/// Body-free, provider-neutral wake that fits one input row in a narrow pane.
+/// Body-free, provider-neutral wake in the current notice envelope.
 /// Generations and queue times remain in the receipt; reconciliation compares
 /// these exact bytes only after the matching attempt's timestamp.
-pub(crate) fn fixed_prompt(_session_id: &str, _queued_at_epoch: i64) -> String {
-    prompt_template()
+pub(crate) fn fixed_prompt(session: &str) -> String {
+    prompt_template(session).unwrap_or_default()
 }
 
-/// Provider history is immutable: recognize its default-name command as well
-/// as the command produced by this build. This does not alias executable names.
-pub(super) fn is_inbox_action(action: &str) -> bool {
-    action
-        .strip_suffix(" message inbox")
-        .is_some_and(|name| name == crate::executable() || name == "agent-session")
-}
-
-/// Whether a transcript prompt is a mailbox reminder this crate injected.
+/// Only current mailbox envelopes identify an injected reminder.
 pub(crate) fn is_mailbox_reminder_prompt(prompt: &str) -> bool {
-    let prompt = prompt.trim_start();
-    prompt.starts_with(LEGACY_PROMPT_PREFIX)
-        || prompt.strip_prefix(PROMPT_PREFIX).is_some_and(is_inbox_action)
-        || coalescing::is_count_prompt(prompt)
-        // The one place the former letter form is still read: provider history.
-        || coalescing::legacy_total(prompt).is_some()
-        || prompt
-                .strip_prefix(PROMPT_PREFIX)
-                .and_then(|body| body.split_once("; "))
-                .is_some_and(|(date, action)| {
-                    // Preserve the former 60-byte reminder's date-field bound.
-                    date.len() <= 60 - HISTORICAL_SHORT_PROMPT.len() - "; ".len()
-                        && is_inbox_action(action)
-                        && date.parse::<jiff::Timestamp>()
-                        .is_ok_and(|timestamp| timestamp.to_string() == date)
-                })
+    crate::notice::parse_notice(prompt).is_some_and(|notice| match notice.metadata.kind() {
+        "mailbox.alert" => true,
+        "mailbox.wake" => {
+            let mut lines = notice.body.lines();
+            lines.next().is_some()
+                && lines.next().is_some_and(|line| line.starts_with("Read: "))
+                && lines.next().is_some_and(|line| line.starts_with("Show: "))
+        }
+        _ => false,
+    })
 }
 
-/// Whether the exact recipient incarnation still holds live unread mail. A
-/// generation whose mail was already read, acknowledged, or expired has
-/// nothing left to announce, so delivering it would only prompt a stale
-/// inbox check.
-pub(crate) fn has_live_unread(
+/// Whether the exact recipient incarnation has live unread mail or an
+/// unannounced, unexpired quota signal. Read-only full mailboxes still need
+/// their body-free quota notice.
+pub(crate) fn has_pending_content(
     registry: &Registry,
     target_session_id: &str,
     target_incarnation: &str,
     now: i64,
 ) -> bool {
-    registry.messages.iter().any(|message| {
-        message.recipient_session_id == target_session_id
-            && message.recipient_incarnation == target_incarnation
-            && !message.notification_suppressed
-            && message.state == "unread"
-            && message.expires_at_epoch > now
-    })
+    super::mailbox_quota::has_pending(registry, target_session_id, target_incarnation, now)
+        || registry.messages.iter().any(|message| {
+            message.recipient_session_id == target_session_id
+                && message.recipient_incarnation == target_incarnation
+                && !message.notification_suppressed
+                && message.state == "unread"
+                && message.expires_at_epoch > now
+        })
 }
 
 /// Claim the exact recipient incarnation's pending generation for delivery by
@@ -245,17 +165,26 @@ pub(crate) fn has_live_unread(
 /// submitted in one step, so neither serve nor a repeated hook call announces
 /// it again; a later send advances the generation.
 pub(crate) fn claim_hook_reminder(
+    context: &CliContext,
     registry: &mut Registry,
     target_session_id: &str,
     target_incarnation: &str,
     now: i64,
 ) -> Option<NotificationCandidate> {
-    normalize_registry(registry, now);
-    if !has_live_unread(registry, target_session_id, target_incarnation, now) {
+    if !crate::notice::writers_enabled() {
         return None;
     }
-    let notice_prompt = crate::notice::writers_enabled()
-        .then(|| notice::encode_counts(registry, target_session_id, target_incarnation, now));
+    normalize_registry(registry, now);
+    if !has_pending_content(registry, target_session_id, target_incarnation, now) {
+        return None;
+    }
+    let notice_prompt = notice::encode_counts(
+        context,
+        registry,
+        target_session_id,
+        target_incarnation,
+        now,
+    )?;
     let receipt = registry
         .notifications
         .get_mut(&receipt_key(target_session_id, target_incarnation))?;
@@ -270,15 +199,14 @@ pub(crate) fn claim_hook_reminder(
     }
     let attempted_at = jiff::Timestamp::from_second(now).ok()?;
     receipt.routine_last_submitted_at_epoch = now;
-    receipt.attempted_prompt = notice_prompt.or_else(|| receipt.prompt.clone());
+    receipt.attempted_prompt = Some(notice_prompt);
     receipt.state = "prompt_submitted".to_string();
     receipt.attempted_generation = receipt.generation;
     receipt.notified_generation = receipt.generation;
     receipt.attempted_queued_at_epoch = receipt.queued_at_epoch;
     receipt.attempted_at_epoch = now;
     receipt.attempted_at = Some(attempted_at.to_string());
-    receipt.attempted_prompt_format =
-        Some(notice::attempt_format(receipt.attempted_prompt.as_deref()).to_string());
+    receipt.attempted_prompt_format = Some(notice::FORMAT.to_string());
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some("prompt-accepted".to_string());
     let generation = receipt.generation;
@@ -294,8 +222,8 @@ pub(crate) fn claim_hook_reminder(
     })
 }
 
-pub(crate) fn prompt_template() -> String {
-    format!("Mailbox: {} message inbox", crate::executable())
+pub(crate) fn prompt_template(session: &str) -> Option<String> {
+    notice::encode_summary(&format!("{} message inbox", crate::executable()), session)
 }
 
 pub(crate) fn normalize_registry(registry: &mut Registry, now: i64) -> bool {
@@ -502,7 +430,7 @@ pub(crate) fn deliverable_candidates(
     recovery::resolve_drained_generations(registry, now);
     let mut candidates = pending_candidates(registry, now);
     candidates.retain(|candidate| {
-        has_live_unread(
+        has_pending_content(
             registry,
             &candidate.target_session_id,
             &candidate.target_incarnation,
@@ -613,18 +541,27 @@ pub(super) fn transition_attempt_at(
     {
         return None;
     }
-    receipt.attempted_prompt = candidate.prompt.clone();
+    receipt.attempted_prompt = Some(
+        candidate
+            .prompt
+            .clone()
+            .unwrap_or_else(|| fixed_prompt(&candidate.target_session_id)),
+    );
     receipt.state = "attempting".to_string();
     receipt.attempted_generation = receipt.generation;
     receipt.attempted_queued_at_epoch = receipt.queued_at_epoch;
     receipt.attempted_at_epoch = now;
     receipt.attempted_at = Some(attempted_at.to_string());
-    receipt.attempted_prompt_format =
-        Some(notice::attempt_format(receipt.attempted_prompt.as_deref()).to_string());
+    receipt.attempted_prompt_format = Some(if candidate.is_text_wake() {
+        "mailbox-text-wake.v1".to_string()
+    } else {
+        notice::FORMAT.to_string()
+    });
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some(REASON_ATTEMPTING.to_string());
+    receipt.last_reason_detail = None;
     Some(NotificationCandidate {
-        prompt: candidate.prompt.clone(),
+        prompt: receipt.attempted_prompt.clone(),
         target_session_id: candidate.target_session_id.clone(),
         target_incarnation: candidate.target_incarnation.clone(),
         generation: receipt.attempted_generation,
@@ -644,7 +581,6 @@ fn transition_submitted(
     };
     receipt.routine_last_submitted_at_epoch = now;
     receipt.notified_generation = receipt.notified_generation.max(candidate.generation);
-    receipt.composer_recovery_prompt = None;
     receipt.state = if receipt.generation > candidate.generation {
         "queued".to_string()
     } else {
@@ -677,6 +613,7 @@ fn transition_known_failure(
     receipt.next_attempt_at_epoch = retry_at_epoch.max(now);
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some(safe_reason(reason));
+    receipt.last_reason_detail = None;
     receipt.record_attempt(candidate.generation, reason, now);
     true
 }
@@ -801,6 +738,16 @@ pub(crate) fn defer(
     reason: &str,
     retry_after_seconds: i64,
 ) -> Result<bool, CliError> {
+    defer_with_detail(context, candidate, reason, None, retry_after_seconds)
+}
+
+pub(crate) fn defer_with_detail(
+    context: &CliContext,
+    candidate: &NotificationCandidate,
+    reason: &str,
+    detail: Option<&str>,
+    retry_after_seconds: i64,
+) -> Result<bool, CliError> {
     update_attempt(context, |registry, now| {
         normalize_registry(registry, now);
         let Some(receipt) = registry.notifications.get_mut(&receipt_key(
@@ -812,9 +759,18 @@ pub(crate) fn defer(
         if receipt.generation != candidate.generation || receipt.state != "queued" {
             return false;
         }
+        let detail = detail.and_then(|detail| safe_reason_detail(reason, detail));
+        if !crate::notice::writers_enabled()
+            && reason == "provider-not-ready"
+            && receipt.last_reason.as_deref() == Some(reason)
+            && receipt.last_reason_detail == detail
+        {
+            return false;
+        }
         receipt.updated_at_epoch = now;
         receipt.next_attempt_at_epoch = now.saturating_add(retry_after_seconds.max(0));
         receipt.last_reason = Some(safe_reason(reason));
+        receipt.last_reason_detail = detail;
         receipt.record_attempt(candidate.generation, reason, now);
         true
     })
@@ -893,13 +849,15 @@ fn merge_current(current: &mut Option<NotificationReceipt>, candidate: Notificat
 fn normalize_current(receipt: &mut NotificationReceipt, now: i64) {
     receipt.schema_version = NOTIFICATION_VERSION.to_string();
     receipt.notified_generation = receipt.notified_generation.min(receipt.generation);
-    // Pending text follows the current count form and executable name. Sent
-    // attempts keep their exact bytes (`attempted_prompt` and
-    // `composer_recovery_prompt`), which reconciliation compares.
-    if let Some(total) = receipt.prompt.as_deref().and_then(|prompt| {
-        coalescing::count_total(prompt).or_else(|| coalescing::legacy_total(prompt))
-    }) {
-        receipt.prompt = Some(coalescing::unread_prompt(total));
+    // Discard retired pending text without reading its old syntax. Delivery
+    // rebuilds an envelope from current unread metadata. Retain exact attempted
+    // bytes as evidence; they never authorize old-format replay.
+    if receipt
+        .prompt
+        .as_deref()
+        .is_some_and(|text| !is_mailbox_reminder_prompt(text))
+    {
+        receipt.prompt = None;
     }
     receipt.attempted_at = receipt
         .attempted_at
@@ -968,6 +926,86 @@ pub(super) fn safe_reason(reason: &str) -> String {
         | REASON_HOOK_DELIVERED => reason.to_string(),
         _ => REASON_INVALID_STATE.to_string(),
     }
+}
+
+/// Stable refusal codes a structured prompt submission can report. A code
+/// outside this list is never stored: the detail collapses to the bare branch.
+const KNOWN_REFUSAL_CODES: &[&str] = &[
+    "auth-quarantined",
+    "codex-account-binding-invalid",
+    "codex-account-binding-missing",
+    "codex-account-binding-superseded",
+    "codex-account-next-pending",
+    "codex-account-not-bound",
+    "codex-account-unsupported",
+    "coordination-notification-superseded",
+    "serve-task-failed",
+    "session-incarnation-conflict",
+    "structured-prompt-outcome-unknown",
+];
+
+/// Details a deferral may record for its reason. They name the branch or
+/// condition that deferred and carry no message or runtime content.
+pub(crate) fn safe_reason_detail(reason: &str, detail: &str) -> Option<String> {
+    if matches!(
+        detail,
+        "notice-writers-disabled" | "notice-provider-unsupported" | "notice-receiver-not-attached"
+    ) {
+        return Some(detail.to_owned());
+    }
+    match reason {
+        "provider-not-ready" => provider_not_ready_detail(detail),
+        "recipient-composer-unobservable" if detail == "region-not-single-row" => {
+            Some(detail.to_string())
+        }
+        "recipient-coordination-not-quiescent" => matches!(
+            detail,
+            "active-claim"
+                | "active-operation"
+                | "uncertain-operation"
+                | "broker-not-authoritative"
+                | "auth-quarantined"
+                | "restart-fenced"
+        )
+        .then(|| detail.to_string()),
+        _ => None,
+    }
+}
+
+/// A refused structured prompt may append one code from `KNOWN_REFUSAL_CODES`
+/// as `prompt-submission-refused:<code>`; any other suffix is dropped.
+fn provider_not_ready_detail(detail: &str) -> Option<String> {
+    let (branch, code) = detail
+        .split_once(':')
+        .map_or((detail, None), |(branch, code)| (branch, Some(code)));
+    match (branch, code) {
+        (
+            "notice-writers-disabled"
+            | "notice-runtime-unavailable"
+            | "notice-not-prepared"
+            | "prompt-control-unavailable"
+            | "notice-attempt-not-admitted"
+            | "authorization-timeout"
+            | "prompt-submission-refused",
+            None,
+        ) => Some(branch.to_string()),
+        ("prompt-submission-refused", Some(code)) => Some(if KNOWN_REFUSAL_CODES.contains(&code) {
+            detail.to_string()
+        } else {
+            branch.to_string()
+        }),
+        _ => None,
+    }
+}
+
+/// Deferral details follow their last reason; a text wake's configuration cause
+/// also remains visible after submission or an unknown outcome.
+pub(crate) fn reason_detail(receipt: &NotificationReceipt) -> Option<String> {
+    let reason = receipt.last_reason.as_deref()?;
+    receipt
+        .last_reason_detail
+        .as_deref()
+        .and_then(|detail| safe_reason_detail(reason, detail))
 }
 
 fn state_priority(state: &str) -> u8 {
@@ -1058,40 +1096,20 @@ mod tests {
 
     #[test]
     fn every_reminder_prompt_is_recognized_by_its_prefix() {
-        assert!(is_mailbox_reminder_prompt(&fixed_prompt(
-            "target-session",
-            1_790_000_000
-        )));
-        assert!(is_mailbox_reminder_prompt(&fixed_prompt(
-            "target-session",
-            0
-        )));
+        assert!(is_mailbox_reminder_prompt(&fixed_prompt("target")));
         assert!(!is_mailbox_reminder_prompt(
             "Check the coordination mailbox"
         ));
     }
 
     #[test]
-    fn notification_prompt_is_fixed_short_and_contains_no_body() {
-        crate::command_identity::with_name("agent-session", || {
-            let prompt = fixed_prompt("target-session", 1_790_000_000);
-            assert_eq!(prompt, "Mailbox: agent-session message inbox");
-            assert_eq!(prompt_template(), "Mailbox: agent-session message inbox");
-            assert!(!prompt.contains("message show"));
-            assert!(!prompt.contains("target-session"));
-            assert!(!prompt.contains("--capability-file"));
-        });
-    }
-
-    #[test]
-    fn undated_generation_uses_the_short_actionable_prompt() {
-        crate::command_identity::with_name("agent-session", || {
-            // Unknown queue times must never invent a date or a recipient id.
-            assert_eq!(
-                fixed_prompt("target-session", 0),
-                "Mailbox: agent-session message inbox"
-            );
-        });
+    fn notification_prompt_is_fixed_envelope_and_contains_no_mail_body() {
+        let prompt = fixed_prompt("target");
+        assert!(prompt.contains("message inbox --session target --format json"));
+        assert!(
+            prompt.contains("message show --session target --message MESSAGE_ID --format json")
+        );
+        assert!(!prompt.contains("--capability-file"));
     }
 
     #[test]
@@ -1165,7 +1183,11 @@ mod tests {
         ))
         .expect("notification fixture");
         crate::command_identity::with_name("agent-session", || {
-            assert_eq!(fixture["prompt_template"], prompt_template());
+            assert!(
+                prompt_template("target")
+                    .unwrap()
+                    .contains("--session target")
+            );
         });
         assert_eq!(
             fixture["states"],

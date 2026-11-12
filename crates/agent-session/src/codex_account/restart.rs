@@ -4,7 +4,7 @@ use crate::{CliContext, CliError, SessionRecord};
 
 /// Authorize only restart's sealed exit after native idle, identity, composer,
 /// and restart-fence admission. A failed binding must not deadlock an explicit
-/// queued repair, even before the first turn moves activity out of `starting`.
+/// restart retry, even before the first turn moves activity out of `starting`.
 /// The replacement runtime still validates and binds that account before input.
 pub(crate) fn authorize_restart_exit_locked(
     context: &CliContext,
@@ -12,7 +12,8 @@ pub(crate) fn authorize_restart_exit_locked(
 ) -> Result<(), CliError> {
     if crate::codex_app_server::runtime_is_supported(record)
         && matches!(super::decode_binding(record), super::DecodedBinding::Valid(binding) if binding.state == "failed")
-        && super::queued_switch_repair(record).is_some()
+        && (super::queued_switch_repair(record).is_some()
+            || matches!(super::decode_next(record), super::DecodedNext::Absent))
     {
         return super::record_input_fence_locked(context, record);
     }

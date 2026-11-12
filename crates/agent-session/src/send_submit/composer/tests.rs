@@ -704,3 +704,35 @@ fn direct_native_queued_hint_is_empty_without_relaxing_guarded_input() {
         );
     }
 }
+
+#[test]
+fn claude_suggestion_that_starts_like_a_version_is_an_empty_composer() {
+    use super::Unobserved;
+    let pane =
+        |row: &str| format!("────────────────────\n❯\u{a0}{row}\n────────────────────\n  status");
+    let dim = |text: &str| format!("\u{1b}[2m{text}\u{1b}[0m");
+    // Claude styles each suggestion word separately, so the space between is unstyled.
+    let suggestion = format!("{} {}", dim("1.30.5"), dim("notes"));
+    assert_eq!(
+        super::direct_composer_observation("claude", &pane(&suggestion)),
+        Ok(String::new())
+    );
+    // A selection list puts whitespace after the number, dim or not.
+    for row in [
+        format!("{} {}", dim("1."), dim("notes")),
+        dim("1. notes"),
+        "12.\u{a0}notes".to_string(),
+        "2.".to_string(),
+    ] {
+        assert_eq!(
+            super::direct_composer_observation("claude", &pane(&row)),
+            Err(Unobserved::ComposerNotLocated),
+            "{row:?}"
+        );
+    }
+    // Plain text that starts like a version is an owner draft, not a choice.
+    assert_eq!(
+        super::direct_composer_observation("claude", &pane("1.30.5 notes")),
+        Ok("1.30.5 notes".to_string())
+    );
+}

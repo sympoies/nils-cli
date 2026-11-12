@@ -15,6 +15,9 @@ pub const SUPPRESSION_REGISTRY_VERSION: &str = "agent-session.coordination-regis
 pub const CLAIM_FENCE_REGISTRY_VERSION: &str = "agent-session.coordination-registry.v2";
 pub const NOTIFICATION_HISTORY_REGISTRY_VERSION: &str = "agent-session.coordination-registry.v5";
 pub const COALESCING_REGISTRY_VERSION: &str = "agent-session.coordination-registry.v6";
+pub const QUOTA_REGISTRY_VERSION: &str = "agent-session.coordination-registry.v7";
+/// Fixed, body-free quota signal shared by the mailbox writer and hook consumer.
+pub const MAILBOX_QUOTA_ALERT_NOTICE: &str = "<!-- agent-notice:v1 kind=mailbox.alert source=agent-session -->\n\nMailbox alert: Mailbox capacity needs attention. Read pending messages and acknowledge handled messages; inspect the mailbox audit for rejected sends.";
 pub const CLAIM_VERSION: &str = "agent-session.work-context.v1";
 /// Canonical whole-registry byte cap, shared by this projection reader and the
 /// agent-session coordination read/write path (which references this constant).
@@ -151,6 +154,7 @@ pub fn load(state_dir: &Path) -> Result<Option<RegistryProjection>, ReadError> {
             | DELEGATION_REGISTRY_VERSION
             | NOTIFICATION_HISTORY_REGISTRY_VERSION
             | COALESCING_REGISTRY_VERSION
+            | QUOTA_REGISTRY_VERSION
     ) {
         // A well-formed body in this schema family that declares an unknown
         // version came from another release generation. Report drift so the
@@ -164,6 +168,7 @@ pub fn load(state_dir: &Path) -> Result<Option<RegistryProjection>, ReadError> {
                 DELEGATION_REGISTRY_VERSION,
                 NOTIFICATION_HISTORY_REGISTRY_VERSION,
                 COALESCING_REGISTRY_VERSION,
+                QUOTA_REGISTRY_VERSION,
             ],
         ) {
             return Err(ReadError::Incompatible);
@@ -389,6 +394,7 @@ mod tests {
             DELEGATION_REGISTRY_VERSION,
             NOTIFICATION_HISTORY_REGISTRY_VERSION,
             COALESCING_REGISTRY_VERSION,
+            QUOTA_REGISTRY_VERSION,
         ] {
             let temporary = tempfile::TempDir::new().expect("temporary state");
             let coordination = temporary.path().join("coordination");

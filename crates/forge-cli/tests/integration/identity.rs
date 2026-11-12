@@ -1190,6 +1190,51 @@ printf '{"iid":1,"web_url":"https://gitlab.example.invalid/example/project/-/iss
     }
 
     #[test]
+    fn actor_probe_reports_rate_limits_and_preserves_unauthorized() {
+        for (response, status, code, expected) in [
+            (
+                "HTTP/2 403 Forbidden\\nX-RateLimit-Remaining: 0\\nX-RateLimit-Reset: 2000000000\\n\\n{}",
+                69,
+                "github_rate_limited",
+                "2033-05-18T03:33:20Z",
+            ),
+            (
+                "HTTP/2 429 Too Many Requests\\nRetry-After: 120\\n\\n{\"message\":\"You have exceeded a secondary rate limit\"}",
+                69,
+                "github_rate_limited",
+                "retry after that",
+            ),
+            (
+                "HTTP/2 429 Too Many Requests\\nX-RateLimit-Remaining: 0\\nX-RateLimit-Reset: 1\\nRetry-After: 120\\n\\n{}",
+                69,
+                "github_rate_limited",
+                "resets at 20",
+            ),
+            (
+                "HTTP/2 401 Unauthorized\\n\\n{}",
+                65,
+                "identity_actor_unavailable",
+                "http_401",
+            ),
+        ] {
+            let f = Fixture::new(POLICY);
+            let script = fs::read_to_string(&f.gh).unwrap().replace(
+                "api:user) printf '{\"login\":\"%s\"}' \"${FIXTURE_ACTOR:-account-a}\"; exit 0;;",
+                &format!("api:user) printf '{response}'; exit 1;;"),
+            );
+            fs::write(&f.gh, script).unwrap();
+            let out = f.command().args(["issue", "view", "1"]).output().unwrap();
+            let text = String::from_utf8_lossy(&out.stdout);
+            assert_eq!(out.status.code(), Some(status), "{text}");
+            assert!(text.contains(code), "{text}");
+            assert!(text.contains(expected), "{text}");
+            if status == 69 {
+                assert!(text.contains("account-a"), "{text}");
+            }
+        }
+    }
+
+    #[test]
     fn actor_probe_failure_keeps_data_exit_and_bounded_json_cause() {
         let f = Fixture::new(POLICY);
         let script = fs::read_to_string(&f.gh).unwrap().replace(
@@ -1287,6 +1332,26 @@ printf '{"iid":1,"web_url":"https://gitlab.example.invalid/example/project/-/iss
         );
         assert!(f.audit().contains("account-b"));
     }
+    #[test]
+    fn identity_app_later_page_rate_limit_is_reported() {
+        let policy = POLICY.replacen(
+            "expected_login = \"account-a\"",
+            "expected_app_id=42\napp_slug='fixture-app'",
+            1,
+        );
+        let f = Fixture::new(&policy);
+        let script = fs::read_to_string(&f.gh).unwrap().replace(
+            "printf 'HTTP/2 200 OK\\r\\n\\r\\n%s' \"${FIXTURE_COVERAGE:-[]}\"; exit 0;;",
+            "printf 'HTTP/2 200 OK\\r\\n\\r\\n{\"repositories\":[]}\\nHTTP/2 403 Forbidden\\r\\nX-RateLimit-Remaining: 0\\r\\nX-RateLimit-Reset: 2000000000\\r\\n\\r\\n{}'; exit 1;;",
+        );
+        fs::write(&f.gh, script).unwrap();
+        let out = f.command().args(["issue", "view", "1"]).output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(out.status.code(), Some(69), "{text}");
+        assert!(text.contains("github_rate_limited"), "{text}");
+        assert!(text.contains("2033-05-18T03:33:20Z"), "{text}");
+    }
+
     #[test]
     fn identity_app_id_actor_and_repository_coverage_are_all_required() {
         let policy = POLICY.replacen(

@@ -20,17 +20,27 @@ pub(crate) use composer::cleanup::{
     input as cleanup_composer_input, matched_layout as wrapped_composer_layout,
     prefix_end as cleanup_prefix_end,
 };
-pub(crate) use composer::command_ui_observed;
+pub(crate) use composer::placeholder::{claude_paste_placeholder, has_claude_paste_placeholder};
 pub(crate) use composer::{
     Unobserved, composer_holds, direct_composer_observation, exact_composer_input,
     known_multiline_cursor_holds, known_multiline_input,
 };
+pub(crate) use composer::{codex_notice_cursor_path, command_ui_observed};
 
 /// Leading non-whitespace characters used to find the text again. Short enough
 /// to stay ahead of any provider rewriting further into a long text, long enough
 /// not to match a placeholder by accident.
 const PROBE_CHARS: usize = 20;
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Pause between a literal paste and the keys that follow it, so the provider
+/// finishes reading the paste. Unit tests drive stub tmux binaries that need no
+/// settling, so they use a short pause.
+const PRODUCTION_POST_PASTE_KEY_SETTLE_DELAY: Duration = Duration::from_millis(500);
+#[cfg(not(test))]
+pub(crate) const POST_PASTE_KEY_SETTLE_DELAY: Duration = PRODUCTION_POST_PASTE_KEY_SETTLE_DELAY;
+#[cfg(test)]
+pub(crate) const POST_PASTE_KEY_SETTLE_DELAY: Duration = Duration::from_millis(20);
 /// How long the text may stay in the composer after an Enter before that Enter
 /// counts as swallowed.
 const RETRY_AFTER: Duration = Duration::from_millis(1500);
@@ -43,7 +53,14 @@ const MAX_ENTER_PRESSES: u32 = 2;
 /// find it busy wait only five seconds. Guarded terminal delivery supplies a
 /// longer deadline for its repeated identity, idle and exact-composer checks;
 /// native dispatch retains this default.
-pub(crate) const HOLD_BUDGET: Duration = Duration::from_millis(4000);
+///
+/// Unit tests shorten it to just past the swallowed-Enter retry, so the cases
+/// that end unconfirmed do not wait out the full production budget.
+const PRODUCTION_HOLD_BUDGET: Duration = Duration::from_millis(4000);
+#[cfg(not(test))]
+pub(crate) const HOLD_BUDGET: Duration = PRODUCTION_HOLD_BUDGET;
+#[cfg(test)]
+pub(crate) const HOLD_BUDGET: Duration = Duration::from_millis(2500);
 /// Longest single pane read; a read never runs past the hold budget either.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(1);
 /// Shortest time a pane read is given. With less left in the budget the loop
@@ -158,6 +175,7 @@ pub(crate) fn classify(agent: &str, pane: &str, probe: &Probe) -> Composer {
     if let Some(text) = probe.notice.as_deref() {
         if composer::known_multiline_input(agent, pane, text)
             .is_some_and(|input| composer::composer_holds(agent, &input, text))
+            || agent == "codex" && composer::codex_notice_cursor_path(pane, text).is_some()
         {
             return Composer::Pending;
         }
@@ -321,11 +339,15 @@ fn codex_composer<'a>(lines: &'a [&'a str]) -> Option<(&'a [&'a str], &'a [&'a s
 }
 
 /// Provider selection lists draw their cursor as the composer glyph followed by
-/// `1.`, `2.` …; such a line is a choice, not typed input.
+/// `1.`, `2.` … and a space; such a line is a choice, not typed input. A line
+/// that only starts like a number, such as a version, is not a choice.
 fn starts_with_numbered_choice(after_glyph: &str) -> bool {
     let rest = after_glyph.trim_start_matches([' ', '\u{a0}', '\u{2007}', '\u{202f}']);
     let digits = rest.chars().take_while(char::is_ascii_digit).count();
-    digits > 0 && rest[digits..].starts_with('.')
+    digits > 0
+        && rest[digits..].strip_prefix('.').is_some_and(|tail| {
+            tail.is_empty() || tail.starts_with([' ', '\u{a0}', '\u{2007}', '\u{202f}'])
+        })
 }
 
 /// Press the submitting Enter, then watch the composer until it proves the
@@ -871,6 +893,18 @@ mod tests {
     fn a_queued_prompt_is_reported_as_queued() {
         let (result, _, _) = scripted(&[CLAUDE_PENDING, CLAUDE_QUEUED], true);
         assert_eq!(result.unwrap().outcome, SubmitOutcome::Queued);
+    }
+
+    #[test]
+    fn production_waits_keep_their_values_while_unit_tests_use_short_ones() {
+        assert_eq!(
+            PRODUCTION_POST_PASTE_KEY_SETTLE_DELAY,
+            Duration::from_millis(500)
+        );
+        assert_eq!(PRODUCTION_HOLD_BUDGET, Duration::from_millis(4000));
+        assert!(POST_PASTE_KEY_SETTLE_DELAY < PRODUCTION_POST_PASTE_KEY_SETTLE_DELAY);
+        assert!(HOLD_BUDGET < PRODUCTION_HOLD_BUDGET);
+        assert!(HOLD_BUDGET > RETRY_AFTER);
     }
 }
 

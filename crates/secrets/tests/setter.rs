@@ -196,7 +196,7 @@ fn set_hands_off_pending_without_any_git_delivery() {
     assert!(data["next_actions"].to_string().contains("forge-cli"));
     assert_eq!(
         decode(&fs::read_to_string(f.target()).unwrap()),
-        format!("TOKEN=\"{CANARY}\"\n")
+        format!("TOKEN={CANARY}\n")
     );
     let ops = fs::read_to_string(f.root.path().join("ops")).unwrap();
     assert!(!ops.lines().any(|line| line.starts_with("add ")
@@ -217,7 +217,7 @@ fn set_updates_exact_key_and_preserves_other_keys_and_comments() {
     assert_eq!(
         decode(&fs::read_to_string(f.target()).unwrap()),
         format!(
-            "# retained\nTOKEN_SUFFIX=untouched\nTOKEN=\"{CANARY} \\\"quote\\\" 'single' \\\\ \\$HOME\\nnext\\n\"\nOTHER='literal value'\n"
+            "# retained\nTOKEN_SUFFIX=untouched\nTOKEN={CANARY} \"quote\" 'single' \\ $HOME\\nnext\\n\nOTHER='literal value'\n"
         )
     );
     let sops_ops = fs::read_to_string(f.root.path().join("sops-ops")).unwrap();
@@ -230,7 +230,7 @@ fn set_updates_exact_key_and_preserves_other_keys_and_comments() {
 
 #[test]
 fn set_accepts_empty_and_preserves_one_final_linefeed() {
-    for (input, expected) in [("", "TOKEN=\"\"\n"), ("value\n", "TOKEN=\"value\\n\"\n")] {
+    for (input, expected) in [("", "TOKEN=\n"), ("value\n", "TOKEN=value\\n\n")] {
         let f = Fixture::new();
         assert!(f.run(input.as_bytes(), &[]).status.success());
         assert_eq!(decode(&fs::read_to_string(f.target()).unwrap()), expected);
@@ -502,8 +502,55 @@ fn set_large_utf8_value_crosses_pipe_buffers_without_loss() {
     assert!(f.run(input.as_bytes(), &[]).status.success());
     assert_eq!(
         decode(&fs::read_to_string(f.target()).unwrap()),
-        format!("TOKEN=\"{}\"\n", input.replace('\t', "\\t"))
+        format!("TOKEN={input}\n")
     );
+}
+
+/// The stored form is the bare value, byte-for-byte what `secrets add` stores from
+/// a `KEY=value` file, so a plain `sops -d` dotenv consumer reads the input back.
+/// SOPS dotenv keeps quotes, `#`, `$`, backslashes, tabs and edge whitespace as-is.
+#[test]
+fn set_stores_values_bare_like_secrets_add() {
+    for value in [
+        "ordinary-value-123",
+        "p@ss\"w$rd\\b'x",
+        "  lead and trail  ",
+        "ab #cd",
+        "#start",
+        "\"wrapped\"",
+        "a=b",
+        "a\tb",
+    ] {
+        let f = Fixture::new();
+        assert!(f.run(value.as_bytes(), &[]).status.success());
+        assert_eq!(
+            decode(&fs::read_to_string(f.target()).unwrap()),
+            format!("TOKEN={value}\n"),
+            "{value:?}"
+        );
+    }
+}
+
+/// LF uses the SOPS dotenv newline form (`\n`); a backslash before LF stays distinct.
+#[test]
+fn set_encodes_linefeed_as_sops_dotenv_newline() {
+    let f = Fixture::new();
+    assert!(f.run(b"a\\\nb", &[]).status.success());
+    assert_eq!(
+        decode(&fs::read_to_string(f.target()).unwrap()),
+        "TOKEN=a\\\\nb\n"
+    );
+}
+
+/// SOPS dotenv reads a literal backslash+`n` as LF, so such a value cannot round-trip.
+#[test]
+fn set_refuses_value_containing_literal_backslash_n() {
+    for input in ["a\\nb", "a\\\\nb"] {
+        let f = Fixture::new();
+        assert!(!f.run(input.as_bytes(), &[]).status.success(), "{input:?}");
+        assert!(!f.target().exists());
+        f.assert_no_temp();
+    }
 }
 
 #[test]
@@ -555,7 +602,7 @@ fn set_resolves_existing_stack_and_appends_missing_key() {
     assert_eq!(json["data"]["entry"], "stacks/service.enc.env");
     assert_eq!(
         decode(&fs::read_to_string(target).unwrap()),
-        format!("# retained\nOTHER=keep\nTOKEN=\"{CANARY}\"\n")
+        format!("# retained\nOTHER=keep\nTOKEN={CANARY}\n")
     );
     assert!(!f.target().exists());
 }

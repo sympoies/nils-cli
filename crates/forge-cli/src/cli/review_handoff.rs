@@ -99,7 +99,7 @@ pub struct PrReviewHandoffReturnArgs {
     #[arg(long)]
     pub expected_state: String,
     /// Bounded role-based reason; mailbox details stay private.
-    #[arg(long, value_parser = ["reviewer-unreachable", "reviewer-closed", "reviewer-declined", "reviewer-timeout", "coordinator-retired"])]
+    #[arg(long, value_parser = ["reviewer-unreachable", "reviewer-closed", "reviewer-declined", "reviewer-timeout", "publisher-unavailable", "coordinator-retired"])]
     pub reason: String,
     /// Recorded coordinator selector; required for coordinator-retired only.
     #[arg(long)]

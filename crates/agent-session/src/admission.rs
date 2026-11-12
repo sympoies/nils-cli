@@ -341,6 +341,11 @@ pub(super) fn create_record_with_lineage(
         store_startup_projection(&mut record, &starting_projection(&iso, "record"));
     }
 
+    if let Err(error) = lifecycle::begin_creation(request.context, &record) {
+        session_storage.cleanup_if_current();
+        return Err(error);
+    }
+
     if let Err(error) = write_initial_session_record(&session_storage, &record) {
         session_storage.cleanup_if_current();
         return Err(error);

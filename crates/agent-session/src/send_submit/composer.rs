@@ -4,7 +4,10 @@ use super::{
 };
 use unicode_width::UnicodeWidthChar;
 
+mod codex_notice;
+pub(crate) use codex_notice::codex_notice_cursor_path;
 mod command_ui;
+pub(super) mod placeholder;
 pub(crate) use command_ui::observed as command_ui_observed;
 mod unobserved;
 pub(crate) use unobserved::Unobserved;
@@ -15,6 +18,8 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
 
 /// Match a known multiline notice only in a logical capture where tmux has
 /// joined soft-wrapped rows. Unknown drafts are never inferred from a prefix.
+/// Codex blank rows are candidates only: the guard must also prove their
+/// logical cursor path before treating them as owned input.
 pub(crate) fn known_multiline_input(agent: &str, pane: &str, expected: &str) -> Option<String> {
     crate::notice::parse_notice(expected)?;
     let visual = expected.replace("\r\n", "\n");
@@ -73,6 +78,16 @@ pub(crate) fn known_multiline_input(agent: &str, pane: &str, expected: &str) -> 
     let mut logical_rows = Vec::with_capacity(observed_rows.len());
     for (index, observed) in observed_rows.iter().enumerate() {
         let wanted = expected_rows.get(index).copied();
+        if agent == "codex"
+            && index > 0
+            && observed.chars().all(|ch| ch == ' ')
+            && wanted.is_some_and(|row| row.chars().all(|ch| ch == ' '))
+        {
+            // Codex 0.162.1 leaves a layout cell on blank rows, including
+            // whitespace-only drafts. Only cursor checkpoints prove the bytes.
+            logical_rows.push(wanted?.to_owned());
+            continue;
+        }
         if index > 0 && observed.is_empty() {
             logical_rows.push(String::new());
             continue;
@@ -226,13 +241,14 @@ fn observe_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Result<Str
         _ => None,
     }
     .ok_or(Unobserved::ComposerNotLocated)?;
-    if region.len() != 1
-        || footer.iter().any(|line| {
-            let lower = line.to_lowercase();
-            DIALOG_HINTS.iter().any(|hint| lower.contains(hint))
-        })
-    {
-        return Err(Unobserved::RowUnrecognized);
+    if region.len() != 1 {
+        return Err(Unobserved::RegionNotSingleRow);
+    }
+    if footer.iter().any(|line| {
+        let lower = line.to_lowercase();
+        DIALOG_HINTS.iter().any(|hint| lower.contains(hint))
+    }) {
+        return Err(Unobserved::FooterDialogHint);
     }
     let glyph = if agent == "claude" { '❯' } else { '›' };
     let after_glyph = region[0]
@@ -280,7 +296,7 @@ fn observe_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Result<Str
     let compressed = compact(input);
     if compressed == CLAUDE_QUEUED_HINT {
         if !allow_queued_hint || agent != "claude" {
-            return Err(Unobserved::RowUnrecognized);
+            return Err(Unobserved::QueuedHintNotAdmitted);
         }
         return Ok(if fully_dim {
             String::new()
@@ -292,7 +308,7 @@ fn observe_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Result<Str
         .iter()
         .any(|mark| compressed.contains(mark))
     {
-        return Err(Unobserved::RowUnrecognized);
+        return Err(Unobserved::PastePlaceholder);
     }
     // Native suggestions are dynamic, not limited to the startup hint wording.
     // Every hint word must carry dim styling; plain, partially dim and blank
@@ -303,7 +319,7 @@ fn observe_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Result<Str
     if (agent == "codex" && input == "Ask Codex to do anything")
         || (agent == "claude" && input.starts_with("Try \"") && input.ends_with('"'))
     {
-        return Err(Unobserved::RowUnrecognized);
+        return Err(Unobserved::SuggestionLiteralUnstyled);
     }
     Ok(input.to_string())
 }

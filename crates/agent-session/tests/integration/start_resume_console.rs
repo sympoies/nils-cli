@@ -146,7 +146,9 @@ fn stub(responses: Vec<(u16, Value)>) -> (String, thread::JoinHandle<Vec<(String
                 thread::sleep(Duration::from_millis(10));
             };
             requests.push(read_request(&mut stream));
-            let body = if status == 404 && body.is_null() {
+            let body = if status == 299 {
+                "not json".to_owned()
+            } else if status == 404 && body.is_null() {
                 String::new()
             } else {
                 body.to_string()
@@ -161,36 +163,49 @@ fn stub(responses: Vec<(u16, Value)>) -> (String, thread::JoinHandle<Vec<(String
 #[test]
 fn cli_console_check_does_not_read_prompt_or_create_operation_and_rejects_old_or_misbound_answers()
 {
-    for (answer, expected) in [
-        (preflight(), None),
+    for (answer, expected, reason) in [
+        (preflight(), None, None),
         (
             json!({"schema_version":"agent-session.serve.v1","ok":true}),
             Some("resume-unsupported"),
+            Some("preflight-schema-mismatch"),
         ),
         {
             let mut answer = preflight();
             answer["data"]["machine"] = json!("other-target");
-            (answer, Some("resume-unsupported"))
+            (
+                answer,
+                Some("resume-unsupported"),
+                Some("preflight-binding-mismatch"),
+            )
         },
         {
             let mut answer = preflight();
             answer["data"]["account"] = json!("/private/fixture-account");
-            (answer, Some("resume-unsupported"))
+            (
+                answer,
+                Some("resume-unsupported"),
+                Some("preflight-binding-mismatch"),
+            )
         },
         {
             let mut answer = preflight();
             answer["data"]["history_scope"] = json!("account");
-            (answer, None)
+            (answer, None, None)
         },
         {
             let mut answer = preflight();
             answer["data"]["history_scope"] = json!("shared");
-            (answer, None)
+            (answer, None, None)
         },
         {
             let mut answer = preflight();
             answer["data"]["history_scope"] = json!("unexpected");
-            (answer, Some("resume-unsupported"))
+            (
+                answer,
+                Some("resume-unsupported"),
+                Some("preflight-binding-mismatch"),
+            )
         },
     ] {
         let f = Fixture::new();
@@ -214,6 +229,10 @@ fn cli_console_check_does_not_read_prompt_or_create_operation_and_rejects_old_or
             None => assert_eq!(out.stdout_json(), expected_success, "{}", out.stderr_text()),
             Some(code) => {
                 assert_eq!(out.stdout_json()["error"]["code"], code);
+                assert_eq!(
+                    out.stdout_json()["error"]["details"]["reason"],
+                    reason.unwrap()
+                );
                 assert_eq!(
                     out.stdout_json()["error"]["details"]["session_created"],
                     false
@@ -247,9 +266,46 @@ fn old_daemon_without_a_preflight_route_is_distinguishable_from_transport_failur
     worker.join().unwrap();
     assert_eq!(out.stdout_json()["error"]["code"], "resume-unsupported");
     assert_eq!(
+        out.stdout_json()["error"]["details"]["reason"],
+        "daemon-route-missing"
+    );
+    assert_eq!(
         out.stdout_json()["error"]["details"]["safe_to_retry"],
         false
     );
+}
+
+#[test]
+fn cli_preflight_reports_unreadable_and_forwarded_reasons_without_upstream_content() {
+    for (status, body, reason) in [
+        (299, Value::Null, "daemon-answer-unreadable"),
+        (
+            422,
+            json!({"schema_version":"cli.agent-session.resume-preflight.v1","ok":false,"error":{"code":"resume-unsupported","details":{"session_created":false,"safe_to_retry":false,"reason":"relay-config-missing"}}}),
+            "relay-config-missing",
+        ),
+        (
+            422,
+            json!({"schema_version":"cli.agent-session.resume-preflight.v1","ok":false,"error":{"code":"resume-unsupported","details":{"session_created":false,"safe_to_retry":false,"reason":"untrusted-content"}}}),
+            "",
+        ),
+    ] {
+        let f = Fixture::new();
+        let (url, worker) = stub(vec![(status, body)]);
+        let capability = seed_caller(&f, &url);
+        let out = run_console(&f, &capability, &["--check-resume"]);
+        worker.join().unwrap();
+        let result = out.stdout_json();
+        assert_eq!(result["error"]["code"], "resume-unsupported");
+        assert_eq!(result["error"]["details"]["session_created"], false);
+        assert_eq!(result["error"]["details"]["safe_to_retry"], false);
+        if reason.is_empty() {
+            assert!(result["error"]["details"].get("reason").is_none());
+        } else {
+            assert_eq!(result["error"]["details"]["reason"], reason);
+        }
+        assert!(!result.to_string().contains("untrusted-content"));
+    }
 }
 
 #[test]
@@ -295,7 +351,7 @@ fn cli_console_start_forwards_resume_account_and_ordinary_context_and_terminal_r
         assert_eq!(requests[0].0, "/sessions/source/console-resume/v1");
         let request = &requests[0].1;
         assert_eq!(request["session"]["resume"], CONVERSATION);
-        assert_eq!(request["session"]["claude_account"], "original");
+        assert_eq!(request["session"]["account"], "original");
         assert_eq!(request["session"]["prompt"], "fixture bootstrap");
         assert_eq!(
             request["session"]["agent_args"],

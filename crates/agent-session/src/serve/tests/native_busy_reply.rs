@@ -98,60 +98,69 @@ async fn keyed_codex_reply_reaches_native_protocol_while_turn_is_working() {
         let listener =
             tokio::net::UnixListener::bind(tmp.path().join(format!("{ID}.sock"))).unwrap();
         let (seen, mut received) = tokio::sync::mpsc::unbounded_channel();
-        let peer =
-            tokio::spawn(async move {
-                let (stream, _) = listener.accept().await.unwrap();
-                let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
-                let initialize = read_json(&mut socket).await;
-                assert_eq!(initialize["method"], "initialize");
-                reply(&mut socket, &initialize, json!({})).await;
-                assert_eq!(read_json(&mut socket).await["method"], "initialized");
-                let loaded = read_json(&mut socket).await;
-                assert_eq!(loaded["method"], "thread/loaded/list");
-                reply(
-                    &mut socket,
-                    &loaded,
-                    json!({"data": [THREAD], "nextCursor": null}),
-                )
-                .await;
-                let resume = read_json(&mut socket).await;
-                assert_eq!(resume["method"], "thread/resume");
-                assert_eq!(resume["params"]["threadId"], THREAD);
-                reply(&mut socket, &resume, json!({})).await;
-                let usage = read_json(&mut socket).await;
-                assert_eq!(usage["method"], "account/rateLimits/read");
-                socket.send(ClientMessage::Text(json!({
-                "method": "turn/started",
-                "params": {"threadId": THREAD, "turn": {"id": TURN, "status": "inProgress"}}
-            }).to_string().into())).await.unwrap();
-                reply(&mut socket, &usage, json!({"rateLimits": {}})).await;
-                let prompt = read_json(&mut socket).await;
-                assert_eq!(prompt["method"], "turn/start");
-                assert_eq!(prompt["params"]["threadId"], THREAD);
-                assert_eq!(prompt["params"]["input"][0]["text"], TEXT);
-                // Interleaved reminder input and a sibling input with identical
-                // text are notifications, not this request's native RPC response.
-                for (item, text) in [
-                    ("reminder-input", "Mailbox: agent-session message inbox"),
-                    ("sibling-input", TEXT),
-                ] {
-                    socket
-                        .send(ClientMessage::Text(
-                            json!({
-                                "method": "item/completed",
-                                "params": {"threadId": THREAD, "turnId": TURN,
-                                    "item": {"id": item, "type": "userMessage",
-                                        "content": [{"type": "text", "text": text}]}}
-                            })
-                            .to_string()
-                            .into(),
-                        ))
-                        .await
-                        .unwrap();
-                }
-                seen.send(prompt).unwrap();
-                (socket, seen)
-            });
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let initialize = read_json(&mut socket).await;
+            assert_eq!(initialize["method"], "initialize");
+            reply(&mut socket, &initialize, json!({})).await;
+            assert_eq!(read_json(&mut socket).await["method"], "initialized");
+            let loaded = read_json(&mut socket).await;
+            assert_eq!(loaded["method"], "thread/loaded/list");
+            reply(
+                &mut socket,
+                &loaded,
+                json!({"data": [THREAD], "nextCursor": null}),
+            )
+            .await;
+            let resume = read_json(&mut socket).await;
+            assert_eq!(resume["method"], "thread/resume");
+            assert_eq!(resume["params"]["threadId"], THREAD);
+            reply(&mut socket, &resume, json!({})).await;
+            let usage = read_json(&mut socket).await;
+            assert_eq!(usage["method"], "account/rateLimits/read");
+            socket
+                .send(ClientMessage::Text(
+                    json!({
+                        "method": "turn/started",
+                        "params": {"threadId": THREAD, "turn": {"id": TURN, "status": "inProgress"}}
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .unwrap();
+            reply(&mut socket, &usage, json!({"rateLimits": {}})).await;
+            let prompt = read_json(&mut socket).await;
+            assert_eq!(prompt["method"], "turn/start");
+            assert_eq!(prompt["params"]["threadId"], THREAD);
+            assert_eq!(prompt["params"]["input"][0]["text"], TEXT);
+            // Interleaved reminder input and a sibling input with identical
+            // text are notifications, not this request's native RPC response.
+            for (item, text) in [
+                (
+                    "reminder-input",
+                    "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: agent-session message inbox",
+                ),
+                ("sibling-input", TEXT),
+            ] {
+                socket
+                    .send(ClientMessage::Text(
+                        json!({
+                            "method": "item/completed",
+                            "params": {"threadId": THREAD, "turnId": TURN,
+                                "item": {"id": item, "type": "userMessage",
+                                    "content": [{"type": "text", "text": text}]}}
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await
+                    .unwrap();
+            }
+            seen.send(prompt).unwrap();
+            (socket, seen)
+        });
         let (handle, commands, ready) = codex_app_server::starting_control_channel();
         let control = tokio::spawn(codex_app_server::run_control(
             st.context.clone(),
@@ -224,6 +233,12 @@ async fn keyed_codex_reply_reaches_native_protocol_while_turn_is_working() {
             socket.close(None).await.unwrap();
         }
         let (status, result) = request.await.unwrap();
+        assert!(
+            native["params"]["clientUserMessageId"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("agent-session-")),
+            "a keyed busy reply must carry its provider client message id"
+        );
         assert_eq!(
             status,
             if acknowledge {
@@ -260,6 +275,10 @@ async fn keyed_codex_reply_reaches_native_protocol_while_turn_is_working() {
             assert_eq!(next["method"], "turn/start");
             assert_eq!(next["params"]["threadId"], THREAD);
             assert_ne!(next["id"], native["id"]);
+            assert_ne!(
+                next["params"]["clientUserMessageId"], native["params"]["clientUserMessageId"],
+                "distinct logical replies require distinct client ids"
+            );
             reply(
                 &mut socket,
                 &next,

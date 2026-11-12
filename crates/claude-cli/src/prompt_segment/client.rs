@@ -56,7 +56,24 @@ pub(crate) fn backoff_active(access_token: &str) -> bool {
 }
 
 pub(crate) fn fetch_usage(access_token: &str) -> Result<UsageObservation, UsageFetchError> {
-    let result = request_usage(access_token).map_err(|failure| {
+    finish_fetch(request_usage(access_token), access_token)
+}
+
+/// `fetch_usage` through the Claude Code status identity of `diag
+/// rate-limits`, the only identity for which the endpoint returns the
+/// limit-reset programs.
+pub(crate) fn fetch_status(access_token: &str) -> Result<UsageObservation, UsageFetchError> {
+    finish_fetch(
+        crate::rate_limits::status::request_status(access_token),
+        access_token,
+    )
+}
+
+fn finish_fetch(
+    result: Result<UsageObservation, RequestFailure>,
+    access_token: &str,
+) -> Result<UsageObservation, UsageFetchError> {
+    let result = result.map_err(|failure| {
         UsageFetchError::new(match failure {
             RequestFailure::Backoff => ProviderUsageReason::RateLimited,
             RequestFailure::Client => ProviderUsageReason::Unknown,

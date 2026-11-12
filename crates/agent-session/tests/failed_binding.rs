@@ -3,7 +3,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
+use nils_test_support::cmd::{CmdOptions, CmdOutput, retry_executable_file_busy, run_resolved};
 use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
 
@@ -18,9 +18,7 @@ fn executable(path: &Path, body: &str) {
     fs::write(path, body).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     assert!(
-        std::process::Command::new(path)
-            .arg("prewarm")
-            .status()
+        retry_executable_file_busy(|| std::process::Command::new(path).arg("prewarm").status())
             .unwrap()
             .success()
     );

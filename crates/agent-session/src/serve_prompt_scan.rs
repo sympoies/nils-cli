@@ -4,7 +4,7 @@
 use super::*;
 
 #[path = "serve_prompt_projection.rs"]
-mod projection;
+pub(super) mod projection;
 
 /// Why no transcript source is available yet.
 enum NoSource {
@@ -137,6 +137,11 @@ impl ProviderPromptDiscoveryRegistry {
 
 #[cfg(test)]
 impl ProviderPromptDiscoveryRegistry {
+    async fn continuity_for_key(&self, key: &ProviderPromptDiscoveryKey) -> Option<String> {
+        let slot = self.entries.lock().await.get(key).cloned()?;
+        Some(slot.lock().await.last_prompt_continuity.clone())
+    }
+
     async fn wait_until<F, Fut>(&self, what: &str, mut done: F)
     where
         F: FnMut() -> Fut,
@@ -245,7 +250,7 @@ mod tests {
             async move {
                 tokio::time::timeout(
                     Duration::from_millis(500),
-                    registry.last_prompt_projection(&record),
+                    registry.last_prompt_projection(&record, None),
                 )
                 .await
                 .expect("GET /sessions must not wait for a provider-history scan")

@@ -3,6 +3,9 @@ use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
 use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+
+#[path = "claude_notice/refusals.rs"]
+mod refusals;
 use std::fs;
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
@@ -559,38 +562,41 @@ fn claude_notice_supported_native_delivery_is_exact_and_consumed_once() {
 
 #[test]
 fn claude_notice_postclaim_failures_retain_key_and_preserve_unknown_draft() {
-    for mode in [
-        "dropped",
-        "wrong-result",
-        "draft-after",
-        "identity-change",
-        "lost-result",
-    ] {
-        let fixture = super::Fixture::new("claude");
-        let peer = Peer::start(&fixture, mode);
-        let output = send_notice(&fixture, "synthetic\n");
-        let value = fixture.refused(&output, "notice-native-unconfirmed");
-        assert_eq!(value["error"]["details"]["submitted"], Value::Null);
-        assert_eq!(value["error"]["details"]["pasted"], false);
-        fixture.refused(
-            &send_notice(&fixture, "synthetic\n"),
-            "send-idempotency-key-used",
-        );
-        assert_eq!(
-            peer.text.lock().unwrap().len(),
-            1,
-            "{mode}: never release another body"
-        );
-        fixture.no_delivery();
-        assert_eq!(
-            fs::read_to_string(fixture.root().join("composer")).unwrap(),
-            if mode == "draft-after" {
-                "new user draft"
-            } else {
-                ""
-            }
-        );
-    }
+    crate::cases::for_each_case(
+        &[
+            "dropped",
+            "wrong-result",
+            "draft-after",
+            "identity-change",
+            "lost-result",
+        ],
+        |&mode| {
+            let fixture = super::Fixture::new("claude");
+            let peer = Peer::start(&fixture, mode);
+            let output = send_notice(&fixture, "synthetic\n");
+            let value = fixture.refused(&output, "notice-native-unconfirmed");
+            assert_eq!(value["error"]["details"]["submitted"], Value::Null);
+            assert_eq!(value["error"]["details"]["pasted"], false);
+            fixture.refused(
+                &send_notice(&fixture, "synthetic\n"),
+                "send-idempotency-key-used",
+            );
+            assert_eq!(
+                peer.text.lock().unwrap().len(),
+                1,
+                "{mode}: never release another body"
+            );
+            fixture.no_delivery();
+            assert_eq!(
+                fs::read_to_string(fixture.root().join("composer")).unwrap(),
+                if mode == "draft-after" {
+                    "new user draft"
+                } else {
+                    ""
+                }
+            );
+        },
+    );
 }
 
 #[test]
@@ -651,9 +657,17 @@ fn claude_notice_ledger_reserves_unfinished_pairs_and_refuses_partial_data() {
         );
         fs::write(&ledger, &bytes).unwrap();
         fs::set_permissions(&ledger, fs::Permissions::from_mode(0o600)).unwrap();
-        fixture.refused(
+        let error = fixture.refused(
             &send_notice(&fixture, "synthetic\n"),
             "notice-native-unavailable",
+        );
+        assert_eq!(
+            error["error"]["details"]["reason"],
+            if partial {
+                "claim-unavailable"
+            } else {
+                "claim-ledger-full"
+            }
         );
         assert_eq!(
             fs::read(&ledger).unwrap(),
@@ -755,27 +769,33 @@ fn attach_status(root: &Path) -> Option<Value> {
 
 #[test]
 fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
-    for resume in [false, true] {
-        for (gate, version, mounted, reason, observed) in [
-            ("1", "2.1.296", true, "", ""),
-            ("1", "2.1.317", true, "", ""),
-            (
-                "1",
-                "2.1.318",
-                false,
-                "provider-version-unsupported",
-                "2.1.318",
-            ),
-            (
-                "1",
-                "2.1.295",
-                false,
-                "provider-version-unsupported",
-                "2.1.295",
-            ),
-            ("1", "garbled", false, "provider-version-unreadable", ""),
-            ("0", "2.1.296", false, "writers-disabled", ""),
-        ] {
+    let versions = [
+        ("1", "2.1.296", true, "", ""),
+        ("1", "2.1.319", true, "", ""),
+        (
+            "1",
+            "2.1.320",
+            false,
+            "provider-version-unsupported",
+            "2.1.320",
+        ),
+        (
+            "1",
+            "2.1.295",
+            false,
+            "provider-version-unsupported",
+            "2.1.295",
+        ),
+        ("1", "garbled", false, "provider-version-unreadable", ""),
+        ("0", "2.1.296", false, "writers-disabled", ""),
+    ];
+    let cases: Vec<_> = [false, true]
+        .into_iter()
+        .flat_map(|resume| versions.map(|version| (resume, version)))
+        .collect();
+    crate::cases::for_each_case(
+        &cases,
+        |&(resume, (gate, version, mounted, reason, observed))| {
             let temp = tempfile::tempdir_in("/tmp").unwrap();
             let (_, calls) = launch_case(temp.path(), gate, version, resume);
             let case = format!("{gate} {version} resume={resume}");
@@ -783,7 +803,7 @@ fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
             let status = attach_status(temp.path());
             if mounted {
                 assert_eq!(status, None, "{case}");
-                continue;
+                return;
             }
             assert_eq!(
                 status,
@@ -793,12 +813,12 @@ fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
                     "reason": reason,
                     "provider_version": (!observed.is_empty()).then_some(observed),
                     "supported_min": "2.1.296",
-                    "supported_max": "2.1.317",
+                    "supported_max": "2.1.319",
                 })),
                 "{case}"
             );
-        }
-    }
+        },
+    );
 }
 
 fn seed_attach_status(fixture: &super::Fixture, status: Option<Value>) {
@@ -817,17 +837,17 @@ fn seed_attach_status(fixture: &super::Fixture, status: Option<Value>) {
 
 fn status(reason: &str, version: Option<&str>) -> Value {
     json!({"schema_version":"agent-session.claude-notice-attach.v1","state":"not-attached",
-        "reason":reason,"provider_version":version,"supported_min":"2.1.296","supported_max":"2.1.317"})
+        "reason":reason,"provider_version":version,"supported_min":"2.1.296","supported_max":"2.1.319"})
 }
 
 #[test]
 fn claude_notice_unattached_session_refuses_with_a_typed_reason() {
     for (seed, code, reason, version) in [
         (
-            Some(status("provider-version-unsupported", Some("2.1.318"))),
+            Some(status("provider-version-unsupported", Some("2.1.320"))),
             "notice-native-version-unsupported",
             "provider-version-unsupported",
-            json!("2.1.318"),
+            json!("2.1.320"),
         ),
         (
             Some(status("provider-version-unreadable", None)),
@@ -856,7 +876,7 @@ fn claude_notice_unattached_session_refuses_with_a_typed_reason() {
             json!({"id":"guarded","guard":"transport","stage":"admission","atomic":false,
                 "pasted":false,"submitted":false,
                 "native_module":{"attached":false,"reason":reason,"provider_version":version,
-                    "supported_min":"2.1.296","supported_max":"2.1.317"}}),
+                    "supported_min":"2.1.296","supported_max":"2.1.319"}}),
             "{reason}"
         );
         // Refused before any claim or input: the key stays unused.
@@ -890,10 +910,11 @@ fn claude_notice_unprovable_transcript_lookup_keeps_the_generic_unavailable_code
         }
         // Waiting for a turn cannot fix an ambiguous or unprovable lookup, so
         // only a clean not-found may claim the transcript does not exist yet.
-        fixture.refused(
+        let error = fixture.refused(
             &send_notice(&fixture, "synthetic\n"),
             "notice-native-unavailable",
         );
+        assert_eq!(error["error"]["details"]["reason"], "baseline-unprovable");
         assert!(peer.text.lock().unwrap().is_empty(), "{case}");
         fixture.no_delivery();
     }

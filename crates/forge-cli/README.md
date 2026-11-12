@@ -23,6 +23,7 @@ cargo run -p nils-forge-cli -- completion zsh
 cargo run -p nils-forge-cli -- label audit --catalog labels.yaml --format json
 cargo run -p nils-forge-cli -- pr deliver --kind feature --dry-run --format json
 cargo run -p nils-forge-cli -- pr review 123 --decision comments-only --comment-file review.md --mirror-issue --issue 456 --format json
+cargo run -p nils-forge-cli -- pr review edit 123 --review 456 --body-file review.md --format json
 cargo run -p nils-forge-cli -- pr review validate --comment-file review.md --thread-file review-threads.json --format json
 cargo run -p nils-forge-cli -- pr review validate --specialist-report --comment-file review.md --thread-file review-threads.json --format json
 cargo run -p nils-forge-cli -- pr review validate 123 --check-diff --comment-file review.md --thread-file review-threads.json --format json
@@ -47,6 +48,11 @@ provider, `--store-root <path>` overrides `FORGE_CLI_LOCAL_STORE`; it does not
 affect GitHub or GitLab operations.
 
 ## PR body section headings
+
+For a test-only bug fix, such as a flake fix, use `--kind bug` and the bug
+test-first record (or a reasoned waiver). When the bug gate is enabled, a
+`--kind test` PR with test-change findings also requires that record. A plain
+test addition without findings may use `--kind test` without a record.
 
 `pr create`, `pr edit`, and `pr deliver` require non-empty H2 sections named
 `## Summary` and `## Test plan` by default. To use other headings, configure
@@ -73,6 +79,7 @@ intended remote. GitLab and Local are unsupported for these commands.
 ```sh
 forge-cli --repo example/widget release create v1.0.0 --title 'Release 1.0.0' --notes-file notes.md --verify-tag --draft
 forge-cli --repo example/widget release upload v1.0.0 artifact.tar.gz
+forge-cli --repo example/widget release delete-asset v1.0.0 artifact.tar.gz --expect-sha256 "artifact.tar.gz=$SHA256" --dry-run
 forge-cli --repo example/widget release view v1.0.0 --format json
 forge-cli --repo example/widget release edit v1.0.0 --notes-file notes.md
 forge-cli --repo example/widget release delete evidence-check --cleanup-tag
@@ -89,7 +96,14 @@ timeline comments; `review` selects diff review comments. Workflow input values
 remain literal strings, and dispatch success records acceptance rather than run
 completion. Use `--dry-run` to inspect a plan without writing. See the
 [command contract](docs/specs/forge-cli-spec-v1.md#release-create--release-upload)
-for flags and typed outputs. Release and deletion commands require the caller's
+for flags and typed outputs. Asset deletion validates all names and optional SHA-256 guards before deleting;
+JSON output includes each selected asset’s former size and provider digest.
+
+A dry run reads the release and lists the selected assets without deleting them.
+A provider failure during deletion can leave earlier requested assets deleted;
+inspect the release before retrying.
+
+Release and deletion commands require the caller's
 existing authorization. Canonical SemVer tags require `--allow-version-tag`
 for release deletion; `--cleanup-tag` separately opts into tag removal. The
 [release lifecycle contract](docs/specs/forge-publication-admin-v1.md#release-view--release-edit--release-delete)
@@ -112,11 +126,14 @@ and the existing private Forgejo creation flow. Supply `--provider`,
 `--repo namespace/name`, `--owner-kind`, a safe
 `--default-branch`, one or more regular repository-root `--file` inputs, a
 Semantic Commit `--message`, and a regular `--reason-file` recording the
-operator's authorization. The default visibility is private; public GitHub
+operator's authorization.
+
+The default visibility is private; public GitHub
 or GitLab repositories require `--visibility public`. For GitLab, use
 `--owner-kind org` for a group or subgroup and `--owner-kind user` for the
 authenticated user's namespace. Bind a self-managed instance with
-`--host gitlab.example.com`. Forgejo remains private only.
+`--host gitlab.example.com`. Forgejo remains private only. Explicit `--file` inputs are staged even when Git
+ignore rules match them.
 
 ```sh
 forge-cli --provider github --repo OWNER/REPO --dry-run repo bootstrap \
@@ -137,13 +154,22 @@ Omit `--existing-empty` to create a new empty repository; include it only when
 adopting a repository that already exists and has no refs. The CLI records an
 exact-input receipt before creation or push, verifies the local signature and
 zero-parent ancestry, reads back the exact remote branch and provider signature,
-reads GitHub and GitLab API status from the HTTP response header,
+
+The CLI reads GitHub and GitLab API status from the HTTP response header,
 rejects additional GitLab branches or tags, and never retries an ambiguous first push. Receipts use schema v2; any other schema is
 rejected as unsupported with the receipt path, and the owner reconciles it against the
 remote state before removing it. If interrupted, inspect the receipt
 reported in the error and repeat the same command with `--resume`. If an
 attempted push has no remote branch, resume stops for manual reconciliation. A completed
-matching receipt is idempotent. Nested paths belong in a normal managed
+matching receipt is idempotent.
+
+To abandon an incomplete receipt, repeat the
+bootstrap command with `--abandon` instead of `--resume`. The receipt and local
+checkout are archived under the bootstrap state directory; an existing archive
+must be retained or moved before another abandonment. This operation never
+deletes the remote. Inspect it first: an empty remote must be removed or reused
+by the operator (with `--existing-empty` where supported). A push may have
+already populated it. Nested paths belong in a normal managed
 worktree and PR after the initial branch exists.
 
 `repo push-default` is a narrow, policy-driven exception to PR delivery. It
@@ -588,13 +614,27 @@ It requires a current-head published review and a reviewer-owned closed ledger;
 mailbox verdicts never replace provider evidence. See the
 [handoff contract](docs/specs/forge-cli-spec-v1.md#pr-review-handoff-assign--inspect--check--surrender--recover)
 for assignment, writer fencing, generation-bound surrender/recovery, and privacy boundaries.
+
+If the assigned review publisher is unavailable, the recorded coordinator can
+use `recover --reason publisher-unavailable --expected-head <sha> --expected-state
+<digest>`. This audited recovery advances the generation and releases the
+designated merge gate. Merge then follows the repository's non-assigned review
+policy; `--review-convergence=false` permits an absent observation. Other merge
+gates remain enforced. Reviewer recovery reasons still return
+`designated_reviewer_unavailable`. See the
+[publisher recovery runbook](docs/runbooks/unavailable-review-publisher.md).
+
 A repository-configured handoff supervisor can recover a retired coordinator
 with `--reason coordinator-retired`, `--base-sha`, `--expected-head`, and
 `--expected-state`. `--coordinator-session` is optional; the stored coordinator
 digest can identify its registry row. The target base branch's
 `[review_handoff].supervisors` allow-list, a fresh stopped/deleted status, and
-stale terminal-activity evidence are required. The transfer preserves findings
-and keeps review verdicts reviewer-owned.
+stale terminal-activity evidence are required. The allow-list accepts session
+digests or stable `role:<attested-role>` entries authenticated by the session
+broker. Only operator-attested roles grant supervisor authority; ordinary role
+labels do not. See the [recovery runbook](docs/runbooks/retired-coordinator-recovery.md).
+
+The transfer preserves findings and keeps review verdicts reviewer-owned.
 
 When an automated review App configured in the user-global config still blocks
 a head the designated reviewer has passed, `pr review-dismiss <id> --review-id <id> --expected-head
@@ -603,5 +643,32 @@ refuses human, unconfigured, wrong-head and wrong-state reviews, and any PR
 without a designated PASS at that head. See the
 [dismissal contract](docs/specs/forge-cli-spec-v1.md#pr-review-dismiss).
 
+Approve an external contributor's GitHub Actions run after reviewing the workflow changes:
+
+```bash
+forge-cli --repo example/widget run approve 42 --pr 7 --expected-head "$EXPECTED_HEAD" --reason-file reason.txt
+```
+
+The reason file is recorded in the output and must not contain secrets. The run
+and PR must match the expected head, and the run must be awaiting approval. A
+repeat after the run moves on is refused with `run-not-awaiting-approval`.
+GitLab is unsupported. Use `--dry-run` to check the fences without approving.
+
 For fenced CI reruns and attempt/job receipts, see the
 [run rerun contract](docs/specs/forge-run-rerun-v1.md).
+
+### Editing comments
+
+Use `forge-cli issue comment-edit <comment-id> --body-file <path>` or
+`forge-cli pr comment-edit <comment-id> --body-file <path>` to replace a
+timeline comment. For GitLab, also pass `--parent <issue-or-mr-iid>`. The
+provider enforces edit permissions and the response includes the edited body.
+GitLab may normalize the body before saving it.
+
+## Identity verification errors
+
+| Error code | Exit | Meaning |
+| --- | --- | --- |
+| `github_rate_limited` | 69 | GitHub identity verification hit a rate limit; retry after the reported reset time. |
+| `identity_actor_unavailable` | 65 | Identity lookup failed, including an HTTP 401 response. |
+| `identity_actor_mismatch` | 65 | The authenticated actor differs from the selected identity. |

@@ -1,11 +1,14 @@
 //! Machine notice projection requires an immutable producer/physical-row join.
 use super::*;
 use crate::send::claude_notice::{sha256, store};
-use std::collections::hash_map::Entry;
+use std::cell::Cell;
 
 #[derive(Default)]
 pub(crate) struct Bindings {
-    rows: HashMap<u64, Option<store::Confirmed>>,
+    reader: Option<store::Reader>,
+    launch: Option<(u64, String, String)>,
+    cutoff: Option<u64>,
+    failed: Cell<bool>,
 }
 
 pub(crate) enum Decision {
@@ -23,29 +26,48 @@ impl Bindings {
         let Some(state) = state else {
             return Ok(Self::default());
         };
-        if session.provider != "claude" {
+        if !matches!(session.provider.as_str(), "claude" | "codex") {
             return Ok(Self::default());
         }
-        let confirmed = store::confirmed(state, deadline).map_err(|_| HistoryError::Io)?;
-        let mut rows = HashMap::new();
-        for proof in confirmed {
-            let binding = &proof.claim.binding;
-            if proof.claim.history_id != session.id
-                || binding.provider_session_id != session.provider_session_id
-                || binding.launch.profile != session.agent_profile
-            {
-                continue;
-            }
-            match rows.entry(proof.row_offset) {
-                Entry::Vacant(entry) => {
-                    entry.insert(Some(proof));
-                }
-                Entry::Occupied(mut entry) => {
-                    entry.insert(None);
-                }
-            }
+        let reader =
+            store::Reader::open(state, &session.id, deadline).map_err(|_| HistoryError::Io)?;
+        let launch = crate::notice::launch::binding(state, session, deadline);
+        let live = reader.as_ref().and_then(|reader| {
+            reader.earliest_live_offset(
+                &session.provider_session_id,
+                session.agent_profile.as_deref(),
+            )
+        });
+        let cutoff = live
+            .into_iter()
+            .chain(launch.as_ref().map(|binding| binding.0))
+            .min();
+        Ok(Self {
+            reader,
+            launch,
+            cutoff,
+            failed: Cell::new(false),
+        })
+    }
+
+    pub(crate) fn launch_binding(&self) -> Option<&(u64, String, String)> {
+        self.launch.as_ref()
+    }
+
+    pub(crate) fn has_cutoff(&self) -> bool {
+        self.cutoff.is_some()
+    }
+
+    pub(crate) fn legacy_header(&self, offset: u64) -> bool {
+        self.cutoff.is_none_or(|cutoff| offset < cutoff)
+    }
+
+    pub(crate) fn check(&self) -> Result<(), HistoryError> {
+        if self.failed.get() {
+            Err(HistoryError::Io)
+        } else {
+            Ok(())
         }
-        Ok(Self { rows })
     }
 
     pub(crate) fn project(
@@ -56,18 +78,63 @@ impl Bindings {
         value: &Value,
         include_parts: bool,
     ) -> Decision {
-        let Some(proof) = self.rows.get(&offset) else {
+        if let Some(binding) = &self.launch
+            && crate::notice::launch::bound_row(binding, offset, line, value)
+        {
+            return Decision::Notice(Box::new(HistoryMessage {
+                id: format!("{}-{offset}", session.id),
+                paging_offset: offset,
+                history_turn_id: None,
+                prompt_request: None,
+                row_class: Some(crate::provider_prompt::row_classes::RowClass::Notice),
+                compaction: None,
+                role: "notice".into(),
+                text: binding.1.clone(),
+                timestamp: value
+                    .get("timestamp")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                images: Vec::new(),
+                parts: include_parts.then(Vec::new),
+                human_prompt: false,
+            }));
+        }
+        let Some(reader) = &self.reader else {
+            return Decision::NotBound;
+        };
+        let proof = match reader.proof(offset) {
+            Ok(proof) => proof,
+            Err(_) => {
+                self.failed.set(true);
+                return Decision::Rejected;
+            }
+        };
+        let Some(proof) = proof else {
             return Decision::NotBound;
         };
         let Some(proof) = proof else {
             return Decision::Rejected;
         };
+        if proof.claim.binding.provider_session_id != session.provider_session_id
+            || proof.claim.binding.launch.profile != session.agent_profile
+        {
+            return Decision::Rejected;
+        }
         let payload = crate::provider_prompt::native_notice::payload(line);
         if sha256(payload) != proof.row_payload_sha256 {
             return Decision::Rejected;
         }
-        let Some(row) = crate::provider_prompt::native_notice::row(value, &proof.claim.binding)
-        else {
+        let row = if session.provider == "codex" {
+            crate::provider_prompt::codex_notice::project(
+                &session.transcript_path,
+                value,
+                &proof.claim,
+                &proof,
+            )
+        } else {
+            crate::provider_prompt::native_notice::row(value, &proof.claim.binding)
+        };
+        let Some(row) = row else {
             return Decision::Rejected;
         };
         if row.native_uuid != proof.native_uuid
@@ -79,9 +146,10 @@ impl Bindings {
         }
         Decision::Notice(Box::new(HistoryMessage {
             id: format!("{}-{offset}", session.id),
+            paging_offset: offset,
             history_turn_id: None,
             prompt_request: None,
-            row_class: None,
+            row_class: Some(crate::provider_prompt::row_classes::RowClass::Notice),
             compaction: None,
             role: "notice".into(),
             text: row.text,

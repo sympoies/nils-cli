@@ -112,6 +112,18 @@ removal remains limited to the conditions above. Probe failures identify the
 tmux `has-session` probe or recorded process-boundary liveness probe. No
 replacement numeric target is signaled and no boot proof is fabricated.
 
+When no cgroup is recorded, the marker inventory retains the shared per-user
+daemons `gpg-agent`, `dirmngr`, and `keyboxd` if reparented to init (launchd on
+macOS). It records their name and PID as `shared-daemon-retained`; they do not
+block deletion and are not signaled by this inventory. Other marked processes
+remain blockers. These GnuPG exemptions do not alter cgroup-backed teardown or population checks.
+The resolved executable must be under a system binary or library directory,
+`/usr/local`, `/opt/homebrew`, `/opt/local`, `/home/linuxbrew/.linuxbrew`, or
+`/nix/store`,
+and outside the session worktree, state directory, and temporary directories.
+A same-user process that can write a package prefix can still spoof a daemon,
+consistent with the existing same-OS-user trust boundary.
+
 If either condition stops holding between preview and action, the request
 returns `maintenance-preview-stale` and nothing moves.
 
@@ -170,3 +182,19 @@ add a second signalling surface without closing a reachable gap.
 | v2 daemon | v1 consumer | valid v1 preview; no v2-only action is ever advertised |
 | v2 daemon | v2 consumer | v2 preview, record-only removal advertised when justified |
 | any | unknown version | fails closed |
+
+### Shared Codex provider daemons
+
+On Linux, Codex 0.162.1 managed app-server and updater processes are retained as
+`codex-app-server` and `codex-daemon-updater` in
+`process_inventory.retained_shared_daemons`, with reason `shared-daemon-retained`.
+Recognition requires the deletion owner's provider home, its selected package
+executable, matching daemon arguments, and a provider PID record matching boot
+and native process identity. Candidate-controlled provider-home values do not
+establish ownership. Private session listen sockets do not qualify.
+
+Proven provider infrastructure is excluded from marker and recorded cgroup
+liveness. A cgroup containing it uses verified tmux-only termination, followed
+by the full remaining-boundary check, without freezing or killing the shared
+cgroup. Any other survivor remains a blocker. Recovery refuses to replay a
+whole-cgroup kill over proven shared infrastructure and retains session state.

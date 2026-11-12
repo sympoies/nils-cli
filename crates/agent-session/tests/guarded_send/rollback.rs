@@ -51,32 +51,35 @@ fn paste_then_draft_refusal_restores_only_the_user_draft() {
 
 #[test]
 fn uncertain_navigation_changed_input_or_identity_never_deletes() {
-    for marker in [
-        "cursor-not-at-start",
-        "wrong-prefix-end",
-        "draft-on-home",
-        "replace-on-home",
-        "replace-after-paste",
-    ] {
-        let fixture = Fixture::new("claude");
-        live(&fixture, &["bare-composer", "inject-draft", marker]);
-        let output = guarded_text(&fixture, "short fixture");
-        let receipt = details(&output, "send-composer-mismatch");
-        assert_eq!(receipt["cleared"], false, "{marker}: {receipt}");
-        assert!(fixture.calls().iter().all(|call| {
-            call.last()
-                .is_none_or(|key| !matches!(key.as_str(), "DC" | "BSpace"))
-        }));
-        assert!(submissions(&fixture).is_empty());
-        assert_eq!(
-            composer(&fixture),
-            if matches!(marker, "draft-on-home" | "replace-after-paste") {
-                "replacement draft"
-            } else {
-                "short fixture user addition"
-            }
-        );
-    }
+    crate::cases::for_each_case(
+        &[
+            "cursor-not-at-start",
+            "wrong-prefix-end",
+            "draft-on-home",
+            "replace-on-home",
+            "replace-after-paste",
+        ],
+        |&marker| {
+            let fixture = Fixture::new("claude");
+            live(&fixture, &["bare-composer", "inject-draft", marker]);
+            let output = guarded_text(&fixture, "short fixture");
+            let receipt = details(&output, "send-composer-mismatch");
+            assert_eq!(receipt["cleared"], false, "{marker}: {receipt}");
+            assert!(fixture.calls().iter().all(|call| {
+                call.last()
+                    .is_none_or(|key| !matches!(key.as_str(), "DC" | "BSpace"))
+            }));
+            assert!(submissions(&fixture).is_empty());
+            assert_eq!(
+                composer(&fixture),
+                if matches!(marker, "draft-on-home" | "replace-after-paste") {
+                    "replacement draft"
+                } else {
+                    "short fixture user addition"
+                }
+            );
+        },
+    );
 }
 
 #[test]

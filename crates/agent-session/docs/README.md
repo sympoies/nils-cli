@@ -15,6 +15,9 @@ or integrating a specific subsystem.
 - [Codex account recovery acceptance](runbooks/codex-account-recovery-acceptance.md):
   disposable-session recipes for startup recovery and an idle fixture without
   a model turn.
+- [Authentication quarantine fixture acceptance](runbooks/auth-quarantine-acceptance.md):
+  headless Claude and Codex recovery checks using synthetic credentials, with
+  repaired/admitted and unrepaired/refused outcomes.
 - [Work coordination](runbooks/work-coordination.md): coordination modes,
   declared paths, authority boundaries, advisory flow, and enforce flow.
 - [Serve daemon operations](runbooks/serve-daemon.md): safe startup,
@@ -25,6 +28,8 @@ or integrating a specific subsystem.
 
 ## Stable contracts
 
+- [Authentication alert delivery v1](specs/auth-alert-delivery-v1.md): durable
+  consumer records, configured person/watchdog targets and delivery acknowledgements.
 - [Authentication failover v1](specs/auth-failover-v1.md): fresh broker policy
   and capacity, fenced switching, terminal outcomes and rollback.
 - [Claude auth recovery v1](specs/claude-auth-recovery-v1.md): prompt quarantine,
@@ -52,6 +57,9 @@ or integrating a specific subsystem.
   creation, terminal transport, and usage to topic contracts.
 - [Native busy replies](specs/native-busy-replies.md): immediate client handoff,
   provider acknowledgment limits, and the separate explicit idle-only option.
+- [Owner prompt intent design](specs/owner-prompt-intent.md): proposed explicit
+  text/command choice, typed refusals, and coordinated caller migration;
+  implementation requires review and consumer-owner agreement.
 - [Session retitle v2](specs/session-retitle-v2.md): bounded title context,
   automatic scheduling, mutation fences, provider configuration, and privacy.
 - [Session retitle v3](specs/session-retitle-v3.md): bounded semantic memory,

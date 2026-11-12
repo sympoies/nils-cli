@@ -11,7 +11,8 @@ This specification extends
 - the `claude-cli auth` profile commands listed under
   [Auth profiles](#auth-profiles)
 - `claude-cli agent doctor --format json`
-- the `limit_resets` field of `claude-cli diag rate-limits --format json`
+- the `limit_resets` and `limit_resets_checked_at` fields of
+  `claude-cli diag rate-limits --format json`
 
 `claude-cli auth reset-rate-limits` has its own contract,
 [`claude-cli-auth-reset-rate-limits-json-contract-v1.md`](claude-cli-auth-reset-rate-limits-json-contract-v1.md).
@@ -74,6 +75,84 @@ cache reads; they are omitted on OAuth cooldown paths until a successful OAuth
 refresh establishes ownership. An eligible shared account snapshot can also
 populate the token-owned projection without changing its fetch time. The foreground prompt uses local associations
 without resolving credentials.
+
+### Usage scoped windows and limit resets
+
+Both additions come from the same response as the base windows and are parsed
+by the readers `diag rate-limits` uses (see
+[Diag rate-limits limit resets](#diag-rate-limits-limit-resets)), so the two
+commands report the same values.
+
+Each `weekly_scoped` entry of the response's `limits[]` adds one `windows[]`
+item after `5h` and `weekly`, in response order, with `key`
+`weekly_scoped:<model>`, `label` `Weekly (<model>)`, `window_minutes` `10080`,
+and the usual percent and reset fields. Entries without a model name or a
+numeric `percent` are skipped. Windows from `--source cache` include the scoped
+windows stored in the cached response. The `--source cli` probe does not: it
+scrapes only the 5-hour and weekly lines and deliberately ignores per-model
+weekly lines, so a `cli` result never carries `weekly_scoped:*` windows.
+
+A result from a live OAuth response also carries `limit_resets`. It is absent
+from `cache`, `cli`, and `none` results, so absence means the programs were
+not read, never that none are offered:
+
+```json
+{
+  "session": { "state": "not_available", "reason": "not_at_wall", "next_available_at": 1700298000 },
+  "grants": [
+    {
+      "kind": "full",
+      "label": "Full reset",
+      "resets_left": 2,
+      "resets_total": 2,
+      "ends_at": 1701388800,
+      "usable_now": true,
+      "next": true
+    }
+  ]
+}
+```
+
+- `session.state` is `available`, `not_offered` (the `juniper_tide` key is
+  present and `null`), `not_available`, or `unknown` (the response does not
+  report the program: the key is absent or not an object). `reason` (the
+  normalized `ineligible_reason`) and `next_available_at` (epoch seconds) are
+  present only when known.
+- `grants` has one entry per grant, in response order. It is `[]` when the
+  `cedar_ember` key is present and `null` (no grants offered) and is omitted
+  when the response does not report the program (key absent or not an
+  object), so unread grants are never shown as none. `kind` is `full` when the grant's `clears` contains
+  `seven_day`, otherwise `model`; the upstream `type` field is not consulted.
+  `label`, `resets_total`, and `ends_at` are omitted when unknown.
+  `usable_now` is the upstream value. `next` is `true` for the grant a
+  redemption would spend next (the normalized `next_grant_id`).
+- Grant ids are host-local and are not part of `usage`; `next` replaces
+  `next_grant_id`.
+
+The OAuth read sends the status query and the Claude Code `User-Agent` of
+`diag rate-limits` (`claude-cli/<Claude Code version> (external, cli)`),
+because the endpoint returns grants only for that identity. A response reused
+from the shared 60-second response cache was fetched by whichever caller read
+first; if that caller used another identity it carries no reset programs, so
+`limit_resets` reports `session.state` `unknown` with `grants` omitted until
+the entry expires.
+
+Text output keeps the one-line windows summary, adding the scoped windows as
+`Weekly (<model>):<remaining>%`, and appends a `Limit resets` section when
+`limit_resets` is present:
+
+Text prints `session: unknown` and `grants: unknown` for unreported programs,
+and `grants: none` for an empty list.
+
+```text
+source=oauth Weekly:60% Weekly (Model A):70%
+Limit resets
+  session: not offered
+  grant: full "Full reset" 2/2 left, expires 2023-12-01T00:00Z, usable now, next
+  grant: model "Model A reset" 1/3 left, expires 2023-11-30T12:00Z, not usable now
+```
+
+Times in text are UTC.
 
 ### Usage error envelopes
 
@@ -240,9 +319,38 @@ negotiation, and automatic session recovery are separate contracts.
 `codex-cli diag rate-limits` also emits. Each Claude result read from the
 shared OAuth reader (network or a response reused within 60 seconds)
 additionally carries `limit_resets`, the normalized status of the two
-Claude limit-reset programs. Results from `--cached` or a cache fallback, and
-failed results, omit it. A network body without either program reports both
-as `null`, so absence always means the value was not read.
+Claude limit-reset programs, and `limit_resets_checked_at`, the epoch seconds
+of the network read that supplied it. A network body without either program
+reports both as `null`.
+
+The last network `limit_resets` is stored with the rate-limit cache entry of
+its profile, so `--cached` results and cache-fallback results (for example a
+rate-limited profile under `--all`) carry that stored value, and
+`limit_resets_checked_at` is the time of the read that supplied it, not the
+time of the diagnostic. A cache entry that holds no stored value, and failed
+results, omit both fields, so absence always means no network read supplied a
+value. Like the windows beside it, a cached value is display data, not fresh
+authority.
+
+Each `weekly_scoped` entry of the usage response's `limits[]` (a per-model
+weekly limit, read from `scope.model.display_name`, `percent` as the used
+percentage, and `resets_at`) adds one more `windows[]` item after `5h` and
+`Weekly`, in response order. Its `label` is `weekly_scoped:<model>`;
+`window_minutes` is `10080` and `used_percent`, `remaining_percent` and
+`reset_at_epoch` (omitted without a reset time) match the existing windows.
+A scoped window also carries three additive fields; existing windows never do:
+
+- `kind`: `"weekly_scoped"`
+- `model`: the scope's model display name
+- `allowance_percent_of_weekly`: the `allowance_percent_of_weekly` of the
+  `weekly_scoped_shares[]` entry whose `limit_index` is the entry's position in
+  `limits[]`, or `null` when no share matches
+
+Entries without a model name or a numeric `percent` are skipped. A response
+without `limits[]` or without a scoped entry yields the same windows as
+before, and `summary` and the one-line output do not include scoped windows.
+Cached results (`--cached` and cache fallback) keep the scoped windows stored
+with the cache entry they read, including `allowance_percent_of_weekly`.
 
 A live rate limit or active shared cooldown preserves eligible cached diagnostic
 windows with `source: cache-fallback` and `reason_code: rate_limited`.

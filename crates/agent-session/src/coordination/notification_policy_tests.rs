@@ -148,7 +148,7 @@ fn notification_policy_suppressed_mail_remains_readable_acknowledgeable_and_repl
     .unwrap();
     assert_eq!(shown["notification_suppressed"], true);
     assert_eq!(shown["body"]["text"], envelope.body);
-    assert_eq!(shown["body"]["classification"], "untrusted_peer_data");
+    assert_eq!(shown["body"]["classification"], "peer_message");
     let ack = |revision| {
         super::super::mailbox::ack(
             &context,
@@ -213,6 +213,7 @@ fn notification_policy_mixed_generations_ignore_suppressed_unread_mail() {
     );
     assert!(
         super::super::notification::claim_hook_reminder(
+            &context,
             &mut locked.registry,
             "recipient",
             "recipient-incarnation",
@@ -596,22 +597,35 @@ fn routine_coalescing_is_opt_in_and_urgent_mail_bypasses_the_window() {
         .unwrap();
     let prompt = super::super::notification_prompt(&urgent);
     // One progress, one handoff and one blocker message are unread.
+    let notice = crate::notice::parse_notice(&prompt).unwrap();
     assert_eq!(
-        prompt,
-        format!(
-            "Mailbox: 3 unread; {} message inbox",
-            nils_common::session_binary::NAME
+        notice.body.lines().next(),
+        Some(
+            format!(
+                "Mailbox: 3 unread; {} message inbox",
+                nils_common::session_binary::NAME
+            )
+            .as_str()
         )
+    );
+    assert!(
+        notice
+            .body
+            .contains("message inbox --session recipient --format json")
+    );
+    assert!(
+        notice
+            .body
+            .contains("message show --session recipient --message MESSAGE_ID --format json")
     );
     assert!(!prompt.contains("bounded fixture body"));
 }
 
 #[test]
 fn coalescing_window_survives_restart_and_hook_claim_until_ten_minutes() {
-    // This asserts the plain route, so the notice gate must be off whatever a
-    // concurrent notice test has set.
+    // Hook claims use the current notice writer contract.
     let lock = GlobalStateLock::new();
-    let _gate = EnvGuard::remove(&lock, crate::notice::WRITERS_ENV);
+    let _gate = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let (_temp, context) = tests::fixture();
     write_atomic(&context.state_dir.join("coordination/notification-policy.json"), &serde_json::to_vec(&json!({
         "schema_version":"agent-session.notification-policy.v1", "recipients":[{"session_id":"recipient", "suppress_categories":[], "routine_interval_seconds":600}]
@@ -635,6 +649,7 @@ fn coalescing_window_survives_restart_and_hook_claim_until_ten_minutes() {
     let at = receipt.routine_last_submitted_at_epoch;
     assert!(
         super::super::notification::claim_hook_reminder(
+            &context,
             &mut registry,
             "recipient",
             "recipient-incarnation",
@@ -643,20 +658,21 @@ fn coalescing_window_survives_restart_and_hook_claim_until_ten_minutes() {
         .is_none()
     );
     let next = super::super::notification::claim_hook_reminder(
+        &context,
         &mut registry,
         "recipient",
         "recipient-incarnation",
         at + 600,
     )
     .unwrap();
-    assert_eq!(
-        super::super::notification_prompt(&next),
-        // One report and one uncategorized message are unread.
-        format!(
-            "Mailbox: 2 unread; {} message inbox",
-            nils_common::session_binary::NAME
-        )
+    let prompt = super::super::notification_prompt(&next);
+    let notice = crate::notice::parse_notice(&prompt).unwrap();
+    let summary = format!(
+        "Mailbox: 1 report, 1 uncategorized; {} message inbox",
+        nils_common::session_binary::NAME
     );
+    assert_eq!(notice.metadata.kind(), "mailbox.wake");
+    assert_eq!(notice.body.lines().next(), Some(summary.as_str()));
 }
 
 #[test]

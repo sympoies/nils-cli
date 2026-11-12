@@ -21,6 +21,7 @@ pub(super) fn registry_version_supported(version: &str) -> bool {
                 | nils_common::coordination_projection::DELEGATION_REGISTRY_VERSION
                 | nils_common::coordination_projection::NOTIFICATION_HISTORY_REGISTRY_VERSION
                 | nils_common::coordination_projection::COALESCING_REGISTRY_VERSION
+                | nils_common::coordination_projection::QUOTA_REGISTRY_VERSION
         )
 }
 
@@ -29,7 +30,13 @@ pub(super) fn fence_registry(registry: &mut Registry) {
     let notification_history =
         nils_common::coordination_projection::NOTIFICATION_HISTORY_REGISTRY_VERSION;
     let coalescing = nils_common::coordination_projection::COALESCING_REGISTRY_VERSION;
-    if registry.schema_version == coalescing
+    let quota = nils_common::coordination_projection::QUOTA_REGISTRY_VERSION;
+    if registry.schema_version == quota
+        || !registry.quota_rejections.is_empty()
+        || registry.notifications.values().any(|r| r.quota.is_some())
+    {
+        registry.schema_version = quota.into();
+    } else if registry.schema_version == coalescing
         || registry.notifications.values().any(|receipt| {
             receipt.routine_interval_seconds != 0
                 || receipt.prompt.is_some()
@@ -288,6 +295,18 @@ pub(crate) fn authenticate_read_only(
     let incarnation = super::incarnation(&caller)?;
     super::verify_capability_token(context, &registry, &caller, &incarnation, token)?;
     Ok((caller, incarnation))
+}
+
+/// Authenticate without the registry lock when the committed snapshot verifies the caller.
+/// A refusal reruns the locking path, so refusal diagnostics and delegation audit are unchanged.
+pub(crate) fn authenticate_snapshot_first(
+    context: &CliContext,
+    session: &str,
+    token: &str,
+    usage: Use<'_>,
+) -> Result<(SessionRecord, String), CliError> {
+    authenticate_read_only(context, Some(session), token, usage)
+        .or_else(|_| authenticate_token(context, Some(session), token, usage, false))
 }
 
 pub(crate) fn authenticate_token(

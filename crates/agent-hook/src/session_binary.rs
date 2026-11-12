@@ -6,8 +6,10 @@
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+#[cfg(any(target_os = "linux", test))]
 use std::process::{Command, Stdio};
 
+#[cfg(any(target_os = "linux", test))]
 use nils_common::runtime_compat::{ReleaseSkew, classify_release};
 use nils_common::session_binary::NAME;
 
@@ -24,6 +26,24 @@ pub(crate) fn trusted_sibling() -> Result<PathBuf, HookError> {
             )
         })?;
     sibling_in(&current, NAME)
+}
+
+pub(crate) fn trusted_root(root: &Path) -> Result<PathBuf, HookError> {
+    let unavailable = || {
+        HookError::runtime(
+            "operation-lifecycle-helper-unavailable",
+            "approved helper is unavailable",
+        )
+    };
+    if !root.is_absolute() || !root.is_dir() || fs::canonicalize(root.join(NAME)).is_err() {
+        return Err(unavailable());
+    }
+    nils_common::session_binary::trusted_root(root).ok_or_else(|| {
+        HookError::data(
+            "operation-lifecycle-helper-untrusted",
+            "approved helper is not an owner-controlled executable",
+        )
+    })
 }
 
 /// A canonical, owner-controlled executable named `name` that stays in the
@@ -59,10 +79,12 @@ fn sibling_in(current: &Path, name: &str) -> Result<PathBuf, HookError> {
 ///
 /// Called only after a session call has failed, so the healthy path spawns
 /// nothing. An unreadable or unparsable release never claims a mismatch.
+#[cfg(target_os = "linux")]
 pub(crate) fn release_mismatch() -> Option<String> {
     release_mismatch_for(&trusted_sibling().ok()?, env!("CARGO_PKG_VERSION"))
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn release_mismatch_for(binary: &Path, local: &str) -> Option<String> {
     let output = Command::new(binary)
         .arg("--version")
@@ -135,6 +157,19 @@ mod tests {
             release_mismatch_for(&directory.path().join("absent"), "1.39.8"),
             None
         );
+    }
+
+    #[test]
+    fn an_approved_root_rejects_a_helper_owned_by_another_user() {
+        let system_binary = Path::new("/bin/sh");
+        let metadata = fs::metadata(system_binary).expect("system shell metadata");
+        if metadata.uid() == unsafe { libc::geteuid() } {
+            return; // This environment has no distinct owner for the fixture.
+        }
+        let directory = tempfile::tempdir().expect("tempdir");
+        symlink(system_binary, directory.path().join(NAME)).expect("system binary alias");
+        let refused = trusted_root(directory.path()).expect_err("wrong owner");
+        assert_eq!(refused.code, "operation-lifecycle-helper-untrusted");
     }
 
     #[test]

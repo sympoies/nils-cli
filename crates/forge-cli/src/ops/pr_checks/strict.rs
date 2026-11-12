@@ -1,5 +1,7 @@
 //! Opt-in execution gate for the one-shot checks read.
-use super::{FailedCheck, PendingCheck, PrChecksPayload, SCHEMA, SCHEMA_VERSION, render_text};
+use super::{
+    FailedCheck, NO_CHECKS, PendingCheck, PrChecksPayload, SCHEMA, SCHEMA_VERSION, render_text,
+};
 use crate::cli::BINARY;
 use crate::envelope::emit_success;
 use crate::ops::required_check_gate::nothing_was_checked;
@@ -22,7 +24,7 @@ pub(super) fn emit(mut payload: PrChecksPayload, strict: bool, format: OutputFor
             .find(|state| {
                 (*state == "failure" && has_skipped) || gate.iter().any(|c| c.state == *state)
             })
-            .unwrap_or(if empty { "pending" } else { "success" });
+            .unwrap_or(if empty { NO_CHECKS } else { "success" });
         // Rebuild from the effective gate: the ordinary snapshot can omit
         // visible fallback rows from its required-only detail lists.
         payload.failed.clear();
@@ -46,12 +48,18 @@ pub(super) fn emit(mut payload: PrChecksPayload, strict: bool, format: OutputFor
             }
         }
         if payload.state != "success" {
-            let kind = if payload.state == "pending" {
+            let kind = if payload.state == NO_CHECKS {
+                "checks_not_registered"
+            } else if payload.state == "pending" {
                 "checks_pending"
             } else {
                 "checks_failed"
             };
-            let message = "strict checks require every gating check to conclude success";
+            let message = if payload.state == NO_CHECKS {
+                "no checks are registered for this head, so nothing proves it was checked"
+            } else {
+                "strict checks require every gating check to conclude success"
+            };
             let envelope = Envelope {
                 schema_version: schema,
                 ok: false,

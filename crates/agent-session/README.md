@@ -59,6 +59,7 @@ agent-session start --agent claude --issue sympoies/nils-cli#2032   # child of t
 agent-session list
 agent-session board --state live --since 3d --format json   # who else is working (session board v1)
 agent-session glance <id> --tail 40
+agent-session previews <id> --format json   # last_prompt and History START/LATEST rows, read locally
 agent-session refresh <id> --format json   # re-read model, effort and title on demand
 agent-session title set <id> "Review the parser" --if-revision 0 --format json
 agent-session title auto <id> --if-revision 1 --format json
@@ -81,6 +82,7 @@ agent-session send <id> --text-stdin --key enter --require-idle \
   --require-empty-composer --expect-runtime <launch-id> --idempotency-key <key>
 agent-session notice <id> --kind schedule.pulse --source scheduler \
   --summary "Check the scheduled task" --body-file notice.txt --idempotency-key <key>
+agent-session --state-dir <state-directory> notice-store audit --format json
 agent-session send <id> --key c-c
 agent-session send <id> --key down --key enter   # answer a dialog while blocked
 agent-session send <id> --text "custom answer" --allow-blocked

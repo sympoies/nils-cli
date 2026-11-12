@@ -244,15 +244,33 @@ jobs:
     # runs on 2026-09-28..30 took 21 minutes (19 with a cold cache). Keep the
     # test job limits below the merge queue's 90 minute check timeout and the
     # release PR's 60 minute check wait, so a waiter sees the job fail instead
-    # of reaching its own timeout.
+    # of reaching its own timeout. A release queue entry runs this job after
+    # `full_validation`. In the v1.40.8 merge-group run 41797597406, its
+    # Linux `test` critical path took 28.5 minutes, the macOS partitions took
+    # 26.1 and 17.7 minutes, and this job took about 2 minutes. The entry took
+    # 31.4 minutes, leaving about 28.6 minutes of the release PR's wait.
     timeout-minutes: 50
     permissions:
+      actions: read
       contents: read
       checks: write
     steps:
       - name: Configure gate reports
         shell: bash
         run: echo "NILS_CLI_REPORT_DIR=$RUNNER_TEMP/nils-cli-reports" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Diagnose unacquired macOS runner
+        if: github.event_name == 'merge_group' && needs.macos_clippy.result != 'success'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            await require('./.github/scripts/macos-runner-capacity.cjs').reportMacosCapacity({github, context, core});
 
       - name: Require change detection
         env:
@@ -284,11 +302,6 @@ jobs:
             echo 'error: release queue full validation did not succeed' >&2
             exit 1
           fi
-
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -323,7 +336,7 @@ jobs:
 
       - name: Install zsh + xvfb + ripgrep + tmux + bubblewrap
         if: needs.changes.outputs.release_only != 'true'
-        run: sudo apt-get update && sudo apt-get install -y zsh xvfb xauth ripgrep tmux bubblewrap
+        run: bash scripts/ci/apt-install-retry.sh zsh xvfb xauth ripgrep tmux bubblewrap
 
       - name: Install cargo-nextest
         if: needs.changes.outputs.release_only != 'true'
@@ -434,6 +447,12 @@ jobs:
           name: junit-nextest
           path: ${{ env.NILS_CLI_REPORT_DIR }}/nextest/ci/junit.xml
 
+      # Advisory: names new tests of 10 s or more; never fails the job.
+      - name: Slow-test ratchet
+        if: always() && steps.junit-report.outputs.present == 'true'
+        continue-on-error: true
+        run: python3 scripts/ci/slow-test-ratchet.py --junit "$NILS_CLI_REPORT_DIR/nextest/ci/junit.xml" --summary "$GITHUB_STEP_SUMMARY"
+
   # The cgroup containment checks need a systemd user
   # scope and compile their own agent-session targets (~5.5 min). They run
   # beside `test` instead of in front of it. This required Linux check blocks
@@ -471,7 +490,7 @@ jobs:
 
       - name: Install zsh + xvfb + ripgrep + tmux + bubblewrap
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        run: sudo apt-get update && sudo apt-get install -y zsh xvfb xauth ripgrep tmux bubblewrap
+        run: bash scripts/ci/apt-install-retry.sh zsh xvfb xauth ripgrep tmux bubblewrap
 
       # Keep identical to the copy in the test job.
       - name: Provision systemd user scopes
@@ -569,6 +588,7 @@ jobs:
     if: always() && ((github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.changes.outputs.release_candidate == 'true') || ((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'))
     uses: ./.github/workflows/full-validation.yml
     permissions:
+      actions: read
       contents: read
       checks: write
     with:
@@ -590,11 +610,19 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Download nightly JUnit reports
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: junit-nextest*
+          path: ${{ runner.temp }}/nightly-junit
       - name: Update nightly tracking issue
         uses: actions/github-script@v9
         env:
           VALIDATION_RESULT: ${{ needs.full_validation.result }}
+          JUNIT_DIR: ${{ runner.temp }}/nightly-junit
         with:
           script: |
             const { trackNightly } = require('./.github/scripts/nightly-tracker.cjs');
-            await trackNightly({ github, context, core, result: process.env.VALIDATION_RESULT });
+            const junitDir = require('node:fs').existsSync(process.env.JUNIT_DIR) ? process.env.JUNIT_DIR : undefined;
+            await trackNightly({ github, context, core, result: process.env.VALIDATION_RESULT, junitDir });

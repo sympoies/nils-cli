@@ -27,7 +27,7 @@ async fn target_consent_metadata_is_resume_only_and_never_weakens_account_bindin
         ),
         (
             "/sessions/resume/v1",
-            json!({"agent":"claude","resume":ID,"claude_account":"other","resume_account_explicit":false}),
+            json!({"agent":"claude","resume":ID,"account":"other","resume_account_explicit":false}),
             "resume-account-mismatch",
         ),
         (
@@ -128,7 +128,7 @@ async fn late_account_switch_requires_original_explicit_consent_across_console_h
         let mut request = json!({"operation_id":uuid::Uuid::now_v7().to_string(),"machine":"test-machine","no_parent":true,
             "session":{"agent":"claude","resume":ID,"id":"replacement"}});
         if explicit {
-            request["session"]["claude_account"] = json!("original");
+            request["session"]["account"] = json!("original");
         }
         for _ in 0..2 {
             let (_, result) = post(
@@ -161,7 +161,7 @@ async fn late_account_switch_requires_original_explicit_consent_across_console_h
             2,
             "replay must not repeat either upstream hop"
         );
-        assert_eq!(requests[1].1["session"]["claude_account"], "original");
+        assert_eq!(requests[1].1["session"]["account"], "original");
         assert_eq!(
             requests[1].1["session"]["resume_account_explicit"],
             explicit

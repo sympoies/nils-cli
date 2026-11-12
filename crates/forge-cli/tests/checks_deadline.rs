@@ -530,5 +530,5 @@ fn interrupted_read_after_an_empty_poll_is_not_registered() {
     let envelope = parse_envelope(&out.stdout);
     assert_eq!(envelope["error"]["code"], "checks_not_registered");
     assert_eq!(envelope["data"]["checks"].as_array().unwrap().len(), 0);
-    assert_eq!(envelope["data"]["state"], "success");
+    assert_eq!(envelope["data"]["state"], "no-checks");
 }

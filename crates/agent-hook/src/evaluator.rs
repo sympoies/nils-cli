@@ -1673,23 +1673,9 @@ fn activity_failure_label(error: &HookError) -> String {
     }
 }
 
-/// Resolve the `agent-session` helper for the activity capability.
-///
-/// `AGENT_SESSION_BIN` outranks `PATH`, and a long-lived tmux server keeps the
-/// environment it started with. A stale override therefore survived the very
-/// relocation the `PATH` pin was added to protect against, and every session
-/// created afterwards fail-closed on its first `UserPromptSubmit`
-/// (`sympoies/nils-cli#1414`).
-///
-/// An override that does not resolve to an executable file is treated as absent
-/// so the daemon-pinned `PATH` decides instead. That is a deliberate change to a
-/// fail-closed boundary and not a downgrade: anyone able to set
-/// `AGENT_SESSION_BIN` can already set `PATH`, and the pinned `PATH` is
-/// daemon-controlled. The discarded override is recorded as a typed
-/// classification so it cannot silently mask a misconfiguration.
+/// Resolve activity using the explicit override, approved roots, or the trusted sibling.
 fn resolve_activity_helper() -> Result<std::ffi::OsString, HookError> {
-    if let Some(override_path) = std::env::var_os(HELPER_BIN_ENV)
-        && !override_path.is_empty()
+    if let Some(override_path) = std::env::var_os(HELPER_BIN_ENV).filter(|value| !value.is_empty())
     {
         if let Some(candidate) = canonical_executable(Path::new(&override_path)) {
             return Ok(candidate.into_os_string());
@@ -1699,7 +1685,7 @@ fn resolve_activity_helper() -> Result<std::ffi::OsString, HookError> {
             ACTIVITY_HELPER_UNRESOLVABLE,
             crate::observe::Severity::Warn,
         )
-        .disposition("path-fallback")
+        .disposition("authority-fallback")
         .recovery(crate::observe::RECOVERY_HOOK_DOCTOR)
         .emit();
     }
@@ -1713,21 +1699,20 @@ fn resolve_activity_helper() -> Result<std::ffi::OsString, HookError> {
         })
 }
 
-/// Locate the helper that would actually run, or `None` when nothing resolves.
-///
-/// `doctor` needs the resolved answer rather than the spawn-time fallback:
-/// reporting a provider as converged while the capability binary cannot execute
-/// is what let `sympoies/nils-cli#1414` stay invisible to every health surface.
+/// Resolve the same authoritative helper for activity and doctor.
 pub(crate) fn locate_activity_helper() -> Option<PathBuf> {
     if let Some(override_path) = std::env::var_os(HELPER_BIN_ENV).filter(|value| !value.is_empty())
+        && let Some(candidate) = canonical_executable(Path::new(&override_path))
     {
-        let candidate = PathBuf::from(override_path);
-        if let Some(candidate) = canonical_executable(&candidate) {
-            return Some(candidate);
-        }
+        return Some(candidate);
     }
-    nils_common::session_binary::locate_on_path(std::env::var_os("PATH").as_deref())
-        .and_then(|candidate| canonical_executable(&candidate))
+    if let Some(roots) = std::env::var_os("AGENT_RUNTIME_TRUSTED_CLI_ROOT")
+        .filter(|roots| !roots.to_string_lossy().trim().is_empty())
+    {
+        return std::env::split_paths(&roots)
+            .find_map(|root| crate::session_binary::trusted_root(&root).ok());
+    }
+    crate::session_binary::trusted_sibling().ok()
 }
 
 fn canonical_executable(path: &Path) -> Option<PathBuf> {
@@ -1980,7 +1965,7 @@ pub(crate) fn validate_policy_handlers(
             ACTIVITY_HELPER_UNRESOLVABLE,
             format!(
                 "the {} activity capability helper could not be resolved to an \
-                 executable file through {HELPER_BIN_ENV} or PATH",
+                 executable file through {HELPER_BIN_ENV}, approved roots, or the same-release sibling",
                 nils_common::session_binary::NAME
             ),
         ));

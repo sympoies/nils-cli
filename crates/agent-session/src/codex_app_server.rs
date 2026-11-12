@@ -6,9 +6,13 @@
 //! the same bound thread and turn. Auto-resume distinguishes
 //! `usageLimitExceeded` from bounded `serverOverloaded` capacity recovery.
 
+mod account_login;
+use account_login::drive_external_auth_login;
 mod exact_attention;
 pub(crate) mod guarded;
 mod idle_probe;
+mod protocol_projection;
+use protocol_projection::server_observation;
 #[path = "codex_app_server/prompt_submit.rs"]
 pub(crate) mod prompt_submit;
 mod proxy_transport;
@@ -79,6 +83,7 @@ const MAX_PROXY_MESSAGE_BYTES: usize = proxy_transport::HARD_MESSAGE_LIMIT_BYTES
 const CONTROL_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 const CONTROL_SUBMISSION_TIMEOUT: Duration = Duration::from_secs(15);
 const CONTROL_SUBMIT_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const CONTINUATION_BUDGET: Duration = CONTROL_SUBMIT_TOTAL_TIMEOUT;
 const MINIMUM_APP_SERVER_VERSION: (u64, u64, u64) = (0, 145, 0);
 const APP_SERVER_CAPABILITY_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const APP_SERVER_CAPABILITY_PROBE_MAX_OUTPUT_BYTES: u64 = 64 * 1024;
@@ -324,9 +329,9 @@ fn app_server_probe(agent_bin: &Path) -> AppServerProbe {
     }
 }
 
-fn bounded_command_output(agent_bin: &Path, args: &[&str]) -> Option<std::process::Output> {
-    bounded_command_output_with_timeout(agent_bin, args, APP_SERVER_CAPABILITY_PROBE_TIMEOUT)
-}
+mod resume_admission;
+use resume_admission::bounded_command_output;
+pub(crate) use resume_admission::{resume_runtime_ready, resume_transport_supported};
 
 fn bounded_command_output_with_timeout(
     agent_bin: &Path,
@@ -2089,32 +2094,10 @@ pub(crate) struct ControlHandle {
     ready: watch::Receiver<bool>,
 }
 
-pub(crate) enum ControlCommand {
-    Usage(oneshot::Sender<Result<UsageSnapshot, String>>),
-    Prompt {
-        message: String,
-        response: oneshot::Sender<Result<String, prompt_submit::PromptSubmissionFailure>>,
-    },
-    Steer {
-        message: String,
-        expected_turn_id: String,
-        response: oneshot::Sender<Result<String, String>>,
-    },
-    Continue {
-        message: String,
-        response: oneshot::Sender<Result<String, String>>,
-    },
-    BindAccount {
-        account: String,
-        revision: u64,
-        response: oneshot::Sender<Result<crate::codex_account::CodexAccountView, String>>,
-    },
-    /// Drain and apply a queued next-account intent if the turn is idle. Used by
-    /// the periodic idle-boundary drive; a no-op when nothing is drainable.
-    ApplyNext {
-        response: oneshot::Sender<Result<(), String>>,
-    },
-}
+pub(crate) mod continuation_notice;
+mod control;
+pub(crate) mod mailbox_notice;
+pub(crate) use control::ControlCommand;
 
 impl ControlHandle {
     // Registration permits account recovery while startup is still in progress.
@@ -2150,50 +2133,6 @@ impl ControlHandle {
         })
         .await
         .map_err(|_| "codex rate-limit request timed out".to_string())?
-    }
-
-    pub(crate) async fn submit(&self, message: &str) -> Result<String, String> {
-        let (response, receive) = oneshot::channel();
-        tokio::time::timeout(CONTROL_SUBMIT_TOTAL_TIMEOUT, async {
-            self.sender
-                .send(ControlCommand::Continue {
-                    message: message.to_string(),
-                    response,
-                })
-                .await
-                .map_err(|_| "codex control connection unavailable".to_string())?;
-            receive
-                .await
-                .map_err(|_| "codex control connection closed".to_string())?
-        })
-        .await
-        .map_err(|_| "codex turn submission timed out".to_string())?
-    }
-
-    pub(crate) async fn steer_prompt(
-        &self,
-        message: &str,
-        expected_turn_id: &str,
-    ) -> Result<String, String> {
-        let (response, receive) = oneshot::channel();
-        tokio::time::timeout(
-            CONTROL_RESPONSE_TIMEOUT,
-            self.sender.send(ControlCommand::Steer {
-                message: message.to_string(),
-                expected_turn_id: expected_turn_id.to_string(),
-                response,
-            }),
-        )
-        .await
-        .map_err(|_| "codex turn steering enqueue timed out".to_string())?
-        .map_err(|_| "codex control connection unavailable".to_string())?;
-        // Once the command is queued, the caller's durable notification fence
-        // must remain held until the bounded control handler answers or the
-        // connection closes. Timing out here would let a late provider write
-        // outlive that fence and overlap a newly admitted atomic operation.
-        receive
-            .await
-            .map_err(|_| "codex control connection closed".to_string())?
     }
 
     pub(crate) async fn bind_account(
@@ -2258,49 +2197,6 @@ pub(crate) fn control_channel() -> (ControlHandle, mpsc::Receiver<ControlCommand
     let (handle, commands, ready) = starting_control_channel();
     ready.send_replace(true);
     (handle, commands)
-}
-
-/// Resolve credentials and drive the app-server external-auth login for
-/// `account`. Mutates only the live app-server; never touches durable binding
-/// or next-intent state. Returns a fail-closed reason code on failure.
-async fn drive_external_auth_login(
-    websocket: &mut tokio_tungstenite::WebSocketStream<UnixStream>,
-    request_id: &mut u64,
-    account: &str,
-) -> Result<(), &'static str> {
-    let resolve_account = account.to_string();
-    let credentials = tokio::task::spawn_blocking(move || {
-        crate::codex_account::resolve_account(&resolve_account, false)
-    })
-    .await
-    .map_err(|_| "broker_failed")?
-    .map_err(|_| "broker_failed")?;
-
-    *request_id = request_id.saturating_add(1);
-    if send_json(
-        websocket,
-        external_auth_login_request(
-            *request_id,
-            &credentials.access_token,
-            &credentials.chatgpt_account_id,
-            credentials.chatgpt_plan_type.as_deref(),
-        ),
-    )
-    .await
-    .is_err()
-    {
-        return Err("apply_failed");
-    }
-    let result =
-        receive_response_with_timeout(websocket, *request_id, None, None, CONTROL_RESPONSE_TIMEOUT)
-            .await;
-    if !result
-        .as_ref()
-        .is_ok_and(|result| result.get("type").and_then(Value::as_str) == Some("chatgptAuthTokens"))
-    {
-        return Err("apply_failed");
-    }
-    Ok(())
 }
 
 async fn apply_account_binding(
@@ -2636,7 +2532,7 @@ pub(crate) async fn run_control(
                         response.send(Err(prompt_submit::PromptSubmissionFailure::NotDispatched));
                 }
                 ControlCommand::Steer { response, .. }
-                | ControlCommand::Continue { response, .. } => {
+                | ControlCommand::NoticeContinue { response, .. } => {
                     let _ = response.send(Err(
                         "Codex account binding is not ready; retry the account switch".to_string(),
                     ));
@@ -2687,7 +2583,6 @@ pub(crate) async fn run_control(
     };
     let reconnecting = thread_attached_path(&record).is_some_and(Path::is_file);
     bind_thread_and_persist_resume(&context, &record, &thread_id).await?;
-    let mut thread_resumed = false;
     if reconnecting {
         request_id = request_id.saturating_add(1);
         send_json(
@@ -2711,7 +2606,7 @@ pub(crate) async fn run_control(
         )
         .await
         {
-            Ok(_) => thread_resumed = true,
+            Ok(_) => {}
             Err(err) if err.ends_with("(no_rollout)") => {}
             Err(err) => return Err(format!("thread/resume failed: {err}")),
         }
@@ -2758,7 +2653,6 @@ pub(crate) async fn run_control(
                 if let Some(resume) = current.provider_resume.as_ref() && resume.session_id != thread_id {
                     thread_id = resume.session_id.clone();
                     reducer = FailureReducer::new(thread_id.clone());
-                    thread_resumed = true;
                 }
                 match command {
                     ControlCommand::Usage(response) => {
@@ -2788,7 +2682,7 @@ pub(crate) async fn run_control(
                         ).await;
                         let _ = response.send(result.map(|value| usage_snapshot(&value)));
                     }
-                    ControlCommand::Prompt { message, response } => {
+                    ControlCommand::Prompt { message, client_message_id, write, response } => {
                         if let Err(error) = control_account_ready(
                             &context,
                             &record,
@@ -2800,16 +2694,21 @@ pub(crate) async fn run_control(
                             let _ = response.send(Err(prompt_submit::PromptSubmissionFailure::NotDispatched));
                             continue;
                         }
+                        let write_lock = match mailbox_notice::lock(&context, &thread_id, &message, write.as_deref()).await {
+                            Ok(lock) => lock,
+                            Err(_) => { let _ = response.send(Err(prompt_submit::PromptSubmissionFailure::NotDispatched)); continue; }
+                        };
                         request_id = request_id.saturating_add(1);
                         let result = prompt_submit::submit_prompt_request(
                             &mut websocket,
                             request_id,
-                            continuation_request(request_id, &thread_id, &message),
+                            control::prompt_request(request_id, &thread_id, &message, client_message_id.as_deref()),
                             Some((&context, &record, &mut reducer)),
                             external_auth_account
                                 .as_deref()
                                 .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
                             CONTROL_SUBMISSION_TIMEOUT,
+                            write_lock,
                         ).await;
                         let result = match result {
                             Ok(turn_id) => Ok(turn_id),
@@ -2827,6 +2726,8 @@ pub(crate) async fn run_control(
                     ControlCommand::Steer {
                         message,
                         expected_turn_id,
+                        client_message_id,
+                        write,
                         response,
                     } => {
                         if let Err(error) = control_terminal_account_ready(
@@ -2890,15 +2791,13 @@ pub(crate) async fn run_control(
                             }
                         };
                         request_id = request_id.saturating_add(1);
-                        if let Err(err) = send_json(
-                            &mut websocket,
-                            steering_request(
-                                request_id,
-                                &thread_id,
-                                &raw_turn_id,
-                                &message,
-                            ),
-                        )
+                        let write_lock = match mailbox_notice::lock(&context, &thread_id, &message, write.as_deref()).await {
+                            Ok(lock) => lock,
+                            Err(error) => { let _ = response.send(Err(error)); continue; }
+                        };
+                        let mut request = steering_request(request_id, &thread_id, &raw_turn_id, &message);
+                        if let Some(client) = client_message_id.as_deref() { request["params"]["clientUserMessageId"] = json!(client); }
+                        if let Err(err) = mailbox_notice::send(&mut websocket, request, write_lock)
                         .await
                         {
                             let _ = response.send(Err(err));
@@ -2911,7 +2810,7 @@ pub(crate) async fn run_control(
                             external_auth_account
                                 .as_deref()
                                 .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
-                            CONTROL_SUBMISSION_TIMEOUT,
+                            write.as_ref().map_or(CONTROL_SUBMISSION_TIMEOUT, |write| CONTROL_SUBMISSION_TIMEOUT.min(write.deadline.saturating_duration_since(Instant::now()))),
                         )
                         .await
                         .and_then(|value| {
@@ -2928,69 +2827,17 @@ pub(crate) async fn run_control(
                                         .to_string(),
                                 );
                             }
-                            Ok(expected_turn_id)
+                            Ok(if client_message_id.is_some() { raw_turn_id } else { expected_turn_id })
                         });
                         let _ = response.send(result);
                     }
-                    ControlCommand::Continue { message, response } => {
-                        if let Err(error) = control_account_ready(
-                            &context,
-                            &record,
-                            external_auth_account.as_deref(),
-                        )
-                        .await
-                        {
-                            let _ = response.send(Err(error));
-                            continue;
-                        }
-                        if !thread_resumed {
-                            request_id = request_id.saturating_add(1);
-                            if let Err(err) = send_json(
-                                &mut websocket,
-                                resume_thread_request(request_id, &thread_id, &record.cwd),
-                            ).await {
-                                let _ = response.send(Err(err));
-                                return Err("Codex continuation resume write failed".to_string());
-                            }
-                            if let Err(err) = receive_response_with_timeout(
-                                &mut websocket,
-                                request_id,
-                                Some((&context, &record, &mut reducer)),
-                                external_auth_account
-                                    .as_deref()
-                                    .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
-                                CONTROL_RESPONSE_TIMEOUT,
-                            ).await {
-                                let _ = response.send(Err(err));
-                                continue;
-                            }
-                            thread_resumed = true;
-                        }
+                    ControlCommand::NoticeContinue { message, client_message_id, expected, tmux_bin, recovery, deadline, response } => {
                         request_id = request_id.saturating_add(1);
-                        if let Err(err) = send_json(
-                            &mut websocket,
-                            continuation_request(request_id, &thread_id, &message),
-                        ).await {
-                            let _ = response.send(Err(err));
-                            return Err("Codex continuation request write failed".to_string());
-                        }
-                        let result = receive_response_with_timeout(
-                            &mut websocket,
-                            request_id,
-                            Some((&context, &record, &mut reducer)),
-                            external_auth_account
-                                .as_deref()
-                                .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
-                            CONTROL_SUBMISSION_TIMEOUT,
-                        ).await.and_then(|value| {
-                            value.pointer("/turn/id")
-                                .and_then(Value::as_str)
-                                .map(str::to_string)
-                                .ok_or_else(|| "Codex turn/start response omitted the acknowledged turn id".to_string())
-                        });
-                        if let Ok(turn_id) = result.as_deref() {
-                            reducer.note_started(turn_id);
-                        }
+                        let result = continuation_notice::dispatch(
+                            &mut websocket, request_id, &context, &record, &thread_id, &mut reducer,
+                            external_auth_account.as_deref().map(|account| (account, external_auth_connection_id.as_str())),
+                            &message, &client_message_id, &expected, &tmux_bin, &recovery, deadline,
+                        ).await;
                         let _ = response.send(result);
                     }
                     ControlCommand::BindAccount { account, revision, response } => {
@@ -3103,7 +2950,6 @@ pub(crate) async fn run_control(
                     if let Some(resume) = current.provider_resume.as_ref() && resume.session_id != thread_id {
                         thread_id = resume.session_id.clone();
                         reducer = FailureReducer::new(thread_id.clone());
-                        thread_resumed = true;
                     }
                 }
                 process_live_message(&context, &record, &mut reducer, None, &value).await?;
@@ -3977,6 +3823,10 @@ impl ProxyProjection {
                     self.requires_thread_binding = false;
                     return Ok(());
                 }
+                let startup_idle = value
+                    .pointer("/result/thread/status/type")
+                    .and_then(Value::as_str)
+                    == Some("idle");
                 if let Err(error) = self
                     .enqueue_acknowledged_server(value, Some(persisted_thread.clone()))
                     .await
@@ -3996,6 +3846,9 @@ impl ProxyProjection {
                     eprintln!("warning: Codex projection disabled: {error}");
                     self.disable();
                     return Err(error);
+                }
+                if startup_idle {
+                    idle_probe::settle_startup(&self.context, &self.record).await?;
                 }
                 self.requires_thread_binding = false;
             }
@@ -4218,174 +4071,6 @@ fn project_model_settings(value: &Value) -> Value {
             json!(value.as_str().and_then(crate::session_model::effort_label));
     }
     out
-}
-
-fn server_observation(value: &Value) -> ServerProjection {
-    if let Some(id) = value.get("id").filter(|id| json_id_key(id).is_some())
-        && value.get("error").is_some()
-    {
-        return ServerProjection::Unique(json!({"id": id, "error": {}}));
-    }
-    if let (Some(id), Some(turn_id)) = (
-        value.get("id"),
-        value.pointer("/result/turn/id").and_then(Value::as_str),
-    ) && json_id_key(id).is_some()
-        && protocol_id_is_valid(turn_id)
-    {
-        return ServerProjection::Unique(json!({"id": id, "result": {"turn": {"id": turn_id}}}));
-    }
-    if let (Some(id), Some(thread_id)) = (value.get("id"), value.pointer("/result/thread/id")) {
-        let Some(thread_id) = thread_id.as_str() else {
-            return ServerProjection::RejectedUnique;
-        };
-        if json_id_key(id).is_none() || !protocol_id_is_valid(thread_id) {
-            return ServerProjection::RejectedUnique;
-        }
-        let mut result = json!({"thread": {"id": thread_id}});
-        result.as_object_mut().expect("object").extend(
-            project_model_settings(&value["result"])
-                .as_object()
-                .expect("object")
-                .clone(),
-        );
-        return bounded_observation(json!({"id": id, "result": result}))
-            .map(ServerProjection::Unique)
-            .unwrap_or(ServerProjection::RejectedUnique);
-    }
-    let Some(method) = value.get("method").and_then(Value::as_str) else {
-        return ServerProjection::Irrelevant;
-    };
-    if let Some(projection) = exact_attention::nonblocking_input(value) {
-        return projection;
-    }
-    if let Some(kind) = match method {
-        "item/commandExecution/requestApproval"
-        | "item/fileChange/requestApproval"
-        | "item/permissions/requestApproval" => Some("approval"),
-        "item/tool/requestUserInput" => Some("clarification"),
-        "mcpServer/elicitation/request" => {
-            match value.pointer("/params/mode").and_then(Value::as_str) {
-                Some("form" | "openai/form" | "openaiForm") => Some("clarification"),
-                Some("url") => Some("authentication"),
-                _ => return ServerProjection::RejectedUnique,
-            }
-        }
-        _ => None,
-    } {
-        let (Some(request_id), Some(thread_id)) = (
-            value.get("id"),
-            value.pointer("/params/threadId").and_then(Value::as_str),
-        ) else {
-            return ServerProjection::RejectedUnique;
-        };
-        let turn_id = value.pointer("/params/turnId");
-        let turn_required = method != "mcpServer/elicitation/request";
-        if attention_request_id_key(request_id).is_none()
-            || !protocol_id_is_valid(thread_id)
-            || (turn_required
-                && !turn_id
-                    .and_then(Value::as_str)
-                    .is_some_and(protocol_id_is_valid))
-            || (!turn_required
-                && turn_id.is_some_and(|turn_id| {
-                    !turn_id.is_null() && !turn_id.as_str().is_some_and(protocol_id_is_valid)
-                }))
-        {
-            return ServerProjection::RejectedUnique;
-        }
-        return bounded_observation(json!({
-            "method": "agent-session/attention/requested",
-            "params": {
-                "requestId": request_id,
-                "threadId": thread_id,
-                "turnId": turn_id,
-                "kind": kind
-            }
-        }))
-        .map(ServerProjection::Unique)
-        .unwrap_or(ServerProjection::RejectedUnique);
-    }
-    if method == "serverRequest/resolved" {
-        let (Some(request_id), Some(thread_id)) = (
-            value.pointer("/params/requestId"),
-            value.pointer("/params/threadId").and_then(Value::as_str),
-        ) else {
-            return ServerProjection::RejectedUnique;
-        };
-        if attention_request_id_key(request_id).is_none() || !protocol_id_is_valid(thread_id) {
-            return ServerProjection::RejectedUnique;
-        }
-        return bounded_observation(json!({
-            "method": "agent-session/attention/resolved",
-            "params": {"requestId": request_id, "threadId": thread_id}
-        }))
-        .map(ServerProjection::Unique)
-        .unwrap_or(ServerProjection::RejectedUnique);
-    }
-    let observation = match method {
-        "error" => {
-            let (Some(thread_id), Some(turn_id)) = (
-                value.pointer("/params/threadId").and_then(Value::as_str),
-                value.pointer("/params/turnId").and_then(Value::as_str),
-            ) else {
-                return ServerProjection::RejectedUnique;
-            };
-            if !protocol_id_is_valid(thread_id) || !protocol_id_is_valid(turn_id) {
-                return ServerProjection::RejectedUnique;
-            }
-            json!({
-                "method": "error",
-                "params": {
-                    "threadId": thread_id,
-                    "turnId": turn_id,
-                    "willRetry": value.pointer("/params/willRetry"),
-                    "error": {
-                        "codexErrorInfo": value.pointer("/params/error/codexErrorInfo")
-                    }
-                }
-            })
-        }
-        "turn/completed" => {
-            let (Some(thread_id), Some(turn_id)) = (
-                value.pointer("/params/threadId").and_then(Value::as_str),
-                value.pointer("/params/turn/id").and_then(Value::as_str),
-            ) else {
-                return ServerProjection::RejectedUnique;
-            };
-            if !protocol_id_is_valid(thread_id) || !protocol_id_is_valid(turn_id) {
-                return ServerProjection::RejectedUnique;
-            }
-            json!({
-                "method": "turn/completed",
-                "params": {
-                    "threadId": thread_id,
-                    "turn": {
-                        "id": turn_id,
-                        "status": value.pointer("/params/turn/status"),
-                        "error": {
-                            "codexErrorInfo": value.pointer("/params/turn/error/codexErrorInfo")
-                        }
-                    }
-                }
-            })
-        }
-        "account/rateLimits/updated" => json!({
-            "method": "account/rateLimits/updated",
-            "params": {
-                "rateLimits": value.pointer("/params/rateLimits"),
-                "rateLimitsByLimitId": value.pointer("/params/rateLimitsByLimitId")
-            }
-        }),
-        _ => return ServerProjection::Irrelevant,
-    };
-    match bounded_observation(observation) {
-        Some(observation) if method == "account/rateLimits/updated" => {
-            ServerProjection::Repeatable(observation)
-        }
-        Some(observation) => ServerProjection::Unique(observation),
-        None if method == "account/rateLimits/updated" => ServerProjection::Irrelevant,
-        None => ServerProjection::RejectedUnique,
-    }
 }
 
 fn bounded_observation(value: Value) -> Option<Value> {

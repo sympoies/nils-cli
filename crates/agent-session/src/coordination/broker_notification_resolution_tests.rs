@@ -137,6 +137,47 @@ fn delivered_then_acknowledged(use_hook: bool, compacted: bool) {
 }
 
 #[test]
+fn own_claim_blocks_the_in_turn_attempt_but_not_the_idle_attempt() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let (_dir, context, _capability) = authenticated_fixture();
+    let candidate = coordination::pending_notifications(&context)
+        .unwrap()
+        .pop()
+        .unwrap();
+    let mut locked = coordination::lock_registry(&context).unwrap();
+    locked.registry.claims.push(
+        serde_json::from_value(json!({
+            "schema_version": "agent-session.work-context.v1",
+            "session_id": "session",
+            "session_incarnation": "current",
+            "claim_id": "own-issue-claim",
+            "revision": 1,
+            "state": "active",
+            "intent": "implementation",
+            "tier": "issue",
+            "repositories": [],
+            "worktrees": [],
+            "provider_refs": [],
+            "plan_refs": [],
+            "scopes": [],
+            "summary": "own claim fixture",
+            "updated_at": "2030-01-01T00:00:00Z",
+            "expires_at": "9999-12-31T23:59:59Z",
+            "expires_at_epoch": i64::MAX
+        }))
+        .unwrap(),
+    );
+    locked.save().unwrap();
+    drop(locked);
+    let mut guard = coordination::lock_session_quiescence(&context, "session", "current").unwrap();
+    assert_eq!(guard.notification_block(true), Some("active-claim"));
+    assert_eq!(guard.notification_block(false), None);
+    assert!(!guard.begin_notification_attempt(&candidate).unwrap());
+    assert!(guard.begin_idle_notification_attempt(&candidate).unwrap());
+}
+
+#[test]
 fn serve_retry_resolves_acknowledged_generation() {
     delivered_then_acknowledged(false, false);
 }

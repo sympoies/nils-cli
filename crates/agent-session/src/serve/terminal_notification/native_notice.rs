@@ -17,7 +17,9 @@ pub(crate) fn begin_mailbox_notice(
         )
     };
     let agent = AgentKind::from_name(&record.agent).ok_or_else(refused)?;
-    if !candidate.is_notice()
+    let text_wake = candidate.is_text_wake()
+        && crate::send::claude_notice::attach::mailbox_text_reason(context, record).is_some();
+    if (!candidate.is_notice() && !text_wake)
         || record.id != candidate.target_session_id
         || record
             .runtime
@@ -28,6 +30,7 @@ pub(crate) fn begin_mailbox_notice(
         || !terminal_notification_waiting(context, record, agent)
         || tmux_session_attached(tmux, &record.tmux_session) != Ok(false)
         || (agent == AgentKind::Claude
+            && !text_wake
             && crate::send::claude_notice::runtime::readiness(context, record).is_none())
     {
         return Err(refused());
@@ -37,7 +40,7 @@ pub(crate) fn begin_mailbox_notice(
         &candidate.target_session_id,
         &candidate.target_incarnation,
     )?;
-    if !guard.begin_notification_attempt(candidate)? {
+    if !guard.begin_idle_notification_attempt(candidate)? {
         return Err(refused());
     }
     Ok(())
@@ -48,6 +51,10 @@ pub(super) async fn dispatch(
     record: SessionRecord,
     candidate: crate::coordination::NotificationCandidate,
 ) {
+    let text_reason = candidate
+        .is_text_wake()
+        .then(|| crate::send::claude_notice::attach::mailbox_text_reason(&state.context, &record))
+        .flatten();
     let context = state.context.clone();
     let tmux = state.tmux_bin.clone();
     let sending = candidate.clone();
@@ -60,15 +67,19 @@ pub(super) async fn dispatch(
             tmux,
         );
         args.guards = crate::send_guard::GuardArgs {
-            notice_envelope: true,
+            notice_envelope: sending.is_notice(),
             require_idle: true,
             require_empty_composer: true,
             expect_runtime: Some(sending.target_incarnation.clone()),
             expect_provider_session: record.provider_resume.map(|provider| provider.session_id),
-            idempotency_key: Some(format!(
-                "mailbox-{}-{}",
-                sending.target_incarnation, sending.generation
-            )),
+            // Claude uses the generation CAS at the release boundary; consuming
+            // a separate key before that CAS would prevent a refused retry.
+            idempotency_key: (record.agent != "claude").then(|| {
+                format!(
+                    "mailbox-{}-{}",
+                    sending.target_incarnation, sending.generation
+                )
+            }),
             client_message_id: None,
         };
         crate::send::send_mailbox_notice(&context, args, &sending)
@@ -76,6 +87,7 @@ pub(super) async fn dispatch(
     .await;
     let context = state.context.clone();
     if matches!(result, Ok(Ok(_))) {
+        let candidate = candidate.clone();
         let _ = tokio::task::spawn_blocking(move || {
             crate::coordination::mark_notification_submitted(&context, &candidate)
         })
@@ -93,13 +105,42 @@ pub(super) async fn dispatch(
         })
         .await;
         if matches!(attempted, Ok(Ok(false))) {
-            update_notification_deferred(
-                &state,
-                &candidate,
-                "provider-not-ready",
-                COORDINATION_NOTIFICATION_RETRY,
-            )
-            .await;
+            let multi_row = matches!(&result, Ok(Err(error))
+                if error.code() == "send-composer-unobservable"
+                    && error.details().and_then(|details| details["observation"].as_str())
+                        == Some("region-not-single-row"));
+            if multi_row {
+                let context = state.context.clone();
+                let candidate = candidate.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::coordination::defer_notification_with_detail(
+                        &context,
+                        &candidate,
+                        "recipient-composer-unobservable",
+                        Some("region-not-single-row"),
+                        COORDINATION_NOTIFICATION_RETRY,
+                    )
+                })
+                .await;
+            } else {
+                let detail = if matches!(&result, Ok(Err(error))
+                    if error.code() == "notice-native-unavailable"
+                        && error.details().and_then(|details| details["reason"].as_str())
+                            == Some("authorization-timeout"))
+                {
+                    "authorization-timeout"
+                } else {
+                    "notice-attempt-not-admitted"
+                };
+                super::mailbox_dispatch::defer_provider_not_ready(&state, &candidate, detail).await;
+            }
         }
+    }
+    if let Some(reason) = text_reason {
+        let context = state.context.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            candidate.record_text_wake_reason(&context, reason)
+        })
+        .await;
     }
 }

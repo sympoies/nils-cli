@@ -1,3 +1,5 @@
+#[path = "codex_startup.rs"]
+mod codex_startup;
 use super::*;
 use pretty_assertions::{assert_eq, assert_ne};
 

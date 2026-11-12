@@ -3,7 +3,7 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `3bdb5872d9a085679f06344001c4da5623cbd11f73e4a890a69d802cbca7f95c`
+- Cargo.lock SHA256: `8e246fcff355b05cec9d00dd844bea7f62c2af2e2374d798cf41bb21355c32f3`
 - Third-party crates (`source != null`): 493
 
 ## Notice Extraction Policy
@@ -150,7 +150,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### async-executor 1.14.0
+### async-executor 1.14.1
 
 - License: `Apache-2.0 OR MIT`
 - Source: `crates.io`
@@ -1156,7 +1156,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### graphql-tools 0.5.10
+### graphql-tools 0.5.11
 
 - License: `MIT`
 - Source: `crates.io`
@@ -2658,7 +2658,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### rustix 1.1.4
+### rustix 1.1.6
 
 - License: `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT`
 - Source: `crates.io`

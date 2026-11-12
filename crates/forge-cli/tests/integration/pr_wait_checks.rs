@@ -335,11 +335,11 @@ fn pr_wait_checks_expires_as_not_registered_when_nothing_is_ever_reported() {
     );
     // Poll sleeps and interrupted snapshot reads must agree on the outcome.
     // If no read completed, the retained initial state is pending; otherwise
-    // the empty snapshot reports success. Neither proves checks registered.
+    // the empty snapshot reports no-checks. Neither is a pass.
     assert_eq!(env["ok"], false);
     assert!(matches!(
         env["data"]["state"].as_str(),
-        Some("success" | "pending")
+        Some("no-checks" | "pending")
     ));
     assert_eq!(env["data"]["checks"], serde_json::json!([]));
     assert_eq!(env["data"]["required_count"], 0);
@@ -374,6 +374,7 @@ fn pr_wait_checks_allow_no_checks_completes_immediately() {
 
     assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
     let env = parse_envelope(&out.stdout);
+    assert_eq!(env["data"]["state"], "no-checks");
     assert_eq!(env["data"]["required_count"], 0);
 }
 
@@ -410,6 +411,7 @@ fn pr_wait_checks_repo_declared_no_checks_completes_immediately() {
 
     assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
     let env = parse_envelope(&out.stdout);
+    assert_eq!(env["data"]["state"], "no-checks");
     assert_eq!(env["data"]["required_count"], 0);
 }
 
@@ -536,6 +538,7 @@ mod registration {
                     }
                 }
                 ("api", endpoint) if endpoint.contains("/status?") => r#"{"total_count":0,"statuses":[]}"#.to_string(),
+                ("api", endpoint) if endpoint.contains("/actions/runs?") => r#"{"total_count":0,"workflow_runs":[]}"#.to_string(),
                 _ => panic!("unexpected call: {argv:?}"),
             };
             Ok(BackendSuccess {
@@ -699,6 +702,9 @@ mod configured_gate {
                 }
                 ("api", "repos/example/project/commits/head/status?per_page=100") => {
                     self.statuses.clone()
+                }
+                ("api", "repos/example/project/actions/runs?head_sha=head&per_page=100") => {
+                    serde_json::json!({"total_count":0,"workflow_runs":[]})
                 }
                 _ => panic!("gate must read the exact current head: {argv:?}"),
             };

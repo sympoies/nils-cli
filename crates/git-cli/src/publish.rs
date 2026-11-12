@@ -425,9 +425,13 @@ fn run_sync_default(args: &[String]) -> i32 {
         Err(err) => return emit_error("sync-default", requested_format, err),
     };
 
+    let mut parsed = parsed;
+    if parsed.dry_run {
+        parsed.fetch = false;
+    }
     match sync_default(&parsed) {
         Ok(output) => emit_success("sync-default", parsed.format, &output, || {
-            if output.already_current {
+            let message = if output.already_current {
                 format!(
                     "Already current: {} at {}",
                     output.default_branch,
@@ -449,6 +453,11 @@ fn run_sync_default(args: &[String]) -> i32 {
                     short(&output.new_head),
                     output.strategy
                 )
+            };
+            if output.dry_run {
+                format!("{message}; compared {} (fetched=false)", output.remote_ref)
+            } else {
+                message
             }
         }),
         Err(err) => emit_error("sync-default", parsed.format, err),
@@ -498,7 +507,9 @@ fn sync_default(args: &SyncArgs) -> Result<SyncOutput, CliError> {
             "remote-default-branch-missing",
             format!("'{remote_ref}' does not resolve to a commit"),
         )
-        .with_hint("fetch the remote default branch first, or drop `--no-fetch`")
+        .with_hint(
+            "fetch the remote default branch first, or run without `--no-fetch` or `--dry-run`",
+        )
     })?;
 
     if previous_head == new_head {
@@ -983,6 +994,9 @@ fn print_sync_help() {
         "  Refuses anything that is not a pure fast-forward onto an already-published commit."
     );
     println!("  Moves the ref directly when no worktree holds the default branch checked out.");
+    println!(
+        "  --dry-run skips fetch and previews the cached ref; fetch first for a fresh preview."
+    );
     println!(
         "  --no-fetch syncs against the already-fetched remote ref instead of contacting the remote."
     );

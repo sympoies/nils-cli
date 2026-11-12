@@ -180,6 +180,106 @@ fn post(serve: &Serve, bearer: &str, body: &Value) -> (u16, Value) {
 }
 
 #[test]
+fn service_route_forwards_notice_metadata() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let admission = Admission::new(&fixture);
+    let serve = admission.serve(&fixture, &aggregator);
+    let mut body = valid_body(&fixture, &new_operation());
+    body["session"]["prompt"] =
+        json!("<!-- agent-notice:v1 kind=dispatch.bootstrap source=scheduler -->\n\nTask");
+    body["session"]["notice_kind"] = json!("dispatch.bootstrap");
+    body["session"]["notice_source"] = json!("scheduler");
+    created(&aggregator, "notice-child");
+    let (status, response) = post(&serve, SERVICE_TOKEN, &body);
+    assert_eq!(status, 201, "{response}");
+    let seen = aggregator.seen();
+    let session = &seen[0].body.as_ref().unwrap()["session"];
+    for field in ["prompt", "notice_kind", "notice_source"] {
+        assert_eq!(session[field], body["session"][field]);
+    }
+}
+
+#[test]
+fn service_start_accepts_root_work_identity() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let admission = Admission::new(&fixture);
+    let _serve = admission.serve(&fixture, &aggregator);
+    let operation = new_operation();
+    let credential = admission.credential.to_str().unwrap();
+    let expiry = at(600);
+    created(&aggregator, "identity-child");
+    let output = fixture.start_via_console(
+        &[
+            "--agent",
+            "claude",
+            "--service",
+            SERVICE,
+            "--service-generation",
+            GENERATION,
+            "--credential-file",
+            credential,
+            "--owner",
+            OWNER,
+            "--machine",
+            MACHINE,
+            "--expires-at",
+            &expiry,
+            "--operation-id",
+            &operation,
+            "--format",
+            "json",
+            "--no-parent",
+            "--role",
+            "coordinator",
+            "--issue",
+            "example/project#42",
+        ],
+        false,
+    );
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    let body = aggregator.seen()[0].body.clone().unwrap();
+    let work = json!({"program": null, "issues": [{"provider":"github", "repository":"example/project", "number":42}], "inherited":false});
+    assert_eq!(body["session"]["role"], "coordinator");
+    assert_eq!(body["session"]["work"], work);
+    assert_eq!(body["session"]["lineage"]["parent"], Value::Null);
+    assert_eq!(
+        output.stdout_json()["data"]["receipt"]["identity"],
+        json!({"no_parent":true,"role":"coordinator","work":work})
+    );
+    created(&aggregator, "direct-child");
+    let direct = fixture.start_via_console(
+        &[
+            "--agent",
+            "claude",
+            "--no-parent",
+            "--role",
+            "coordinator",
+            "--issue",
+            "example/project#42",
+            "--format",
+            "json",
+        ],
+        true,
+    );
+    assert_eq!(direct.code, 0, "{}", direct.stdout_text());
+    let direct_body = aggregator.seen()[1].body.clone().unwrap();
+    for field in ["role", "work"] {
+        assert_eq!(body["session"][field], direct_body["session"][field]);
+    }
+    assert_eq!(
+        body["session"]["lineage"]["parent"],
+        direct_body["session"]["lineage"]["parent"]
+    );
+    let replay = Request::new(&admission).reconcile(&fixture, &operation);
+    assert_eq!(
+        replay.stdout_json()["data"]["receipt"]["identity"],
+        output.stdout_json()["data"]["receipt"]["identity"]
+    );
+}
+
+#[test]
 fn service_start_creates_one_console_root_and_returns_the_owner_receipt() {
     let fixture = Fixture::new();
     let aggregator = Aggregator::start();
@@ -203,6 +303,7 @@ fn service_start_creates_one_console_root_and_returns_the_owner_receipt() {
         "operation_id": operation,
         "state": "created",
         "safe_to_retry": false,
+        "identity": {"no_parent": false, "role": null, "work": null},
         "session": {
             "id": "service-child",
             "agent": "claude",
@@ -600,7 +701,7 @@ fn service_start_uncertain_result_reconciles_without_a_second_create() {
 }
 
 #[test]
-fn service_start_options_are_complete_and_never_name_a_parent_or_resume() {
+fn service_start_options_require_service_identity_and_refuse_resume() {
     let fixture = Fixture::new();
     let admission = Admission::new(&fixture);
     let credential = admission.credential.to_string_lossy().to_string();
@@ -632,23 +733,38 @@ fn service_start_options_are_complete_and_never_name_a_parent_or_resume() {
         without("--credential-file"),
         without("--service-generation"),
     ];
-    for extra in [
-        vec!["--no-parent"],
-        vec!["--role", "coordinator"],
-        vec!["--issue", "owner/repo#1"],
-        vec!["--no-inherit-work"],
-        vec!["--resume", "prior"],
-    ] {
-        let mut args = complete.to_vec();
-        args.extend(extra);
-        cases.push(args);
-    }
+    let mut args = complete.to_vec();
+    args.extend(["--resume", "prior"]);
+    cases.push(args);
     for args in cases {
         // Each is refused by the parser, before any credential or daemon is touched.
         let output = fixture.start_via_console(&args, false);
         assert_eq!(output.code, 64, "{args:?}: {}", output.stdout_text());
         assert_eq!(error_of(&output)["code"], "parse-error", "{args:?}");
     }
+}
+
+#[test]
+fn service_route_rejects_invalid_root_identity() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let admission = Admission::new(&fixture);
+    let serve = admission.serve(&fixture, &aggregator);
+    for (field, value, code) in [
+        ("role", json!("bad role"), "role-invalid"),
+        (
+            "work",
+            json!({"issues": [{"provider":"github", "repository":"example/project", "number":0}]}),
+            "work-ref-invalid",
+        ),
+        ("role", json!("coordinator"), "role-requires-root"),
+    ] {
+        let mut body = valid_body(&fixture, &new_operation());
+        body[field] = value;
+        let (_, answer) = post(&serve, SERVICE_TOKEN, &body);
+        assert_eq!(answer["error"]["code"], code, "{answer}");
+    }
+    assert_eq!(creates(&aggregator), 0);
 }
 
 fn valid_body(fixture: &Fixture, operation: &str) -> Value {
@@ -769,6 +885,20 @@ fn service_route_keeps_its_bound_while_a_start_outlives_its_client() {
     thread::sleep(Duration::from_millis(300));
 
     // The eight starts still run, so a ninth is refused rather than started.
+    let receipt_count = || {
+        fs::read_dir(fixture.state_dir.join("coordination"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("console-start-")
+                    && entry.path().extension().is_some_and(|ext| ext == "json")
+            })
+            .count()
+    };
+    let before = receipt_count();
     let response = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
@@ -778,8 +908,18 @@ fn service_route_keeps_its_bound_while_a_start_outlives_its_client() {
         .json(&valid_body(&fixture, &new_operation()))
         .send()
         .expect("the ninth start is refused promptly");
+    assert_eq!(response.status().as_u16(), 503);
     let body: Value = response.json().expect("refusal json");
-    assert_eq!(body["error"]["code"], "console-start-unavailable", "{body}");
+    assert_eq!(body["error"]["code"], "console-start-busy", "{body}");
+    assert_eq!(body["error"]["details"]["retryable"], true);
+    assert_eq!(body["error"]["details"]["recovery"]["safe_to_retry"], true);
+    let output = Request::new(&admission).run(&fixture, &new_operation());
+    let error = error_of(&output);
+    assert_eq!(output.code, 69);
+    assert_eq!(error["code"], "console-start-busy");
+    assert_eq!(error["details"]["retryable"], true);
+    assert_eq!(error["details"]["recovery"]["safe_to_retry"], true);
+    assert_eq!(receipt_count(), before);
     assert_eq!(stalled.connections(), 8);
 }
 
@@ -807,11 +947,95 @@ fn service_start_typed_aggregator_rejection_records_a_retryable_not_created() {
         assert_eq!(error["code"], code);
 
         // The operation is recorded as not created and may be retried.
+        let before = aggregator.seen().len();
         let probe = request.reconcile(&fixture, &operation);
         assert_eq!(probe.code, 0, "{code}: {}", probe.stdout_text());
+        assert_eq!(
+            aggregator.seen().len(),
+            before,
+            "not-created lookup is local"
+        );
         let data = probe.stdout_json()["data"].clone();
         assert_eq!(data["receipt"]["state"], "not_created", "{code}");
         assert_eq!(data["receipt"]["safe_to_retry"], true, "{code}");
         assert_eq!(data["receipt"]["session"], Value::Null, "{code}");
+    }
+}
+
+#[test]
+fn service_start_recovers_known_created_id_after_unavailable_response_and_restart() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let admission = Admission::new(&fixture);
+    let request = Request::new(&admission);
+    for code in ["console-start-unavailable", "create-outcome-unknown"] {
+        let operation = new_operation();
+        let serve = admission.serve(&fixture, &aggregator);
+        // The target created the session but its start answer was lost upstream.
+        // The aggregator still knows the exact id; ignore the caller's first answer.
+        aggregator.reply_json(
+            502,
+            &json!({"ok":false,"error":{
+                "code":code,"message":"session was created; start response lost",
+                "details":{"created_session_id":"recovered-child","prompt":"private-fixture"}
+            }}),
+        );
+        let output = request.run(&fixture, &operation);
+        drop(serve);
+        let _serve = admission.serve(&fixture, &aggregator);
+        let before = aggregator.seen().len();
+        let probe = request.reconcile(&fixture, &operation);
+        assert_eq!(probe.code, 0, "{}", probe.stdout_text());
+        let data = probe.stdout_json()["data"].clone();
+        assert_eq!(data["receipt"]["state"], "created", "{code}: {data}");
+        assert_eq!(data["receipt"]["session"]["id"], "recovered-child");
+        assert_eq!(data["session"]["id"], "recovered-child");
+        assert_eq!(data["receipt"]["operation_id"], operation);
+        assert_eq!(data["receipt"]["safe_to_retry"], false);
+        assert_eq!(
+            aggregator.seen().len(),
+            before,
+            "lookup uses the receipt only"
+        );
+        let error = error_of(&output);
+        assert_eq!(error["code"], "console-start-unavailable");
+        assert_eq!(error["details"]["created_session_id"], "recovered-child");
+        assert_eq!(error["details"]["recovery"]["safe_to_retry"], false);
+        assert!(error["hint"].as_str().unwrap().contains(&operation));
+        assert!(error["hint"].as_str().unwrap().contains("--reconcile"));
+        assert!(!probe.stdout_text().contains("private-fixture"));
+        assert!(!output.stdout_text().contains("private-fixture"));
+    }
+    assert_eq!(creates(&aggregator), 2, "one create per operation");
+}
+
+#[test]
+fn service_start_translates_old_account_and_rejects_conflicts() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let admission = Admission::new(&fixture);
+    let serve = admission.serve(&fixture, &aggregator);
+    let request = |session: Value| {
+        json!({"service_id":SERVICE,"service_generation":GENERATION,
+        "owner":OWNER,"machine":MACHINE,"expires_at":at(600),"operation_id":new_operation(),"session":session})
+    };
+    for field in ["account", "claude_account"] {
+        created(&aggregator, "child");
+        let (status, body) = post(
+            &serve,
+            SERVICE_TOKEN,
+            &request(json!({"agent":"claude",field:"spare"})),
+        );
+        assert_eq!(status, 201, "{body}");
+        let sent = aggregator.seen().last().unwrap().body.clone().unwrap();
+        assert_eq!(sent["session"]["account"], "spare");
+        assert!(sent["session"].get("claude_account").is_none());
+    }
+    for session in [
+        json!({"agent":"claude","account":"spare","claude_account":"spare"}),
+        json!({"agent":"claude","codex_account":"spare"}),
+    ] {
+        let (_, body) = post(&serve, SERVICE_TOKEN, &request(session));
+        assert_eq!(body["ok"], false, "{body}");
     }
 }

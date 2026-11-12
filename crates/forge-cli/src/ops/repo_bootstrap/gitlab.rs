@@ -400,7 +400,7 @@ fn verify_namespace(
     Ok(())
 }
 
-pub(super) fn repo_parts(global: &GlobalFlags) -> Result<(String, String), ForgeError> {
+pub(crate) fn repo_parts(global: &GlobalFlags) -> Result<(String, String), ForgeError> {
     let value = global.repo.as_deref().unwrap_or_default();
     let valid = value.split('/').all(|part| {
         !part.is_empty()

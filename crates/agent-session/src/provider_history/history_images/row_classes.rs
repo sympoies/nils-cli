@@ -1,6 +1,7 @@
 //! Boundary-anchored compactions share one bounded adjacent lookup in all paging directions.
 use super::*;
 use crate::provider_prompt::row_classes as classes;
+mod compact_order;
 
 pub(super) enum Projection {
     Ordinary,
@@ -21,6 +22,11 @@ pub(super) fn project(
     {
         return Projection::Hidden;
     }
+    if session.provider == "claude"
+        && let Some(projection) = compact_order::project(session, value, offset, parts)
+    {
+        return projection;
+    }
     let summary = match session.provider.as_str() {
         "codex" if value["type"] == "compacted" => value
             .pointer("/payload/message")
@@ -35,9 +41,22 @@ pub(super) fn project(
         }
         _ => return Projection::Ordinary,
     };
-    let (text, compaction) = classes::summary(&summary);
-    Projection::Row(Box::new(HistoryMessage {
+    Projection::Row(Box::new(compaction(
+        session, value, offset, parts, &summary,
+    )))
+}
+
+fn compaction(
+    session: &HistorySession,
+    value: &Value,
+    offset: u64,
+    parts: bool,
+    summary: &str,
+) -> HistoryMessage {
+    let (text, compaction) = classes::summary(summary);
+    HistoryMessage {
         id: format!("{}-{offset}", session.id),
+        paging_offset: offset,
         role: "notice".into(),
         text,
         row_class: Some(classes::RowClass::Compaction),
@@ -45,7 +64,7 @@ pub(super) fn project(
         timestamp: projected_timestamp(value),
         parts: parts.then(Vec::new),
         ..Default::default()
-    }))
+    }
 }
 
 fn adjacent_summary(session: &HistorySession, offset: u64) -> Option<String> {
@@ -82,6 +101,25 @@ fn adjacent_summary(session: &HistorySession, offset: u64) -> Option<String> {
         if classes::claude_logical_record(&value) {
             return Some(String::new());
         }
+    }
+}
+
+pub(super) fn text_with_receipts(
+    provider: &str,
+    role: &str,
+    text: &str,
+    value: &Value,
+    legacy_header: bool,
+) -> (String, Option<classes::RowClass>) {
+    let (text, class) = self::text(provider, role, text, value);
+    if !legacy_header
+        && class == Some(classes::RowClass::Notice)
+        && text.starts_with("<!-- agent-notice:")
+        && crate::notice::parse_notice(&text).is_some()
+    {
+        (truncate_chars(&text, MAX_MESSAGE_CHARS), None)
+    } else {
+        (text, class)
     }
 }
 

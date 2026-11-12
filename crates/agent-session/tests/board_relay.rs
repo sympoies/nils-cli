@@ -966,6 +966,79 @@ fn console_start_confirms_pinned_mode_without_retrying_a_created_session() {
 }
 
 #[test]
+fn console_start_transports_notice_metadata_with_encoded_stdin() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let _serve = fixture.serve(&[], Some(&aggregator));
+    aggregator.reply_json(
+        201,
+        &json!({"ok":true,"data":{"session":{
+            "id":"notice-child", "agent":"claude", "launch_notice":"written"
+        }}}),
+    );
+    let body = "Synthetic dispatch\n";
+    let output = run_resolved(
+        "agent-session",
+        &[
+            "--state-dir",
+            fixture.state_dir.to_str().unwrap(),
+            "start",
+            "--via-console",
+            "--machine",
+            "host-b",
+            "--agent",
+            "claude",
+            "--cwd",
+            fixture.root.to_str().unwrap(),
+            "--title",
+            "Dispatch task",
+            "--notice-kind",
+            "dispatch.bootstrap",
+            "--notice-source",
+            "scheduler",
+            "--notice-id",
+            "dispatch-example",
+            "--prompt-stdin",
+            "--format",
+            "json",
+        ],
+        &CmdOptions::new()
+            .with_cwd(&fixture.root)
+            .without_ambient_managed_session_env()
+            .with_env_remove_many(&ISOLATED_ENV)
+            .with_env("HOME", fixture.home.to_str().unwrap())
+            .with_env("AGENT_SESSION_ID", SESSION)
+            .with_env(
+                "AGENT_SESSION_CAPABILITY_FILE",
+                fixture.capability_file.to_str().unwrap(),
+            )
+            .with_env("AGENT_SESSION_NOTICE_WRITERS", "1")
+            .with_stdin_str(body),
+    );
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["data"]["session"]["launch_notice"],
+        "written"
+    );
+    let seen = aggregator.seen();
+    let session = &seen[0].body.as_ref().unwrap()["session"];
+    assert_eq!(session["notice_kind"], "dispatch.bootstrap");
+    assert_eq!(session["notice_source"], "scheduler");
+    assert_eq!(session["notice_id"], "dispatch-example");
+    assert_eq!(
+        session["prompt"],
+        agent_session::notice::NoticeEnvelope::new(
+            "dispatch.bootstrap",
+            "scheduler",
+            Some("dispatch-example")
+        )
+        .unwrap()
+        .encode(body)
+        .unwrap()
+    );
+}
+
+#[test]
 fn console_start_creates_the_child_through_the_aggregator_as_the_calling_session() {
     let fixture = Fixture::new();
     let aggregator = Aggregator::start();
@@ -1500,6 +1573,35 @@ fn console_start_route_requires_the_current_session_capability_and_a_known_body(
         );
     }
     assert!(aggregator.seen().is_empty(), "{:?}", aggregator.seen());
+    for field in ["account", "claude_account"] {
+        aggregator.reply_json(
+            201,
+            &json!({"ok":true,"data":{"session":{"id":"child","agent":"claude"}}}),
+        );
+        let (status, body) = post(
+            CAPABILITY,
+            json!({"operation_id":uuid::Uuid::now_v7().to_string(),"session":{"agent":"claude",field:"spare"}}),
+        );
+        assert_eq!(status, 201, "{body}");
+        let sent = aggregator.seen().last().unwrap().body.clone().unwrap();
+        assert_eq!(sent["session"]["account"], "spare");
+        assert!(sent["session"].get("claude_account").is_none());
+    }
+    for fields in [
+        json!({"account":"spare","claude_account":"spare"}),
+        json!({"codex_account":"spare"}),
+    ] {
+        let mut session = json!({"agent":"claude"});
+        session
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        let (_, result) = post(
+            CAPABILITY,
+            json!({"operation_id":uuid::Uuid::now_v7().to_string(),"session":session}),
+        );
+        assert_eq!(result["ok"], false, "{result}");
+    }
 }
 
 #[test]
@@ -1508,7 +1610,7 @@ fn console_start_selects_the_account_for_its_agent_and_the_launch_profile() {
     let aggregator = Aggregator::start();
     let _serve = fixture.serve(&[], Some(&aggregator));
     let created = json!({"ok": true, "data": {"session": {"id": "child", "agent": "codex"}}});
-    for (agent, field) in [("codex", "codex_account"), ("claude", "claude_account")] {
+    for agent in ["codex", "claude"] {
         aggregator.reply_json(201, &created);
         let output = fixture.start_via_console(
             &[
@@ -1531,7 +1633,7 @@ fn console_start_selects_the_account_for_its_agent_and_the_launch_profile() {
             .expect("body")["session"];
         assert_eq!(
             session,
-            &json!({"agent": agent, "cwd": "/w", field: "spare", "lineage": child_lineage(), "origin":{"parent":{"session_id":SESSION,"machine":MACHINE}}, "workspace":null})
+            &json!({"agent": agent, "cwd": "/w", "account": "spare", "lineage": child_lineage(), "origin":{"parent":{"session_id":SESSION,"machine":MACHINE}}, "workspace":null})
         );
     }
     aggregator.reply_json(201, &created);

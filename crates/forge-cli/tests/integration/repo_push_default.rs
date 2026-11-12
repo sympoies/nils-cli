@@ -476,6 +476,20 @@ fn run_with_repo_options_and_identity(
         let config_home = stub.tempdir.path().join("identity-config");
         let forge_config = config_home.join("forge-cli");
         fs::create_dir_all(&forge_config).expect("identity config dir");
+        let git_config = config_home.join("git/config");
+        fs::create_dir_all(git_config.parent().unwrap()).expect("Git config directory");
+        fs::write(&git_config, "[credential]\nhelper=\n").expect("empty helper list");
+        nils_test_support::git::git(
+            stub.tempdir.path(),
+            &[
+                "config",
+                "--file",
+                git_config.to_str().unwrap(),
+                "--add",
+                "credential.helper",
+                "!f() { test \"$1\" = get || exit 0; cat >/dev/null; printf 'username=fixture\\npassword=%s\\n' \"$FIXTURE_ACCOUNT_A_CREDENTIAL\"; }; f",
+            ],
+        );
         let policy = include_str!("../../../nils-common/tests/fixtures/identity/policy.toml")
             .replace("sandbox/widget", "sympoies/demo");
         fs::write(
@@ -502,6 +516,10 @@ fn run_with_repo_options_and_identity(
             std::env::var("PATH").unwrap_or_default()
         );
         stub = stub
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                git_config.to_string_lossy().into_owned(),
+            )
             .env(
                 "XDG_CONFIG_HOME",
                 config_home.to_string_lossy().into_owned(),

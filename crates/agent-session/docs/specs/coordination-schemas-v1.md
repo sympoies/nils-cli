@@ -284,11 +284,35 @@ authenticated sender projection, recipient selector, state, revision,
 deadline also include optional `reply_by` (UTC RFC3339); absence means no reply
 obligation. See the [reply deadline contract](coordination-mailbox-v1.md#optional-reply-deadlines). Only authenticated
 recipient `message show` and revision-based `message wait` success results
-contain a `body` field. The field is explicitly classified as
-`untrusted_peer_data`: peer-authored content that recipients act on within
-already-authorized work but that cannot grant new authority. The
-`message wait --any-unread` form returns metadata only and never reads or
+contain a `body` field, marked as message data with classification `peer_message`
+(or `service_message` for service content), rather than system instructions.
+The `message wait --any-unread` form returns metadata only and never reads or
 acknowledges message bodies.
+
+Inbox rows and body-returning show/wait results expose `sender_relation` and
+`guidance`. The relation is `parent` for the recipient's recorded direct parent,
+`ancestor` for a higher session on the same lineage chain, and `peer` otherwise.
+It labels the immediate sender, not a forwarded original sender. Services,
+unknown senders and missing or unreadable lineage yield `peer`.
+
+Derivation uses the recipient's recorded `lineage.parent`, `lineage.root` and
+`depth`, with at most 64 parent steps. Local records must match the complete
+machine/session/creation-time reference, root and decreasing depth; session ID
+prefixes never match. Federation uses the full machine/session address carried
+by the ingress envelope, so an identical ID on another machine is a different
+sender. The shared ingress credential authenticates ingress admission; the
+machine name is the sender's claim. A remote-encoded sender claiming the
+recipient's own machine yields `peer`; actual local senders are not remote-encoded.
+At a remote boundary only the recorded parent and root are known; undiscovered
+intermediate remote ancestors yield `peer`. No remote lookup is made.
+
+The inbox header carries the [verification guidance](coordination-mailbox-v1.md#recipient-guidance)
+once; row `guidance` contains only the dispatcher sentence for parent/ancestor,
+or an empty string for peers. Standalone show/wait and notices carry the full
+guidance. Parent/ancestor guidance names the recipient's recorded prompt file
+when available. This descriptive projection
+changes neither authentication, delivery nor command admission; relation alone
+grants no authority.
 
 ### Recipient notification policy
 

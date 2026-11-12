@@ -341,6 +341,7 @@ fn collect_json_result_for_secret(
                         windows: Some(windows),
                         reset_credits: reset_credits_from_usage(&usage.json),
                         limit_resets: None,
+                        limit_resets_checked_at: None,
                         raw_usage: Some(project_safe_usage_json(&usage.json)),
                         error: None,
                     }
@@ -531,6 +532,9 @@ fn windows_from_usage_values(
             used_percent: shared_schema::percent_i64(window.used_percent),
             remaining_percent: rendered.remaining,
             reset_at_epoch: Some(rendered.reset_epoch).filter(|epoch| *epoch > 0),
+            kind: None,
+            model: None,
+            allowance_percent_of_weekly: None,
         })
     })
     .collect()
@@ -1187,6 +1191,7 @@ fn run_single_mode(
             windows: Some(windows),
             reset_credits: reset_credits_from_usage(&usage.json),
             limit_resets: None,
+            limit_resets_checked_at: None,
             raw_usage: Some(project_safe_usage_json(&usage.json)),
             error: None,
         };

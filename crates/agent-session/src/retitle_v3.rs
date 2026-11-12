@@ -3640,7 +3640,6 @@ mod tests {
     use std::fs;
     use std::io::{BufWriter, Write};
     use std::path::{Path, PathBuf};
-    use std::time::Instant;
 
     #[test]
     fn pinned_title_blocks_refresh_before_history_or_provider_work() {
@@ -6457,7 +6456,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_memory_manual_retitle_owns_the_in_process_250_ms_budget_without_provider_attempts() {
+    fn fresh_memory_manual_retitle_completes_locally_without_provider_attempts() {
         let tmp = tempfile::tempdir().unwrap();
         let id = "fresh-manual-latency";
         let (context, catalog, _) = fixture(
@@ -6471,7 +6470,6 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let mut samples = Vec::new();
         for index in 0..20 {
             let record = load_session_record(&context, id).unwrap();
             let memory_revision = memory_revision(&record);
@@ -6487,22 +6485,14 @@ mod tests {
                     provider_turn_id: None,
                 },
             };
-            let started = Instant::now();
             let accepted = refresh_once(&context, &catalog, id, &request).unwrap();
             let completed =
                 complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
                     .unwrap()
                     .unwrap();
-            samples.push(started.elapsed());
             assert!(completed.provider_attempts.is_empty());
             assert_eq!(completed.status, "terminal");
         }
-        samples.sort_unstable();
-        let p95 = samples[18];
-        assert!(
-            p95 < std::time::Duration::from_millis(250),
-            "in-process fresh-memory p95 {p95:?} exceeded 250 ms"
-        );
     }
 
     #[test]

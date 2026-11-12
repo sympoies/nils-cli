@@ -139,6 +139,80 @@ fn audit_fixture_lists_three_anomaly_classes_without_bodies_or_mutation() {
 }
 
 #[test]
+fn audit_reports_which_provider_not_ready_branch_deferred_the_wake() {
+    let fixture: Value =
+        serde_json::from_str(include_str!("fixtures/coordination/mail-audit-v1.json")).unwrap();
+    for (reason, detail, expected) in [
+        (
+            "provider-not-ready",
+            "prompt-control-unavailable",
+            json!("prompt-control-unavailable"),
+        ),
+        (
+            "provider-not-ready",
+            "notice-attempt-not-admitted",
+            json!("notice-attempt-not-admitted"),
+        ),
+        (
+            "provider-not-ready",
+            "prompt-submission-refused:coordination-notification-superseded",
+            json!("prompt-submission-refused:coordination-notification-superseded"),
+        ),
+        (
+            "provider-not-ready",
+            "prompt-submission-refused:unlisted-code",
+            json!("prompt-submission-refused"),
+        ),
+        (
+            "provider-not-ready",
+            "prompt-submission-refused:BODY_CANARY",
+            json!("prompt-submission-refused"),
+        ),
+        (
+            "provider-not-ready",
+            "notice-attempt-not-admitted:extra",
+            Value::Null,
+        ),
+        ("provider-not-ready", "BODY_CANARY", Value::Null),
+        (
+            "recipient-coordination-not-quiescent",
+            "restart-fenced",
+            json!("restart-fenced"),
+        ),
+        (
+            "recipient-coordination-not-quiescent",
+            "prompt-control-unavailable",
+            Value::Null,
+        ),
+        (
+            "recipient-working",
+            "prompt-control-unavailable",
+            Value::Null,
+        ),
+    ] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut registry = fixture["registry"].clone();
+        let receipt = &mut registry["notifications"]["receipt"];
+        receipt["last_reason"] = json!(reason);
+        receipt["last_reason_detail"] = json!(detail);
+        write_private(&temp.path().join("coordination/registry.json"), &registry);
+        write_private(
+            &temp.path().join("coordination/federation-journal.json"),
+            &fixture["journal"],
+        );
+        let page = audit(temp.path(), &[]);
+        let row = page["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["message_id"] == "overdue")
+            .unwrap();
+        assert_eq!(row["notification"]["reason_code"], reason);
+        assert_eq!(row["notification"]["reason_detail"], expected, "{detail}");
+    }
+}
+
+#[test]
 fn audit_cli_preserves_parse_errors_and_reports_semantic_query_errors() {
     let temp = tempfile::TempDir::new().unwrap();
     for (args, expected) in [

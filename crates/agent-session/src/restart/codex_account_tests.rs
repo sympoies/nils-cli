@@ -6,7 +6,15 @@ use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::{fs, os::unix::fs::PermissionsExt};
 
-fn fixture(root: &Path) -> (CliContext, SessionRecord, PathBuf) {
+fn fixture(
+    root: &Path,
+) -> (
+    CliContext,
+    SessionRecord,
+    PathBuf,
+    nils_test_support::tempdir::ScopedTempDir,
+) {
+    let (socket_dir, socket) = nils_test_support::short_socket_path("s");
     let context = CliContext {
         state_dir: root.join("state"),
         host: None,
@@ -18,10 +26,9 @@ fn fixture(root: &Path) -> (CliContext, SessionRecord, PathBuf) {
     }));
     record.cwd = root.to_string_lossy().into_owned();
     let runtime = record.runtime.as_mut().unwrap();
-    runtime.extra.insert(
-        crate::codex_app_server::SOCKET_KEY.into(),
-        json!(root.join("s")),
-    );
+    runtime
+        .extra
+        .insert(crate::codex_app_server::SOCKET_KEY.into(), json!(socket));
     runtime.extra.insert(
         crate::codex_app_server::THREAD_ATTACHED_KEY.into(),
         json!(root.join("attached")),
@@ -68,7 +75,7 @@ esac
     )
     .unwrap();
     fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
-    (context, record, tmux)
+    (context, record, tmux, socket_dir)
 }
 
 /// Serve only observation RPCs. Any attempt to start a model turn fails.
@@ -193,7 +200,7 @@ async fn assert_restart_repairs(phase: crate::activity::TurnPhase) {
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::tempdir().unwrap();
-    let (context, record, tmux) = fixture(tmp.path());
+    let (context, record, tmux, _socket_dir) = fixture(tmp.path());
     if phase == crate::activity::TurnPhase::Waiting {
         crate::auth_incident::observe(
             &context,
@@ -239,6 +246,25 @@ async fn native_idle_starting_restart_honours_queued_account_repair() {
 }
 
 #[tokio::test]
+async fn native_idle_restart_retries_failed_selected_account_without_queue() {
+    let lock = GlobalStateLock::new();
+    let _broker = EnvGuard::set(
+        &lock,
+        "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+        r#"["/configured/broker"]"#,
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    let (context, mut record, tmux, _socket_dir) = fixture(tmp.path());
+    record.extra.remove("codex_account_next");
+    crate::write_session_record(&context, &record).unwrap();
+    assert!(request_exit(context, record, tmux, "idle").await.unwrap());
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("input")).unwrap(),
+        "/quit"
+    );
+}
+
+#[tokio::test]
 async fn failed_startup_without_identity_stops_without_typing_or_resuming() {
     let lock = GlobalStateLock::new();
     let _broker = EnvGuard::set(
@@ -248,7 +274,7 @@ async fn failed_startup_without_identity_stops_without_typing_or_resuming() {
     );
     for status in ["idle", "empty", "active", "multiple", "paginated"] {
         let tmp = tempfile::tempdir().unwrap();
-        let (context, mut record, tmux) = fixture(tmp.path());
+        let (context, mut record, tmux, _socket_dir) = fixture(tmp.path());
         record.provider_resume = None;
         fs::remove_file(crate::codex_app_server::thread_attached_path(&record).unwrap()).unwrap();
         crate::write_session_record(&context, &record).unwrap();
@@ -285,7 +311,7 @@ async fn fresh_restart_readiness_observes_new_identity_and_bound_account() {
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::tempdir().unwrap();
-    let (context, mut record, tmux) = fixture(tmp.path());
+    let (context, mut record, tmux, _socket_dir) = fixture(tmp.path());
     let resume = record.provider_resume.take();
     fs::remove_file(crate::codex_app_server::thread_attached_path(&record).unwrap()).unwrap();
     crate::write_session_record(&context, &record).unwrap();
@@ -333,7 +359,7 @@ async fn synthetic_idle_fixture_allows_restart_repair_without_a_model_turn() {
 }
 
 #[tokio::test]
-async fn restart_repair_keeps_native_idle_and_explicit_intent_guards() {
+async fn restart_repair_keeps_native_idle_and_intent_guards() {
     let lock = GlobalStateLock::new();
     let _broker = EnvGuard::set(
         &lock,
@@ -343,20 +369,16 @@ async fn restart_repair_keeps_native_idle_and_explicit_intent_guards() {
     for case in [
         "active",
         "attention",
-        "absent",
         "malformed",
         "applying",
         "automatic",
         "pending_binding",
     ] {
         let tmp = tempfile::tempdir().unwrap();
-        let (context, mut record, tmux) = fixture(tmp.path());
+        let (context, mut record, tmux, _socket_dir) = fixture(tmp.path());
         match case {
             "pending_binding" => {
                 record.extra.get_mut("codex_account_binding").unwrap()["state"] = json!("pending");
-            }
-            "absent" => {
-                record.extra.remove("codex_account_next");
             }
             "malformed" => {
                 record

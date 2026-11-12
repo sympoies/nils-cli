@@ -62,6 +62,7 @@ pub(super) fn start_creates_session_state_without_printing_prompt() {
                 tmux_log.to_string_lossy().as_ref(),
             ),
             ("CODEX_AUTH_PROFILE_NAMES", daemon_roster),
+            ("AGENT_RUNTIME_TRUSTED_CLI_ROOT", "/fixture/daemon-root"),
         ],
     );
 
@@ -177,6 +178,8 @@ pub(super) fn start_creates_session_state_without_printing_prompt() {
             format!("PATH={inherited_path}"),
             "-e".to_string(),
             format!("CODEX_AUTH_PROFILE_NAMES={daemon_roster}"),
+            "-e".to_string(),
+            "AGENT_RUNTIME_TRUSTED_CLI_ROOT=/fixture/daemon-root".to_string(),
             "-e".to_string(),
             format!("AGENT_SESSION_BIN={agent_session_bin}"),
             "--".to_string(),
@@ -401,8 +404,8 @@ pub(super) fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
     let tmux_log_arg = tmux_log.to_string_lossy().to_string();
     let codex_arg = codex_bin.to_string_lossy().to_string();
     let daemon_roster = "fixture-account-a fixture-account-b";
-    let output = run(
-        tmp.path(),
+    let output = run_resolved(
+        "agent-session",
         &[
             "--state-dir",
             &state_arg,
@@ -413,12 +416,14 @@ pub(super) fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
             "--format",
             "json",
         ],
-        &[
-            ("AGENT_SESSION_FAKE_TMUX_LOG", &tmux_log_arg),
-            ("AGENT_SESSION_FAKE_TMUX_HAS_SESSION", "0"),
-            ("NILS_TEST_PANE_LIFETIME_MS", "500"),
-            ("CODEX_AUTH_PROFILE_NAMES", daemon_roster),
-        ],
+        &super::super::hermetic_provider_options(tmp.path())
+            .with_env_remove("AGENT_RUNTIME_TRUSTED_CLI_ROOT")
+            .with_envs(&[
+                ("AGENT_SESSION_FAKE_TMUX_LOG", &tmux_log_arg),
+                ("AGENT_SESSION_FAKE_TMUX_HAS_SESSION", "0"),
+                ("NILS_TEST_PANE_LIFETIME_MS", "500"),
+                ("CODEX_AUTH_PROFILE_NAMES", daemon_roster),
+            ]),
     );
 
     assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
@@ -502,6 +507,8 @@ pub(super) fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
             format!("PATH={inherited_path}"),
             "-e".to_string(),
             format!("CODEX_AUTH_PROFILE_NAMES={daemon_roster}"),
+            "-e".to_string(),
+            "AGENT_RUNTIME_TRUSTED_CLI_ROOT=".to_string(),
             "-e".to_string(),
             format!("AGENT_SESSION_BIN={agent_session_bin}"),
             "--".to_string(),

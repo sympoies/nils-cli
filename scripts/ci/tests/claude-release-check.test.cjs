@@ -7,7 +7,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const test = require("node:test");
 const { discover, verifyIntegrity, isolatedEnvironment, candidateChanges, checkCandidate,
-  runReleaseCheck, collectReleaseCheck, range } = require("../../../.github/scripts/claude-release-check.cjs");
+  runReleaseCheck, collectReleaseCheck, planReleaseCheck, range } = require("../../../.github/scripts/claude-release-check.cjs");
 const REPOSITORY = path.resolve(__dirname, "../../..");
 const VERSION = "crates/agent-session/src/send/claude_notice/version.rs";
 const NOTICE = "crates/agent-session/tests/guarded_send/claude_notice.rs";
@@ -75,7 +75,8 @@ function fixture({ newest = "2.1.318", passing = true } = {}) {
     },
   };
   const core = { setFailed: (x) => state.failures.push(x), summary: { addRaw: () => core.summary, write: async () => {} } };
-  return { state, options: { github: { rest, paginate: async (method, args) => (await method(args)).data }, core,
+  const github = { rest, paginate: async (method, args) => (await method(args)).data };
+  return { state, options: { github, issueGithub: github, core,
     context: { repo: { owner: "example", repo: "project" }, ref: "refs/heads/main", sha: state.source, runId: 7 },
     root: ROOT, artifactDir,
     checked: { schema_version: 1, source_sha: state.source, release: metadata(newest),
@@ -88,6 +89,60 @@ function fixture({ newest = "2.1.318", passing = true } = {}) {
     fetchJSON: async url => metadata(newest, url.includes("linux-x64") ? PLATFORM : PACKAGE),
     writeResult: (result) => { state.result = result; } } };
 }
+
+test("candidate publication uses the bot App token without a default-token fallback", () => {
+  const workflow = fs.readFileSync(path.join(REPOSITORY, ".github/workflows/claude-release-check.yml"), "utf8");
+  const publish = workflow.split("\n  publish:")[1];
+  assert.match(publish, /permissions:\n      contents: read\n      issues: write\n    steps:/);
+  const mint = publish.match(/- name: Mint bot token\n([\s\S]*?)(?=\n      - name:)/);
+  const candidate = publish.match(/- name: Prepare draft range candidate from validated evidence\n([\s\S]*?)(?=\n      - name:)/);
+  assert.ok(mint); assert.ok(candidate);
+  const credentials = publish.match(/- name: Require bot app credentials\n([\s\S]*?)(?=\n      - name:)/);
+  assert.match(credentials[1], /if: steps\.publication_plan\.outputs\.candidate == 'true'/);
+  const plan = publish.match(/- name: Plan candidate publication[\s\S]*?node <<'JS'\n([\s\S]*?)\n          JS/)[1]
+    .split("\n").map(line => line.slice(10)).join("\n");
+  for (const [checked, expected] of [[{ check: null }, "candidate=false\n"],
+    [{ check: { passed: false } }, "candidate=false\n"], [{ check: { passed: true } }, "candidate=true\n"]]) {
+    const writes = [];
+    require("node:vm").runInNewContext(plan, {
+      require: name => name === "node:fs" ? { readFileSync: () => JSON.stringify(checked), appendFileSync: (_, value) => writes.push(value) } : path,
+      process: { env: { CLAUDE_CHECK_ARTIFACT_DIR: "evidence", GITHUB_OUTPUT: "output" } },
+    });
+    assert.deepEqual(writes, [expected]);
+  }
+  assert.match(candidate[1], /Candidate publication requires a bot App token/);
+  assert.match(mint[1], /if: steps\.publication_plan\.outputs\.candidate == 'true'/);
+  assert.match(mint[1], /id: bot_token/);
+  assert.match(mint[1], /uses: actions\/create-github-app-token@v3/);
+  assert.match(mint[1], /permission-contents: write/);
+  assert.match(mint[1], /permission-pull-requests: write/);
+  assert.match(candidate[1], /github-token: \${{ github\.token }}/);
+  assert.match(candidate[1], /getOctokit\(process\.env\.BOT_TOKEN\)/);
+  assert.match(candidate[1], /issueGithub: getOctokit\(process\.env\.ISSUE_TOKEN\)/);
+  assert.match(candidate[1], /ISSUE_TOKEN: \${{ github\.token }}/);
+});
+
+test("publication reaches reporting without an App token and refuses candidate writes without one", async () => {
+  const workflow = fs.readFileSync(path.join(REPOSITORY, ".github/workflows/claude-release-check.yml"), "utf8");
+  const step = workflow.split("- name: Prepare draft range candidate from validated evidence")[1].split("- name: Retain publication result")[0];
+  const script = step.split("          script: |\n")[1].split("\n").map(line => line.slice(12)).join("\n");
+  for (const [checked, token, expected] of [[{ check: null }, "", "report"],
+    [{ check: { passed: false } }, "", "report"], [{ check: { passed: true } }, "", "refuse"],
+    [{ check: { passed: true } }, "app-token", "candidate"]]) {
+    let call;
+    const issueClient = {};
+    const appClient = {};
+    const run = require("node:vm").runInNewContext(`(async () => { ${script} })`, {
+      require: name => name === "node:fs" ? { lstatSync: () => ({ isFile: () => true }), statSync: () => ({ size: 1 }),
+        readFileSync: file => JSON.stringify(file.endsWith("checked.json") ? checked : {}) } : name === "node:path" ? path :
+        { runReleaseCheck: async options => { call = options; } },
+      process: { env: { CLAUDE_CHECK_ARTIFACT_DIR: "evidence", ISSUE_TOKEN: "issue-token", BOT_TOKEN: token } },
+      github: issueClient, getOctokit: value => value === "app-token" ? appClient : issueClient, context: {}, core: {},
+    });
+    if (expected === "refuse") await assert.rejects(run(), /requires a bot App token/);
+    else { await run(); assert.equal(call.github, expected === "candidate" ? appClient : issueClient); assert.equal(call.issueGithub, issueClient); }
+  }
+});
 
 test("official latest registry discovery uses strict stable versions and exact package identity", async () => {
   const seen = [];
@@ -166,6 +221,15 @@ test("passing candidate creates one draft with exact source/integrity/exits/arti
   assert.equal(state.pulls.length, 1); assert.equal(state.writes.length, before);
 });
 
+test("failure issues use the separate issue client", async () => {
+  const candidate = fixture({ passing: false });
+  const issue = fixture({ passing: false });
+  candidate.options.issueGithub = issue.options.github;
+  await runReleaseCheck(candidate.options);
+  assert.equal(candidate.state.issues.length, 0);
+  assert.equal(issue.state.issues.length, 1);
+});
+
 test("failing candidate upserts a single bounded issue and preserves human notes/closed state", async () => {
   const { state, options } = fixture({ passing: false });
   await runReleaseCheck(options);
@@ -207,7 +271,8 @@ test("existing human edits, reviews, ready/closed PRs, duplicates and occupied b
     await runReleaseCheck(options);
     assert.ok(["preserved", "error"].includes(state.result.status), `${variant}: ${state.result.status}`);
     assert.ok(!state.writes.slice(before).some(([kind]) => ["ref", "commit", "tree", "pr"].includes(kind)), variant);
-    if (variant !== "branch") assert.equal(state.pulls[0]?.body, pr.body);
+    if (variant === "branch") assert.match(state.result.action, /delivery-and-releases\.md#orphan-candidate-branch/);
+    else assert.equal(state.pulls[0]?.body, pr.body);
   }
 });
 
@@ -363,4 +428,65 @@ test("privileged publication rejects stale, injected or inconsistent artifact in
     assert.equal(state.result.status, "error", variant);
     assert.deepEqual(state.writes, [], variant);
   }
+});
+
+// The plan job runs before any Rust setup, compile or install and asks the
+// provider whether this version already has a candidate PR or failure issue.
+async function plan(options, newest) {
+  const outputs = {};
+  // The provider filters by head branch; mirror that so other versions do not match.
+  const list = options.github.rest.pulls.list;
+  options.github.rest.pulls.list = async args => ({ data: (await list(args)).data.filter(pr => `${options.context.repo.owner}:${pr.head.ref}` === args.head) });
+  const core = { ...options.core, setOutput: (name, value) => { outputs[name] = value; } };
+  const result = await planReleaseCheck({ github: options.github, context: options.context, core, root: ROOT,
+    discoverRelease: async () => metadata(newest) });
+  return { outputs, result };
+}
+
+test("an existing candidate PR for the detected version skips build and install", async () => {
+  const { state, options } = fixture();
+  await runReleaseCheck(options);
+  assert.equal(state.pulls.length, 1);
+  const before = state.writes.length;
+  const { outputs } = await plan(options, "2.1.318");
+  assert.equal(outputs.skip, "true");
+  assert.equal(state.writes.length, before);
+  state.pulls[0].state = "closed";
+  assert.equal((await plan(options, "2.1.318")).outputs.skip, "true");
+});
+
+test("an existing failure issue for the detected version skips build and install, closed or open", async () => {
+  const { state, options } = fixture({ passing: false });
+  await runReleaseCheck(options);
+  assert.equal(state.issues.length, 1);
+  assert.equal((await plan(options, "2.1.318")).outputs.skip, "true");
+  state.issues[0].state = "closed";
+  assert.equal((await plan(options, "2.1.318")).outputs.skip, "true");
+});
+
+test("a new version, an in-range version or an orphan candidate branch still runs the full check", async () => {
+  const { state, options } = fixture();
+  assert.equal((await plan(options, "2.1.318")).outputs.skip, "false");
+  await runReleaseCheck(options);
+  assert.equal((await plan(options, "2.1.319")).outputs.skip, "false");
+  assert.equal((await plan(options, "2.1.316")).outputs.skip, "false");
+  const orphan = fixture();
+  orphan.state.refs.set("heads/ci/claude-range-2.1.318", "f".repeat(40));
+  assert.equal((await plan(orphan.options, "2.1.318")).outputs.skip, "false");
+  assert.equal(state.writes.filter(([kind]) => kind === "pr").length, 1);
+});
+
+test("the workflow gates the heavy check and publication on the plan job, only for scheduled runs", () => {
+  const workflow = fs.readFileSync(path.join(REPOSITORY, ".github/workflows/claude-release-check.yml"), "utf8");
+  const planJob = workflow.slice(workflow.indexOf("  plan:"), workflow.indexOf("  check:"));
+  const check = workflow.slice(workflow.indexOf("  check:"), workflow.indexOf("  publish:"));
+  const publish = workflow.slice(workflow.indexOf("  publish:"));
+  assert.doesNotMatch(planJob, /contents: write|issues: write|pull-requests: write|cargo|npm install|rust-toolchain/);
+  assert.match(planJob, /issues: read/); assert.match(planJob, /pull-requests: read/);
+  assert.match(planJob, /continue-on-error: true/);
+  assert.match(check, /needs: plan/);
+  assert.match(check, /needs\.plan\.outputs\.skip != 'true'/);
+  assert.match(planJob, /if: github\.event_name == 'schedule'/);
+  assert.match(publish, /needs: check/);
+  assert.match(publish, /needs\.check\.result == 'success'/);
 });

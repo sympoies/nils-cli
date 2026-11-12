@@ -21,6 +21,14 @@ pub struct ProcessOutput {
     pub elapsed_ms: u64,
 }
 
+/// Sleeps between child-exit polls: short first so fast-exiting children are
+/// reaped promptly, backing off to 10 ms for long-running ones.
+pub fn poll_pause(polls: &mut u32) {
+    let millis = (1u64 << (*polls).min(4)).min(10);
+    *polls = polls.saturating_add(1);
+    thread::sleep(Duration::from_millis(millis));
+}
+
 pub fn run(
     program: &Path,
     args: &[String],
@@ -83,6 +91,7 @@ pub fn run(
     drop(child.stdin.take());
 
     let mut timed_out = false;
+    let mut polls = 0;
     let status = loop {
         match child
             .try_wait()
@@ -108,7 +117,7 @@ pub fn run(
                     .wait()
                     .map_err(|error| format!("failed to reap timed-out process: {error}"))?;
             }
-            None => thread::sleep(Duration::from_millis(10)),
+            None => poll_pause(&mut polls),
         }
     };
 
@@ -193,6 +202,7 @@ pub fn run_detached(
         .spawn()
         .map_err(|error| format!("failed to start detached process: {error}"))?;
     let mut timed_out = false;
+    let mut polls = 0;
     let status = loop {
         match child
             .try_wait()
@@ -211,7 +221,7 @@ pub fn run_detached(
                     .wait()
                     .map_err(|error| format!("failed to reap detached launcher: {error}"))?;
             }
-            None => thread::sleep(Duration::from_millis(10)),
+            None => poll_pause(&mut polls),
         }
     };
     #[cfg(unix)]

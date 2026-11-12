@@ -51,3 +51,37 @@ pub(crate) fn settle_starting(
     write_document(&path, &mut document)?;
     Ok(true)
 }
+
+/// Age makes missing provider evidence explicit; it never authorizes input or
+/// changes durable history. A later primary idle observation can still settle.
+pub(super) fn project_unverified(record: &SessionRecord, state: &mut TurnState, at: &str) {
+    if record.agent != "codex"
+        || record
+            .runtime
+            .as_ref()
+            .is_none_or(|runtime| runtime.kind != "codex_app_server")
+        || state.phase != TurnPhase::Starting
+        || state.current_turn.is_some()
+        || state.diagnostic.is_some()
+    {
+        return;
+    }
+    let (Ok(since), Ok(at)) = (
+        state.phase_changed_at.parse::<jiff::Timestamp>(),
+        at.parse::<jiff::Timestamp>(),
+    ) else {
+        return;
+    };
+    let Ok(deadline) = since.checked_add(jiff::SignedDuration::from_secs(30)) else {
+        return;
+    };
+    if at < deadline {
+        return;
+    }
+    state.phase = TurnPhase::Unknown;
+    state.source.confidence = Confidence::Inferred;
+    state.diagnostic = Some(ActivityDiagnosticView {
+        reason: "codex_startup_idle_unverified".into(),
+        extra: Map::new(),
+    });
+}

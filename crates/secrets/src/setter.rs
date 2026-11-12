@@ -273,6 +273,12 @@ fn read_value() -> Result<String, CmdError> {
                         "stdin contains unsupported control characters; target unchanged",
                     ));
                 }
+                // SOPS dotenv decodes every `\n` pair as LF, so a literal one cannot round-trip.
+                if value.contains("\\n") {
+                    return Err(CmdError::runtime(
+                        "stdin contains a literal backslash followed by n, which dotenv stores as a newline; target unchanged",
+                    ));
+                }
                 return Ok(value);
             }
             Ok(Err(_)) | Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -287,18 +293,8 @@ fn replace_key(original: &[u8], key: &str, value: &str) -> Result<String, CmdErr
     let document = std::str::from_utf8(original).map_err(|_| {
         CmdError::runtime("existing dotenv document is not UTF-8; target unchanged")
     })?;
-    let mut escaped = String::new();
-    for c in value.chars() {
-        match c {
-            '\\' => escaped.push_str("\\\\"),
-            '"' => escaped.push_str("\\\""),
-            '$' => escaped.push_str("\\$"),
-            '\n' => escaped.push_str("\\n"),
-            '\t' => escaped.push_str("\\t"),
-            _ => escaped.push(c),
-        }
-    }
-    let replacement = format!("{key}=\"{escaped}\"\n");
+    // Bare SOPS dotenv value: the only escape is LF as `\n`, SOPS' native newline form.
+    let replacement = format!("{key}={}\n", value.replace('\n', "\\n"));
     let mut seen = BTreeSet::new();
     let mut updated = false;
     let mut output = String::new();

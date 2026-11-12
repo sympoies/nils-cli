@@ -9,6 +9,8 @@ pub struct RunArgs {
 pub enum RunCommand {
     /// Request exactly one rerun, then read its attempt and job receipt.
     Rerun(RunRerunArgs),
+    /// Approve a workflow run awaiting approval at the reviewed head.
+    Approve(RunApproveArgs),
 }
 #[derive(Args, Debug)]
 pub struct RunRerunArgs {
@@ -26,4 +28,19 @@ pub struct RunRerunArgs {
     /// Bound receipt reads after the single write; zero performs one receipt probe.
     #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u64).range(0..=60))]
     pub receipt_timeout_secs: u64,
+}
+
+#[derive(Args, Debug)]
+pub struct RunApproveArgs {
+    /// Workflow run database id.
+    pub run_id: u64,
+    /// Exact full SHA of the reviewed pull request head.
+    #[arg(long)]
+    pub expected_head: String,
+    /// Pull request associated with the run.
+    #[arg(long)]
+    pub pr: u64,
+    /// File containing the approval reason; do not include secrets.
+    #[arg(long)]
+    pub reason_file: String,
 }

@@ -21,6 +21,8 @@ pub(super) fn project(diagnostic: &ActivityDiagnosticView) -> Option<StreamActiv
             | "activity_state_unavailable"
             | "interrupted_suspected"
             | "codex_progress_quiet"
+            | "codex_startup_idle_unverified"
+            | "codex_runtime_stopped"
     ) {
         return None;
     }

@@ -4,7 +4,7 @@ use super::*;
 pub(super) async fn create_handler(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
-    Json(body): Json<CreateBody>,
+    Json(create_body::CheckedCreateBody(body)): Json<create_body::CheckedCreateBody>,
 ) -> Response {
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
@@ -13,6 +13,11 @@ pub(super) async fn create_handler(
         return envelope_err(crate::start_resume::refusal("resume-unsupported"));
     }
     if let Err(error) = crate::launch_env::validate(&body.launch_env) {
+        return envelope_err(error);
+    }
+    if let Err(error) =
+        crate::notice::start::validate_prepared(&body.notice, body.prompt.as_deref())
+    {
         return envelope_err(error);
     }
     let origin = match body.origin_fields() {
@@ -41,7 +46,7 @@ pub(super) async fn create_handler(
 pub(super) async fn create_handler_inner(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
-    Json(body): Json<CreateBody>,
+    Json(mut body): Json<CreateBody>,
     origin: crate::origin::Fields,
 ) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
@@ -62,10 +67,31 @@ pub(super) async fn create_handler_inner(
         ));
     }
     let resuming = body.resume.is_some();
+    if !resuming && let Some(account) = body.account.take() {
+        if body.codex_account.is_some() || body.claude_account.is_some() {
+            return envelope_err(CliError::usage(
+                "invalid-account",
+                "account cannot be combined with a provider account",
+                None,
+            ));
+        }
+        match agent {
+            AgentKind::Codex => body.codex_account = Some(account),
+            AgentKind::Claude => body.claude_account = Some(account),
+            _ => {
+                return envelope_err(CliError::usage(
+                    "invalid-account",
+                    "account requires Codex or Claude",
+                    None,
+                ));
+            }
+        }
+    }
     if resuming
         && (body.agent_profile.is_some()
             || body.provider_resume_id.is_some()
-            || body.codex_account.is_some())
+            || body.codex_account.is_some()
+            || body.claude_account.is_some())
     {
         return envelope_err(crate::start_resume::refusal("resume-unsupported"));
     }
@@ -119,13 +145,15 @@ pub(super) async fn create_handler_inner(
         }
         None => (title, None),
     };
-    if let Err(err) = validate_create_accounts(
-        agent,
-        body.codex_account.is_some(),
-        body.claude_account.is_some(),
-        launch_profile.is_some(),
-        body.provider_resume_id.is_some(),
-    ) {
+    if !resuming
+        && let Err(err) = validate_create_accounts(
+            agent,
+            body.codex_account.is_some(),
+            body.claude_account.is_some(),
+            launch_profile.is_some(),
+            body.provider_resume_id.is_some(),
+        )
+    {
         return envelope_err(err);
     }
     let mut initial_lineage = match create_body_lineage(
@@ -210,9 +238,27 @@ pub(super) async fn create_handler_inner(
             Err(_) => join_err(),
         };
     }
+    let resume_account_explicit = body
+        .resume_account_explicit
+        .or_else(|| resuming.then_some(body.account.is_some()));
     let explicit_account = body.codex_account;
     let (selected_account, selection_source) = if resuming {
-        (None, None)
+        match super::resume_start::resolve_codex_account(
+            &state,
+            crate::start_resume::Request {
+                agent: body.agent.clone(),
+                resume: body.resume.clone().unwrap(),
+                cwd: body.cwd.as_ref().map(PathBuf::from),
+                account: body.account.clone(),
+                agent_profile: body.agent_profile.clone(),
+                agent_args: body.agent_args.clone(),
+            },
+        )
+        .await
+        {
+            Ok(selection) => selection,
+            Err(error) => return envelope_err(error),
+        }
     } else {
         match tokio::task::spawn_blocking(move || {
             let _journal_owner = crate::lifecycle::ServeGuard::enter("create");
@@ -252,7 +298,7 @@ pub(super) async fn create_handler_inner(
     let args = cli::StartArgs {
         resume: body.resume,
         check_resume: false,
-        initial_resume_account_explicit: body.resume_account_explicit,
+        initial_resume_account_explicit: resume_account_explicit,
         workspace: None,
         title_mode: match body.title_mode {
             crate::display_metadata::TitleMode::Auto => "auto",
@@ -289,7 +335,7 @@ pub(super) async fn create_handler_inner(
         },
         prompt_file: None,
         prompt_stdin: false,
-        notice: Default::default(),
+        notice: body.notice,
         tmux_bin: Some(state.tmux_bin.clone()),
         agent_bin: launch_profile
             .as_ref()
@@ -305,10 +351,15 @@ pub(super) async fn create_handler_inner(
         via_console: false,
         console_operation: Default::default(),
         machine: None,
-        account: if resuming { body.claude_account } else { None },
+        account: if resuming {
+            selected_account.clone().or(body.account)
+        } else {
+            None
+        },
         agent_profile: None,
         no_parent: false,
         forge_initiator: None,
+        attest_role: false,
         role: None,
         program: None,
         issues: Vec::new(),

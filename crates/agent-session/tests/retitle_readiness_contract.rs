@@ -768,7 +768,7 @@ impl ServeProcess {
             address,
         };
         let deadline = Instant::now() + Duration::from_secs(15);
-        while TcpStream::connect(address).is_err() {
+        while !serve_answers_healthz(address) {
             if let Some(status) = server.child.try_wait().expect("poll serve child") {
                 panic!(
                     "agent-session serve exited before listening: status={status}; stderr={}",
@@ -809,6 +809,26 @@ impl Drop for ServeProcess {
         }
         let _ = self.child.wait();
     }
+}
+
+/// True once the spawned serve itself answers `/healthz` for its machine.
+///
+/// A bare TCP connect is not enough: the port is reserved and released before
+/// serve binds it, so another process can briefly hold it and accept the probe
+/// before closing, leaving the first real request refused.
+fn serve_answers_healthz(address: SocketAddr) -> bool {
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_secs(1)) else {
+        return false;
+    };
+    let timeout = Some(Duration::from_secs(1));
+    if stream.set_read_timeout(timeout).is_err() || stream.set_write_timeout(timeout).is_err() {
+        return false;
+    }
+    let request = format!("GET /healthz HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n");
+    let mut response = Vec::new();
+    stream.write_all(request.as_bytes()).is_ok()
+        && stream.read_to_end(&mut response).is_ok()
+        && String::from_utf8_lossy(&response).contains(&format!("\"machine\":\"{MACHINE}\""))
 }
 
 fn request_json(

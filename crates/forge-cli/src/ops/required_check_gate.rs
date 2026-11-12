@@ -25,26 +25,20 @@
 //! # Absence is not success
 //!
 //! "All required checks passed" is vacuously true over an empty set, so a
-//! snapshot with nothing failing, nothing pending, **and nothing passing** used
-//! to reach `Ok`. That let a PR satisfy the gate having run no CI at all, which
-//! is not hypothetical: `gh pr checks --required` exits non-zero with "no
-//! required checks reported" during the provider's check-registration window
-//! after a force-with-lease, and [`pr_checks`] deliberately normalizes that into
-//! an empty successful snapshot so the read surface can report "nothing is
-//! failing" without erroring.
+//! snapshot with nothing failing, nothing pending, **and nothing passing** must
+//! not reach `Ok`: that would let a PR satisfy the gate having run no CI at all,
+//! which happens during the provider's check-registration window (`gh pr checks
+//! --required` exits non-zero with "no required checks reported" after a
+//! force-with-lease) or while a run is queued without jobs.
 //!
-//! Reporting and gating want opposite defaults there. The read surface is right
-//! to say "no checks are failing"; the gate must not accept that as proof the
-//! head was checked, because the gate exists to establish exactly that. So the
-//! empty gating set fails closed here as `checks_not_registered`, while
-//! [`pr_checks`] keeps reporting it as `success` — and a repository that
+//! [`pr_checks`] reports that snapshot as `state=no-checks`, and the gate fails
+//! closed on the empty gating set as `checks_not_registered`. A repository that
 //! genuinely configures no checks opts out per invocation with
-//! `--allow-no-checks`.
+//! `--allow-no-checks`, or declares `[checks] none = true`.
 //!
-//! The neighbouring REST fallback already reached this conclusion: when
-//! requiredness is unknown and the row set is empty it *synthesizes a pending
-//! row* rather than returning an empty pass. This is the same rule applied to
-//! the path that reports emptiness honestly.
+//! The neighbouring REST fallback applies the same rule: when requiredness is
+//! unknown and the row set is empty it *synthesizes a pending row* rather than
+//! returning an empty pass.
 
 use crate::backend::BackendRunner;
 use crate::cli::{BINARY, GlobalFlags, PrChecksArgs};

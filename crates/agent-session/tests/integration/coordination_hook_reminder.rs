@@ -1,6 +1,10 @@
 use super::*;
 use pretty_assertions::{assert_eq, assert_ne};
 
+fn run(dir: &Path, args: &[&str]) -> CmdOutput {
+    run_with_env(dir, args, &[("AGENT_SESSION_NOTICE_WRITERS", "1")])
+}
+
 #[test]
 fn message_reminder_claims_each_live_unread_generation_once() {
     // DSH sessions have no serve prompt route; their policy hook claims the
@@ -98,10 +102,22 @@ fn message_reminder_claims_each_live_unread_generation_once() {
         .as_str()
         .expect("reminder text")
         .to_string();
-    assert!(text.starts_with("Mailbox: "), "{text}");
-    assert!(text.ends_with("agent-session message inbox"));
-    assert!(text.is_ascii() && text.len() <= 60);
-    assert!(!text.contains("beta"));
+    assert!(
+        text.starts_with(
+            "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: "
+        ),
+        "{text}"
+    );
+    let body = text.split_once("\n\n").unwrap().1;
+    assert!(
+        body.lines()
+            .next()
+            .unwrap()
+            .ends_with("agent-session message inbox")
+    );
+    assert!(text.is_ascii());
+    assert!(text.contains("message inbox --session beta --format json"));
+    assert!(text.contains("message show --session beta --message MESSAGE_ID --format json"));
     assert!(!first.stdout_text().contains("REMINDER-BODY-CANARY"));
     assert_eq!(data(&first)["generation"], 1);
     let receipt = coordination_registry(&state_dir)["notifications"]

@@ -63,14 +63,18 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
                 ReleaseCommand::Upload(_) => "release.upload",
                 ReleaseCommand::Edit(_) => "release.edit",
                 ReleaseCommand::Delete(_) => "release.delete",
+                ReleaseCommand::DeleteAsset(_) => "release.delete-asset",
                 ReleaseCommand::View(_) => unreachable!("read handled above"),
             },
             mutation,
             ProviderEffect::NetworkWrite,
             Vec::new(),
         ),
-        Some(Command::Run(_)) => (
-            "run.rerun",
+        Some(Command::Run(args)) => (
+            match args.command {
+                crate::cli::RunCommand::Rerun(_) => "run.rerun",
+                crate::cli::RunCommand::Approve(_) => "run.approve",
+            },
             mutation,
             ProviderEffect::NetworkWrite,
             vec!["provider", "identity_policy"],
@@ -164,6 +168,12 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
                     } else {
                         vec!["local_inputs"]
                     },
+                ),
+                Some(PrReviewCommand::Edit(_)) => (
+                    "pr.review.edit",
+                    mutation,
+                    ProviderEffect::NetworkWrite,
+                    vec!["local_inputs", "provider"],
                 ),
                 None => (
                     "pr.review.post",

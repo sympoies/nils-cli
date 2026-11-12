@@ -31,6 +31,18 @@ GitHub-only repository writes; both return `provider`, `repository`, `tag`,
   of every asset. A create URL comes from backend stdout; upload has no URL
   when the backend supplies none.
 
+### `release delete-asset`
+
+`release delete-asset <tag> <asset-name>...` resolves the exact GitHub release and
+validates every requested name before sending any delete request. Repeat
+`--expect-sha256 <name>=<digest>` to require the provider SHA-256 digest for
+a requested asset. Missing or mismatched digests refuse the operation.
+`--dry-run` reads the release and lists selected assets without writes. JSON
+output includes each selected asset's name, former size, and provider digest.
+Delete requests run sequentially; on failure, the error details include the
+confirmed deleted prefix and the current asset whose outcome is unknown. Inspect
+the release before retrying. GitLab and Local are unsupported.
+
 ### `release view` / `release edit` / `release delete`
 
 These operations support GitHub only and require one literal tag selector.

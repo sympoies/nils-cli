@@ -4,6 +4,8 @@ mod account_broker;
 #[doc(hidden)]
 pub mod activity;
 mod activity_ingress;
+mod activity_setup;
+use activity_setup::forward_activity_setup_to_agent_hook;
 mod agent_bin;
 mod attachment_filename;
 use attachment_filename::{attachment_candidate_path, sanitize_attachment_filename};
@@ -74,7 +76,7 @@ mod session_title;
 use session_title::normalize_title;
 mod session_record;
 mod session_views;
-use session_views::{list_sessions, list_sessions_for_serve, visit_session_views};
+use session_views::{list_sessions_for_serve, visit_session_views};
 mod usage;
 
 #[cfg(test)]
@@ -114,7 +116,7 @@ use nils_common::git::parse_git_remote_url;
 // `provider_prompt` module via `crate::` are re-exported at crate scope.
 use nils_provider_resume::{
     CODEX_RESUME_SCAN_MAX_DEPTH, ClaudeResumeScanBudget, CodexResumeScanBudget, ResumeIdError,
-    ResumeProvider, ResumeResolveError, collect_claude_provider_resume_matches,
+    ResumeProvider, ResumeResolveError, collect_claude_named_resume_matches,
     collect_codex_provider_resume_matches, normalize_resume_id, resolve_resume_source,
     resolve_resume_source_in_config_dir,
 };
@@ -211,7 +213,7 @@ const CODEX_RESUME_BACKFILL_MAX_AGE_SECS: u64 = 10 * 60;
 pub const PANE_INPUT_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const PANE_OBSERVATION_COMMAND_TIMEOUT: Duration = Duration::from_secs(1);
 const PANE_OBSERVATION_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
-const POST_PASTE_KEY_SETTLE_DELAY: Duration = Duration::from_millis(500);
+use send_submit::POST_PASTE_KEY_SETTLE_DELAY;
 const PANE_PASTE_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const PANE_PASTE_READY_DEADLINE: Duration = Duration::from_secs(15);
 /// A launch may wait out a slow TUI, but the structured prompt route answers an
@@ -274,10 +276,8 @@ where
             return emit_parse_error(SCHEMA, format, code, &message);
         }
     };
-
     dispatch(cli)
 }
-
 fn dispatch(cli: Cli) -> i32 {
     if let Some(code) = cli::operator_rules::prepare(&cli.command) {
         return code;
@@ -302,43 +302,9 @@ fn dispatch(cli: Cli) -> i32 {
     ) {
         account_broker::adopt_serve_brokers(&context.state_dir);
     }
-    match cli.command {
-        Command::Start(args) => run_start(&context, *args),
-        Command::Run(args) => run_one_shot(&context, args),
-        Command::List(args) => run_list(&context, args),
-        Command::Board(args) => board::run(&context, args),
-        Command::Show(args) => session_model::refresh::run_show(&context, args),
-        Command::Refresh(args) => session_model::refresh::run(&context, args),
-        Command::Title(args) => session_title::run(&context, args),
-        Command::AutoResume(args) => auto_resume::cli::run(&context, args),
-        Command::Attach(args) => run_attach(&context, args),
-        Command::Logs(args) => run_logs(&context, args),
-        Command::Diagnose(args) => diagnose::run_diagnose(&context, args),
-        Command::Send(args) => send::run(&context, args),
-        Command::Notice(args) => notice::run(&context, args),
-        Command::Glance(args) => run_glance(&context, args),
-        Command::Resume(args) => run_resume(&context, args),
-        Command::Restart(args) => restart::run(&context, args),
-        Command::Clear(args) => conversation::run(&context, args, true),
-        Command::Rebind(args) => conversation::run(&context, args, false),
-        Command::Account(args) => session_account::run_account(&context, args),
-        Command::Activity(args) => run_activity(&context, args),
-        Command::WorkContext(args) => coordination::run_work_context(&context, args),
-        Command::Broker(args) => coordination::run_broker(&context, args),
-        Command::Readiness(args) => coordination::readiness::run(&context, args),
-        Command::Delegation(args) => coordination::delegation::run(&context, args),
-        Command::Message(args) => coordination::run_message(&context, args),
-        Command::Metadata(args) => metadata::run_metadata(&context, args),
-        Command::Lineage(args) => lineage::run_lineage(&context, args),
-        Command::Work(args) => lineage::run_work(&context, args),
-        Command::Workspace(args) => origin::run(&context, args),
-        Command::Serve(args) => serve::run_serve(&context, args),
-        Command::CodexAppServerProxy(args) => codex_app_server::run_proxy(&context, args),
-        Command::Delete(args) => run_delete(&context, args),
-        Command::Tmp(args) => runtime_environment::session_tmp::run(&context, args),
-        Command::Completion(_) | Command::Rules(_) => unreachable!("handled earlier"),
-    }
+    cli::dispatch::run(&context, cli.command)
 }
+
 fn detect_format_from_args(args: &[OsString]) -> OutputFormat {
     let mut index = 1;
     while index < args.len() {
@@ -420,17 +386,6 @@ fn run_one_shot(context: &CliContext, args: cli::RunArgs) -> i32 {
             render_single_success(RUN_COMMAND, view.format, &view.result, render_started_text)
         }
         Err(err) => render_error(RUN_COMMAND, format, err),
-    }
-}
-
-fn run_list(context: &CliContext, args: cli::ListArgs) -> i32 {
-    match list_sessions(context, None) {
-        Ok(results) => render_list_success(
-            args.format,
-            &results,
-            &board::machine_identity(None, context),
-        ),
-        Err(err) => render_error(LIST_COMMAND, args.format, err),
     }
 }
 
@@ -584,152 +539,6 @@ fn run_activity(context: &CliContext, args: cli::ActivityArgs) -> i32 {
             Err(err) => render_error(ACTIVITY_SETUP_COMMAND, args.format, err),
         },
     }
-}
-
-fn forward_activity_setup_to_agent_hook(args: &cli::ActivitySetupArgs) -> Result<Value, CliError> {
-    if args.agent == AgentKind::Dsh {
-        return Err(CliError::usage(
-            "unsupported-activity-agent",
-            "dsh activity comes from the dsh-runtime-kit bridge hook installed by the launch profile, or from the external runtime's liveness sidecar; there is no provider activity configuration to manage",
-            Some(json!({ "agent": args.agent.as_str() })),
-        ));
-    }
-    let explicit_binary = std::env::var_os("AGENT_HOOK_BIN");
-    let binary = explicit_binary
-        .clone()
-        .unwrap_or_else(|| OsString::from("agent-hook"));
-    let action = if args.dry_run {
-        "--dry-run"
-    } else if args.apply {
-        "--apply"
-    } else if args.remove {
-        "--remove"
-    } else {
-        "--repair"
-    };
-    let mut command = ProcessCommand::new(binary);
-    command.args([
-        "setup",
-        "--product",
-        args.agent.as_str(),
-        action,
-        "--format",
-        "json",
-    ]);
-    if let Some(digest) = args.expected_preview_digest.as_deref() {
-        command.args(["--expected-plan-digest", digest]);
-    }
-    let output = match run_output_with_timeout_and_cap(
-        command,
-        Duration::from_secs(10),
-        AGENT_HOOK_SETUP_MAX_OUTPUT_BYTES,
-    ) {
-        Ok(output) => output,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Err(CliError::unavailable(
-                "agent-hook-setup-unavailable",
-                "agent-hook is required for provider setup; install the matching nils-agent-hook binary, then rerun the same dry-run before any apply, repair, or remove",
-                Some(json!({
-                    "compatibility_owner": "agent-hook",
-                    "action": "install-agent-hook-and-repeat-reviewed-preview"
-                })),
-            ));
-        }
-        Err(error) => {
-            return Err(CliError::unavailable(
-                "agent-hook-setup-unavailable",
-                format!("agent-hook setup compatibility forward failed: {error}"),
-                Some(json!({
-                    "compatibility_owner": "agent-hook",
-                    "action": "inspect-agent-hook-installation-and-repeat-reviewed-preview"
-                })),
-            ));
-        }
-    };
-    let envelope: Envelope<Value> = match serde_json::from_slice(&output.stdout) {
-        Ok(value) => value,
-        Err(_) => {
-            return Err(CliError::data(
-                "agent-hook-setup-output-invalid",
-                "agent-hook setup returned invalid JSON",
-                None,
-            ));
-        }
-    };
-    if envelope.schema_version != "cli.agent-hook.setup.v1" {
-        return Err(CliError::data(
-            "agent-hook-setup-output-invalid",
-            "agent-hook setup returned an unsupported envelope schema",
-            None,
-        ));
-    }
-    if !output.status.success() || !envelope.ok {
-        let (code, message, details) = envelope.error.map_or_else(
-            || {
-                (
-                    "agent-hook-setup-failed".to_string(),
-                    "agent-hook setup rejected the compatibility request".to_string(),
-                    None,
-                )
-            },
-            |error| (error.code, error.message, error.details),
-        );
-        let child_exit = output
-            .status
-            .code()
-            .filter(|code| {
-                matches!(
-                    *code,
-                    exit::RUNTIME | exit::USAGE | exit::DATA | exit::UNAVAILABLE | exit::SOFTWARE
-                )
-            })
-            .unwrap_or(exit::DATA);
-        return Err(CliError::with_exit_code(code, message, details, child_exit));
-    }
-    let typed: Envelope<agent_hook::setup::SetupResult> = serde_json::from_slice(&output.stdout)
-        .map_err(|_| {
-            CliError::data(
-                "agent-hook-setup-output-invalid",
-                "agent-hook setup returned an incomplete success contract",
-                None,
-            )
-        })?;
-    let result = typed.data.ok_or_else(|| {
-        CliError::data(
-            "agent-hook-setup-output-invalid",
-            "agent-hook setup omitted its data object",
-            None,
-        )
-    })?;
-    if result.schema_version != "agent-hook.setup-result.v1"
-        || result.product != args.agent.as_str()
-        || result.action != action.trim_start_matches("--")
-        || result.compatibility_owner != "agent-hook"
-        || !valid_sha256(&result.plan_digest)
-        || !valid_sha256(&result.config_digest)
-        || !valid_sha256(&result.policy_digest)
-    {
-        return Err(CliError::data(
-            "agent-hook-setup-output-invalid",
-            "agent-hook setup response does not match the requested operation",
-            None,
-        ));
-    }
-    let mut result = serde_json::to_value(result)
-        .ok()
-        .and_then(|value| value.as_object().cloned())
-        .ok_or_else(|| {
-            CliError::data(
-                "agent-hook-setup-output-invalid",
-                "agent-hook setup result could not be projected",
-                None,
-            )
-        })?;
-    result.insert(
-        "compatibility_owner".to_string(),
-        Value::String("agent-hook".to_string()),
-    );
-    Ok(Value::Object(result))
 }
 
 fn render_forwarded_setup_text(result: &Value) -> String {
@@ -1401,6 +1210,9 @@ struct DurableResumeRecord {
 
 #[derive(Debug, Serialize)]
 pub struct SessionView {
+    /// Present on fresh start results; contains no private receipt metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch_notice: Option<notice::start::LaunchNotice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     context_usage: Option<context_usage::ContextUsage>,
     launch_env: launch_env::LaunchEnv,
@@ -1483,12 +1295,7 @@ pub struct SessionView {
     role: Option<String>,
 }
 
-#[derive(Debug)]
-pub struct StartView {
-    format: OutputFormat,
-    pub result: SessionView,
-    pub prompt_delivery_observation: Option<PromptDeliveryObservation>,
-}
+pub use start_resume::StartView;
 
 pub(crate) struct ProviderResumeImportArgs {
     pub(crate) ordinary_start: Option<Box<cli::StartArgs>>,
@@ -1986,7 +1793,7 @@ fn start_session_inner_unjournaled(
         }
         return Err(with_failed_launch_cleanup(err, cleanup));
     }
-    if let Err(err) = release_held_runtime(context, &created.record) {
+    if let Err(err) = notice::release_start(context, &args.notice, &created.record) {
         let cleanup = recover_failed_tmux_launch_bounded(
             context,
             &mut created.record,
@@ -2056,7 +1863,8 @@ fn start_session_inner_unjournaled(
     let status = session_status(context, &tmux_bin, &created.record);
     startup::check_stopped(context, &mut created.record, &status, &tmux_bin)?;
     reconcile_owned_startup_projection(context, &mut created.record, &status);
-    let result = session_view(context, &created.record, Some(status), Some(&tmux_bin));
+    let mut result = session_view(context, &created.record, Some(status), Some(&tmux_bin));
+    notice::start::project(&args.notice, &created.record, &mut result);
     record_workdir_usage(context, &cwd);
     // Keep the app-server bootstrap marker valid for the entire create-lock
     // lifetime. Explicit ordering avoids Rust's reverse local-drop order from
@@ -3044,7 +2852,7 @@ pub(crate) fn resolve_provider_transcript_path_from_roots(
         }
         AgentKind::Claude => {
             let mut budget = ClaudeResumeScanBudget::from_env();
-            collect_claude_provider_resume_matches(
+            collect_claude_named_resume_matches(
                 claude_root?,
                 session_id,
                 &mut matches,
@@ -4148,35 +3956,7 @@ fn send_input_serialized_with_title_guard(
     )
 }
 
-/// Submit the product-owned continuation while `auto_resume::tick` holds the
-/// session record lock. Reloading here prevents a stale scheduler record from
-/// targeting a restarted or recreated runtime.
-pub(crate) fn send_auto_resume_input(
-    context: &CliContext,
-    expected: &SessionRecord,
-    text: &str,
-    tmux_bin: &Path,
-) -> Result<(), CliError> {
-    let mut current = load_session_record(context, &expected.id)?;
-    ensure_same_session_identity(expected, &current)?;
-    if live_status(tmux_bin, &current.tmux_session) != "running" {
-        return Err(CliError::runtime(
-            "session-not-running",
-            format!("session is not running: {}", current.id),
-            Some(json!({ "id": current.id })),
-        ));
-    }
-    codex_account::authorize_input_locked(context, &mut current)?;
-    send_input_unlocked(
-        context,
-        &current,
-        Some(text),
-        &[SpecialKey::Enter],
-        tmux_bin,
-        None,
-        PasteMode::Raw,
-    )
-}
+pub(crate) use send::daemon_notice::send_auto_resume_input;
 
 struct ManualInputSection {
     record_lock: Option<SessionRecordLock>,
@@ -6628,6 +6408,7 @@ fn session_view_from_parts(
     });
     let (auth_incident, auth_detection_health) = auth_incident::projection(context, record);
     SessionView {
+        launch_notice: None,
         origin: origin::Fields::of(record),
         context_usage,
         launch_env: launch_env::projection(record.extra.get("launch_env")),
@@ -8982,48 +8763,12 @@ fn recover_persisted_linux_control_group_at_root(
     state: TmuxTerminationState,
     root: &Path,
 ) -> Result<LinuxControlGroupRecovery, SessionTerminationFailure> {
-    let full_path = linux_control_group_full_path_at_root(Path::new(&control_group.path), root)?;
-    let current_boot_id = linux_boot_id()?;
-    match control_group.boot_id.as_deref() {
-        Some(boot_id) if boot_id == current_boot_id => {}
-        Some(_) => return Ok(LinuxControlGroupRecovery::DifferentBoot),
-        None if !full_path.exists() => return Ok(LinuxControlGroupRecovery::CurrentBoot),
-        None => return Err(SessionTerminationFailure::RuntimeIdentityUnavailable),
-    }
-    let mut pinned_control_group = match fs::metadata(&full_path) {
-        Ok(_) => Some(open_pinned_linux_control_group(control_group, &full_path)?),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
-        Err(_) => return Err(SessionTerminationFailure::VerificationFailed),
-    };
-    let pinned_processes = if matches!(state, TmuxTerminationState::KillConfirmed { .. }) {
-        control_group_members
-            .iter()
-            .map(pin_matching_linux_process)
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
-    if matches!(state, TmuxTerminationState::KillConfirmed { .. }) {
-        if let Some(pinned) = pinned_control_group.as_ref() {
-            write_control_group_file(&pinned.kill_fd, b"1")?;
-        }
-        for process in &pinned_processes {
-            pidfd_send_signal(&process.pidfd, libc::SIGKILL, true)?;
-        }
-    }
-    if state.thaw_on_recovery()
-        && let Some(pinned) = pinned_control_group.as_mut()
-    {
-        pinned.thaw_on_drop = true;
-        if !thaw_pinned_control_group(pinned) {
-            return Err(SessionTerminationFailure::VerificationFailed);
-        }
-        pinned.thaw_on_drop = false;
-    }
-    Ok(LinuxControlGroupRecovery::CurrentBoot)
+    runtime_teardown::cgroup_membership::recover_persisted_linux_control_group_at_root(
+        control_group,
+        control_group_members,
+        state,
+        root,
+    )
 }
 
 pub(crate) fn recover_interrupted_tmux_terminations(context: &CliContext) -> Result<(), CliError> {
@@ -14178,8 +13923,8 @@ exit 0
     #[cfg(target_os = "linux")]
     struct TestTmuxServer {
         bin: PathBuf,
+        _socket_dir: nils_test_support::tempdir::ScopedTempDir,
     }
-
     #[cfg(target_os = "linux")]
     impl Drop for TestTmuxServer {
         fn drop(&mut self) {
@@ -14190,10 +13935,8 @@ exit 0
                 .status();
         }
     }
-
     #[cfg(target_os = "linux")]
     struct TestPidGuard(libc::pid_t);
-
     #[cfg(target_os = "linux")]
     impl Drop for TestPidGuard {
         fn drop(&mut self) {
@@ -14205,7 +13948,6 @@ exit 0
             }
         }
     }
-
     #[cfg(target_os = "linux")]
     #[test]
     fn process_session_descendant_helper() {
@@ -14517,7 +14259,7 @@ exit 0
             Some("delete-cgroup-detached-descendant"),
         );
         let record = load_session_record(&context, &id).unwrap();
-        let socket = format!("nils-delete-cgroup-{}", unsafe { libc::getpid() });
+        let (socket_dir, socket) = nils_test_support::short_socket_path("tmux.sock");
         let scope = format!("tmux-spawn-6302a262-c059-4ec9-9b93-{:012x}", unsafe {
             libc::getpid()
         });
@@ -14527,21 +14269,22 @@ exit 0
         fs::write(
             &wrapper,
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nif [ -f {} ] && {{ [ \"$1\" = has-session ] || [ \"$1\" = display-message ]; }}; then printf '%s\\n' \"can't find session: stopped\" >&2; exit 1; fi\nif [ \"$1\" = new-session ]; then exec {} --user --scope --quiet --collect --unit {} -- {} -f /dev/null -L {} \"$@\"; fi\nexec {} -f /dev/null -L {} \"$@\"\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nif [ -f {} ] && {{ [ \"$1\" = has-session ] || [ \"$1\" = display-message ]; }}; then printf '%s\\n' \"can't find session: stopped\" >&2; exit 1; fi\nif [ \"$1\" = new-session ]; then exec {} --user --scope --quiet --collect --unit {} -- {} -f /dev/null -S {} \"$@\"; fi\nexec {} -f /dev/null -S {} \"$@\"\n",
                 shell_words::quote(&super::display_path(&wrapper_calls)),
                 shell_words::quote(&super::display_path(&force_stopped)),
                 shell_words::quote(&super::display_path(&systemd_run)),
                 shell_words::quote(&scope),
                 shell_words::quote(&super::display_path(&tmux)),
-                shell_words::quote(&socket),
+                shell_words::quote(&super::display_path(&socket)),
                 shell_words::quote(&super::display_path(&tmux)),
-                shell_words::quote(&socket),
+                shell_words::quote(&super::display_path(&socket)),
             ),
         )
         .unwrap();
         fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
         let _tmux_server = TestTmuxServer {
             bin: wrapper.clone(),
+            _socket_dir: socket_dir,
         };
         let descendant_trigger_path = tmp.path().join("detached-descendant.trigger");
         let descendant_pid_path = tmp.path().join("detached-descendant.pid");
@@ -14893,6 +14636,8 @@ exit 0
             }
             thread::sleep(Duration::from_millis(10));
         }
+        drop(_tmux_server);
+        assert!(!socket.exists(), "isolated socket leaked");
     }
 
     #[cfg(target_os = "linux")]
@@ -16718,7 +16463,7 @@ fi
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
 
-        let views = super::list_sessions(&context, Some(&tmux)).unwrap();
+        let views = super::session_views::list_sessions(&context, Some(&tmux)).unwrap();
         assert_eq!(views.len(), 2);
         assert_eq!(fs::read_to_string(calls).unwrap(), "list-windows\n");
     }
@@ -16735,7 +16480,7 @@ fi
         fs::write(&tmux, "#!/bin/sh\nexit 1\n").unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
 
-        let views = super::list_sessions(&context, Some(&tmux)).unwrap();
+        let views = super::session_views::list_sessions(&context, Some(&tmux)).unwrap();
         assert_eq!(views.len(), 1);
         assert_eq!(views[0].agent, "hermes");
     }
@@ -16781,7 +16526,7 @@ fi
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
 
-        let views = super::list_sessions(&context, Some(&tmux)).unwrap();
+        let views = super::session_views::list_sessions(&context, Some(&tmux)).unwrap();
 
         assert_eq!(views.len(), 1);
         assert_eq!(views[0].status, "running");
@@ -18132,7 +17877,7 @@ exit 42
     fn post_paste_settle_applies_only_between_literal_paste_and_keys() {
         assert_eq!(
             super::post_paste_settle_delay(true, true),
-            Some(std::time::Duration::from_millis(500))
+            Some(super::POST_PASTE_KEY_SETTLE_DELAY)
         );
         assert_eq!(super::post_paste_settle_delay(true, false), None);
         assert_eq!(super::post_paste_settle_delay(false, true), None);

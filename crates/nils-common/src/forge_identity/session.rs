@@ -10,11 +10,18 @@ pub const BINDING_SCHEMA: &str = "agent-session.forge-binding.v1";
 pub struct LaunchContext {
     pub initiator: String,
     pub role: Option<String>,
+    /// Present only when the trusted operator launcher attested this session's role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attested_role: Option<String>,
 }
 impl LaunchContext {
     pub fn validate(&self) -> Result<()> {
         if !policy::identifier(&self.initiator)
             || self.role.as_ref().is_some_and(|r| !policy::identifier(r))
+            || self
+                .attested_role
+                .as_ref()
+                .is_some_and(|r| Some(r) != self.role.as_ref())
         {
             return Err(Error::new("identity_session_binding_invalid"));
         }
@@ -41,6 +48,9 @@ pub struct SessionBinding {
     pub parent: Option<SessionReference>,
     pub initiator: String,
     pub role: Option<String>,
+    /// Present only when the trusted operator launcher attested this session's role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attested_role: Option<String>,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionDecision {
@@ -70,6 +80,7 @@ impl SessionBinding {
         LaunchContext {
             initiator: self.initiator.clone(),
             role: self.role.clone(),
+            attested_role: self.attested_role.clone(),
         }
         .validate()
     }
@@ -142,6 +153,7 @@ impl Policy {
         let (principal, matched_launch_rule) = self.principal_for_launch(&LaunchContext {
             initiator: binding.initiator.clone(),
             role: binding.role.clone(),
+            attested_role: binding.attested_role.clone(),
         })?;
         Ok((
             principal,

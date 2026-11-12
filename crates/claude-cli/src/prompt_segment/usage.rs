@@ -17,6 +17,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::{auth, backoff, cache, client, render};
 
+mod limits;
+
 const USAGE_SCHEMA_VERSION: &str = "claude-cli.usage.v1";
 const USAGE_COMMAND: &str = "usage";
 const DEFAULT_CLAUDE_BIN: &str = "claude";
@@ -62,6 +64,9 @@ struct UsageResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     updated_at: Option<i64>,
     windows: Vec<UsageWindow>,
+    /// Read from a live OAuth response only; absent means not read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit_resets: Option<limits::UsageLimitResets>,
     #[serde(skip_serializing_if = "Option::is_none")]
     plan: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -335,7 +340,7 @@ fn try_oauth(
 ) -> Result<UsageResult, (ProviderUsageReason, Option<String>)> {
     let token = auth::resolve_access_token().ok_or((ProviderUsageReason::AuthRequired, None))?;
     let key = Some(backoff::token_key(&token.value));
-    let body = client::fetch_usage(&token.value).map_err(|error| {
+    let body = client::fetch_status(&token.value).map_err(|error| {
         if error.reason() == ProviderUsageReason::RateLimited
             && let Some(body) = client::cached_usage(&token.value)
             && let Some(cache_file) = cache_file
@@ -350,14 +355,19 @@ fn try_oauth(
     if let Some(cache_file) = cache_file {
         let _ = cache::write_oauth_cache_file(cache_file, &body, &token.value);
     }
-    Ok(result_from_usage(
+    let mut result = result_from_usage(
         "oauth",
         false,
         cache_file,
         Some(body.fetched_at),
         &usage,
         None,
-    ))
+    );
+    result
+        .windows
+        .extend(limits::scoped_windows(&value, Some(body.fetched_at)));
+    result.limit_resets = Some(limits::limit_resets(&value));
+    Ok(result)
 }
 
 fn try_claude_cli(cache_file: Option<&PathBuf>) -> Result<UsageResult, ProviderUsageReason> {
@@ -403,14 +413,19 @@ fn read_cache_matching(cache_file: Option<&PathBuf>, key: Option<&str>) -> Optio
     }
     let value: Value = serde_json::from_str(&raw).ok()?;
     let usage = render::parse_usage_value(&value)?;
-    Some(result_from_usage(
+    let updated_at = modified_epoch_seconds(cache_file);
+    let mut result = result_from_usage(
         "cache",
         true,
         Some(cache_file),
-        modified_epoch_seconds(cache_file),
+        updated_at,
         &usage,
         Some("serving last cached usage".to_string()),
-    ))
+    );
+    result
+        .windows
+        .extend(limits::scoped_windows(&value, updated_at));
+    Some(result)
 }
 
 fn cache_unavailable_note(cache_file: Option<&PathBuf>) -> &'static str {
@@ -433,6 +448,7 @@ fn empty_result(
         cache_file: cache_file.as_ref().map(|path| display_path(path)),
         updated_at: None,
         windows: Vec::new(),
+        limit_resets: None,
         plan: None,
         note: Some(note.to_string()),
         reason_code: Some(reason),
@@ -585,6 +601,7 @@ fn result_from_usage(
         cache_file: cache_file.map(|path| display_path(path)),
         updated_at,
         windows,
+        limit_resets: None,
         plan: None,
         note,
         reason_code: None,
@@ -632,7 +649,12 @@ fn render_text_result(result: &UsageResult) -> String {
     if result.stale {
         parts.push("(stale)".to_string());
     }
-    parts.join(" ")
+    let mut text = parts.join(" ");
+    if let Some(resets) = &result.limit_resets {
+        text.push('\n');
+        text.push_str(&limits::render_text(resets));
+    }
+    text
 }
 
 fn probe_claude_cli_usage() -> anyhow::Result<String> {

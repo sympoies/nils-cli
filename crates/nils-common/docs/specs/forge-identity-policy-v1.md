@@ -141,6 +141,16 @@ session has no binding, so a bound role-less root always comes from a
 non-session launcher. Roles are never inherited. Resume and adoption
 preserve the original context.
 
+An operator launcher may additionally request `--attest-role` with both flags
+to record `attested_role` for that session. The broker projects this optional
+field only from immutable launch context; it must equal the session's role.
+Managed callers cannot request it, and child launches clear it even when the
+child chooses the same ordinary role or starts a new lineage root. Existing
+immutable bindings without the field remain valid and carry no attested role.
+A consumer requiring operator-attested role authority must match this field;
+existing identity launch-rule matching continues to use the ordinary launch
+context and does not turn a role label into a privileged attestation.
+
 Each resolver calls `agent-session broker identity --session ID --format json`
 under the caller's probe deadline. The producer verifies the private session
 capability, live heartbeat/registry and current runtime incarnation. The consumer
@@ -230,13 +240,58 @@ repositories/principals refuse.
 
 ## Execution and refusal
 
-Changes apply only to the child process. They do not change shared gh active
-account, persistent Git author/signing config, or stored remotes.
+Identity preparation applies only to the child process. It does not change
+shared gh active account, persistent Git author/signing config, or stored remotes.
+The explicit `git-cli transport set` command separately owns repository-local
+remote URL selection; see its
+[operator procedure](../../../git-cli/docs/runbooks/governed-https-transport.md).
 
-Supported HTTPS and GitHub SSH remote shapes execute over pinned HTTPS with the
-selected verified token. The SSH URL stays stored unchanged. The child has an
+For an HTTPS fetch/push, the guard obtains the credential from the configured
+system/global Git credential helper using `git credential fill`, with interaction
+and tracing disabled. Local/worktree helper entries (including URL-scoped keys,
+empty resets, and values reached through local includes) refuse before helper
+execution. Scope-inspection failures also refuse. Lookup runs in an owned empty
+temporary directory with repository discovery fenced there; local configuration
+cannot add a helper between inspection and lookup. Global/system configuration
+selectors and the executable environment remain operator-owned, like the
+identity policy's configuration selector. See
+[Git configuration scopes](https://git-scm.com/docs/git-config#SCOPES).
+
+The guard verifies the actor of that exact credential against the selected
+profile using the same human/App checks as other protected operations. A missing
+helper credential or mismatched actor refuses before transport with a fix hint;
+the guard does not substitute the profile's API credential. Profile selection,
+session binding, operation admission, and audit remain required.
+
+The verified helper token is passed in the Git child's `FORGE_IDENTITY_TOKEN`
+environment variable for the actual HTTPS command, without a URL rewrite or
+second configured-helper lookup. SSH-shaped remotes
+retain the existing profile-credential selection and child-only pinned HTTPS
+routing; the stored SSH URL stays unchanged. In either case the child has an
 empty credential-helper list followed by a helper constrained to the selected
 HTTPS host/repository, no interactive credential fallback, and redirects disabled.
+
+The command-scope executable overrides are exactly `core.hooksPath=/dev/null`,
+`core.fsmonitor=false`, and `core.alternateRefsCommand=`. They prevent repository
+hooks, fsmonitor programs, and alternate-refs commands from running with the token.
+
+The closed network-configuration refusal list is `http.proxy`, `http.sslCAInfo`,
+and `http.sslCAPath` (including their `http.<url>.*` forms), plus
+`remote.<name>.proxy`. Repository/worktree
+entries refuse before credential authorization with
+`identity_transport_config_untrusted` and a system/global configuration fix hint.
+Empty resets and entries reached through local includes also refuse, even when a
+URL-specific entry does not match the selected destination. Scope-inspection
+failures also refuse. This uses the same scope rules as the helper refusal;
+system/global proxy and CA values remain effective. It applies to HTTPS remotes
+and SSH-shaped remotes routed through pinned HTTPS.
+
+Other repository-configured commands remain operator-owned and may inherit the
+token if Git starts them. The pinned credential helper and HTTPS transport still
+inherit the Git environment; their executable environment remains operator-owned.
+These overrides do not change stored Git configuration or commit signing and
+authoring behavior.
+
 TLS certificate verification is enforced for the selected URL, overriding inherited
 `http.sslVerify` settings and removing `GIT_SSL_NO_VERIFY` from the child.
 Pre-existing URL rewrites or HTTP credential headers refuse. Credentials are never

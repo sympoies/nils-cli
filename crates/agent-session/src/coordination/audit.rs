@@ -35,6 +35,7 @@ impl Default for Query {
 struct Registry {
     schema_version: String,
     messages: Vec<Inbox>,
+    quota_rejections: Vec<super::mailbox_quota::Rejection>,
     brokers: BTreeMap<String, Broker>,
     notifications: BTreeMap<String, notification::NotificationReceipt>,
     receipts: BTreeMap<String, receipt_retention::ReceiptOwner>,
@@ -478,6 +479,7 @@ fn snapshot_at(
                 "queued_at":time(Some(n.queued_at_epoch)),"attempted_at":time(Some(n.attempted_at_epoch)),
                 "updated_at":time(Some(n.updated_at_epoch)),"next_retry_at":time(Some(n.next_attempt_at_epoch)),
                 "reason_code":n.last_reason.as_deref().map(notification::safe_reason),
+                "reason_detail":notification::reason_detail(n),
             }));
             let state = known(&m.state, &["unread", "read", "acknowledged", "expired"]);
             let unread = state == "unread" && m.expires_at_epoch > now;
@@ -658,7 +660,7 @@ fn snapshot_at(
         None
     };
     Ok(
-        json!({"routine_coalescing":super::notification_policy::coalescing_status(context),"notification_capabilities":["routine-coalescing-v1"],"schema_version":"agent-session.mail-audit.v1","machine":machine,"snapshot_at":super::timestamp(now),"observation_finished_at":super::timestamp(super::now_epoch()),"older_than_seconds":query.older_than,"partial":partial,"sources":sources,"records":rows,"next_cursor":next_cursor,"receipt_usage":receipt_usage}),
+        json!({"quota_rejections":registry.as_ref().ok().map(|r| &r.quota_rejections),"routine_coalescing":super::notification_policy::coalescing_status(context),"notification_capabilities":["routine-coalescing-v1"],"schema_version":"agent-session.mail-audit.v1","machine":machine,"snapshot_at":super::timestamp(now),"observation_finished_at":super::timestamp(super::now_epoch()),"older_than_seconds":query.older_than,"partial":partial,"sources":sources,"records":rows,"next_cursor":next_cursor,"receipt_usage":receipt_usage}),
     )
 }
 #[derive(Deserialize, Serialize)]

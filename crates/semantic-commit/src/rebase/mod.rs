@@ -61,8 +61,11 @@ fn replay(options: &options::Options) -> Result<(), String> {
             "--no-autosquash",
             "--no-fork-point",
             "--gpg-sign",
-            upstream,
         ]);
+        if let Some(onto) = &state.onto {
+            command.args(["--onto", onto]);
+        }
+        command.arg(upstream);
     } else {
         command.args(["rebase", "--continue"]);
     }

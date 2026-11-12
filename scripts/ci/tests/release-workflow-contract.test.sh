@@ -67,6 +67,7 @@ for invalid_ref in refs/heads/main refs/tags/v1.22.10-rc.1 refs/tags/1.22.10; do
 done
 assert_contains .github/workflows/release.yml "- runs_on: ubuntu-24.04-arm" \
   "Linux ARM64 release uses the native GitHub-hosted runner"
+python3 scripts/ci/tests/check-release-glibc.test.py
 assert_contains .github/workflows/release.yml 'run: cargo build --release --workspace --locked --target ${{ matrix.target }}' \
   "release workflow uses the locked native cargo build"
 assert_not_contains .github/workflows/release.yml "tool: cross" \
@@ -178,10 +179,10 @@ assert_contains <(workflow_job .github/workflows/ci.yml changes) '    timeout-mi
 # The shared full workflow owns the former merge/release coverage contract.
 assert_contains .github/workflows/full-validation.yml 'NILS_CLI_COVERAGE_FAIL_UNDER_LINES: "85"' \
   "full release/nightly coverage retains the 85% floor"
-assert_contains .github/workflows/full-validation.yml 'NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS: "1"' \
-  "macOS delegates OS-independent audits to full Linux"
-assert_contains .github/workflows/full-validation.yml 'NILS_CLI_SKIP_DOCTESTS: "1"' \
-  "macOS delegates doctests to full Linux"
+assert_contains .github/workflows/full-validation.yml 'python3 scripts/ci/merge-lcov.py' \
+  "macOS partition coverage is merged and floored once"
+assert_contains .github/workflows/full-validation.yml 'NILS_CLI_NEXTEST_PARTITION: count:${{ matrix.partition }}/2' \
+  "macOS tests run as two nextest partitions"
 assert_contains .config/nextest.toml 'terminate-after = ' \
   "nextest terminates hung tests"
 assert_contains scripts/ci/nils-cli-verification.sh \

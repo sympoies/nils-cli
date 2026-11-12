@@ -363,6 +363,14 @@ normalized windows, and an optional provider-neutral `reason_code`. Provider
 responses, terminal errors, and credentials are classified locally and never
 forwarded.
 
+A live OAuth read also reports the per-model weekly windows
+(`weekly_scoped:<model>`) and a `Limit resets` section (`limit_resets` in JSON):
+the session-reset program and one entry per grant, with grant kind taken from
+what it clears. It reads through the same client identity as
+`diag rate-limits`. The cache source keeps the scoped windows; the CLI probe
+does not report them. The shape is in the
+[JSON contract](docs/specs/claude-cli-json-contract-v1.md#usage-scoped-windows-and-limit-resets).
+
 ## Diagnostics: rate limits
 
 `diag rate-limits` reports Claude OAuth rate limits in the shared
@@ -394,10 +402,13 @@ collector reads both.
   `ok`, `source`, `reason_code`, `summary`, `windows`, `error`) and exit `1`
   when any result failed, which is a result without `windows`. A single target
   exits `1` on failure.
-- Each network result also carries `limit_resets`: the normalized
+- Each network result also carries `limit_resets_checked_at` (epoch seconds of
+  the read) and `limit_resets`: the normalized
   `juniper_tide` and `cedar_ember` reset status, each `null` when the upstream
   block is missing or malformed. A malformed block never fails the result.
-  Cached and cache-fallback results omit `limit_resets`. The shape is in the
+  Cached and cache-fallback results carry the last network `limit_resets` and
+  the `limit_resets_checked_at` of that read, or omit both when no network read
+  supplied them. The shape is in the
   [JSON contract](docs/specs/claude-cli-json-contract-v1.md#diag-rate-limits-limit-resets);
   grant ids stay host-local.
 - Text output prints the shared accounts table for `--all` and `--async`, and

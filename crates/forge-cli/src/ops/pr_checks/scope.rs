@@ -43,7 +43,11 @@ impl PrChecksPayload {
         let visible_state = ["failure", "timed_out", "cancelled", "pending"]
             .into_iter()
             .find(|state| self.checks.iter().any(|c| c.state == *state))
-            .unwrap_or("success");
+            .unwrap_or(if self.checks.is_empty() {
+                super::NO_CHECKS
+            } else {
+                "success"
+            });
         let fallback = self.gate_scope == "visible_fallback";
         ScopeFields {
             configured_required_count,

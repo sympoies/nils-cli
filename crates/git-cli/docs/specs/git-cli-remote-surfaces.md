@@ -3,7 +3,7 @@
 ## Ownership
 
 This is a crate-local specification for `git-cli push`,
-`git-cli sync-default`, and `git-cli sync-branch`.
+`git-cli sync-default`, `git-cli sync-branch`, and `git-cli transport`.
 
 ## Why These Exist
 
@@ -114,7 +114,9 @@ git-cli sync-default [--remote <name>] [--no-fetch] [--dry-run]
 ```
 
 Fast-forwards the local default branch to its remote-tracking ref. Fetches that
-one ref first unless `--no-fetch` is passed.
+one ref first unless `--no-fetch` or `--dry-run` is passed. A dry run previews
+against the already-fetched ref and reports `fetched=false` and the compared ref.
+Fetch first for a fresh preview, or run without `--dry-run` to fetch and sync.
 
 The safety argument is that the local ref only ever moves forward onto a commit
 that is already published: nothing is authored, no content changes, nothing is
@@ -132,7 +134,7 @@ Three strategies, selected by where the default branch is checked out:
 `main` lags — and it moves the ref without touching any working tree.
 
 When `refs/remotes/<remote>/HEAD` is not cached and the command may contact the
-remote (no `--no-fetch`), it first runs `git remote set-head <remote> --auto`.
+remote (neither `--no-fetch` nor `--dry-run`), it first runs `git remote set-head <remote> --auto`.
 `git-cli worktree add` does the same for `origin` before it resolves the default
 base ref. Both are best effort: an unreachable remote leaves the cache unset.
 
@@ -166,13 +168,36 @@ mismatched upstream, divergence, and a dirty checkout. It uses
 `git merge --ff-only` for the sole mutation; it never authors, rebases, resets,
 pushes, or changes upstream configuration.
 
+## `git-cli transport`
+
+```text
+git-cli transport set https|ssh [--remote <name>] [--format text|json]
+git-cli transport status [--remote <name>] [--format text|json]
+```
+
+The default remote is `origin`. Selection is recorded only in repository-local
+`remote.<name>.url`, shared by linked worktrees. `set` preserves the forge host
+and repository and writes its canonical HTTPS or SSH URL. `status` reads that
+choice without credential probes or network access. Both refuse URL rewrites,
+ambiguous URLs, explicit push URLs, and unprovable targets. Neither changes
+credentials, global configuration, signing, or identity-policy activation.
+
+With active identity policy, governed HTTPS fetch/push resolves the configured
+Git credential helper, verifies the authenticated actor against the selected
+profile, and pins that exact credential for transport. The existing SSH-shaped
+remote behavior remains profile-selected pinned HTTPS. Without active policy,
+the existing passthrough behavior uses the stored remote normally. See the
+[operator procedure](../runbooks/governed-https-transport.md).
+
 ## JSON Contract
 
-Both commands accept `--format text|json` and use the shared workspace envelope:
+The commands accept `--format text|json` and use the shared workspace envelope:
 
 - `cli.git-cli.push.v1`
 - `cli.git-cli.sync-default.v1`
 - `cli.git-cli.sync-branch.v1`
+- `cli.git-cli.transport.set.v1`
+- `cli.git-cli.transport.status.v1`
 
 `push` returns `branch`, `remote`, `remote_branch`, `refspec`, `head`,
 `default_branch`, `pushed`, `dry_run`, `created_remote_branch`, `bootstrapped`,
@@ -187,5 +212,10 @@ Both commands accept `--format text|json` and use the shared workspace envelope:
 `new_head`, `strategy`, `already_current`, `fast_forward`, `dry_run`, and
 `fetched`.
 
-`--dry-run` performs every read-only check and reports the strategy and target
-head it would use, without mutating anything.
+`transport set` and `transport status` return `remote`, `transport` (`https` or
+`ssh`), `url`, and `recorded_in` (the repository-local Git configuration key).
+
+For sync commands, `--dry-run` reports the local strategy without moving the
+local branch, but still fetches unless `--no-fetch` is supplied. Use both flags
+for local-only readback. Push dry-run performs its read-only checks and reports
+the proposed publication without pushing.

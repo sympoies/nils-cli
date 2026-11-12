@@ -22,7 +22,9 @@ and Claude layout padding is excluded from its observation. The fallback does
 not infer hidden text; a cleanup that cannot prove emptiness refuses delivery.
 
 Once the observed text has remained unchanged longer than the bound, admission
-persists the exact observed draft before sending any cleanup key. It reuses the
+checks [runtime residue ownership](session-notices-v1.md#saved-draft-residue-recognition).
+Runtime residue is cleared without a saved draft; other text is persisted
+exactly before sending any cleanup key. It reuses the
 existing draft-cleanup key path, with exact matching and no prefix removal. Counted cursor navigation verifies
 the logical end even when the caret was abandoned in the middle of the draft.
 Delivery proceeds only after an empty composer is confirmed. The draft is never
@@ -36,11 +38,13 @@ Terminal observations and keystrokes are not atomic against human editing.
 The store is `<state-dir>/sessions/<session-id>/drafts/`. Its private directories
 use mode 0700 and files use 0600, with the same OS owner as the session state.
 Only the same operator principals trusted to read the session may read drafts;
-HTTP list and read routes require the existing daemon bearer token. Draft text
+HTTP list, read and discard routes require the existing daemon bearer token. Draft text
 never appears in board projections, diagnostic messages, or lifecycle logs.
 
 `observation.json` holds a text digest, unchanged-since timestamp, and runtime
-and provider-session identity. `saved/<draft-id>.json` is a durable event record
+and provider-session identity. `injected.json` privately remembers the exact last
+notice paste and the runtime incarnation that typed it; it is ownership evidence,
+not a saved draft and is never projected. `saved/<draft-id>.json` is a durable event record
 with schema `agent-session.saved-draft.v1`, event `stale_draft_stashed`, its draft
 ID, timestamp, runtime identity, exact UTF-8 text, and `cleared` boolean. The
 initial record and `latest.json` event metadata are synced before cleanup; `cleared` becomes true only after the
@@ -50,16 +54,35 @@ session and are not silently evicted.
 
 Each draft may contain at most 64 KiB of UTF-8 text. A session holds at most
 128 saved drafts and 8 MiB of serialized saved records. Reaching either store
-bound refuses fallback without sending keys. Draft IDs are opaque UUIDs.
+bound refuses user-draft cleanup without sending keys. Recognized runtime
+residue does not consume saved-draft quota. Draft IDs are opaque UUIDs.
 
 - `GET /sessions/{id}/drafts` returns `{ drafts: [...] }` in the usual serve
   envelope. Each entry contains `draft_id`, `saved_at` (the save timestamp),
   `session_id` (the owning session), and `bytes` (UTF-8 text byte length), plus
   `event`, `session_incarnation`, and `cleared`. Entries omit text.
   Public metadata uses `saved_at`; `timestamp` remains internal to saved records.
+
 - `GET /sessions/{id}/drafts/{draft_id}` returns `text/plain; charset=utf-8`.
   The response body is the original observed text byte-for-byte, including
   leading/trailing spaces and Unicode, without a newline added by the server.
+
+- `POST /sessions/{id}/drafts/{draft_id}/discard` takes no body and requires
+  the same owner bearer token. Success is `200` with
+  `{ machine, discarded: <draft-id>, remaining: <count>, stale_draft: <projection-or-null> }`
+  in the usual envelope. The projection is exactly what the next session read
+  shows: the newest remaining draft, or absent after discarding the last one.
+  In the latter case `latest.json` is removed and the response field is `null`.
+  Saved drafts belong to the session, so discard has no incarnation fence.
+  A well-formed missing or already discarded ID returns `draft-not-found` (404);
+  an invalid UUID returns `invalid-draft-id` (400). Existing `session-not-found`
+  and `draft-store-unavailable` errors apply. Discard is not idempotent.
+
+`agent-session drafts discard <session-id> <draft-id> [--format json]` performs
+that same operation locally and returns the same result fields and error codes.
+Discard neither submits input nor changes the composer. The latest projection
+is persisted and synced before deleting the saved record. On persist failure
+the draft is kept.
 
 These routes are always installed; their absence means saved-draft retrieval is
 unsupported. There is no feature flag. Setting the fallback bound to 0 leaves
@@ -74,10 +97,11 @@ admission. No server endpoint automatically replays a saved draft.
 
 `unresponsive_seconds` in the serve config and
 `AGENT_SESSION_UNRESPONSIVE_SECONDS` set the response bound in positive integer
-seconds. The environment takes precedence. The default is 4 seconds, matching
-the existing submission observation budget: it accommodates the 1.5-second
-Enter observation/retry interval and the 2.5-second cleanup budget. Zero is
-invalid; there are no aliases or additional recovery settings.
+seconds. The environment takes precedence. The default is 4 seconds. This
+passive observation bound is independent of the fifteen-second terminal send
+and owned opaque-paste cleanup budgets. Ordinary text cleanup retains its
+2.5-second budget. Zero is invalid; there are no aliases or additional recovery
+settings.
 
 Guarded terminal submission and shared composer cleanup record an observation
 before their existing key action. Only a recognized, nonempty composer in an

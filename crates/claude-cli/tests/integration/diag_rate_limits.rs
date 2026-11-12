@@ -178,11 +178,44 @@ fn alpha_result(source: &str) -> Value {
             }
         ]
     });
-    // A network read always reports reset status; cached values never do.
-    if source == "network" {
-        result["limit_resets"] = json!({ "juniper_tide": null, "cedar_ember": null });
-    }
+    // Every result here follows a network read, which stores its reset status.
+    result["limit_resets"] = json!({ "juniper_tide": null, "cedar_ember": null });
     result
+}
+
+/// Removes `limit_resets_checked_at` from one result or a list of results.
+/// It must accompany `limit_resets` and be the epoch of a recent read.
+fn without_checked_at(mut value: Value) -> Value {
+    fn strip(result: &mut Value) {
+        let object = result.as_object_mut().expect("result");
+        let checked_at = object.remove("limit_resets_checked_at");
+        assert_eq!(
+            checked_at.is_some(),
+            object.contains_key("limit_resets"),
+            "limit_resets_checked_at accompanies limit_resets: {object:?}"
+        );
+        if let Some(checked_at) = checked_at {
+            let checked_at = checked_at.as_i64().expect("epoch seconds");
+            assert!((checked_at - epoch_now()).abs() < 600, "{checked_at}");
+        }
+    }
+    if value.is_array() {
+        value
+            .as_array_mut()
+            .expect("results")
+            .iter_mut()
+            .for_each(strip);
+    } else {
+        strip(&mut value);
+    }
+    value
+}
+
+fn epoch_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs() as i64
 }
 
 fn error_result(name: &str, reason: &str, code: &str) -> Value {
@@ -235,7 +268,7 @@ fn diag_rate_limits_all_json_reports_every_profile_and_fails_when_one_has_no_win
     assert_eq!(payload["ok"], false);
     let gamma = error_result("gamma", "auth_expired", "access-token-expired");
     assert_eq!(
-        without_error_messages(payload["results"].clone()),
+        without_checked_at(without_error_messages(payload["results"].clone())),
         json!([
             alpha_result("network"),
             error_result("beta", "permission_denied", "request-failed"),
@@ -285,7 +318,10 @@ fn diag_rate_limits_all_json_exits_zero_when_every_profile_has_windows() {
     assert_exit(&output, 0);
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
     assert_eq!(payload["ok"], true);
-    assert_eq!(payload["results"], json!([alpha_result("network")]));
+    assert_eq!(
+        without_checked_at(payload["results"].clone()),
+        json!([alpha_result("network")])
+    );
 }
 
 #[test]
@@ -319,7 +355,10 @@ fn diag_rate_limits_named_profile_reports_a_single_result() {
     assert_eq!(payload["schema_version"], SCHEMA);
     assert_eq!(payload["mode"], "single");
     assert_eq!(payload["ok"], true);
-    assert_eq!(payload["result"], alpha_result("network"));
+    assert_eq!(
+        without_checked_at(payload["result"].clone()),
+        alpha_result("network")
+    );
 
     let output = fx.run(&["diag", "rate-limits", "beta", "--format", "json"]);
     assert_exit(&output, 1);
@@ -368,7 +407,7 @@ fn diag_rate_limits_without_a_target_reads_the_active_login() {
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
     let mut expected = alpha_result("network");
     expected["target_file"] = json!(".credentials.json");
-    assert_eq!(payload["result"], expected);
+    assert_eq!(without_checked_at(payload["result"].clone()), expected);
 
     // An active login that no profile holds is reported as `active`.
     fx.write_active_login("access-beta", FUTURE_MS);
@@ -486,7 +525,10 @@ fn diag_rate_limits_async_json_falls_back_to_cache_and_cached_mode_stays_offline
     assert_exit(&output, 0);
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
     assert_eq!(payload["mode"], "async");
-    assert_eq!(payload["results"], json!([alpha_result("network")]));
+    assert_eq!(
+        without_checked_at(payload["results"].clone()),
+        json!([alpha_result("network")])
+    );
 
     fx.alpha_limited.store(true, Ordering::SeqCst);
     age_shared_usage(&fx.root);
@@ -495,7 +537,10 @@ fn diag_rate_limits_async_json_falls_back_to_cache_and_cached_mode_stays_offline
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
     let mut limited = alpha_result("cache-fallback");
     limited["reason_code"] = json!("rate_limited");
-    assert_eq!(payload["results"], json!([limited]));
+    assert_eq!(
+        without_checked_at(payload["results"].clone()),
+        json!([limited])
+    );
 
     let strict = fx
         .options()
@@ -767,7 +812,7 @@ fn diag_rate_limits_reports_normalized_limit_resets() {
     // The windows are unaffected by the reset blocks.
     let mut expected = alpha_result("network");
     expected["limit_resets"] = payload["result"]["limit_resets"].clone();
-    assert_eq!(payload["result"], expected);
+    assert_eq!(without_checked_at(payload["result"].clone()), expected);
 
     let requests = server.take_requests();
     assert_eq!(requests.len(), 1);
@@ -944,5 +989,229 @@ fn diag_rate_limits_user_agent_follows_the_installed_claude_code_version() {
                 .with_env("CLAUDE_PROMPT_SEGMENT_USER_AGENT", "custom-agent/1")
         ),
         "custom-agent/1"
+    );
+}
+
+const SCOPED_USAGE: &str = r#"{
+  "five_hour": { "utilization": 25.0, "resets_at": "2023-11-14T22:13:20.000000+00:00" },
+  "seven_day": { "utilization": 40.0, "resets_at": "2023-11-20T17:06:40+00:00" },
+  "limits": [
+    { "kind": "five_hour", "percent": 25, "resets_at": "2023-11-14T22:13:20+00:00" },
+    {
+      "kind": "weekly_scoped",
+      "scope": { "model": { "display_name": "Model A" } },
+      "percent": 30.4,
+      "resets_at": "2023-11-21T17:06:40+00:00"
+    },
+    {
+      "kind": "weekly_scoped",
+      "scope": { "model": { "display_name": "Model B" } },
+      "percent": 5,
+      "resets_at": null
+    }
+  ],
+  "weekly_scoped_shares": [
+    { "limit_index": 1, "used_percent_of_weekly": 15, "allowance_percent_of_weekly": 50 }
+  ]
+}"#;
+
+const UNSCOPED_LIMITS_USAGE: &str = r#"{
+  "five_hour": { "utilization": 25.0, "resets_at": "2023-11-14T22:13:20.000000+00:00" },
+  "seven_day": { "utilization": 40.0, "resets_at": "2023-11-20T17:06:40+00:00" },
+  "limits": [{ "kind": "five_hour", "percent": 25 }]
+}"#;
+
+fn scoped_windows() -> Vec<Value> {
+    vec![
+        json!({
+            "label": "weekly_scoped:Model A",
+            "window_minutes": 10080,
+            "used_percent": 30,
+            "remaining_percent": 70,
+            "reset_at_epoch": 1_700_586_400,
+            "kind": "weekly_scoped",
+            "model": "Model A",
+            "allowance_percent_of_weekly": 50
+        }),
+        json!({
+            "label": "weekly_scoped:Model B",
+            "window_minutes": 10080,
+            "used_percent": 5,
+            "remaining_percent": 95,
+            "kind": "weekly_scoped",
+            "model": "Model B",
+            "allowance_percent_of_weekly": null
+        }),
+    ]
+}
+
+#[test]
+fn diag_rate_limits_adds_a_window_per_weekly_scoped_limit_and_cache_keeps_it() {
+    let fx = Fixture::new();
+    fx.write_profile("alpha", "access-alpha", FUTURE_MS);
+    let server = resets_server(SCOPED_USAGE);
+    let options = resets_options(&fx, &server, "");
+
+    let output = run(
+        &["diag", "rate-limits", "alpha", "--format", "json"],
+        &options,
+    );
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    let mut expected = alpha_result("network")["windows"].clone();
+    expected
+        .as_array_mut()
+        .expect("windows")
+        .extend(scoped_windows());
+    assert_eq!(payload["result"]["windows"], expected);
+
+    let output = run(
+        &["diag", "rate-limits", "--async", "--json", "--cached"],
+        &options,
+    );
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["results"][0]["source"], "cache");
+    assert_eq!(payload["results"][0]["windows"], expected);
+}
+
+#[test]
+fn diag_rate_limits_ignores_limits_without_a_weekly_scoped_entry() {
+    let fx = Fixture::new();
+    fx.write_profile("alpha", "access-alpha", FUTURE_MS);
+    let server = resets_server(UNSCOPED_LIMITS_USAGE);
+
+    let output = run(
+        &["diag", "rate-limits", "alpha", "--format", "json"],
+        &resets_options(&fx, &server, ""),
+    );
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(
+        payload["result"]["windows"],
+        alpha_result("network")["windows"]
+    );
+}
+
+/// Drops the shared usage snapshots, so a later read cannot reuse or import one.
+fn remove_shared_usage(root: &Path) {
+    for entry in std::fs::read_dir(root.join("usage-backoff"))
+        .expect("usage-backoff")
+        .flatten()
+    {
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|ext| ext == "response")
+        {
+            std::fs::remove_file(entry.path()).expect("remove response");
+        }
+    }
+}
+
+fn rate_limited_server() -> TestServer {
+    TestServer::new(|_request: &RecordedRequest| {
+        HttpResponse::new(429, r#"{"error":{"message":"slow down"}}"#)
+    })
+    .expect("server")
+}
+
+/// One network read of `alpha` whose reset status is `RESETS_USAGE`'s.
+fn read_alpha_resets(fx: &Fixture) -> (Value, i64) {
+    let server = resets_server(RESETS_USAGE);
+    let output = run(
+        &["diag", "rate-limits", "alpha", "--format", "json"],
+        &resets_options(fx, &server, ""),
+    );
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    let result = &payload["result"];
+    assert_eq!(result["source"], "network");
+    let checked_at = result["limit_resets_checked_at"]
+        .as_i64()
+        .expect("checked_at");
+    assert!((checked_at - epoch_now()).abs() < 600, "{checked_at}");
+    (result["limit_resets"].clone(), checked_at)
+}
+
+#[test]
+fn diag_rate_limits_cache_fallback_keeps_the_last_network_limit_resets() {
+    let fx = Fixture::new();
+    fx.write_profile("alpha", "access-alpha", FUTURE_MS);
+    let (resets, checked_at) = read_alpha_resets(&fx);
+    assert_ne!(resets["cedar_ember"], Value::Null);
+
+    remove_shared_usage(&fx.root);
+    let limited = rate_limited_server();
+    let output = run(
+        &["diag", "rate-limits", "--all", "--format", "json"],
+        &resets_options(&fx, &limited, ""),
+    );
+
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    let result = &payload["results"][0];
+    assert_eq!(result["source"], "cache-fallback");
+    assert_eq!(result["reason_code"], "rate_limited");
+    assert_eq!(result["limit_resets"], resets);
+    assert_eq!(result["limit_resets_checked_at"], json!(checked_at));
+}
+
+#[test]
+fn diag_rate_limits_cached_mode_keeps_the_last_network_limit_resets() {
+    let fx = Fixture::new();
+    fx.write_profile("alpha", "access-alpha", FUTURE_MS);
+    let (resets, checked_at) = read_alpha_resets(&fx);
+
+    let output = fx.run(&["diag", "rate-limits", "--async", "--json", "--cached"]);
+
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    let result = &payload["results"][0];
+    assert_eq!(result["source"], "cache");
+    assert_eq!(result["limit_resets"], resets);
+    assert_eq!(result["limit_resets_checked_at"], json!(checked_at));
+}
+
+#[test]
+fn diag_rate_limits_cached_results_without_a_network_read_omit_limit_resets() {
+    let fx = Fixture::new();
+    fx.write_profile("alpha", "access-alpha", FUTURE_MS);
+    read_alpha_resets(&fx);
+    // An entry that holds windows but never stored reset status.
+    let cache_file = fx.root.join("diag-rate-limits").join("alpha.kv");
+    let entry = std::fs::read_to_string(&cache_file).expect("cache entry");
+    let without_resets: Vec<&str> = entry
+        .lines()
+        .filter(|line| !line.starts_with("limit_resets"))
+        .collect();
+    assert!(without_resets.len() < entry.lines().count());
+    std::fs::write(&cache_file, without_resets.join("\n")).expect("rewrite entry");
+    remove_shared_usage(&fx.root);
+
+    let output = fx.run(&["diag", "rate-limits", "--async", "--json", "--cached"]);
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["results"][0]["source"], "cache");
+    assert!(payload["results"][0].get("limit_resets").is_none());
+    assert!(
+        payload["results"][0]
+            .get("limit_resets_checked_at")
+            .is_none()
+    );
+
+    let limited = rate_limited_server();
+    let output = run(
+        &["diag", "rate-limits", "--all", "--format", "json"],
+        &resets_options(&fx, &limited, ""),
+    );
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["results"][0]["source"], "cache-fallback");
+    assert!(payload["results"][0].get("limit_resets").is_none());
+    assert!(
+        payload["results"][0]
+            .get("limit_resets_checked_at")
+            .is_none()
     );
 }

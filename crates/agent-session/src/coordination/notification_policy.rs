@@ -21,6 +21,8 @@ struct Recipient {
     suppress_categories: Vec<QuietCategory>,
     #[serde(default)]
     routine_interval_seconds: i64,
+    #[serde(default = "default_alert_percent")]
+    mailbox_alert_percent: u8,
 }
 
 #[derive(Deserialize)]
@@ -51,17 +53,25 @@ fn invalid() -> CliError {
     )
 }
 
+fn default_alert_percent() -> u8 {
+    80
+}
+
+pub(super) fn mailbox_alert_percent(context: &CliContext, session: &str) -> Result<u8, CliError> {
+    settings(context, session, MessageCategory::Uncategorized).map(|(_, _, percent)| percent)
+}
+
 fn settings(
     context: &CliContext,
     session: &str,
     category: MessageCategory,
-) -> Result<(bool, i64), CliError> {
+) -> Result<(bool, i64, u8), CliError> {
     let path = context
         .state_dir
         .join("coordination/notification-policy.json");
     let bytes = match super::read_private_file(&path, MAX_BYTES) {
         Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((false, 0)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((false, 0, 80)),
         Err(_) => return Err(invalid()),
     };
     let policy: Policy = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
@@ -71,22 +81,25 @@ fn settings(
     let mut sessions = std::collections::BTreeSet::new();
     let mut suppressed = false;
     let mut interval = 0;
+    let mut percent = 80;
     for recipient in policy.recipients {
         if recipient.session_id.is_empty()
             || !sessions.insert(recipient.session_id.clone())
             || !matches!(recipient.routine_interval_seconds, 0 | 600)
+            || !(1..=100).contains(&recipient.mailbox_alert_percent)
         {
             return Err(invalid());
         }
         if recipient.session_id == session {
             interval = recipient.routine_interval_seconds;
+            percent = recipient.mailbox_alert_percent;
             suppressed = recipient
                 .suppress_categories
                 .iter()
                 .any(|selected| selected.matches(category));
         }
     }
-    Ok((suppressed, interval))
+    Ok((suppressed, interval, percent))
 }
 
 /// The caller holds the destination registry lock and persists this decision
@@ -97,7 +110,7 @@ pub(super) fn admit(
     message: &mut StoredMessage,
     now: i64,
 ) -> Result<NotificationProjection, CliError> {
-    let (suppressed, interval) = settings(
+    let (suppressed, interval, _) = settings(
         context,
         &message.recipient_session_id,
         message.category.unwrap_or_default(),
@@ -138,7 +151,7 @@ pub(super) fn coalescing_status(context: &CliContext) -> serde_json::Value {
                 &recipient.session_id,
                 MessageCategory::Uncategorized,
             )
-            .is_ok_and(|(_, interval)| interval == 600)
+            .is_ok_and(|(_, interval, _)| interval == 600)
             {
                 out.insert(recipient.session_id, serde_json::json!(600));
             }

@@ -8,12 +8,19 @@ use tokio_tungstenite::WebSocketStream;
 /// The `plugin/list` response that motivated these tests was 16.8 MB and grows
 /// with a remote catalog, so the relayed size sits just above the old 16 MiB cap.
 const ABOVE_OLD_CAP_BYTES: usize = 17 * 1024 * 1024;
-/// Far beyond any legitimate response, so the proxy refuses to forward it.
-const ABOVE_FORWARD_LIMIT_BYTES: usize = 65 * 1024 * 1024;
+/// The containment tests lower the forwarding limit so the oversized messages
+/// stay small; moving tens of MiB over a Unix socket is slow on macOS.
+const TEST_FORWARD_LIMIT_BYTES: usize = 1024 * 1024;
+const ABOVE_FORWARD_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 
 const _: () = assert!(ABOVE_OLD_CAP_BYTES < MAX_FORWARDED_MESSAGE_BYTES);
-const _: () = assert!(MAX_FORWARDED_MESSAGE_BYTES < ABOVE_FORWARD_LIMIT_BYTES);
-const _: () = assert!(ABOVE_FORWARD_LIMIT_BYTES < HARD_MESSAGE_LIMIT_BYTES);
+const _: () = assert!(TEST_FORWARD_LIMIT_BYTES < ABOVE_FORWARD_LIMIT_BYTES);
+const _: () = assert!(ABOVE_FORWARD_LIMIT_BYTES < MAX_FORWARDED_MESSAGE_BYTES);
+const _: () = assert!(MAX_FORWARDED_MESSAGE_BYTES < HARD_MESSAGE_LIMIT_BYTES);
+
+fn lower_forwarding_limit() {
+    super::FORWARDING_LIMIT_OVERRIDE.with(|limit| limit.set(Some(TEST_FORWARD_LIMIT_BYTES)));
+}
 
 fn text(value: &str) -> Message {
     Message::Text(value.to_string().into())
@@ -64,6 +71,26 @@ fn containment_classifies_by_json_rpc_shape_and_ignores_messages_within_the_limi
     assert_eq!(
         contain_over(&text("not json at all, but long"), 16).unwrap_err(),
         "proxy observed malformed oversized JSON"
+    );
+}
+
+#[test]
+fn production_forwarding_limit_is_the_64_mib_constant() {
+    // The end-to-end tests lower the limit; this pins what production enforces.
+    let prefix = r#"{"id":1,"result":{"catalog":""#;
+    let at_limit = Message::Text(padded_text(prefix, MAX_FORWARDED_MESSAGE_BYTES).into());
+    assert_eq!(super::contain_oversized(&at_limit).unwrap(), None);
+    drop(at_limit);
+
+    let above = Message::Text(padded_text(prefix, MAX_FORWARDED_MESSAGE_BYTES + 1).into());
+    let Some(Oversized::ToTui(Message::Text(reply))) = super::contain_oversized(&above).unwrap()
+    else {
+        panic!("a response above the production limit is answered towards the TUI");
+    };
+    let reply: Value = serde_json::from_str(reply.as_str()).unwrap();
+    assert_eq!(
+        reply["error"]["data"]["limit_bytes"],
+        json!(MAX_FORWARDED_MESSAGE_BYTES)
     );
 }
 
@@ -221,6 +248,7 @@ async fn proxy_relays_a_server_response_above_the_previous_16_mib_cap() {
 
 #[tokio::test]
 async fn proxy_fails_only_the_request_whose_response_is_oversized() {
+    lower_forwarding_limit();
     let mut fixture = fixture("oversize-response");
     let proxy = spawn_proxy(&fixture);
     let listener = fixture.take_listener();
@@ -276,6 +304,7 @@ async fn proxy_fails_only_the_request_whose_response_is_oversized() {
 
 #[tokio::test]
 async fn proxy_rejects_an_oversized_server_request_and_drops_an_oversized_notification() {
+    lower_forwarding_limit();
     let mut fixture = fixture("oversize-server-initiated");
     let proxy = spawn_proxy(&fixture);
     let listener = fixture.take_listener();

@@ -46,10 +46,48 @@ pub struct PrReviewLoopPayload {
     /// shares the appended comment, so `appended: false` always means the outcome
     /// was not posted (the ledger was already current).
     pub outcome_posted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ceiling_proposal: Option<CeilingProposal>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub accepted_risks: Vec<review_state::acceptance::AcceptanceReceipt>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored_stale_records: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CeilingProposal {
+    pub stop_code: &'static str,
+    pub budget_field: &'static str,
+    pub increment: u32,
+    pub proposal_digest: String,
+    pub approval_marker: String,
+}
+
+fn ceiling_proposal(
+    state: &review_state::ReviewLoopState,
+    tip: &str,
+) -> Result<Option<CeilingProposal>, ForgeError> {
+    if state.hard_stop.is_some()
+        || state.no_progress_rounds != state.budget.max_no_progress_rounds
+        || !state.findings.values().any(|finding| {
+            finding.blocking && finding.status == review_state::ReviewFindingStatus::Open
+        })
+    {
+        return Ok(None);
+    }
+    let stop_code = "review_no_progress";
+    let budget_field = "max_no_progress_rounds";
+    let increment = 1;
+    let proposal_digest =
+        review_state::extension_proposal_digest(tip, stop_code, budget_field, increment)?;
+    let approval_marker = extension_approval_marker(&proposal_digest, budget_field, increment);
+    Ok(Some(CeilingProposal {
+        stop_code,
+        budget_field,
+        increment,
+        proposal_digest,
+        approval_marker,
+    }))
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -673,6 +711,86 @@ pub fn run_extend_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     })?;
     let ledger_head =
         extension_head::bind(runner, &ctx, &repository, previous, &args.expected_head)?;
+    if previous.hard_stop.is_none() {
+        let proposal = ceiling_proposal(previous, &args.expected_state)?.ok_or_else(|| {
+            ForgeError::validation(
+                schema_err(),
+                "review_extension_invalid",
+                "the current state is not at the no-progress ceiling",
+                None,
+            )
+        })?;
+        if args.stop_code != proposal.stop_code
+            || args.budget_field != proposal.budget_field
+            || args.increment != proposal.increment
+            || args.proposal_digest != proposal.proposal_digest
+        {
+            return Err(ForgeError::validation(
+                schema_err(),
+                "review_extension_invalid",
+                "the extension does not match the current ceiling proposal",
+                None,
+            ));
+        }
+        if global.dry_run {
+            return emit_extend_dry_run(&ctx, format);
+        }
+        let approval = read_approval_comment(
+            runner,
+            &ctx,
+            &repository,
+            view.number,
+            args.approval_comment,
+        )?;
+        validate_approval(
+            &approval,
+            state_view.tip_created_at.as_deref(),
+            &proposal.proposal_digest,
+            proposal.budget_field,
+            proposal.increment,
+        )?;
+        let mut extended = previous.clone();
+        extended.budget.max_no_progress_rounds = extended
+            .budget
+            .max_no_progress_rounds
+            .checked_add(1)
+            .ok_or_else(|| {
+                ForgeError::validation(
+                    schema_err(),
+                    "review_extension_invalid",
+                    "review budget extension overflowed",
+                    None,
+                )
+            })?;
+        extended.extensions.push(review_state::ReviewLoopExtension {
+            proposal_digest: proposal.proposal_digest,
+            approval_reference: approval.url,
+            budget_field: proposal.budget_field.to_string(),
+            increment: proposal.increment,
+        });
+        let appended = pr_review::append_review_loop_state(
+            runner,
+            &ctx,
+            pr_review::ReviewLoopAppend {
+                repository: &repository,
+                number: view.number,
+                expected_head: &ledger_head,
+                expected_tip: state_view.chain.tip_digest.as_deref(),
+                state: extended,
+                visible_outcome: None,
+            },
+        )?;
+        return emit_state(
+            &ctx,
+            view.number,
+            view.url,
+            appended.chain,
+            true,
+            false,
+            SCHEMA_EXTEND,
+            format,
+        );
+    }
     let hard_stop = previous.hard_stop.as_ref().ok_or_else(|| {
         ForgeError::validation(
             schema_err(),
@@ -702,12 +820,7 @@ pub fn run_extend_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         ));
     }
     if global.dry_run {
-        return emit_dry_run(
-            &ctx,
-            "verify one post-stop approval and append exactly one budget extension",
-            SCHEMA_EXTEND,
-            format,
-        );
+        return emit_extend_dry_run(&ctx, format);
     }
     let approval = read_approval_comment(
         runner,
@@ -750,6 +863,15 @@ pub fn run_extend_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         appended.chain,
         true,
         false,
+        SCHEMA_EXTEND,
+        format,
+    )
+}
+
+fn emit_extend_dry_run(ctx: &ProviderContext, format: OutputFormat) -> Result<i32, ForgeError> {
+    emit_dry_run(
+        ctx,
+        "verify one state-bound approval and append exactly one budget extension",
         SCHEMA_EXTEND,
         format,
     )
@@ -1322,7 +1444,7 @@ fn validate_marker_approval(
         return Err(ForgeError::validation(
             schema_err(),
             "review_extension_approval_invalid",
-            "the approval comment must be authored after the hard-stop state tip",
+            "the approval comment must be authored after the current state tip",
             Some(format!(
                 "state_created_at={state_created_at}; approval_created_at={}",
                 approval.created_at
@@ -1353,6 +1475,14 @@ fn emit_state(
 ) -> Result<i32, ForgeError> {
     let generation = chain.records.last().map(|record| record.generation);
     let state = review_state::latest_review_loop_state(&chain).cloned();
+    let ceiling_proposal = if schema == SCHEMA_INSPECT {
+        match (state.as_ref(), chain.tip_digest.as_deref()) {
+            (Some(state), Some(tip)) => ceiling_proposal(state, tip)?,
+            _ => None,
+        }
+    } else {
+        None
+    };
     Ok(emit_success(
         schema_version_for(BINARY, schema, SCHEMA_VERSION),
         PrReviewLoopPayload {
@@ -1374,6 +1504,7 @@ fn emit_state(
             state,
             appended,
             outcome_posted,
+            ceiling_proposal,
             ignored_stale_records: chain.ignored_stale_records,
         },
         format,
@@ -1386,6 +1517,12 @@ fn emit_state(
                 appended = payload.appended,
                 outcome_posted = payload.outcome_posted,
             );
+            if let Some(proposal) = &payload.ceiling_proposal {
+                println!(
+                    "ceiling proposal: {}\napproval marker: {}",
+                    proposal.proposal_digest, proposal.approval_marker
+                );
+            }
         },
     ))
 }
@@ -3456,11 +3593,60 @@ mod tests {
             error
                 .detail()
                 .unwrap_or_default()
-                .contains(&format!("stopped_head={HEAD}")),
-            "detail should name the stopped head: {:?}",
+                .contains(&format!("ledger_head={HEAD}")),
+            "detail should name the ledger head: {:?}",
             error.detail()
         );
         assert!(runner.appended_bodies().is_empty());
+    }
+
+    #[test]
+    fn extend_consumes_a_ceiling_approval_on_a_repaired_descendant_head() {
+        let mut state = stopped_state(HEAD, "unused");
+        state.hard_stop = None;
+        state.no_progress_rounds = state.budget.max_no_progress_rounds;
+        state.findings.insert(
+            "correctness:review-loop:ceiling".to_string(),
+            review_state::ReviewLoopFinding {
+                root_cause_fingerprint: None,
+                status: review_state::ReviewFindingStatus::Open,
+                blocking: true,
+                first_seen_head: HEAD.to_string(),
+                last_seen_head: HEAD.to_string(),
+                seen_count: 1,
+                reopen_count: 0,
+                threads: Vec::new(),
+            },
+        );
+        let seeded = FakeGitHub::new(NEXT_HEAD).with_state(&state, HEAD);
+        let tip = seeded.tip_digest().expect("seeded tip");
+        let proposal = review_state::extension_proposal_digest(
+            &tip,
+            "review_no_progress",
+            "max_no_progress_rounds",
+            1,
+        )
+        .expect("proposal digest");
+        let marker = extension_approval_marker(&proposal, "max_no_progress_rounds", 1);
+        let body = format!("Approving the extension.\n\n{marker}\n");
+        let runner = seeded
+            .with_compare_status("ahead")
+            .with_approval(approval_payload("2026-07-20T12:00:01Z", "MEMBER", &body));
+        let mut args = extend_args(NEXT_HEAD, &tip, &proposal);
+        args.stop_code = "review_no_progress".to_string();
+        args.budget_field = "max_no_progress_rounds".to_string();
+
+        let code = run_extend_with(
+            &runner,
+            &flags(false),
+            args,
+            OutputFormat::Json,
+            github_remote,
+        )
+        .expect("ceiling extension applied on the repaired head");
+
+        assert_eq!(code, 0);
+        assert_eq!(runner.appended_bodies().len(), 1);
     }
 
     #[test]

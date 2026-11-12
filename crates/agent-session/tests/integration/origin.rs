@@ -75,6 +75,9 @@ impl Fixture {
         let mut envs = vec![
             ("AGENT_SESSION_FAKE_TMUX_LOG", self.tmux_log.as_str()),
             ("AGENT_SESSION_MACHINE", MACHINE),
+            // The fake agent never shows a composer, so start would otherwise
+            // observe the full default capture window.
+            ("AGENT_SESSION_CODEX_CAPTURE_TIMEOUT_MS", "25"),
         ];
         if let Some((session, runtime)) = caller {
             envs.push(("AGENT_SESSION_ID", session));

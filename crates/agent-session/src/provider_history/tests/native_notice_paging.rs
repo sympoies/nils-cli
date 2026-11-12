@@ -9,6 +9,92 @@ fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 
+#[test]
+fn codex_attested_notice_keeps_response_row_identity_exact_bytes_and_human_control() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let provider = "codex-notice-thread";
+    let history = stable_history_id("codex", None, provider);
+    let text = "<!-- agent-notice:v1 kind=runtime.resume source=agent-session -->\n\nResume  \n";
+    let baseline = format!(
+        "{}\n",
+        serde_json::json!({"type":"session_meta","timestamp":"2026-09-01T00:00:00Z",
+        "payload":{"id":provider,"cwd":"/work/example","source":"cli","timestamp":"2026-09-01T00:00:00Z"}})
+    );
+    let response = serde_json::json!({"type":"response_item","payload":{"type":"message",
+        "role":"user","content":[{"type":"input_text","text":text}],
+        "internal_chat_message_metadata_passthrough":{"turn_id":"accepted-turn","content_item_kinds":["user.text"]}}}).to_string();
+    let event = serde_json::json!({"type":"event_msg","payload":{"type":"user_message",
+        "client_id":"agent-session-fixture","message":text,"images":[],"local_images":[]}})
+    .to_string();
+    let human = serde_json::json!({"type":"response_item","payload":{"type":"message",
+        "role":"user","content":[{"type":"input_text","text":text}]}});
+    let transcript = root.join("provider/session.jsonl");
+    fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+    fs::write(
+        &transcript,
+        format!("{baseline}{response}\n{event}\n{human}\n"),
+    )
+    .unwrap();
+    let op = "33333333-3333-4333-8333-333333333333";
+    let claim = serde_json::json!({"schema_version":"agent-session.claude-notice-ledger.v1",
+        "kind":"claim","op":op,"history_id":history,
+        "binding":{"launch":{"session_id":"modeled","incarnation":"runtime-one","generation":1,"profile":null},
+            "provider":"codex","provider_session_id":provider},
+        "codex":{"identity_sha256":"a".repeat(64),"client_message_id":"agent-session-fixture"},
+        "envelope_bytes":text.len(),"envelope_sha256":digest(text.as_bytes()),"original_budget_ms":15000,
+        "baseline":{"device":0,"inode":0,"eof":baseline.len(),"continuity_sha256":digest(baseline.as_bytes())}});
+    let claim_bytes = claim.to_string();
+    let terminal = serde_json::json!({"schema_version":"agent-session.claude-notice-ledger.v1",
+        "kind":"terminal","op":op,"claim_sha256":digest(claim_bytes.as_bytes()),"state":"submitted",
+        "native_uuid":digest(response.as_bytes()),"row_offset":baseline.len(),
+        "row_payload_sha256":digest(response.as_bytes()),"envelope_sha256":digest(text.as_bytes()),
+        "confirmation_elapsed_ms":10,
+        "codex":{"event_offset":baseline.len()+response.len()+1,"event_payload_sha256":digest(event.as_bytes()),"turn_id":"accepted-turn"}});
+    let state = root.join("state");
+    let directory = state.join("history/claude-notices");
+    fs::create_dir_all(&directory).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    let ledger = directory.join("ledger.jsonl");
+    fs::write(&ledger, format!("{claim_bytes}\n{terminal}\n")).unwrap();
+    fs::set_permissions(&ledger, fs::Permissions::from_mode(0o600)).unwrap();
+    let catalog = HistoryCatalog::new(
+        vec![HistorySource {
+            provider: "codex".into(),
+            agent_profile: None,
+            root: root.join("provider"),
+        }],
+        archive_root(&state),
+        star_root(&state),
+    )
+    .with_session_state_dir(state);
+    for direction in [
+        HistoryMessageDirection::Forward,
+        HistoryMessageDirection::Latest,
+    ] {
+        let page = catalog
+            .messages_with_parts(&history, None, 10, direction, true)
+            .unwrap();
+        assert_eq!(page.messages.len(), 2);
+        let notice = &page.messages[0];
+        assert_eq!(
+            notice.role, "notice",
+            "the producer-attested physical row must be system text"
+        );
+        assert_eq!(notice.id, format!("{history}-{}", baseline.len()));
+        assert_eq!(notice.text, text);
+        assert!(!notice.human_prompt);
+        assert!(notice.prompt_request.is_none());
+        assert!(notice.images.is_empty());
+        assert!(notice.parts.as_ref().unwrap().is_empty());
+        assert_eq!(
+            page.messages[1].role, "user",
+            "an identical human envelope has no machine authority"
+        );
+    }
+}
+
 fn notice_catalog(root: &Path, text: &str) -> (HistoryCatalog, String, Vec<String>) {
     let provider_id = "11111111-1111-4111-8111-111111111111";
     let row_id = "22222222-2222-4222-8222-222222222222";
@@ -294,4 +380,204 @@ fn dense_latest_page_stops_after_one_reverse_chunk() {
     .unwrap();
     assert_eq!(page.messages.len(), 50);
     assert!(reader.bytes_read <= REVERSE_MESSAGE_CHUNK_BYTES);
+}
+
+#[test]
+fn history_previews_skip_classified_provider_context_notice() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("sessions/2026/08/31");
+    fs::create_dir_all(&root).unwrap();
+    let rows = [
+        serde_json::json!({"timestamp":"2026-08-31T00:00:00Z","type":"session_meta","payload":{"id":"abc","cwd":"/work/example","source":"cli","timestamp":"2026-08-31T00:00:00Z"}}),
+        serde_json::json!({"type":"event_msg","payload":{"type":"user_message","message":"<environment_context>\ncontext\n</environment_context>"}}),
+        serde_json::json!({"type":"event_msg","payload":{"type":"user_message","message":"real prompt"}}),
+        serde_json::json!({"type":"event_msg","payload":{"type":"user_message","message":"<environment_context>\ncontext\n</environment_context>"}}),
+    ];
+    fs::write(
+        root.join("rollout.jsonl"),
+        rows.iter()
+            .map(|row| format!("{row}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    let sources = [HistorySource {
+        provider: "codex".into(),
+        agent_profile: None,
+        root: tmp.path().join("sessions"),
+    }];
+    let page = list(
+        &sources,
+        HistoryRoots {
+            archives: &tmp.path().join("archives"),
+            stars: &tmp.path().join("stars"),
+        },
+        "test",
+        None,
+        None,
+        None,
+        25,
+    )
+    .unwrap();
+    let session = &page.sessions[0];
+    assert_eq!(
+        session.first_user_prompt_preview.as_deref(),
+        Some("real prompt")
+    );
+    assert_eq!(session.prompt_preview.as_deref(), Some("real prompt"));
+    assert_eq!(
+        session.last_user_prompt_preview.as_deref(),
+        Some("real prompt")
+    );
+}
+
+#[test]
+fn history_latest_skips_notice_snapshot_after_real_user_prompt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("projects/example");
+    fs::create_dir_all(&root).unwrap();
+    let id = "11111111-1111-4111-8111-111111111111";
+    let notice = "<!-- agent-notice:v1 kind=mailbox source=synthetic -->\n\nMailbox wake";
+    let human = serde_json::json!({"type":"user","sessionId":id,"cwd":"/work/example","message":{"role":"user","content":"real prompt"}});
+    let injected = serde_json::json!({"type":"user","sessionId":id,"message":{"role":"user","content":notice}});
+    let snapshot = serde_json::json!({"type":"last-prompt","sessionId":id,"lastPrompt":notice});
+    fs::write(
+        root.join(format!("{id}.jsonl")),
+        format!(
+            "{human}\n{}{snapshot}\n",
+            format!("{injected}\n").repeat(40)
+        ),
+    )
+    .unwrap();
+    let sources = [HistorySource {
+        provider: "claude".into(),
+        agent_profile: None,
+        root: tmp.path().join("projects"),
+    }];
+    let page = list(
+        &sources,
+        HistoryRoots {
+            archives: &tmp.path().join("archives"),
+            stars: &tmp.path().join("stars"),
+        },
+        "test",
+        None,
+        None,
+        None,
+        25,
+    )
+    .unwrap();
+    let session = &page.sessions[0];
+    assert_eq!(
+        session.first_user_prompt_preview.as_deref(),
+        Some("real prompt")
+    );
+    assert_eq!(session.prompt_preview.as_deref(), Some("real prompt"));
+    assert_eq!(
+        session.last_user_prompt_preview.as_deref(),
+        Some("real prompt")
+    );
+}
+
+#[test]
+fn header_only_history_uses_first_receipt_as_cutoff() {
+    let temp = tempfile::tempdir().unwrap();
+    let text = "<!-- agent-notice:v1 kind=mailbox source=synthetic -->\n\nreceipt-bound\n";
+    let (catalog, id, _) = notice_catalog(temp.path(), text);
+    let transcript = temp
+        .path()
+        .join("provider/project/11111111-1111-4111-8111-111111111111.jsonl");
+    let original = fs::read_to_string(&transcript).unwrap();
+    let later = serde_json::json!({"type":"user", "sessionId":"11111111-1111-4111-8111-111111111111", "cwd":"/work/example", "promptSource":"typed", "message":{"role":"user", "content":text}});
+    fs::write(&transcript, format!("{original}{later}\n")).unwrap();
+    let old_id = "77777777-7777-4777-8777-777777777777";
+    let old_row = serde_json::json!({"type":"user", "sessionId":old_id, "cwd":"/work/example", "message":{"role":"user", "content":text}});
+    fs::write(
+        temp.path().join(format!("provider/project/{old_id}.jsonl")),
+        format!("{old_row}\n"),
+    )
+    .unwrap();
+    let old_history = stable_history_id("claude", None, old_id);
+    let old_page = catalog
+        .messages_with_parts(
+            &old_history,
+            None,
+            10,
+            HistoryMessageDirection::Forward,
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        old_page.messages[0].row_class,
+        Some(crate::provider_prompt::row_classes::RowClass::Notice),
+        "pre-receipt history remains a notice even when another history has receipts"
+    );
+    let page = catalog
+        .messages_with_parts(&id, None, 10, HistoryMessageDirection::Forward, false)
+        .unwrap();
+    assert_eq!(
+        page.messages[0].row_class,
+        Some(crate::provider_prompt::row_classes::RowClass::Notice),
+        "header before the first receipt retains the legacy classification"
+    );
+    assert_eq!(
+        page.messages[1].row_class,
+        Some(crate::provider_prompt::row_classes::RowClass::Notice)
+    );
+    assert_eq!(
+        page.messages[3].row_class, None,
+        "unclaimed header after receipt is a user row"
+    );
+    assert!(page.messages[3].human_prompt);
+    let list = catalog.list("test", None, None, None, 25).unwrap();
+    let preview = list
+        .sessions
+        .iter()
+        .find(|session| session.id == id)
+        .unwrap();
+    assert_eq!(
+        preview.first_user_prompt_preview.as_deref(),
+        Some(text.trim())
+    );
+    assert_eq!(preview.prompt_preview.as_deref(), Some(text.trim()));
+    assert_eq!(
+        preview.last_user_prompt_preview.as_deref(),
+        Some(text.trim())
+    );
+    let incremental = catalog.incremental_messages(&id, None, 65536).unwrap();
+    let later = incremental.messages.last().unwrap();
+    assert_eq!(
+        later.row_class, None,
+        "incremental history agrees with paged history after the receipt cutoff"
+    );
+    assert!(later.human_prompt);
+    let latest = catalog
+        .messages_with_parts(&id, None, 10, HistoryMessageDirection::Latest, false)
+        .unwrap();
+    assert_eq!(latest.messages[3].row_class, None);
+    assert!(latest.messages[3].human_prompt);
+    fs::remove_file(
+        temp.path()
+            .join("state/history/claude-notices/ledger.jsonl"),
+    )
+    .unwrap();
+    let page = catalog
+        .messages_with_parts(&id, None, 10, HistoryMessageDirection::Forward, false)
+        .unwrap();
+    assert_eq!(
+        page.messages[0].row_class,
+        Some(crate::provider_prompt::row_classes::RowClass::Notice),
+        "pre-receipt history retains the header fallback"
+    );
+    let incremental = catalog.incremental_messages(&id, None, 65536).unwrap();
+    assert_eq!(
+        incremental.messages.last().unwrap().row_class,
+        Some(crate::provider_prompt::row_classes::RowClass::Notice)
+    );
+    let list = catalog.list("test", None, None, None, 25).unwrap();
+    let preview = list
+        .sessions
+        .iter()
+        .find(|session| session.id == id)
+        .unwrap();
+    assert!(preview.last_user_prompt_preview.is_none());
 }

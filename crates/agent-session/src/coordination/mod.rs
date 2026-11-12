@@ -13,8 +13,12 @@ pub(crate) mod delete;
 mod forwarding;
 mod heartbeat_state;
 pub mod mailbox;
+mod mailbox_quota;
+mod mailbox_sender_relation;
 mod mailbox_wait;
 mod notification;
+mod quiescence_attempt;
+pub(crate) use quiescence_attempt::NOTIFICATION_NOT_QUIESCENT_CODE;
 mod notification_policy;
 pub(crate) mod read_events;
 pub(crate) mod resume_preflight;
@@ -108,6 +112,7 @@ pub(crate) struct Registry {
     operations: Vec<claims::OperationLease>,
     completion_events: Vec<claims::CompletionEvent>,
     messages: Vec<mailbox::StoredMessage>,
+    quota_rejections: Vec<mailbox_quota::Rejection>,
     cursors: BTreeMap<String, mailbox::InboxCursor>,
     receipts: BTreeMap<String, IdempotencyReceipt>,
     receipt_evictions: BTreeMap<String, receipt_retention::ReceiptEviction>,
@@ -382,52 +387,6 @@ impl SessionQuiescenceGuard {
             &self.incarnation,
             false,
         )
-    }
-
-    pub(crate) fn begin_notification_attempt(
-        &mut self,
-        candidate: &NotificationCandidate,
-    ) -> Result<bool, CliError> {
-        if auth_effects::quarantined(&self._locked.path, &self.session_id, &self.incarnation)
-            || candidate.target_session_id != self.session_id
-            || candidate.target_incarnation != self.incarnation
-            || !self.broker_authoritative
-            || self.active_claim
-            || self.active_operation
-            || self.uncertain_operation
-            || crate::restart::fenced(&self._locked.path, &self.session_id, &self.incarnation)
-        {
-            return Ok(false);
-        }
-        let attempted_at = jiff::Timestamp::now();
-        // The recipient may have drained its inbox on its own since the
-        // generation was queued; a reminder then only prompts a stale check.
-        if !notification::has_live_unread(
-            &self._locked.registry,
-            &self.session_id,
-            &self.incarnation,
-            attempted_at.as_second(),
-        ) {
-            if notification::resolve_drained_generation(
-                &mut self._locked.registry,
-                &self.session_id,
-                &self.incarnation,
-                attempted_at.as_second(),
-            ) {
-                self._locked.save()?;
-            }
-            return Ok(false);
-        }
-        let Some(_) = notification::transition_attempt_at(
-            &mut self._locked.registry,
-            candidate,
-            attempted_at.as_second(),
-            attempted_at,
-        ) else {
-            return Ok(false);
-        };
-        self._locked.save()?;
-        Ok(true)
     }
 }
 
@@ -763,6 +722,16 @@ pub(crate) fn defer_notification(
     notification::defer(context, candidate, reason, retry_after_seconds)
 }
 
+pub(crate) fn defer_notification_with_detail(
+    context: &CliContext,
+    candidate: &NotificationCandidate,
+    reason: &str,
+    detail: Option<&str>,
+    retry_after_seconds: i64,
+) -> Result<bool, CliError> {
+    notification::defer_with_detail(context, candidate, reason, detail, retry_after_seconds)
+}
+
 pub(crate) fn reconcile_notification_submitted(
     context: &CliContext,
     candidate: &NotificationCandidate,
@@ -780,9 +749,10 @@ pub(crate) fn reconcile_notification_absent(
 pub(crate) const NOTIFICATION_REASON_HOOK_DELIVERED: &str = notification::REASON_HOOK_DELIVERED;
 
 pub(crate) fn notification_prompt(candidate: &NotificationCandidate) -> String {
-    candidate.prompt.clone().unwrap_or_else(|| {
-        notification::fixed_prompt(&candidate.target_session_id, candidate.queued_at_epoch)
-    })
+    candidate
+        .prompt
+        .clone()
+        .unwrap_or_else(|| notification::fixed_prompt(&candidate.target_session_id))
 }
 
 pub(crate) fn coordination_dir(context: &CliContext, session_id: &str) -> PathBuf {

@@ -4,12 +4,25 @@ use std::path::PathBuf;
 pub(super) struct Options {
     pub repo: Option<PathBuf>,
     pub upstream: Option<String>,
+    pub onto: Option<String>,
 }
 
 pub(crate) fn clap_command() -> Command {
     Command::new("rebase")
         .about("Replay a non-default managed branch with authenticated signing")
-        .arg(Arg::new("upstream").value_name("upstream"))
+        .arg(
+            Arg::new("upstream")
+                .value_name("upstream")
+                .help("Upstream, or old base when using --onto"),
+        )
+        .arg(
+            Arg::new("onto")
+                .long("onto")
+                .value_name("new-base")
+                .help("Replay commits after upstream onto this new base")
+                .requires("upstream")
+                .conflicts_with("continue"),
+        )
         .arg(
             Arg::new("continue")
                 .long("continue")
@@ -42,5 +55,6 @@ pub(super) fn parse(args: &[String]) -> Result<Options, i32> {
     Ok(Options {
         repo: matches.get_one::<String>("repo").map(PathBuf::from),
         upstream: matches.get_one::<String>("upstream").cloned(),
+        onto: matches.get_one::<String>("onto").cloned(),
     })
 }

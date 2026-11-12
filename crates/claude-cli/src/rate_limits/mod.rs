@@ -7,12 +7,14 @@
 //! printed; an expired token is reported without a request.
 //!
 //! The read sends Claude Code's status query and User-Agent (`status.rs`), so
-//! every network result also carries the normalized `limit_resets`. Cached
-//! and cache-fallback results omit it.
+//! every network result also carries the normalized `limit_resets` and
+//! `limit_resets_checked_at`. The cache keeps the last network `limit_resets`,
+//! so cached and cache-fallback results carry it with the time it was read.
 
 mod cache;
 mod cached;
 mod observation;
+pub(crate) mod scoped;
 pub(crate) mod status;
 
 use anyhow::Result;
@@ -102,6 +104,7 @@ enum Fetch {
     },
     NoWindow {
         limit_resets: Value,
+        fetched_at: i64,
     },
     Failed {
         code: &'static str,
@@ -208,11 +211,19 @@ impl RateLimitsProvider for ClaudeRateLimits {
         match fetch(target) {
             Fetch::Windows {
                 values,
+                windows,
+                limit_resets,
                 owner_key,
                 fetched_at,
-                ..
             } => {
-                write_cache(&name, &values, owner_key.as_deref(), fetched_at);
+                write_cache(
+                    &name,
+                    &values,
+                    &windows,
+                    &limit_resets,
+                    owner_key.as_deref(),
+                    fetched_at,
+                );
                 OneLineFetch {
                     line: shared_values::one_line_from_values(&values, format_local_datetime)
                         .map(normalize_one_line),
@@ -261,11 +272,19 @@ impl RateLimitsProvider for ClaudeRateLimits {
         match fetch(target) {
             Fetch::Windows {
                 values,
+                windows,
+                limit_resets,
                 owner_key,
                 fetched_at,
-                ..
             } => {
-                write_cache(&name, &values, owner_key.as_deref(), fetched_at);
+                write_cache(
+                    &name,
+                    &values,
+                    &windows,
+                    &limit_resets,
+                    owner_key.as_deref(),
+                    fetched_at,
+                );
                 OneLineFetch {
                     line: shared_values::one_line_from_values(&values, format_local_datetime),
                     ..Default::default()
@@ -313,14 +332,12 @@ impl RateLimitsProvider for ClaudeRateLimits {
         _fill_from_stale_cache: bool,
     ) -> ResetEpochs {
         let name = target_name(target);
-        let entry = if cached {
+        let read = if cached {
             cached::read(target, &name).ok()
         } else {
-            cache::read_allow_stale_owned(&name, &active_owner_key(target), now_epoch())
-                .ok()
-                .map(|read| read.entry)
+            cache::read_allow_stale_owned(&name, &active_owner_key(target), now_epoch()).ok()
         };
-        entry
+        read.map(|read| read.entry)
             .map(|entry| ResetEpochs {
                 non_weekly: entry.non_weekly_reset_epoch.filter(|epoch| *epoch > 0),
                 weekly: entry.weekly_reset_epoch.filter(|epoch| *epoch > 0),
@@ -395,9 +412,9 @@ fn run_single(
 
     if cached {
         return match cached::read(&target, &target_name(&target)) {
-            Ok(entry) => {
+            Ok(read) => {
                 if let Some(line) =
-                    shared_values::one_line_from_cache(&entry, format_local_datetime)
+                    shared_values::one_line_from_cache(&read.entry, format_local_datetime)
                 {
                     println!("{line}");
                 }
@@ -496,19 +513,31 @@ fn json_result(
             owner_key,
             fetched_at,
         } => {
-            write_cache(&name, &values, owner_key.as_deref(), fetched_at);
+            write_cache(
+                &name,
+                &values,
+                &windows,
+                &limit_resets,
+                owner_key.as_deref(),
+                fetched_at,
+            );
             let summary = schema::summary_from_weekly_values(&values, format_local_with_offset);
             let mut result = sanitize(RateLimitResult::ok(identity, "network", summary, windows));
             result.limit_resets = Some(limit_resets);
+            result.limit_resets_checked_at = Some(fetched_at);
             result
         }
-        Fetch::NoWindow { limit_resets } => {
+        Fetch::NoWindow {
+            limit_resets,
+            fetched_at,
+        } => {
             let fallback_result = from_owned_cache(target, identity.clone(), &name);
             if fallback_result.ok {
                 return fallback_result;
             }
             let mut result = RateLimitResult::no_window(identity, None);
             result.limit_resets = Some(limit_resets);
+            result.limit_resets_checked_at = Some(fetched_at);
             result
         }
         Fetch::Failed {
@@ -539,18 +568,13 @@ fn from_cache(
     name: &str,
     enforce_ttl: bool,
 ) -> RateLimitResult {
-    let entry = if enforce_ttl {
+    let read = if enforce_ttl {
         cache::read_for_cached_mode(name, now_epoch())
     } else {
-        cache::read_allow_stale(name, now_epoch()).map(|read| read.entry)
+        cache::read_allow_stale(name, now_epoch())
     };
-    match entry {
-        Ok(entry) => sanitize(RateLimitResult::from_cache(
-            identity,
-            source,
-            &entry,
-            format_local_with_offset,
-        )),
+    match read {
+        Ok(read) => result_from_read(identity, source, read),
         Err(message) => {
             RateLimitResult::error(identity, source, "cache-read-failed", message, None, None)
         }
@@ -573,12 +597,7 @@ fn from_owned_cache(target: &Path, identity: TargetIdentity, name: &str) -> Rate
         );
     };
     match cache::read_allow_stale_owned(name, &owner_key, now_epoch()) {
-        Ok(read) => sanitize(RateLimitResult::from_cache(
-            identity,
-            "cache-fallback",
-            &read.entry,
-            format_local_with_offset,
-        )),
+        Ok(read) => result_from_read(identity, "cache-fallback", read),
         Err(message) => RateLimitResult::error(
             identity,
             "cache-fallback",
@@ -588,6 +607,25 @@ fn from_owned_cache(target: &Path, identity: TargetIdentity, name: &str) -> Rate
             None,
         ),
     }
+}
+
+/// A cached result keeps the scoped windows and the last network
+/// `limit_resets` that were stored with its entry.
+fn result_from_read(
+    identity: TargetIdentity,
+    source: &str,
+    read: cache::CacheRead,
+) -> RateLimitResult {
+    let mut result =
+        RateLimitResult::from_cache(identity, source, &read.entry, format_local_with_offset);
+    if let Some(windows) = result.windows.as_mut() {
+        windows.extend(read.scoped);
+    }
+    if let Some(stored) = read.limit_resets {
+        result.limit_resets = Some(stored.value);
+        result.limit_resets_checked_at = Some(stored.checked_at);
+    }
+    sanitize(result)
 }
 
 /// Adds the fixed Claude window lengths and drops a missing weekly reset.
@@ -608,14 +646,15 @@ fn window_minutes(label: &str) -> Option<i64> {
     match label {
         FIVE_HOUR_LABEL => Some(FIVE_HOUR_MINUTES),
         WEEKLY_LABEL => Some(WEEKLY_MINUTES),
+        _ if label.starts_with(scoped::LABEL_PREFIX) => Some(WEEKLY_MINUTES),
         _ => None,
     }
 }
 
 fn cached_one_line(target: &Path, name: &str) -> OneLineFetch {
     match cached::read(target, name) {
-        Ok(entry) => OneLineFetch {
-            line: shared_values::one_line_from_cache(&entry, format_local_datetime),
+        Ok(read) => OneLineFetch {
+            line: shared_values::one_line_from_cache(&read.entry, format_local_datetime),
             ..Default::default()
         },
         Err(err) => OneLineFetch {
@@ -657,12 +696,15 @@ fn stale_one_line_for_target(
     }
 }
 
-fn write_cache(name: &str, values: &WeeklyValues, owner_key: Option<&str>, fetched_at: i64) {
-    if let Some(owner_key) = owner_key {
-        let _ = cache::write_owned(name, fetched_at, values, owner_key);
-    } else {
-        let _ = cache::write(name, fetched_at, values);
-    }
+fn write_cache(
+    name: &str,
+    values: &WeeklyValues,
+    windows: &[RateLimitWindow],
+    limit_resets: &Value,
+    owner_key: Option<&str>,
+    fetched_at: i64,
+) {
+    let _ = cache::write(name, fetched_at, values, windows, limit_resets, owner_key);
 }
 
 fn fetch(target: &Path) -> Fetch {
@@ -698,15 +740,9 @@ fn fetch(target: &Path) -> Fetch {
             };
         }
     };
-    let mut result = parse_usage_body(&body.body);
-    if let Fetch::Windows {
-        owner_key,
-        fetched_at,
-        ..
-    } = &mut result
-    {
+    let mut result = parse_usage_body(&body.body, body.fetched_at);
+    if let Fetch::Windows { owner_key, .. } = &mut result {
         *owner_key = Some(crate::prompt_segment::token_key(&login.access_token));
-        *fetched_at = body.fetched_at;
     }
     result
 }
@@ -726,7 +762,8 @@ fn request_failure_reason(failure: &RequestFailure) -> ProviderUsageReason {
     }
 }
 
-fn parse_usage_body(body: &str) -> Fetch {
+/// `fetched_at` is the epoch of the network read that returned `body`.
+fn parse_usage_body(body: &str, fetched_at: i64) -> Fetch {
     let Ok(value) = serde_json::from_str::<Value>(body) else {
         return Fetch::Failed {
             code: "invalid-usage-payload",
@@ -738,7 +775,10 @@ fn parse_usage_body(body: &str) -> Fetch {
         serde_json::to_value(status::parse_limit_resets(&value)).unwrap_or(Value::Null);
     let Some(usage) = usage_render::parse_usage_value(&value) else {
         return if value.is_object() {
-            Fetch::NoWindow { limit_resets }
+            Fetch::NoWindow {
+                limit_resets,
+                fetched_at,
+            }
         } else {
             Fetch::Failed {
                 code: "invalid-usage-payload",
@@ -763,7 +803,7 @@ fn parse_usage_body(body: &str) -> Fetch {
             .as_ref()
             .map(|window| window_values(window, FIVE_HOUR_LABEL)),
     };
-    let windows = [
+    let mut windows: Vec<RateLimitWindow> = [
         (usage.five_hour.as_ref(), FIVE_HOUR_LABEL, FIVE_HOUR_MINUTES),
         (usage.seven_day.as_ref(), WEEKLY_LABEL, WEEKLY_MINUTES),
     ]
@@ -776,15 +816,23 @@ fn parse_usage_body(body: &str) -> Fetch {
             used_percent: schema::percent_i64(window.used_percent),
             remaining_percent: window.remaining_percent,
             reset_at_epoch: reset_epoch(window),
+            kind: None,
+            model: None,
+            allowance_percent_of_weekly: None,
         })
     })
     .collect();
+    windows.extend(
+        scoped::parse_weekly_scoped(&value)
+            .iter()
+            .map(|limit| limit.window(WEEKLY_MINUTES)),
+    );
     Fetch::Windows {
         values,
         windows,
         limit_resets,
         owner_key: None,
-        fetched_at: now_epoch(),
+        fetched_at,
     }
 }
 
@@ -994,13 +1042,18 @@ mod tests {
     #[test]
     fn usage_body_maps_claude_windows_and_treats_null_windows_as_benign() {
         let Fetch::Windows {
-            values, windows, ..
+            values,
+            windows,
+            fetched_at,
+            ..
         } = parse_usage_body(
             r#"{"five_hour":{"utilization":12.6,"resets_at":null},"seven_day":{"utilization":99.5,"resets_at":"2023-11-20T17:06:40Z"}}"#,
+            1_700_000_000,
         )
         else {
             panic!("expected windows");
         };
+        assert_eq!(fetched_at, 1_700_000_000);
         assert_eq!(values.non_weekly.expect("5h").remaining, 87);
         assert_eq!(values.weekly.expect("weekly").reset_epoch, 1_700_500_000);
         assert_eq!(
@@ -1011,11 +1064,11 @@ mod tests {
             ])
         );
         assert!(matches!(
-            parse_usage_body(r#"{"five_hour":null,"seven_day":null}"#),
+            parse_usage_body(r#"{"five_hour":null,"seven_day":null}"#, 1_700_000_000),
             Fetch::NoWindow { .. }
         ));
         assert!(matches!(
-            parse_usage_body("not json"),
+            parse_usage_body("not json", 1_700_000_000),
             Fetch::Failed {
                 code: "invalid-usage-payload",
                 ..
