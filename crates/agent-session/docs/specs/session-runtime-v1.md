@@ -77,7 +77,9 @@ Each requirement uses RFC 2119 terms.
    stream-json or SDK host process. Clients of a process that already is the
    writer are views of it, not writers: a Codex TUI attached to the app-server
    and control-channel prompts to the same thread are clients of the
-   app-server, which is the single writer and serializes their turns.
+   app-server, which is the single writer. Serialization of turns from the TUI
+   and control-channel clients is **[N] not measured**; it is an architectural
+   expectation, not an established spike result.
 4. **Provider environment.** A process spawned by a runtime MUST receive an
    explicitly built environment. It MUST NOT inherit API-key style credentials
    or endpoint overrides unless the session is configured for API billing, and
@@ -203,3 +205,26 @@ need its own maintainer decision and would reuse the single-writer rule.
   wire format.
 - Subscription terms describe "ordinary, individual usage". Revisit this
   document if the provider terms or credit rules change.
+
+## Claude rule inventory for #3592
+
+This removal inventory is pending lead approval. Production rules remain in place.
+Matching uses `sessionId` in the session's provider configuration directory;
+`state` decides when present, otherwise `status` decides.
+
+| Existing rule and owner | Structured replacement or retained requirement | Proposed action |
+| --- | --- | --- |
+| `shadow::classify`: `claude_working_indicator` (`esc to interrupt`, current Running tool) | `state=working` or `status=busy`; `UserPromptSubmit` starts a turn and `PreToolUse` supplies progress. | Remove Claude working screen arm and Running-tool helper. |
+| `claude_prompt_visible` (last three rows) | `state=done/failed/stopped` or `status=idle` supplies idleness; primary `SessionStart(startup/resume)` supplies initial readiness. Idle alone does not identify a completed turn. | Remove screen idle/prompt arm. |
+| `claude_permission_form` (proceed/allow text) | `state=blocked` or `status=waiting`, with `waitingFor=permission prompt`, supplies approval-wait observation. `PermissionRequest` records attention; matched `PostToolUse`/`PostToolUseFailure` resolves its tool call. | Remove activity dialog detection; retain hook correlation and conservative attention where resolution is unproven. |
+| `claude_interrupt_marker`, empty composer, latest-marker/current-viewport/Running-tool guards | `state=stopped` and provider idleness replace pane evidence. The reader groups `done/failed/stopped` as idle; `status=idle` cannot identify an interrupt. Manual denial and interrupt emit no hook (#3599). | Remove screen marker and composer/history guards. Retain uncertainty for an open turn without qualifying completion; generic idle does not prove an outcome. |
+| `project_interrupt_uncertainty`/`interrupt_since`: two samples at least 15 seconds apart | Inputs can be structured idle observations only. Generic idle and hooks do not prove why an unmatched open turn stopped. | Remove screen-marker input. Retain runtime/revision-fenced sustained structured-idle uncertainty, except where a qualifying Stop establishes completion. This delay is conservative inference, not confirmed interrupt. |
+| `claude_completion`: one-second post-Stop window | Same-runtime, same-revision structured idle plus the qualifying current-turn Stop can confirm idleness without a quiet timer. `StopFailure` and `Notification(idle_prompt)` already complete immediately. Raw Stop cannot prove other hooks will not continue. | Remove timer completion and deadline-driven wakeups. Keep candidate identity/cancellation fences; missing/busy/blocked state cannot settle it. |
+| Structured-reader failure falling through to Claude screen arms | No structured state is available; missing binary, timeout, malformed/unknown entry or unmatched identity does not justify pane inference. | Remove Claude pane fallback; report metadata-only unavailability and retain semantic hook state. No fallback switch. |
+| `send_submit`/`composer` and send guards: editor boundaries, drafts, pasted/queued text, dialog exclusion, Enter readback | Neither listing nor hooks reveal editor contents, cursor position, exact submitted bytes, or whether Enter answers a dialog. `SessionStart` supplies initial readiness only. | Still required for safe terminal input; retain checks/tests. They do not determine activity completion. |
+| Terminal authentication-pattern detection | `StopFailure.error=authentication_failed` covers emitted failures, but generic structured state does not identify an unreported terminal authentication incident. | Still required for terminal-only incidents under the separate health/recovery contract; retain bounded recognition. |
+
+Manual denial remains a hook-correlation gap: no result hook proves which
+approval was denied. Generic idle must not silently resolve exact attention or
+invent tool success. The structured waiting observation and durable hook
+attention remain distinguishable. This inventory claims no new live probe.
