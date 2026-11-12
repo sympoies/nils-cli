@@ -12,7 +12,7 @@ thread_local! { static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None)
 
 // Process deadlines are an I/O boundary, outside the deterministic render path.
 #[allow(clippy::disallowed_methods)]
-fn now() -> Instant {
+pub(super) fn now() -> Instant {
     Instant::now()
 }
 

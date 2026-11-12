@@ -27,3 +27,7 @@ mod forge_identity_children;
 #[cfg(unix)]
 #[path = "integration/forge_identity_network.rs"]
 mod forge_identity_network;
+
+#[cfg(unix)]
+#[path = "integration/forge_identity_verification_cache.rs"]
+mod forge_identity_verification_cache;

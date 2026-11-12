@@ -1232,7 +1232,7 @@ mod tests {
         let _exe = EnvGuard::set(&lock, ENV_GIT_BIN, executable.to_str().unwrap());
         let executed = home.path().join("executed");
         let _executed = EnvGuard::set(&lock, "FIXTURE_GIT_EXECUTED", executed.to_str().unwrap());
-        for (body, probe, timeout, expected, executed_expected) in [
+        for (case, (body, probe, timeout, expected, executed_expected)) in [
             (
                 "#!/bin/sh\nprintf 'executed' > \"$FIXTURE_GIT_EXECUTED\"; printf '%s' \"$FORGE_IDENTITY_TOKEN\" >&2; sleep 3\n",
                 "#!/bin/sh\nprintf '{\"login\":\"account-a\"}'\n",
@@ -1254,7 +1254,17 @@ mod tests {
                 "identity_probe_timeout",
                 false,
             ),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // A verified actor is reused for the process; each case gets its own
+            // credential so its own actor probe runs.
+            let _case_secret = EnvGuard::set(
+                &lock,
+                "FIXTURE_ACCOUNT_A_CREDENTIAL",
+                &format!("{CANARY}_{case}"),
+            );
             if executed.exists() {
                 fs::remove_file(&executed).unwrap();
             }
