@@ -294,11 +294,11 @@ pub(super) fn comparison<R: BackendRunner>(
     let mut findings = diff::detect(&residual)?;
     findings.extend(adaptations.iter().map(|path| diff::Finding {
         path: path.clone(),
-        kind: "import-adaptation",
+        kind: "import-adaptation".into(),
     }));
     findings.extend(additions.iter().map(|path| diff::Finding {
         path: path.clone(),
-        kind: "import-addition",
+        kind: "import-addition".into(),
     }));
     findings.sort();
     let mut binding = json!({"repository":d.repository, "commit":d.commit,

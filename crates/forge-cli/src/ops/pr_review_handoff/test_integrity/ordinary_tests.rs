@@ -84,3 +84,56 @@ fn ordinary_oversized_test_patches_name_the_paths_without_source_text() {
         assert_limit(error, "diff_bytes");
     }
 }
+
+const INLINE_TESTS: &str = "#[test]\nfn keeps_first() {}\n\n#[test]\nfn drops_second() {}\n\n#[tokio::test]\nasync fn drops_third() {}";
+
+fn inline_deletion_patch() -> String {
+    patch("src/lib.rs", INLINE_TESTS, "#[test]\nfn keeps_first() {}")
+}
+
+#[test]
+fn inline_test_deletions_are_reported_one_row_per_deleted_test() {
+    let kinds: Vec<String> = diff::detect(&inline_deletion_patch())
+        .unwrap()
+        .iter()
+        .map(|finding| finding.kind.to_string())
+        .collect();
+    assert_eq!(
+        kinds,
+        vec!["deleted-test:drops_second", "deleted-test:drops_third"]
+    );
+}
+
+#[test]
+fn an_undeclared_inline_test_deletion_fails_even_when_a_sibling_is_declared() {
+    let patch = inline_deletion_patch();
+    let row = |name: &str| {
+        format!("- src/lib.rs | deleted-test:{name} | Replacement keeps the removed contract.")
+    };
+    let both = format!(
+        "## Test changes\n{}\n{}",
+        row("drops_second"),
+        row("drops_third")
+    );
+    let metadata = subject(HEAD, BASE, &both);
+    admit(
+        metadata.clone(),
+        metadata,
+        &patch,
+        &confirmation(&patch, BASE, HEAD, &both),
+    )
+    .unwrap();
+    let one = format!("## Test changes\n{}", row("drops_second"));
+    let metadata = subject(HEAD, BASE, &one);
+    assert_eq!(
+        admit(
+            metadata.clone(),
+            metadata,
+            &patch,
+            &confirmation(&patch, BASE, HEAD, &one)
+        )
+        .unwrap_err()
+        .kind(),
+        "test_changes_undeclared"
+    );
+}

@@ -19,11 +19,11 @@ fn patch(path: &str, before: &str, after: &str) -> String {
     )
 }
 
-fn kinds(patch: &str) -> Vec<&'static str> {
+fn kinds(patch: &str) -> Vec<String> {
     diff::detect(patch)
         .unwrap()
         .iter()
-        .map(|f| f.kind)
+        .map(|f| f.kind.clone())
         .collect()
 }
 
@@ -33,7 +33,7 @@ fn detects_deleted_files_cases_inline_tests_and_weakened_multiline_assertions() 
     assert_eq!(kinds(deleted), vec!["assertion-change", "deleted-test"]);
     assert_eq!(
         kinds(&patch("src/lib.rs", "#[test]\nfn contract() {}", "")),
-        vec!["deleted-test"]
+        vec!["deleted-test:contract"]
     );
     assert_eq!(
         kinds(&patch(
@@ -41,11 +41,11 @@ fn detects_deleted_files_cases_inline_tests_and_weakened_multiline_assertions() 
             "func TestContract(t *testing.T) {}",
             ""
         )),
-        vec!["deleted-test"]
+        vec!["deleted-test:TestContract"]
     );
     assert_eq!(
         kinds(&patch("tests/api.test.ts", "it('contract', () => {});", "")),
-        vec!["deleted-test"]
+        vec!["deleted-test:it('contract',()=>"]
     );
     assert_eq!(
         kinds(&patch(
@@ -76,7 +76,9 @@ fn flags_supported_new_skip_markers() {
         ("ApiTest.java", "@Disabled"),
     ] {
         assert!(
-            kinds(&patch(path, "", marker)).contains(&"new-skip"),
+            kinds(&patch(path, "", marker))
+                .iter()
+                .any(|kind| kind == "new-skip"),
             "{marker}"
         );
     }
@@ -189,7 +191,7 @@ fn renamed_test_sources_require_deletion_declarations_for_the_old_path() {
             diff::detect(&patch).unwrap(),
             vec![diff::Finding {
                 path: "tests/test_api.py".into(),
-                kind: "deleted-test",
+                kind: "deleted-test".into(),
             }]
         );
     }
@@ -201,7 +203,7 @@ fn javascript_module_test_sources_include_all_module_extensions() {
         let path = format!("api.test.{extension}");
         assert_eq!(
             kinds(&patch(&path, "test('contract', () => {});", "")),
-            vec!["deleted-test"]
+            vec!["deleted-test:test('contract',()=>"]
         );
         let deleted = format!(
             "diff --git a/{path} b/{path}\ndeleted file mode 100644\n--- a/{path}\n+++ /dev/null\n@@ -1 +0,0 @@\n-// no recognizable case signature\n"
@@ -215,7 +217,7 @@ fn rust_module_removal_and_conditional_disabling_require_declarations() {
     for module in ["#[cfg(test)]\nmod tests;", "#[cfg(test)] mod tests;"] {
         assert_eq!(
             kinds(&patch("src/lib.rs", module, "")),
-            vec!["deleted-test"]
+            vec!["deleted-test:modtests;"]
         );
     }
     for marker in [
@@ -229,7 +231,8 @@ fn rust_module_removal_and_conditional_disabling_require_declarations() {
                 "#[test]\nfn contract() {}",
                 &format!("{marker}\n#[test]\nfn contract() {{}}")
             ))
-            .contains(&"new-skip"),
+            .iter()
+            .any(|kind| kind == "new-skip"),
             "{marker}"
         );
     }

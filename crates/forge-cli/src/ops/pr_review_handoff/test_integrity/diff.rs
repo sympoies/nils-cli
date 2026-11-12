@@ -9,7 +9,7 @@ mod skip_calls;
 #[derive(Debug, serde::Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Finding {
     pub path: String,
-    pub kind: &'static str,
+    pub kind: String,
 }
 
 #[derive(Default)]
@@ -162,7 +162,7 @@ fn finish(file: &File, found: &mut BTreeSet<Finding>) {
     if renamed_test {
         found.insert(Finding {
             path: file.old.clone(),
-            kind: "deleted-test",
+            kind: "deleted-test".into(),
         });
     }
     let path = if file.deleted || file.new.is_empty() {
@@ -176,27 +176,50 @@ fn finish(file: &File, found: &mut BTreeSet<Finding>) {
     let test = test_path(&file.old) || test_path(&file.new);
     let before = signals(&file.before, test);
     let after = signals(&file.after, test);
-    let mut add = |kind| {
+    let mut add = |kind: String| {
         found.insert(Finding {
             path: path.clone(),
             kind,
         });
     };
-    if (file.deleted && test) || removed(&before.0, &after.0) {
-        add("deleted-test");
+    if file.deleted && test {
+        add("deleted-test".into());
+    } else {
+        // One row per removed test, so a declaration cannot cover its siblings.
+        for key in removed_keys(&before.0, &after.0) {
+            add(format!("deleted-test:{}", case_name(key)));
+        }
     }
     if removed(&before.1, &after.1) {
-        add("assertion-change");
+        add("assertion-change".into());
     }
     if removed(&after.2, &before.2) {
-        add("new-skip");
+        add("new-skip".into());
     }
 }
 
 type Counts = BTreeMap<String, usize>;
-fn removed(old: &Counts, new: &Counts) -> bool {
+fn removed_keys<'a>(old: &'a Counts, new: &'a Counts) -> impl Iterator<Item = &'a String> {
     old.iter()
-        .any(|(key, count)| *count > new.get(key).copied().unwrap_or(0))
+        .filter(|(key, count)| **count > new.get(*key).copied().unwrap_or(0))
+        .map(|(key, _)| key)
+}
+
+fn removed(old: &Counts, new: &Counts) -> bool {
+    removed_keys(old, new).next().is_some()
+}
+
+/// Whitespace-free test label for a case key: the declared function name when
+/// the key starts with a compacted Rust, Python or Go declaration keyword.
+fn case_name(key: &str) -> &str {
+    let key = key.strip_prefix("#[cfg(test)]").unwrap_or(key);
+    let name = ["asyncfn", "pubfn", "fn", "asyncdef", "def", "func"]
+        .iter()
+        .find_map(|prefix| key.strip_prefix(prefix));
+    match name {
+        Some(name) => name.split(['(', '<']).next().unwrap_or(name),
+        None => key,
+    }
 }
 
 fn signals(lines: &[String], test_path: bool) -> (Counts, Counts, Counts) {
