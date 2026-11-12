@@ -618,6 +618,11 @@ for deleted tests, assertion changes and new skips in the PR comparison.
   the exact approval marker. The stop code must map to its canonical budget
   field and the proposal must match the active receipt. Each proposal is
   consumable once; retry and delivery paths cannot silently increase a budget.
+  `--expected-head` is always the current provider head. When the author pushed
+  a repair after the stop, that head differs from the ledger head; `extend` then
+  requires the provider to prove it descends from the stopped head, binds the
+  extension record to the stopped head, and leaves the next observation to
+  record the repaired head. Unrelated heads are refused as `review_state_conflict`.
 - To terminally accept remaining risk after a durable hard stop, use an
   explicit acceptance envelope with `observe --expected-head <stopped-head>
   --expected-state <current-tip> --findings-file acceptance.json`:
@@ -753,8 +758,10 @@ for deleted tests, assertion changes and new skips in the PR comparison.
 - The three provider-backed commands emit their own
   `cli.forge-cli.pr.review-loop.*.v1` schema with `data.appended` and
   `data.outcome_posted`. Only `observe` can set `outcome_posted`, and never
-  without `appended`. `inspect` and `extend` dry-runs are offline and report the
-  command-specific read/transition plan.
+  without `appended`. an `inspect` dry-run is offline and reports the command-specific
+  read/transition plan. An `extend` dry-run reads the pull request and ledger and
+  runs the same head and tip checks as the real call, but skips the approval read and
+  the append.
 - `validate --findings-file <path>` is the offline payload check, mirroring
   `pr review validate`. It emits `cli.forge-cli.pr.review-loop.validate.v1` with
   `data = { shape, row_count, identity_count, dispositions[], blocking_count,

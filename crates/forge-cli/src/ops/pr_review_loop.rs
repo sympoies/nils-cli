@@ -21,6 +21,7 @@ use crate::validations::{RuleVerdict, no_escaped_control_markdown, no_local_path
 
 mod acceptance_input;
 mod correction_input;
+mod extension_head;
 mod supersession_input;
 use correction_input::ObservationInput;
 
@@ -654,14 +655,6 @@ pub fn run_extend_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     remote_url_lookup: F,
 ) -> Result<i32, ForgeError> {
     let ctx = resolve_context(global, &remote_url_lookup)?;
-    if global.dry_run {
-        return emit_dry_run(
-            &ctx,
-            "verify one post-stop approval and append exactly one budget extension",
-            SCHEMA_EXTEND,
-            format,
-        );
-    }
     let (view, repository) = resolve_pr(runner, &ctx, args.id)?;
     ensure_expected_head(view.head_sha.as_deref(), &args.expected_head)?;
     let state_view =
@@ -678,21 +671,8 @@ pub fn run_extend_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             None,
         )
     })?;
-    let stopped_head_matches = previous
-        .hard_stop
-        .as_ref()
-        .is_some_and(|stop| stop.attempted_head_sha == args.expected_head);
-    if previous.head_sha != args.expected_head && !stopped_head_matches {
-        return Err(ForgeError::validation(
-            schema_err(),
-            "review_state_conflict",
-            "the review-loop state is bound to a different head",
-            Some(format!(
-                "state_head={}; expected_head={}",
-                previous.head_sha, args.expected_head
-            )),
-        ));
-    }
+    let ledger_head =
+        extension_head::bind(runner, &ctx, &repository, previous, &args.expected_head)?;
     let hard_stop = previous.hard_stop.as_ref().ok_or_else(|| {
         ForgeError::validation(
             schema_err(),
@@ -720,6 +700,14 @@ pub fn run_extend_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
                 hard_stop.proposal_digest
             )),
         ));
+    }
+    if global.dry_run {
+        return emit_dry_run(
+            &ctx,
+            "verify one post-stop approval and append exactly one budget extension",
+            SCHEMA_EXTEND,
+            format,
+        );
     }
     let approval = read_approval_comment(
         runner,
@@ -749,7 +737,7 @@ pub fn run_extend_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         pr_review::ReviewLoopAppend {
             repository: &repository,
             number: view.number,
-            expected_head: &args.expected_head,
+            expected_head: &ledger_head,
             expected_tip: state_view.chain.tip_digest.as_deref(),
             state: extended,
             visible_outcome: None,
@@ -1852,6 +1840,7 @@ mod tests {
         view: String,
         comments: std::cell::RefCell<Vec<serde_json::Value>>,
         approval: Option<String>,
+        compare_status: Option<String>,
         calls: std::cell::RefCell<Vec<Vec<String>>>,
         chain_reads: std::cell::Cell<usize>,
         /// Append one extra record to the chain immediately after the Nth chain
@@ -1866,6 +1855,7 @@ mod tests {
                 view: view_json(head_sha),
                 comments: std::cell::RefCell::new(Vec::new()),
                 approval: None,
+                compare_status: None,
                 calls: std::cell::RefCell::new(Vec::new()),
                 chain_reads: std::cell::Cell::new(0),
                 append_after_chain_read: None,
@@ -1949,6 +1939,13 @@ mod tests {
             self
         }
 
+        /// Answers the provider comparison of the stopped head against the
+        /// current provider head with this `status` (`ahead`, `diverged`, ...).
+        fn with_compare_status(mut self, status: &str) -> Self {
+            self.compare_status = Some(status.to_string());
+            self
+        }
+
         fn with_approval(mut self, approval: serde_json::Value) -> Self {
             self.approval = Some(approval.to_string());
             self
@@ -2020,6 +2017,22 @@ mod tests {
                 }
                 return Ok(BackendSuccess {
                     stdout: page.to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if let Some(status) = self.compare_status.as_ref()
+                && argv.iter().any(|arg| arg.contains("/compare/"))
+            {
+                let ahead = status == "ahead";
+                return Ok(BackendSuccess {
+                    stdout: serde_json::json!({
+                        "status": status,
+                        "ahead_by": 1,
+                        "behind_by": u64::from(!ahead),
+                        "base_commit": {"sha": HEAD},
+                        "merge_base_commit": {"sha": if ahead { HEAD } else { "head-0" }}
+                    })
+                    .to_string(),
                     stderr: String::new(),
                 });
             }
@@ -3309,19 +3322,55 @@ mod tests {
     // --- extend ----------------------------------------------------------
 
     #[test]
-    fn extend_dry_run_plans_without_touching_the_provider() {
-        let runner = FakeGitHub::new(HEAD);
+    fn extend_dry_run_plans_without_writing_or_reading_the_approval() {
+        let state = stopped_state(HEAD, "sha256:proposal");
+        let runner = FakeGitHub::new(HEAD).with_state(&state, HEAD);
+        let tip = runner.tip_digest().expect("seeded tip");
         let code = run_extend_with(
             &runner,
             &flags(true),
-            extend_args(HEAD, "sha256:tip", "sha256:proposal"),
+            extend_args(HEAD, &tip, "sha256:proposal"),
             OutputFormat::Text,
             github_remote,
         )
         .expect("dry run");
 
         assert_eq!(code, 0);
-        assert_eq!(runner.calls(), Vec::<Vec<String>>::new());
+        assert!(runner.appended_bodies().is_empty());
+        assert!(
+            runner
+                .calls()
+                .iter()
+                .all(|argv| !argv.iter().any(|arg| arg.contains("issues/comments"))),
+            "a dry run must not read the approval comment"
+        );
+    }
+
+    #[test]
+    fn extend_dry_run_reports_the_same_head_conflict_as_the_real_call() {
+        let state = stopped_state(HEAD, "sha256:proposal");
+        let runner = FakeGitHub::new(NEXT_HEAD)
+            .with_state(&state, HEAD)
+            .with_compare_status("diverged");
+        let tip = runner.tip_digest().expect("seeded tip");
+        let mut errors = Vec::new();
+        for dry_run in [true, false] {
+            errors.push(
+                run_extend_with(
+                    &runner,
+                    &flags(dry_run),
+                    extend_args(NEXT_HEAD, &tip, "sha256:proposal"),
+                    OutputFormat::Json,
+                    github_remote,
+                )
+                .expect_err("unrelated head"),
+            );
+        }
+
+        assert_eq!(errors[0].kind(), "review_state_conflict");
+        assert_eq!(errors[0].kind(), errors[1].kind());
+        assert_eq!(errors[0].message(), errors[1].message());
+        assert!(runner.appended_bodies().is_empty());
     }
 
     #[test]
@@ -3386,9 +3435,11 @@ mod tests {
     }
 
     #[test]
-    fn extend_rejects_a_state_bound_to_a_different_head() {
+    fn extend_rejects_a_head_unrelated_to_the_stopped_head() {
         let state = stopped_state(HEAD, "sha256:proposal");
-        let runner = FakeGitHub::new(NEXT_HEAD).with_state(&state, HEAD);
+        let runner = FakeGitHub::new(NEXT_HEAD)
+            .with_state(&state, HEAD)
+            .with_compare_status("diverged");
         let tip = runner.tip_digest().expect("seeded tip");
 
         let error = run_extend_with(
@@ -3405,9 +3456,52 @@ mod tests {
             error
                 .detail()
                 .unwrap_or_default()
-                .contains(&format!("state_head={HEAD}")),
-            "detail should name the bound head: {:?}",
+                .contains(&format!("stopped_head={HEAD}")),
+            "detail should name the stopped head: {:?}",
             error.detail()
+        );
+        assert!(runner.appended_bodies().is_empty());
+    }
+
+    #[test]
+    fn extend_consumes_an_approval_on_a_repaired_descendant_head() {
+        let proposal = "sha256:proposal";
+        let state = stopped_state(HEAD, proposal);
+        let marker = extension_approval_marker(proposal, "max_repair_rounds", 1);
+        let body = format!("Approving the extension.\n\n{marker}\n");
+        let runner = FakeGitHub::new(NEXT_HEAD)
+            .with_state(&state, HEAD)
+            .with_compare_status("ahead")
+            .with_approval(approval_payload("2026-07-20T12:00:01Z", "MEMBER", &body));
+        let tip = runner.tip_digest().expect("seeded tip");
+
+        let code = run_extend_with(
+            &runner,
+            &flags(false),
+            extend_args(NEXT_HEAD, &tip, proposal),
+            OutputFormat::Json,
+            github_remote,
+        )
+        .expect("extension applied on the repaired head");
+
+        assert_eq!(code, 0);
+        assert_eq!(runner.appended_bodies().len(), 1);
+        let bodies: Vec<String> = runner
+            .comments
+            .borrow()
+            .iter()
+            .map(|node| node["body"].as_str().unwrap_or_default().to_string())
+            .collect();
+        let chain = review_state::parse_chain(bodies.iter().map(String::as_str), REPO, PR)
+            .expect("extended chain");
+        let extended = review_state::latest_review_loop_state(&chain).expect("state");
+        assert_eq!(extended.extensions.len(), 1);
+        assert!(
+            extended
+                .hard_stop
+                .as_ref()
+                .expect("stop retained")
+                .extension_applied
         );
     }
 
