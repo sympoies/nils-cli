@@ -485,14 +485,19 @@ pub(crate) fn execute(
                 format,
                 |payload| {
                     for hook in &payload.hooks {
+                        // Literal markers only: the secret value is never in scope here.
+                        let secret = if hook.secret.is_some() {
+                            "secret=[redacted]"
+                        } else {
+                            "no-secret"
+                        };
                         println!(
-                            "{}\t{}\t{}\t{}\t{}\t{}",
+                            "{}\t{}\t{}\t{}\t{}\t{secret}",
                             hook.id,
                             if hook.active { "active" } else { "inactive" },
                             hook.events.join(","),
                             hook.content_type.as_deref().unwrap_or("-"),
                             hook.url.as_deref().unwrap_or("-"),
-                            hook.secret.unwrap_or("no-secret"),
                         );
                     }
                 },

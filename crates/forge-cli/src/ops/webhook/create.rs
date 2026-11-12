@@ -172,13 +172,12 @@ pub(crate) fn create(
         format,
         |payload| {
             println!(
-                "{} org hook {} {} {} events={} secret={}",
+                "{} org hook {} {} {} events={} secret=[redacted]",
                 payload.org,
                 payload.id.map(|id| id.to_string()).unwrap_or_default(),
                 payload.status,
                 payload.url,
                 payload.events.join(","),
-                payload.secret,
             )
         },
     ))
