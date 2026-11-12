@@ -1503,13 +1503,13 @@ fn snapshot_worker_executable() -> Result<SnapshotWorkerExecutable> {
         let executable_dir = current
             .parent()
             .context("current executable has no parent directory")?;
-        let target_dir = if executable_dir.file_name() == Some(OsStr::new("deps")) {
-            executable_dir
-                .parent()
-                .context("test executable directory has no parent")?
-        } else {
-            executable_dir
-        };
+        // Test executables: `<profile>/deps`, or from Cargo 1.100 `<profile>/build/*/*/out`.
+        let target_dir = match executable_dir.file_name().and_then(OsStr::to_str) {
+            Some("deps") => executable_dir.parent(),
+            Some("out") => executable_dir.ancestors().nth(4),
+            _ => Some(executable_dir),
+        }
+        .context("test executable directory has no Cargo profile directory")?;
         fs::canonicalize(target_dir.join("git-cli"))
             .context("dirty snapshot worker executable is unavailable")?
     };
