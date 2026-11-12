@@ -27,11 +27,13 @@ pub(super) fn forward_activity_setup_to_agent_hook(
     ]);
     // The hook that writes the provider config renders the session binary name
     // it was built with. Unless the caller pins `AGENT_SESSION_BIN`, the selector
-    // takes the hook beside this executable (the same release) before any
-    // trusted root; an executable not running under the configured name falls
-    // through to the trusted roots.
-    if std::env::var_os("AGENT_SESSION_BIN").is_none()
+    // takes the hook beside this executable (the same release, in the directory
+    // this trusted executable runs from) before any trusted root. Without such
+    // a hook the variable stays unset and the trusted roots apply; an executable
+    // not running under the configured name also falls through to them.
+    if std::env::var_os("AGENT_SESSION_BIN").is_none_or(|value| value.is_empty())
         && let Ok(current) = std::env::current_exe()
+        && sibling_hook_is_executable(&current)
     {
         command.env("AGENT_SESSION_BIN", current);
     }
@@ -166,4 +168,12 @@ pub(super) fn forward_activity_setup_to_agent_hook(
         Value::String("agent-hook".to_string()),
     );
     Ok(Value::Object(result))
+}
+
+fn sibling_hook_is_executable(current: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    current
+        .with_file_name("agent-hook")
+        .metadata()
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }

@@ -92,3 +92,70 @@ fn activity_setup_uses_the_hook_beside_the_configured_session_binary() {
         .unwrap();
     assert_eq!(fs::read_to_string(marker).unwrap(), "sibling");
 }
+
+/// Runs `session` for a dry-run activity setup with a trusted root holding a
+/// hook that records `root`; `pin` is the caller's `AGENT_SESSION_BIN`.
+fn run_setup(session: &std::path::Path, temp: &std::path::Path, pin: Option<&str>) -> String {
+    let marker = temp.join("executed");
+    let _ = fs::remove_file(&marker);
+    let roots = temp.join("roots");
+    fs::create_dir_all(&roots).unwrap();
+    executable(
+        &roots.join("agent-hook"),
+        "#!/bin/sh\nprintf root > \"$MARKER\"\nexit 69\n",
+    );
+    let mut command = Command::new(session);
+    command
+        .args([
+            "activity",
+            "setup",
+            "--agent",
+            "codex",
+            "--dry-run",
+            "--format",
+            "json",
+        ])
+        .current_dir(temp)
+        .env("PATH", temp)
+        .env("MARKER", &marker)
+        .env("AGENT_RUNTIME_TRUSTED_CLI_ROOT", &roots);
+    match pin {
+        Some(value) => command.env("AGENT_SESSION_BIN", value),
+        None => command.env_remove("AGENT_SESSION_BIN"),
+    };
+    command.output().unwrap();
+    fs::read_to_string(marker).unwrap_or_default()
+}
+
+#[test]
+fn activity_setup_falls_back_to_trusted_roots_without_a_sibling_hook() {
+    let temp = tempfile::tempdir().unwrap();
+    let installed = temp.path().join("installed");
+    fs::create_dir_all(&installed).unwrap();
+    let session = installed.join(nils_common::session_binary::NAME);
+    fs::copy(env!("CARGO_BIN_EXE_agent-session"), &session).unwrap();
+    assert_eq!(run_setup(&session, temp.path(), None), "root");
+    assert_eq!(run_setup(&session, temp.path(), Some("")), "root");
+}
+
+#[test]
+fn activity_setup_keeps_a_caller_pinned_session_binary_and_ignores_mismatched_names() {
+    let temp = tempfile::tempdir().unwrap();
+    let installed = temp.path().join("installed");
+    fs::create_dir_all(&installed).unwrap();
+    executable(
+        &installed.join("agent-hook"),
+        "#!/bin/sh\nprintf sibling > \"$MARKER\"\nexit 69\n",
+    );
+    let named = installed.join(nils_common::session_binary::NAME);
+    fs::copy(env!("CARGO_BIN_EXE_agent-session"), &named).unwrap();
+    // A pin that selects nothing keeps the sibling out of play.
+    assert_eq!(
+        run_setup(&named, temp.path(), Some("/nonexistent/other-session")),
+        "root"
+    );
+    // An executable not running under the configured name uses the trusted roots.
+    let renamed = installed.join("session-under-test");
+    fs::copy(env!("CARGO_BIN_EXE_agent-session"), &renamed).unwrap();
+    assert_eq!(run_setup(&renamed, temp.path(), None), "root");
+}
