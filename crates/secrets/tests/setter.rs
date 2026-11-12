@@ -606,3 +606,48 @@ fn set_resolves_existing_stack_and_appends_missing_key() {
     );
     assert!(!f.target().exists());
 }
+
+/// Every `--value-stdin` refusal is value-free: neither the marker nor any
+/// 6-byte slice of it reaches stdout, stderr (the JSON error payload) or the
+/// target, so a later message change cannot echo a secret into output.
+#[test]
+fn set_value_refusals_never_echo_the_input_value() {
+    const MARKER: &str = "k3Vq9xR7pLm2Zt8W";
+    let marked = |forbidden: &[u8]| {
+        let mut input = MARKER.as_bytes().to_vec();
+        input.extend_from_slice(forbidden);
+        input.extend_from_slice(MARKER.as_bytes());
+        input
+    };
+    let mut oversized = marked(b"");
+    oversized.resize(1024 * 1024 + 1, b'x');
+    let cases = [
+        ("nul", marked(b"\0")),
+        ("carriage return", marked(b"\r")),
+        ("other control", marked(b"\x07")),
+        ("invalid utf-8", marked(b"\xff")),
+        ("backslash n", marked(b"\\n")),
+        ("oversized", oversized),
+    ];
+    for (name, input) in cases {
+        let f = Fixture::new();
+        let out = f.run(&input, &[]);
+        assert!(!out.status.success(), "{name} must be refused");
+        assert!(!f.target().exists(), "{name} must not write");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !stdout.is_empty() || !stderr.is_empty(),
+            "{name} refusal must report an error"
+        );
+        for (stream, text) in [("stdout", &stdout), ("stderr", &stderr)] {
+            for start in 0..=MARKER.len() - 6 {
+                let piece = &MARKER[start..start + 6];
+                assert!(
+                    !text.contains(piece),
+                    "{name} refusal echoed input on {stream}"
+                );
+            }
+        }
+    }
+}
