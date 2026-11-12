@@ -226,10 +226,11 @@ Required fields:
 
 Optional allowlisted fields are `provider_session_id`, `provider_turn_id`,
 `failure_reason`, `attention_id`, `attention_kind`, `source_kind`, and
-`provider_time`, optional `completion_candidate_reason`, and optional
-`completion_candidate`. These completion fields are admitted only
-on observed Claude provider-hook `stop_observed` events and contains no raw hook
-payload. Unknown
+`provider_time`, optional `completion_candidate_reason`, optional
+`completion_candidate`, and optional `tool_call`. These completion fields are
+admitted only on observed Claude provider-hook `stop_observed` events and contains no raw hook
+payload. `tool_call` is admitted only on Claude provider-hook events and is
+defined with the approval rules below. Unknown
 keys fail parsing. Identifiers are bounded, non-empty, and control-free.
 `attention_requested` requires an opaque correlation id and one of `approval`,
 `clarification`, `authentication`, or `other`; `attention_cleared` requires the
@@ -420,9 +421,10 @@ reconnect, and browser clocks do not advance it. Clients may use its age to
 describe uncertainty, but age never proves Waiting or completion.
 
 Attention `certainty` is `exact` only when the selected provider adapter owns a
-stable request/resolution correlation. Generic permission and identifier-less
-elicitation evidence is `conservative`. Old snapshots omit the field and
-therefore deserialize conservatively.
+stable request/resolution correlation. A Claude approval bound to its tool call
+by [tool-call correlation](#approval-and-tool-call-correlation) is `exact`.
+Generic permission and identifier-less elicitation evidence is `conservative`.
+Old snapshots omit the field and therefore deserialize conservatively.
 
 Optional `diagnostic.reason` values are producer-owned allowlisted codes:
 `completion_evidence_pending`, `attention_authority_mismatch`,
@@ -586,6 +588,21 @@ and an empty `background_tasks` array.
 - The support floor is Claude Code 2.1.206; the hooks contract was checked through
   2.1.289 against the [official reference](https://code.claude.com/docs/en/hooks#stop).
 
+The one-second window remains because Stop hook data cannot prove that the turn
+ended. Claude runs every matching `Stop` hook in parallel and any of them may
+continue the turn, and the payload (`stop_hook_active`, `background_tasks`,
+`session_crons`, `last_assistant_message`, `prompt_id`) says nothing about the
+other hooks. A continuing hook's next `Stop` carries `stop_hook_active: true`,
+which is non-final, so completing at once would project `waiting` while Claude
+works until a late `idle_prompt`. Immediate completion is therefore limited to
+payloads that prove it: `StopFailure` and `idle_prompt`.
+
+The structured source that removes the window is the `claude agents --json` idle state
+([#3590](https://github.com/sympoies/nils-cli/issues/3590)); the screen rules
+go after both land ([#3592](https://github.com/sympoies/nils-cli/issues/3592)).
+No settings reader is added to prove that no other Stop hook exists: plugin,
+`--settings` and skill-frontmatter hooks are not enumerable from the hook.
+
 The coordination notification controller applies a narrower input-safety rule:
 an exact-runtime `Stop` may authorize only the fixed body-free mailbox prompt
 after a short debounce with no later accepted provider hook, no pending attention,
@@ -604,6 +621,7 @@ notification-only waiting signal.
 | `attention_requested` | keep current start time, add one opaque pending request, enter `needs_input`; a Claude request for another turn first interrupts the stale open turn |
 | correlated `attention_cleared` | remove only that request, advance monotonic `last_progress_at`, and remain `needs_input` while any remain |
 | uncorrelated `progress` | advance monotonic `last_progress_at`; may establish/retain `working`, but never clears attention |
+| Claude `progress` with `tool_call` `finished` for a call bound to an approval | as `progress`, and remove only that approval ([tool-call correlation](#approval-and-tool-call-correlation)); any other pending attention remains |
 | `stop_observed` | increment evidence revision and journal it; never changes to Waiting |
 | admitted server-operator reconciliation | close only the exact stop-observed open provider turn as `operator_reconciled`, enter authoritative `waiting`, and retain typed reconciliation provenance |
 | matching `turn_completed` | close current turn, clear attention, enter `waiting`; authoritative Codex notifications require the exact open turn id |
@@ -619,23 +637,70 @@ Claude `PermissionRequest` signals for tools other than `AskUserQuestion` mean
 that a permission dialog is actually being shown, so they emit
 `attention_requested` even when the payload reports `permission_mode:
 "bypassPermissions"`. The mode hint does not override the observed prompt;
-bypass mode retains a root/home deletion circuit breaker. Because these
-approvals have no request-resolution id, correlation remains conservative. A
-same-turn `Stop` clears known approval latches without clearing clarification
-or ambiguous overflow. Missing or mismatched prompt identity remains latched.
-`StopFailure`, completion, new turn, and runtime boundaries clear all attention.
-Tool progress does not clear permission attention: `PreToolUse` precedes the
-permission check, and even same-name or same-input parallel calls cannot be
-correlated to a permission request without a stable shared request id.
+bypass mode retains a root/home deletion circuit breaker. The request names the
+tool, carries the same `tool_input` as the `PreToolUse` that preceded it, and
+has no `tool_use_id` or request id (Claude Code 2.1.317, measured). It is
+therefore correlated to its call as described below, and a request that cannot
+be correlated stays on the conservative latch. A same-turn `Stop` clears known
+approval latches without clearing clarification or ambiguous overflow. Missing
+or mismatched prompt identity remains latched. `StopFailure`, completion, new
+turn, and runtime boundaries clear all attention.
 
-There is no approval-resolved hook in the
-[official contract](https://code.claude.com/docs/en/hooks#permissionrequest).
-`PermissionDenied` is observational and fires only on auto-mode denial; a manual
-dialog denial emits no resolution hook and remains latched until same-turn Stop.
-The supported clearance bound is the earliest unambiguous terminal signal,
-not two seconds from approval during a long-running tool. User-owned or
-previously configured `permission_prompt` notification reporters normalize the
-same way, but the managed setup does not install that duplicate source.
+### Approval and tool-call correlation
+
+The optional event member `tool_call` carries content-free evidence for Claude
+`PreToolUse`, `PermissionRequest`, `PostToolUse`, `PostToolUseFailure` and
+`PermissionDenied` events other than `AskUserQuestion`, which stays exact
+through its own `tool_use_id`. Its fields are `phase` (`started`, `permission`
+or `finished`), `call_id` (a runtime-scoped projection of `tool_use_id`, on
+`started` and `finished`), `input_digest` (a runtime-scoped projection of the
+tool name and `tool_input`, on `started` and `permission`) and `tool_name` (a
+bounded name over `[A-Za-z0-9_.:-]`, omitted otherwise). The tool input, its
+description and the raw call id never leave the hook. Missing or malformed
+optional fields yield no `tool_call` and never fail the event.
+
+The reducer keeps the open calls of the current turn (calls with a `started`
+and no `finished` yet, at most 64, scoped by the projected turn id) and applies
+these rules:
+
+| Evidence | Rule |
+| --- | --- |
+| `started` | record the call; a later `started` for the same call id replaces it |
+| `permission` | name the tool on the pending approval; bind it to the call when exactly one unbound open call of the same turn has the same `input_digest`, and mark that approval `certainty: exact` |
+| `permission`, zero or several matching calls | no binding; the approval stays `conservative` (identical parallel calls cannot be told apart) |
+| `finished` for a call with a bound approval | remove that approval only; other pending approvals remain, and the phase returns to `working` when none remain |
+| `finished` for another turn, an unknown call or an unbound approval | no effect on attention |
+
+The public `attention` view gains the optional `tool_name` of the first pending
+approval, for example `{"kind":"approval","pending_count":1,"certainty":"exact",
+"tool_name":"Bash"}`. It never exposes the input, the digest or any id.
+
+Limits:
+
+- Correlation needs the `PreToolUse` and the result hooks registered for the
+  tool. Managed setup registers hooks per tool matcher; a tool without them has
+  no recorded call, so its approval stays `conservative` and `tool_name` is
+  still recorded from the request.
+- There is no approval-resolved hook in the
+  [official contract](https://code.claude.com/docs/en/hooks#permissionrequest).
+  `PermissionDenied` fires only on auto-mode denial. A manual dialog denial and
+  an interrupt emit no hook at all (measured on Claude Code 2.1.317: no
+  `PermissionDenied`, `PostToolUseFailure` or `Stop` followed), so the recorded
+  wait ends only at the next `UserPromptSubmit`, a same-turn `Stop`,
+  `StopFailure`, completion or a runtime boundary. The structured source that
+  can observe denial is the `claude agents --json` state
+  ([#3590](https://github.com/sympoies/nils-cli/issues/3590)).
+- Two open calls with the same tool and input are ambiguous by construction;
+  the approval is not bound and a result for either call does not clear it.
+- A result clears the approval when the tool runs after approval, including
+  when the tool itself then fails. Hooks that fail open and drop a `started`
+  leave the approval conservative, never wrongly cleared.
+- Producers and consumers must be upgraded together before using `tool_call`;
+  an older `agent-session` rejects the unknown event key.
+
+User-owned or previously configured `permission_prompt` notification reporters
+normalize to the same conservative latch, but the managed setup does not
+install that duplicate source.
 
 Revision is monotonic for each accepted non-duplicate event and runtime
 boundary. Phase timestamps change only when the phase changes. Durations are

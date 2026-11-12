@@ -144,6 +144,8 @@ struct ActivityEvent {
     attention_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     attention_kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call: Option<crate::tool_call::ToolCallEvidence>,
     confidence: &'static str,
     source_kind: &'static str,
 }
@@ -879,6 +881,7 @@ pub fn normalize_activity_event(
             failure_reason: None,
             attention_id: None,
             attention_kind: None,
+            tool_call: None,
             confidence: "observed",
             source_kind: "provider_hook",
         };
@@ -1060,6 +1063,9 @@ pub fn normalize_activity_event(
         failure_reason,
         attention_id,
         attention_kind,
+        tool_call: (request.product == Product::Claude && !exact_clarification)
+            .then(|| crate::tool_call::evidence(runtime_id, &request.event, object))
+            .flatten(),
         confidence,
         source_kind: "provider_hook",
     };
@@ -1466,7 +1472,12 @@ fn validate_provider_id(field: &str, value: &str) -> Result<(), HookError> {
     Ok(())
 }
 
-fn projected_provider_id(runtime_id: &str, product: Product, field: &str, value: &str) -> String {
+pub(crate) fn projected_provider_id(
+    runtime_id: &str,
+    product: Product,
+    field: &str,
+    value: &str,
+) -> String {
     let mut digest = Sha256::new();
     digest.update(b"agent-session.provider-identifier.v1\0");
     digest.update(runtime_id.as_bytes());

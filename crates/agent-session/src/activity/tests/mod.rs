@@ -23,6 +23,7 @@ fn event(kind: TurnEventKind, event_id: &str) -> TurnEvent {
         attention_kind: None,
         attention_correlation_ambiguous: false,
         attention_correlation_exact: false,
+        tool_call: None,
         confidence: Confidence::Observed,
         source_kind: SourceKind::ProviderHook,
         provider_time: None,
@@ -50,6 +51,7 @@ fn document() -> ActivityDocument {
         pending_completion: None,
         runtime_unhealthy_reason: None,
         operator_provider_turn_receipts: Vec::new(),
+        open_tool_calls: Default::default(),
         extra: Map::new(),
     }
 }
@@ -1179,6 +1181,7 @@ fn test_session(tmp: &tempfile::TempDir) -> (CliContext, crate::CreatedRecord) {
     test_session_for_agent(tmp, AgentKind::Codex)
 }
 
+mod claude_approval;
 mod claude_completion;
 mod claude_permission;
 mod codex_phase;

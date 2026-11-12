@@ -99,6 +99,29 @@ pub(super) fn validate_event(event: &TurnEvent, admission: EventAdmission) -> Re
             None,
         ));
     }
+    if let Some(call) = &event.tool_call {
+        use agent_hook::tool_call::ToolCallPhase;
+        let kind_matches = match call.phase {
+            ToolCallPhase::Permission => {
+                event.kind == TurnEventKind::AttentionRequested
+                    && event.attention_kind.as_deref() == Some("approval")
+            }
+            ToolCallPhase::Started | ToolCallPhase::Finished => {
+                event.kind == TurnEventKind::Progress
+            }
+        };
+        if event.provider != "claude"
+            || event.source_kind != SourceKind::ProviderHook
+            || !kind_matches
+            || !call.is_well_formed()
+        {
+            return Err(CliError::data(
+                "activity-tool-call-invalid",
+                "tool_call requires a well-formed Claude provider-hook progress or approval event",
+                None,
+            ));
+        }
+    }
     if let Some(reason) = event.failure_reason.as_deref() {
         let reason_allowed = matches!(
             reason,

@@ -699,6 +699,17 @@ apply its non-denying failure posture when the registry is unavailable.
 - `75`: concurrency/lock contention suitable for bounded retry.
 
 Claude PermissionDenied is observational progress and is registered by managed
-Claude setup. It reports auto-mode denial, not a manual dialog denial. Permission
-requests and tool progress retain no tool-name correlation metadata; same-turn
-terminal evidence owns conservative permission-latch clearance.
+Claude setup. It reports auto-mode denial, not a manual dialog denial. For
+Claude `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PostToolUseFailure`
+and `PermissionDenied` (except `AskUserQuestion`), the activity event carries a
+content-free `tool_call` member built by `agent_hook::tool_call::evidence`: the
+phase, a runtime-scoped projection of `tool_use_id`, a runtime-scoped
+projection of the tool name and `tool_input`, and a bounded tool name. The
+input and the raw ids never leave the hook, and malformed optional fields omit
+the member without failing the event.
+
+`agent-session` correlates a request to
+its call with it; see the turn-state contract. Uncorrelated approvals keep the
+conservative latch cleared by same-turn terminal evidence. Registration stays
+owned by managed setup; this change adds no event, and approval correlation
+needs the `PreToolUse` and result hooks registered for the tool.

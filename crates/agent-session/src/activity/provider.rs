@@ -191,6 +191,10 @@ pub(super) fn normalize_provider_hook(
         attention_kind: attention_kind.map(str::to_string),
         attention_correlation_ambiguous,
         attention_correlation_exact: exact_clarification || exact_elicitation,
+        tool_call: (agent == AgentKind::Claude && !exact_clarification)
+            .then(|| raw.as_object())
+            .flatten()
+            .and_then(|fields| agent_hook::tool_call::evidence(runtime_id, event_name, fields)),
         completion_candidate: completion_candidate_reason
             == Some(agent_hook::stop_completion::CompletionCandidateReason::Candidate),
         completion_candidate_reason,
@@ -259,6 +263,7 @@ pub(super) fn normalize_provider_notification(
         attention_kind: None,
         attention_correlation_ambiguous: false,
         attention_correlation_exact: false,
+        tool_call: None,
         completion_candidate: false,
         completion_candidate_reason: None,
         confidence: Confidence::Authoritative,
@@ -339,6 +344,7 @@ pub(crate) fn ingest_codex_app_server_completion(
             attention_kind: None,
             attention_correlation_ambiguous: false,
             attention_correlation_exact: false,
+            tool_call: None,
             completion_candidate: false,
             completion_candidate_reason: None,
             confidence: Confidence::Authoritative,
