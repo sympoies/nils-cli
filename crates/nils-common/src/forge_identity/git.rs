@@ -1,4 +1,6 @@
-use super::{Authorization, Error, Operation, Profile, Result, Target, load, load_ungated, managed_path};
+use super::{
+    Authorization, Error, Operation, Profile, Result, Target, load, load_ungated, managed_path,
+};
 use std::path::Path;
 use std::process::Command;
 
