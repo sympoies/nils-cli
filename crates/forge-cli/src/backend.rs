@@ -1194,6 +1194,77 @@ mod tests {
     }
 
     #[test]
+    fn process_runner_verifies_the_actor_again_after_a_managed_call_is_rejected() {
+        use std::os::unix::fs::PermissionsExt;
+
+        struct Reset(&'static [&'static str]);
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                for name in self.0 {
+                    unsafe { std::env::remove_var(name) };
+                }
+            }
+        }
+
+        let _guard = ENV_GH_BIN_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let config = isolate_forge_config();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let policy_dir = config.path().join("xdg-config/forge-cli");
+        std::fs::create_dir_all(&policy_dir).expect("policy dir");
+        std::fs::write(
+            policy_dir.join("identity.toml"),
+            include_str!("../../nils-common/tests/fixtures/identity/policy.toml"),
+        )
+        .expect("write policy");
+        let stub = dir.path().join("gh");
+        std::fs::write(
+            &stub,
+            "#!/bin/sh\ncase \"$1:$2\" in\n api:user) printf 'probe\\n' >> \"$FIXTURE_PROBE_LOG\"; printf '{\"login\":\"account-a\"}'; exit 0;;\nesac\nif test -e \"$FIXTURE_REJECT\"; then echo 'gh: Bad credentials (HTTP 401)' >&2; exit 1; fi\nprintf '{}'\n",
+        )
+        .expect("write stub");
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let probes = dir.path().join("probes");
+        let reject = dir.path().join("reject");
+        let _reset = Reset(&[
+            ENV_GH_BIN,
+            "FORGE_IDENTITY_PRINCIPAL",
+            "FIXTURE_ACCOUNT_A_CREDENTIAL",
+            "FIXTURE_PROBE_LOG",
+            "FIXTURE_REJECT",
+            "FORGE_CLI_RATE_LIMIT_GATE",
+        ]);
+        unsafe {
+            std::env::set_var(ENV_GH_BIN, &stub);
+            std::env::set_var("FORGE_IDENTITY_PRINCIPAL", "contributor");
+            std::env::set_var(
+                "FIXTURE_ACCOUNT_A_CREDENTIAL",
+                "FIXTURE_BACKEND_REJECT_TOKEN",
+            );
+            std::env::set_var("FIXTURE_PROBE_LOG", &probes);
+            std::env::set_var("FIXTURE_REJECT", &reject);
+            std::env::set_var("FORGE_CLI_RATE_LIMIT_GATE", "off");
+        }
+        let probe_count = || {
+            std::fs::read_to_string(&probes)
+                .map(|text| text.lines().count())
+                .unwrap_or(0)
+        };
+        let call =
+            || BackendCall::new(BackendProgram::Gh, ["api", "repos/sandbox/widget/issues/1"]);
+
+        ProcessRunner.run(&call()).expect("first call");
+        ProcessRunner.run(&call()).expect("second call");
+        assert_eq!(probe_count(), 1, "a verified actor is reused");
+
+        std::fs::write(&reject, "").expect("reject");
+        assert!(ProcessRunner.run(&call()).is_err());
+        assert_eq!(probe_count(), 1, "the rejected call still used the cache");
+        std::fs::remove_file(&reject).expect("accept again");
+        ProcessRunner.run(&call()).expect("call after rejection");
+        assert_eq!(probe_count(), 2, "a 401 drops the verified actor");
+    }
+
+    #[test]
     fn process_runner_timed_call_rejects_output_above_capture_limit() {
         use std::os::unix::fs::PermissionsExt;
 

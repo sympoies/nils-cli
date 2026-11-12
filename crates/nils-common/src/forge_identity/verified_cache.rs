@@ -155,6 +155,119 @@ mod tests {
         assert_eq!(lookup_at(&key, start + TTL), None);
     }
 
+    fn auth(
+        token: &str,
+        host: &str,
+        repo: &str,
+        login: Option<&str>,
+        app: Option<(&str, u64)>,
+    ) -> Authorization {
+        use super::super::{Operation, Profile, Selection, Target};
+        Authorization {
+            selection: Selection {
+                principal: "fixture".to_owned(),
+                target: Target::new(host, repo).unwrap(),
+                operation: Operation::ApiRead,
+                profile_id: "fixture".to_owned(),
+                matched_rule: "fixture".to_owned(),
+                profile: Profile {
+                    expected_login: login.map(str::to_owned),
+                    expected_app_id: app.map(|(_, id)| id),
+                    app_slug: app.map(|(slug, _)| slug.to_owned()),
+                    credential: "fixture".to_owned(),
+                    commit_name: "Fixture".to_owned(),
+                    commit_email: "fixture@example.invalid".to_owned(),
+                    signing_fingerprint: "fixture".to_owned(),
+                    operations: vec![Operation::ApiRead],
+                },
+                session_binding: None,
+            },
+            actor: login.unwrap_or("fixture-app[bot]").to_owned(),
+            token: token.to_owned(),
+            policy_digest: "fixture".to_owned(),
+        }
+    }
+
+    fn reused(stored: &Authorization, other: &Authorization) -> bool {
+        store(stored);
+        lookup(other).is_some()
+    }
+
+    #[test]
+    fn a_verification_is_reused_only_for_the_same_credential_host_and_login() {
+        let _lock = nils_test_support::GlobalStateLock::new();
+        let base = auth("unit-human-token", "github.com", "o/r", Some("alice"), None);
+        assert!(reused(&base, &base));
+        for different in [
+            auth(
+                "unit-human-token-2",
+                "github.com",
+                "o/r",
+                Some("alice"),
+                None,
+            ),
+            auth(
+                "unit-human-token",
+                "ghe.example.com",
+                "o/r",
+                Some("alice"),
+                None,
+            ),
+            auth("unit-human-token", "github.com", "o/r", Some("bob"), None),
+        ] {
+            assert!(!reused(&base, &different));
+        }
+        // A human credential is not repository scoped.
+        assert!(reused(
+            &base,
+            &auth(
+                "unit-human-token",
+                "github.com",
+                "o/other",
+                Some("alice"),
+                None
+            )
+        ));
+    }
+
+    #[test]
+    fn an_app_verification_is_bound_to_its_slug_id_and_checked_repository() {
+        let _lock = nils_test_support::GlobalStateLock::new();
+        let base = auth(
+            "unit-app-token",
+            "github.com",
+            "o/r",
+            None,
+            Some(("app-a", 1)),
+        );
+        assert!(reused(&base, &base));
+        for different in [
+            auth(
+                "unit-app-token",
+                "github.com",
+                "o/r",
+                None,
+                Some(("app-b", 1)),
+            ),
+            auth(
+                "unit-app-token",
+                "github.com",
+                "o/r",
+                None,
+                Some(("app-a", 2)),
+            ),
+            auth(
+                "unit-app-token",
+                "github.com",
+                "o/other",
+                None,
+                Some(("app-a", 1)),
+            ),
+        ] {
+            assert!(!reused(&base, &different));
+        }
+    }
+
     #[test]
     fn only_a_provider_rejection_counts_as_rejected() {
         assert!(rejected(b"gh: Bad credentials (HTTP 401)"));

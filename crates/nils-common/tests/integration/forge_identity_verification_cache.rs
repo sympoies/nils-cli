@@ -28,7 +28,7 @@ impl Harness {
         let bins = StubBinDir::new();
         bins.write_exe(
             "gh",
-            "#!/bin/sh\nprintf 'probe\\n' >> \"$FIXTURE_PROBE_LOG\"\nprintf '{\"login\":\"%s\"}' \"${FIXTURE_ACTOR:-account-a}\"\n",
+            "#!/bin/sh\nprintf 'probe\\n' >> \"$FIXTURE_PROBE_LOG\"\nsleep \"${FIXTURE_PROBE_DELAY:-0}\"\nprintf '{\"login\":\"%s\"}' \"${FIXTURE_ACTOR:-account-a}\"\n",
         );
         let env = vec![
             EnvGuard::set(&lock, "XDG_CONFIG_HOME", home.path().to_str().unwrap()),
@@ -45,6 +45,7 @@ impl Harness {
                 home.path().join("probes").to_str().unwrap(),
             ),
             EnvGuard::remove(&lock, "FIXTURE_ACTOR"),
+            EnvGuard::remove(&lock, "FIXTURE_PROBE_DELAY"),
             prepend_path(&lock, bins.path()),
         ];
         let policy = identity::load().unwrap().unwrap();
@@ -182,4 +183,30 @@ fn the_audit_record_notes_a_cached_verification_and_when_it_happened() {
     let audit =
         fs::read_to_string(h.home.path().join("state/forge-cli/identity-audit.jsonl")).unwrap();
     assert!(!audit.contains(TOKEN_ONE));
+}
+
+#[test]
+fn concurrent_managed_calls_share_one_probe() {
+    let h = Harness::new();
+    let _delay = EnvGuard::set(&h._lock, "FIXTURE_PROBE_DELAY", "0.3");
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            scope.spawn(|| assert_eq!(h.authorize().unwrap().actor, "account-a"));
+        }
+    });
+    assert_eq!(h.probes(), 1);
+}
+
+#[test]
+fn a_verification_is_not_reused_under_a_different_audit_state_root() {
+    let h = Harness::new();
+    h.authorize().unwrap();
+    h.authorize().unwrap();
+    assert_eq!(h.probes(), 1);
+    let other = h.home.path().join("other-state");
+    let _state = EnvGuard::set(&h._lock, "XDG_STATE_HOME", other.to_str().unwrap());
+    h.authorize().unwrap();
+    assert_eq!(h.probes(), 2);
+    let record = &read_audit(&other.join("forge-cli/identity-audit.jsonl"))[0];
+    assert_eq!(record["actor_verification"]["cached"], false);
 }
