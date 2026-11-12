@@ -8,6 +8,23 @@ fn executable(path: &std::path::Path, contents: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+/// Runs `command`, retrying while the kernel reports the executable busy: a
+/// just-copied binary can still be open for writing in a forked sibling test.
+fn output_retrying_busy(command: &mut Command) {
+    for _ in 0..50 {
+        match command.output() {
+            Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            result => {
+                result.unwrap();
+                return;
+            }
+        }
+    }
+    command.output().unwrap();
+}
+
 #[test]
 fn activity_setup_uses_selected_hook_and_rejects_path_and_old_override() {
     let temp = tempfile::tempdir().unwrap();
@@ -73,7 +90,8 @@ fn activity_setup_uses_the_hook_beside_the_configured_session_binary() {
     );
     let session = installed.join(nils_common::session_binary::NAME);
     fs::copy(env!("CARGO_BIN_EXE_agent-session"), &session).unwrap();
-    Command::new(&session)
+    let mut command = Command::new(&session);
+    command
         .args([
             "activity",
             "setup",
@@ -87,9 +105,8 @@ fn activity_setup_uses_the_hook_beside_the_configured_session_binary() {
         .env("PATH", temp.path())
         .env("MARKER", &marker)
         .env_remove("AGENT_SESSION_BIN")
-        .env("AGENT_RUNTIME_TRUSTED_CLI_ROOT", &other)
-        .status()
-        .unwrap();
+        .env("AGENT_RUNTIME_TRUSTED_CLI_ROOT", &other);
+    output_retrying_busy(&mut command);
     assert_eq!(fs::read_to_string(marker).unwrap(), "sibling");
 }
 
@@ -123,19 +140,7 @@ fn run_setup(session: &std::path::Path, temp: &std::path::Path, pin: Option<&str
         Some(value) => command.env("AGENT_SESSION_BIN", value),
         None => command.env_remove("AGENT_SESSION_BIN"),
     };
-    // A just-copied executable can still be open for writing in a forked
-    // sibling test; retry the spawn while the kernel reports it busy.
-    for _ in 0..50 {
-        match command.output() {
-            Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) => {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            result => {
-                result.unwrap();
-                break;
-            }
-        }
-    }
+    output_retrying_busy(&mut command);
     fs::read_to_string(marker).unwrap_or_default()
 }
 
