@@ -1019,7 +1019,7 @@ fn output_text(stdout: &[u8], stderr: &[u8]) -> String {
 
 fn parse_cli_usage_output(raw: &str) -> Option<render::Usage> {
     let stripped = strip_ansi(raw, AnsiStripMode::CsiAnyTerminator);
-    let normalized = stripped.replace('\r', "\n");
+    let normalized = stripped.replace("\r\n", "\n").replace('\r', "\n");
     let mut current = None;
     let mut five_hour = ParsedWindow::default();
     let mut seven_day = ParsedWindow::default();
@@ -1610,5 +1610,39 @@ mod tests {
         assert_eq!(five.used_percent, 42.0);
         assert_eq!(five.resets_at, None);
         assert!(usage.seven_day.is_none());
+    }
+
+    #[test]
+    fn cli_usage_parser_reads_pty_crlf_screen_with_sgr() {
+        let fixture = include_str!("../../tests/fixtures/claude_usage_screen.txt");
+        let colored = fixture
+            .lines()
+            .map(|line| format!("\x1b[1m{line}\x1b[0m"))
+            .collect::<Vec<_>>();
+        for raw in [fixture.replace('\n', "\r\n"), colored.join("\r\n")] {
+            let usage = parse_cli_usage_output(&raw).expect("usage");
+
+            let five = usage.five_hour.expect("five hour");
+            assert_eq!(five.used_percent, 42.0);
+            assert_eq!(five.resets_at.as_deref(), Some("4:59am (Example/Zone)"));
+            let weekly = usage.seven_day.expect("weekly");
+            assert_eq!(weekly.used_percent, 61.0);
+            assert_eq!(
+                weekly.resets_at.as_deref(),
+                Some("Nov 15, 8:59pm (Example/Zone)")
+            );
+        }
+    }
+
+    #[test]
+    fn cli_usage_parser_takes_only_a_resets_line_as_the_reset() {
+        let usage = parse_cli_usage_output(
+            "Current session\n\
+             42% used\n\
+             Approximate: sessions on this machine only\n",
+        )
+        .expect("usage");
+
+        assert_eq!(usage.five_hour.expect("five hour").resets_at, None);
     }
 }
