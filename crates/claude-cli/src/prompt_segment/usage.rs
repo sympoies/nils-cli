@@ -1025,8 +1025,8 @@ fn parse_cli_usage_output(raw: &str) -> Option<render::Usage> {
     let mut seven_day = ParsedWindow::default();
 
     // A window is the heading plus the two lines under it (percent, then reset).
-    // A blank line, the next heading or a third line closes it, so text from a
-    // later section is never attributed to it.
+    // A blank line or the next heading closes it, and later lines are ignored,
+    // so text from a later section is never attributed to it.
     let mut body_lines = 0;
     for line in normalized.lines() {
         let trimmed = line.trim();
@@ -1046,8 +1046,7 @@ fn parse_cli_usage_output(raw: &str) -> Option<render::Usage> {
         match body_lines {
             1 if lower.contains("% used") => window.used_percent = parse_used_percent(trimmed),
             2 if lower.starts_with("resets") => window.resets_at = parse_reset_value(trimmed),
-            1 | 2 => {}
-            _ => current = None,
+            _ => {}
         }
     }
 
@@ -1567,29 +1566,43 @@ mod tests {
              42% used\n\
              Resets 4:59am (Example/Zone)\n\
              99% used of context\n\
+             Resets tomorrow\n\
              Current week (all models)\n\
              61%used\n\
              99% used of context\n",
         )
         .expect("usage");
 
-        assert_eq!(usage.five_hour.expect("five hour").used_percent, 42.0);
+        let five = usage.five_hour.expect("five hour");
+        assert_eq!(five.used_percent, 42.0);
+        assert_eq!(five.resets_at.as_deref(), Some("4:59am (Example/Zone)"));
         assert!(usage.seven_day.is_none());
+    }
+
+    #[test]
+    fn cli_usage_parser_closes_a_window_at_a_blank_line() {
+        let usage = parse_cli_usage_output(
+            "Current week (all models)\n\
+             \n\
+             61% used\n",
+        );
+
+        assert!(usage.is_none());
     }
 
     #[test]
     fn cli_usage_parser_rejects_loose_openers_and_per_model_weekly() {
         let usage = parse_cli_usage_output(
-            "Current week (Fable)\n\
-             77% used\n\
-             Resets Nov 15, 9pm (Example/Zone)\n\
+            "Current session\n\
+             42% used\n\
+             30% used\n\
              \n\
              Last session 5h ago\n\
              88% used\n\
              \n\
-             Current session\n\
-             42% used\n\
-             30% used\n",
+             Current week (Fable)\n\
+             77% used\n\
+             Resets Nov 15, 9pm (Example/Zone)\n",
         )
         .expect("usage");
 
