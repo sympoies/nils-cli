@@ -40,6 +40,9 @@ or integrating a specific subsystem.
 - [History row classes v1 design](specs/history-row-classes-v1.md): proposed
   runtime-command, compaction and notice classes, shared recognition rules and
   consumer schema fixture; runtime implementation follows separately.
+- [Session runtime v1](specs/session-runtime-v1.md): hybrid direction
+  (structured sources by default, real terminal takeover kept), the
+  single-writer rule and per-provider signal map; design only.
 - [Mailbox read events v1](specs/mailbox-read-events-v1.md): display-only
   conversation events for mailbox reads and acknowledgements, identity,
   transcript-offset ordering and authorization.
