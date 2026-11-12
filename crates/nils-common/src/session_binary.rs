@@ -44,12 +44,17 @@ pub fn trusted_root(root: &Path) -> Option<PathBuf> {
         return None;
     }
     let candidate = fs::canonicalize(root.join(NAME)).ok()?;
-    let metadata = fs::metadata(&candidate).ok()?;
-    (metadata.is_file()
-        && metadata.uid() == unsafe { libc::geteuid() }
-        && metadata.permissions().mode() & 0o022 == 0
-        && metadata.permissions().mode() & 0o111 != 0)
-        .then_some(candidate)
+    is_owner_controlled_executable(&candidate).then_some(candidate)
+}
+
+/// A regular executable file owned by the caller that no other user can write.
+pub fn is_owner_controlled_executable(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|metadata| {
+        metadata.is_file()
+            && metadata.uid() == unsafe { libc::geteuid() }
+            && metadata.permissions().mode() & 0o022 == 0
+            && metadata.permissions().mode() & 0o111 != 0
+    })
 }
 
 /// First regular executable file named [`NAME`] in a `PATH`-style list.

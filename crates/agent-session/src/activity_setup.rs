@@ -33,7 +33,9 @@ pub(super) fn forward_activity_setup_to_agent_hook(
     // not running under the configured name also falls through to them.
     if std::env::var_os("AGENT_SESSION_BIN").is_none_or(|value| value.is_empty())
         && let Ok(current) = std::env::current_exe()
-        && sibling_hook_is_trusted(&current)
+        && nils_common::session_binary::is_owner_controlled_executable(
+            &current.with_file_name("agent-hook"),
+        )
     {
         command.env("AGENT_SESSION_BIN", current);
     }
@@ -168,20 +170,4 @@ pub(super) fn forward_activity_setup_to_agent_hook(
         Value::String("agent-hook".to_string()),
     );
     Ok(Value::Object(result))
-}
-
-/// The same owner and mode rule `session_binary::trusted_root` applies to the
-/// session binary: an executable regular file owned by the caller that no
-/// other user can write.
-fn sibling_hook_is_trusted(current: &std::path::Path) -> bool {
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    current
-        .with_file_name("agent-hook")
-        .metadata()
-        .is_ok_and(|metadata| {
-            metadata.is_file()
-                && metadata.uid() == unsafe { libc::geteuid() }
-                && metadata.permissions().mode() & 0o022 == 0
-                && metadata.permissions().mode() & 0o111 != 0
-        })
 }
