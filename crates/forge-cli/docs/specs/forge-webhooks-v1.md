@@ -32,8 +32,8 @@ Schema `cli.forge-cli.{repo,org}.hook.list.v1`.
 - Each hook: `id`, `active`, `events`, `content_type`, `url`, and `secret`.
 - `secret` is the marker `[redacted]` when a secret is configured, otherwise
   `null`. The secret value is dropped when the response is parsed.
-- GitHub allows at most 20 webhooks per repository or organization, so one page
-  is read.
+- The first page of 100 hooks is read. The cited GitHub pages state no
+  per-target hook limit, so a target with more than 100 hooks lists only 100.
 
 ## `hook set-url` and `hook set-active`
 
@@ -48,7 +48,7 @@ Schema `cli.forge-cli.{repo,org}.hook.{set-url,set-active}.v1`. Data:
 
 Each command reads the hook and compares the field with the expected value. For
 `set-active` the expected state is the opposite of the requested one. URLs must
-be distinct absolute `http(s)` URLs.
+be distinct absolute `http(s)` URLs without whitespace or embedded credentials.
 
 - Already the requested value: `status` is `already_set` and nothing is
   written, so a rerun after success is a clean no-op.
@@ -60,7 +60,9 @@ The write is `PATCH .../hooks/ID/config` with `url`, or `PATCH .../hooks/ID`
 with `active` and no `config`. The read-back requires every other setting to be
 unchanged: events, content type, `insecure_ssl`, the active flag or URL, and
 whether a secret is set. Otherwise the command fails with
-`hook_readback_mismatch` (exit 1); the change may have been applied.
+`hook_readback_mismatch` (exit 1); the change may have been applied. Any
+failure of the write itself or of the read-back (for example a 5xx or a timeout)
+is reported the same way, since the outcome is then unknown.
 
 `--dry-run` performs the read and reports `would_update`, writing nothing.
 Rollback is the same command with `--from` and `--to` swapped, or the other
@@ -115,8 +117,9 @@ Schema `cli.forge-cli.org.hook.create.v1`. Data: `provider`, `org`, `dry_run`,
 - [Organization webhooks](https://docs.github.com/en/rest/orgs/webhooks)
 
 `PATCH .../hooks/ID/config` takes `url`, `content_type`, `secret` and
-`insecure_ssl` and uses the secret "if provided", so sending only `url` cannot
-change or drop it.
+`insecure_ssl` and uses the secret "if provided". The documentation is silent on
+what happens to an omitted key, so that sending only `url` keeps the secret is
+undocumented: the read-back checks it and the smoke procedure below confirms it.
 
 `PATCH .../hooks/ID` states: "If you previously had a secret set, you must
 provide the same secret or set a new secret or the secret will be removed." The

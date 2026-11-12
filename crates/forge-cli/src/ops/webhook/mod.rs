@@ -9,10 +9,12 @@
 //! - <https://docs.github.com/en/rest/repos/webhooks>
 //! - <https://docs.github.com/en/rest/orgs/webhooks>
 //!
-//! URL changes use `PATCH .../hooks/{id}/config` with only `url`: the
-//! configuration endpoint updates just the keys it is given, whereas
-//! `PATCH .../hooks/{id}` documents that an omitted secret is removed when a
-//! webhook is updated. The active flag has no configuration-endpoint form, so
+//! URL changes use `PATCH .../hooks/{id}/config` with only `url`. The
+//! configuration endpoint documents the secret as used "if provided" but is
+//! silent about omitted keys, whereas `PATCH .../hooks/{id}` documents that an
+//! omitted secret is removed when a webhook is updated; that the configuration
+//! endpoint keeps an omitted secret is therefore undocumented and covered by
+//! the read-back and the operator smoke procedure. The active flag has no configuration-endpoint form, so
 //! it is changed with `PATCH .../hooks/{id}` carrying only `active` (no
 //! `config`), and every write is read back to confirm nothing else changed,
 //! including that a configured secret is still set. The secret value is never

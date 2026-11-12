@@ -73,7 +73,7 @@ pub(crate) fn create(
     if !valid_url(&args.url) {
         return Err(refuse(
             "hook_url_invalid",
-            "--url must be an absolute http(s) URL without whitespace".to_string(),
+            "--url must be an absolute http(s) URL without whitespace or credentials".to_string(),
         ));
     }
     if args.events.iter().any(|event| !valid_event(event)) {

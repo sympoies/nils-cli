@@ -105,7 +105,7 @@ impl HookSpec {
                 if !valid_url(from) || !valid_url(to) {
                     return issue(
                         "hook_url_invalid",
-                        "from and to must be absolute http(s) URLs without whitespace",
+                        "from and to must be absolute http(s) URLs without whitespace or credentials",
                     );
                 }
                 if from == to {
@@ -128,11 +128,17 @@ impl HookSpec {
     }
 }
 
+/// An absolute `http(s)` URL without whitespace or embedded credentials (a
+/// URL is echoed in output, so userinfo must not be carried in it).
 pub(super) fn valid_url(value: &str) -> bool {
     value.len() <= 2048
         && !value.chars().any(|c| c.is_control() || c.is_whitespace())
-        && url::Url::parse(value)
-            .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+        && url::Url::parse(value).is_ok_and(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+        })
 }
 
 /// Outcome of one row (and the payload of a single change).
@@ -363,8 +369,26 @@ pub(super) fn apply<R: BackendRunner>(
             &["--method", "PATCH", "-F", &format!("active={to}")],
         ),
     };
-    run_call(runner, &write)?;
-    let after = read(runner, ctx, spec)?;
+    // Once the PATCH is issued, any failure (of the write itself or of the
+    // read-back, for example a 5xx or a timeout) leaves the outcome unknown, so
+    // it is reported as a possibly applied change and a batch stops.
+    let unknown = |error: ForgeError| {
+        if matches!(
+            error.kind(),
+            "org_hook_scope_missing" | "backend_unauthenticated"
+        ) {
+            // Refused before it could apply.
+            return error;
+        }
+        ForgeError::runtime_failure(
+            schema_err(),
+            "hook_readback_mismatch",
+            "the write or its read-back failed; the change may have been applied",
+            Some(format!("{}: {}", error.kind(), error.message())),
+        )
+    };
+    run_call(runner, &write).map_err(unknown)?;
+    let after = read(runner, ctx, spec).map_err(unknown)?;
     let mut expected_after = before;
     match &spec.change {
         Change::Url { to, .. } => expected_after.url = to.clone(),
@@ -422,8 +446,8 @@ pub(super) fn list_hooks<R: BackendRunner>(
     ctx: &ProviderContext,
     target: &HookTarget,
 ) -> Result<Vec<HookView>, ForgeError> {
-    // GitHub allows at most 20 webhooks per repository or organization, so
-    // one page of 100 is complete.
+    // The first page of 100 is read; the cited GitHub pages state no
+    // per-target hook limit, so a target with more hooks lists only 100.
     let output = run_call(runner, &api_call(ctx, target.path("?per_page=100"), &[]))?;
     let value: Value =
         serde_json::from_str(output.stdout.trim()).map_err(|_| invalid_response("webhook list"))?;

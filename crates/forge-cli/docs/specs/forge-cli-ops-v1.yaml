@@ -1960,7 +1960,7 @@ operations:
       local: provider_unsupported
     output:
       data: { provider, target, hooks }
-    notes: "Hooks: id, active, events, content_type, url, secret (marker [redacted] when set, otherwise null). The secret value is dropped on parse. GitHub allows at most 20 webhooks per repository, so one page is complete. org.hook.list is the same read on orgs/{org}/hooks (needs admin:org_hook; org_hook_scope_missing names the scope) and is authorized by an identity org rule only."
+    notes: "Hooks: id, active, events, content_type, url, secret (marker [redacted] when set, otherwise null). The secret value is dropped on parse. The first page of 100 hooks is read. org.hook.list is the same read on orgs/{org}/hooks (needs admin:org_hook; org_hook_scope_missing names the scope) and is authorized by an identity org rule only."
 
   - id: repo.hook.set-url
     schema_version: cli.forge-cli.repo.hook.set-url.v1
@@ -1975,7 +1975,7 @@ operations:
       local: provider_unsupported
     output:
       data: { provider, dry_run, target, hook, action, status, from, to, observed }
-    notes: "Only url is sent, through the configuration endpoint, so the secret, events and content type are untouched. Read hook; already_set when the URL equals --to; hook_value_mismatch when it is not --from; otherwise write and read back (hook_readback_mismatch unless the URL is --to and active, events, content_type, insecure_ssl and secret presence are unchanged). --dry-run reads only and reports would_update."
+    notes: "Only url is sent, through the configuration endpoint, so the secret, events and content type are untouched. Read hook; already_set when the URL equals --to; hook_value_mismatch when it is not --from; otherwise write and read back (hook_readback_mismatch if the write or its read-back fails, or unless the URL is --to and active, events, content_type, insecure_ssl and secret presence are unchanged). --dry-run reads only and reports would_update."
 
   - id: repo.hook.set-active
     schema_version: cli.forge-cli.repo.hook.set-active.v1

@@ -35,7 +35,8 @@ or repositories.
    delivery reaches `HOOK_URL_A` and its signature verifies with `SECRET`.
 3. Note the hook id with `forge-cli repo hook list --repo REPO` (or `org hook
    list --org ORG`). Confirm it shows `HOOK_URL_A`, `active: true`, and
-   `secret: "[redacted]"`.
+   `secret: "[redacted]"`. If no secret marker is shown, stop: the hook has no
+   secret recorded, so the rest of the procedure proves nothing.
 4. Switch the URL: `forge-cli repo hook set-url --repo REPO --hook ID --from
    HOOK_URL_A --to HOOK_URL_B`. Expect `status: updated`.
 5. Confirm `hook list` shows `HOOK_URL_B` and the secret still marked

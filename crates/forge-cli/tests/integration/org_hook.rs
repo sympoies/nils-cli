@@ -237,6 +237,14 @@ fn create_sends_the_secret_only_in_the_request_body_file() {
     assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
     never_leaks(&out);
     assert_no_env_secret(&out, &stub);
+    // The body file is private to the owner while the call runs, and gone after.
+    let mode = fs::read_to_string(stub.tempdir.path().join("post-mode")).unwrap();
+    assert_eq!(mode.trim(), "600");
+    let path = fs::read_to_string(stub.tempdir.path().join("post-path")).unwrap();
+    assert!(
+        !std::path::Path::new(&path).exists(),
+        "body file left behind: {path}"
+    );
     let body: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(stub.tempdir.path().join("post-body.json")).unwrap(),
     )
@@ -282,6 +290,24 @@ fn create_dry_run_posts_nothing() {
     assert_eq!(env["data"]["dry_run"], true);
     assert!(!stub.tempdir.path().join("post-body.json").exists());
     assert_eq!(calls(&stub), vec!["api orgs/acme/hooks?per_page=100"]);
+}
+
+#[test]
+fn create_refuses_credentials_in_the_url() {
+    let stub = stub(&[]);
+    let out = create(
+        &stub,
+        false,
+        "https://user:pw@new.example.test/hook",
+        &[("ORG_HOOK_SECRET", ENV_SECRET)],
+    );
+
+    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "hook_url_invalid"
+    );
+    assert!(calls(&stub).is_empty());
 }
 
 #[test]

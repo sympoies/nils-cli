@@ -21,7 +21,8 @@ const LIST_JSON: &str = r#"[{"id":7,"name":"web","active":true,"events":["push",
 /// A stub `gh` for hooks `(id, url, active)`. Flag files in its state
 /// directory: `deny` makes organization calls fail for a missing
 /// `admin:org_hook` scope; `drop-secret` makes any write silently remove the
-/// secret, as a wrong PATCH would.
+/// secret, as a wrong PATCH would; `fail-after-patch` makes every hook read
+/// after a write fail with a 502.
 pub(super) fn stub(hooks: &[(u64, &str, bool)]) -> StubEnv {
     let stub = StubEnv::new();
     let dir = stub.tempdir.path().to_path_buf();
@@ -52,6 +53,8 @@ case "$2" in
   */hooks\?per_page=100) cat "$dir/list.json" ;;
   orgs/acme/hooks)
     [ "$#" -eq 6 ] && [ "$3" = --method ] && [ "$4" = POST ] && [ "$5" = --input ] || {{ echo "unexpected create args: $*" >&2; exit 96; }}
+    stat -c %a "$6" > "$dir/post-mode"
+    printf '%s' "$6" > "$dir/post-path"
     cp "$6" "$dir/post-body.json"
     printf '{{"id":42,"active":true,"events":["push","pull_request"],"config":{{"url":"https://new.example.test/hook","content_type":"json","insecure_ssl":"0","secret":"********"}}}}\n'
     ;;
@@ -59,6 +62,7 @@ case "$2" in
     id=${{2%/config}}; id=${{id##*/}}
     [ "$#" -eq 6 ] && [ "$3" = --method ] && [ "$4" = PATCH ] && [ "$5" = -f ] && case "$6" in url=*) true;; *) false;; esac || {{ echo "unexpected config args: $*" >&2; exit 98; }}
     printf '%s' "${{6#url=}}" > "$dir/url-$id"
+    touch "$dir/patched"
     if [ -e "$dir/drop-secret" ]; then touch "$dir/secret-gone"; fi
     printf '{{"url":"%s"}}\n' "${{6#url=}}"
     ;;
@@ -67,9 +71,11 @@ case "$2" in
     if [ "$#" -gt 2 ]; then
       [ "$#" -eq 6 ] && [ "$3" = --method ] && [ "$4" = PATCH ] && [ "$5" = -F ] && case "$6" in active=true|active=false) true;; *) false;; esac || {{ echo "unexpected hook args: $*" >&2; exit 97; }}
       printf '%s' "${{6#active=}}" > "$dir/active-$id"
+      touch "$dir/patched"
       if [ -e "$dir/drop-secret" ]; then touch "$dir/secret-gone"; fi
       echo '{{}}'
     else
+      if [ -e "$dir/fail-after-patch" ] && [ -e "$dir/patched" ]; then echo 'gh: Bad Gateway (HTTP 502)' >&2; exit 1; fi
       hook "$id"
     fi
     ;;
@@ -372,6 +378,66 @@ fn a_write_that_drops_the_secret_is_reported_as_a_readback_mismatch() {
 }
 
 #[test]
+fn set_url_refuses_credentials_in_a_url() {
+    let stub = stub(&[(7, OLD, true)]);
+    let out = set_url(
+        &stub,
+        "7",
+        OLD,
+        "https://user:pw@new.example.test/hook",
+        false,
+    );
+
+    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "hook_url_invalid"
+    );
+    assert!(calls(&stub).is_empty());
+}
+
+#[test]
+fn a_failing_readback_after_the_write_is_reported_as_possibly_applied() {
+    let stub = stub(&[(7, OLD, true)]);
+    flag(&stub, "fail-after-patch");
+    let out = set_url(&stub, "7", OLD, NEW, false);
+
+    assert_eq!(out.code, 1, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["error"]["code"], "hook_readback_mismatch");
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("may have been applied")
+    );
+    assert_eq!(stored(&stub, "url", 7), NEW, "the write did land");
+}
+
+#[test]
+fn batch_stops_after_a_failing_readback() {
+    let stub = stub(&[(7, OLD, true), (8, OLD, true)]);
+    flag(&stub, "fail-after-patch");
+    let file = batch_file(
+        &stub,
+        &format!(
+            "[{},{}]",
+            url_row("acme/widgets", 7, OLD, NEW),
+            url_row("acme/widgets", 8, OLD, NEW)
+        ),
+    );
+    let out = run_batch(&stub, "repo", &file, false);
+
+    assert_eq!(out.code, 1, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    let rows = &env["data"]["rows"];
+    assert_eq!(rows[0]["error"]["kind"], "hook_readback_mismatch");
+    assert_eq!(rows[1]["status"], "skipped");
+    assert_eq!(patches(&stub).len(), 1);
+    assert_eq!(stored(&stub, "url", 8), OLD);
+}
+
+#[test]
 fn batch_reports_each_row_and_exits_non_zero_when_any_row_fails() {
     let stub = stub(&[
         (7, OLD, true),
@@ -487,6 +553,10 @@ fn batch_validates_the_whole_file_before_any_call() {
         ),
         format!(
             r#"[{good},{{"target":"acme/widgets","hook":8,"action":"delete","from":true,"to":false}}]"#
+        ),
+        // Embedded credentials are refused.
+        format!(
+            r#"[{good},{{"target":"acme/widgets","hook":8,"action":"set-url","from":"{OLD}","to":"https://user:pw@new.example.test/hook"}}]"#
         ),
         // An organization is not a repository target, and from == to is refused.
         format!("[{}]", url_row("acme", 7, OLD, NEW)),
