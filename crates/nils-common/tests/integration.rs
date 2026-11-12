@@ -17,6 +17,10 @@ mod provider_runtime_contract;
 mod forge_identity_remote;
 
 #[cfg(unix)]
+#[path = "integration/forge_identity_unasserted.rs"]
+mod forge_identity_unasserted;
+
+#[cfg(unix)]
 #[path = "integration/forge_identity_https.rs"]
 mod forge_identity_https;
 

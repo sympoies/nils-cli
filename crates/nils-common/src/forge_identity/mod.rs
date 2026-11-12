@@ -7,6 +7,7 @@ mod probe;
 mod rate_limit;
 mod replay;
 pub mod session;
+mod unasserted;
 mod verified_cache;
 pub use git::{
     authoring_remote, prepare_git, prepare_git_with_deadline, target_for_remote, verify_key,
@@ -14,6 +15,10 @@ pub use git::{
 pub use policy::{Credential, Operation, Policy, Profile, Selection, Target};
 pub use probe::with_deadline as with_probe_deadline;
 pub use replay::execute_replay_commit;
+pub use unasserted::{
+    FIX_TEXT as UNASSERTED_FIX_TEXT, Mode as UnassertedMode, is_noninteractive,
+    is_noninteractive_with, reset_notice_for_tests as reset_unasserted_notice_for_tests,
+};
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -82,7 +87,7 @@ fn config_home() -> Result<PathBuf> {
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
         .ok_or(Error::new("identity_config_unavailable"))
 }
-pub fn load() -> Result<Option<LoadedPolicy>> {
+fn read_policy() -> Result<Option<LoadedPolicy>> {
     let path = config_home()?.join("forge-cli/identity.toml");
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
@@ -94,15 +99,30 @@ pub fn load() -> Result<Option<LoadedPolicy>> {
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
     let policy = Policy::parse(&text)?;
-    // Presence, including an empty/non-Unicode value, activates strict selection.
-    // Parse first so an unreadable or malformed installed policy never bypasses.
-    if !policy.require_session_binding
+    Ok(Some(LoadedPolicy { policy, digest }))
+}
+// Presence, including an empty/non-Unicode value, activates strict selection.
+// Parse first so an unreadable or malformed installed policy never bypasses.
+fn passes_through(policy: &Policy) -> bool {
+    !policy.require_session_binding
         && policy.activation == policy::Activation::AssertedOnly
         && std::env::var_os(PRINCIPAL_ENV).is_none()
-    {
-        return Ok(None);
-    }
-    Ok(Some(LoadedPolicy { policy, digest }))
+}
+/// Load the policy for a protected operation. An `asserted-only` policy with no asserted
+/// principal passes through, subject to the `unasserted_noninteractive` gate.
+pub fn load() -> Result<Option<LoadedPolicy>> {
+    let loaded = read_policy()?;
+    Ok(match loaded {
+        Some(loaded) if passes_through(&loaded.policy) => {
+            unasserted::gate(loaded.policy.unasserted_noninteractive)?;
+            None
+        }
+        other => other,
+    })
+}
+/// Load and validate the policy without the unasserted gate (read-only diagnostics and refusal audit).
+pub fn load_ungated() -> Result<Option<LoadedPolicy>> {
+    Ok(read_policy()?.filter(|l| !passes_through(&l.policy)))
 }
 pub fn principal() -> Result<String> {
     let p = std::env::var(PRINCIPAL_ENV).map_err(|_| Error::new("identity_principal_missing"))?;
@@ -427,7 +447,7 @@ fn append_audit(record: &impl Serialize) -> Result<()> {
 }
 /// Record a refusal whose repository or policy could not be resolved. No caller text is retained.
 pub fn audit_refusal(code: &'static str) -> Result<()> {
-    if let Some(loaded) = load().ok().flatten()
+    if let Some(loaded) = load_ungated().ok().flatten()
         && loaded.policy.require_session_binding
     {
         let binding = session::current().ok();
