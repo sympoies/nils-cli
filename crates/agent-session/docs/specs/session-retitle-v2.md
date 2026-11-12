@@ -49,6 +49,13 @@ Stable readiness reasons are `ready`, `provider_not_configured`,
 `set_api_key`, `install_provider_command`, `restore_primary`, and
 `migrate_provider`.
 
+For a `codex_subscription` provider, `account_missing` means the configured
+account is absent from the broker roster, or the broker exited non-zero for
+automatic selection. The broker protocol has no typed no-account signal, so a
+rejection and a crash are indistinguishable and both report `account_missing`.
+A broker that cannot be started, times out, or returns an unusable response is
+`account_broker_unavailable`, for explicit and automatic selection alike.
+
 ## Mutation request and response
 
 The strict request object contains:
