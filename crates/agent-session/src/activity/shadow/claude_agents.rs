@@ -1,7 +1,9 @@
 //! Structured Claude session state from `claude agents --json`.
 //!
-//! The installed Claude CLI lists its active sessions with a `status` of
-//! `idle`, `busy` or `waiting` (plus `waitingFor`). The shadow sampler prefers
+//! The installed Claude CLI lists its active sessions with a `state` of
+//! `working`, `blocked`, `done`, `failed` or `stopped` when the provider
+//! reports one, and otherwise with a `status` of `idle`, `busy` or `waiting`
+//! (plus `waitingFor`). The shadow sampler prefers
 //! this provider-owned signal over screen rules and falls through to the
 //! screen only when it is unavailable, recording why. One call per provider
 //! config directory serves every session within a short window, because each
@@ -31,8 +33,8 @@ const CACHE_TTL: Duration = Duration::from_secs(2);
 /// credentials and endpoint overrides are never inherited; the only provider
 /// variable is the session's own `CLAUDE_CONFIG_DIR`.
 const INHERITED_ENV: [&str; 3] = ["HOME", "PATH", "TMPDIR"];
-/// The only `waitingFor` value observed in the provider spike (Claude Code
-/// 2.1.317). Any other value is reported as `other`, never copied.
+/// The `waitingFor` value that names an approval (provider documentation;
+/// also observed in the provider spike on Claude Code 2.1.317). Any other value is reported as `other`, never copied.
 const PERMISSION_PROMPT: &str = "permission prompt";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,6 +90,32 @@ impl Snapshot {
     }
 }
 
+/// The state of one listed session. `state` (background sessions and newer
+/// Claude Code versions) decides when present: `status` then only says
+/// whether the process is busy. `status` decides only when `state` is absent.
+fn entry_state(entry: &serde_json::Map<String, Value>) -> Result<AgentState, Unavailable> {
+    let waiting = || {
+        AgentState::Waiting(match entry.get("waitingFor").and_then(Value::as_str) {
+            Some(PERMISSION_PROMPT) => WaitingFor::PermissionPrompt,
+            _ => WaitingFor::Other,
+        })
+    };
+    match entry.get("state") {
+        Some(state) => match state.as_str() {
+            Some("working") => Ok(AgentState::Busy),
+            Some("blocked") => Ok(waiting()),
+            Some("done" | "failed" | "stopped") => Ok(AgentState::Idle),
+            _ => Err(Unavailable::UnknownState),
+        },
+        None => match entry.get("status").and_then(Value::as_str) {
+            Some("idle") => Ok(AgentState::Idle),
+            Some("busy") => Ok(AgentState::Busy),
+            Some("waiting") => Ok(waiting()),
+            _ => Err(Unavailable::UnknownState),
+        },
+    }
+}
+
 pub(super) fn parse(output: &[u8]) -> Result<Snapshot, Unavailable> {
     let value: Value = serde_json::from_slice(output).map_err(|_| Unavailable::Malformed)?;
     let entries = value.as_array().ok_or(Unavailable::Malformed)?;
@@ -97,17 +125,7 @@ pub(super) fn parse(output: &[u8]) -> Result<Snapshot, Unavailable> {
         let Some(session_id) = entry.get("sessionId").and_then(Value::as_str) else {
             continue;
         };
-        let state = match entry.get("status").and_then(Value::as_str) {
-            Some("idle") => Ok(AgentState::Idle),
-            Some("busy") => Ok(AgentState::Busy),
-            Some("waiting") => Ok(AgentState::Waiting(
-                match entry.get("waitingFor").and_then(Value::as_str) {
-                    Some(PERMISSION_PROMPT) => WaitingFor::PermissionPrompt,
-                    _ => WaitingFor::Other,
-                },
-            )),
-            _ => Err(Unavailable::UnknownState),
-        };
+        let state = entry_state(entry);
         // Two entries for one id may only agree; the list order decides nothing.
         let state = match sessions.get(session_id) {
             Some(previous) if *previous != state => Err(Unavailable::ConflictingEntries),

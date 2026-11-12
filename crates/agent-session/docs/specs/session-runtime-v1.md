@@ -131,7 +131,7 @@ contract until implemented and tested. Basis per cell:
 
 | Need | Claude (TUI in tmux) | Codex (app-server) |
 | --- | --- | --- |
-| Turn state | `claude agents --json` `status` (`idle`, `busy`, `waiting`) and `waitingFor`; `Stop` hook, completing after a one-second quiet window | `turn/started`, `turn/completed` notifications |
+| Turn state | `claude agents --json` `state` (`working`, `blocked`, `done`, `failed`, `stopped`) when present, else `status` (`idle`, `busy`, `waiting`), and `waitingFor`; `Stop` hook, completing after a one-second quiet window | `turn/started`, `turn/completed` notifications |
 | Approval request | `PermissionRequest` hook, bound to its `PreToolUse` call by turn, tool name and input digest; cleared by that call's result hook | Server requests with JSON-RPC ids |
 | Approval answer | Hook decision, while the terminal dialog stays visible | JSON-RPC response |
 | Interrupt | Keystroke, observed through `agents --json` | `turn/interrupt` |
