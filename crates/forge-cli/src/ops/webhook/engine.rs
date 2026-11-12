@@ -486,13 +486,13 @@ pub(crate) fn execute(
                 |payload| {
                     for hook in &payload.hooks {
                         // Literal markers only: the secret value is never in scope here.
-                        let secret = if hook.secret.is_some() {
+                        let marker = if hook.secret.is_some() {
                             "secret=[redacted]"
                         } else {
                             "no-secret"
                         };
                         println!(
-                            "{}\t{}\t{}\t{}\t{}\t{secret}",
+                            "{}\t{}\t{}\t{}\t{}\t{marker}",
                             hook.id,
                             if hook.active { "active" } else { "inactive" },
                             hook.events.join(","),
