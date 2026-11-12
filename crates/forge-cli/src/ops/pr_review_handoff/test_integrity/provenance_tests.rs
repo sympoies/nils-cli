@@ -201,11 +201,11 @@ fn declared_adaptation_remains_visible_and_needs_normal_declaration() {
         vec![
             diff::Finding {
                 path: "vendor/tests/import0.test.ts".into(),
-                kind: "import-adaptation"
+                kind: "import-adaptation".into()
             },
             diff::Finding {
                 path: "vendor/tests/import0.test.ts".into(),
-                kind: "new-skip"
+                kind: "new-skip".into()
             }
         ]
     );
@@ -328,11 +328,11 @@ fn existing_modified_and_deleted_tests_cannot_be_omitted_by_import_mappings() {
         vec![
             diff::Finding {
                 path: "vendor/tests/import0.test.ts".into(),
-                kind: "assertion-change"
+                kind: "assertion-change".into()
             },
             diff::Finding {
                 path: "vendor/tests/import1.test.ts".into(),
-                kind: "deleted-test"
+                kind: "deleted-test".into()
             }
         ]
     );
@@ -424,11 +424,11 @@ fn declared_additions_retain_skip_detection_patch_completeness_and_residual_limi
         vec![
             diff::Finding {
                 path: "vendor/tests/import0.test.ts".into(),
-                kind: "import-addition"
+                kind: "import-addition".into()
             },
             diff::Finding {
                 path: "vendor/tests/import0.test.ts".into(),
-                kind: "new-skip"
+                kind: "new-skip".into()
             },
         ]
     );

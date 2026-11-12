@@ -21,7 +21,8 @@ Each finding names an exact repository-relative file and one of:
 
 | Kind | Signal |
 | --- | --- |
-| `deleted-test` | Deleted test source file, rename of an old test source path, removed recognizable test signature or Rust test-module declaration |
+| `deleted-test` | Deleted test source file or rename of an old test source path |
+| `deleted-test:<name>` | One removed recognizable test signature or Rust test-module declaration, in any source file including inline `#[cfg(test)]` modules; `<name>` is the function name (for example `deleted-test:extend_applies_one_increment`) or, for other syntaxes, the compacted signature (JavaScript cases: the quoted title) |
 | `assertion-change` | Removed or edited assertion, including potential weakening |
 | `new-skip` | Added skip, ignore or expected-failure marker |
 | `import-addition` | A declared new mapped file has no upstream counterpart; inspect its complete ordinary patch |
@@ -70,7 +71,8 @@ not review admission. It uses the same complete comparison, metadata re-read
 and digest calculation as admission.
 
 For every flagged file/kind, add a row under the level-two `Test changes`
-heading in the PR body. Give a concrete reason and describe the retained
+heading in the PR body. Use one `deleted-test:<name>` row per removed test;
+a row never covers a sibling test. Give a concrete reason and describe the retained
 coverage or replacement owner. The reason must contain at least 12 characters.
 The diagnostic lists the required rows.
 
@@ -79,6 +81,7 @@ The diagnostic lists the required rows.
 
 - tests/test_api.py | assertion-change | The replacement assertion protects the supported response contract.
 - tests/test_old.py | deleted-test | The consolidated API test retains the obsolete case's contract.
+- src/api.rs | deleted-test:rejects_old_token | The remaining token test retains the obsolete case's contract.
 ```
 
 The per-PR allowlist uses the same exact file/kind format with `allow`
