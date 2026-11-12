@@ -25,6 +25,8 @@ pub(crate) use preview::{LastMessage, SessionPreviews};
 pub(crate) use row_classes::notice::human_history_prompt as history_preview_prompt;
 
 #[cfg(test)]
+mod launch_row_tests;
+#[cfg(test)]
 mod preview_regressions;
 
 pub(crate) const PROVIDER_PROMPT_CAPABILITY: &str = "provider-prompt.v1";
@@ -300,6 +302,8 @@ pub struct ProviderPromptTail {
     codex_notice_submissions: Vec<String>,
     claude_fallback_delay: Duration,
     disabled: bool,
+    /// Receipt-bound launch notice text; its `last-prompt` and queue echoes are not prompts.
+    launch_notice: Option<String>,
 }
 
 #[derive(Debug)]
@@ -372,6 +376,7 @@ impl ProviderPromptTail {
             codex_notice_submissions: Vec::new(),
             claude_fallback_delay,
             disabled: false,
+            launch_notice: None,
         })
     }
 
@@ -580,6 +585,13 @@ impl ProviderPromptTail {
                 }
             }
             ProviderKind::Claude => {
+                if self
+                    .launch_notice
+                    .as_deref()
+                    .is_some_and(|notice| crate::notice::launch::echoes_notice(&value, notice))
+                {
+                    return;
+                }
                 if let Some(prompt) = projected {
                     self.preview = Some(LastPrompt::from(prompt));
                 }
@@ -668,6 +680,7 @@ impl ProviderLastPromptTracker {
             read_preview_with_binding(&source, MAX_LAST_PROMPT_RECOVERY_BYTES, binding);
         tail.goal = goal;
         tail.messages = messages;
+        tail.launch_notice = binding.map(|binding| binding.1.clone());
         tail.restore_display_partial().ok()?;
         if validate_source_identity
             && (!source_still_matches(&source)
@@ -1426,6 +1439,23 @@ fn mask_bound_launch(buffer: &mut [u8], start: u64, binding: &(u64, String, Stri
         && crate::notice::launch::bound_row(binding, binding.0, &buffer[relative..end], &value)
     {
         buffer[relative..end - 1].fill(b' ');
+    }
+    // Claude echoes the launch text in `last-prompt` and queue rows.
+    let marker = b"agent-notice:v1";
+    let mut line_start = 0;
+    while line_start < buffer.len() {
+        let line_end = buffer[line_start..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(buffer.len(), |n| line_start + n);
+        let line = &buffer[line_start..line_end];
+        if line.windows(marker.len()).any(|window| window == marker)
+            && serde_json::from_slice::<Value>(line)
+                .is_ok_and(|value| crate::notice::launch::echoes_notice(&value, &binding.1))
+        {
+            buffer[line_start..line_end].fill(b' ');
+        }
+        line_start = line_end + 1;
     }
 }
 

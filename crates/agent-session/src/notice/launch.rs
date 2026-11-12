@@ -76,6 +76,16 @@ pub(crate) fn matches_row(value: &Value, text: &str) -> bool {
         && value["message"]["content"].as_str().and_then(unwrap_paste) == Some(text)
 }
 
+/// Claude repeats the launch text in `last-prompt` and queued-input rows.
+pub(crate) fn echoes_notice(value: &Value, text: &str) -> bool {
+    let echoed = match value["type"].as_str() {
+        Some("last-prompt") => value["lastPrompt"].as_str(),
+        Some("queue-operation") if value["operation"] == "enqueue" => value["content"].as_str(),
+        _ => None,
+    };
+    echoed.and_then(unwrap_paste) == Some(text)
+}
+
 pub(crate) fn bound_row(
     binding: &(u64, String, String),
     offset: u64,
