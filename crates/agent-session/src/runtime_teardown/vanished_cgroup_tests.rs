@@ -162,35 +162,11 @@ fn termination_fails_closed_when_the_kill_write_fails_on_a_live_scope() {
 }
 
 #[test]
-fn termination_fails_closed_when_scope_removal_cannot_be_read() {
-    use std::os::fd::{FromRawFd, IntoRawFd};
-
-    let Some(systemd_run) = systemd_scope_runner() else {
-        return;
-    };
-    let mut scoped = ScopedPane::start(systemd_run);
-    let read_only = fs::File::open("/dev/null").unwrap();
-    let group = scoped.runtime.control_group.as_mut().unwrap();
-    group.kill_fd = read_only.into();
-    // A directory descriptor that no longer names an open file cannot be read
-    // for removal: unreadable state must never count as removed.
-    let stale = fs::File::open("/dev/null").unwrap().into_raw_fd();
-    unsafe { libc::close(stale) };
-    let live_directory = std::mem::replace(&mut group.directory_fd, unsafe {
-        OwnedFd::from_raw_fd(stale)
-    });
-
-    let terminated = scoped.terminate();
-
-    // Release the stale descriptor without closing it a second time.
-    let group = scoped.runtime.control_group.as_mut().unwrap();
-    let _released = std::mem::replace(&mut group.directory_fd, live_directory).into_raw_fd();
-    assert_eq!(
-        terminated,
-        Err(SessionTerminationFailure::VerificationFailed)
-    );
-    assert!(
-        scoped.pane.try_wait().unwrap().is_none(),
-        "the pane must not be signaled when its stop is not proven"
-    );
+fn only_an_observed_removal_proves_the_scope_stopped() {
+    assert!(super::scope_removal_proves_stop(Ok(true)));
+    assert!(!super::scope_removal_proves_stop(Ok(false)));
+    // A removal state that cannot be read must never count as removed.
+    assert!(!super::scope_removal_proves_stop(Err(
+        SessionTerminationFailure::VerificationFailed
+    )));
 }

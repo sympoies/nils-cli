@@ -106,6 +106,13 @@ pub(super) fn tmux_kill_captured_runtime_with_timeout(
     }
 }
 
+/// Only a positively observed removal proves the scope's stop: a removal state
+/// that cannot be read must never count as removed.
+#[cfg(target_os = "linux")]
+fn scope_removal_proves_stop(removed: Result<bool, SessionTerminationFailure>) -> bool {
+    matches!(removed, Ok(true))
+}
+
 pub(super) fn terminate_captured_process_runtime(
     identity: &TmuxRuntimeIdentity,
     pinned_runtime: &mut PinnedProcessRuntime,
@@ -134,7 +141,7 @@ pub(super) fn terminate_captured_process_runtime(
             // directory proves that stop; the checks below still verify it.
             Err(SessionTerminationFailure::VerificationFailed)
                 if pinned_runtime.control_group.as_ref().is_some_and(|group| {
-                    pinned_control_group_was_removed(&group.directory_fd).unwrap_or(false)
+                    scope_removal_proves_stop(pinned_control_group_was_removed(&group.directory_fd))
                 }) => {}
             Err(reason) => return Err(reason),
         }
