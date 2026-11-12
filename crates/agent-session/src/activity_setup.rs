@@ -25,6 +25,18 @@ pub(super) fn forward_activity_setup_to_agent_hook(
         &nils_common::provider_entrypoint::selector(true),
         "provider-entrypoint",
     ]);
+    // The hook that writes the provider config renders the session binary name
+    // it was built with. Unless the caller pins `AGENT_SESSION_BIN`, the selector
+    // takes the hook beside this executable (the same release) before any trusted
+    // root, provided it is owner-controlled. Without such a hook the variable
+    // stays unset and the trusted roots apply; an executable
+    // not running under the configured name also falls through to them.
+    if std::env::var_os("AGENT_SESSION_BIN").is_none_or(|value| value.is_empty())
+        && let Ok(current) = std::env::current_exe()
+        && sibling_hook_is_selectable(&current)
+    {
+        command.env("AGENT_SESSION_BIN", current);
+    }
     command.args([
         "setup",
         "--product",
@@ -156,4 +168,15 @@ pub(super) fn forward_activity_setup_to_agent_hook(
         Value::String("agent-hook".to_string()),
     );
     Ok(Value::Object(result))
+}
+
+/// The hook the selector would run beside `current`: owner-controlled and
+/// resolving into the same directory (a link elsewhere makes it exit 127).
+fn sibling_hook_is_selectable(current: &std::path::Path) -> bool {
+    let hook = current.with_file_name("agent-hook");
+    nils_common::session_binary::is_owner_controlled_executable(&hook)
+        && match (std::fs::canonicalize(&hook), std::fs::canonicalize(current)) {
+            (Ok(hook), Ok(session)) => hook.parent() == session.parent(),
+            _ => false,
+        }
 }
