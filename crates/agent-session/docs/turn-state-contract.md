@@ -467,7 +467,9 @@ Claude Code 2.1.317 and the research-preview agent view; see
   `TMPDIR` and the session's `CLAUDE_CONFIG_DIR` only. API-key style
   credentials and endpoint overrides are never inherited.
 - **Match.** An entry matches a session by its provider session id
-  (`provider_resume.session_id`) equal to the entry `sessionId`.
+  (`provider_resume.session_id`) equal to the entry `sessionId`. Duplicate
+  entries for one id resolve only when they agree; conflicting ones are
+  unavailable, never decided by list order.
 - **Mapping.** `busy` projects `working`, `idle` projects `waiting`, and
   `waiting` projects `needs_input`. `waitingFor: "permission prompt"` is
   recorded as `claude_agents_waiting_permission_prompt` and any other reason
@@ -480,12 +482,17 @@ Claude Code 2.1.317 and the research-preview agent view; see
   marker below, without the screen marker's composer check.
 - **Fallthrough.** When the binary is missing, the call times out or fails,
   the output is malformed, the session has no provider session id, no entry
-  matches, or the status is not `idle`, `busy` or `waiting`, the screen rules
+  matches, entries for it conflict, or the status is not `idle`, `busy` or
+  `waiting`, the screen rules
   decide. The resulting observation (`observer_version: terminal-shadow.v1`)
   carries `claude_agents_unavailable` with one of `binary_missing`, `timeout`,
-  `failed`, `malformed`, `no_provider_session`, `unmatched` or
-  `unknown_state`. The activity stream carries `rule_id` and
+  `failed`, `malformed`, `no_provider_session`, `unmatched`,
+  `conflicting_entries` or `unknown_state`. The activity stream carries `rule_id` and
   `observer_version` only; the reason appears in session views.
+
+The `waiting` and `waitingFor` fixtures follow the provider spike and were
+not live captured; only the `idle` and `busy` entries match output captured
+from the installed CLI.
 
 Screen rules stay in place as the fallback; removing them is tracked
 separately.

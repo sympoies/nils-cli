@@ -107,6 +107,41 @@ fn unlisted_session_is_unmatched() {
     );
 }
 
+fn entry(session_id: &str, status: &str) -> serde_json::Value {
+    json!({"sessionId": session_id, "status": status, "pid": 1})
+}
+
+#[test]
+fn conflicting_duplicate_entries_are_unavailable_in_either_order() {
+    for entries in [
+        [entry(BUSY_ID, "busy"), entry(BUSY_ID, "idle")],
+        [entry(BUSY_ID, "idle"), entry(BUSY_ID, "busy")],
+    ] {
+        let snapshot = parse(json!(entries).to_string().as_bytes()).unwrap();
+        assert_eq!(
+            snapshot.state(BUSY_ID),
+            Err(Unavailable::ConflictingEntries),
+            "{entries:?}"
+        );
+    }
+}
+
+#[test]
+fn identical_duplicate_entries_still_resolve() {
+    let snapshot = parse(
+        json!([
+            entry(BUSY_ID, "busy"),
+            entry(BUSY_ID, "busy"),
+            entry(IDLE_ID, "idle")
+        ])
+        .to_string()
+        .as_bytes(),
+    )
+    .unwrap();
+    assert_eq!(snapshot.state(BUSY_ID), Ok(AgentState::Busy));
+    assert_eq!(snapshot.state(IDLE_ID), Ok(AgentState::Idle));
+}
+
 #[test]
 fn unrecognized_status_is_unavailable_for_that_session_only() {
     let snapshot = parse(MIXED.as_bytes()).unwrap();
@@ -135,6 +170,7 @@ fn unavailability_codes_are_stable() {
         (Unavailable::NoProviderSession, "no_provider_session"),
         (Unavailable::Unmatched, "unmatched"),
         (Unavailable::UnknownState, "unknown_state"),
+        (Unavailable::ConflictingEntries, "conflicting_entries"),
     ];
     for (reason, code) in codes {
         assert_eq!(reason.code(), code);

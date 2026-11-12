@@ -58,6 +58,7 @@ pub(super) enum Unavailable {
     NoProviderSession,
     Unmatched,
     UnknownState,
+    ConflictingEntries,
 }
 
 impl Unavailable {
@@ -70,6 +71,7 @@ impl Unavailable {
             Self::NoProviderSession => "no_provider_session",
             Self::Unmatched => "unmatched",
             Self::UnknownState => "unknown_state",
+            Self::ConflictingEntries => "conflicting_entries",
         }
     }
 }
@@ -105,6 +107,11 @@ pub(super) fn parse(output: &[u8]) -> Result<Snapshot, Unavailable> {
                 },
             )),
             _ => Err(Unavailable::UnknownState),
+        };
+        // Two entries for one id may only agree; the list order decides nothing.
+        let state = match sessions.get(session_id) {
+            Some(previous) if *previous != state => Err(Unavailable::ConflictingEntries),
+            _ => state,
         };
         sessions.insert(session_id.to_string(), state);
     }
