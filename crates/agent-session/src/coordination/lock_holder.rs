@@ -7,12 +7,14 @@
 //! paths or message content, and is advisory: the lock itself stays the only
 //! source of mutual exclusion.
 use std::{
-    fs, io,
-    path::{Path, PathBuf},
+    fs::{File, OpenOptions},
+    io::Write,
+    os::unix::fs::OpenOptionsExt,
+    path::Path,
+    sync::OnceLock,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use nils_common::fs::write_atomic;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -54,6 +56,8 @@ impl HolderClass {
 struct Descriptor {
     operation: String,
     pid: u32,
+    // Distinguishes the holder from an unrelated process that reuses its pid.
+    process_start: Option<u64>,
     acquired_at_epoch_ms: u64,
 }
 
@@ -66,10 +70,14 @@ fn now_epoch_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-/// The sidecar this holder published; removed on drop. The owner drops it
-/// before releasing the lock so a successor's descriptor is never removed.
+/// The sidecar this holder wrote; cleared on drop. The owner drops it before
+/// releasing the lock so a successor's descriptor is never cleared.
+///
+/// The write is advisory and runs while the lock is held, so it stays cheap:
+/// one sidecar is rewritten in place, with no fsync and no rename. A reader
+/// racing the rewrite sees an unparsable file and reports no holder.
 pub(super) struct PublishedHolder {
-    path: PathBuf,
+    file: File,
 }
 
 impl PublishedHolder {
@@ -79,32 +87,57 @@ impl PublishedHolder {
         let descriptor = Descriptor {
             operation: class.as_str().to_string(),
             pid: std::process::id(),
+            process_start: own_process_start(),
             acquired_at_epoch_ms: now_epoch_ms(),
         };
-        let path = root.join(HOLDER_FILE);
         let bytes = serde_json::to_vec(&descriptor).ok()?;
-        write_atomic(&path, &bytes, SECRET_FILE_MODE).ok()?;
-        Some(Self { path })
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(SECRET_FILE_MODE)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(root.join(HOLDER_FILE))
+            .ok()?;
+        file.write_all(&bytes).ok()?;
+        Some(Self { file })
     }
 }
 
 impl Drop for PublishedHolder {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        let _ = self.file.set_len(0);
     }
 }
 
-fn process_is_gone(pid: u32) -> bool {
-    let Ok(pid) = libc::pid_t::try_from(pid) else {
-        return true;
-    };
-    if pid == 0 {
-        return true;
+/// This process's start time never changes, so it is read once per process.
+fn own_process_start() -> Option<u64> {
+    static OWN: OnceLock<(u32, Option<u64>)> = OnceLock::new();
+    let pid = std::process::id();
+    let (cached_pid, start) = OWN.get_or_init(|| (pid, process_start(pid)));
+    if *cached_pid == pid {
+        *start
+    } else {
+        process_start(pid)
     }
-    // SAFETY: signal 0 only probes for the process.
-    let alive = unsafe { libc::kill(pid, 0) } == 0
-        || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
-    !alive
+}
+
+/// Kernel start time of a live, non-zombie process (Linux `/proc` identity,
+/// as used by `process_observation`); `None` when it cannot be confirmed.
+#[cfg(target_os = "linux")]
+pub(super) fn process_start(pid: u32) -> Option<u64> {
+    let pid = libc::pid_t::try_from(pid).ok()?;
+    match crate::read_linux_process_identity(pid) {
+        Ok(Some(identity)) if !identity.zombie => Some(identity.start_time),
+        _ => None,
+    }
+}
+
+// No portable process start time exists here, so ownership is never
+// confirmed and a descriptor is always reported stale.
+#[cfg(not(target_os = "linux"))]
+pub(super) fn process_start(_pid: u32) -> Option<u64> {
+    None
 }
 
 fn describe(root: &Path) -> Option<Value> {
@@ -113,9 +146,11 @@ fn describe(root: &Path) -> Option<Value> {
     HolderClass::ALL
         .iter()
         .find(|class| class.as_str() == descriptor.operation)?;
-    if process_is_gone(descriptor.pid) {
-        // The holder crashed or was killed without retiring its descriptor, so
-        // nothing in it describes the current holder.
+    let owner_confirmed = descriptor.process_start.is_some()
+        && process_start(descriptor.pid) == descriptor.process_start;
+    if !owner_confirmed {
+        // The holder exited without retiring its descriptor (or its pid was
+        // reused), so nothing in it describes the current holder.
         return Some(json!({ "state": "stale" }));
     }
     Some(json!({

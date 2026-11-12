@@ -189,19 +189,23 @@ and runtime/storage failures use the runtime exit code.
 ### Registry lock holder
 
 While a caller holds the coordination registry lock it publishes a private
-descriptor sidecar (`registry.holder`, next to `registry.lock`) and removes it
-before releasing the lock. The descriptor has exactly three fields: `operation`
+descriptor sidecar (`registry.holder`, next to `registry.lock`) and empties it
+before releasing the lock. The descriptor has exactly four fields: `operation`
 (one of `full-maintenance`, `observational`, `lifecycle`, `reminder`), `pid`,
-and `acquired_at_epoch_ms`. It carries no session id, token, path, or message
-content. The lock bound (2 s), idempotency, and error codes are unchanged.
+`process_start` (the holder's kernel start time, which tells it apart from an
+unrelated process that reuses the pid), and `acquired_at_epoch_ms`. It carries
+no session id, token, path, or message content. The lock bound (2 s),
+idempotency, and error codes are unchanged.
 
 A `coordination-lock-timeout` raised for the registry lock gains an additive
 `details.holder` object when a descriptor is readable:
 
 - `{"state": "active", "operation": <class>, "pid": <pid>, "held_ms": <ms>}`
-  when the holder process is still running;
-- `{"state": "stale"}` when the holder process is gone. A stale descriptor is
-  never trusted: its class, pid, and age are not reported.
+  when the process at `pid` is still running with the recorded start time;
+- `{"state": "stale"}` when the holder is gone, its pid was reused, or ownership
+  cannot be confirmed (the start time is read from Linux `/proc`, so other
+  platforms always report stale). A stale descriptor is never trusted: its
+  class, pid, and age are not reported.
 
 The object is absent when no valid descriptor exists, for example when the
 holder has not published yet or holds the lock through another entry point.
