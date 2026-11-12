@@ -11,6 +11,20 @@ The existing turn signals stay owned by
 [Turn state contract](../turn-state-contract.md), and terminal input and attach
 stay owned by [Serve terminal transport v1](serve-terminal-v1.md).
 
+## Evidence basis
+
+Provider facts in this document come from the #3585 spike, read and measured
+on 2026-11-12 against Claude Code 2.1.317, the Claude Agent SDK 0.3.322 and
+`codex-cli` 0.162.1. They are pinned to those versions; the provider signals
+are not a stable contract. Statements are labeled where it matters:
+
+- **[F]** fact: measured in the spike or quoted from the provider's documents.
+- **[I]** inference: reasoned from facts, including from the absence of a
+  documented feature.
+- **[N]** not measured.
+
+Unlabeled sentences are requirements or decisions, not provider claims.
+
 ## Direction
 
 The target is hybrid. Wherever a provider offers an official structured source,
@@ -23,13 +37,20 @@ session in the real provider terminal UI.
 | Codex | `codex app-server` owns the thread | JSON-RPC turn, interrupt, steer and approval requests | Codex TUI attached to the same app-server |
 | Claude | Claude TUI in tmux (option C) | `claude agents --json` state, hook events, transcript | The tmux pane itself |
 
+The Codex row is **[F]** from the generated app-server protocol schema and one
+real-turn probe (n=1: start, turn, restart, resume, fork). Attaching the Codex
+TUI with `--remote` is **[F]** from the CLI help only; the spike did **[N]**
+exercise it.
+
 Maintainer decision, 2026-11-12, recorded on #3585: option C for Claude.
 Options evaluated in the spike (comment on #3585):
 
 - **Full Claude Agent SDK runtime (option A): not adopted** as a default.
-  It gives structured turn, interrupt and approval signals, but Claude offers
-  no supported way to attach a live terminal UI to an SDK or stream-json
-  session.
+  It gives structured turn, interrupt and approval signals **[F]**, but Claude
+  offers no supported way to attach a live terminal UI to an SDK or
+  stream-json session **[I]**: none was found in the provider documents and
+  package read in the spike, two long documentation pages of which were read
+  only in part.
 - **Mode-switch hybrid (option B): possible later opt-in, not scheduled.** A
   switch between an SDK process and the terminal UI costs a few seconds and
   loses runtime state such as the permission mode. It could return as an
@@ -51,8 +72,12 @@ Each requirement uses RFC 2119 terms.
    document MUST name it. When a structured source replaces a heuristic, the
    same change deletes the heuristic; the two are not kept side by side.
 3. **Single writer.** At most one writer MAY drive a provider session id at any
-   time. A writer is any process that can submit input to or resume the
-   session: a terminal UI, a stream-json or SDK host, an app-server client.
+   time. A writer is a provider process that owns the session's live
+   conversation state and can append to it: a terminal UI process, or a
+   stream-json or SDK host process. Clients of a process that already is the
+   writer are views of it, not writers: a Codex TUI attached to the app-server
+   and control-channel prompts to the same thread are clients of the
+   app-server, which is the single writer and serializes their turns.
 4. **Provider environment.** A process spawned by a runtime MUST receive an
    explicitly built environment. It MUST NOT inherit API-key style credentials
    or endpoint overrides unless the session is configured for API billing, and
@@ -69,10 +94,12 @@ Each requirement uses RFC 2119 terms.
 
 ## Single-writer rule
 
-The spike measured that Claude provides no session lock: a stream-json resume
-succeeded while a terminal UI held the same session open, neither side saw the
-other's turn, and the later resume followed one branch so the other turn left
-the effective context. The runtime therefore owns the rule:
+The spike measured, once (n=1, Claude Code 2.1.317, **[F]**), that Claude
+provides no session lock: a stream-json resume succeeded while a terminal UI
+held the same session open, neither side saw the other's turn, and the later
+resume followed one branch so the other turn left the effective context. One
+run does not bound how often or how silently this happens, so the rule below
+is a requirement, not a tuned mitigation. The runtime therefore owns it:
 
 | Part | Requirement |
 | --- | --- |
@@ -80,15 +107,25 @@ the effective context. The runtime therefore owns the rule:
 | Acquire | Before any resume or attach, check the lease and the provider's live-process listing for the session id. Refuse when another writer holds it. |
 | Handoff | An explicit command: stop the current writer, verify its process has exited, release the lease, then start the next writer. |
 | Notification | The registry records the handoff. The outgoing writer learns by its own exit; the incoming writer by acquiring the lease. |
-| Codex | The app-server owns running threads. Clients attach to that process; they do not resume a separate copy of a running thread. |
+| Codex | The app-server is the writer for its running threads. The TUI and control-channel clients attach to that process as views; no separate process resumes a copy of a running thread. |
 
 Stale leases after a crash and the exact registry location are open questions
 below.
 
 ## Provider signal map
 
-This map is current evidence for the pinned provider versions in the spike. It
-is not a contract until implemented and tested.
+This map is current evidence for the pinned versions above. It is not a
+contract until implemented and tested. Basis per cell:
+
+- Claude turn state, approval request and approval answer: **[F]**, measured
+  on one tmux session per signal (n=1; the hook decision allow and deny once
+  each).
+- Claude interrupt by keystroke (observed through `agents --json`, n=1) and
+  Claude input, images and model switching by keystrokes and file references:
+  the interrupt is **[F]**; that no structured channel exists for the rest is
+  **[I]**.
+- Codex cells: **[F]** from the schema; turn lifecycle, resume and fork from
+  the one probe; interrupt, steer and approval answers **[N]** exercised.
 
 | Need | Claude (TUI in tmux) | Codex (app-server) |
 | --- | --- | --- |
@@ -108,7 +145,9 @@ Order only; each step is its own issue.
 2. Single-writer lease, handoff command and pre-attach liveness check.
 3. Approval answers through the `PermissionRequest` hook with id correlation.
 4. Codex slices #3582, #3583 and #3584 under this document.
-5. Optional unattended stream-json runtime, only after a maintainer decision.
+
+Not scheduled: an opt-in unattended stream-json runtime (option B). It would
+need its own maintainer decision and would reuse the single-writer rule.
 
 ## Open questions
 
