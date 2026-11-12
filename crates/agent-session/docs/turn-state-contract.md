@@ -504,7 +504,8 @@ the research-preview agent view; see
   and `projection: unknown`. Its `claude_agents_unavailable` metadata reason
   is `binary_missing`, `timeout`, `failed`, `malformed`,
   `no_provider_session`, `unmatched`, `conflicting_entries` or `unknown_state`.
-  Session views project `unknown` with that reason in both the observation and
+- **Unavailable diagnostics.** Session views project `unknown` with that reason
+  in both the observation and
   activity diagnostic; the open turn, last outcome and durable hook state are
   preserved. The activity stream carries the fixed diagnostic and rule metadata.
   `activity doctor` describes the structured-state dependency. No Claude pane
