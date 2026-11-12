@@ -17,7 +17,9 @@
 
 ### Evidence
 
-- Focused launch_row and provider_prompt tests plus local-fast pass; each truncated-prefix guard was mutated one at a time and failed the new guard test
+- Focused launch_row and provider_prompt tests plus local-fast pass; each
+  truncated-prefix guard was mutated one at a time and failed the new guard
+  test
 
 ### Links
 
