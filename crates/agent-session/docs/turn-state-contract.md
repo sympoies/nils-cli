@@ -455,9 +455,17 @@ For a running Claude session the shadow sampler reads the provider's own
 state first and uses screen rules only when it is unavailable. The source is
 `claude agents --json` of the installed `claude` binary (resolved like other
 provider binaries, never from a session record). Provider facts are pinned to
-Claude Code 2.1.317 and the research-preview agent view; see
+the research-preview agent view; see
 [Session runtime v1](specs/session-runtime-v1.md).
 
+- **Supported versions.** Two entry shapes are read. The `status` shape
+  (`idle`, `busy`, `waiting`, plus `waitingFor`) was captured from Claude Code
+  2.1.317. The `state` shape (`working`, `blocked`, `done`, `failed`,
+  `stopped`) is read from the provider's current documentation of
+  `claude agents --json` ([agent view](https://code.claude.com/docs/en/agent-view));
+  it documents no minimum version, and public reports show `state` alongside
+  `status` from 2.1.310. The `state` fixtures are synthetic. A version that
+  reports neither field value set reads as `unknown_state` and falls through.
 - **Call.** One call per provider config directory serves every session
   sampled within a 2-second window; sessions sharing a directory never spawn
   per session. Each config directory has its own registry, so a session with
@@ -470,10 +478,16 @@ Claude Code 2.1.317 and the research-preview agent view; see
   (`provider_resume.session_id`) equal to the entry `sessionId`. Duplicate
   entries for one id resolve only when they agree; conflicting ones are
   unavailable, never decided by list order.
-- **Mapping.** `busy` projects `working`, `idle` projects `waiting`, and
-  `waiting` projects `needs_input`. `waitingFor: "permission prompt"` is
-  recorded as `claude_agents_waiting_permission_prompt` and any other reason
-  as `claude_agents_waiting_other`; provider text is never copied.
+- **Mapping.** `state` decides when the entry has one, and `status` then only
+  says whether the process is busy; `status` decides only when `state` is
+  absent. `state: working` projects `working`; `blocked` projects
+  `needs_input`; `done`, `failed` and `stopped` project `waiting` (not
+  working). Without `state`, `busy` projects `working`, `idle` projects
+  `waiting` and `waiting` projects `needs_input`.
+  `waitingFor: "permission prompt"` is recorded as
+  `claude_agents_waiting_permission_prompt` and any other or missing reason as
+  `claude_agents_waiting_other`; provider text is never copied. The rule id
+  does not say which field decided.
 - **Evidence.** The observation has `observer_version: claude-agents.v1` and a
   `rule_id` of `claude_agents_busy`, `claude_agents_idle`,
   `claude_agents_waiting_permission_prompt` or `claude_agents_waiting_other`.
@@ -482,9 +496,10 @@ Claude Code 2.1.317 and the research-preview agent view; see
   marker below, without the screen marker's composer check.
 - **Fallthrough.** When the binary is missing, the call times out or fails,
   the output is malformed, the session has no provider session id, no entry
-  matches, entries for it conflict, or the status is not `idle`, `busy` or
-  `waiting`, the screen rules
-  decide. The resulting observation (`observer_version: terminal-shadow.v1`)
+  matches, entries for it conflict, the `state` is present but not one of
+  the five values above (its `status` is then not consulted), or the status
+  of an entry without `state` is not `idle`, `busy` or `waiting`, the screen
+  rules decide. The resulting observation (`observer_version: terminal-shadow.v1`)
   carries `claude_agents_unavailable` with one of `binary_missing`, `timeout`,
   `failed`, `malformed`, `no_provider_session`, `unmatched`,
   `conflicting_entries` or `unknown_state`. The activity stream carries `rule_id` and
@@ -492,7 +507,8 @@ Claude Code 2.1.317 and the research-preview agent view; see
 
 The `waiting` and `waitingFor` fixtures follow the provider spike and were
 not live captured; only the `idle` and `busy` entries match output captured
-from the installed CLI.
+from the installed CLI. The `state` fixtures are synthetic and follow the
+provider documentation.
 
 Screen rules stay in place as the fallback; removing them is tracked
 separately.

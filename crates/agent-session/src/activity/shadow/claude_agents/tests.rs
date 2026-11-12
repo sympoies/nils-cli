@@ -14,12 +14,20 @@ use super::*;
 use crate::{CliContext, activity};
 
 const MIXED: &str = include_str!("../../../../tests/fixtures/claude-agents/mixed.json");
+const WITH_STATE: &str = include_str!("../../../../tests/fixtures/claude-agents/with-state.json");
 const MALFORMED: &str = include_str!("../../../../tests/fixtures/claude-agents/malformed.txt");
 const IDLE_ID: &str = "00000000-0000-4000-8000-000000000001";
 const BUSY_ID: &str = "00000000-0000-4000-8000-000000000002";
 const WAITING_ID: &str = "00000000-0000-4000-8000-000000000003";
 const WAITING_OTHER_ID: &str = "00000000-0000-4000-8000-000000000004";
 const PAUSED_ID: &str = "00000000-0000-4000-8000-000000000005";
+const STATE_WORKING_IDLE_PROCESS_ID: &str = "00000000-0000-4000-8000-000000000011";
+const STATE_BLOCKED_PROMPT_ID: &str = "00000000-0000-4000-8000-000000000012";
+const STATE_BLOCKED_NO_PROCESS_ID: &str = "00000000-0000-4000-8000-000000000013";
+const STATE_DONE_BUSY_PROCESS_ID: &str = "00000000-0000-4000-8000-000000000014";
+const STATE_FAILED_ID: &str = "00000000-0000-4000-8000-000000000015";
+const STATE_STOPPED_ID: &str = "00000000-0000-4000-8000-000000000016";
+const STATE_UNKNOWN_ID: &str = "00000000-0000-4000-8000-000000000017";
 
 fn write_script(path: &Path, body: &str) {
     fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
@@ -28,8 +36,13 @@ fn write_script(path: &Path, body: &str) {
 
 /// A stub `claude` that counts calls and prints the mixed fixture.
 fn counting_claude(dir: &Path) -> (PathBuf, PathBuf) {
+    counting_claude_printing(dir, MIXED)
+}
+
+/// A stub `claude` that counts calls and prints the given listing.
+fn counting_claude_printing(dir: &Path, listing: &str) -> (PathBuf, PathBuf) {
     let fixture = dir.join("agents.json");
-    fs::write(&fixture, MIXED).unwrap();
+    fs::write(&fixture, listing).unwrap();
     let calls = dir.join("calls");
     let bin = dir.join("claude");
     write_script(
@@ -116,6 +129,29 @@ fn conflicting_duplicate_entries_are_unavailable_in_either_order() {
     for entries in [
         [entry(BUSY_ID, "busy"), entry(BUSY_ID, "idle")],
         [entry(BUSY_ID, "idle"), entry(BUSY_ID, "busy")],
+    ] {
+        let snapshot = parse(json!(entries).to_string().as_bytes()).unwrap();
+        assert_eq!(
+            snapshot.state(BUSY_ID),
+            Err(Unavailable::ConflictingEntries),
+            "{entries:?}"
+        );
+    }
+}
+
+#[test]
+fn a_conflict_among_three_duplicate_entries_is_not_resolved_by_a_later_agreeing_entry() {
+    for entries in [
+        [
+            entry(BUSY_ID, "busy"),
+            entry(BUSY_ID, "idle"),
+            entry(BUSY_ID, "busy"),
+        ],
+        [
+            entry(BUSY_ID, "idle"),
+            entry(BUSY_ID, "busy"),
+            entry(BUSY_ID, "idle"),
+        ],
     ] {
         let snapshot = parse(json!(entries).to_string().as_bytes()).unwrap();
         assert_eq!(
@@ -477,5 +513,214 @@ fn idle_provider_state_over_an_open_turn_is_sustained_uncertainty() {
     assert_eq!(
         state.diagnostic.map(|diagnostic| diagnostic.reason),
         Some("interrupted_suspected".to_string())
+    );
+}
+
+#[test]
+fn state_field_decides_and_status_only_says_whether_the_process_is_busy() {
+    let snapshot = parse(WITH_STATE.as_bytes()).unwrap();
+    // `state: working` outranks `status: idle`.
+    assert_eq!(
+        snapshot.state(STATE_WORKING_IDLE_PROCESS_ID),
+        Ok(AgentState::Busy)
+    );
+    assert_eq!(
+        snapshot.state(STATE_BLOCKED_PROMPT_ID),
+        Ok(AgentState::Waiting(WaitingFor::PermissionPrompt))
+    );
+    // Blocked without a live process names no prompt.
+    assert_eq!(
+        snapshot.state(STATE_BLOCKED_NO_PROCESS_ID),
+        Ok(AgentState::Waiting(WaitingFor::Other))
+    );
+    // `state: done` outranks `status: busy`; failed and stopped have no status.
+    for id in [
+        STATE_DONE_BUSY_PROCESS_ID,
+        STATE_FAILED_ID,
+        STATE_STOPPED_ID,
+    ] {
+        assert_eq!(snapshot.state(id), Ok(AgentState::Idle), "{id}");
+    }
+}
+
+#[test]
+fn unknown_state_is_unavailable_and_does_not_fall_back_to_status() {
+    let snapshot = parse(WITH_STATE.as_bytes()).unwrap();
+    assert_eq!(
+        snapshot.state(STATE_UNKNOWN_ID),
+        Err(Unavailable::UnknownState)
+    );
+    assert_eq!(
+        snapshot.state(STATE_FAILED_ID),
+        Ok(AgentState::Idle),
+        "one unknown entry must not affect another"
+    );
+}
+
+#[test]
+fn a_state_that_is_not_a_string_is_unknown() {
+    let snapshot = parse(
+        json!([{"sessionId": BUSY_ID, "status": "busy", "state": null}])
+            .to_string()
+            .as_bytes(),
+    )
+    .unwrap();
+    assert_eq!(snapshot.state(BUSY_ID), Err(Unavailable::UnknownState));
+}
+
+#[test]
+fn sampler_reads_state_over_status_end_to_end() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (bin, _) = counting_claude_printing(tmp.path(), WITH_STATE);
+    let _bin = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_BIN", bin.to_str().unwrap());
+    let _config = EnvGuard::remove(&lock, "CLAUDE_CONFIG_DIR");
+    let sampled = running_turn(STATE_WORKING_IDLE_PROCESS_ID);
+
+    sampled.collect(true);
+    let document = sampled.wait_for_document(|_| true);
+
+    assert_eq!(document.observation.observer_version, OBSERVER_VERSION);
+    assert_eq!(document.observation.rule_id, "claude_agents_busy");
+    assert_eq!(document.observation.projection, "working");
+    assert!(!sampled.captures.exists(), "the screen was sampled anyway");
+}
+
+#[test]
+fn unknown_state_falls_through_to_the_screen_and_says_so() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (bin, _) = counting_claude_printing(tmp.path(), WITH_STATE);
+    let _bin = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_BIN", bin.to_str().unwrap());
+    let _config = EnvGuard::remove(&lock, "CLAUDE_CONFIG_DIR");
+    let sampled = running_turn(STATE_UNKNOWN_ID);
+
+    sampled.collect(true);
+    let document = sampled.wait_for_document(|_| true);
+
+    assert_eq!(document.observation.rule_id, "claude_prompt_visible");
+    assert_eq!(
+        document.observation.extra.get(UNAVAILABLE_KEY),
+        Some(&json!("unknown_state"))
+    );
+}
+
+#[test]
+fn the_cache_serves_a_snapshot_only_until_it_expires() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (bin, calls) = counting_claude(tmp.path());
+
+    snapshot(bin.clone(), None).unwrap();
+    snapshot(bin.clone(), None).unwrap();
+    assert_eq!(call_count(&calls), 1, "a fresh snapshot is reused");
+
+    thread::sleep(Duration::from_millis(2300));
+    snapshot(bin, None).unwrap();
+    assert_eq!(
+        call_count(&calls),
+        2,
+        "an expired snapshot is fetched again"
+    );
+}
+
+#[test]
+fn the_cache_is_keyed_by_binary_path() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let first = tmp.path().join("first");
+    let second = tmp.path().join("second");
+    fs::create_dir_all(&first).unwrap();
+    fs::create_dir_all(&second).unwrap();
+    let (first_bin, first_calls) = counting_claude(&first);
+    let (second_bin, second_calls) = counting_claude(&second);
+
+    snapshot(first_bin, None).unwrap();
+    snapshot(second_bin, None).unwrap();
+
+    assert_eq!(call_count(&first_calls), 1);
+    assert_eq!(
+        call_count(&second_calls),
+        1,
+        "another binary must not be served from the first one's snapshot"
+    );
+}
+
+#[test]
+fn only_a_claude_provider_session_id_is_looked_up() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (bin, calls) = counting_claude(tmp.path());
+    let _bin = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_BIN", bin.to_str().unwrap());
+    let _config = EnvGuard::remove(&lock, "CLAUDE_CONFIG_DIR");
+    let mut record = claude_record("other-provider", BUSY_ID);
+    record.provider_resume.as_mut().unwrap().provider = "codex".to_string();
+
+    assert_eq!(state_for(&record), Err(Unavailable::NoProviderSession));
+    assert_eq!(call_count(&calls), 0, "no call for a non-Claude id");
+}
+
+#[test]
+fn a_codex_session_never_consults_the_claude_listing() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (bin, calls) = counting_claude(tmp.path());
+    let _bin = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_BIN", bin.to_str().unwrap());
+    let _config = EnvGuard::remove(&lock, "CLAUDE_CONFIG_DIR");
+    let sampled = running_turn(BUSY_ID);
+    // A Claude-shaped resume id that is listed as busy must still not be used.
+    let mut record = sampled.record.clone();
+    record.agent = "codex".to_string();
+
+    let observation = super::super::sample(&record, &sampled.tmux, &TurnPhase::Working);
+
+    assert_eq!(call_count(&calls), 0);
+    assert_eq!(observation.observer_version, super::super::SHADOW_VERSION);
+    assert!(observation.extra.get(UNAVAILABLE_KEY).is_none());
+}
+
+/// A stub `claude` printing a valid empty listing padded to `total` bytes.
+fn padded_listing_claude(dir: &Path, total: usize) -> PathBuf {
+    let bin = dir.join("padded");
+    write_script(
+        &bin,
+        &format!(
+            "printf '['\nhead -c {} /dev/zero | tr '\\0' ' '\nprintf ']'",
+            total - 2
+        ),
+    );
+    bin
+}
+
+#[test]
+fn output_is_capped_at_one_mebibyte() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let limit = 1024 * 1024;
+    assert!(
+        snapshot(padded_listing_claude(tmp.path(), limit), None).is_ok(),
+        "exactly the cap is accepted"
+    );
+    let over = tmp.path().join("over");
+    fs::create_dir_all(&over).unwrap();
+    assert_eq!(
+        snapshot(padded_listing_claude(&over, limit + 1), None).err(),
+        Some(Unavailable::Failed),
+        "one byte over the cap is refused"
+    );
+}
+
+#[test]
+fn the_call_is_bounded_to_one_and_a_half_seconds() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let within = tmp.path().join("within");
+    write_script(&within, "sleep 0.5\nprintf '[]'");
+    assert!(
+        snapshot(within, None).is_ok(),
+        "a call within the bound completes"
+    );
+    let beyond = tmp.path().join("beyond");
+    write_script(&beyond, "sleep 3\nprintf '[]'");
+    assert_eq!(
+        snapshot(beyond, None).err(),
+        Some(Unavailable::Timeout),
+        "a call beyond the bound is cut off"
     );
 }

@@ -1,0 +1,67 @@
+[
+  {
+    "pid": 4201,
+    "cwd": "/work/example/alpha",
+    "kind": "interactive",
+    "startedAt": 1700000000000,
+    "sessionId": "00000000-0000-4000-8000-000000000011",
+    "name": "state working, process idle",
+    "status": "idle",
+    "state": "working"
+  },
+  {
+    "pid": 4202,
+    "cwd": "/work/example/beta",
+    "kind": "interactive",
+    "startedAt": 1700000001000,
+    "sessionId": "00000000-0000-4000-8000-000000000012",
+    "name": "state blocked on a permission prompt",
+    "status": "waiting",
+    "waitingFor": "permission prompt",
+    "state": "blocked"
+  },
+  {
+    "cwd": "/work/example/gamma",
+    "kind": "background",
+    "startedAt": 1700000002000,
+    "sessionId": "00000000-0000-4000-8000-000000000013",
+    "name": "state blocked, process gone",
+    "state": "blocked"
+  },
+  {
+    "pid": 4204,
+    "cwd": "/work/example/delta",
+    "kind": "interactive",
+    "startedAt": 1700000003000,
+    "sessionId": "00000000-0000-4000-8000-000000000014",
+    "name": "state done, process alive",
+    "status": "busy",
+    "state": "done"
+  },
+  {
+    "cwd": "/work/example/epsilon",
+    "kind": "background",
+    "startedAt": 1700000004000,
+    "sessionId": "00000000-0000-4000-8000-000000000015",
+    "name": "state failed",
+    "state": "failed"
+  },
+  {
+    "cwd": "/work/example/zeta",
+    "kind": "background",
+    "startedAt": 1700000005000,
+    "sessionId": "00000000-0000-4000-8000-000000000016",
+    "name": "state stopped",
+    "state": "stopped"
+  },
+  {
+    "pid": 4207,
+    "cwd": "/work/example/eta",
+    "kind": "interactive",
+    "startedAt": 1700000006000,
+    "sessionId": "00000000-0000-4000-8000-000000000017",
+    "name": "unknown state, status busy",
+    "status": "busy",
+    "state": "a state this adapter does not know"
+  }
+]
