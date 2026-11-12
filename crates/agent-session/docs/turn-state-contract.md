@@ -646,8 +646,8 @@ hooks and background tasks remain non-final.
 
 A candidate completes only with a fresh `claude-agents.v1`
 `claude_agents_idle` observation in the same runtime launch, generation and
-accepted activity revision. Fresh means the actual provider fetch must not
-precede the accepted Stop; a cache hit retains its original fetch timestamp.
+accepted activity revision. Fresh means the provider fetch must start after
+the accepted Stop; a cache hit retains its original fetch timestamp.
 Once established, this revision-bound completion proof does not expire with the
 poll interval or get overwritten by a sample of the projected completed revision.
 Only newer accepted activity or a runtime boundary invalidates it. There is no one-second quiet timer or

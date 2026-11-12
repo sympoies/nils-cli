@@ -801,43 +801,85 @@ fn conflicting_provider_entries_activity_is_unknown() {
 #[test]
 fn pre_stop_cached_idle_is_not_retimestamped_as_completion_evidence() {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
-    let (bin, _) = counting_claude(tmp.path());
-    let _bin = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_BIN", bin.to_str().unwrap());
-    let _config = EnvGuard::remove(&lock, "CLAUDE_CONFIG_DIR");
-    let sampled = running_turn(IDLE_ID);
-    let before = super::super::sample(
-        &sampled.record,
-        &sampled.tmux,
-        &activity::TurnPhase::Working,
-    );
-    let stop: activity::TurnEvent = serde_json::from_value(json!({
-        "schema_version":"agent-session.turn-event.v1", "event_id":"stop",
-        "runtime_id":"launch-a", "provider":"claude", "provider_turn_id":"turn-1",
-        "provider_session_id":IDLE_ID, "kind":"stop_observed", "completion_candidate":true,
-        "confidence":"observed", "source_kind":"provider_hook"
-    }))
-    .unwrap();
-    let stopped = activity::ingest_event(&sampled.context, &sampled.record.id, stop).unwrap();
-    let cached = super::super::sample(&sampled.record, &sampled.tmux, &stopped.turn_state.phase);
-    assert_eq!(
-        cached.observed_at, before.observed_at,
-        "a cache read invented a new observation"
-    );
-    let document = ShadowDocument {
-        schema_version: super::super::SHADOW_DOCUMENT_VERSION.to_string(),
-        runtime_id: "launch-a".into(),
-        runtime_generation: 1,
-        activity_revision: Some(stopped.turn_state.revision),
-        interrupt_since: None,
-        observation: cached,
-    };
-    fs::write(sampled.path(), serde_json::to_vec(&document).unwrap()).unwrap();
-    let state = activity::state_for_view(&sampled.context, &sampled.record).unwrap();
-    assert_eq!(state.phase, activity::TurnPhase::Working);
-    assert!(state.current_turn.is_some());
-    assert!(state.last_turn.is_none());
-    assert!(!sampled.captures.exists());
+    for in_flight in [false, true] {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (bin, _) = counting_claude(tmp.path());
+        let started = tmp.path().join("started");
+        let release = tmp.path().join("release");
+        if in_flight {
+            write_script(
+                &bin,
+                &format!(
+                    "touch '{}'; while [ ! -f '{}' ]; do sleep 0.01; done; cat '{}'",
+                    started.display(),
+                    release.display(),
+                    tmp.path().join("agents.json").display()
+                ),
+            );
+        }
+        let _bin = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_BIN", bin.to_str().unwrap());
+        let _config = EnvGuard::remove(&lock, "CLAUDE_CONFIG_DIR");
+        let sampled = running_turn(IDLE_ID);
+        let priming = in_flight.then(|| {
+            let record = sampled.record.clone();
+            thread::spawn(move || super::state_for(&record).unwrap().1)
+        });
+        let observed_at = if in_flight {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !started.exists() {
+                assert!(Instant::now() < deadline, "listing did not start");
+                thread::sleep(Duration::from_millis(5));
+            }
+            None
+        } else {
+            Some(
+                super::super::sample(
+                    &sampled.record,
+                    &sampled.tmux,
+                    &activity::TurnPhase::Working,
+                )
+                .observed_at,
+            )
+        };
+        let stop: activity::TurnEvent = serde_json::from_value(json!({
+            "schema_version":"agent-session.turn-event.v1", "event_id":"stop",
+            "runtime_id":"launch-a", "provider":"claude", "provider_turn_id":"turn-1",
+            "provider_session_id":IDLE_ID, "kind":"stop_observed", "completion_candidate":true,
+            "confidence":"observed", "source_kind":"provider_hook"
+        }))
+        .unwrap();
+        let stopped = activity::ingest_event(&sampled.context, &sampled.record.id, stop).unwrap();
+        let observed_at = if let Some(priming) = priming {
+            fs::write(&release, "").unwrap();
+            priming.join().unwrap()
+        } else {
+            observed_at.unwrap()
+        };
+        let cached =
+            super::super::sample(&sampled.record, &sampled.tmux, &stopped.turn_state.phase);
+        assert_eq!(
+            cached.observed_at, observed_at,
+            "a cache read invented a new observation"
+        );
+        let document = ShadowDocument {
+            schema_version: super::super::SHADOW_DOCUMENT_VERSION.to_string(),
+            runtime_id: "launch-a".into(),
+            runtime_generation: 1,
+            activity_revision: Some(stopped.turn_state.revision),
+            interrupt_since: None,
+            observation: cached,
+        };
+        fs::write(sampled.path(), serde_json::to_vec(&document).unwrap()).unwrap();
+        let state = activity::state_for_view(&sampled.context, &sampled.record).unwrap();
+        assert_eq!(
+            state.phase,
+            activity::TurnPhase::Working,
+            "in-flight={in_flight}"
+        );
+        assert!(state.current_turn.is_some());
+        assert!(state.last_turn.is_none());
+        assert!(!sampled.captures.exists());
+    }
 }
 
 #[test]

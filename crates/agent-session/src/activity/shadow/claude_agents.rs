@@ -146,6 +146,9 @@ pub(super) fn fetch(
     config_dir: Option<&Path>,
     timeout: Duration,
 ) -> Result<Snapshot, Unavailable> {
+    // A shared call may already be in flight when another session accepts Stop.
+    // Its completion time must not turn earlier provider state into fresh proof.
+    let observed_at = super::super::now();
     let mut command = ProcessCommand::new(bin);
     command.args(["agents", "--json"]).env_clear();
     for name in INHERITED_ENV {
@@ -165,7 +168,9 @@ pub(super) fn fetch(
     if !output.status.success() {
         return Err(Unavailable::Failed);
     }
-    parse(&output.stdout)
+    let mut snapshot = parse(&output.stdout)?;
+    snapshot.observed_at = observed_at;
+    Ok(snapshot)
 }
 
 type CacheKey = (PathBuf, Option<PathBuf>);
