@@ -11,7 +11,8 @@ This specification extends
 - the `claude-cli auth` profile commands listed under
   [Auth profiles](#auth-profiles)
 - `claude-cli agent doctor --format json`
-- the `limit_resets` field of `claude-cli diag rate-limits --format json`
+- the `limit_resets` and `limit_resets_checked_at` fields of
+  `claude-cli diag rate-limits --format json`
 
 `claude-cli auth reset-rate-limits` has its own contract,
 [`claude-cli-auth-reset-rate-limits-json-contract-v1.md`](claude-cli-auth-reset-rate-limits-json-contract-v1.md).
@@ -240,9 +241,18 @@ negotiation, and automatic session recovery are separate contracts.
 `codex-cli diag rate-limits` also emits. Each Claude result read from the
 shared OAuth reader (network or a response reused within 60 seconds)
 additionally carries `limit_resets`, the normalized status of the two
-Claude limit-reset programs. Results from `--cached` or a cache fallback, and
-failed results, omit it. A network body without either program reports both
-as `null`, so absence always means the value was not read.
+Claude limit-reset programs, and `limit_resets_checked_at`, the epoch seconds
+of the network read that supplied it. A network body without either program
+reports both as `null`.
+
+The last network `limit_resets` is stored with the rate-limit cache entry of
+its profile, so `--cached` results and cache-fallback results (for example a
+rate-limited profile under `--all`) carry that stored value, and
+`limit_resets_checked_at` is the time of the read that supplied it, not the
+time of the diagnostic. A cache entry that holds no stored value, and failed
+results, omit both fields, so absence always means no network read supplied a
+value. Like the windows beside it, a cached value is display data, not fresh
+authority.
 
 Each `weekly_scoped` entry of the usage response's `limits[]` (a per-model
 weekly limit, read from `scope.model.display_name`, `percent` as the used

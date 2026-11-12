@@ -6,15 +6,20 @@ pub(super) fn import_shared_cache(target: &Path, name: &str) {
     if let Ok(login) = read_target_login(target)
         && let Some(body) = client::cached_usage(&login.access_token)
         && let Fetch::Windows {
-            values, windows, ..
-        } = parse_usage_body(&body.body)
+            values,
+            windows,
+            limit_resets,
+            fetched_at,
+            ..
+        } = parse_usage_body(&body.body, body.fetched_at)
     {
         write_cache(
             name,
             &values,
             &windows,
+            &limit_resets,
             Some(&crate::prompt_segment::token_key(&login.access_token)),
-            body.fetched_at,
+            fetched_at,
         );
     }
 }

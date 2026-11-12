@@ -76,6 +76,9 @@ pub struct RateLimitResult {
     /// Provider-owned limit-reset status (Claude only); absent elsewhere.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit_resets: Option<Value>,
+    /// Epoch seconds of the network read that supplied `limit_resets`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit_resets_checked_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_usage: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -110,6 +113,7 @@ impl RateLimitResult {
             windows: Some(windows),
             reset_credits: None,
             limit_resets: None,
+            limit_resets_checked_at: None,
             raw_usage: None,
             error: None,
         }
@@ -136,6 +140,7 @@ impl RateLimitResult {
             windows: None,
             reset_credits: None,
             limit_resets: None,
+            limit_resets_checked_at: None,
             raw_usage: None,
             error: Some(ErrorEnvelope {
                 code: code.to_string(),
@@ -159,6 +164,7 @@ impl RateLimitResult {
             windows: Some(Vec::new()),
             reset_credits,
             limit_resets: None,
+            limit_resets_checked_at: None,
             raw_usage: None,
             error: None,
         }
