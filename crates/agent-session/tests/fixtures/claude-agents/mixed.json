@@ -1,0 +1,49 @@
+[
+  {
+    "pid": 4101,
+    "cwd": "/work/example/alpha",
+    "kind": "interactive",
+    "startedAt": 1700000000000,
+    "sessionId": "00000000-0000-4000-8000-000000000001",
+    "name": "session one",
+    "status": "idle"
+  },
+  {
+    "pid": 4102,
+    "cwd": "/work/example/beta",
+    "kind": "interactive",
+    "startedAt": 1700000001000,
+    "sessionId": "00000000-0000-4000-8000-000000000002",
+    "name": "session two",
+    "status": "busy"
+  },
+  {
+    "pid": 4103,
+    "cwd": "/work/example/gamma",
+    "kind": "interactive",
+    "startedAt": 1700000002000,
+    "sessionId": "00000000-0000-4000-8000-000000000003",
+    "name": "session three",
+    "status": "waiting",
+    "waitingFor": "permission prompt"
+  },
+  {
+    "pid": 4104,
+    "cwd": "/work/example/delta",
+    "kind": "background",
+    "startedAt": 1700000003000,
+    "sessionId": "00000000-0000-4000-8000-000000000004",
+    "name": "session four",
+    "status": "waiting",
+    "waitingFor": "a reason this adapter does not know"
+  },
+  {
+    "pid": 4105,
+    "cwd": "/work/example/epsilon",
+    "kind": "interactive",
+    "startedAt": 1700000004000,
+    "sessionId": "00000000-0000-4000-8000-000000000005",
+    "name": "session five",
+    "status": "paused"
+  }
+]

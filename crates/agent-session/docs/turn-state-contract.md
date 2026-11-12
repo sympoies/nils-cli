@@ -449,6 +449,47 @@ Optional `shadow_observation` is ordinarily diagnostics-only. It contains
 `working`, `needs_input`, `waiting`, or `unknown`, and a `disagrees` flag. It
 never confirms completion, clears attention, or authorizes automation.
 
+### Claude structured state source
+
+For a running Claude session the shadow sampler reads the provider's own
+state first and uses screen rules only when it is unavailable. The source is
+`claude agents --json` of the installed `claude` binary (resolved like other
+provider binaries, never from a session record). Provider facts are pinned to
+Claude Code 2.1.317 and the research-preview agent view; see
+[Session runtime v1](specs/session-runtime-v1.md).
+
+- **Call.** One call per provider config directory serves every session
+  sampled within a 2-second window; sessions sharing a directory never spawn
+  per session. Each config directory has its own registry, so a session with
+  its own `CLAUDE_CONFIG_DIR` (launch profile or bound account) is read from
+  that directory. The call is bounded to 1.5 seconds and 1 MiB.
+- **Environment.** The child environment is built explicitly: `HOME`, `PATH`,
+  `TMPDIR` and the session's `CLAUDE_CONFIG_DIR` only. API-key style
+  credentials and endpoint overrides are never inherited.
+- **Match.** An entry matches a session by its provider session id
+  (`provider_resume.session_id`) equal to the entry `sessionId`.
+- **Mapping.** `busy` projects `working`, `idle` projects `waiting`, and
+  `waiting` projects `needs_input`. `waitingFor: "permission prompt"` is
+  recorded as `claude_agents_waiting_permission_prompt` and any other reason
+  as `claude_agents_waiting_other`; provider text is never copied.
+- **Evidence.** The observation has `observer_version: claude-agents.v1` and a
+  `rule_id` of `claude_agents_busy`, `claude_agents_idle`,
+  `claude_agents_waiting_permission_prompt` or `claude_agents_waiting_other`.
+  The `disagrees` flag compares the projection with the hook-derived phase. An
+  idle reading over an open turn is sustained like the screen interrupt
+  marker below, without the screen marker's composer check.
+- **Fallthrough.** When the binary is missing, the call times out or fails,
+  the output is malformed, the session has no provider session id, no entry
+  matches, or the status is not `idle`, `busy` or `waiting`, the screen rules
+  decide. The resulting observation (`observer_version: terminal-shadow.v1`)
+  carries `claude_agents_unavailable` with one of `binary_missing`, `timeout`,
+  `failed`, `malformed`, `no_provider_session`, `unmatched` or
+  `unknown_state`. The activity stream carries `rule_id` and
+  `observer_version` only; the reason appears in session views.
+
+Screen rules stay in place as the fallback; removing them is tracked
+separately.
+
 For Claude and Codex, two consecutive samples of the provider interrupt marker,
 at least 15 seconds apart, may project `phase: unknown` with
 `diagnostic.reason: interrupted_suspected` and inferred terminal-heuristic

@@ -168,7 +168,13 @@ Hook signals as implemented by
 Order only; each step is its own issue.
 
 1. Claude state reader over `claude agents --json`, replacing the post-Stop
-   quiet window and two-sample interrupt checks in the same change.
+   quiet window and two-sample interrupt checks. Implemented as the state
+   source first ([#3590](https://github.com/sympoies/nils-cli/issues/3590),
+   see [Claude structured state source](../turn-state-contract.md#claude-structured-state-source)):
+   the structured state outranks the screen rules, which remain as the
+   fallback until their removal lands as its own change
+   ([#3592](https://github.com/sympoies/nils-cli/issues/3592)), so the two
+   are side by side only between those changes.
 2. Single-writer lease, handoff command and pre-attach liveness check.
 3. Approval answers through the `PermissionRequest` hook with id correlation.
 4. Codex slices #3582, #3583 and #3584 under this document.
@@ -179,7 +185,9 @@ need its own maintainer decision and would reuse the single-writer rule.
 ## Open questions
 
 - Agent view is a provider research preview. What provider version window does
-  the state reader support, and what is the failure behavior outside it?
+  the state reader support? Outside it the failure behavior is decided: an
+  unavailable call, malformed output, an unmatched session or an unknown
+  status falls through to the screen rules and is recorded.
 - A manual approval denial and an interrupt emit no Claude hook. Which
   structured source ends the recorded wait sooner than the next prompt: the
   `claude agents --json` state (#3590), or the transcript?
