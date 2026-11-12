@@ -10,6 +10,15 @@
 - `warn` prints one stderr line naming the fix and appends an audit record with
   caller argv0 and parent process base names only; `deny` refuses with
   `identity_unasserted_noninteractive` (exit 65).
+- The stderr warning is `warning: forge identity: no principal asserted in a
+  non-interactive run; set FORGE_IDENTITY_PRINCIPAL to a configured principal,
+  or set the identity policy key unasserted_noninteractive = "allow" to keep the
+  shared default account on purpose`; the key is `unasserted_noninteractive`.
+- The warning prints once per process. Audit records are capped at one per
+  caller (argv0 and parent) per hour, tracked by a stamp file under
+  `forge-cli/unasserted-callers` in the state root, so scheduled automation
+  writes at most 24 lines a day per caller. The decision is local (environment
+  and policy file): no identity probe and no provider call is added.
 - Runs that assert a principal, `identity explain`/`doctor`, and raw `gh`
   callers are unaffected.
 

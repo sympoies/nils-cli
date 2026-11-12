@@ -142,3 +142,26 @@ fn unknown_mode_value_is_an_invalid_policy() {
     );
     assert!(env.audit().is_none());
 }
+
+#[test]
+fn audit_records_are_capped_to_one_per_caller_per_hour() {
+    let env = Env::new(Some("warn"));
+    assert!(identity::load().unwrap().is_none());
+    identity::reset_unasserted_notice_for_tests();
+    assert!(identity::load().unwrap().is_none());
+    assert_eq!(env.audit().unwrap().lines().count(), 1);
+    // A later hour records again.
+    let stamps = env.root.path().join("state/forge-cli/unasserted-callers");
+    let old = std::time::UNIX_EPOCH;
+    for entry in fs::read_dir(&stamps).unwrap() {
+        fs::File::options()
+            .write(true)
+            .open(entry.unwrap().path())
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+    identity::reset_unasserted_notice_for_tests();
+    assert!(identity::load().unwrap().is_none());
+    assert_eq!(env.audit().unwrap().lines().count(), 2);
+}

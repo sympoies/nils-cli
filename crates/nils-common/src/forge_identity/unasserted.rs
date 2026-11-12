@@ -1,6 +1,6 @@
 //! Signal for non-interactive runs that reach a configured `asserted-only` policy without
 //! asserting a principal, so they would otherwise silently use the host's default `gh` account.
-use super::{Error, Result, append_audit};
+use super::{Error, Result, append_audit, state_home};
 use serde::Deserialize;
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,6 +32,28 @@ pub fn is_noninteractive() -> bool {
         std::io::stdout().is_terminal(),
         |name| std::env::var_os(name).is_some(),
     )
+}
+
+/// At most one audit record per caller (argv0 and parent) per window, so scheduled
+/// automation that runs unasserted many times an hour writes a bounded number of lines.
+const AUDIT_WINDOW: std::time::Duration = std::time::Duration::from_secs(3600);
+/// True when this caller has no record inside the window; claims the window when it does.
+fn claim_audit_window(argv0: &str, parent: &str) -> bool {
+    let Some(state) = state_home() else {
+        return true;
+    };
+    let dir = state.join("forge-cli/unasserted-callers");
+    let stamp = dir.join(format!("{argv0}.{parent}"));
+    let fresh = std::fs::metadata(&stamp)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < AUDIT_WINDOW);
+    if fresh {
+        return false;
+    }
+    let _ = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&stamp, b""));
+    true
 }
 
 static NOTIFIED: AtomicBool = AtomicBool::new(false);
@@ -96,16 +118,20 @@ pub(super) fn gate(mode: Mode) -> Result<()> {
     if mode == Mode::Warn && NOTIFIED.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
+    let (argv0, parent) = (argv0(), parent_name());
+    let audit = claim_audit_window(&argv0, &parent);
     let record = serde_json::json!({
         "schema_version": "forge.identity.audit.v1",
         "timestamp": jiff::Timestamp::now().to_string(),
         "principal": null,
         "target": null,
         "outcome": outcome,
-        "caller": {"argv0": argv0(), "parent": parent_name()},
+        "caller": {"argv0": argv0, "parent": parent},
     });
     if mode == Mode::Deny {
-        append_audit(&record)?;
+        if audit {
+            append_audit(&record)?;
+        }
         return Err(Error::with_detail(
             "identity_unasserted_noninteractive",
             FIX_TEXT.into(),
@@ -115,6 +141,8 @@ pub(super) fn gate(mode: Mode) -> Result<()> {
         "warning: forge identity: no principal asserted in a non-interactive run; {FIX_TEXT}"
     );
     // A warning must not fail the run; an unwritable audit trail only loses the record.
-    let _ = append_audit(&record);
+    if audit {
+        let _ = append_audit(&record);
+    }
     Ok(())
 }

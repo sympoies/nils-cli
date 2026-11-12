@@ -23,7 +23,7 @@ impl Fixture {
         let gh = home.path().join("gh");
         fs::write(
             &gh,
-            "#!/bin/sh\ncase \"$1:$2\" in\n auth:token) printf '%s' \"$FIXTURE_CREDENTIAL\"; exit 0;;\n api:user) printf '{\"login\":\"account-a\"}'; exit 0;;\nesac\nprintf '{\"number\":1,\"url\":\"https://github.com/sandbox/widget/issues/1\",\"state\":\"OPEN\",\"title\":\"Example\",\"body\":\"\",\"labels\":[],\"assignees\":[]}'\n",
+            "#!/bin/sh\nprintf 'call\\n' >> \"$FIXTURE_CALL_LOG\"\ncase \"$1:$2\" in\n auth:token) printf '%s' \"$FIXTURE_CREDENTIAL\"; exit 0;;\n api:user) printf '{\"login\":\"account-a\"}'; exit 0;;\nesac\nprintf '{\"number\":1,\"url\":\"https://github.com/sandbox/widget/issues/1\",\"state\":\"OPEN\",\"title\":\"Example\",\"body\":\"\",\"labels\":[],\"assignees\":[]}'\n",
         )
         .unwrap();
         fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).unwrap();
@@ -48,6 +48,7 @@ impl Fixture {
             .env("FORGE_CLI_GH_BIN", self.home.path().join("gh"))
             .env("FORGE_CLI_RATE_LIMIT_GATE", "off")
             .env("FIXTURE_CREDENTIAL", CANARY)
+            .env("FIXTURE_CALL_LOG", self.home.path().join("calls"))
             .env("AGENT_SESSION_ID", "SESSION_CANARY_91")
             .env_remove("FORGE_IDENTITY_PRINCIPAL");
         if let Some(principal) = principal {
@@ -119,4 +120,19 @@ fn allow_and_asserted_principal_are_silent_in_every_mode() {
         assert!(!stderr(&out).contains("unasserted_noninteractive"), "{key}");
         assert!(!f.audit().contains("unasserted_noninteractive"), "{key}");
     }
+}
+
+#[test]
+fn warn_and_deny_add_no_provider_calls() {
+    let calls = |key: &str| {
+        let f = Fixture::new(key);
+        f.run(None);
+        fs::read_to_string(f.home.path().join("calls"))
+            .map(|log| log.lines().count())
+            .unwrap_or(0)
+    };
+    let allow = calls("unasserted_noninteractive='allow'\n");
+    assert!(allow > 0);
+    assert_eq!(calls("unasserted_noninteractive='warn'\n"), allow);
+    assert_eq!(calls("unasserted_noninteractive='deny'\n"), 0);
 }

@@ -114,6 +114,10 @@ pass-through, where no principal is asserted.
 - `deny`: the audit record is appended and the run refuses with
   `identity_unasserted_noninteractive` (DATA, exit 65) carrying the same fix text.
 - `allow`: silent.
+- Audit volume: at most one record per caller (argv0 and parent) per hour, tracked
+  by a stamp file under `forge-cli/unasserted-callers` in the state root; the
+  warning itself prints once per process. The decision is local and adds no
+  identity probe or provider call.
 - The record's `outcome` is `unasserted_noninteractive_warned` or
   `unasserted_noninteractive_denied`. It holds only `caller.argv0` and
   `caller.parent` (base names), never environment values, tokens or paths.
