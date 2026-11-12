@@ -123,7 +123,19 @@ fn run_setup(session: &std::path::Path, temp: &std::path::Path, pin: Option<&str
         Some(value) => command.env("AGENT_SESSION_BIN", value),
         None => command.env_remove("AGENT_SESSION_BIN"),
     };
-    command.output().unwrap();
+    // A just-copied executable can still be open for writing in a forked
+    // sibling test; retry the spawn while the kernel reports it busy.
+    for _ in 0..50 {
+        match command.output() {
+            Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            result => {
+                result.unwrap();
+                break;
+            }
+        }
+    }
     fs::read_to_string(marker).unwrap_or_default()
 }
 
@@ -158,4 +170,19 @@ fn activity_setup_keeps_a_caller_pinned_session_binary_and_ignores_mismatched_na
     let renamed = installed.join("session-under-test");
     fs::copy(env!("CARGO_BIN_EXE_agent-session"), &renamed).unwrap();
     assert_eq!(run_setup(&renamed, temp.path(), None), "root");
+}
+
+#[test]
+fn activity_setup_ignores_a_group_or_world_writable_sibling_hook() {
+    let temp = tempfile::tempdir().unwrap();
+    let installed = temp.path().join("installed");
+    fs::create_dir_all(&installed).unwrap();
+    let hook = installed.join("agent-hook");
+    executable(&hook, "#!/bin/sh\nprintf sibling > \"$MARKER\"\nexit 69\n");
+    let session = installed.join(nils_common::session_binary::NAME);
+    fs::copy(env!("CARGO_BIN_EXE_agent-session"), &session).unwrap();
+    for mode in [0o775, 0o757] {
+        fs::set_permissions(&hook, fs::Permissions::from_mode(mode)).unwrap();
+        assert_eq!(run_setup(&session, temp.path(), None), "root", "{mode:o}");
+    }
 }

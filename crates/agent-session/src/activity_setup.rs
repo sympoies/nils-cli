@@ -27,13 +27,13 @@ pub(super) fn forward_activity_setup_to_agent_hook(
     ]);
     // The hook that writes the provider config renders the session binary name
     // it was built with. Unless the caller pins `AGENT_SESSION_BIN`, the selector
-    // takes the hook beside this executable (the same release, in the directory
-    // this trusted executable runs from) before any trusted root. Without such
-    // a hook the variable stays unset and the trusted roots apply; an executable
+    // takes the hook beside this executable (the same release) before any trusted
+    // root, provided it is owner-controlled. Without such a hook the variable
+    // stays unset and the trusted roots apply; an executable
     // not running under the configured name also falls through to them.
     if std::env::var_os("AGENT_SESSION_BIN").is_none_or(|value| value.is_empty())
         && let Ok(current) = std::env::current_exe()
-        && sibling_hook_is_executable(&current)
+        && sibling_hook_is_trusted(&current)
     {
         command.env("AGENT_SESSION_BIN", current);
     }
@@ -170,10 +170,18 @@ pub(super) fn forward_activity_setup_to_agent_hook(
     Ok(Value::Object(result))
 }
 
-fn sibling_hook_is_executable(current: &std::path::Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
+/// The same owner and mode rule `session_binary::trusted_root` applies to the
+/// session binary: an executable regular file owned by the caller that no
+/// other user can write.
+fn sibling_hook_is_trusted(current: &std::path::Path) -> bool {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     current
         .with_file_name("agent-hook")
         .metadata()
-        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .is_ok_and(|metadata| {
+            metadata.is_file()
+                && metadata.uid() == unsafe { libc::geteuid() }
+                && metadata.permissions().mode() & 0o022 == 0
+                && metadata.permissions().mode() & 0o111 != 0
+        })
 }
