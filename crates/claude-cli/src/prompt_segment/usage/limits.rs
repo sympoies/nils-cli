@@ -14,7 +14,9 @@ use serde_json::Value;
 use super::{UsageWindow, usage_window};
 use crate::prompt_segment::render;
 use crate::rate_limits::scoped::parse_weekly_scoped;
-use crate::rate_limits::status::{Grant, GrantedResets, SessionReset, parse_limit_resets};
+use crate::rate_limits::status::{
+    CEDAR_EMBER, Grant, GrantedResets, JUNIPER_TIDE, SessionReset, parse_limit_resets,
+};
 
 const WEEKLY_MINUTES: i64 = 10_080;
 const FULL_CLEARS: &str = "seven_day";
@@ -22,7 +24,10 @@ const FULL_CLEARS: &str = "seven_day";
 #[derive(Debug, Clone, Serialize)]
 pub(super) struct UsageLimitResets {
     session: SessionResetView,
-    grants: Vec<GrantView>,
+    /// Omitted when the response does not report the grant program, so an
+    /// unread program is never shown as "no grants".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    grants: Option<Vec<GrantView>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,9 +43,12 @@ struct SessionResetView {
 #[serde(rename_all = "snake_case")]
 enum SessionResetState {
     Available,
-    /// The program block is `null` or missing from the response.
+    /// The program block is present and `null`.
     NotOffered,
     NotAvailable,
+    /// The response does not report the program (key absent or not an
+    /// object), for example a body fetched by another client identity.
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -88,20 +96,26 @@ pub(super) fn scoped_windows(value: &Value, reference_epoch: Option<i64>) -> Vec
 /// The normalized reset programs of a usage response body.
 pub(super) fn limit_resets(value: &Value) -> UsageLimitResets {
     let parsed = parse_limit_resets(value);
+    // The shared parser maps a `null`, a missing, and a malformed block alike
+    // to `None`; only a present `null` means the program is not offered.
+    let is_null = |key: &str| matches!(value.get(key), Some(Value::Null));
     UsageLimitResets {
-        session: session_view(parsed.juniper_tide.as_ref()),
-        grants: parsed
-            .cedar_ember
-            .as_ref()
-            .map(grant_views)
-            .unwrap_or_default(),
+        session: session_view(parsed.juniper_tide.as_ref(), is_null(JUNIPER_TIDE)),
+        grants: match parsed.cedar_ember.as_ref() {
+            Some(resets) => Some(grant_views(resets)),
+            None => is_null(CEDAR_EMBER).then(Vec::new),
+        },
     }
 }
 
-fn session_view(session: Option<&SessionReset>) -> SessionResetView {
+fn session_view(session: Option<&SessionReset>, null: bool) -> SessionResetView {
     match session {
         None => SessionResetView {
-            state: SessionResetState::NotOffered,
+            state: if null {
+                SessionResetState::NotOffered
+            } else {
+                SessionResetState::Unknown
+            },
             reason: None,
             next_available_at: None,
         },
@@ -146,15 +160,15 @@ fn grant_kind(grant: &Grant) -> GrantKind {
 pub(super) fn render_text(resets: &UsageLimitResets) -> String {
     let mut lines = vec!["Limit resets".to_string()];
     lines.push(format!("  session: {}", session_text(&resets.session)));
-    if resets.grants.is_empty() {
-        lines.push("  grants: none".to_string());
+    match &resets.grants {
+        None => lines.push("  grants: unknown".to_string()),
+        Some(grants) if grants.is_empty() => lines.push("  grants: none".to_string()),
+        Some(grants) => lines.extend(
+            grants
+                .iter()
+                .map(|grant| format!("  grant: {}", grant_text(grant))),
+        ),
     }
-    lines.extend(
-        resets
-            .grants
-            .iter()
-            .map(|grant| format!("  grant: {}", grant_text(grant))),
-    );
     lines.join("\n")
 }
 
@@ -162,6 +176,7 @@ fn session_text(session: &SessionResetView) -> String {
     match session.state {
         SessionResetState::Available => "available".to_string(),
         SessionResetState::NotOffered => "not offered".to_string(),
+        SessionResetState::Unknown => "unknown".to_string(),
         SessionResetState::NotAvailable => {
             let mut text = "not available".to_string();
             if let Some(reason) = &session.reason {
@@ -225,5 +240,15 @@ mod tests {
 
         assert_eq!(resets.session.state, SessionResetState::Available);
         assert_eq!(session_text(&resets.session), "available");
+    }
+
+    #[test]
+    fn unreported_programs_read_as_unknown_in_text() {
+        let resets = limit_resets(&json!({ "five_hour": null }));
+
+        assert_eq!(
+            render_text(&resets),
+            "Limit resets\n  session: unknown\n  grants: unknown"
+        );
     }
 }

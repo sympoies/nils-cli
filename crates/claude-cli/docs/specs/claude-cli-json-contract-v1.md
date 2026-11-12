@@ -112,12 +112,15 @@ not read, never that none are offered:
 }
 ```
 
-- `session.state` is `available`, `not_offered` (the session-reset program is
-  `null` or missing from the response), or `not_available`. `reason` (the
+- `session.state` is `available`, `not_offered` (the `juniper_tide` key is
+  present and `null`), `not_available`, or `unknown` (the response does not
+  report the program: the key is absent or not an object). `reason` (the
   normalized `ineligible_reason`) and `next_available_at` (epoch seconds) are
   present only when known.
-- `grants` has one entry per grant, in response order, and is empty when the
-  response has no grants. `kind` is `full` when the grant's `clears` contains
+- `grants` has one entry per grant, in response order. It is `[]` when the
+  `cedar_ember` key is present and `null` (no grants offered) and is omitted
+  when the response does not report the program (key absent or not an
+  object), so unread grants are never shown as none. `kind` is `full` when the grant's `clears` contains
   `seven_day`, otherwise `model`; the upstream `type` field is not consulted.
   `label`, `resets_total`, and `ends_at` are omitted when unknown.
   `usable_now` is the upstream value. `next` is `true` for the grant a
@@ -129,12 +132,16 @@ The OAuth read sends the status query and the Claude Code `User-Agent` of
 `diag rate-limits` (`claude-cli/<Claude Code version> (external, cli)`),
 because the endpoint returns grants only for that identity. A response reused
 from the shared 60-second response cache was fetched by whichever caller read
-first; if that caller used another identity it carries no reset programs and
-`limit_resets` reports `not_offered` with no grants until the entry expires.
+first; if that caller used another identity it carries no reset programs, so
+`limit_resets` reports `session.state` `unknown` with `grants` omitted until
+the entry expires.
 
 Text output keeps the one-line windows summary, adding the scoped windows as
 `Weekly (<model>):<remaining>%`, and appends a `Limit resets` section when
 `limit_resets` is present:
+
+Text prints `session: unknown` and `grants: unknown` for unreported programs,
+and `grants: none` for an empty list.
 
 ```text
 source=oauth Weekly:60% Weekly (Model A):70%

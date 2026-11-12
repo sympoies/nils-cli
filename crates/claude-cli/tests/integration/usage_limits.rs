@@ -272,7 +272,7 @@ fn usage_team_plan_text_lists_scoped_window_and_limit_resets() {
 }
 
 #[test]
-fn usage_body_without_reset_programs_reports_not_offered_and_no_grants() {
+fn usage_body_without_reset_programs_reports_unknown_not_not_offered() {
     let (output, _) = run_usage(
         r#"{"five_hour":{"utilization":25.0},"seven_day":{"utilization":50.0}}"#,
         "json",
@@ -283,9 +283,24 @@ fn usage_body_without_reset_programs_reports_not_offered_and_no_grants() {
         key_percent_reset(&result),
         vec![json!(["5h", 75.0, null]), json!(["weekly", 50.0, null])]
     );
-    // Neither program was in the body: both read as absent, not as a missing read.
+    // Neither program key is in the body (for example it was fetched by
+    // another client identity): unread, not "not offered" and not "no grants".
     assert_eq!(
         result["limit_resets"],
+        json!({ "session": { "state": "unknown" } })
+    );
+}
+
+#[test]
+fn usage_null_reset_programs_report_not_offered_and_no_grants() {
+    let (output, _) = run_usage(
+        r#"{"five_hour":{"utilization":25.0},"seven_day":{"utilization":50.0},
+            "juniper_tide":null,"cedar_ember":null}"#,
+        "json",
+    );
+
+    assert_eq!(
+        usage_result(&output)["limit_resets"],
         json!({ "session": { "state": "not_offered" }, "grants": [] })
     );
 }
