@@ -176,6 +176,56 @@ fn approval_without_a_recorded_tool_call_falls_back_to_the_conservative_latch() 
 }
 
 #[test]
+fn an_approval_binds_only_to_a_call_of_the_same_tool() {
+    // The input digest covers the raw tool name, so identical inputs of
+    // different tools never match, and a request without a usable name has no
+    // digest to match with.
+    for (tool, name) in [
+        (Some("Write"), "Write"),
+        (Some("Bash; rm"), "Bash; rm"),
+        (None, ""),
+    ] {
+        let mut document = document();
+        let mut request = json!({
+            "hook_event_name": "PermissionRequest", "session_id": "session-1",
+            "prompt_id": "turn-1", "tool_input": {"command": COMMAND_A},
+        });
+        if let Some(tool) = tool {
+            request["tool_name"] = json!(tool);
+        }
+        let request = normalize_provider_hook(AgentKind::Claude, None, "runtime-1", &request)
+            .unwrap()
+            .unwrap();
+        run(
+            &mut document,
+            [
+                start("turn-1"),
+                hook("PreToolUse", "turn-1", Some("call-1"), "Bash", COMMAND_A),
+                request,
+            ],
+        );
+        let waiting = attention(&document).unwrap();
+        assert_eq!(
+            waiting.certainty,
+            AttentionCertainty::Conservative,
+            "{name}"
+        );
+
+        run(
+            &mut document,
+            [hook(
+                "PostToolUse",
+                "turn-1",
+                Some("call-1"),
+                "Bash",
+                COMMAND_A,
+            )],
+        );
+        assert_eq!(document.state.phase, TurnPhase::NeedsInput, "{name}");
+    }
+}
+
+#[test]
 fn a_result_for_another_turn_does_not_clear_the_approval() {
     let mut document = document();
     run(
