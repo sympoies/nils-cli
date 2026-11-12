@@ -3,7 +3,9 @@
 
 ### Result
 
-- A registry-lock `coordination-lock-timeout` now reports the holder's operation class, pid and hold time in `details.holder`; a descriptor whose process is gone is reported as `stale` only.
+- A registry-lock `coordination-lock-timeout` now reports the holder's operation class,
+  pid and hold time in `details.holder`. A descriptor whose process is gone is
+  reported as `stale` only.
 
 ### Why / context
 
