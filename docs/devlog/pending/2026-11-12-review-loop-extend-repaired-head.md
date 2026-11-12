@@ -3,9 +3,11 @@
 
 ### Result
 
-- forge-cli pr review-loop extend now consumes an approved extension when the
-  provider head is a repair that descends from the stopped head; the record
-  binds the stopped head and unrelated heads stay refused
+- forge-cli pr review-loop extend now consumes an approved no-progress-ceiling
+  extension when the provider head is a repair that descends from the ledger
+  head; the record binds the ledger head and unrelated heads stay refused. A
+  durable hard stop still accepts only the stopped head (supersession owns a
+  repaired head there)
 - extend --dry-run now reads the pull request and ledger and reports the same
   head and tip conflicts as the real call
 

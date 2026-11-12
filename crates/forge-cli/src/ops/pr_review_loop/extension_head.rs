@@ -4,11 +4,13 @@ use super::*;
 /// Returns the head the extension record binds to.
 ///
 /// `expected_head` is the provider head, already verified by the caller. It
-/// binds directly when it is the ledger head or the stopped head. Otherwise the
-/// author pushed a repair after the last observation: the extension binds the
-/// ledger anchor (the stopped head, else the ledger head, both heads the ledger
-/// already accepts) once the provider proves the repaired head descends from it.
-/// Unrelated heads stay refused.
+/// binds directly when it is the ledger head or the stopped head. A durable hard
+/// stop otherwise keeps the old refusal: observation only resumes at the stopped
+/// head, so a repaired head there needs the signed fast-forward supersession.
+/// Without a hard stop (the no-progress ceiling), the author may have pushed a
+/// repair after the last observation: the extension binds the ledger head once
+/// the provider proves the repaired head descends from it. Unrelated heads stay
+/// refused.
 pub(super) fn bind<R: BackendRunner>(
     runner: &R,
     ctx: &ProviderContext,
@@ -23,9 +25,17 @@ pub(super) fn bind<R: BackendRunner>(
     if previous.head_sha == expected_head || stopped == Some(expected_head) {
         return Ok(expected_head.to_string());
     }
-    let anchor = stopped.unwrap_or(&previous.head_sha);
-    ensure_descendant(runner, ctx, repository, anchor, expected_head)?;
-    Ok(anchor.to_string())
+    if stopped.is_some() {
+        return Err(conflict(
+            "the review-loop state is bound to a different head",
+            format!(
+                "state_head={}; expected_head={expected_head}",
+                previous.head_sha
+            ),
+        ));
+    }
+    ensure_descendant(runner, ctx, repository, &previous.head_sha, expected_head)?;
+    Ok(previous.head_sha.clone())
 }
 
 fn ensure_descendant<R: BackendRunner>(

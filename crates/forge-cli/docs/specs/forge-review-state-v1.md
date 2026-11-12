@@ -673,11 +673,14 @@ for deleted tests, assertion changes and new skips in the PR comparison.
   the exact approval marker. The stop code must map to its canonical budget
   field and the proposal must match the active receipt. Each proposal is
   consumable once; retry and delivery paths cannot silently increase a budget.
-  `--expected-head` is always the current provider head. When the author pushed
-  a repair after the last observation, that head differs from the ledger head;
-  `extend` then requires the provider to prove it descends from the ledger anchor
-  (the stopped head, else the ledger head), binds the extension record to that
-  anchor, and leaves the next observation to record the repaired head. Unrelated heads are refused as `review_state_conflict`.
+  `--expected-head` is always the current provider head. At the no-progress
+  ceiling (no durable hard stop), a repair pushed after the last observation makes
+  that head differ from the ledger head; `extend` then requires the provider to
+  prove it descends from the ledger head, binds the extension record to the ledger
+  head, and leaves the next observation to record the repaired head. Unrelated
+  heads are refused as `review_state_conflict`. A durable hard stop keeps its rule:
+  observation resumes only at the stopped head, so `extend` accepts only the stopped
+  head, and a repaired head needs the signed fast-forward supersession.
 - To terminally accept remaining risk after a durable hard stop, use an
   explicit acceptance envelope with `observe --expected-head <stopped-head>
   --expected-state <current-tip> --findings-file acceptance.json`:

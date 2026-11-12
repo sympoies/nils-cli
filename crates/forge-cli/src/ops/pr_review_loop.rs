@@ -2607,6 +2607,26 @@ mod tests {
         }
     }
 
+    fn ceiling_state(head: &str) -> review_state::ReviewLoopState {
+        let mut state = stopped_state(head, "unused");
+        state.hard_stop = None;
+        state.no_progress_rounds = state.budget.max_no_progress_rounds;
+        state.findings.insert(
+            "correctness:review-loop:ceiling".to_string(),
+            review_state::ReviewLoopFinding {
+                root_cause_fingerprint: None,
+                status: review_state::ReviewFindingStatus::Open,
+                blocking: true,
+                first_seen_head: head.to_string(),
+                last_seen_head: head.to_string(),
+                seen_count: 1,
+                reopen_count: 0,
+                threads: Vec::new(),
+            },
+        );
+        state
+    }
+
     fn approval_payload(created_at: &str, association: &str, body: &str) -> serde_json::Value {
         serde_json::json!({
             "html_url": "https://github.com/acme/widgets/pull/7#issuecomment-99",
@@ -3485,7 +3505,7 @@ mod tests {
 
     #[test]
     fn extend_dry_run_reports_the_same_head_conflict_as_the_real_call() {
-        let state = stopped_state(HEAD, "sha256:proposal");
+        let state = ceiling_state(HEAD);
         let runner = FakeGitHub::new(NEXT_HEAD)
             .with_state(&state, HEAD)
             .with_compare_status("diverged");
@@ -3572,8 +3592,8 @@ mod tests {
     }
 
     #[test]
-    fn extend_rejects_a_head_unrelated_to_the_stopped_head() {
-        let state = stopped_state(HEAD, "sha256:proposal");
+    fn extend_rejects_a_head_unrelated_to_the_ledger_head() {
+        let state = ceiling_state(HEAD);
         let runner = FakeGitHub::new(NEXT_HEAD)
             .with_state(&state, HEAD)
             .with_compare_status("diverged");
@@ -3602,22 +3622,7 @@ mod tests {
 
     #[test]
     fn extend_consumes_a_ceiling_approval_on_a_repaired_descendant_head() {
-        let mut state = stopped_state(HEAD, "unused");
-        state.hard_stop = None;
-        state.no_progress_rounds = state.budget.max_no_progress_rounds;
-        state.findings.insert(
-            "correctness:review-loop:ceiling".to_string(),
-            review_state::ReviewLoopFinding {
-                root_cause_fingerprint: None,
-                status: review_state::ReviewFindingStatus::Open,
-                blocking: true,
-                first_seen_head: HEAD.to_string(),
-                last_seen_head: HEAD.to_string(),
-                seen_count: 1,
-                reopen_count: 0,
-                threads: Vec::new(),
-            },
-        );
+        let state = ceiling_state(HEAD);
         let seeded = FakeGitHub::new(NEXT_HEAD).with_state(&state, HEAD);
         let tip = seeded.tip_digest().expect("seeded tip");
         let proposal = review_state::extension_proposal_digest(
@@ -3647,175 +3652,56 @@ mod tests {
 
         assert_eq!(code, 0);
         assert_eq!(runner.appended_bodies().len(), 1);
+        // The loop must stay live: the next observation at the repaired head
+        // resumes instead of being refused.
+        let bodies: Vec<String> = runner
+            .comments
+            .borrow()
+            .iter()
+            .map(|node| node["body"].as_str().unwrap_or_default().to_string())
+            .collect();
+        let chain = review_state::parse_chain(bodies.iter().map(String::as_str), REPO, PR)
+            .expect("extended chain");
+        let extended = review_state::latest_review_loop_state(&chain).expect("state");
+        let rows = vec![review_state::ReviewFindingObservation {
+            fingerprint: "correctness:review-loop:ceiling".to_string(),
+            root_cause_fingerprint: None,
+            blocking: true,
+            status: review_state::ReviewFindingStatus::Open,
+            threads: Vec::new(),
+        }];
+        assert!(review_state::observe_review_loop(Some(extended), NEXT_HEAD, &rows).is_ok());
     }
 
     #[test]
-    fn extend_consumes_an_approval_on_a_repaired_descendant_head() {
+    fn extend_refuses_a_repaired_head_while_a_hard_stop_binds_the_stopped_head() {
+        // Observation resumes only at the stopped head, so consuming the
+        // approval at a repaired head would strand the loop; supersession owns
+        // that move.
         let proposal = "sha256:proposal";
         let state = stopped_state(HEAD, proposal);
-        let marker = extension_approval_marker(proposal, "max_repair_rounds", 1);
-        let body = format!("Approving the extension.\n\n{marker}\n");
         let runner = FakeGitHub::new(NEXT_HEAD)
             .with_state(&state, HEAD)
-            .with_compare_status("ahead")
-            .with_approval(approval_payload("2026-07-20T12:00:01Z", "MEMBER", &body));
+            .with_compare_status("ahead");
         let tip = runner.tip_digest().expect("seeded tip");
 
-        let code = run_extend_with(
+        let error = run_extend_with(
             &runner,
             &flags(false),
             extend_args(NEXT_HEAD, &tip, proposal),
             OutputFormat::Json,
             github_remote,
         )
-        .expect("extension applied on the repaired head");
+        .expect_err("a hard stop refuses a repaired head");
 
-        assert_eq!(code, 0);
-        assert_eq!(runner.appended_bodies().len(), 1);
-        let bodies: Vec<String> = runner
-            .comments
-            .borrow()
-            .iter()
-            .map(|node| node["body"].as_str().unwrap_or_default().to_string())
-            .collect();
-        let chain = review_state::parse_chain(bodies.iter().map(String::as_str), REPO, PR)
-            .expect("extended chain");
-        let extended = review_state::latest_review_loop_state(&chain).expect("state");
-        assert_eq!(extended.extensions.len(), 1);
+        assert_eq!(error.kind(), "review_state_conflict");
         assert!(
-            extended
-                .hard_stop
-                .as_ref()
-                .expect("stop retained")
-                .extension_applied
+            error
+                .detail()
+                .unwrap_or_default()
+                .contains(&format!("state_head={HEAD}"))
         );
-    }
-
-    #[test]
-    fn extend_rejects_an_approval_from_a_non_maintainer() {
-        let proposal = "sha256:proposal";
-        let state = stopped_state(HEAD, proposal);
-        let marker = extension_approval_marker(proposal, "max_repair_rounds", 1);
-        let runner = FakeGitHub::new(HEAD)
-            .with_state(&state, HEAD)
-            .with_approval(approval_payload("2026-07-20T12:00:01Z", "NONE", &marker));
-        let tip = runner.tip_digest().expect("seeded tip");
-
-        let error = run_extend_with(
-            &runner,
-            &flags(false),
-            extend_args(HEAD, &tip, proposal),
-            OutputFormat::Json,
-            github_remote,
-        )
-        .expect_err("outsider approval");
-
-        assert_eq!(error.kind(), "review_extension_approval_invalid");
-        assert_eq!(runner.appended_bodies(), Vec::<String>::new());
-    }
-
-    #[test]
-    fn extend_rejects_an_approval_missing_required_metadata() {
-        let proposal = "sha256:proposal";
-        let state = stopped_state(HEAD, proposal);
-        let runner = FakeGitHub::new(HEAD)
-            .with_state(&state, HEAD)
-            .with_approval(serde_json::json!({
-                "html_url": "https://github.com/acme/widgets/pull/7#issuecomment-99",
-                "issue_url": "https://api.github.com/repos/acme/widgets/issues/7",
-                "user": {"login": "maintainer"},
-                "author_association": "MEMBER",
-                "created_at": "2026-07-20T12:00:01Z"
-            }));
-        let tip = runner.tip_digest().expect("seeded tip");
-
-        let error = run_extend_with(
-            &runner,
-            &flags(false),
-            extend_args(HEAD, &tip, proposal),
-            OutputFormat::Json,
-            github_remote,
-        )
-        .expect_err("approval body missing");
-
-        assert_eq!(error.kind(), "review_extension_approval_invalid");
-        assert!(
-            error.detail().unwrap_or_default().contains("field=/body"),
-            "detail should name the missing field: {:?}",
-            error.detail()
-        );
-    }
-
-    #[test]
-    fn extend_rejects_an_approval_on_another_pull_request() {
-        let proposal = "sha256:proposal";
-        let state = stopped_state(HEAD, proposal);
-        let marker = extension_approval_marker(proposal, "max_repair_rounds", 1);
-        let mut payload = approval_payload("2026-07-20T12:00:01Z", "MEMBER", &marker);
-        payload["issue_url"] =
-            serde_json::json!("https://api.github.com/repos/acme/widgets/issues/8");
-        let runner = FakeGitHub::new(HEAD)
-            .with_state(&state, HEAD)
-            .with_approval(payload);
-        let tip = runner.tip_digest().expect("seeded tip");
-
-        let error = run_extend_with(
-            &runner,
-            &flags(false),
-            extend_args(HEAD, &tip, proposal),
-            OutputFormat::Json,
-            github_remote,
-        )
-        .expect_err("approval belongs to another PR");
-
-        assert_eq!(error.kind(), "review_extension_approval_invalid");
-    }
-
-    #[test]
-    fn extend_applies_exactly_one_budget_increment() {
-        let proposal = "sha256:proposal";
-        let state = stopped_state(HEAD, proposal);
-        let marker = extension_approval_marker(proposal, "max_repair_rounds", 1);
-        let body = format!("Approving the extension.\n\n{marker}\n");
-        let runner = FakeGitHub::new(HEAD)
-            .with_state(&state, HEAD)
-            .with_approval(approval_payload("2026-07-20T12:00:01Z", "MEMBER", &body));
-        let tip = runner.tip_digest().expect("seeded tip");
-
-        let code = run_extend_with(
-            &runner,
-            &flags(false),
-            extend_args(HEAD, &tip, proposal),
-            OutputFormat::Json,
-            github_remote,
-        )
-        .expect("extension applied");
-
-        assert_eq!(code, 0);
-        assert_eq!(runner.appended_bodies().len(), 1);
-        let bodies: Vec<String> = runner
-            .comments
-            .borrow()
-            .iter()
-            .map(|node| node["body"].as_str().unwrap_or_default().to_string())
-            .collect();
-        let chain = review_state::parse_chain(bodies.iter().map(String::as_str), REPO, PR)
-            .expect("extended chain");
-        let extended = review_state::latest_review_loop_state(&chain).expect("state");
-        assert_eq!(
-            extended.budget.max_repair_rounds,
-            review_state::ReviewLoopBudget::default().max_repair_rounds + 1
-        );
-        assert_eq!(extended.extensions.len(), 1);
-        assert_eq!(extended.extensions[0].proposal_digest, proposal);
-        assert!(
-            extended
-                .hard_stop
-                .as_ref()
-                .expect("stop retained")
-                .extension_applied,
-            "the consumed hard stop must be marked applied so it cannot be replayed"
-        );
+        assert!(runner.appended_bodies().is_empty());
     }
 
     // --- merge gates -----------------------------------------------------

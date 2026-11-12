@@ -1332,14 +1332,14 @@ operations:
       - review_state_comment_too_large
     backends:
       github:
-        - { program: gh, argv: [api, "repos/{repo}/compare/{stopped_head}...{expected_head}?per_page=1"] } # only when the provider head is a repair after the stop
+        - { program: gh, argv: [api, "repos/{repo}/compare/{ledger_head}...{expected_head}?per_page=1"] } # only at the no-progress ceiling when the provider head is a repair after the last observation
         - { program: gh, argv: [api, "repos/{repo}/issues/comments/{approval_comment}"] }
         - { program: gh, argv: [api, "repos/{repo}/issues/{id}/comments", --method, POST, --raw-field, "body=<visible ledger metadata line plus canonical state marker>"] } # extend never carries a delivery outcome
       gitlab: unsupported
       local: unsupported
     output:
       data: object<{provider,number,url,state_tip_digest,generation,state,appended:true,outcome_posted:false}>
-    notes: "This command is separate from delivery retry paths. It requires a current ceiling proposal or active durable hard-stop receipt, the canonical stop-code/budget-field pair and exact one-step proposal, plus an OWNER/MEMBER/COLLABORATOR approval comment on the same PR that is newer than the bound state tip and carries the exact marker. One proposal can be consumed once. --expected-head is the provider head; after a repair push it may descend from the ledger anchor (the stopped head, else the ledger head), which the provider must prove, and the record binds that anchor. Unrelated heads are refused. --dry-run runs the same head and tip checks and skips the approval read and append."
+    notes: "This command is separate from delivery retry paths. It requires a current ceiling proposal or active durable hard-stop receipt, the canonical stop-code/budget-field pair and exact one-step proposal, plus an OWNER/MEMBER/COLLABORATOR approval comment on the same PR that is newer than the bound state tip and carries the exact marker. One proposal can be consumed once. --expected-head is the provider head. At the no-progress ceiling a repair push may leave it descending from the ledger head, which the provider must prove, and the record binds the ledger head; a durable hard stop accepts only the stopped head (a repaired head needs supersession). Unrelated heads are refused. --dry-run runs the same head and tip checks and skips the approval read and append."
 
   - id: pr.review-loop.validate
     schema_version: cli.forge-cli.pr.review-loop.validate.v1
