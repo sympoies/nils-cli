@@ -193,11 +193,12 @@ pub(super) fn ensure<R: BackendRunner>(
             .map(|f| format!("- {} | {} | <reason and retained coverage>", f.path, f.kind))
             .collect::<Vec<_>>()
             .join("\n");
+        let notes = stale_notes(&findings, &rows);
         return Err(error(
             "test_changes_undeclared",
             "test changes require explicit PR-body declarations under ## Test changes",
             Some(format!(
-                "Before requesting review, run `forge-cli pr review-handoff test-changes {number} --expected-head {head}` to print findings and the digest without an existing review. Add the following rows to ## Test changes with a concrete reason (at least 12 characters), then rerun that preview for the updated digest. Intentional removals/false positives may use '- allow <path> | <kind> | <reason>'; exact entries only, no globs. All entries still need independent reviewer confirmation.\n{files}"
+                "Before requesting review, run `forge-cli pr review-handoff test-changes {number} --expected-head {head}` to print findings and the digest without an existing review. Add the following rows to ## Test changes with a concrete reason (at least 12 characters), then rerun that preview for the updated digest. Intentional removals/false positives may use '- allow <path> | <kind> | <reason>'; exact entries only, no globs. All entries still need independent reviewer confirmation.\n{files}{notes}"
             )),
         ));
     }
@@ -215,6 +216,42 @@ pub(super) fn ensure<R: BackendRunner>(
         ));
     }
     Ok(())
+}
+
+/// Declared rows that cover no finding are stale. A file-level `deleted-test`
+/// row for a file whose removed tests are reported per test is the retired form.
+fn stale_notes(findings: &[diff::Finding], rows: &[(&str, &str)]) -> String {
+    let per_test = |path: &str| {
+        findings
+            .iter()
+            .any(|f| f.path == path && f.kind.starts_with("deleted-test:"))
+    };
+    let (mut retired, mut stale) = (Vec::new(), Vec::new());
+    for (path, kind) in rows {
+        if findings.iter().any(|f| f.path == *path && f.kind == *kind) {
+            continue;
+        }
+        let row = format!("- {path} | {kind}");
+        if *kind == "deleted-test" && per_test(path) {
+            retired.push(row);
+        } else {
+            stale.push(row);
+        }
+    }
+    let mut notes = String::new();
+    if !retired.is_empty() {
+        notes.push_str(&format!(
+            "\nRetired file-level form: a file-level `deleted-test` row no longer covers removed tests in a file that still exists; declare one `deleted-test:<name>` row per removed test instead:\n{}",
+            retired.join("\n")
+        ));
+    }
+    if !stale.is_empty() {
+        notes.push_str(&format!(
+            "\nDeclared rows that match no finding (stale; fix the path/kind or remove them):\n{}",
+            stale.join("\n")
+        ));
+    }
+    notes
 }
 
 fn declarations(body: &str) -> String {
