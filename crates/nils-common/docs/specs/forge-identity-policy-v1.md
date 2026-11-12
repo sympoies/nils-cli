@@ -117,9 +117,11 @@ pass-through, where no principal is asserted.
 - Audit volume: at most one record per caller (argv0 and parent) per hour, tracked
   by a stamp file under `forge-cli/unasserted-callers` in the state root; the
   warning itself prints once per process. The decision is local and adds no
-  identity probe or provider call. The cap holds for sequential runs; parallel first
-  runs of one caller can each record before the stamp exists, and under `deny` the
-  generic refusal record is uncapped.
+  identity probe or provider call. Accepted scope: the cap holds for sequential runs;
+  parallel first runs of one caller can each record before the stamp exists, and under
+  `deny` the generic refusal record is uncapped (each is a real refusal). Neither can
+  grow the trail without bound, because the audit file itself is size-bounded (see
+  Diagnostics and audit).
 - The record's `outcome` is `unasserted_noninteractive_warned` or
   `unasserted_noninteractive_denied`. It holds only `caller.argv0` and
   `caller.parent` (base names), never environment values, tokens or paths.
@@ -414,6 +416,18 @@ target. No credential values, raw source lines, subprocess arguments, URLs with
 credentials, or provider response bodies are retained. Audit inability refuses
 before execution; `identity_audit_failed_after_execution` explicitly denotes
 partial success if an execution completed before a subsequent append failed.
+
+The audit file is size-bounded. Before an append would push the active
+`identity-audit.jsonl` past 4 MiB, it is renamed to `identity-audit.jsonl.1`, older
+copies shift to `.2` through `.4`, and the previous `.4` is deleted; the record being
+written always lands whole in the new active file. At most five files exist (the
+active file plus four rotated copies, 20 MiB on disk, given records far smaller than
+the limit), all mode 0600. Writers serialise rotation and append on an advisory lock
+file `identity-audit.lock` in the same directory, so concurrent writers neither lose
+nor interleave records. Record format is unchanged. Rotation adds no provider call
+and no identity probe. A file larger than the limit left by an earlier version is
+rotated whole on its first append and leaves the retained set after four further
+rotations; a host may delete it earlier by hand.
 
 Typed refusal codes include `identity_policy_invalid`, `identity_policy_version`,
 `identity_principal_missing`, `identity_principal_unknown`,

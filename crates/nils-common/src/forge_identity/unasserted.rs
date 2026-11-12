@@ -48,7 +48,9 @@ fn claim_audit_window(argv0: &str, parent: &str) -> bool {
     let Some(state) = state_home() else {
         return true;
     };
-    let dir = state.join("forge-cli/unasserted-callers");
+    claim_in(&state.join("forge-cli/unasserted-callers"), argv0, parent)
+}
+fn claim_in(dir: &std::path::Path, argv0: &str, parent: &str) -> bool {
     let stamp = dir.join(stamp_name(argv0, parent));
     let fresh = std::fs::metadata(&stamp)
         .and_then(|m| m.modified())
@@ -58,7 +60,7 @@ fn claim_audit_window(argv0: &str, parent: &str) -> bool {
     if fresh {
         return false;
     }
-    let _ = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&stamp, b""));
+    let _ = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&stamp, b""));
     true
 }
 
@@ -176,5 +178,13 @@ mod tests {
             all.iter().collect::<std::collections::BTreeSet<_>>().len(),
             3
         );
+    }
+    #[test]
+    fn the_stamp_path_keeps_callers_apart_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(claim_in(dir.path(), "forge-cli", "bash"));
+        assert!(!claim_in(dir.path(), "forge-cli", "bash"));
+        assert!(claim_in(dir.path(), "forge-cli", "systemd"));
+        assert!(claim_in(dir.path(), "git-cli", "bash"));
     }
 }

@@ -1,5 +1,6 @@
 //! Optional, metadata-only forge identity policy shared by managed API and Git runners.
 //! Configured sessions resolve the principal from authenticated immutable launch context.
+mod audit_log;
 mod git;
 mod https;
 mod policy;
@@ -23,8 +24,8 @@ pub use unasserted::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fmt;
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::Duration;
@@ -415,34 +416,10 @@ fn append_audit(record: &impl Serialize) -> Result<()> {
     let state = state_home().ok_or(Error::new("identity_audit_unavailable"))?;
     let dir = state.join("forge-cli");
     fs::create_dir_all(&dir).map_err(|_| Error::new("identity_audit_unavailable"))?;
-    let mut options = OpenOptions::new();
-    options.create(true).append(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    }
-    let mut file = options
-        .open(dir.join("identity-audit.jsonl"))
-        .map_err(|_| Error::new("identity_audit_unavailable"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if file
-            .metadata()
-            .map_err(|_| Error::new("identity_audit_unavailable"))?
-            .permissions()
-            .mode()
-            & 0o077
-            != 0
-        {
-            return Err(Error::new("identity_audit_unavailable"));
-        }
-    }
     let mut bytes =
         serde_json::to_vec(record).map_err(|_| Error::new("identity_audit_unavailable"))?;
     bytes.push(b'\n');
-    file.write_all(&bytes)
+    audit_log::append(&dir, &bytes, audit_log::LIMITS)
         .map_err(|_| Error::new("identity_audit_unavailable"))
 }
 /// Record a refusal whose repository or policy could not be resolved. No caller text is retained.
