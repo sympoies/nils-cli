@@ -103,6 +103,39 @@ impl Fixture {
         for path in [&policy, &config] {
             fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
         }
+        // DIAGNOSTIC (#3626): name what is on disk when the lookup fails.
+        if nils_test_support::bin::resolve_optional("agent-session").is_none() {
+            let exe = std::env::current_exe().unwrap();
+            let target_dir = exe.parent().and_then(|p| p.parent()).unwrap().to_path_buf();
+            let list = |dir: &std::path::Path| {
+                fs::read_dir(dir)
+                    .map(|entries| {
+                        let mut names: Vec<String> = entries
+                            .flatten()
+                            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                            .collect();
+                        names.sort();
+                        names.join(" ")
+                    })
+                    .unwrap_or_else(|error| format!("<unreadable: {error}>"))
+            };
+            let cargo_env: Vec<String> = std::env::vars()
+                .filter(|(name, _)| name.starts_with("CARGO") || name.starts_with("NEXTEST"))
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect();
+            panic!(
+                "DIAGNOSTIC #3626 exe={} cwd={:?} target_dir={} entries=[{}] deps_has_agent_session={} cargo_env={:?}",
+                exe.display(),
+                std::env::current_dir(),
+                target_dir.display(),
+                list(&target_dir),
+                list(exe.parent().unwrap())
+                    .split(' ')
+                    .filter(|name| name.starts_with("agent_session-") && !name.contains('.'))
+                    .count(),
+                cargo_env,
+            );
+        }
         let helper = nils_test_support::bin::resolve("agent-session");
         // Fail here, naming the build command, on a missing or earlier-release
         // dispatcher; the run_resolved calls below reuse this artifact.
