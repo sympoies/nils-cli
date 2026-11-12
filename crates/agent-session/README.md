@@ -166,7 +166,10 @@ Restart an affected session to bind the installed helper.
 
 Provider hooks project metadata-only lifecycle events into a private,
 runtime-bound activity snapshot. Provider registration is owned by
-`agent-hook`; `activity setup` is a compatibility forwarder. See the
+`agent-hook`, which renders the session binary name fixed at build time;
+`activity setup` is a compatibility forwarder that runs the `agent-hook` beside
+its own executable, so both writers agree, unless `AGENT_SESSION_BIN` pins
+another. See the
 [turn-state contract](docs/turn-state-contract.md).
 `metadata attach` binds one bounded, revision-fenced public label; see
 [Session public metadata v1](docs/specs/session-public-metadata-v1.md).

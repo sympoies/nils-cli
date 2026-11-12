@@ -1,3 +1,4 @@
+use pretty_assertions::assert_eq;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
@@ -51,4 +52,43 @@ fn activity_setup_uses_selected_hook_and_rejects_path_and_old_override() {
     }
     let _ = run(&selected, true);
     assert_eq!(fs::read_to_string(marker).unwrap(), "selected");
+}
+
+#[test]
+fn activity_setup_uses_the_hook_beside_the_configured_session_binary() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("executed");
+    let installed = temp.path().join("installed");
+    let other = temp.path().join("other");
+    fs::create_dir_all(&installed).unwrap();
+    fs::create_dir_all(&other).unwrap();
+    // Another build's hook in a trusted root renders its own compile-time name.
+    executable(
+        &other.join("agent-hook"),
+        "#!/bin/sh\nprintf other > \"$MARKER\"\nexit 69\n",
+    );
+    executable(
+        &installed.join("agent-hook"),
+        "#!/bin/sh\nprintf sibling > \"$MARKER\"\nexit 69\n",
+    );
+    let session = installed.join(nils_common::session_binary::NAME);
+    fs::copy(env!("CARGO_BIN_EXE_agent-session"), &session).unwrap();
+    Command::new(&session)
+        .args([
+            "activity",
+            "setup",
+            "--agent",
+            "codex",
+            "--dry-run",
+            "--format",
+            "json",
+        ])
+        .current_dir(temp.path())
+        .env("PATH", temp.path())
+        .env("MARKER", &marker)
+        .env_remove("AGENT_SESSION_BIN")
+        .env("AGENT_RUNTIME_TRUSTED_CLI_ROOT", &other)
+        .status()
+        .unwrap();
+    assert_eq!(fs::read_to_string(marker).unwrap(), "sibling");
 }

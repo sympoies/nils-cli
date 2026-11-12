@@ -25,6 +25,16 @@ pub(super) fn forward_activity_setup_to_agent_hook(
         &nils_common::provider_entrypoint::selector(true),
         "provider-entrypoint",
     ]);
+    // The hook that writes the provider config renders the session binary name
+    // it was built with. Unless the caller pins `AGENT_SESSION_BIN`, the selector
+    // takes the hook beside this executable (the same release) before any
+    // trusted root; an executable not running under the configured name falls
+    // through to the trusted roots.
+    if std::env::var_os("AGENT_SESSION_BIN").is_none()
+        && let Ok(current) = std::env::current_exe()
+    {
+        command.env("AGENT_SESSION_BIN", current);
+    }
     command.args([
         "setup",
         "--product",
