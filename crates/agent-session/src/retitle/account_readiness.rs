@@ -3,9 +3,10 @@ use crate::retitle::RetitleReadiness;
 
 /// Readiness for an automatic account selection the broker could not complete.
 ///
-/// A broker that answered but offered no account (it rejected the request)
-/// means no usable account exists. Any other failure (unavailable, timed out,
-/// failed, or unusable response) says nothing about the roster, so it is a
+/// The broker protocol has no typed "no account" signal: a non-zero exit is
+/// `-rejected` whether the broker declined to select or crashed, so that code
+/// stays `account_missing`. A broker that could not start, timed out, or
+/// returned an unusable response says nothing about the roster, so it is a
 /// broker fault and must not be reported as a missing account.
 pub(super) fn selection_failure(error: &CliError) -> RetitleReadiness {
     if error.code() == "codex-account-broker-rejected" {
@@ -58,6 +59,7 @@ mod tests {
         let lock = nils_test_support::GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
         let rejecting = write_broker(tmp.path(), "rejecting", "exit 3");
+        let crashing = write_broker(tmp.path(), "crashing", "exit 1");
         let malformed = write_broker(tmp.path(), "malformed", "printf '%s\\n' 'not json'");
         let _config = nils_test_support::EnvGuard::set(
             &lock,
@@ -67,8 +69,13 @@ mod tests {
 
         for (name, argv, expected) in [
             (
-                "no selectable account",
+                "broker exits non-zero (rejection and crash are indistinguishable)",
                 json!([rejecting]),
+                ("unavailable", "account_missing", "select_account"),
+            ),
+            (
+                "broker crashes",
+                json!([crashing]),
                 ("unavailable", "account_missing", "select_account"),
             ),
             (
