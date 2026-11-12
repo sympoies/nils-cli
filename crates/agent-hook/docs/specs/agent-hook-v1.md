@@ -713,3 +713,8 @@ its call with it; see the turn-state contract. Uncorrelated approvals keep the
 conservative latch cleared by same-turn terminal evidence. Registration stays
 owned by managed setup; this change adds no event, and approval correlation
 needs the `PreToolUse` and result hooks registered for the tool.
+
+An `agent-hook` that emits `tool_call` requires an `agent-session` that accepts
+it. An older `agent-session` rejects the event, and the resulting
+`session-activity-failed` blocks mutating Claude tool calls under enforce
+coordination, so install the two together.

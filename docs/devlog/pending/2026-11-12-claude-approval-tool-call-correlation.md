@@ -7,9 +7,16 @@
   name and input digest, recorded with the tool name, and cleared by that
   call's own PostToolUse or PostToolUseFailure instead of waiting for the next
   Stop.
+
 - The one-second post-Stop quiet window stays and is now documented: parallel
   Stop hooks can continue a turn and the Stop payload cannot rule that out; the
   claude agents --json idle state (#3590) is what removes it.
+
+- Release note: install agent-session and agent-hook together in one install
+  step on each host (agent-session first if the installer orders them). An
+  older agent-session rejects the new tool_call event key, and the resulting
+  session-activity-failed blocks mutating Claude tool calls under enforce
+  coordination. There is no compatibility guard in the hook.
 
 ### Why / context
 

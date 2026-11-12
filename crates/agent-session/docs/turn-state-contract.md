@@ -699,8 +699,9 @@ Limits:
   candidate: the request binds to it as `exact` and its result clears the
   approval early. No payload field shows a drop, so this cannot be detected;
   the case needs a lost hook and an identical open call.
-- An evicted open call (the 64-call cap) keeps the `exact` mark of the
-  approval bound to it, though no result can clear it any more.
+- When the 64-call cap evicts the oldest open call, the approval bound to it
+  becomes `conservative`, because that call can no longer deliver the result
+  that clears it.
 - No input summary is recorded. The redaction rules exclude tool input, so the
   approval carries the tool name and nothing else about the call.
 - `input_digest` is SHA-256 over the runtime id, tool name and full input with
@@ -708,12 +709,13 @@ Limits:
   and is never public, but a short, guessable input can be confirmed offline
   by a reader of those files; the evidence holds no raw content, not no
   derivative.
-- Producers and consumers must be upgraded together before using `tool_call`.
-  An older `agent-session` rejects the unknown event key
-  (`activity-event-invalid`). The hook then reports `session-activity-failed`,
-  which only warns for read-only, advisory or off operations and blocks other
-  operations under enforce coordination. Install `agent-session` no later than
-  `agent-hook`, or both in one step.
+- An `agent-hook` that emits `tool_call` requires an `agent-session` that
+  accepts it; no compatibility guard exists. An older `agent-session` rejects
+  the unknown event key (`activity-event-invalid`). The hook then reports
+  `session-activity-failed`, which only warns for read-only, advisory or off
+  operations and makes other operations, including mutating Claude tool calls,
+  block under enforce coordination. Install both in one step on each host,
+  `agent-session` first when the installer orders them.
 
 User-owned or previously configured `permission_prompt` notification reporters
 normalize to the same conservative latch, but the managed setup does not

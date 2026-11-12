@@ -332,6 +332,40 @@ fn an_identical_call_started_later_gets_its_own_binding() {
 }
 
 #[test]
+fn evicting_a_bound_call_downgrades_its_approval_to_conservative() {
+    // At most 64 open calls are kept. An evicted call can no longer deliver a
+    // result, so the approval bound to it must not stay exact.
+    let mut document = document();
+    run(
+        &mut document,
+        [
+            start("turn-1"),
+            hook("PreToolUse", "turn-1", Some("call-0"), "Bash", COMMAND_A),
+            hook("PermissionRequest", "turn-1", None, "Bash", COMMAND_A),
+        ],
+    );
+    assert_eq!(
+        attention(&document).unwrap().certainty,
+        AttentionCertainty::Exact
+    );
+    for index in 1..=64 {
+        run(
+            &mut document,
+            [hook(
+                "PreToolUse",
+                "turn-1",
+                Some(&format!("call-{index}")),
+                "Bash",
+                &format!("touch /srv/secret-project/{index}.txt"),
+            )],
+        );
+    }
+    let waiting = attention(&document).expect("the approval is still recorded");
+    assert_eq!(waiting.certainty, AttentionCertainty::Conservative);
+    assert_eq!(waiting.pending_count, 1);
+}
+
+#[test]
 fn a_lost_pre_tool_use_can_bind_the_request_to_an_identical_open_call() {
     // Known limit, documented in the turn-state contract: when the
     // PreToolUse of the call that asks is lost, an identical open call is the

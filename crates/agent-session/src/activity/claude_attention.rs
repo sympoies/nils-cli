@@ -103,15 +103,26 @@ pub(super) fn observe_tool_progress(document: &mut ActivityDocument, event: &Tur
         (ToolCallPhase::Started, Some(call_id), Some(input_digest)) => {
             let calls = &mut document.open_tool_calls.0;
             calls.retain(|open| &open.turn_id == turn && &open.call_id != call_id);
-            if calls.len() >= MAX_OPEN_TOOL_CALLS {
-                calls.remove(0);
-            }
+            let evicted = (calls.len() >= MAX_OPEN_TOOL_CALLS)
+                .then(|| calls.remove(0).approval_id)
+                .flatten();
             calls.push(OpenToolCall {
                 turn_id: turn.clone(),
                 call_id: call_id.clone(),
                 input_digest: input_digest.clone(),
                 approval_id: None,
             });
+            // An evicted call can no longer deliver the result that clears its
+            // approval, so that approval is no longer exactly correlated.
+            if let Some(approval_id) = evicted
+                && let Some(pending) = document
+                    .pending_attention
+                    .iter_mut()
+                    .find(|pending| pending.id == approval_id)
+            {
+                pending.certainty = AttentionCertainty::Conservative;
+                refresh_attention(document);
+            }
         }
         (ToolCallPhase::Finished, Some(call_id), _) => {
             let calls = &mut document.open_tool_calls.0;
