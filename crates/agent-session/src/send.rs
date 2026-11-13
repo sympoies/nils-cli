@@ -190,7 +190,17 @@ fn send_observing(
             .check(None, "admission")?;
             send_guard::placeholder::admit(&record, &tmux_bin)?;
         }
-        if notification.is_some_and(|candidate| candidate.is_text_wake()) {
+        if claude_notice::capability(
+            context,
+            &record,
+            &args,
+            text.as_deref(),
+            owner_command.is_some(),
+        )
+        .is_some()
+        {
+            claude_notice::check_admission(&admission, "admission")?;
+        } else if notification.is_some_and(|candidate| candidate.is_text_wake()) {
             admission.check_preserving_draft("admission")?;
         } else {
             admission.check(None, "admission")?;
@@ -534,16 +544,13 @@ fn guarded(
             admission.check(None, "admission")
         }
     };
-    check_empty()?;
-    if !attempt.terminal_command
-        && args.guards.notice_envelope
-        && record.agent == "claude"
-        && args.guards.require_idle
-        && args.guards.require_empty_composer
-        && carries_literal_text(text.as_deref())
-        && args.keys == [SpecialKey::Enter]
-        && let Some(capability) = claude_notice::runtime::readiness(context, &record)
-    {
+    if let Some(capability) = claude_notice::capability(
+        context,
+        &record,
+        &args,
+        text.as_deref(),
+        attempt.terminal_command,
+    ) {
         let deadline = admission.deadline;
         return claude_notice::deliver(
             context,
@@ -557,6 +564,7 @@ fn guarded(
             capability,
         );
     }
+    check_empty()?;
     if !attempt.terminal_command
         && codex_app_server::runtime_is_supported(&record)
         && args.guards.require_idle

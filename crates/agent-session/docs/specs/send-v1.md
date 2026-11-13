@@ -305,9 +305,14 @@ mode, runtime injection or terminal fallback.
 
 The native notice input is the complete LF-only UTF-8 envelope, at most 16 KiB.
 Its spaces and final LF are never trimmed. Identity, idle, pending-ingress,
-mounted-empty and used-key checks precede native authorization. A fresh native
-handshake is required before durable key/operation consumption, and consumption
-is synchronized before text release. The record lock is released before native
+account and used-key checks remain. The supported attached notice route uses
+the fresh module authorization's `prompt.read` result (empty text, cursor zero)
+as its composer fact, bound to the current offer, nonce, module and
+runtime/provider identity. It does not require an additional screen-empty
+verdict. The module reads again immediately before submit; a late human edit
+causes no submit or clear, retains the consumed attempt and never switches to
+terminal text. A fresh native handshake is required before durable
+key/operation consumption, and consumption is synchronized before text release. The record lock is released before native
 API entry so required hooks can run; no record writes occur while it is
 released. Confirmation reacquires and checks identity in the same original
 Claude send budget, without renewing it.

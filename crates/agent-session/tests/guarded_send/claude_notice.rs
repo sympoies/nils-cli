@@ -4,6 +4,8 @@ use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+#[path = "claude_notice/composer.rs"]
+mod composer;
 #[path = "claude_notice/refusals.rs"]
 mod refusals;
 use std::fs;
@@ -372,6 +374,9 @@ impl Peer {
                 }
                 std::thread::sleep(Duration::from_millis(2));
             };
+            if mode == "unfamiliar-authorization" {
+                composer::unfamiliar_screen(&root);
+            }
             let request = json!({"schema_version":"agent-session.claude-notice-authorize.v1", "op":offer["op"],
                 "binding":offer["binding"], "nonce":boot["nonce"], "terminal":true,"box_empty":true,"cursor":0});
             let socket = Path::new(boot["socket_path"].as_str().unwrap());

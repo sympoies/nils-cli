@@ -157,9 +157,16 @@ Mounting uses the existing writer gate at launch. Old runtimes, gate-off
 launches and releases outside the tested range do not gain the module later.
 They are never injected into, restarted or sent through a plain fallback by
 `notice`. Matching private readiness must be followed by a fresh
-identity/empty-composer handshake before claiming the operation. Native empty
-reads alone do not prove that a composer is mounted; existing independent
-terminal admission remains.
+identity/empty-composer handshake before claiming the operation. On this
+supported attached notice branch, the fresh authorization's native
+`prompt.read` result (empty text and cursor zero) supplies the composer fact;
+a redundant screen-empty verdict is not required. Authorization must match the
+current offer, operation, nonce, module and runtime/provider binding. Readiness
+alone never authorizes text. Runtime, idle, pending-ingress, account and claim
+checks remain, and the module independently reads the draft again immediately
+before submit. A human edit at that second read prevents submit and clear; the
+consumed operation remains unconfirmed and never moves to terminal text.
+Ordinary Claude prompts and Codex composer policy retain their existing proof.
 
 ### Tested Claude Code range
 
