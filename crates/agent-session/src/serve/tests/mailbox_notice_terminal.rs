@@ -245,8 +245,8 @@ async fn wrapped_claude_draft_wake_defers_with_native_composer_reason() {
     assert!(!fixture.temp.path().join("sessions/beta/drafts/saved").exists());
     let receipt = notification_fixture(fixture.temp.path());
     assert_eq!(receipt["state"], "queued", "{receipt}");
-    assert_eq!(receipt["last_reason"], "provider-not-ready", "{receipt}");
-    assert_eq!(receipt["last_reason_detail"], "notice-attempt-not-admitted", "{receipt}");
+    assert_eq!(receipt["last_reason"], "recipient-composer-not-empty", "{receipt}");
+    assert_eq!(receipt["last_reason_detail"], Value::Null, "{receipt}");
     assert_eq!(receipt["attempted_generation"], 0);
     assert!(observation.exists(), "native admission must not run screen draft repair");
     let refusal = fixture.check_draft().unwrap_err();

@@ -164,6 +164,17 @@ a redundant screen-empty verdict is not required. Authorization must match the
 current offer, operation, nonce, module and runtime/provider binding. Readiness
 alone never authorizes text.
 
+The module reports its first read using the existing bound `box_empty` and
+`cursor` authorization fields, including negative observations. The bridge
+validates the operation, identity and nonce before interpreting those facts;
+an occupied composer refuses as `authorization-composer-not-empty` before any
+claim or text response. The daemon records `recipient-composer-not-empty` and
+keeps the generation queued. A nonzero cursor also refuses before authorization.
+
+Human drafts, stale or fresh, remain until the human clears them. Native notices
+never run screen-based stale-draft stashing or cleanup, and do not change its
+observation timer. Ordinary terminal stale-draft admission is unchanged.
+
 Runtime, idle, pending-ingress, account and claim
 checks remain, and the module independently reads the draft again immediately
 before submit. A human edit at that second read prevents submit and clear; the

@@ -10,6 +10,26 @@ pub(super) fn unfamiliar_screen(root: &Path) {
 }
 
 #[test]
+fn non_idle_native_notice_refuses_at_admission_without_claim_or_text() {
+    let fixture = super::super::Fixture::new("claude");
+    let peer = Peer::start(&fixture, "accepted");
+    let activity = fixture.root().join("state/sessions/guarded/activity.json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&activity).unwrap()).unwrap();
+    state["state"]["phase"] = json!("working");
+    fs::write(activity, serde_json::to_vec(&state).unwrap()).unwrap();
+
+    let output = send_notice(&fixture, "synthetic\n");
+    let result = fixture.refused(&output, "send-session-not-idle");
+    assert_eq!(result["error"]["details"]["guard"], "idle");
+    assert_eq!(result["error"]["details"]["stage"], "admission");
+    assert_eq!(result["error"]["details"]["pasted"], false);
+    assert_eq!(result["error"]["details"]["submitted"], false);
+    assert!(peer.text.lock().unwrap().is_empty());
+    assert!(!peer.consumed_before_text.load(Ordering::SeqCst));
+    super::refusals::no_claim(&fixture);
+}
+
+#[test]
 fn authenticated_empty_notice_ignores_unfamiliar_screen_at_authorization() {
     for before_offer in [false, true] {
         let fixture = super::super::Fixture::new("claude");
@@ -77,8 +97,17 @@ fn native_draft_and_cursor_refuse_before_authorization() {
         let module = module_peer(&fixture, mode);
         let output = send_notice(&fixture, "synthetic\n");
         let trace = module_trace(module);
-        fixture.refused(&output, "notice-native-unavailable");
-        assert_eq!(trace["authorizations"], 0);
+        let refusal = fixture.refused(&output, "notice-native-unavailable");
+        assert_eq!(
+            refusal["error"]["details"]["reason"],
+            if mode == "draft-before" {
+                "authorization-composer-not-empty"
+            } else {
+                "authorization-cursor"
+            }
+        );
+        // One negative observation request, with no authorization granted.
+        assert_eq!(trace["authorizations"], 1);
         assert_eq!(trace["submits"], json!([]));
         assert_eq!(trace["clears"], 0);
         assert!(!trace["reads"].as_array().unwrap().is_empty());

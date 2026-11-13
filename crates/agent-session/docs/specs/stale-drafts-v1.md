@@ -4,14 +4,21 @@ Part of [Serve prompt submission](serve-prompt-v1.md) and [Send v1](send-v1.md).
 
 ## Setting and observation
 
+This policy applies to screen-based guarded admission. Supported attached
+Claude native notices never stash or clear a human draft, stale or fresh;
+they defer until the human clears it. A bound negative native observation
+records `authorization-composer-not-empty`, projected by the mailbox as
+`recipient-composer-not-empty` without consuming its generation. Such a notice
+does not update or discard an existing screen-draft timer.
+
 `stale_draft_seconds` in the serve config and
 `AGENT_SESSION_STALE_DRAFT_SECONDS` set the unchanged-text bound in seconds.
 The environment takes precedence. The default is 600 seconds; 0 disables the
 fallback and preserves the nonempty-composer refusal. Values must be unsigned
 integer seconds. This setting introduces no aliases or other recovery modes.
 
-Only pending guarded delivery observes age. The first exact nonempty composer
-observation starts the timer; the same observed text in the same runtime and
+Only pending guarded delivery on this screen path observes age. The first exact
+nonempty composer observation starts the timer; the same observed text in the same runtime and
 provider session retains it. An edited, empty, or unobservable composer resets
 it. A daemon restart retains the observation. Time is measured from these
 observations, not terminal activity or the session's waiting status. A pane the

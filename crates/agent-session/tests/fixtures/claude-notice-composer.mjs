@@ -55,10 +55,16 @@ const api = {
           let text = '';
           res.setEncoding('utf8');
           res.on('data', chunk => { text += chunk; });
-          res.on('end', () => resolve({ ok: res.statusCode === 200, status: res.statusCode, text }));
+          res.on('end', () => {
+            if (path === '/authorize' && res.statusCode !== 200) done = true;
+            resolve({ ok: res.statusCode === 200, status: res.statusCode, text });
+          });
         });
         request.setTimeout(5000, () => request.destroy(new Error('bridge timeout')));
-        request.on('error', reject);
+        request.on('error', error => {
+          if (path === '/authorize') done = true;
+          reject(error);
+        });
         request.end(options.body);
       });
       if (path === '/authorize' && response.ok && mode === 'draft-after') {

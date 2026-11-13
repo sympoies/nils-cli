@@ -5,6 +5,8 @@
 
 - Supported attached Claude notices use the current bound module authorization
   to establish an empty composer, with a second native read before submit.
+- Native human drafts remain until human clearing, with an occupied-composer
+  deferral reason; ordinary terminal stale-draft admission is unchanged.
 
 ### Why / context
 
@@ -13,9 +15,10 @@
 
 ### Evidence
 
-- T1 red retained before production edits; 17 focused Claude notice tests pass,
+- T1 red retained before production edits; 18 focused Claude notice tests pass,
   including the executed embedded-module draft race and authorization identity
-  negatives.
+  negatives. Review repairs retain idle-fence mutation red and native diagnostic
+  red/green evidence.
 
 ### Links
 
