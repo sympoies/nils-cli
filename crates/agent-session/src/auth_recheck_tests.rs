@@ -3,6 +3,9 @@
 use super::*;
 use pretty_assertions::{assert_eq, assert_ne};
 
+#[path = "auth_recheck_publication_tests.rs"]
+mod publication_tests;
+
 /// A real `StopFailure` hook leaves both the incident and the failed turn that
 /// quarantine the runtime. Recovery then exhausts and the failover refuses for
 /// lack of a policy-capable broker, exactly the state operators see.
