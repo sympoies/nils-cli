@@ -99,14 +99,15 @@ Bump the toolchain in one reviewed PR that does nothing else:
 2. Fix the new compiler and clippy lints in the same PR.
 3. Check that tooling reading the `target/` layout still handles it
    (`scripts/ci/lib/target_guard.py` and the test-binary resolvers).
-4. Run the full gates on Linux and macOS before merge, including the jobs PR-time CI
-   skips: `macos_clippy` (merge groups only) and `full_validation` (nightly, manual
-   and release-candidate merge groups). Locally that is
-   `NILS_CLI_TEST_RUNNER=nextest bash scripts/ci/nils-cli-checks-entrypoint.sh` on Linux
-   and, on a macOS host, `cargo clippy --all-targets --all-features -- -D warnings`
-   plus `cargo nextest run --profile ci --workspace`.
-5. Merge through the queue, which requires the merge group's `macos_clippy`, then
-   dispatch CI on `main` so `full_validation` runs, and revert the bump if it fails.
+4. Run the Linux gates on the PR head before merge: required CI plus
+   `bash scripts/ci/nils-cli-checks-entrypoint.sh --local-fast` locally. Two jobs
+   cannot run on a PR head: `macos_clippy` runs only in merge groups, and
+   `full_validation` runs for nightly, manual and release-candidate runs on `main`.
+5. Merge through the queue. The merge group runs `macos_clippy` on the new toolchain
+   before anything lands, and a failure there dequeues the PR; fix it and queue again.
+6. Right after the merge, dispatch the manual full run on `main` so `full_validation`
+   runs. It must be green before the next release; if it fails, a fix PR or a revert
+   goes first and the release waits.
 
 ## 2. Build and quick smoke checks
 
