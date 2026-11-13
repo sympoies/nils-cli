@@ -21,6 +21,8 @@ mod dispatcher;
 mod open;
 #[path = "integration/publish.rs"]
 mod publish;
+#[path = "integration/publish_tracking.rs"]
+mod publish_tracking;
 #[path = "integration/reset.rs"]
 mod reset;
 #[path = "integration/trusted_binary_cache.rs"]

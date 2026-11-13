@@ -46,6 +46,14 @@ that flag existed, which carries the *default* branch as its upstream. Checking
 only for the presence of an upstream would leave exactly the broken case
 unrepaired.
 
+After a successful push, the upstream must resolve to a remote-tracking ref.
+For a single-branch clone whose fetch refspec excludes the published branch,
+the command adds an exact fetch mapping for that branch and fetches that ref
+without tags. Existing mappings remain intact; no wildcard mapping is added.
+Repeated pushes reuse the mapping, and dry runs leave fetch configuration and
+refs untouched. If tracking setup fails after publication, the command returns
+`push-tracking-failed` and states that the branch was already pushed.
+
 Refusals:
 
 | `error.code` | Condition |
