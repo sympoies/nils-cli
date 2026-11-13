@@ -1019,16 +1019,35 @@ fn output_text(stdout: &[u8], stderr: &[u8]) -> String {
 
 fn parse_cli_usage_output(raw: &str) -> Option<render::Usage> {
     let stripped = strip_ansi(raw, AnsiStripMode::CsiAnyTerminator);
+    let mut normalized = String::with_capacity(stripped.len());
+    let mut chars = stripped.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if !matches!(ch, '\r' | '\n') {
+            normalized.push(ch);
+            continue;
+        }
+        let mut lf = usize::from(ch == '\n');
+        let mut cr = usize::from(ch == '\r');
+        while let Some(ch) = chars.next_if(|ch| matches!(ch, '\r' | '\n')) {
+            lf += usize::from(ch == '\n');
+            cr += usize::from(ch == '\r');
+        }
+        normalized.push('\n');
+        // One LF (with any CR padding) is one transport break; repeated LF,
+        // or repeated bare CR, preserves a blank section boundary.
+        if lf >= 2 || (lf == 0 && cr >= 2) {
+            normalized.push('\n');
+        }
+    }
     let mut current = None;
     let mut five_hour = ParsedWindow::default();
     let mut seven_day = ParsedWindow::default();
 
     // A window is the heading plus the two lines under it (percent, then reset).
-    // A whitespace-only line or the next heading closes it, and later lines are ignored,
+    // A blank line or the next heading closes it, and later lines are ignored,
     // so text from a later section is never attributed to it.
     let mut body_lines = 0;
-    // Empty split fields collapse any CR/LF run into one line boundary.
-    for line in stripped.split(['\r', '\n']).filter(|line| !line.is_empty()) {
+    for line in normalized.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             current = None;
@@ -1712,5 +1731,48 @@ mod tests {
              Current week (all models)\n67%used\nResetsNov 15,9pm(Example/Zone)\n",
         );
         assert!(usage.is_none());
+    }
+
+    #[test]
+    fn cli_usage_parser_blank_line_blocks_unrelated_context_values() {
+        let usage = parse_cli_usage_output(
+            "Current session\n42% used\nResets 4:59am\n\n\
+             Current week (all models)\n\n79% used of context window\nResets tomorrow",
+        )
+        .expect("session usage");
+        assert_eq!(usage.five_hour.expect("session").used_percent, 42.0);
+        assert!(usage.seven_day.is_none());
+    }
+
+    #[test]
+    fn cli_usage_parser_blank_line_after_heading_closes_window() {
+        for boundary in ["\n\n", "\r\r", "\r\n\r\n", "\n\r\n"] {
+            let raw = format!("Current session{boundary}42% used\nResets tomorrow");
+            assert!(parse_cli_usage_output(&raw).is_none(), "{boundary:?}");
+        }
+    }
+
+    #[test]
+    fn cli_usage_parser_blank_line_after_percentage_closes_window() {
+        for boundary in ["\n\n", "\r\r", "\r\n\r\n", "\n\r\n"] {
+            let raw = format!("Current session\n42% used{boundary}Resets tomorrow");
+            let usage = parse_cli_usage_output(&raw).expect("session usage");
+            assert_eq!(
+                usage.five_hour.expect("session").resets_at,
+                None,
+                "{boundary:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_usage_parser_blank_line_in_screen_fixture_closes_window() {
+        let raw = include_str!("../../tests/fixtures/claude_usage_screen.txt").replace(
+            "  Current week (all models)\n",
+            "  Current week (all models)\n\n",
+        );
+        let usage = parse_cli_usage_output(&raw).expect("session usage");
+        assert_eq!(usage.five_hour.expect("session").used_percent, 42.0);
+        assert!(usage.seven_day.is_none());
     }
 }
