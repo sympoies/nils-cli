@@ -2,7 +2,7 @@
 use super::*;
 
 /// Only an unchanged startup can settle; no turn completion is invented and
-/// the preceding runtime's last turn remains intact. Native probes supply the
+/// the preceding runtime's turn outcome remains intact. Native probes supply the
 /// revision they observed before I/O; Claude's SessionStart is itself the event.
 pub(crate) fn settle_starting(
     context: &CliContext,
@@ -37,6 +37,16 @@ pub(crate) fn settle_starting(
         || (expected_revision.is_some() && pending::event_pending(context, &record.id)?)
     {
         return Ok(false);
+    }
+    // A fresh, exact-runtime Claude readiness observation supersedes only the
+    // carried predecessor's activity quarantine. An auth failure on this
+    // runtime already left Starting and cannot enter this transition. Retain
+    // the original incident/journal; readiness never claims provider health.
+    if record.agent == "claude"
+        && let Some(last) = document.state.last_turn.as_mut()
+        && last.provider_failure_kind() == Some("authentication")
+    {
+        last.extra.remove("provider_failure_kind");
     }
     document.state.phase = TurnPhase::Waiting;
     document.state.phase_changed_at = now();

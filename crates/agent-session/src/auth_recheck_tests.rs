@@ -1,7 +1,7 @@
 //! A same-account switch is the supported way to settle an authentication
 //! quarantine once the account credentials are valid again.
 use super::*;
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 
 /// A real `StopFailure` hook leaves both the incident and the failed turn that
 /// quarantine the runtime. Recovery then exhausts and the failover refuses for
@@ -98,6 +98,139 @@ fn auth_recheck_settles_the_quarantine_once_credentials_are_republished() {
     assert!(!effects.contains("kill-session"));
     assert!(!effects.contains("new-session"));
     assert!(effects.contains("paste-buffer"));
+}
+
+#[test]
+fn auth_recheck_unchanged_valid_publication_requires_independent_provider_proof() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = quarantined(&context, tmp.path(), &tmux);
+    // A valid broker observation and materialization prove neither runtime
+    // credential adoption nor a successful provider request after the failure.
+    let mut publication = crate::claude_account::generation::tests::envelope(1);
+    publication["state"]["authority"]["auth"]["state"] = json!("valid");
+    fs::write(
+        tmp.path().join("credential-state.json"),
+        publication.to_string(),
+    )
+    .unwrap();
+    let path = crate::session_dir(&context, ID).join("auth-incidents.json");
+    let before = fs::read(&path).unwrap();
+    let effects = log(tmp.path());
+    let error = recheck(&context, &record, &tmux).unwrap_err();
+    assert_eq!(error.code(), "claude-account-recheck-refused");
+    let details = error.details().unwrap();
+    assert_eq!(details["reason"], "provider_verification_required");
+    assert_eq!(details["next_action"], "restart_same_account");
+    assert_eq!(details["credential_materialized"], true);
+    assert_eq!(details["runtime_adoption"], "unconfirmed");
+    assert_eq!(details["provider_request"], "unverified");
+    assert_eq!(fs::read(path).unwrap(), before);
+    assert_eq!(log(tmp.path()), effects);
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
+}
+
+#[test]
+fn auth_recheck_guidance_preserves_drafts_and_restarts_the_same_account() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = quarantined(&context, tmp.path(), &tmux);
+    let launch = launch_id(&record).unwrap();
+    let screen = fs::read(tmp.path().join("screen")).unwrap();
+    fs::write(
+        tmp.path().join("screen"),
+        "────────────────────\n❯ synthetic draft\n────────────────────\n  status\n",
+    )
+    .unwrap();
+    let before = log(tmp.path());
+    let error = restart(&context, &restart_args(&tmux, false, 10)).unwrap_err();
+    assert_eq!(error.code(), "restart-session-not-idle");
+    assert_eq!(
+        launch_id(&load_session_record(&context, ID).unwrap()),
+        Some(launch.clone())
+    );
+    assert!(!log(tmp.path())[before.len()..].contains("paste-buffer"));
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
+    // The operator preserves the draft before taking the guarded restart.
+    fs::write(tmp.path().join("screen"), screen).unwrap();
+    let watcher = on_relaunched_prompt(&context, tmp.path(), &launch);
+    let result = restart(&context, &restart_args(&tmux, false, 10));
+    watcher.join().unwrap();
+    assert_eq!(result.unwrap().outcome, "ready");
+    let current = load_session_record(&context, ID).unwrap();
+    assert_ne!(launch_id(&current), Some(launch));
+    assert_eq!(
+        serde_json::to_value(&current.provider_resume).unwrap(),
+        serde_json::to_value(&record.provider_resume).unwrap()
+    );
+    assert_eq!(
+        crate::claude_account::view_for_record(&current)
+            .unwrap()
+            .selected_account
+            .as_deref(),
+        Some("alpha")
+    );
+    assert_eq!(
+        crate::claude_account::generation::baseline(&current),
+        crate::claude_account::generation::baseline(&record)
+    );
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &current).is_ok());
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("pasted-input")).unwrap(),
+        "/exit"
+    );
+    // Readiness belongs to the new incarnation; it is not provider health and
+    // must not rewrite the failed predecessor's evidence as recovered.
+    assert_eq!(
+        incident_store(&context)["incidents"][0]["status"],
+        "auth_failed"
+    );
+    claude_hook(
+        &context,
+        &launch_id(&current).unwrap(),
+        json!({
+            "hook_event_name": "StopFailure", "error": "authentication_failed",
+            "session_id": CONVERSATION,
+        }),
+    );
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &current).is_err());
+    assert_eq!(
+        incident_store(&context)["incidents"][1]["status"],
+        "auth_failed"
+    );
+}
+
+#[test]
+fn auth_recheck_revoked_publication_remains_quarantined() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = quarantined(&context, tmp.path(), &tmux);
+    let mut publication = crate::claude_account::generation::tests::envelope(1);
+    publication["state"]["authority"]["auth"]["state"] = json!("revoked");
+    fs::write(
+        tmp.path().join("credential-state.json"),
+        publication.to_string(),
+    )
+    .unwrap();
+    let path = crate::session_dir(&context, ID).join("auth-incidents.json");
+    let before = fs::read(&path).unwrap();
+    let error = recheck(&context, &record, &tmux).unwrap_err();
+    assert_eq!(error.code(), "claude-account-recheck-refused");
+    assert_eq!(
+        error.details().unwrap()["reason"],
+        "credentials_not_republished"
+    );
+    assert_eq!(fs::read(path).unwrap(), before);
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
 }
 
 #[test]
@@ -269,7 +402,7 @@ fn scheduled_recheck_refusals_exhaust_and_survive_daemon_recreation() {
         assert_eq!(receipt["attempts"].as_array().unwrap().len(), count);
         assert_eq!(
             receipt["attempts"][count - 1]["result"],
-            "credentials_not_republished"
+            "provider_verification_required"
         );
     }
     let store = incident_store(&context);
@@ -287,6 +420,14 @@ fn scheduled_recheck_refusals_exhaust_and_survive_daemon_recreation() {
     assert_eq!(notification["degraded_reason"], "owner_unavailable");
     assert_eq!(notification["escalation"]["route"], "observation_spool");
     assert_eq!(notification["escalation"]["state"], "recorded");
+    let alerts = crate::auth_incident::alert_delivery::list(&context, 100).unwrap();
+    let recovery_alert = alerts["alerts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|alert| alert["result"] == "recheck_exhausted")
+        .unwrap();
+    assert_eq!(recovery_alert["recovery_action"], "restart_same_account");
     let events = nils_common::observation::read_recent(&context.state_dir, 0).unwrap();
     assert!(
         events
@@ -545,7 +686,7 @@ fn delayed_first_scheduled_recheck_retains_the_failed_launch_publication_fence()
     assert_eq!(store["incidents"][0]["status"], "auth_failed");
     assert_eq!(
         store["incidents"][0]["auto_settle"]["attempts"][0]["result"],
-        "credentials_not_republished"
+        "provider_verification_required"
     );
     assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
     assert_eq!(store["incidents"][0]["same_account_recovery"], Value::Null);
@@ -615,7 +756,7 @@ fn scheduled_recheck_prioritizes_current_failure_over_carried_baseline() {
     );
     assert_eq!(
         store["incidents"][1]["auto_settle"]["attempts"][0]["result"],
-        "credentials_not_republished"
+        "provider_verification_required"
     );
     assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &replacement).is_err());
     publish(tmp.path(), 3);

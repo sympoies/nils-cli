@@ -197,6 +197,14 @@ pub(super) fn enqueue(
                 "healthy" | "credentials_refreshed" | "account_switched" | "runtime_replaced"
             ) {
             None
+        } else if recovery
+            && result == "recheck_exhausted"
+            && incident
+                .auto_settle
+                .as_ref()
+                .is_some_and(auto_settle::Receipt::requires_provider_verification)
+        {
+            Some("restart_same_account".into())
         } else {
             Some("same_account_credential_recheck".into())
         },

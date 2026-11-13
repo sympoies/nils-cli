@@ -21,6 +21,16 @@ struct Attempt {
     result: String,
 }
 
+impl Receipt {
+    pub(super) fn requires_provider_verification(&self) -> bool {
+        self.state == "exhausted"
+            && self
+                .attempts
+                .last()
+                .is_some_and(|attempt| attempt.result == "provider_verification_required")
+    }
+}
+
 pub(super) fn matches(incident: &AuthIncident, record: &SessionRecord) -> bool {
     incident.auto_settle.as_ref().is_some_and(|receipt| {
         record.runtime.as_ref().is_some_and(|runtime| {
@@ -173,6 +183,7 @@ pub(crate) fn tick(
             {
                 Some("recovery_in_progress") => "recovery_in_progress",
                 Some("credentials_not_republished") => "credentials_not_republished",
+                Some("provider_verification_required") => "provider_verification_required",
                 _ if error.code() == "claude-account-recheck-refused" => {
                     "credential_preflight_refused"
                 }
