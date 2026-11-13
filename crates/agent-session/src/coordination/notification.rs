@@ -776,6 +776,52 @@ pub(crate) fn defer_with_detail(
     })
 }
 
+/// Pre-claim refusals for an unobservable composer that a record without a
+/// provider binding may accumulate before its wake settles as undeliverable.
+const UNOBSERVABLE_COMPOSER_BOUND: usize = 5;
+
+/// Defers a wake whose composer could not be observed, for a record without a
+/// provider binding. Its composer may never become observable, so the
+/// `UNOBSERVABLE_COMPOSER_BOUND`th consecutive refusal of the generation
+/// settles it as `undeliverable` instead of retrying until the message expires.
+pub(crate) fn defer_unbound_unobservable_composer(
+    context: &CliContext,
+    candidate: &NotificationCandidate,
+    retry_after_seconds: i64,
+) -> Result<bool, CliError> {
+    const REASON: &str = "recipient-composer-unobservable";
+    update_attempt(context, |registry, now| {
+        normalize_registry(registry, now);
+        let Some(receipt) = registry.notifications.get_mut(&receipt_key(
+            &candidate.target_session_id,
+            &candidate.target_incarnation,
+        )) else {
+            return false;
+        };
+        if receipt.generation != candidate.generation || receipt.state != "queued" {
+            return false;
+        }
+        let refusals = 1 + receipt
+            .attempt_history
+            .iter()
+            .rev()
+            .take_while(|attempt| {
+                attempt.generation == candidate.generation && attempt.reason == REASON
+            })
+            .count();
+        receipt.updated_at_epoch = now;
+        receipt.last_reason = Some(REASON.to_string());
+        receipt.last_reason_detail = None;
+        receipt.record_attempt(candidate.generation, REASON, now);
+        if refusals >= UNOBSERVABLE_COMPOSER_BOUND {
+            receipt.state = "undeliverable".to_string();
+        } else {
+            receipt.next_attempt_at_epoch = now.saturating_add(retry_after_seconds.max(0));
+        }
+        true
+    })
+}
+
 pub(crate) fn reconcile_submitted(
     context: &CliContext,
     candidate: &NotificationCandidate,

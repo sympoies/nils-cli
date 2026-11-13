@@ -444,6 +444,15 @@ after the existing quiescence/attempt fence, and only a confirmed empty composer
 proceeds to paste. A bound of 0 preserves refusal. An unobservable pane is never
 stale. The operator can also clear or submit a draft before retrying the wake.
 
+A terminal-started Codex record has no provider binding (no `provider_resume`) and no structured prompt
+route, so an unobservable composer may never recover. For such a record the fifth consecutive
+`recipient-composer-unobservable` refusal of one generation, counted from the attempt history, settles the
+notification as `undeliverable` with that reason and no injected input; the first four stay queued with the
+one-second retry. Any other recorded reason resets the count, and a later message creates a new generation.
+`recipient-working` and `provider-not-ready` remain transient retries. A record with a provider binding and the
+multi-row Claude case above keep retrying. A Console-started Codex record
+submits through its structured prompt route and never observes the composer.
+
 After paste settlement, Enter is pressed only if the composer contains exactly
 the controller's fixed reminder and the recipient is still idle and detached,
 with no pending provider-event ingress. If the exact reminder remains in the
