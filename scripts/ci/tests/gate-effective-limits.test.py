@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location('gate_resources', ROOT / 'scripts/ci/gate-resources.py')
@@ -149,6 +149,72 @@ class EffectiveLimits(unittest.TestCase):
         receipt = self.run_inside('darwin')
         self.assertEqual(receipt['effective']['memory_max']['reason'], 'non_linux')
         self.assertIsNone(receipt['mismatch'])
+
+    def test_membership_without_leading_slash_is_rejected(self):
+        self.proc.write_text('0::gate/workload\n')
+        receipt = self.run_inside()
+        self.assertEqual(receipt['effective']['memory_max']['reason'], 'invalid_cgroup_path')
+        self.assertIsNone(receipt['mismatch'])
+
+    def test_membership_with_parent_traversal_is_rejected(self):
+        self.proc.write_text('0::/gate/../gate/workload\n')
+        receipt = self.run_inside()
+        self.assertEqual(receipt['effective']['memory_max']['reason'], 'invalid_cgroup_path')
+        self.assertIsNone(receipt['mismatch'])
+
+
+class ReceiptFailures(unittest.TestCase):
+    setUp = EffectiveLimits.setUp
+    group = EffectiveLimits.group
+
+    def run_worker(self, stderr=None, setup_error=None):
+        self.launch = Mock(return_value=7)
+        env = {'NILS_CLI_GATE_SUPERVISOR_PID': str(os.getpid()),
+               'NILS_CLI_GATE_SLICE': 'fixture.slice',
+               'NILS_CLI_GATE_RECEIPT': str(self.receipt)}
+        with patch.dict(os.environ, env, clear=True), \
+             patch.object(resources.sys, 'platform', 'linux'), \
+             patch.object(resources, 'SELF_CGROUP', self.proc), \
+             patch.object(resources, 'CGROUP_ROOT', self.tree), \
+             patch.object(resources.subprocess, 'run', side_effect=setup_error), \
+             patch.object(resources.subprocess, 'call', self.launch), \
+             contextlib.redirect_stderr(stderr if stderr is not None else io.StringIO()):
+            result = resources.main(['--inside', '--', 'fixture-workload'])
+        self.launch.assert_called_once_with(['fixture-workload'])
+        return result
+
+    def test_unwritable_receipt_keeps_workload_status(self):
+        # Model EACCES even when the test runner can bypass Unix mode bits.
+        stderr = io.StringIO()
+        with patch.object(Path, 'write_text', side_effect=PermissionError('fixture')):
+            self.assertEqual(self.run_worker(stderr), 7)
+        self.assertIn('receipt unavailable', stderr.getvalue())
+
+    def test_missing_receipt_directory_keeps_workload_status(self):
+        self.receipt = self.root / 'missing/receipt.json'
+        self.assertEqual(self.run_worker(), 7)
+        self.assertFalse(self.receipt.exists())
+
+    def test_closed_stderr_keeps_workload_status(self):
+        stderr = Mock()
+        stderr.write.side_effect = BrokenPipeError('fixture')
+        self.assertEqual(self.run_worker(stderr), 7)
+        self.assertIn('effective', json.loads(self.receipt.read_text()))
+
+    def test_non_utf8_limit_is_typed_and_workload_starts(self):
+        (self.tree / 'gate/workload/memory.max').write_bytes(b'\xff')
+        self.assertEqual(self.run_worker(), 7)
+        receipt = json.loads(self.receipt.read_text())
+        self.assertEqual(receipt['effective']['memory_max']['reason'], 'invalid_value')
+        self.assertIsNone(receipt['mismatch'])
+
+    def test_receipt_error_preserves_original_setup_failure(self):
+        original = resources.subprocess.CalledProcessError(3, ['fixture-setup'])
+        with patch.object(Path, 'write_text', side_effect=PermissionError('fixture')):
+            with self.assertRaises(resources.subprocess.CalledProcessError) as raised:
+                self.run_worker(setup_error=original)
+        self.assertIs(raised.exception, original)
+        self.launch.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -32,6 +32,8 @@ def read_limit(path):
         return unavailable('file_missing')
     except OSError:
         return unavailable('file_unreadable')
+    except UnicodeError:
+        return unavailable('invalid_value')
     if value == 'max':
         return {'status': 'unlimited', 'bytes': None}
     if not re.fullmatch(r'[0-9]+', value):
@@ -94,9 +96,17 @@ def resource_receipt(linux):
 
 
 def write_resource_receipt(linux):
-    receipt = resource_receipt(linux)
-    Path(os.environ['NILS_CLI_GATE_RECEIPT']).write_text(json.dumps(receipt, indent=2) + '\n')
-    print('gate resource receipt: ' + json.dumps(receipt, sort_keys=True), file=sys.stderr, flush=True)
+    try:
+        receipt = resource_receipt(linux)
+        Path(os.environ['NILS_CLI_GATE_RECEIPT']).write_text(json.dumps(receipt, indent=2) + '\n')
+        print('gate resource receipt: ' + json.dumps(receipt, sort_keys=True), file=sys.stderr, flush=True)
+    except (OSError, ValueError) as error:
+        # Observation must not prevent launch or replace a slice setup error.
+        try:
+            print(f'warning: gate resource receipt unavailable ({type(error).__name__})',
+                  file=sys.stderr, flush=True)
+        except (OSError, ValueError):
+            pass  # stderr can itself be closed or broken
 
 
 def validate_systemd():

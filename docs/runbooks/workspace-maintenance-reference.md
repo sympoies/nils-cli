@@ -330,7 +330,10 @@ process group before releasing admission. This fallback does not change
 Before starting the workload, the inner gate worker writes a JSON resource
 receipt to a unique `gate-<id>.json` in `NILS_CLI_RESOURCE_STATE_DIR` and prints
 the same receipt to stderr. The workload receives its path through the internal
-`NILS_CLI_GATE_RECEIPT` variable. The receipt schema is
+`NILS_CLI_GATE_RECEIPT` variable. Receipts remain until the operator archives or
+removes them; the gate does not prune them. Receipt emission is diagnostic:
+write or logging failures produce a best-effort warning and do not prevent
+workload launch or replace a slice-setup error. The receipt schema is
 `nils-cli.gate-resources.v1`:
 
 | Field | Meaning |
@@ -349,10 +352,13 @@ values are the minimum finite limits across that cgroup and its visible
 ancestors, including a mounted delegated root when it exposes limit files.
 Missing ancestor-root files are skipped because cgroup v2's global root has
 no resource limit files.
+
 An unreadable required file makes that limit unavailable rather than replacing
 it with the request. Ancestors hidden by a cgroup namespace are outside this
 observation. On cgroup v1 and non-Linux systems no effective values are
-claimed. The receipt does not add an outer cap or alter admission, cleanup,
+claimed. Hybrid v1/v2 hierarchies are untested; if unified membership exists
+but a controller remains in v1, missing v2 files are reported as unavailable.
+The receipt does not add an outer cap or alter admission, cleanup,
 runner counts, or the gate-owned scope/slice budget.
 
 Use consistent semaphore and runner settings across callers on the same host.
