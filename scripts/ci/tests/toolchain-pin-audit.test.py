@@ -216,6 +216,19 @@ class ToolchainPinAuditTest(unittest.TestCase):
                 result = self.audit()
                 self.assertEqual(result.returncode, 0, result.stdout)
 
+    def test_quoted_helper_calls_with_floating_channels_are_rejected(self):
+        for helper, command in (
+                ('scripts/setup.py', 'subprocess.run("rustup default stable", shell=True)'),
+                ('scripts/setup.js', 'run("rustup default nightly")')):
+            with self.subTest(helper=helper):
+                self.write(helper, command + '\n')
+                self.assert_rejected(f'{helper}:1: {command}')
+
+    def test_every_rustup_command_on_a_line_is_checked(self):
+        command = f'rustup toolchain install {PIN} && rustup default stable'
+        self.write('scripts/setup.sh', HELPER + command + '\n')
+        self.assert_rejected(f'scripts/setup.sh:5: {command}')
+
     def test_toolchain_file_without_a_channel_is_rejected(self):
         self.write('rust-toolchain.toml', '[toolchain]\ncomponents = ["clippy"]\n')
         self.assert_rejected('rust-toolchain.toml: no exact toolchain channel')
