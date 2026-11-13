@@ -89,9 +89,12 @@ failure chain. Another auth fault before that turn produces
 `consecutive_fault` without selecting another account.
 
 The official same-account refresh path remains available after a refusal
-when no account intent is pending. A successful credential response releases
-input quarantine as `credentials_refreshed`; it still does not prove model
-health. Damaged incident reporting must not disable that official retry path.
+when no account intent is pending. For Claude, a newer publication alone cannot
+release a failed resident runtime: it requires automatic lifecycle recovery or
+a guarded same-account restart (`runtime_adoption_required`). A recheck may
+settle a carried predecessor quarantine after replacement; it still does not
+prove model health. Damaged incident reporting must not disable the official
+retry path.
 Queued and applying intents refuse refresh. Failed or malformed intents do
 not prevent refresh of the current bound account; their evidence remains
 intact and continues to fence new prompts until applied or cancelled.

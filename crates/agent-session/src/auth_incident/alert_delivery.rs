@@ -202,7 +202,7 @@ pub(super) fn enqueue(
             && incident
                 .auto_settle
                 .as_ref()
-                .is_some_and(auto_settle::Receipt::requires_provider_verification)
+                .is_some_and(auto_settle::Receipt::requires_same_account_restart)
         {
             Some("restart_same_account".into())
         } else {

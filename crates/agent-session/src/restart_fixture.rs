@@ -39,7 +39,8 @@ impl Drop for FakeTmux {
 /// provisions coordination. An Enter key stands in for the provider exiting on
 /// its exit command unless `hold-exit` exists, a `fail-launch` marker makes the
 /// next launch fail, a `stall` marker stalls pane identity observations and a
-/// `stall-status` marker stalls `has-session`.
+/// `stall-status` marker stalls `has-session`. An `echo-paste` marker instead
+/// models a composer accepting a fresh prompt and clearing it on Enter.
 pub(super) fn fake_tmux(root: &Path) -> FakeTmux {
     let script = format!(
         r#"#!/bin/sh
@@ -83,7 +84,11 @@ case "$1" in
   show-environment) [ -f "$root/stall" ] && sleep 20; grep "^$4=" "$root/env" || exit 1 ;;
   capture-pane) cat "$root/screen" ;;
   load-buffer) cat "$4" >> "$root/pasted-input" ;;
-  send-keys) case " $* " in *" Enter "*) [ -f "$root/hold-exit" ] || stop_pane ;; esac ;;
+  paste-buffer) [ -f "$root/echo-paste" ] && printf '%s\n' '────────────────────' "❯$(printf '\302\240')$(tail -n 1 "$root/pasted-input")" '────────────────────' '  status' > "$root/screen" ;;
+  send-keys) case " $* " in *" Enter "*)
+    if [ -f "$root/echo-paste" ]; then
+      printf '%s\n' '────────────────────' "❯$(printf '\302\240')" '────────────────────' '  status' > "$root/screen"
+    else [ -f "$root/hold-exit" ] || stop_pane; fi ;; esac ;;
   if-shell|kill-session) stop_pane ;;
 esac
 exit 0

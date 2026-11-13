@@ -22,12 +22,14 @@ struct Attempt {
 }
 
 impl Receipt {
-    pub(super) fn requires_provider_verification(&self) -> bool {
+    pub(super) fn requires_same_account_restart(&self) -> bool {
         self.state == "exhausted"
-            && self
-                .attempts
-                .last()
-                .is_some_and(|attempt| attempt.result == "provider_verification_required")
+            && self.attempts.last().is_some_and(|attempt| {
+                matches!(
+                    attempt.result.as_str(),
+                    "provider_verification_required" | "runtime_adoption_required"
+                )
+            })
     }
 }
 
@@ -184,6 +186,7 @@ pub(crate) fn tick(
                 Some("recovery_in_progress") => "recovery_in_progress",
                 Some("credentials_not_republished") => "credentials_not_republished",
                 Some("provider_verification_required") => "provider_verification_required",
+                Some("runtime_adoption_required") => "runtime_adoption_required",
                 _ if error.code() == "claude-account-recheck-refused" => {
                     "credential_preflight_refused"
                 }
