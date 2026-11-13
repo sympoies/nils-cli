@@ -3,6 +3,7 @@
 import contextlib
 import datetime
 import fcntl
+import io
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,99 @@ import uuid
 GIB = 1024 ** 3
 SYSTEMD_RUN = '/usr/bin/systemd-run'
 SYSTEMCTL = '/usr/bin/systemctl'
+SELF_CGROUP = Path('/proc/self/cgroup')
+CGROUP_ROOT = Path('/sys/fs/cgroup')
+
+
+def unavailable(reason):
+    return {'status': 'unavailable', 'bytes': None, 'reason': reason}
+
+
+def read_limit(path):
+    try:
+        value = path.read_text().strip()
+    except FileNotFoundError:
+        return unavailable('file_missing')
+    except OSError:
+        return unavailable('file_unreadable')
+    except UnicodeError:
+        return unavailable('invalid_value')
+    if value == 'max':
+        return {'status': 'unlimited', 'bytes': None}
+    if not re.fullmatch(r'[0-9]+', value):
+        return unavailable('invalid_value')
+    return {'status': 'limited', 'bytes': int(value)}
+
+
+def effective_limit(group, filename):
+    local = read_limit(group / filename)
+    observed = dict(local, limiting_ancestor_levels=0)
+    ancestor = group
+    levels = 0
+    # Linux cgroup v2's global root has no resource limit files. A mounted
+    # delegated root can have them and must participate in the observation.
+    while ancestor != CGROUP_ROOT:
+        ancestor = ancestor.parent
+        levels += 1
+        value = read_limit(ancestor / filename)
+        if ancestor == CGROUP_ROOT and value.get('reason') == 'file_missing':
+            break
+        if value['status'] == 'unavailable':
+            observed = dict(value, limiting_ancestor_levels=levels)
+            break
+        if observed['status'] != 'unavailable' and value['bytes'] is not None and (
+                observed['bytes'] is None or value['bytes'] < observed['bytes']):
+            observed = dict(value, limiting_ancestor_levels=levels)
+    return dict(observed, local=local, file=filename)
+
+
+def resource_receipt(linux):
+    requested = {'memory_max_bytes': positive('NILS_CLI_GATE_MEMORY_MAX_GIB', 16, 1048576) * GIB,
+                 'memory_swap_max_bytes': 0}
+    reason, version, group = 'non_linux', None, None
+    if linux:
+        try:
+            entries = SELF_CGROUP.read_text().splitlines()
+            unified = [line[3:] for line in entries if line.startswith('0::')]
+            legacy = any(re.fullmatch(r'[1-9][0-9]*:[^:]+:/.*', line) for line in entries)
+            version = 2 if unified else 1 if legacy else None
+            reason = 'cgroup_v1' if legacy else 'membership_invalid'
+            if unified:
+                relative = unified[0]
+                if not relative.startswith('/') or '..' in relative.split('/'):
+                    reason = 'invalid_cgroup_path'
+                else:
+                    group = CGROUP_ROOT / relative.lstrip('/')
+        except FileNotFoundError:
+            reason = 'membership_missing'
+        except OSError:
+            reason = 'membership_unreadable'
+    effective = {}
+    for name, filename in [('memory_max', 'memory.max'), ('memory_swap_max', 'memory.swap.max')]:
+        effective[name] = effective_limit(group, filename) if group is not None else unavailable(reason)
+    comparisons = [None if value['status'] == 'unavailable' else
+                   value['bytes'] != requested[name + '_bytes'] for name, value in effective.items()]
+    mismatch = True if True in comparisons else None if None in comparisons else False
+    return {'schema_version': 'nils-cli.gate-resources.v1', 'requested': requested,
+            'effective': effective, 'mismatch': mismatch, 'cgroup_version': version,
+            'source': '/proc/self/cgroup', 'ancestor_scope': 'visible'}
+
+
+def write_resource_receipt(linux):
+    try:
+        receipt = resource_receipt(linux)
+        Path(os.environ['NILS_CLI_GATE_RECEIPT']).write_text(json.dumps(receipt, indent=2) + '\n')
+        print('gate resource receipt: ' + json.dumps(receipt, sort_keys=True), file=sys.stderr, flush=True)
+    except (OSError, ValueError) as error:
+        # Observation must not prevent launch or replace a slice setup error.
+        try:
+            print(f'warning: gate resource receipt unavailable ({type(error).__name__})',
+                  file=sys.stderr, flush=True)
+        except (OSError, ValueError):
+            # Do not retry a broken buffer at interpreter shutdown (exit 120).
+            # Only silence this worker's Python diagnostics; preserve fd 2
+            # for the workload, whose stderr behavior must remain unchanged.
+            sys.stderr = io.StringIO()
 
 
 def validate_systemd():
@@ -283,6 +377,7 @@ def run_gate(command, linux):
               f'memory_high={high}GiB memory_max={maximum}GiB', file=sys.stderr, flush=True)
         os.environ['NILS_CLI_GATE_ACTIVE'] = '1'
         os.environ['NILS_CLI_GATE_SUPERVISOR_PID'] = str(os.getpid())
+        os.environ['NILS_CLI_GATE_RECEIPT'] = str(state_directory() / f'gate-{uuid.uuid4().hex}.json')
         worker = [sys.executable, str(Path(__file__).resolve()), '--inside', '--', *command]
         if not linux:
             print('gate: memory cgroup cap is a no-op on macOS; admission and concurrency limits remain active',
@@ -316,11 +411,14 @@ def main(arguments):
     if inside:
         # A late scope launch after supervisor death must not start a workload.
         os.kill(int(os.environ['NILS_CLI_GATE_SUPERVISOR_PID']), 0)
-        if sys.platform == 'linux':
-            maximum = positive('NILS_CLI_GATE_MEMORY_MAX_GIB', 16, 1048576)
-            high = positive('NILS_CLI_GATE_MEMORY_HIGH_GIB', max(1, maximum * 3 // 4), maximum)
-            subprocess.run(slice_command(os.environ['NILS_CLI_GATE_SLICE'], high, maximum),
-                           check=True, timeout=10)
+        try:
+            if sys.platform == 'linux':
+                maximum = positive('NILS_CLI_GATE_MEMORY_MAX_GIB', 16, 1048576)
+                high = positive('NILS_CLI_GATE_MEMORY_HIGH_GIB', max(1, maximum * 3 // 4), maximum)
+                subprocess.run(slice_command(os.environ['NILS_CLI_GATE_SLICE'], high, maximum),
+                               check=True, timeout=10)
+        finally:
+            write_resource_receipt(sys.platform == 'linux')
         return subprocess.call(command)
     linux = sys.platform == 'linux'
     if linux:

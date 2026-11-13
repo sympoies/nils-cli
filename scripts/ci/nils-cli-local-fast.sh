@@ -574,6 +574,7 @@ run python3 scripts/ci/tests/public-boundary-audit.test.py
 run python3 scripts/ci/toolchain-pin-audit.py
 run python3 scripts/ci/tests/toolchain-pin-audit.test.py
 run python3 scripts/ci/tests/gate-resources.test.py
+run python3 scripts/ci/tests/gate-effective-limits.test.py
 run python3 scripts/ci/tests/gate-reports.test.py
 run python3 scripts/ci/tests/devlog-policy.test.py
 run bash scripts/ci/tests/test-env.test.sh

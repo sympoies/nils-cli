@@ -362,6 +362,40 @@ limits still apply. Interrupting the macOS supervisor terminates its workload
 process group before releasing admission. This fallback does not change
 `agent-hook`'s Linux-only contained-execution support.
 
+Before starting the workload, the inner gate worker writes a JSON resource
+receipt to a unique `gate-<id>.json` in `NILS_CLI_RESOURCE_STATE_DIR` and prints
+the same receipt to stderr. The workload receives its path through the internal
+`NILS_CLI_GATE_RECEIPT` variable. Receipts remain until the operator archives or
+removes them; the gate does not prune them. Receipt emission is diagnostic:
+write or logging failures produce a best-effort warning and do not prevent
+workload launch or replace a slice-setup error. The receipt schema is
+`nils-cli.gate-resources.v1`:
+
+| Field | Meaning |
+| --- | --- |
+| `requested.memory_max_bytes`, `requested.memory_swap_max_bytes` | Configured memory cap in bytes and requested swap cap (zero). |
+| `effective.memory_max`, `effective.memory_swap_max` | Observed `memory.max` and `memory.swap.max`; `status` is `limited`, `unlimited`, or `unavailable`. `bytes` is an integer only for `limited`, otherwise null. Kernel `max` means `unlimited`. |
+| `effective.<limit>.local` | Direct executing-cgroup observation, before ancestor constraints, with the same status/bytes semantics. |
+| `effective.<limit>.file`, `effective.<limit>.limiting_ancestor_levels` | Source filename and distance to the constraining ancestor (zero for the executing cgroup). An unavailable ancestor uses its distance here. |
+| `effective.<limit>.reason` | Typed unavailable reason: `file_missing`, `file_unreadable`, `invalid_value`, `membership_missing`, `membership_unreadable`, `membership_invalid`, `invalid_cgroup_path`, `cgroup_v1`, or `non_linux`. |
+| `mismatch` | True if any observed limit differs from its request (including unlimited); false if both match; null if readback is incomplete and no mismatch is proven. It is diagnostic and does not change workload exit status. |
+| `cgroup_version`, `source`, `ancestor_scope` | Detected hierarchy version (null on non-Linux or unreadable/invalid membership), membership source `/proc/self/cgroup`, and `visible` ancestor scope. Raw cgroup identities are omitted. |
+
+Readback runs inside the executing scope after slice configuration, using its
+own `/proc/self/cgroup`, never the launching supervisor's membership. Effective
+values are the minimum finite limits across that cgroup and its visible
+ancestors, including a mounted delegated root when it exposes limit files.
+Missing ancestor-root files are skipped because cgroup v2's global root has
+no resource limit files.
+
+An unreadable required file makes that limit unavailable rather than replacing
+it with the request. Ancestors hidden by a cgroup namespace are outside this
+observation. On cgroup v1 and non-Linux systems no effective values are
+claimed. Hybrid v1/v2 hierarchies are untested; if unified membership exists
+but a controller remains in v1, missing v2 files are reported as unavailable.
+The receipt does not add an outer cap or alter admission, cleanup,
+runner counts, or the gate-owned scope/slice budget.
+
 Use consistent semaphore and runner settings across callers on the same host.
 For example, on a host with capacity reserved for two gates:
 
