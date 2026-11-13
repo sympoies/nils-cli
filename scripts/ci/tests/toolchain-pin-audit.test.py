@@ -134,7 +134,100 @@ class ToolchainPinAuditTest(unittest.TestCase):
         for channel in ('stable', 'beta', 'nightly-2026-11-01', '1.99'):
             with self.subTest(channel=channel):
                 self.write('rust-toolchain.toml', f'[toolchain]\nchannel = "{channel}"\n')
-                self.assert_rejected('rust-toolchain.toml')
+                self.assert_rejected(
+                    f'rust-toolchain.toml:2: channel "{channel}" is not an exact X.Y.Z version')
+
+    def test_missing_toolchain_file_is_rejected(self):
+        (self.root / 'rust-toolchain.toml').unlink()
+        self.assert_rejected('rust-toolchain.toml: missing')
+
+    def test_yaml_workflow_is_scanned(self):
+        (self.root / '.github/workflows/ci.yml').unlink()
+        self.write('.github/workflows/ci.yaml', WORKFLOW.replace(
+            f'rust-toolchain@{PIN}', 'rust-toolchain@stable'))
+        self.assert_rejected('.github/workflows/ci.yaml:11: dtolnay/rust-toolchain@stable')
+
+    def test_commented_toolchain_selections_are_ignored(self):
+        self.write('scripts/setup.sh', HELPER + '# rustup default stable\n')
+        self.write('.github/workflows/ci.yml', WORKFLOW.replace(
+            '          cargo build --locked',
+            '          # rustup default nightly\n          cargo build --locked'))
+        result = self.audit()
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_commented_cargo_run_needs_no_setup(self):
+        self.write('.github/workflows/ci.yml', """jobs:
+  docs:
+    steps:
+      - run: |
+          # cargo build --locked
+          echo docs
+""")
+        result = self.audit()
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_rustc_run_requires_setup(self):
+        self.write('.github/workflows/ci.yml', """jobs:
+  compile:
+    steps:
+      - run: rustc --version
+""")
+        self.assert_rejected('job compile runs cargo without a pinned toolchain step')
+
+    def test_github_helpers_are_scanned(self):
+        self.write('.github/scripts/setup.sh', 'rustup default stable\n')
+        self.assert_rejected('.github/scripts/setup.sh:1: rustup default stable')
+
+    def test_environment_override_with_space_before_colon_is_rejected(self):
+        self.write('.github/workflows/ci.yml', WORKFLOW.replace(
+            '    steps:', '    env:\n      RUSTUP_TOOLCHAIN   : stable\n    steps:', 1))
+        self.assert_rejected('RUSTUP_TOOLCHAIN   : stable')
+
+    def test_rustup_flag_values_are_not_toolchain_names(self):
+        for options in ('--profile minimal', '--profile=minimal',
+                        '--component rustfmt', '-c rustfmt',
+                        '--target wasm32-unknown-unknown', '-t wasm32-unknown-unknown',
+                        '--profile minimal --component rustfmt --no-self-update'):
+            for channel in (PIN, 'stable'):
+                command = f'rustup toolchain install {options} {channel}'
+                with self.subTest(command=command):
+                    self.write('scripts/setup.sh', HELPER + command + '\n')
+                    result = self.audit()
+                    self.assertEqual(result.returncode, 0 if channel == PIN else 1, result.stdout)
+                    if channel != PIN:
+                        self.assertIn(f'scripts/setup.sh:5: {command} (expected {PIN})', result.stdout)
+        for option in ('--path "project directory"', '--path="project directory"',
+                       r'--path project\ directory'):
+            for channel in (PIN, 'nightly'):
+                command = f'rustup override set {option} {channel}'
+                with self.subTest(command=command):
+                    self.write('scripts/setup.sh', HELPER + command + '\n')
+                    result = self.audit()
+                    self.assertEqual(result.returncode, 0 if channel == PIN else 1, result.stdout)
+
+    def test_quoted_inline_rustup_command_passes(self):
+        for quote in ('"', "'"):
+            with self.subTest(quote=quote):
+                self.write('.github/workflows/ci.yml', f'''jobs:
+  setup:
+    steps:
+      - run: {quote}rustup toolchain install --profile minimal {PIN}{quote}
+''')
+                result = self.audit()
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_quoted_helper_calls_with_floating_channels_are_rejected(self):
+        for helper, command in (
+                ('scripts/setup.py', 'subprocess.run("rustup default stable", shell=True)'),
+                ('scripts/setup.js', 'run("rustup default nightly")')):
+            with self.subTest(helper=helper):
+                self.write(helper, command + '\n')
+                self.assert_rejected(f'{helper}:1: {command}')
+
+    def test_every_rustup_command_on_a_line_is_checked(self):
+        command = f'rustup toolchain install {PIN} && rustup default stable'
+        self.write('scripts/setup.sh', HELPER + command + '\n')
+        self.assert_rejected(f'scripts/setup.sh:5: {command}')
 
     def test_toolchain_file_without_a_channel_is_rejected(self):
         self.write('rust-toolchain.toml', '[toolchain]\ncomponents = ["clippy"]\n')

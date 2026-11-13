@@ -345,3 +345,117 @@ printf '%s\n' '{"login":"wrong-actor"}'
         assert!(!audit.contains(CANARY));
     }
 }
+
+#[test]
+fn unselected_missing_signer_names_fingerprint_and_principal_recovery() {
+    let fixture = SigningFixture::new();
+    // Keep the principal available, but use Git defaults until explicitly selected.
+    let policy_path = fixture
+        .removal
+        .home
+        .path()
+        .join("config/forge-cli/identity.toml");
+    let policy = fs::read_to_string(&policy_path).unwrap().replace(
+        "require_session_binding = true",
+        "require_session_binding = false\nactivation = \"asserted-only\"\nunasserted_noninteractive = \"allow\"",
+    );
+    fs::write(&policy_path, policy).unwrap();
+    let target = Path::new(&fixture.removal.target);
+    let index = std::path::PathBuf::from(
+        git(
+            target,
+            &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+        )
+        .trim(),
+    );
+    let original_index = fs::read(&index).unwrap();
+    let original_bytes = fs::read(target.join("README.md")).unwrap();
+    let original_config = fs::read(fixture.removal.home.path().join(".gitconfig")).unwrap();
+    let result = fixture.remove();
+    assert_eq!(result.code, 65, "{}", result.stdout_text());
+    let error = parse_json(&result);
+    assert_eq!(error["error"]["code"], "removal-backup-failed");
+    assert!(target.exists());
+    assert_eq!(fs::read(index).unwrap(), original_index);
+    assert_eq!(fs::read(target.join("README.md")).unwrap(), original_bytes);
+    assert_eq!(
+        fs::read(fixture.removal.home.path().join(".gitconfig")).unwrap(),
+        original_config
+    );
+    assert!(git(target, &["for-each-ref", "refs/worktree-backup/"]).is_empty());
+    assert!(!result.stdout_text().contains(CANARY));
+    assert!(!result.stderr_text().contains(CANARY));
+    assert_eq!(
+        error["error"]["details"]["signing_fingerprint"],
+        "0000000000000000000000000000000000000000",
+        "{}",
+        result.stdout_text()
+    );
+    let hint = error["error"]["hint"].as_str().unwrap();
+    assert!(hint.contains("FORGE_IDENTITY_PRINCIPAL=<principal> git-cli worktree remove <target>"));
+    assert!(hint.contains("forge-cli identity doctor --operation commit"));
+    let text = run_with(
+        &fixture.removal.harness.git_cli_bin(),
+        &["worktree", "remove", "safe"],
+        &fixture.options(),
+    );
+    assert_eq!(text.code, 65);
+    assert!(
+        text.stderr_text()
+            .contains("0000000000000000000000000000000000000000")
+    );
+    assert!(
+        text.stderr_text()
+            .contains("FORGE_IDENTITY_PRINCIPAL=<principal>")
+    );
+    // Execute the advertised recovery against the same retained target.
+    let options = fixture
+        .options()
+        .with_env("FORGE_IDENTITY_PRINCIPAL", "agent");
+    let recovered = run_with(
+        &fixture.removal.harness.git_cli_bin(),
+        &["worktree", "remove", "safe", "--format", "json"],
+        &options,
+    );
+    assert_eq!(recovered.code, 0, "{}", recovered.stdout_text());
+    assert!(!target.exists());
+    let receipt = parse_json(&recovered);
+    let backup = receipt["data"]["backup_ref"].as_str().unwrap();
+    let verified = run_with(Path::new("git"), &["verify-commit", backup], &options);
+    assert_eq!(verified.code, 0, "{}", verified.stderr_text());
+    let signer = run_with(
+        Path::new("git"),
+        &["show", "-s", "--format=%GF", backup],
+        &options,
+    );
+    assert_eq!(signer.stdout_text().trim(), fixture.fingerprint);
+    assert_eq!(
+        fs::read(fixture.removal.home.path().join(".gitconfig")).unwrap(),
+        original_config
+    );
+}
+
+#[test]
+fn unselected_signing_failure_does_not_expose_arbitrary_key_selector() {
+    let fixture = SigningFixture::new();
+    fs::remove_file(
+        fixture
+            .removal
+            .home
+            .path()
+            .join("config/forge-cli/identity.toml"),
+    )
+    .unwrap();
+    git(
+        fixture.removal.repo.path(),
+        &["config", "user.signingkey", CANARY],
+    );
+    let result = fixture.remove();
+    assert_eq!(result.code, 65, "{}", result.stdout_text());
+    let error = parse_json(&result);
+    assert_eq!(error["error"]["code"], "removal-backup-failed");
+    assert!(error["error"]["details"]["signing_fingerprint"].is_null());
+    assert!(!result.stdout_text().contains(CANARY));
+    assert!(!result.stderr_text().contains(CANARY));
+    assert!(Path::new(&fixture.removal.target).exists());
+}

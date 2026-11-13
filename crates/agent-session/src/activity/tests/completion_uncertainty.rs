@@ -123,20 +123,11 @@ fn claude_stop_diagnoses_safe_candidate_rejection_fields() {
         assert_eq!(board["completion_candidate_reason"], reason);
         clock.advance(Duration::from_secs(301));
         let later = state_for_view(&context, &created.record).unwrap();
-        assert_eq!(
-            later.phase,
-            if reason == "candidate" {
-                TurnPhase::Waiting
-            } else {
-                TurnPhase::Unknown
-            }
+        assert_eq!(later.phase, TurnPhase::Unknown);
+        assert!(
+            later.last_turn.is_none(),
+            "Stop without structured idle cannot complete"
         );
-        if reason != "candidate" {
-            assert!(
-                later.last_turn.is_none(),
-                "continuation and background work cannot complete"
-            );
-        }
         let persisted =
             fs::read_to_string(session_dir(&context, &created.record.id).join(ACTIVITY_FILE))
                 .unwrap();

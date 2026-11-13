@@ -7,6 +7,8 @@
   to establish an empty composer, with a second native read before submit.
 - Native human drafts remain until human clearing, with an occupied-composer
   deferral reason; ordinary terminal stale-draft admission is unchanged.
+- The updated module requires a fresh launch, resume or restart through the
+  existing mount flow; an older mounted module hash fails closed.
 
 ### Why / context
 

@@ -260,6 +260,7 @@ fn push_branch(args: &PushArgs) -> Result<PushOutput, CliError> {
     git_output(&argv).map_err(|err| {
         CliError::runtime("git-push-failed", summarize_git_error(&err.to_string()))
     })?;
+    ensure_pushed_upstream(&args.remote, &branch)?;
 
     Ok(PushOutput {
         remote_branch: branch.clone(),
@@ -388,6 +389,7 @@ fn bootstrap_branch(args: &PushArgs, branch: String) -> Result<PushOutput, CliEr
     git_output(&argv).map_err(|err| {
         CliError::runtime("git-push-failed", summarize_git_error(&err.to_string()))
     })?;
+    ensure_pushed_upstream(&args.remote, &branch)?;
 
     Ok(PushOutput {
         remote_branch: branch.clone(),
@@ -781,6 +783,29 @@ fn upstream_is_own_ref(remote: &str, branch: &str) -> bool {
         git_stdout_trimmed_optional(&["config", "--get", &format!("branch.{branch}.merge")]);
     configured_remote.as_deref() == Some(remote)
         && configured_merge.as_deref() == Some(format!("refs/heads/{branch}").as_str())
+}
+
+/// `push --set-upstream` writes branch config even when a single-branch clone's
+/// fetch refspec cannot map the published branch to a remote-tracking ref.
+/// Add only that branch, preserving the clone's bounded fetch scope.
+fn ensure_pushed_upstream(remote: &str, branch: &str) -> Result<(), CliError> {
+    if git_status_success(&["rev-parse", "--verify", &format!("{branch}@{{upstream}}")]) {
+        return Ok(());
+    }
+
+    let tracking_error = |err: anyhow::Error| {
+        CliError::runtime(
+            "push-tracking-failed",
+            format!(
+                "branch was pushed, but upstream tracking could not be established: {}",
+                summarize_git_error(&err.to_string())
+            ),
+        )
+    };
+    git_output(&["remote", "set-branches", "--add", remote, branch]).map_err(tracking_error)?;
+    let refspec = format!("+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
+    git_output(&["fetch", "--no-tags", remote, &refspec]).map_err(tracking_error)?;
+    Ok(())
 }
 
 fn cached_default_branch(remote: &str) -> Option<String> {

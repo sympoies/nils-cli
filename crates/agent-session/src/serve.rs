@@ -2273,14 +2273,6 @@ async fn activity_change_loop_inner(
     let mut shadow_poll = activity_stream::shadow_refresh_interval();
     shadow_poll.tick().await;
     loop {
-        let completion_deadline =
-            claude_completion::activity_completion_refresh_deadline(&log, &context).await;
-        let completion_refresh = async {
-            match completion_deadline {
-                Some(deadline) => tokio::time::sleep_until(deadline).await,
-                None => std::future::pending::<()>().await,
-            }
-        };
         let change = tokio::select! {
             biased;
             changed = lifecycle_rx.changed() => {
@@ -2293,7 +2285,6 @@ async fn activity_change_loop_inner(
             }
             change = changes.recv() => change,
             _ = shadow_poll.tick() => Some(ActivityChange::Refresh),
-            _ = completion_refresh => Some(ActivityChange::Refresh),
         };
         let Some(change) = change else {
             degrade_activity_broker(

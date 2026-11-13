@@ -73,12 +73,15 @@ state.
 Command `hook batch --file FILE`, schema `cli.forge-cli.{repo,org}.hook.batch.v1`.
 Omit `--repo` and `--org`: rows name their own targets.
 
-The file is a JSON array of `{"target","hook","action","from","to"}` rows.
-Unknown keys are refused.
+The file is a JSON array of rows. Unknown keys are refused.
 
 - `action` is `set-url` with string `from` and `to`, or `set-active` with
   boolean `from` and `to`.
 - `target` is `OWNER/NAME` for `repo hook` and the organization for `org hook`.
+- `action: "redeliver"` instead takes `status` (default `failed`), `since` and
+  `until`, with the same selection as `hook redeliver` below. It has no `from`
+  or `to`. Each selected delivery produces a result row; an empty selection
+  produces none. Mixed change and redelivery rows run in file order.
 
 The whole file is validated before any provider call (`batch_invalid`, exit
 65): malformed or duplicate rows, wrong value types, or no rows.
@@ -93,6 +96,56 @@ identity scope in one process, so the verified actor is reused.
 - Text output is one line per row. The exit code is 1 when any row failed.
 - A `hook_readback_mismatch` skips the remaining rows, since it can mean a write
   changed more than intended.
+
+## `hook redeliver`
+
+Command: `hook redeliver --hook ID --status failed --since TIMESTAMP --until
+TIMESTAMP`, with `--repo OWNER/NAME` or `--org ORG`.
+
+Schema `cli.forge-cli.{repo,org}.hook.redeliver.v1`. Data: `provider`, `dry_run`,
+`total`, `failed`, `rows`, using the existing JSON envelope. Text emits one
+line per result with target, hook, delivery id and status.
+
+- `--status` is `failed` (default), `success`, or `all`. Success means HTTP
+  200–399, including redirects; other numeric codes, including zero for a
+  transport failure, count as failed. A null code is pending.
+- `--since` is inclusive; `--until` is exclusive. Both are RFC 3339 timestamps
+  with an offset, and the start must precede the end. Filtering is local after
+  fetching all delivery pages with `gh api --paginate --slurp` (GitHub uses
+  cursor links). The selected ids are frozen before any POST and deduplicated.
+- Each selected delivery receives exactly one
+  `POST .../hooks/ID/deliveries/DELIVERY/attempts`. A failed POST or read-back
+  reports that row and continues with the remaining deliveries and batch rows.
+  There is no automatic retry: a failed POST can have an uncertain outcome.
+- Redelivery is asynchronous (`202 Accepted`). After each accepted POST the
+  command lists deliveries again, finds a new redelivery with the original
+  GUID and reads its metadata. `delivery` is the selected original id;
+  `observed_delivery` is the new attempt's id. `delivery_status` is `success`,
+  `failed`, or `pending`, with numeric `status_code` (null while pending).
+  If no new attempt is visible, the status is pending; no completion is claimed
+  and the original failure is never presented as the new attempt. No polling.
+  Multiple new candidates or an unresolved earlier POST for the same GUID
+  keep read-back pending because attribution to a specific POST is ambiguous.
+- Row `status` is `redelivered`, `would_redeliver`, or `failed`. Failed POSTs
+  and read-backs include a typed `error`; failed receiver responses retain the
+  observed HTTP code. `failed` counts failed result rows; any failure exits 1.
+  A listing/authorization failure in a batch has a null `delivery` and counts
+  as a failed row. Pending accepted attempts exit 0 and need later confirmation.
+- `--dry-run` lists selected ids and their current status, with no POST or
+  delivery-detail call. Payloads, headers, free-form provider status strings,
+  secrets and backend error details never appear in either output format.
+
+Batch example (omit global `--repo` / `--org`):
+
+```json
+[{"target":"OWNER/NAME","hook":7,"action":"redeliver","status":"failed","since":"2026-01-02T00:00:00Z","until":"2026-01-03T00:00:00Z"}]
+```
+
+GitHub only permits redelivery of deliveries from the
+[past three days](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks).
+Run recovery promptly after a URL switch; an older time window cannot restore
+expired deliveries. Repository and organization webhook token permissions and
+identity rules are the same as for the existing write commands.
 
 ## `org hook create`
 

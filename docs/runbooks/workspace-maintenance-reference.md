@@ -86,11 +86,24 @@ repository, so every place that selects a toolchain names that same release:
   `scripts/`
 - `scripts/setup-rust-tooling.sh`, which reads the channel from the file
 
+The audit reads only the root `rust-toolchain.toml`. Do not add a root
+`rust-toolchain` or nested toolchain file: this Cargo workspace uses one release,
+and rustup can prefer those files over the root pin. Recursive toolchain-file
+discovery is outside this audit's scope so synthetic fixtures and vendored trees
+cannot become additional version sources; review additions of these files against
+this root-only rule.
+
 `python3 scripts/ci/toolchain-pin-audit.py` fails on a version other than the file's,
 on a floating or missing ref (`stable`, `beta`, `nightly`, `@master`, no `@`), and on a
 job that runs cargo without the pinned step. It runs in `--local-fast`, the scoped CI
 checks and the full checks. It sees cargo only as a command word in a `run:` block, so
 a job that reaches cargo only through a script (`cargo-deny-audit.sh`) is not detected.
+This is an accepted exception for the `cargo_deny` jobs in `ci.yml` and
+`full-validation.yml`: they install a prebuilt `cargo-deny` and run advisory and
+duplicate-version checks through Cargo metadata, without compiling workspace code.
+Their Cargo version comes from the runner rather than an explicit pinned setup
+step. Revisit the exception if either job starts compiling code; script-only Cargo
+discovery is outside this text audit, so review such changes explicitly.
 
 Bump the toolchain in one reviewed PR that does nothing else:
 
@@ -99,14 +112,15 @@ Bump the toolchain in one reviewed PR that does nothing else:
 2. Fix the new compiler and clippy lints in the same PR.
 3. Check that tooling reading the `target/` layout still handles it
    (`scripts/ci/lib/target_guard.py` and the test-binary resolvers).
-4. Run the full gates on Linux and macOS before merge, including the jobs PR-time CI
-   skips: `macos_clippy` (merge groups only) and `full_validation` (nightly, manual
-   and release-candidate merge groups). Locally that is
-   `NILS_CLI_TEST_RUNNER=nextest bash scripts/ci/nils-cli-checks-entrypoint.sh` on Linux
-   and, on a macOS host, `cargo clippy --all-targets --all-features -- -D warnings`
-   plus `cargo nextest run --profile ci --workspace`.
-5. Merge through the queue, which requires the merge group's `macos_clippy`, then
-   dispatch CI on `main` so `full_validation` runs, and revert the bump if it fails.
+4. Run the Linux gates on the PR head before merge: required CI plus
+   `bash scripts/ci/nils-cli-checks-entrypoint.sh --local-fast` locally. Two jobs
+   cannot run on a PR head: `macos_clippy` runs only in merge groups, and
+   `full_validation` runs for nightly, manual and release-candidate runs on `main`.
+5. Merge through the queue. The merge group runs `macos_clippy` on the new toolchain
+   before anything lands, and a failure there dequeues the PR; fix it and queue again.
+6. Right after the merge, dispatch the manual full run on `main` so `full_validation`
+   runs. It must be green before the next release; if it fails, a fix PR or a revert
+   goes first and the release waits.
 
 ## 2. Build and quick smoke checks
 
@@ -621,6 +635,57 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 ```
 
 ## 4. Full checks included by the CI entrypoint
+
+The entrypoint runs the cargo-free
+test shell portability audit before selecting a validation mode, including
+PR affected plans, local-fast and docs-only. Static inspection avoids adding
+a macOS runner to every PR.
+Gated re-entry and nested affected-plan execution run the audit again; the
+script suite also scans the current tree, so those paths incur repeated scans.
+Run it directly with:
+
+```bash
+python3 scripts/ci/test-shell-portability-audit.py
+python3 scripts/ci/tests/test-shell-portability-audit.test.py
+```
+
+It scans UTF-8 test sources and fixtures under directories named
+`tests`, `fixtures` or `testdata`, standalone
+`*.test.sh`/`*.test.py`/`*.test.cjs`/`*_test.rs`/`tests.rs`
+files, and Rust source from its first standalone `#[cfg(test)]` onward.
+Build/cache directories, symlinks, binary data, and the audit's own synthetic
+rule-definition test are excluded.
+
+Known rejected forms include short-option clusters, attached arguments and
+options after other flags: `stat -c%a`/`-Lc`/`--format`,
+`sed -E -i`/`-ie`/`--in-place`,
+`readlink -fn`/`--canonicalize`,
+`date -u -d`/`-d@123`/`--date`,
+`grep -oP`/`--perl-regexp` and
+`xargs -0r`/`--no-run-if-empty`.
+An explicit `--` ends option matching.
+
+Use portable commands; for sed, an explicit empty suffix (`sed -i ''`) or
+a dot-prefixed backup suffix (`sed -i.bak` or `sed -i .bak`) passes.
+When OS variants require a fallback, suppress the expected first-command
+error and run the other form on failure, for example
+`stat -c '%a' "$file" 2>/dev/null || stat -f '%Lp' "$file"`
+for GNU/Linux and macOS BSD stat.
+
+Add reviewed exceptions to
+`scripts/ci/test-shell-portability-allowlist.json`: each entry names the
+exact repository-relative `path`, one-based `line_number`, full
+`line`, `kind` and `reason`.
+The `fallback` kind also requires an exact `context` containing the
+fallback (possibly several lines), anchored at that numbered occurrence.
+Moving, removing or copying the command outside that context fails the audit.
+The `classifier-input` kind is only for strings passed as data to a
+shell-policy classifier and never executed. Do not exclude entire classifier
+files. Missing or changed matches fail as stale exceptions.
+
+This is a known-pattern text check, not a shell parser or proof of portability:
+it does not follow generated/dynamically assembled commands or indirect test
+module imports. Real macOS release validation remains required.
 
 `bash scripts/ci/nils-cli-checks-entrypoint.sh` includes:
 

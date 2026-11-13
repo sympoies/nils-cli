@@ -1,0 +1,82 @@
+[
+  {
+    "path": "crates/agent-hook/tests/dsh_policy.rs",
+    "line": "    \"readlink -f $(which a) $(which b)\",",
+    "kind": "classifier-input",
+    "reason": "Unexecuted input to the shell-policy classifier, not a shell stub.",
+    "line_number": 3943
+  },
+  {
+    "path": "crates/agent-hook/tests/dsh_policy_tiers.rs",
+    "line": "        \"export EDITOR=vi; sed -i 's/a/b/' notes.md\",",
+    "kind": "classifier-input",
+    "reason": "Unexecuted input to the shell-policy classifier, not a shell stub.",
+    "line_number": 328
+  },
+  {
+    "path": "crates/agent-hook/tests/dsh_policy_tiers.rs",
+    "line": "        \"export EDITOR=vi; sed -i 's/a/b/' notes.md\",",
+    "kind": "classifier-input",
+    "reason": "Unexecuted input to the shell-policy classifier, not a shell stub.",
+    "line_number": 359
+  },
+  {
+    "path": "crates/agent-hook/tests/dsh_policy_tiers.rs",
+    "line": "        \"export EDITOR=vi; sed -i 's/a/b/' notes.md\",",
+    "kind": "classifier-input",
+    "reason": "Unexecuted input to the shell-policy classifier, not a shell stub.",
+    "line_number": 623
+  },
+  {
+    "path": "crates/agent-hook/tests/dsh_policy_tiers.rs",
+    "line": "        \"export EDITOR=vi; sed -i 's#x#/Users/someone/project#' README.md\",",
+    "kind": "classifier-input",
+    "reason": "Unexecuted input to the shell-policy classifier, not a shell stub.",
+    "line_number": 456
+  },
+  {
+    "path": "crates/agent-hook/tests/dsh_policy_tiers.rs",
+    "line": "        \"export EDITOR=vi; sed -i 's#x#$HOME/project#' README.md\",",
+    "kind": "classifier-input",
+    "reason": "Unexecuted input to the shell-policy classifier, not a shell stub.",
+    "line_number": 463
+  },
+  {
+    "path": "crates/agent-hook/tests/dsh_policy_tiers.rs",
+    "line": "        \"sed -i 's/foo/bar/' agent-out/README.md\",",
+    "kind": "classifier-input",
+    "reason": "Unexecuted input to the shell-policy classifier, not a shell stub.",
+    "line_number": 504
+  },
+  {
+    "path": "crates/agent-hook/tests/dsh_policy_tiers.rs",
+    "line": "        \"sed -i 's/foo/agent-out/' README.md\",",
+    "kind": "classifier-input",
+    "reason": "Unexecuted input to the shell-policy classifier, not a shell stub.",
+    "line_number": 542
+  },
+  {
+    "path": "crates/codex-cli/tests/integration/execution_capsule.rs",
+    "line": "    if stat -c '%a' \"$1\" 2>/dev/null; then",
+    "kind": "fallback",
+    "context": "    if stat -c '%a' \"$1\" 2>/dev/null; then\n      return\n    fi\n    stat -f '%Lp' \"$1\"",
+    "reason": "Supports GNU/Linux stat and macOS BSD stat; the BSD form runs when the GNU form fails.",
+    "line_number": 246
+  },
+  {
+    "path": "crates/forge-cli/tests/integration/repo_hook.rs",
+    "line": "    (stat -c '%a' \"$6\" 2>/dev/null || stat -f '%Lp' \"$6\") > \"$dir/post-mode\"",
+    "kind": "fallback",
+    "context": "    (stat -c '%a' \"$6\" 2>/dev/null || stat -f '%Lp' \"$6\") > \"$dir/post-mode\"",
+    "reason": "Supports GNU/Linux stat and macOS BSD stat; the BSD form runs when the GNU form fails.",
+    "line_number": 56
+  },
+  {
+    "path": "crates/secrets/tests/integration.rs",
+    "line_number": 229,
+    "line": "      *) output_mode=\"$(stat -Lc '%a' \"${output_files[0]}\" 2>/dev/null || true)\" ;;",
+    "kind": "fallback",
+    "context": "    case \"$(uname -s)\" in\n      Darwin|FreeBSD) output_mode=\"$(stat -f '%Lp' \"${output_files[0]}\" 2>/dev/null || true)\" ;;\n      *) output_mode=\"$(stat -Lc '%a' \"${output_files[0]}\" 2>/dev/null || true)\" ;;\n    esac",
+    "reason": "External OS dispatch uses BSD stat on macOS/FreeBSD and GNU stat on Linux."
+  }
+]

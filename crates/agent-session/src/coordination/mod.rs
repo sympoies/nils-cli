@@ -737,6 +737,14 @@ pub(crate) fn defer_notification_with_detail(
     notification::defer_with_detail(context, candidate, reason, detail, retry_after_seconds)
 }
 
+pub(crate) fn defer_notification_unbound_unobservable_composer(
+    context: &CliContext,
+    candidate: &NotificationCandidate,
+    retry_after_seconds: i64,
+) -> Result<bool, CliError> {
+    notification::defer_unbound_unobservable_composer(context, candidate, retry_after_seconds)
+}
+
 pub(crate) fn reconcile_notification_submitted(
     context: &CliContext,
     candidate: &NotificationCandidate,

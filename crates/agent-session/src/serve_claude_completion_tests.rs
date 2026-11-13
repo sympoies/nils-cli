@@ -1,18 +1,18 @@
 use super::*;
 
 #[tokio::test]
-async fn activity_stream_settles_claude_stop_without_later_hooks_or_polling() {
+async fn activity_stream_settles_claude_stop_on_structured_idle_refresh() {
     assert_claude_completion_stream(None, crate::activity::TurnPhase::Working).await;
 }
 
 #[tokio::test]
-async fn activity_stream_settles_claude_stop_with_pending_attention() {
+async fn activity_stream_structured_completion_clears_pending_attention() {
     assert_claude_completion_stream(Some("Elicitation"), crate::activity::TurnPhase::NeedsInput)
         .await;
 }
 
 #[tokio::test]
-async fn activity_stream_settles_claude_stop_with_cleared_approval() {
+async fn activity_stream_structured_completion_after_stop_clears_approval() {
     assert_claude_completion_stream(
         Some("PermissionRequest"),
         crate::activity::TurnPhase::Working,
@@ -82,9 +82,8 @@ async fn assert_claude_completion_stream(
             );
         }
     }
-    assert!(crate::activity::completion_deadline_for_view(&context, &record).is_some());
     let tmux = tmp.path().join("fake-tmux");
-    fs::write(&tmux, "#!/bin/sh\ncase \"$1\" in\n list-windows) printf 'hs-claude-completion-stream\\t100\\n' ;;\n display-message) printf 'Claude\\n' ;;\n capture-pane) printf '❯ \\n' ;;\nesac\n").unwrap();
+    fs::write(&tmux, "#!/bin/sh\ncase \"$1\" in\n list-windows) printf 'hs-claude-completion-stream\\t100\\n' ;;\n *) exit 42 ;;\nesac\n").unwrap();
     fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
     let collector = default_session_collector();
     let broker = ActivityBroker::for_test_with_session_collector(
@@ -93,14 +92,14 @@ async fn assert_claude_completion_stream(
         &tmux,
         collector.clone(),
     );
-    // Keep the notification channel open but send no changes: collector side
-    // effects must not accidentally act as a completion timer.
-    let (_change_tx, change_rx) = mpsc::channel(1);
+    // Feed the same structured sidecar and refresh that the sampler produces.
+    // No quiet-window timer or subsequent provider hook establishes completion.
+    let (change_tx, change_rx) = mpsc::channel(1);
     let change_loop = tokio::spawn(activity_change_loop(
         broker.log.clone(),
         broker.lifecycle.clone(),
         collector,
-        context,
+        context.clone(),
         tmux,
         change_rx,
     ));
@@ -121,6 +120,26 @@ async fn assert_claude_completion_stream(
     } else {
         assert!(attention.is_none(), "approval survived the same-turn Stop");
     }
+    // Finish the initial sampler before replacing its unavailable observation
+    // with the structured idle fixture; it must not overwrite the fixture.
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !dir.join("activity.shadow.json").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("initial sampler finished");
+    let stopped = crate::activity::state_for_view(&context, &record).unwrap();
+    fs::write(
+        dir.join("activity.shadow.json"),
+        serde_json::to_vec(&json!({
+            "schema_version": "agent-session.activity-shadow.v1",
+            "runtime_id": "launch-stream", "runtime_generation": 1,
+            "activity_revision": stopped.revision,
+            "observation": {"observer_version": "claude-agents.v1",
+                "rule_id": "claude_agents_idle", "observed_at": jiff::Timestamp::now().to_string(),
+                "projection": "waiting", "disagrees": true}
+        })).unwrap()
+    ).unwrap();
+    change_tx.send(ActivityChange::Refresh).await.unwrap();
     let completed = tokio::time::timeout(Duration::from_secs(3), async {
         loop {
             let event = subscription.next_event().await.unwrap();
@@ -140,6 +159,6 @@ async fn assert_claude_completion_stream(
     broker.shutdown().await;
     assert!(
         completed.is_ok(),
-        "Stop settled in state_for_view but never reached stream subscribers"
+        "Structured Stop completion never reached stream subscribers"
     );
 }

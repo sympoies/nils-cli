@@ -84,6 +84,7 @@ pub(crate) fn annotate_for_view(
     }) {
         state.shadow_observation =
             Some(with_disagreement(cached.observation.clone(), &state.phase));
+        project_unavailable(record, cached, &mut state);
         project_interrupt_uncertainty(record, cached, &mut state);
     }
     if cached
@@ -104,11 +105,39 @@ pub(crate) fn annotate_for_view(
     state
 }
 
+/// Activity status and list/stream views expose the same structured failure.
+pub(super) fn project_claude_unavailable(
+    context: &CliContext,
+    record: &SessionRecord,
+    state: &mut TurnState,
+) {
+    if record.agent == "claude"
+        && let Some(cached) =
+            read_current(&session_dir(context, &record.id).join(SHADOW_FILE), record)
+    {
+        project_unavailable(record, &cached, state);
+    }
+}
+
+fn project_unavailable(record: &SessionRecord, cached: &ShadowDocument, state: &mut TurnState) {
+    if record.agent == "claude"
+        && cached.activity_revision == Some(state.revision)
+        && cached.observation.rule_id == "claude_agents_unavailable"
+        && is_recent(&cached.observation.observed_at, SAMPLE_INTERVAL_SECONDS * 2)
+    {
+        state.phase = TurnPhase::Unknown;
+        state.diagnostic = Some(super::ActivityDiagnosticView {
+            reason: "claude_agents_unavailable".to_string(),
+            extra: cached.observation.extra.clone(),
+        });
+    }
+}
+
 /// Rules whose sustained reading over an open turn is interrupt uncertainty.
-/// For Claude the provider's own idle state counts like the screen marker.
+/// Claude has no interrupt hook; sustained provider idle remains uncertainty.
 fn is_interrupt_rule(provider: &str, rule_id: &str) -> bool {
     match provider {
-        "claude" => matches!(rule_id, "claude_interrupt_marker" | "claude_agents_idle"),
+        "claude" => rule_id == "claude_agents_idle",
         "codex" => rule_id == "codex_interrupt_marker",
         _ => false,
     }
@@ -259,6 +288,16 @@ fn eligible(provider: &str, status: &str, state: &TurnState) -> bool {
     if status != "running" || !matches!(provider, "claude" | "codex") {
         return false;
     }
+    if provider == "claude"
+        && state
+            .semantic_event
+            .as_ref()
+            .is_some_and(|event| event.kind == "stop_observed")
+    {
+        // A completed Stop keeps its revision-bound proof until newer work.
+        // Resampling a projected revision would overwrite the proof's revision.
+        return state.current_turn.is_some();
+    }
     if state.phase == TurnPhase::Working
         && state
             .current_turn
@@ -283,8 +322,33 @@ fn read_current(path: &Path, record: &SessionRecord) -> Option<ShadowDocument> {
     (document.schema_version == SHADOW_DOCUMENT_VERSION
         && document.runtime_id == runtime.launch_id
         && document.runtime_generation == runtime.generation
+        && (record.agent != "claude"
+            || document.observation.observer_version == claude_agents::OBSERVER_VERSION)
         && valid_observation(&document.observation))
     .then_some(document)
+}
+
+/// A post-Stop structured idle observation, fenced to this accepted revision.
+pub(super) fn completion_observed_at(
+    context: &CliContext,
+    record: &SessionRecord,
+    revision: u64,
+    stopped_at: &str,
+) -> Option<String> {
+    let cached = read_current(&session_dir(context, &record.id).join(SHADOW_FILE), record)?;
+    if record.agent != "claude"
+        || cached.activity_revision != Some(revision)
+        || cached.observation.observer_version != claude_agents::OBSERVER_VERSION
+        || cached.observation.rule_id != "claude_agents_idle"
+        || cached.observation.projection != "waiting"
+        // Post-Stop evidence at this exact revision remains proof after the
+        // sampling interval; aging it out would reopen an already completed turn.
+        || cached.observation.observed_at.parse::<Timestamp>().ok()?
+            < stopped_at.parse::<Timestamp>().ok()?
+    {
+        return None;
+    }
+    Some(cached.observation.observed_at)
 }
 
 fn valid_observation(observation: &ShadowObservationView) -> bool {
@@ -316,47 +380,36 @@ fn is_older_than(value: &str, seconds: i64) -> bool {
 }
 
 fn sample(record: &SessionRecord, tmux_bin: &Path, phase: &TurnPhase) -> ShadowObservationView {
-    // The provider's structured state outranks screen rules. When it is
-    // unavailable the screen decides and the observation says why.
-    let unavailable = if record.agent == "claude" {
-        match claude_agents::state_for(record) {
-            Ok(state) => return claude_agents::observation(state, phase),
-            Err(reason) => Some(reason),
-        }
-    } else {
-        None
-    };
+    if record.agent == "claude" {
+        return match claude_agents::state_for(record) {
+            Ok((state, observed_at)) => {
+                let mut observation = claude_agents::observation(state, phase);
+                observation.observed_at = observed_at;
+                observation
+            }
+            Err(reason) => claude_agents::unavailable_observation(reason),
+        };
+    }
     let target = crate::managed_tmux_pane_target(&record.tmux_session);
     let title = command_output(
         tmux_bin,
         &["display-message", "-p", "-t", &target, "#{pane_title}"],
     );
-    // Scrollback may retain an interrupt from an earlier turn after the
-    // current viewport has moved on. It cannot establish a fresh interrupt.
-    let capture_lines = if record.agent == "claude" {
-        "0"
-    } else {
-        CAPTURE_LINES
-    };
     let bottom = command_output(
         tmux_bin,
-        &["capture-pane", "-p", "-t", &target, "-S", capture_lines],
+        &["capture-pane", "-p", "-t", &target, "-S", CAPTURE_LINES],
     );
     let (projection, rule_id) = match (title, bottom) {
         (Some(title), Some(bottom)) => classify(&record.agent, &title, &bottom),
         _ => ("unknown", "observer_unavailable"),
     };
-    let mut extra = serde_json::Map::new();
-    if let Some(reason) = unavailable {
-        extra.insert(claude_agents::UNAVAILABLE_KEY.into(), reason.code().into());
-    }
     ShadowObservationView {
         observer_version: SHADOW_VERSION.to_string(),
         rule_id: rule_id.to_string(),
         observed_at: now(),
         projection: projection.to_string(),
         disagrees: disagrees(phase, projection),
-        extra,
+        extra: serde_json::Map::new(),
     }
 }
 
@@ -391,78 +444,9 @@ fn classify<'a>(provider: &str, title: &str, bottom: &str) -> (&'a str, &'a str)
         {
             ("waiting", "codex_prompt_visible")
         }
-        "claude"
-            if bottom.contains("do you want to proceed")
-                || bottom.contains("allow this action") =>
-        {
-            ("needs_input", "claude_permission_form")
-        }
-        "claude"
-            if bottom.contains("esc to interrupt") || claude_running_tool_is_current(&bottom) =>
-        {
-            ("working", "claude_working_indicator")
-        }
-        "claude" if claude_interrupt_composer_is_empty(&bottom) => {
-            ("unknown", "claude_interrupt_marker")
-        }
-        "claude"
-            if bottom.lines().rev().take(3).any(|line| {
-                let line = line.trim_start();
-                line.starts_with('❯') || line.starts_with("> ")
-            }) =>
-        {
-            ("waiting", "claude_prompt_visible")
-        }
         "codex" => ("unknown", "codex_unmatched"),
-        "claude" => ("unknown", "claude_unmatched"),
         _ => ("unknown", "provider_unsupported"),
     }
-}
-
-fn claude_running_tool_is_current(bottom: &str) -> bool {
-    // A Running tool can replace the interrupt affordance while an older
-    // marker remains in capture history. A newer marker must still win.
-    let current = bottom
-        .rsplit_once("interrupted · what should claude do instead?")
-        .map_or(bottom, |(_, after_marker)| after_marker);
-    current.lines().any(|line| {
-        line.trim_start()
-            .strip_prefix('⎿')
-            .is_some_and(|status| status.trim_start().starts_with("running…"))
-    })
-}
-
-fn claude_interrupt_composer_is_empty(bottom: &str) -> bool {
-    let Some((_, after_marker)) =
-        bottom.rsplit_once("interrupted · what should claude do instead?")
-    else {
-        return false;
-    };
-    // A submitted prompt after the marker starts a newer turn. The older
-    // interrupt cannot establish idleness for that turn, even if the tool
-    // status has stopped rendering. A draft also cannot establish idleness.
-    if after_marker.lines().map(str::trim).any(|line| {
-        line.strip_prefix('❯')
-            .or_else(|| line.strip_prefix("> "))
-            .is_some_and(|input| !input.trim().is_empty())
-    }) {
-        return false;
-    }
-    // Renderer footers and padding may follow the composer. Only the latest
-    // composer after the marker may establish idleness; an older one cannot.
-    let mut next_nonempty = None;
-    for line in after_marker.lines().rev().map(str::trim) {
-        if line.starts_with('❯') || line == ">" || line.starts_with("> ") {
-            // A multiline draft can start with an empty row. Any text before
-            // the lower composer separator prevents an idle observation.
-            return matches!(line, "❯" | ">")
-                && next_nonempty.is_none_or(|next: &str| next.chars().all(|ch| ch == '─'));
-        }
-        if !line.is_empty() {
-            next_nonempty = Some(line);
-        }
-    }
-    false
 }
 
 pub(super) fn disagrees(phase: &TurnPhase, projection: &str) -> bool {
@@ -485,7 +469,7 @@ fn with_disagreement(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pretty_assertions::{assert_eq, assert_ne};
+    use pretty_assertions::assert_eq;
     use serde_json::{Map, json};
     use std::time::Instant;
 
@@ -539,34 +523,6 @@ mod tests {
     }
 
     #[test]
-    fn claude_interrupt_marker_with_idle_composer_is_explicit_uncertainty() {
-        assert_eq!(
-            classify(
-                "claude",
-                "Claude",
-                "Interrupted · What should Claude do instead?\n❯ "
-            ),
-            ("unknown", "claude_interrupt_marker")
-        );
-        assert_eq!(
-            classify(
-                "claude",
-                "Claude",
-                "Interrupted · What should Claude do instead?\nWorking… esc to interrupt\n❯ "
-            ),
-            ("working", "claude_working_indicator")
-        );
-        assert_eq!(
-            classify(
-                "claude",
-                "Claude",
-                "Interrupted · What should Claude do instead?\n❯ draft"
-            ),
-            ("waiting", "claude_prompt_visible")
-        );
-    }
-
-    #[test]
     fn codex_interrupt_marker_is_uncertainty_even_with_composer_text() {
         // Codex capture text does not distinguish a renderer placeholder from
         // a draft. Neither can establish a completed or waiting turn.
@@ -603,188 +559,6 @@ mod tests {
             classify("codex", "Codex", pane),
             ("working", "codex_working_indicator")
         );
-    }
-
-    #[test]
-    fn claude_old_interrupt_before_a_fresh_prompt_does_not_establish_idleness() {
-        let bottom = "Interrupted · What should Claude do instead?\n❯ Continue the task\n⏺ Tool progress\n❯\n────────────────\n";
-        assert_ne!(
-            classify("claude", "Claude", bottom).1,
-            "claude_interrupt_marker"
-        );
-        assert_eq!(
-            classify(
-                "claude",
-                "Claude",
-                &format!("{bottom}\n{}", interrupted_pane_with_footer(""))
-            ),
-            ("unknown", "claude_interrupt_marker")
-        );
-    }
-
-    #[test]
-    fn claude_sampler_does_not_reuse_a_previous_turn_marker_from_scrollback() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let mut record = record("fresh-turn", "launch-a", 1);
-        record.agent = "claude".to_string();
-        let viewport = tmp.path().join("viewport");
-        let scrollback = tmp.path().join("scrollback");
-        let tmux = tmp.path().join("fake-tmux");
-        fs::write(
-            &tmux,
-            format!(
-                "#!/bin/sh\ncase \"$1\" in\n display-message) printf 'Claude\\n' ;;\n capture-pane) case \"$6\" in\n  0) cat {} ;;\n  -20) cat {} ;;\n  *) exit 1 ;;\n esac ;;\nesac\n",
-                shell_words::quote(viewport.to_str().unwrap()),
-                shell_words::quote(scrollback.to_str().unwrap()),
-            ),
-        )
-        .unwrap();
-        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
-        // A newly written script can exceed the observer deadline on its first
-        // macOS invocation. Initialize the fixture before sampling so this test
-        // checks viewport selection under the unchanged production deadline.
-        let prewarm = nils_test_support::cmd::retry_executable_file_busy(|| {
-            ProcessCommand::new(&tmux).arg("display-message").output()
-        })
-        .expect("initialize fake tmux");
-        assert!(
-            prewarm.status.success(),
-            "fake tmux setup failed: {prewarm:?}"
-        );
-        assert_eq!(prewarm.stdout, b"Claude\n");
-        let interrupted = interrupted_pane_with_footer("");
-        fs::write(&viewport, &interrupted).unwrap();
-        fs::write(&scrollback, &interrupted).unwrap();
-        assert_eq!(
-            sample(&record, &tmux, &TurnPhase::Working).rule_id,
-            "claude_interrupt_marker"
-        );
-
-        let fresh = "⏺ Tool progress\n❯\n────────────────\n";
-        fs::write(&viewport, fresh).unwrap();
-        fs::write(&scrollback, format!("{interrupted}\n{fresh}")).unwrap();
-        let observation = sample(&record, &tmux, &TurnPhase::Working);
-        assert_eq!(observation.rule_id, "claude_prompt_visible");
-        let mut working = state(json!({
-            "schema_version": "agent-session.turn-state.v1", "phase": "working",
-            "phase_changed_at": now(), "revision": 5,
-            "source": {"kind": "provider_hook", "provider": "claude", "confidence": "observed"},
-            "semantic_event": {"kind": "progress", "observed_at": now()},
-            "current_turn": {"provider_turn_id": "fresh-turn", "started_at": now()}
-        }));
-        let earlier = Timestamp::now()
-            .checked_sub(jiff::SignedDuration::from_secs(20))
-            .unwrap()
-            .to_string();
-        let mut document = ShadowDocument {
-            schema_version: SHADOW_DOCUMENT_VERSION.to_string(),
-            runtime_id: "launch-a".to_string(),
-            runtime_generation: 1,
-            observation,
-            activity_revision: Some(working.revision),
-            interrupt_since: Some(earlier),
-        };
-        project_interrupt_uncertainty(&record, &document, &mut working);
-        assert_eq!(working.phase, TurnPhase::Working);
-
-        fs::write(&viewport, &interrupted).unwrap();
-        fs::write(&scrollback, format!("{fresh}\n{interrupted}")).unwrap();
-        document.observation = sample(&record, &tmux, &working.phase);
-        project_interrupt_uncertainty(&record, &document, &mut working);
-        assert_eq!(working.phase, TurnPhase::Unknown);
-        assert_eq!(
-            working.diagnostic.as_ref().unwrap().reason,
-            "interrupted_suspected"
-        );
-        assert!(working.last_turn.is_none());
-    }
-
-    #[test]
-    fn claude_running_tool_after_old_interrupt_marker_stays_working() {
-        // A capture can retain an older interrupt above the fresh tool status.
-        // The visible composer is empty while the foreground tool still runs.
-        let pane = "Interrupted · What should Claude do instead?\n\
-                    ● Bash(command)\n  ⎿ Running…\n❯ \n────────────────────\n";
-        assert_eq!(
-            classify("claude", "Claude", pane),
-            ("working", "claude_working_indicator")
-        );
-    }
-
-    #[test]
-    fn claude_new_interrupt_after_running_tool_preserves_uncertainty() {
-        let pane = "● Bash(command)\n  ⎿ Running…\n\
-                    Interrupted · What should Claude do instead?\n❯ \n";
-        assert_eq!(
-            classify("claude", "Claude", pane),
-            ("unknown", "claude_interrupt_marker")
-        );
-    }
-
-    fn interrupted_pane_with_footer(composer: &str) -> String {
-        format!(
-            "Interrupted · What should Claude do instead?\n❯ {composer}\n\
-             ────────────────────\n\
-             Model: default · effort: normal\n\
-             Working directory: <workspace>\n\
-             Context: 10% · cache: enabled\n\
-             Customizations: 1\n\
-             Tools: 1 command\n\
-             Tokens: 100\n\
-             Permission mode: default · ? for shortcuts\n{}",
-            "\n".repeat(8)
-        )
-    }
-
-    #[test]
-    fn claude_interrupt_marker_tolerates_renderer_footer_and_padding() {
-        let pane = interrupted_pane_with_footer("");
-        assert!(!pane.lines().rev().take(3).any(|line| line.trim() == "❯"));
-        assert_eq!(
-            classify("claude", "Claude", &pane),
-            ("unknown", "claude_interrupt_marker")
-        );
-    }
-
-    #[test]
-    fn claude_interrupt_footer_preserves_latest_composer_and_work_guards() {
-        let draft = interrupted_pane_with_footer("draft");
-        let multiline_draft = interrupted_pane_with_footer("\n  draft continuation");
-        let earlier_empty_composer = format!("❯ \n{draft}");
-        let draft_after_empty =
-            "Interrupted · What should Claude do instead?\n❯ \n❯ draft\nModel: default\n";
-        let empty_before_marker =
-            "❯ \nInterrupted · What should Claude do instead?\nModel: default\n";
-        for pane in [
-            &draft,
-            &multiline_draft,
-            &earlier_empty_composer,
-            draft_after_empty,
-            empty_before_marker,
-        ] {
-            assert_ne!(
-                classify("claude", "Claude", pane).1,
-                "claude_interrupt_marker"
-            );
-        }
-        let idle = interrupted_pane_with_footer("");
-        assert_eq!(
-            classify(
-                "claude",
-                "Claude",
-                &format!("Working… esc to interrupt\n{idle}")
-            ),
-            ("working", "claude_working_indicator")
-        );
-        assert_eq!(
-            classify("claude", "Claude", &format!("Allow this action?\n{idle}")),
-            ("needs_input", "claude_permission_form")
-        );
-    }
-
-    #[test]
-    fn claude_sustained_interrupt_projection_is_turn_and_runtime_fenced() {
-        sustained_interrupt_projection_is_turn_and_runtime_fenced("claude");
     }
 
     #[test]
@@ -857,11 +631,7 @@ mod tests {
         cached["runtime_generation"] = json!(2);
         assert_eq!(view(working.clone(), &cached).phase, TurnPhase::Working);
         cached["runtime_generation"] = json!(1);
-        cached["observation"]["rule_id"] = json!(if provider == "codex" {
-            "claude_interrupt_marker"
-        } else {
-            "codex_interrupt_marker"
-        });
+        cached["observation"]["rule_id"] = json!("provider_unsupported");
         assert_eq!(view(working.clone(), &cached).phase, TurnPhase::Working);
         cached["observation"]["rule_id"] = json!(format!("{provider}_interrupt_marker"));
         cached["interrupt_since"] = json!(
@@ -896,11 +666,6 @@ mod tests {
     }
 
     #[test]
-    fn claude_shadow_writer_sustains_resets_and_throttles_across_revisions() {
-        shadow_writer_sustains_resets_and_throttles_across_revisions("claude");
-    }
-
-    #[test]
     fn codex_shadow_writer_sustains_resets_and_throttles_across_revisions() {
         shadow_writer_sustains_resets_and_throttles_across_revisions("codex");
     }
@@ -930,7 +695,7 @@ mod tests {
         fs::write(&tmux, format!(
             "#!/bin/sh\ncase \"$1\" in\n display-message) printf 'Claude\\n' ;;\n capture-pane) printf 'capture\\n' >> {}; printf '%s' {} ;;\nesac\n",
             shell_words::quote(counter.to_str().unwrap()),
-            shell_words::quote(&if provider == "claude" { interrupted_pane_with_footer("") } else { "Conversation interrupted\n› \n".to_string() }),
+            shell_words::quote("Conversation interrupted\n› \n"),
         )).unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
         let path = session_dir(&context, &record.id).join(SHADOW_FILE);
@@ -1053,7 +818,7 @@ mod tests {
         );
         assert_eq!(
             classify("claude", "Claude", "Working… esc to interrupt"),
-            ("working", "claude_working_indicator")
+            ("unknown", "provider_unsupported")
         );
         assert_eq!(
             classify("codex", "Codex", "unrecognized private output"),
@@ -1096,6 +861,19 @@ mod tests {
         assert!(eligible("claude", "running", &unknown));
         assert!(!eligible("dsh", "running", &unknown));
         assert!(!eligible("codex", "stopped", &unknown));
+        let mut completed = fresh.clone();
+        completed.phase = TurnPhase::Waiting;
+        completed.current_turn = None;
+        completed.semantic_event = Some(
+            serde_json::from_value(json!({
+                "kind":"stop_observed", "observed_at":"2000-01-01T00:00:00Z"
+            }))
+            .unwrap(),
+        );
+        assert!(
+            !eligible("claude", "running", &completed),
+            "a completed Stop must retain its original revision-bound proof"
+        );
     }
 
     #[test]

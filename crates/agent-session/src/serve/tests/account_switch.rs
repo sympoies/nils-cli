@@ -474,7 +474,7 @@ fn claude_switch_retry_after_helper_exit_proves_stopped_with_a_stale_heartbeat()
 }
 
 #[tokio::test]
-async fn queued_claude_switch_applies_after_provider_hook_idle() {
+async fn queued_claude_switch_applies_after_stop_and_structured_idle() {
     let lock = GlobalStateLock::new();
     let tmp = tempfile::TempDir::new().unwrap();
     let (st, broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
@@ -515,6 +515,17 @@ async fn queued_claude_switch_applies_after_provider_hook_idle() {
         event("stop", "stop_observed", true),
     )
     .unwrap();
+    let stopped = crate::activity::state_for_view(&st.context, &record).unwrap();
+    fs::write(
+        crate::session_dir(&st.context, &record.id).join("activity.shadow.json"),
+        serde_json::to_vec(&json!({
+            "schema_version":"agent-session.activity-shadow.v1",
+            "runtime_id":runtime, "runtime_generation":record.runtime.as_ref().unwrap().generation,
+            "activity_revision":stopped.revision,
+            "observation":{"observer_version":"claude-agents.v1", "rule_id":"claude_agents_idle",
+                "observed_at":jiff::Timestamp::now().to_string(), "projection":"waiting", "disagrees":true}
+        })).unwrap()
+    ).unwrap();
     let task = tokio::spawn(account_drain::run(st.clone()));
     let applied = tokio::time::timeout(Duration::from_secs(6), async {
         loop {
