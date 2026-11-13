@@ -520,3 +520,20 @@ async fn mailbox_notice_bound_terminal_codex_unobservable_composer_keeps_retryin
     assert_eq!(receipt["state"], "queued", "{receipt}");
     fixture.assert_no_input("");
 }
+
+#[tokio::test]
+async fn mailbox_notice_unbound_terminal_codex_draft_refusal_keeps_retrying() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let fixture = WakeFixture::new(AgentKind::Codex).await;
+    let record = load_session_record(&fixture.state.context, "beta").unwrap();
+    assert!(record.provider_resume.is_none());
+    fs::write(fixture.temp.path().join("composer"), "operator partial draft").unwrap();
+    for _ in 0..6 {
+        dispatch_wake(&fixture).await;
+    }
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["state"], "queued", "{receipt}");
+    assert_eq!(receipt["last_reason"], "provider-not-ready", "{receipt}");
+    fixture.assert_no_input("operator partial draft");
+}
