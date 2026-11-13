@@ -622,6 +622,46 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 
 ## 4. Full checks included by the CI entrypoint
 
+The entrypoint runs the cargo-free
+test shell portability audit before selecting a validation mode, including
+PR affected plans, local-fast and docs-only. Static inspection avoids adding
+a macOS runner to every PR.
+Run it directly with:
+
+```bash
+python3 scripts/ci/test-shell-portability-audit.py
+python3 scripts/ci/tests/test-shell-portability-audit.test.py
+```
+
+It scans UTF-8 test sources and fixtures under directories named
+`tests`, `fixtures` or `testdata`, standalone
+`*.test.sh`/`*.test.py`/`*.test.cjs`/`*_test.rs`/`tests.rs`
+files, and Rust source from its first standalone `#[cfg(test)]` onward.
+Build/cache directories, symlinks, binary data, and the audit's own synthetic
+rule-definition test are excluded.
+
+Known rejected forms are `stat -c`/`--format`, bare `sed -i`,
+`readlink -f`, `date -d`, `grep -P` and `xargs -r`.
+Use portable commands; for sed, an explicit empty suffix (`sed -i ''`) or
+a dot-prefixed backup suffix (`sed -i.bak` or `sed -i .bak`) passes.
+When OS variants require a fallback, suppress the expected first-command
+error and run the other form on failure, for example
+`stat -c '%a' "$file" 2>/dev/null || stat -f '%Lp' "$file"`
+for GNU/Linux and macOS BSD stat.
+
+Add reviewed exceptions to
+`scripts/ci/test-shell-portability-allowlist.json`: each entry names the
+exact repository-relative `path`, full `line`, `kind` and `reason`.
+The `fallback` kind also requires an exact `context` containing the
+fallback (possibly several lines); removing that context fails the audit.
+The `classifier-input` kind is only for strings passed as data to a
+shell-policy classifier and never executed. Do not exclude entire classifier
+files. Missing or changed matches fail as stale exceptions.
+
+This is a known-pattern text check, not a shell parser or proof of portability:
+it does not follow generated/dynamically assembled commands or indirect test
+module imports. Real macOS release validation remains required.
+
 `bash scripts/ci/nils-cli-checks-entrypoint.sh` includes:
 
 - `bash scripts/ci/docs-placement-audit.sh --strict`

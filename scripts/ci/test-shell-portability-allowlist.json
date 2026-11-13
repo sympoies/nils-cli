@@ -1,0 +1,52 @@
+[
+  {
+    "path": "crates/agent-hook/tests/dsh_policy.rs",
+    "line": "    \"readlink -f $(which a) $(which b)\",",
+    "kind": "classifier-input",
+    "reason": "Unexecuted input to the shell-policy classifier, not a shell stub."
+  },
+  {
+    "path": "crates/agent-hook/tests/dsh_policy_tiers.rs",
+    "line": "        \"export EDITOR=vi; sed -i 's/a/b/' notes.md\",",
+    "kind": "classifier-input",
+    "reason": "Unexecuted input to the shell-policy classifier, not a shell stub."
+  },
+  {
+    "path": "crates/agent-hook/tests/dsh_policy_tiers.rs",
+    "line": "        \"export EDITOR=vi; sed -i 's#x#/Users/someone/project#' README.md\",",
+    "kind": "classifier-input",
+    "reason": "Unexecuted input to the shell-policy classifier, not a shell stub."
+  },
+  {
+    "path": "crates/agent-hook/tests/dsh_policy_tiers.rs",
+    "line": "        \"export EDITOR=vi; sed -i 's#x#$HOME/project#' README.md\",",
+    "kind": "classifier-input",
+    "reason": "Unexecuted input to the shell-policy classifier, not a shell stub."
+  },
+  {
+    "path": "crates/agent-hook/tests/dsh_policy_tiers.rs",
+    "line": "        \"sed -i 's/foo/bar/' agent-out/README.md\",",
+    "kind": "classifier-input",
+    "reason": "Unexecuted input to the shell-policy classifier, not a shell stub."
+  },
+  {
+    "path": "crates/agent-hook/tests/dsh_policy_tiers.rs",
+    "line": "        \"sed -i 's/foo/agent-out/' README.md\",",
+    "kind": "classifier-input",
+    "reason": "Unexecuted input to the shell-policy classifier, not a shell stub."
+  },
+  {
+    "path": "crates/codex-cli/tests/integration/execution_capsule.rs",
+    "line": "    if stat -c '%a' \"$1\" 2>/dev/null; then",
+    "kind": "fallback",
+    "context": "    if stat -c '%a' \"$1\" 2>/dev/null; then\n      return\n    fi\n    stat -f '%Lp' \"$1\"",
+    "reason": "Supports GNU/Linux stat and macOS BSD stat; the BSD form runs when the GNU form fails."
+  },
+  {
+    "path": "crates/forge-cli/tests/integration/repo_hook.rs",
+    "line": "    (stat -c '%a' \"$6\" 2>/dev/null || stat -f '%Lp' \"$6\") > \"$dir/post-mode\"",
+    "kind": "fallback",
+    "context": "    (stat -c '%a' \"$6\" 2>/dev/null || stat -f '%Lp' \"$6\") > \"$dir/post-mode\"",
+    "reason": "Supports GNU/Linux stat and macOS BSD stat; the BSD form runs when the GNU form fails."
+  }
+]
