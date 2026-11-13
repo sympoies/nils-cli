@@ -6238,13 +6238,17 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__org__hook__redeliver)
-            opts="-h --hook --status --since --until --org --format --remote --provider --host --repo --store-root --dry-run --help"
+            opts="-h --hook --delivery-id --status --since --until --org --format --remote --provider --host --repo --store-root --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
                 --hook)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delivery-id)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -10960,13 +10964,17 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__repo__hook__redeliver)
-            opts="-h --hook --status --since --until --format --remote --provider --host --repo --store-root --dry-run --help"
+            opts="-h --hook --delivery-id --status --since --until --format --remote --provider --host --repo --store-root --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
                 --hook)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delivery-id)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

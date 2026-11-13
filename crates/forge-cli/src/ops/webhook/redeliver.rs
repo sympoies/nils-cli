@@ -3,64 +3,17 @@
 //! original failed delivery as the new attempt. No polling or POST retries.
 use std::collections::HashSet;
 
-use jiff::Timestamp;
 use nils_common::cli_contract::OutputFormat;
 use serde::{Deserialize, Serialize};
 
 use super::engine::{Kind, RowError, api_call, invalid_response, run_call, schema_err};
+use super::selection::Selection;
 use super::target::HookTarget;
 use crate::backend::BackendRunner;
-use crate::cli::{GlobalFlags, HookDeliveryStatus, HookRedeliverArgs};
+use crate::cli::{GlobalFlags, HookRedeliverArgs};
 use crate::error::ForgeError;
 use crate::provider::ProviderContext;
 use crate::rate_limit::default_runner;
-
-#[derive(Debug, Clone)]
-pub(super) struct Selection {
-    status: HookDeliveryStatus,
-    since: Timestamp,
-    until: Timestamp,
-}
-
-impl Selection {
-    pub(super) fn new(
-        status: HookDeliveryStatus,
-        since: &str,
-        until: &str,
-    ) -> Result<Self, ForgeError> {
-        let invalid = || {
-            ForgeError::validation(
-                schema_err(),
-                "hook_window_invalid",
-                "since and until must be RFC 3339 timestamps with since before until",
-                None,
-            )
-        };
-        let since = since.parse::<Timestamp>().map_err(|_| invalid())?;
-        let until = until.parse::<Timestamp>().map_err(|_| invalid())?;
-        if since >= until {
-            return Err(invalid());
-        }
-        Ok(Self {
-            status,
-            since,
-            until,
-        })
-    }
-
-    fn contains(&self, delivery: &Delivery) -> Result<bool, ForgeError> {
-        let at = delivery
-            .delivered_at
-            .parse::<Timestamp>()
-            .map_err(|_| invalid_response("delivery timestamp"))?;
-        let selected = match self.status {
-            HookDeliveryStatus::All => true,
-            HookDeliveryStatus::Success => outcome(delivery.status_code) == "success",
-            HookDeliveryStatus::Failed => outcome(delivery.status_code) == "failed",
-        };
-        Ok(selected && at >= self.since && at < self.until)
-    }
-}
 
 #[derive(Debug, Clone)]
 pub(super) struct RedeliverSpec {
@@ -100,7 +53,7 @@ struct Observed {
     status_code: Option<u16>,
 }
 
-fn outcome(code: Option<u16>) -> &'static str {
+pub(super) fn outcome(code: Option<u16>) -> &'static str {
     match code {
         Some(200..=399) => "success",
         Some(_) => "failed",
@@ -136,11 +89,12 @@ impl DeliveryReport {
             error: Some(RowError {
                 kind: error.kind(),
                 message: if error.kind() == "org_hook_scope_missing" {
-                    "the token lacks the admin:org_hook scope"
+                    "the token lacks the admin:org_hook scope".to_string()
+                } else if error.kind() == "hook_delivery_not_found" {
+                    error.message().to_string()
                 } else {
-                    "redelivery operation failed; provider details omitted"
-                }
-                .to_string(),
+                    "redelivery operation failed; provider details omitted".to_string()
+                },
                 detail: None,
             }),
         }
@@ -251,7 +205,7 @@ fn attempt<R: BackendRunner>(
 fn safe_error(error: ForgeError, kind: &'static str) -> ForgeError {
     if matches!(
         error.kind(),
-        "org_hook_scope_missing" | "hook_redelivery_failed"
+        "org_hook_scope_missing" | "hook_redelivery_failed" | "hook_delivery_not_found"
     ) {
         return error;
     }
@@ -271,13 +225,17 @@ pub(super) fn apply<R: BackendRunner>(
 ) -> Result<Vec<DeliveryReport>, ForgeError> {
     let deliveries = list(runner, ctx, spec)?;
     let mut known: HashSet<_> = deliveries.iter().map(|row| row.id).collect();
+    spec.selection.validate_ids(&known)?;
     let mut seen = HashSet::new();
     let mut unresolved = HashSet::new();
     // Validate the complete selection before the first POST. Freeze it so a
     // read-back cannot add redeliveries to the work queue.
     let selected: Vec<_> = deliveries
         .iter()
-        .map(|row| spec.selection.contains(row))
+        .map(|row| {
+            spec.selection
+                .contains(row.id, row.status_code, &row.delivered_at)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let mut rows = Vec::new();
     for (delivery, selected) in deliveries.iter().zip(selected) {
@@ -351,7 +309,12 @@ pub(super) fn run(
     let spec = RedeliverSpec {
         target,
         hook: args.hook,
-        selection: Selection::new(args.status, &args.since, &args.until)?,
+        selection: Selection::new(
+            (!args.delivery_id.is_empty()).then_some(args.delivery_id),
+            args.status,
+            args.since.as_deref(),
+            args.until.as_deref(),
+        )?,
     };
     spec.check()?;
     let rows = match apply(&default_runner(), ctx, &spec, global.dry_run) {

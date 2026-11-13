@@ -78,8 +78,9 @@ The file is a JSON array of rows. Unknown keys are refused.
 - `action` is `set-url` with string `from` and `to`, or `set-active` with
   boolean `from` and `to`.
 - `target` is `OWNER/NAME` for `repo hook` and the organization for `org hook`.
-- `action: "redeliver"` instead takes `status` (default `failed`), `since` and
-  `until`, with the same selection as `hook redeliver` below. It has no `from`
+- `action: "redeliver"` instead takes either a nonempty `delivery_ids` array
+  of positive integers, or `status` (default `failed`), `since` and `until`,
+  with the same mutually exclusive selection as `hook redeliver` below. It has no `from`
   or `to`. Each selected delivery produces a result row; an empty selection
   produces none. Mixed change and redelivery rows run in file order.
 
@@ -101,6 +102,8 @@ identity scope in one process, so the verified actor is reused.
 
 Command: `hook redeliver --hook ID --status failed --since TIMESTAMP --until
 TIMESTAMP`, with `--repo OWNER/NAME` or `--org ORG`.
+For an exact set use `hook redeliver --hook ID --delivery-id DELIVERY_A
+--delivery-id DELIVERY_B` with the same target flags.
 
 Schema `cli.forge-cli.{repo,org}.hook.redeliver.v1`. Data: `provider`, `dry_run`,
 `total`, `failed`, `rows`, using the existing JSON envelope. Text emits one
@@ -109,6 +112,13 @@ line per result with target, hook, delivery id and status.
 - `--status` is `failed` (default), `success`, or `all`. Success means HTTP
   200–399, including redirects; other numeric codes, including zero for a
   transport failure, count as failed. A null code is pending.
+- Repeatable `--delivery-id` selects exactly the supplied positive ids across
+  all delivery pages, deduplicated in provider list order. It cannot be
+  combined with `--status`, `--since` or `--until`. Every requested id must
+  exist on that hook before any POST; otherwise the selection fails with
+  `hook_delivery_not_found` (exit 1), naming the missing id. Batch rows use
+  `delivery_ids` with the same preflight per hook; other batch rows still run
+  independently. Dry-run shows only those ids and their current status.
 - `--since` is inclusive; `--until` is exclusive. Both are RFC 3339 timestamps
   with an offset, and the start must precede the end. Filtering is local after
   fetching all delivery pages with `gh api --paginate --slurp` (GitHub uses
@@ -139,6 +149,12 @@ Batch example (omit global `--repo` / `--org`):
 
 ```json
 [{"target":"OWNER/NAME","hook":7,"action":"redeliver","status":"failed","since":"2026-01-02T00:00:00Z","until":"2026-01-03T00:00:00Z"}]
+```
+
+Exact-set batch example:
+
+```json
+[{"target":"OWNER/NAME","hook":7,"action":"redeliver","delivery_ids":[11,12]}]
 ```
 
 GitHub only permits redelivery of deliveries from the

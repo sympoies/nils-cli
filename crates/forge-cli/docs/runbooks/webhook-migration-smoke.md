@@ -42,11 +42,13 @@ or repositories.
 5. Confirm `hook list` shows `HOOK_URL_B` and the secret still marked
    `[redacted]`; trigger a delivery and confirm it reaches `HOOK_URL_B` and its
    signature still verifies with the original `SECRET`.
-   Recover failures during the switch: record the stop window as RFC 3339
-   `SINCE` (inclusive) and `UNTIL` (exclusive), then preview with
-   `forge-cli repo hook redeliver --repo REPO --hook ID --status failed
-   --since SINCE --until UNTIL --dry-run`. Remove `--dry-run` to attempt each
-   selected id once.
+   Recover deliveries during the switch using the recorded delivery ids:
+   preview with `forge-cli repo hook redeliver --repo REPO --hook ID
+   --delivery-id DELIVERY_A --delivery-id DELIVERY_B --dry-run`. Compare the
+   preview's delivery ids and count with the recorded set; stop if they do not
+   match exactly. Remove only `--dry-run` to attempt that same set once.
+   Explicit ids cannot be combined with status or time-window filters. An
+   unknown id refuses the entire selection for that hook before any POST.
 
    For organization hooks use `org hook redeliver --org ORG`
    with the same selection flags. For multiple hooks, put `action: "redeliver"`

@@ -2003,23 +2003,24 @@ operations:
       local: provider_unsupported
     output:
       data: { provider, dry_run, total, failed, rows }
-    notes: "Whole file validated first (batch_invalid). Each row uses its own identity scope in one process (one actor probe). Redeliver rows take status (default failed), since and until and emit one result per selected delivery; a listing failure emits a row with delivery=null. Exit 1 when any result failed; a hook_readback_mismatch skips the remaining input rows."
+    notes: "Whole file validated first (batch_invalid). Each row uses its own identity scope in one process (one actor probe). Redeliver rows take either a nonempty delivery_ids array of positive ids or status (default failed), since and until; mixed selection modes are refused. Each requested id must exist on that hook before any POST for the row (hook_delivery_not_found names the missing id). Emit one result per selected delivery; a listing failure emits a row with delivery=null. Exit 1 when any result failed; a hook_readback_mismatch skips the remaining input rows."
 
   - id: repo.hook.redeliver
     schema_version: cli.forge-cli.repo.hook.redeliver.v1
-    summary: Redeliver GitHub webhook deliveries selected by status and time window; org.hook.redeliver is the same on organization hooks.
+    summary: Redeliver GitHub webhook deliveries selected by exact ids or status and time window; org.hook.redeliver is the same on organization hooks.
     inputs:
       - { name: --hook, type: integer, required: true }
-      - { name: --status, type: enum<failed|success|all>, default: failed }
-      - { name: --since, type: string, required: true }
-      - { name: --until, type: string, required: true }
+      - { name: --delivery-id, type: integer, required: false } # repeatable positive id; excludes status/since/until
+      - { name: --status, type: enum<failed|success|all>, default: failed } # window selection only
+      - { name: --since, type: string, required: false } # required without delivery-id
+      - { name: --until, type: string, required: false } # required without delivery-id
     backends:
       github: { program: gh, list: [api, "{optional_hostname}", "repos/{repo}/hooks/{hook}/deliveries?per_page=100", --paginate, --slurp], write: [api, "{optional_hostname}", "repos/{repo}/hooks/{hook}/deliveries/{delivery}/attempts", --method, POST], read: [api, "{optional_hostname}", "repos/{repo}/hooks/{hook}/deliveries/{observed_delivery}"] }
       gitlab: provider_unsupported
       local: provider_unsupported
     output:
       data: { provider, dry_run, total, failed, rows }
-    notes: "RFC 3339 since inclusive, until exclusive. Freeze and deduplicate selected ids before POSTs; dry-run lists only. Each accepted POST is followed by a paginated list to correlate a new redelivery by GUID, then GET of the new id. Rows contain target, hook, action, delivery, status, observed_delivery, delivery_status, status_code and optional typed error. Pending is reported when the asynchronous attempt is not visible; never report the original failure as the new attempt. Failures continue; no POST retries. Only allowlisted metadata is emitted, no payloads, headers, secrets or provider diagnostic text. GitHub redelivery is limited to the past three days."
+    notes: "Exact ids cannot be combined with status/window filters. Resolve every requested id across all pages before any POST; hook_delivery_not_found names a missing id and refuses the whole selection for that hook. RFC 3339 since inclusive, until exclusive for window selection. Freeze and deduplicate selected ids before POSTs; dry-run lists only those ids with current status. Each accepted POST is followed by a paginated list to correlate a new redelivery by GUID, then GET of the new id. Rows contain target, hook, action, delivery, status, observed_delivery, delivery_status, status_code and optional typed error. Pending is reported when the asynchronous attempt is not visible; never report the original failure as the new attempt. Failures continue; no POST retries. Only allowlisted metadata is emitted, no payloads, headers, secrets or provider diagnostic text. GitHub redelivery is limited to the past three days."
 
   - id: org.hook.create
     schema_version: cli.forge-cli.org.hook.create.v1

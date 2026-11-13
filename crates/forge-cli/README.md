@@ -293,7 +293,10 @@ After switching a hook URL, recover failed deliveries with `repo hook redeliver`
 or `org hook redeliver`, selecting `--hook`, `--status failed`, `--since` and
 `--until`. Preview with `--dry-run`; the existing `hook batch --file` accepts
 `redeliver` rows for multiple targets. GitHub permits redelivery only within
-three days; see the [selection and result contract](docs/specs/forge-webhooks-v1.md#hook-redeliver).
+three days. For an exact set, repeat `--delivery-id ID` instead of the status
+and window flags; batch rows use `delivery_ids`. Preview with `--dry-run` and
+stop unless the ids match the recorded set. See the
+[selection and result contract](docs/specs/forge-webhooks-v1.md#hook-redeliver).
 
 PR/MR labels `state::do-not-merge`, `do-not-merge`, and `control::hold` block
 both direct merge and queue enqueue with `pr_hold_active`, independently of

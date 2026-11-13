@@ -3049,7 +3049,8 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 (redeliver)
 _arguments "${_arguments_options[@]}" : \
 '--hook=[Webhook id (see \`hook list\`)]:ID:_default' \
-'--status=[Delivery outcome to select]:STATUS:(failed success all)' \
+'(--status --since --until)*--delivery-id=[Exact delivery id; repeat for several. Conflicts with status/window filters]:ID:_default' \
+'--status=[Delivery outcome to select (default\: failed for a time window)]:STATUS:(failed success all)' \
 '--since=[Inclusive start of the delivery window (RFC 3339 timestamp)]:TIMESTAMP:_default' \
 '--until=[Exclusive end of the delivery window (RFC 3339 timestamp)]:TIMESTAMP:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
@@ -3066,7 +3067,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (batch)
 _arguments "${_arguments_options[@]}" : \
-'--file=[JSON rows with target, hook and action\: set-url (from/to URLs), set-active (from/to booleans), or redeliver (status, since, until); \`target\` is \`OWNER/NAME\` for \`repo hook\` and the organization for \`org hook\`]:FILE:_files' \
+'--file=[JSON rows with target, hook and action\: set-url (from/to URLs), set-active (from/to booleans), or redeliver (delivery_ids or status/since/until); \`target\` is \`OWNER/NAME\` for \`repo hook\` and the organization for \`org hook\`]:FILE:_files' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
@@ -3348,7 +3349,8 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 (redeliver)
 _arguments "${_arguments_options[@]}" : \
 '--hook=[Webhook id (see \`hook list\`)]:ID:_default' \
-'--status=[Delivery outcome to select]:STATUS:(failed success all)' \
+'(--status --since --until)*--delivery-id=[Exact delivery id; repeat for several. Conflicts with status/window filters]:ID:_default' \
+'--status=[Delivery outcome to select (default\: failed for a time window)]:STATUS:(failed success all)' \
 '--since=[Inclusive start of the delivery window (RFC 3339 timestamp)]:TIMESTAMP:_default' \
 '--until=[Exclusive end of the delivery window (RFC 3339 timestamp)]:TIMESTAMP:_default' \
 '--org=[Organization login the command acts on]:ORG:_default' \
@@ -3366,7 +3368,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (batch)
 _arguments "${_arguments_options[@]}" : \
-'--file=[JSON rows with target, hook and action\: set-url (from/to URLs), set-active (from/to booleans), or redeliver (status, since, until); \`target\` is \`OWNER/NAME\` for \`repo hook\` and the organization for \`org hook\`]:FILE:_files' \
+'--file=[JSON rows with target, hook and action\: set-url (from/to URLs), set-active (from/to booleans), or redeliver (delivery_ids or status/since/until); \`target\` is \`OWNER/NAME\` for \`repo hook\` and the organization for \`org hook\`]:FILE:_files' \
 '--org=[Organization login the command acts on]:ORG:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
@@ -5237,7 +5239,7 @@ _forge-cli__subcmd__help__subcmd__org__subcmd__hook_commands() {
 'create:Create a webhook; the secret is read only from \`--secret-env\`' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'redeliver:Redeliver deliveries selected by status and time window' \
+'redeliver:Redeliver exact delivery ids or deliveries selected by status and time window' \
 'batch:Apply webhook changes or redeliveries from one file' \
     )
     _describe -t commands 'forge-cli help org hook commands' commands "$@"
@@ -5642,7 +5644,7 @@ _forge-cli__subcmd__help__subcmd__repo__subcmd__hook_commands() {
 'list:List the repository'\''s webhooks. The secret is never printed' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'redeliver:Redeliver deliveries selected by status and time window' \
+'redeliver:Redeliver exact delivery ids or deliveries selected by status and time window' \
 'batch:Apply webhook changes or redeliveries from one file' \
     )
     _describe -t commands 'forge-cli help repo hook commands' commands "$@"
@@ -6185,7 +6187,7 @@ _forge-cli__subcmd__org__subcmd__help__subcmd__hook_commands() {
 'create:Create a webhook; the secret is read only from \`--secret-env\`' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'redeliver:Redeliver deliveries selected by status and time window' \
+'redeliver:Redeliver exact delivery ids or deliveries selected by status and time window' \
 'batch:Apply webhook changes or redeliveries from one file' \
     )
     _describe -t commands 'forge-cli org help hook commands' commands "$@"
@@ -6227,7 +6229,7 @@ _forge-cli__subcmd__org__subcmd__hook_commands() {
 'create:Create a webhook; the secret is read only from \`--secret-env\`' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'redeliver:Redeliver deliveries selected by status and time window' \
+'redeliver:Redeliver exact delivery ids or deliveries selected by status and time window' \
 'batch:Apply webhook changes or redeliveries from one file' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -6250,7 +6252,7 @@ _forge-cli__subcmd__org__subcmd__hook__subcmd__help_commands() {
 'create:Create a webhook; the secret is read only from \`--secret-env\`' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'redeliver:Redeliver deliveries selected by status and time window' \
+'redeliver:Redeliver exact delivery ids or deliveries selected by status and time window' \
 'batch:Apply webhook changes or redeliveries from one file' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -7289,7 +7291,7 @@ _forge-cli__subcmd__repo__subcmd__help__subcmd__hook_commands() {
 'list:List the repository'\''s webhooks. The secret is never printed' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'redeliver:Redeliver deliveries selected by status and time window' \
+'redeliver:Redeliver exact delivery ids or deliveries selected by status and time window' \
 'batch:Apply webhook changes or redeliveries from one file' \
     )
     _describe -t commands 'forge-cli repo help hook commands' commands "$@"
@@ -7340,7 +7342,7 @@ _forge-cli__subcmd__repo__subcmd__hook_commands() {
 'list:List the repository'\''s webhooks. The secret is never printed' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'redeliver:Redeliver deliveries selected by status and time window' \
+'redeliver:Redeliver exact delivery ids or deliveries selected by status and time window' \
 'batch:Apply webhook changes or redeliveries from one file' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -7357,7 +7359,7 @@ _forge-cli__subcmd__repo__subcmd__hook__subcmd__help_commands() {
 'list:List the repository'\''s webhooks. The secret is never printed' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'redeliver:Redeliver deliveries selected by status and time window' \
+'redeliver:Redeliver exact delivery ids or deliveries selected by status and time window' \
 'batch:Apply webhook changes or redeliveries from one file' \
 'help:Print this message or the help of the given subcommand(s)' \
     )

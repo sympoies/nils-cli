@@ -7,6 +7,9 @@ use serde_json::{Value, json};
 use super::repo_hook::calls;
 use super::support::{CmdOutput, StubEnv, parse_envelope, run_forge_cli};
 
+#[path = "hook_redeliver_exact.rs"]
+mod exact;
+
 const SINCE: &str = "2026-01-02T00:00:00Z";
 const UNTIL: &str = "2026-01-03T00:00:00Z";
 const CANARIES: [&str; 4] = [
