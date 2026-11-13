@@ -86,7 +86,7 @@ jobs:
 
       - name: Set up Rust for the existing contract tests
         if: steps.discover.outputs.newer == 'true'
-        uses: dtolnay/rust-toolchain@1.99.1
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Compile existing module contract tests
         id: compile

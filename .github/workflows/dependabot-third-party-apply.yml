@@ -219,7 +219,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.99.1
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Build canonical admission owner
         env:
