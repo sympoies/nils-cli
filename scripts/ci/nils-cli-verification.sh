@@ -225,6 +225,7 @@ ci_disk_report "job start"
 trap ci_disk_report_on_failure EXIT
 
 run python3 scripts/ci/tests/gate-resources.test.py
+run python3 scripts/ci/tests/gate-effective-limits.test.py
 run bash scripts/ci/tests/ci-build-guard.test.sh
 run python3 scripts/ci/tests/gate-reports.test.py
 run python3 scripts/ci/tests/merge-lcov.test.py
