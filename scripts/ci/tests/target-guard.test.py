@@ -62,6 +62,36 @@ class TargetGuardTest(unittest.TestCase):
         self.assertIn('shared target replaced', result.stdout)
         self.assertIn('debug/deps/agent_session-0123abcd', result.stdout)
 
+    def test_replaced_test_executable_in_package_build_layout_is_reported(self):
+        # Cargo 1.100 builds lib test executables under build/<pkg>/<hash>/out
+        # with no deps/ directory.
+        nested = self.target / 'debug/build/agent_session/0123abcd/out/agent_session-4567ef01'
+        write_exec(nested, 'test-v1', 1_000_000_000)
+        self.snapshot()
+        write_exec(nested, 'test-from-another-worktree', 2_000_000_000)
+        result = self.guard('verify', str(self.snapshot_file))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('shared target replaced', result.stdout)
+        self.assertIn('debug/build/agent_session/0123abcd/out/agent_session-4567ef01', result.stdout)
+
+    def test_removed_test_executable_in_package_build_layout_is_reported(self):
+        nested = self.target / 'debug/build/agent_session/0123abcd/out/agent_session-4567ef01'
+        write_exec(nested, 'test-v1', 1_000_000_000)
+        self.snapshot()
+        nested.unlink()
+        result = self.guard('verify', str(self.snapshot_file))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('removed: debug/build/agent_session/0123abcd/out/agent_session-4567ef01', result.stdout)
+
+    def test_build_script_output_directories_are_not_scanned(self):
+        # build/<pkg>-<hash>/out holds build-script output, not tests under test.
+        generated = self.target / 'debug/build/agent_session-0123abcd/out/generated-tool'
+        write_exec(generated, 'generated-v1', 1_000_000_000)
+        self.snapshot()
+        write_exec(generated, 'generated-v2', 2_000_000_000)
+        result = self.guard('verify', str(self.snapshot_file))
+        self.assertEqual(result.returncode, 0, result.stdout)
+
     def test_removed_binary_is_reported(self):
         self.snapshot()
         self.bin.unlink()

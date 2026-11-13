@@ -218,6 +218,9 @@ jobs:
           token: ${{ steps.bot_token.outputs.token }}
           persist-credentials: false
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.99.1
+
       - name: Build canonical admission owner
         env:
           CARGO_BUILD_JOBS: 4
