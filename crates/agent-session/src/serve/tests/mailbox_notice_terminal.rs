@@ -177,7 +177,7 @@ async fn mailbox_notice_supported_terminal_preserves_operator_draft_before_claim
 }
 
 #[tokio::test]
-async fn wrapped_claude_draft_wake_defers_with_composer_reason() {
+async fn wrapped_claude_draft_wake_defers_with_native_composer_reason() {
     use crate::send::claude_notice::{Launch, runtime, sha256};
     let lock = GlobalStateLock::new();
     let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
@@ -220,21 +220,42 @@ async fn wrapped_claude_draft_wake_defers_with_composer_reason() {
     }
     crate::write_private_file(&dir.join("hooks/register.js"), runtime::MODULE.as_bytes()).unwrap();
     assert!(runtime::readiness(&fixture.state.context, &record).is_some());
+    let receiver = std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let offer: Value = loop {
+            let offer: Value = serde_json::from_slice(&fs::read(dir.join("offer.json")).unwrap()).unwrap();
+            if offer["op"].is_string() { break offer; }
+            assert!(Instant::now() < deadline, "receiver did not get an offer");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let mut stream = std::os::unix::net::UnixStream::connect(socket).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let body = json!({"schema_version":"agent-session.claude-notice-authorize.v1",
+            "op":offer["op"], "binding":binding, "nonce":nonce,
+            "terminal":true, "box_empty":false, "cursor":0}).to_string();
+        write!(stream, "POST /authorize HTTP/1.1\r\nHost: notice.invalid\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(!response.contains("HTTP/1.1 200 "), "a native draft must receive no notice text");
+    });
     drain_coordination_notifications(fixture.state.clone()).await;
+    receiver.join().unwrap();
     fixture.assert_no_input(draft);
     assert!(!fixture.temp.path().join("sessions/beta/drafts/saved").exists());
     let receipt = notification_fixture(fixture.temp.path());
     assert_eq!(receipt["state"], "queued", "{receipt}");
-    assert_eq!(receipt["last_reason"], "recipient-composer-unobservable", "{receipt}");
-    assert_eq!(receipt["last_reason_detail"], "region-not-single-row", "{receipt}");
-    assert!(!observation.exists(), "unreadable input must discard the stale timer");
+    assert_eq!(receipt["last_reason"], "provider-not-ready", "{receipt}");
+    assert_eq!(receipt["last_reason_detail"], "notice-attempt-not-admitted", "{receipt}");
+    assert_eq!(receipt["attempted_generation"], 0);
+    assert!(observation.exists(), "native admission must not run screen draft repair");
     let refusal = fixture.check_draft().unwrap_err();
     assert_eq!(refusal.code(), "composer-unobservable");
     assert_eq!(refusal.details().unwrap()["observation"], "region-not-single-row");
     assert!(refusal.message().contains("multi-row composer"));
 }
 
-async fn queued_claude_wake_remains_retryable_after_clear(stash: bool) {
+async fn queued_claude_wake_remains_retryable_after_clear(stale: bool) {
     use crate::send::claude_notice::{Launch, runtime, sha256};
     let lock = GlobalStateLock::new();
     let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
@@ -277,27 +298,18 @@ async fn queued_claude_wake_remains_retryable_after_clear(stash: bool) {
     }
     crate::write_private_file(&dir.join("hooks/register.js"), runtime::MODULE.as_bytes()).unwrap();
     assert!(runtime::readiness(&fixture.state.context, &record).is_some());
-    drain_coordination_notifications(fixture.state.clone()).await;
-    assert_eq!(notification_fixture(fixture.temp.path())["state"], "queued");
-    if stash {
-        let mut observed: Value = serde_json::from_slice(&fs::read(&observation).unwrap()).unwrap();
-        observed["unchanged_since"] = json!(1);
-        fs::write(&observation, serde_json::to_vec(&observed).unwrap()).unwrap();
-    } else {
-        fs::write(fixture.temp.path().join("composer"), "").unwrap();
+    if stale {
+        crate::send_guard::drafts::observe_at(&fixture.state.context, &record, Some(draft), 1, 0).unwrap();
     }
-    crate::serve::terminal_notification::dispatch_coordination_notification(
-        fixture.state.clone(), fixture.candidate.clone(),
-    ).await;
+    drain_coordination_notifications(fixture.state.clone()).await;
+    fixture.assert_no_input(draft);
+    assert!(!fixture.temp.path().join("sessions/beta/drafts/saved").exists());
     let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["attempted_generation"], 0);
+    // Only the human clears this native draft; the notice never stashes or clears it.
+    fs::write(fixture.temp.path().join("composer"), "").unwrap();
     assert_eq!(receipt["last_reason_detail"], "authorization-timeout", "unoffered wake must remain retryable: {receipt}");
     assert_eq!(receipt["state"], "queued", "unoffered wake must remain retryable: {receipt}");
-    if stash {
-        let saved = fs::read_dir(fixture.temp.path().join("sessions/beta/drafts/saved")).unwrap().next().unwrap().unwrap().path();
-        let saved: Value = serde_json::from_slice(&fs::read(saved).unwrap()).unwrap();
-        assert_eq!(saved["text"], draft);
-        assert_eq!(saved["cleared"], true);
-    }
     // Retry discovery honors the receipt backoff; direct redispatch must do so too.
     let retry_at = std::time::UNIX_EPOCH + Duration::from_secs(receipt["next_attempt_at_epoch"].as_u64().unwrap());
     tokio::time::sleep(retry_at.duration_since(std::time::SystemTime::now()).unwrap_or_default()).await;
@@ -343,7 +355,7 @@ async fn queued_claude_wake_remains_retryable_after_user_clear() {
 }
 
 #[tokio::test]
-async fn queued_claude_wake_remains_retryable_after_stash() {
+async fn queued_claude_wake_preserves_stale_native_draft_until_user_clear() {
     queued_claude_wake_remains_retryable_after_clear(true).await;
 }
 
