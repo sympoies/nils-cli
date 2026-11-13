@@ -53,6 +53,50 @@ publication for that account. Only then it settles the owning incidents as
 failover operation still in flight is never overridden (`recovery_in_progress`),
 and a later authentication failure quarantines the runtime again.
 
+### Unchanged publication without independent provider proof
+
+A structured Claude Code `authentication_failed` event remains authentication
+failure even if it follows a transient edge rejection. An HTTP 403 alone does
+not establish revocation, but also does not authorize recovery. No 403 text
+matching or blanket quarantine clearing is used.
+
+After materialization, an exactly unchanged, complete publication in the failed
+launch's account, host, authority, epoch, generation and snapshot domain returns
+`claude-account-recheck-refused` with `reason: provider_verification_required`
+and `next_action: restart_same_account`. The fixed details record
+`credential_materialized: true`, `runtime_adoption: unconfirmed` and
+`provider_request: unverified`.
+
+The broker's authority auth observation, even
+`valid`, does not prove a successful provider request after the failure. The
+current broker contract offers no independent request proof, so this route
+refuses settlement and leaves every incident receipt and the input quarantine
+unchanged. Revoked, missing, partial, invalid, older and identity-mismatched
+publications retain `credentials_not_republished`; materialization failures
+retain their credential preflight refusal. A strictly newer matching publication
+continues to use the recheck settlement above.
+
+The operator can preserve any draft, wait for an idle empty composer, and run
+`agent-session restart <session>` on the same account. This existing guarded
+lifecycle route is available while authentication-quarantined: only its sealed
+`/exit` input bypasses quarantine. The normal runtime identity, draft,
+verified-stop, canonical conversation resume and readiness checks still apply.
+Do not use `--force` as a way to preserve a draft. A refused restart leaves the
+old runtime quarantined and exposes its existing actionable diagnostic.
+
+A successful restart re-materializes the same account and advances the runtime
+incarnation while retaining the provider conversation. It needs no unrelated
+credential rotation or account switch. Its readiness evidence admits input for
+the new incarnation; it does not mark the old incident healthy or prove runtime
+credential adoption or a successful provider request. The carried last-turn
+presentation drops the predecessor's authentication marker only on the exact
+runtime's readiness transition, so it cannot fence
+the new runtime. The original incident and journal retain the failure, and
+unknown effects remain historical evidence. Only an observed healthy
+provider turn proves model health; another authentication failure quarantines
+the replacement runtime again. No interrupted prompt or tool effect is replayed.
+Automatic same-generation recovery is not provided.
+
 ## Scheduled credential recheck
 
 On the existing 15-second observation loop, the daemon schedules same-account
@@ -77,14 +121,19 @@ starts a new incident and schedule. A model-health settlement also stops probes.
 `started_at_epoch`, state (`scheduled`, `settled`, `cancelled`, `exhausted`), fixed
 `refusal` or null, and up to three attempts with `attempted_at_epoch` and a fixed
 `result` (`started`, `credentials_refreshed`, `recovery_in_progress`,
-`credentials_not_republished`, `credential_preflight_refused`, or
-`recheck_unavailable`). Broker details are never copied into this result.
+`credentials_not_republished`, `provider_verification_required`,
+`credential_preflight_refused`, or `recheck_unavailable`). Broker details are
+never copied into this result.
+
 An attempt is committed as `started` before credential work; a daemon
 crash consumes that attempt, so restarting the daemon cannot repeat it without
 bound. After the last refusal (or an interrupted last attempt), the quarantine
 remains and `recovery_result: recheck_exhausted` triggers the existing final-result
-notification and owner-unavailable escalation. Recording an alert is distinct
-from delivery.
+notification and owner-unavailable escalation. If the last attempt lacks
+independent provider proof for an unchanged publication, the final-result alert
+carries `recovery_action: restart_same_account`, directing the operator to the
+guarded lifecycle route above. It does not authorize a consumer to restart or
+recheck automatically. Recording an alert is distinct from delivery.
 
 If an incident still fences an in-place replacement runtime on the same account,
 the daemon applies a fresh schedule from that runtime's `started_at`, retaining

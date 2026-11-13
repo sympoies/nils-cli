@@ -79,13 +79,32 @@ pub(crate) fn settle(
         // the replacement's publication is not itself evidence of a new fault.
         owned.iter().copied().find_map(receipt_baseline)
     };
-    if let Some(baseline) = baseline
-        && !generation::published(account)
-            .ok()
-            .flatten()
-            .is_some_and(|published| published.newer_than(&baseline))
-    {
-        return Err(refused(record, "credentials_not_republished"));
+    if let Some(baseline) = baseline {
+        let published = generation::published(account).ok().flatten();
+        if published.as_ref() == Some(&baseline) {
+            // A complete unchanged publication can still be usable after an
+            // auth-typed transient rejection. The broker offers no independent
+            // post-failure provider request proof; neither materialization nor
+            // its authority auth observation proves adoption by this runtime.
+            return Err(CliError::data(
+                "claude-account-recheck-refused",
+                "the unchanged credentials were materialized, but provider success is unverified; preserve any draft and restart on the same account when idle with an empty composer",
+                Some(serde_json::json!({
+                    "id": record.id,
+                    "reason": "provider_verification_required",
+                    "next_action": "restart_same_account",
+                    "credential_materialized": true,
+                    "runtime_adoption": "unconfirmed",
+                    "provider_request": "unverified",
+                })),
+            ).with_hint(format!(
+                "use `{} restart <session>` after preserving any draft; readiness does not prove a successful provider request",
+                crate::command_identity::executable()
+            )));
+        }
+        if !published.is_some_and(|published| published.newer_than(&baseline)) {
+            return Err(refused(record, "credentials_not_republished"));
+        }
     }
     let at = jiff::Timestamp::now().to_string();
     for i in owned {

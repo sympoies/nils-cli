@@ -59,9 +59,15 @@ Each record also includes `session_id`, `incident_id`, original
 `authentication`. Recovery results are `healthy`, `credentials_refreshed`,
 `refresh_failed`, `runtime_replaced`, `account_switched`, `blocked_no_credential`,
 or `recheck_exhausted`. For `healthy`, `credentials_refreshed`, `account_switched`
-and `runtime_replaced`, the action is null. Other alerts carry
-`same_account_credential_recheck` as operator guidance; it never authorizes an
-automatic recheck in the consumer.
+and `runtime_replaced`, the action is null.
+
+A `recheck_exhausted` result whose
+last scheduled attempt returned `provider_verification_required` carries
+`restart_same_account`: preserve any draft and use the existing guarded restart
+with the same account and conversation (see the
+[unchanged-publication refusal](claude-auth-recovery-v1.md#unchanged-publication-without-independent-provider-proof)).
+Other alerts carry `same_account_credential_recheck` as operator guidance.
+Neither action authorizes an automatic restart or recheck in the consumer.
 A final-result alert remains separate from the original incident acknowledgement.
 
 ## Persistence and retry
