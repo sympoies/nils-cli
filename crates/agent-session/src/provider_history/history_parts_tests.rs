@@ -578,3 +578,15 @@ fn owner_summaries_share_the_aggregate_message_byte_budget() {
             .is_some_and(|text| text.chars().count() <= MAX_PART_SUMMARY_CHARS)
     }));
 }
+
+#[test]
+fn both_history_forms_mask_shared_bare_token_patterns() {
+    let text = include_str!("../../tests/fixtures/history-parts/bare-token.txt").trim_end();
+    let record = serde_json::json!({"type":"response_item", "payload":{
+        "type":"function_call_output", "output":text
+    }});
+    let parts = project("codex", &[record]);
+    assert_eq!(parts[0]["summary"], "inspect [redacted] then");
+    assert!(parts[0].get("owner_summary").is_none());
+    assert_eq!(owner_text(text), "inspect [redacted] then");
+}
