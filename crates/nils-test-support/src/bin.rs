@@ -361,6 +361,37 @@ mod tests {
     }
 
     #[test]
+    fn only_the_two_cargo_shapes_give_a_profile_dir() {
+        // Each shape differs from a valid layout in exactly one guard.
+        for shape in [
+            // an `out` directory that is not under build/<package>/<hash>
+            "/x/y/z/out/exe",
+            "/target/debug/other/pkg/hash/out/exe",
+            // build/<package>/out is one level too shallow
+            "/target/debug/build/pkg/out/exe",
+            // build/<package>/<hash>/extra/out is one level too deep
+            "/target/debug/build/pkg/hash/extra/out/exe",
+            // neither a deps nor an out directory
+            "/target/debug/examples/exe",
+            "/target/debug/exe",
+        ] {
+            assert_eq!(profile_dir(std::path::Path::new(shape)), None, "{shape}");
+        }
+    }
+
+    #[test]
+    fn an_executable_outside_any_layout_cannot_select_a_binary_in_its_grandparent() {
+        let temp = TempDir::new().unwrap();
+        let exe = temp.path().join("tools/bin/pkg");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, "").unwrap();
+        // The grandparent is where an older derivation looked for the binary.
+        write_exe(&temp.path().join("tools"), "tool", "#!/bin/sh\n");
+        write_exe(exe.parent().unwrap(), "tool", "#!/bin/sh\n");
+        assert_eq!(profile_binary(&exe, "tool"), None);
+    }
+
+    #[test]
     fn a_built_binary_is_found_in_the_profile_dir_for_both_layouts() {
         let temp = TempDir::new().unwrap();
         let profile = temp.path().join("target/debug");
