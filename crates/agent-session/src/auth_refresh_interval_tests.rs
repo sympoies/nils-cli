@@ -93,8 +93,9 @@ fn assert_refresh_interval(lock: &GlobalStateLock, delayed_first: bool) {
     assert!(safe_request(&context, &current, "2"));
     assert_eq!(recovery_receipt(&context)["replayed"], false);
     assert!(!log(tmp.path())[before.len()..].contains("paste-buffer"));
+    super::guarded_send::assert_submitted(&context, tmp.path(), &tmux, &current);
     eprintln!(
-        "synthetic timeline (delayed_first={delayed_first}): rejection=0s publication=15s adoption/safe-request=30s + {}ms lifecycle; publication-to-safe-request=15s + lifecycle; live timing UNRUN",
+        "synthetic timeline (delayed_first={delayed_first}): rejection=0s publication=15s adoption/guarded-submission=30s + {}ms lifecycle and send; publication-to-guarded-submission=15s + lifecycle and send; live timing UNRUN",
         lifecycle_started.elapsed().as_millis()
     );
 }

@@ -1,6 +1,8 @@
 use super::*;
 #[path = "auth_failover_claude_tests.rs"]
 mod failover;
+#[path = "auth_recovery_send_fixture.rs"]
+mod guarded_send;
 #[path = "auth_recheck_tests.rs"]
 mod recheck;
 #[path = "auth_refresh_interval_tests.rs"]

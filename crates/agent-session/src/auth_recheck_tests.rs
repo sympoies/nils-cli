@@ -69,6 +69,7 @@ fn auth_recheck_requires_runtime_adoption_after_credentials_are_republished() {
     let context = context(tmp.path());
     let tmux = fake_tmux(tmp.path());
     let record = quarantined(&context, tmp.path(), &tmux);
+    crate::auth_incident::tick(&context, &record, &tmux, "fixture", Some(false)).unwrap();
     publish(tmp.path(), 2);
     let before = log(tmp.path());
     let path = crate::session_dir(&context, ID).join("auth-incidents.json");
@@ -109,6 +110,8 @@ fn auth_recheck_requires_runtime_adoption_after_credentials_are_republished() {
         incident_store(&context)["incidents"][0]["status"],
         "auth_failed"
     );
+    super::guarded_send::assert_submitted(&context, tmp.path(), &tmux, &replacement);
+    super::guarded_send::assert_retained_after_tick(&context, &tmux, &replacement);
 }
 
 #[test]
@@ -152,6 +155,7 @@ fn auth_recheck_guidance_preserves_drafts_and_restarts_the_same_account() {
     let context = context(tmp.path());
     let tmux = fake_tmux(tmp.path());
     let record = quarantined(&context, tmp.path(), &tmux);
+    crate::auth_incident::tick(&context, &record, &tmux, "fixture", Some(false)).unwrap();
     let launch = launch_id(&record).unwrap();
     let screen = fs::read(tmp.path().join("screen")).unwrap();
     fs::write(
@@ -202,6 +206,8 @@ fn auth_recheck_guidance_preserves_drafts_and_restarts_the_same_account() {
         incident_store(&context)["incidents"][0]["status"],
         "auth_failed"
     );
+    super::guarded_send::assert_submitted(&context, tmp.path(), &tmux, &current);
+    super::guarded_send::assert_retained_after_tick(&context, &tmux, &current);
     claude_hook(
         &context,
         &launch_id(&current).unwrap(),
