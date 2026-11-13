@@ -37,7 +37,7 @@ class TestShellPortability(unittest.TestCase):
 
     def allow(self, line, kind="fallback"):
         self.write("scripts/ci/test-shell-portability-allowlist.json", json.dumps([
-            {"path": "crates/example/tests/stub.rs", "line": line,
+            {"path": "crates/example/tests/stub.rs", "line": line, "line_number": 1,
              "kind": kind, "context": line,
              "reason": "GNU/Linux stat falls back to macOS BSD stat."}
         ]))
@@ -103,6 +103,47 @@ class TestShellPortability(unittest.TestCase):
 
     def test_portable_sed_suffixes_pass(self):
         self.write("tests/fixtures/stub.sh", "sed -i.bak 's/a/b/' file\nsed -i '' 's/a/b/' file\n")
+        result = self.audit()
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def assert_spellings_rejected(self, commands):
+        for command in commands:
+            with self.subTest(command=command):
+                self.write("tests/fixtures/stub.sh", command + "\n")
+                result = self.audit()
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("tests/fixtures/stub.sh:1:", result.stdout)
+
+    def test_attached_arguments_and_short_option_clusters_are_rejected(self):
+        self.assert_spellings_rejected((
+            "stat -c%a file", "stat -tc '%a' file", "sed -ie 's/a/b/' file",
+            "readlink -fn file", "date -d@123", "grep -oP pattern file",
+            "grep -Po pattern file", "grep -qP pattern file", "xargs -0r echo",
+            "xargs -rn1 echo"))
+
+    def test_gnu_flags_after_other_options_are_rejected(self):
+        self.assert_spellings_rejected((
+            "stat -L -c '%a' file", "sed -E -i 's/a/b/' file",
+            "sed -n -i 's/a/b/' file", "date -u -d yesterday",
+            "grep -E -P pattern file", "xargs -0 -r echo"))
+
+    def test_gnu_long_options_are_rejected(self):
+        self.assert_spellings_rejected((
+            "stat --format=%a file", "sed --in-place 's/a/b/' file",
+            "readlink --canonicalize file", "date --date=yesterday",
+            "grep --perl-regexp pattern file", "xargs --no-run-if-empty echo"))
+
+    def test_duplicate_allowlisted_line_elsewhere_is_rejected(self):
+        self.allow(FALLBACK)
+        self.write("crates/example/tests/stub.rs", FALLBACK + "\n" + FALLBACK + "\n")
+        result = self.audit()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("crates/example/tests/stub.rs:2:", result.stdout)
+
+    def test_other_flags_and_explicit_sed_suffixes_remain_accepted(self):
+        self.write("tests/fixtures/stub.sh",
+                   "stat -L file\ngrep -E pattern file\nxargs -0 echo\ngrep -- -P file\n"
+                   "sed -E -i.bak 's/a/b/' file\nsed -n -i '' 's/a/b/' file\n")
         result = self.audit()
         self.assertEqual(result.returncode, 0, result.stdout)
 

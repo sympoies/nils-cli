@@ -15,8 +15,8 @@
 ### Evidence
 
 - The pre-3654 webhook fixture first failed the new entrypoint regression
-  assertion; all nine synthetic audit tests now pass, including current-tree
-  and retained-fallback checks.
+  assertion; all fourteen synthetic audit tests now pass, including option
+  spelling classes, current-tree and anchored-fallback checks.
 
 ### Links
 

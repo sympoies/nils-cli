@@ -626,6 +626,8 @@ The entrypoint runs the cargo-free
 test shell portability audit before selecting a validation mode, including
 PR affected plans, local-fast and docs-only. Static inspection avoids adding
 a macOS runner to every PR.
+Gated re-entry and nested affected-plan execution run the audit again; the
+script suite also scans the current tree, so those paths incur repeated scans.
 Run it directly with:
 
 ```bash
@@ -640,8 +642,15 @@ files, and Rust source from its first standalone `#[cfg(test)]` onward.
 Build/cache directories, symlinks, binary data, and the audit's own synthetic
 rule-definition test are excluded.
 
-Known rejected forms are `stat -c`/`--format`, bare `sed -i`,
-`readlink -f`, `date -d`, `grep -P` and `xargs -r`.
+Known rejected forms include short-option clusters, attached arguments and
+options after other flags: `stat -c%a`/`-Lc`/`--format`,
+`sed -E -i`/`-ie`/`--in-place`,
+`readlink -fn`/`--canonicalize`,
+`date -u -d`/`-d@123`/`--date`,
+`grep -oP`/`--perl-regexp` and
+`xargs -0r`/`--no-run-if-empty`.
+An explicit `--` ends option matching.
+
 Use portable commands; for sed, an explicit empty suffix (`sed -i ''`) or
 a dot-prefixed backup suffix (`sed -i.bak` or `sed -i .bak`) passes.
 When OS variants require a fallback, suppress the expected first-command
@@ -651,9 +660,11 @@ for GNU/Linux and macOS BSD stat.
 
 Add reviewed exceptions to
 `scripts/ci/test-shell-portability-allowlist.json`: each entry names the
-exact repository-relative `path`, full `line`, `kind` and `reason`.
+exact repository-relative `path`, one-based `line_number`, full
+`line`, `kind` and `reason`.
 The `fallback` kind also requires an exact `context` containing the
-fallback (possibly several lines); removing that context fails the audit.
+fallback (possibly several lines), anchored at that numbered occurrence.
+Moving, removing or copying the command outside that context fails the audit.
 The `classifier-input` kind is only for strings passed as data to a
 shell-policy classifier and never executed. Do not exclude entire classifier
 files. Missing or changed matches fail as stale exceptions.
