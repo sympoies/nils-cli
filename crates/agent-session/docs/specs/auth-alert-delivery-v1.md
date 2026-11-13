@@ -61,11 +61,12 @@ Each record also includes `session_id`, `incident_id`, original
 or `recheck_exhausted`. For `healthy`, `credentials_refreshed`, `account_switched`
 and `runtime_replaced`, the action is null.
 
-A `recheck_exhausted` result whose
-last scheduled attempt returned `provider_verification_required` carries
+A `recheck_exhausted` result whose last scheduled attempt returned
+`provider_verification_required` or `runtime_adoption_required` carries
 `restart_same_account`: preserve any draft and use the existing guarded restart
 with the same account and conversation (see the
-[unchanged-publication refusal](claude-auth-recovery-v1.md#unchanged-publication-without-independent-provider-proof)).
+[unchanged-publication refusal](claude-auth-recovery-v1.md#unchanged-publication-without-independent-provider-proof)
+and [ordinary replacement limits](claude-auth-recovery-v1.md#ordinary-replacement-and-evidence-limits)).
 Other alerts carry `same_account_credential_recheck` as operator guidance.
 Neither action authorizes an automatic restart or recheck in the consumer.
 A final-result alert remains separate from the original incident acknowledgement.

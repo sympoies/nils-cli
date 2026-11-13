@@ -1,5 +1,5 @@
 //! Same-account credential preflight for operator and scheduled Claude rechecks.
-//! Records `credentials_refreshed` only when the credentials are usable again.
+//! Publication alone cannot settle the failed resident runtime.
 use super::*;
 use crate::claude_account::generation;
 
@@ -23,10 +23,10 @@ pub(super) fn quarantining(incident: &AuthIncident, record: &SessionRecord) -> b
         || recovery::fences(incident, record)
 }
 
-/// Settle every incident quarantining `record` after `account`, the account
-/// the session is already bound to, passes the credential preflight. A session
-/// that is not quarantined is left untouched. An operation the controller owns
-/// is never overridden, and a refused preflight leaves the store unchanged.
+/// Settle carried predecessor incidents after the selected account passes
+/// credential preflight and publication checks. A current failed runtime stays
+/// quarantined until lifecycle recovery or observed health. An operation the
+/// controller owns is never overridden, and refusal leaves the store unchanged.
 pub(crate) fn settle(
     context: &CliContext,
     record: &SessionRecord,
@@ -105,6 +105,27 @@ pub(crate) fn settle(
         if !published.is_some_and(|published| published.newer_than(&baseline)) {
             return Err(refused(record, "credentials_not_republished"));
         }
+    }
+    if current_failed {
+        // Claude Code 2.1.317 has no supported reread acknowledgement in this
+        // adapter. A publication cannot prove adoption by the failed resident
+        // runtime. Keep quarantine so the existing lifecycle controller can
+        // consume it, or an operator can use its guarded same-account restart.
+        return Err(CliError::data(
+            "claude-account-recheck-refused",
+            "account credentials were materialized, but the failed runtime has not confirmed adoption; preserve any draft and restart on the same account when idle with an empty composer",
+            Some(serde_json::json!({
+                "id": record.id,
+                "reason": "runtime_adoption_required",
+                "next_action": "restart_same_account",
+                "credential_materialized": true,
+                "runtime_adoption": "unconfirmed",
+                "provider_request": "unverified",
+            })),
+        ).with_hint(format!(
+            "use `{} restart <session>` after preserving any draft if automatic recovery is no longer eligible; readiness does not prove a successful provider request",
+            crate::command_identity::executable()
+        )));
     }
     let at = jiff::Timestamp::now().to_string();
     for i in owned {

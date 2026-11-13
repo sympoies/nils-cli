@@ -1,5 +1,5 @@
-//! A same-account switch is the supported way to settle an authentication
-//! quarantine once the account credentials are valid again.
+//! Same-account rechecks distinguish publication from resident adoption before
+//! releasing authentication quarantine.
 use super::*;
 use pretty_assertions::{assert_eq, assert_ne};
 
@@ -62,7 +62,7 @@ fn recheck(context: &CliContext, record: &SessionRecord, tmux: &Path) -> Result<
 }
 
 #[test]
-fn auth_recheck_settles_the_quarantine_once_credentials_are_republished() {
+fn auth_recheck_requires_runtime_adoption_after_credentials_are_republished() {
     let lock = GlobalStateLock::new();
     let tmp = tempfile::tempdir().unwrap();
     let _broker = broker(tmp.path(), &lock);
@@ -71,36 +71,44 @@ fn auth_recheck_settles_the_quarantine_once_credentials_are_republished() {
     let record = quarantined(&context, tmp.path(), &tmux);
     publish(tmp.path(), 2);
     let before = log(tmp.path());
-    recheck(&context, &record, &tmux).unwrap();
+    let path = crate::session_dir(&context, ID).join("auth-incidents.json");
+    let incidents_before = fs::read(&path).unwrap();
+    let error = recheck(&context, &record, &tmux).unwrap_err();
+    let details = error.details().unwrap();
+    assert_eq!(details["reason"], "runtime_adoption_required");
+    assert_eq!(details["next_action"], "restart_same_account");
+    assert_eq!(details["credential_materialized"], true);
+    assert_eq!(details["runtime_adoption"], "unconfirmed");
+    assert_eq!(details["provider_request"], "unverified");
+    assert_eq!(fs::read(&path).unwrap(), incidents_before);
     let store = incident_store(&context);
-    assert_eq!(store["incidents"][0]["status"], "recovered", "{store}");
-    assert_eq!(
-        store["incidents"][0]["recovery_result"],
-        "credentials_refreshed"
-    );
-    assert_eq!(store["incidents"][0]["recovery_path"], "credential_recheck");
-    assert_eq!(
-        store["incidents"][0]["failover"]["state"],
-        "credentials_refreshed"
-    );
+    assert_eq!(store["incidents"][0]["status"], "auth_failed", "{store}");
     let current = load_session_record(&context, ID).unwrap();
     assert_eq!(launch_id(&current), launch_id(&record));
-    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &current).is_ok());
-    crate::send::send_to_session(
-        &context,
-        crate::send::unguarded_args(
-            ID.into(),
-            Some("synthetic prompt".into()),
-            vec![SpecialKey::Enter],
-            true,
-            tmux.to_path_buf(),
-        ),
-    )
-    .unwrap();
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &current).is_err());
     let effects = &log(tmp.path())[before.len()..];
     assert!(!effects.contains("kill-session"));
     assert!(!effects.contains("new-session"));
-    assert!(effects.contains("paste-buffer"));
+    assert!(!effects.contains("paste-buffer"));
+
+    let watcher = on_relaunched_prompt(&context, tmp.path(), &launch_id(&record).unwrap());
+    let result = restart(&context, &restart_args(&tmux, false, 10));
+    watcher.join().unwrap();
+    assert_eq!(result.unwrap().outcome, "ready");
+    let replacement = load_session_record(&context, ID).unwrap();
+    assert_ne!(launch_id(&replacement), launch_id(&record));
+    assert_eq!(
+        crate::claude_account::generation::baseline(&replacement)
+            .unwrap()
+            .version
+            .generation,
+        "2"
+    );
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &replacement).is_ok());
+    assert_eq!(
+        incident_store(&context)["incidents"][0]["status"],
+        "auth_failed"
+    );
 }
 
 #[test]
@@ -274,9 +282,28 @@ fn auth_recheck_does_not_hide_a_later_authentication_failure() {
     let tmux = fake_tmux(tmp.path());
     let record = quarantined(&context, tmp.path(), &tmux);
     publish(tmp.path(), 2);
-    recheck(&context, &record, &tmux).unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(20));
+    // Independent observed health may settle in place; publication alone may
+    // not. A later recheck must not conceal a new failure on that same runtime.
     let launch = launch_id(&record).unwrap();
+    claude_hook(
+        &context,
+        &launch,
+        json!({"hook_event_name": "UserPromptSubmit", "session_id": CONVERSATION,
+            "prompt": "synthetic healthy turn"}),
+    );
+    claude_hook(
+        &context,
+        &launch,
+        json!({"hook_event_name": "Notification", "notification_type": "idle_prompt",
+            "session_id": CONVERSATION}),
+    );
+    assert_eq!(
+        incident_store(&context)["incidents"][0]["recovery_result"],
+        "healthy"
+    );
+    recheck(&context, &record, &tmux).unwrap();
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_ok());
+    std::thread::sleep(std::time::Duration::from_millis(20));
     claude_hook(
         &context,
         &launch,
@@ -291,6 +318,9 @@ fn auth_recheck_does_not_hide_a_later_authentication_failure() {
         }),
     );
     let current = load_session_record(&context, ID).unwrap();
+    let store = incident_store(&context);
+    assert_eq!(store["incidents"].as_array().unwrap().len(), 2);
+    assert_eq!(store["incidents"][1]["status"], "auth_failed");
     assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &current).is_err());
 }
 
@@ -324,7 +354,7 @@ fn auth_recheck_leaves_a_session_healed_by_a_later_turn_untouched() {
 }
 
 #[test]
-fn daemon_settles_auth_quarantine_when_same_account_credentials_are_usable() {
+fn daemon_recheck_keeps_failed_resident_quarantined_after_publication() {
     let lock = GlobalStateLock::new();
     let tmp = tempfile::tempdir().unwrap();
     let _broker = broker(tmp.path(), &lock);
@@ -346,26 +376,16 @@ fn daemon_settles_auth_quarantine_when_same_account_credentials_are_usable() {
     let store = incident_store(&context);
     assert_eq!(
         store["incidents"][0]["status"],
-        "recovered",
-        "daemon left usable credentials quarantined; broker calls after tick: {:?}",
+        "auth_failed",
+        "publication cannot prove adoption; broker calls after tick: {:?}",
         &after[before.len()..]
     );
     assert_eq!(
-        store["incidents"][0]["recovery_result"],
-        "credentials_refreshed"
+        store["incidents"][0]["auto_settle"]["attempts"][0]["result"],
+        "runtime_adoption_required"
     );
-    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_ok());
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
     assert!(after[before.len()..].contains("materialize"));
-    crate::auth_incident::auto_settle::tick(
-        &context,
-        &record,
-        jiff::Timestamp::now().as_second() + 1000,
-    )
-    .unwrap();
-    assert_eq!(
-        fs::read_to_string(tmp.path().join("broker.log")).unwrap(),
-        after
-    );
     let current = load_session_record(&context, ID).unwrap();
     assert_eq!(launch_id(&current), launch_id(&record));
 }
@@ -593,9 +613,9 @@ fn scheduled_recheck_records_account_mismatch_and_in_flight_refusals() {
 }
 
 #[test]
-fn scheduled_recheck_reconciles_external_settlement_and_interrupted_success() {
+fn scheduled_recheck_reconciles_observed_health_and_interrupted_settlement() {
     let lock = GlobalStateLock::new();
-    for result in ["healthy", "operator", "interrupted"] {
+    for result in ["healthy", "interrupted"] {
         let tmp = tempfile::tempdir().unwrap();
         let _broker = broker(tmp.path(), &lock);
         let context = context(tmp.path());
@@ -603,25 +623,20 @@ fn scheduled_recheck_reconciles_external_settlement_and_interrupted_success() {
         let record = quarantined(&context, tmp.path(), &tmux);
         let start = jiff::Timestamp::now().as_second();
         crate::auth_incident::auto_settle::tick(&context, &record, start).unwrap();
-        if result == "healthy" {
-            crate::auth_incident::recover(
-                &context,
-                &record,
-                "healthy",
-                &jiff::Timestamp::now().to_string(),
-            )
-            .unwrap();
-        } else {
-            publish(tmp.path(), 2);
-            recheck(&context, &record, &tmux).unwrap();
-            if result == "interrupted" {
-                let path = crate::session_dir(&context, ID).join("auth-incidents.json");
-                let mut store = incident_store(&context);
-                store["incidents"][0]["auto_settle"]["attempts"] = json!([
-                    {"attempted_at_epoch":start, "result":"started"}
-                ]);
-                fs::write(path, serde_json::to_vec(&store).unwrap()).unwrap();
-            }
+        crate::auth_incident::recover(
+            &context,
+            &record,
+            "healthy",
+            &jiff::Timestamp::now().to_string(),
+        )
+        .unwrap();
+        if result == "interrupted" {
+            let path = crate::session_dir(&context, ID).join("auth-incidents.json");
+            let mut store = incident_store(&context);
+            store["incidents"][0]["auto_settle"]["attempts"] = json!([
+                {"attempted_at_epoch":start, "result":"started"}
+            ]);
+            fs::write(path, serde_json::to_vec(&store).unwrap()).unwrap();
         }
         let before = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
         crate::auth_incident::auto_settle::tick(&context, &record, start + 1000).unwrap();
@@ -696,10 +711,10 @@ fn delayed_first_scheduled_recheck_retains_the_failed_launch_publication_fence()
     publish(tmp.path(), 2);
     crate::auth_incident::auto_settle::tick(&context, &record, now + 120).unwrap();
     assert_eq!(
-        incident_store(&context)["incidents"][0]["recovery_result"],
-        "credentials_refreshed"
+        incident_store(&context)["incidents"][0]["auto_settle"]["attempts"][1]["result"],
+        "runtime_adoption_required"
     );
-    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_ok());
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
 }
 
 #[test]
@@ -770,7 +785,11 @@ fn scheduled_recheck_prioritizes_current_failure_over_carried_baseline() {
             .as_array()
             .unwrap()
             .iter()
-            .all(|incident| incident["recovery_result"] == "credentials_refreshed")
+            .all(|incident| incident["status"] == "auth_failed")
     );
-    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &replacement).is_ok());
+    assert_eq!(
+        store["incidents"][1]["auto_settle"]["attempts"][1]["result"],
+        "runtime_adoption_required"
+    );
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &replacement).is_err());
 }

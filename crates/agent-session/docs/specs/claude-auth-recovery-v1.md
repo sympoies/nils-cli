@@ -43,12 +43,23 @@ readiness check completes; a failed readiness check leaves it quarantined.
 
 ## Operator recheck
 
-No turn can be admitted while quarantined. A repaired credential can settle
-through the daemon schedule below or an explicit same-account recheck. `account switch` to the account the session is already bound to
+No turn can be admitted while quarantined. Scheduled or explicit same-account
+rechecks verify credential publication without claiming resident adoption.
+`account switch` to the account the session is already bound to
 queues nothing; on a quarantined session it re-runs the broker credential
 preflight and, when the failed launch's publication is known, requires a newer
-publication for that account. Only then it settles the owning incidents as
-`credentials_refreshed` and admits input again. A refused preflight returns
+publication for that account. A failed resident runtime is not settled by
+publication alone: recheck returns `runtime_adoption_required` with
+`next_action: restart_same_account`, `credential_materialized: true`,
+`runtime_adoption: unconfirmed` and `provider_request: unverified`. It preserves
+every incident and receipt.
+
+The existing automatic recovery controller remains
+primary while eligible; otherwise the operator can preserve any draft and use
+the guarded same-account restart when idle with an empty composer. Recheck can
+settle a carried predecessor quarantine after the runtime has been replaced,
+as `credentials_refreshed`; this does not prove a healthy provider request.
+A refused preflight returns
 `claude-account-recheck-refused` and leaves every receipt unchanged. A recovery or
 failover operation still in flight is never overridden (`recovery_in_progress`),
 and a later authentication failure quarantines the runtime again.
@@ -74,7 +85,8 @@ refuses settlement and leaves every incident receipt and the input quarantine
 unchanged. Revoked, missing, partial, invalid, older and identity-mismatched
 publications retain `credentials_not_republished`; materialization failures
 retain their credential preflight refusal. A strictly newer matching publication
-continues to use the recheck settlement above.
+returns the distinct `runtime_adoption_required` refusal while the failed
+resident remains current; a carried predecessor can settle as described above.
 
 The operator can preserve any draft, wait for an idle empty composer, and run
 `agent-session restart <session>` on the same account. This existing guarded
@@ -122,18 +134,22 @@ starts a new incident and schedule. A model-health settlement also stops probes.
 `refusal` or null, and up to three attempts with `attempted_at_epoch` and a fixed
 `result` (`started`, `credentials_refreshed`, `recovery_in_progress`,
 `credentials_not_republished`, `provider_verification_required`,
-`credential_preflight_refused`, or `recheck_unavailable`). Broker details are
-never copied into this result.
+`runtime_adoption_required`, `credential_preflight_refused`, or
+`recheck_unavailable`). Broker details are never copied into this result.
 
 An attempt is committed as `started` before credential work; a daemon
 crash consumes that attempt, so restarting the daemon cannot repeat it without
 bound. After the last refusal (or an interrupted last attempt), the quarantine
 remains and `recovery_result: recheck_exhausted` triggers the existing final-result
 notification and owner-unavailable escalation. If the last attempt lacks
-independent provider proof for an unchanged publication, the final-result alert
-carries `recovery_action: restart_same_account`, directing the operator to the
+independent provider proof for an unchanged publication or runtime adoption for a
+newer publication, the final-result alert carries
+`recovery_action: restart_same_account`, directing the operator to the
 guarded lifecycle route above. It does not authorize a consumer to restart or
 recheck automatically. Recording an alert is distinct from delivery.
+
+This guidance does not reset a terminal recovery receipt, submit an interrupted
+prompt or prove credential adoption.
 
 If an incident still fences an in-place replacement runtime on the same account,
 the daemon applies a fresh schedule from that runtime's `started_at`, retaining
@@ -141,6 +157,38 @@ the original incident identity and failed-publication proof. Its projection stay
 visible with the schedule's current runtime selectors. Rebuilding the daemon
 without replacing the runtime preserves the consumed budget. An unrelated
 replacement that is no longer quarantined gets no schedule.
+
+## Ordinary replacement and evidence limits
+
+For the audited **Claude Code 2.1.317** adapter, there is no supported resident
+credential reread acknowledgement. Exchange precedes replacement storage and
+publication; an access-only consumer cannot publish the replacement before the
+authority receives it. A newer publication does not prove that a resident
+runtime adopted it or made a successful safe request. Scheduled recheck must
+therefore leave the failed resident quarantined, including on a delayed first
+daemon tick or when publication completes after the lifecycle deadline.
+Automatic recovery still consumes a timely newer same-account publication
+through the existing fenced stop/resume and readiness path, without an
+operator step. Unknown effects are never replayed.
+
+This removes false reopening after publication; **it does not prevent the
+initial revoked error**. Strict prevention would require provider overlap or a
+request barrier spanning exchange and publication. A supported in-process
+repair would require a version-bound reread acknowledgement and rejection-only
+retry contract; neither is established by this adapter or its acceptance
+evidence. Startup readiness is not a successful provider request.
+
+The credential-free lifecycle fixture models rejection at t=0, publication at
+t=15 seconds and a consumer observation at t=30 seconds. Its safe-request model
+requires admission and the replacement launch generation. The modeled
+interruption is 30 seconds plus measured lifecycle elapsed time; the residual
+publication-to-safe-request window is 15 seconds plus that elapsed time. These
+are synthetic measurements, not a live provider bound. Missing/failed
+publication stops at the existing 120-second/eight-poll lifecycle budget and
+three scheduled attempts, retaining quarantine and escalation. All live
+publication, resident-adoption and safe-request timing rows remain **UNRUN**
+pending the disposable provider/publication prerequisite in
+[#2954](https://github.com/sympoies/nils-cli/issues/2954).
 
 ## Publication prerequisite
 
