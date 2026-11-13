@@ -25,15 +25,26 @@ pub struct HookRedeliverArgs {
     /// Webhook id (see `hook list`).
     #[arg(long, value_name = "ID", value_parser = hook_id())]
     pub hook: u64,
-    /// Delivery outcome to select.
-    #[arg(long, value_enum, default_value = "failed")]
-    pub status: HookDeliveryStatus,
+    /// Exact delivery id; repeat for several. Conflicts with status/window filters.
+    #[arg(long, value_name = "ID", value_parser = hook_id(), conflicts_with_all = ["status", "since", "until"])]
+    pub delivery_id: Vec<u64>,
+    /// Delivery outcome to select (default: failed for a time window).
+    #[arg(long, value_enum)]
+    pub status: Option<HookDeliveryStatus>,
     /// Inclusive start of the delivery window (RFC 3339 timestamp).
-    #[arg(long, value_name = "TIMESTAMP")]
-    pub since: String,
+    #[arg(
+        long,
+        value_name = "TIMESTAMP",
+        required_unless_present = "delivery_id"
+    )]
+    pub since: Option<String>,
     /// Exclusive end of the delivery window (RFC 3339 timestamp).
-    #[arg(long, value_name = "TIMESTAMP")]
-    pub until: String,
+    #[arg(
+        long,
+        value_name = "TIMESTAMP",
+        required_unless_present = "delivery_id"
+    )]
+    pub until: Option<String>,
 }
 
 /// `hook set-url` arguments.
@@ -70,7 +81,7 @@ pub struct HookSetActiveArgs {
 #[derive(Args, Debug, Clone)]
 pub struct HookBatchArgs {
     /// JSON rows with target, hook and action: set-url (from/to URLs),
-    /// set-active (from/to booleans), or redeliver (status, since, until);
+    /// set-active (from/to booleans), or redeliver (delivery_ids or status/since/until);
     /// `target` is `OWNER/NAME` for `repo hook` and the organization for `org hook`.
     #[arg(long, value_name = "FILE")]
     pub file: PathBuf,
@@ -92,7 +103,7 @@ pub enum RepoHookCommand {
     SetUrl(HookSetUrlArgs),
     /// Change only a webhook's active flag (compare-and-swap on the current flag).
     SetActive(HookSetActiveArgs),
-    /// Redeliver deliveries selected by status and time window.
+    /// Redeliver exact delivery ids or deliveries selected by status and time window.
     Redeliver(HookRedeliverArgs),
     /// Apply webhook changes or redeliveries from one file.
     Batch(HookBatchArgs),
@@ -133,7 +144,7 @@ pub enum OrgHookCommand {
     SetUrl(HookSetUrlArgs),
     /// Change only a webhook's active flag (compare-and-swap on the current flag).
     SetActive(HookSetActiveArgs),
-    /// Redeliver deliveries selected by status and time window.
+    /// Redeliver exact delivery ids or deliveries selected by status and time window.
     Redeliver(HookRedeliverArgs),
     /// Apply webhook changes or redeliveries from one file.
     Batch(HookBatchArgs),

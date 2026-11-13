@@ -17,7 +17,8 @@ use nils_common::forge_identity::Operation;
 use serde::{Deserialize, Serialize};
 
 use super::engine::{Change, HookSpec, Kind, RowReport, apply, schema_err};
-use super::redeliver::{DeliveryReport, RedeliverSpec, Selection};
+use super::redeliver::{DeliveryReport, RedeliverSpec};
+use super::selection::Selection;
 use super::target::HookTarget;
 use crate::backend::BackendRunner;
 use crate::cli::{BINARY, GlobalFlags, HookDeliveryStatus};
@@ -45,9 +46,10 @@ enum RawRow {
         target: String,
         hook: u64,
         #[serde(default)]
-        status: HookDeliveryStatus,
-        since: String,
-        until: String,
+        status: Option<HookDeliveryStatus>,
+        since: Option<String>,
+        until: Option<String>,
+        delivery_ids: Option<Vec<u64>>,
     },
 }
 
@@ -169,9 +171,11 @@ fn load(file: &Path, kind: Kind) -> Result<Vec<BatchSpec>, ForgeError> {
                 status,
                 since,
                 until,
+                delivery_ids,
             } => {
-                let selection = Selection::new(status, &since, &until)
-                    .map_err(|error| invalid(format!("row {number}: {}", error.message())))?;
+                let selection =
+                    Selection::new(delivery_ids, status, since.as_deref(), until.as_deref())
+                        .map_err(|error| invalid(format!("row {number}: {}", error.message())))?;
                 BatchSpec::Delivery(RedeliverSpec {
                     target: target(name),
                     hook,

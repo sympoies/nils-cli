@@ -24,6 +24,7 @@ mod batch;
 mod create;
 mod engine;
 mod redeliver;
+mod selection;
 mod target;
 
 pub(super) use create::create;
