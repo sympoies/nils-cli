@@ -152,6 +152,10 @@ class ConsumerExecutionTests(unittest.TestCase):
         audit_test.parent.mkdir(parents=True)
         audit_test.write_text('# Audit self-tests run separately against the complete source tree.\n')
         (audit_test.parent / 'public-boundary-audit.test.py').write_text(audit_test.read_text())
+        # The toolchain pin audit reads rust-toolchain.toml and the workflows of the
+        # complete source tree, so the fixture only needs the entry points to exist.
+        (self.repo / 'scripts/ci/toolchain-pin-audit.py').write_text('raise SystemExit(0)\n')
+        (audit_test.parent / 'toolchain-pin-audit.test.py').write_text(audit_test.read_text())
         for name in ('selected', 'consumer', 'untouched', 'unrelated'):
             source = self.repo / f'crates/{name}/src/lib.rs'
             source.parent.mkdir(parents=True)
