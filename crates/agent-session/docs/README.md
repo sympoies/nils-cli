@@ -46,6 +46,9 @@ or integrating a specific subsystem.
 - [Mailbox read events v1](specs/mailbox-read-events-v1.md): display-only
   conversation events for mailbox reads and acknowledgements, identity,
   transcript-offset ordering and authorization.
+- [Send/composer and mailbox-wake design](specs/send-composer-mailbox-design.md):
+  proposed shared evidence boundaries, merged-fix/issue matrix and contract tests;
+  step 1 only, with no production behavior change.
 - [Send v1](specs/send-v1.md): submission-time continuation guards, observation
   limits, durable idempotency claims, and refusal codes.
 - [Session metrics v1](specs/session-metrics-v1.md): authenticated bounded
