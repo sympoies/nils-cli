@@ -162,7 +162,9 @@ supported attached notice branch, the fresh authorization's native
 `prompt.read` result (empty text and cursor zero) supplies the composer fact;
 a redundant screen-empty verdict is not required. Authorization must match the
 current offer, operation, nonce, module and runtime/provider binding. Readiness
-alone never authorizes text. Runtime, idle, pending-ingress, account and claim
+alone never authorizes text.
+
+Runtime, idle, pending-ingress, account and claim
 checks remain, and the module independently reads the draft again immediately
 before submit. A human edit at that second read prevents submit and clear; the
 consumed operation remains unconfirmed and never moves to terminal text.

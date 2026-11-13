@@ -312,7 +312,9 @@ runtime/provider identity. It does not require an additional screen-empty
 verdict. The module reads again immediately before submit; a late human edit
 causes no submit or clear, retains the consumed attempt and never switches to
 terminal text. A fresh native handshake is required before durable
-key/operation consumption, and consumption is synchronized before text release. The record lock is released before native
+key/operation consumption, and consumption is synchronized before text release.
+
+The record lock is released before native
 API entry so required hooks can run; no record writes occur while it is
 released. Confirmation reacquires and checks identity in the same original
 Claude send budget, without renewing it.
