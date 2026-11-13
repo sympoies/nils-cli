@@ -1,6 +1,6 @@
 use crate::common;
 use common::{GitCliHarness, git, init_bare_remote, init_repo};
-use nils_test_support::cmd::CmdOutput;
+use nils_test_support::cmd::{CmdOutput, run_with};
 use nils_test_support::git::{commit_file, git_output};
 use pretty_assertions::assert_eq;
 use serde_json::Value;
@@ -113,6 +113,136 @@ fn push_publishes_the_current_branch_and_sets_its_own_upstream() {
     assert_eq!(
         git_config_optional(repo.path(), "branch.feat/topic.remote").as_deref(),
         Some("origin")
+    );
+}
+
+#[test]
+fn push_from_a_single_branch_clone_leaves_the_pr_head_resolvable() {
+    let harness = GitCliHarness::new();
+    let (seed, remote) = repo_with_published_main();
+    git(remote.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    let clone = TempDir::new().expect("single-branch clone");
+    git(
+        seed.path(),
+        &[
+            "clone",
+            "--single-branch",
+            "--branch",
+            "main",
+            remote.path().to_str().unwrap(),
+            clone.path().to_str().unwrap(),
+        ],
+    );
+    git(clone.path(), &["config", "user.email", "test@example.com"]);
+    git(clone.path(), &["config", "user.name", "Test"]);
+    git(clone.path(), &["config", "commit.gpgsign", "false"]);
+    let narrow = "+refs/heads/main:refs/remotes/origin/main";
+    assert_eq!(
+        git(
+            clone.path(),
+            &["config", "--get-all", "remote.origin.fetch"]
+        )
+        .trim(),
+        narrow
+    );
+
+    let home = TempDir::new().expect("managed worktree home");
+    let options = harness
+        .cmd_options(clone.path())
+        .with_env("AGENT_HOME", home.path().to_str().unwrap());
+    let add = run_with(
+        &harness.git_cli_bin(),
+        &[
+            "worktree",
+            "add",
+            "narrow-topic",
+            "--kind",
+            "bug",
+            "--from",
+            "origin/main",
+            "--format",
+            "json",
+        ],
+        &options,
+    );
+    assert_eq!(add.code, 0, "{}{}", add.stdout_text(), add.stderr_text());
+    let added = parse_json(&add);
+    let worktree = Path::new(added["data"]["path"].as_str().unwrap());
+    let branch = "fix/narrow-topic";
+    commit_file(worktree, "topic.txt", "one\n", "add topic");
+    let head = rev_parse(worktree, "HEAD");
+
+    let dry_run = harness.run(worktree, &["push", "--dry-run", "--format", "json"]);
+    assert_eq!(dry_run.code, 0, "{}", dry_run.stderr_text());
+    assert_eq!(
+        git(worktree, &["config", "--get-all", "remote.origin.fetch"]).trim(),
+        narrow
+    );
+    assert!(
+        !git_output(
+            remote.path(),
+            &["show-ref", "--verify", "refs/heads/fix/narrow-topic"]
+        )
+        .status
+        .success()
+    );
+
+    let output = harness.run(worktree, &["push", "--format", "json"]);
+    assert_eq!(
+        output.code,
+        0,
+        "{}{}",
+        output.stdout_text(),
+        output.stderr_text()
+    );
+    assert_eq!(
+        rev_parse(remote.path(), &format!("refs/heads/{branch}")),
+        head
+    );
+
+    // Fixture form of forge-cli's git_branch_state / branch_pushed guard:
+    // the local head and its resolved upstream must name the same commit.
+    let upstream = git_output(worktree, &["rev-parse", &format!("{branch}@{{upstream}}")]);
+    assert!(
+        upstream.status.success(),
+        "PR head must resolve: {}",
+        String::from_utf8_lossy(&upstream.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&upstream.stdout).trim(), head);
+    assert_eq!(
+        rev_parse(worktree, &format!("refs/remotes/origin/{branch}")),
+        head
+    );
+    assert_eq!(
+        git(worktree, &["rev-parse", "--abbrev-ref", "@{upstream}"]).trim(),
+        format!("origin/{branch}")
+    );
+
+    let fetch = git(worktree, &["config", "--get-all", "remote.origin.fetch"]);
+    assert_eq!(
+        fetch.lines().collect::<Vec<_>>(),
+        vec![
+            narrow,
+            "+refs/heads/fix/narrow-topic:refs/remotes/origin/fix/narrow-topic"
+        ]
+    );
+    commit_file(worktree, "topic.txt", "two\n", "advance topic");
+    let again = harness.run(worktree, &["push", "--format", "json"]);
+    assert_eq!(
+        again.code,
+        0,
+        "{}{}",
+        again.stdout_text(),
+        again.stderr_text()
+    );
+    assert_eq!(
+        rev_parse(worktree, "@{upstream}"),
+        rev_parse(worktree, "HEAD")
+    );
+    assert_eq!(
+        git(worktree, &["config", "--get-all", "remote.origin.fetch"]),
+        fetch,
+        "repeat pushes do not duplicate the exact mapping"
     );
 }
 
