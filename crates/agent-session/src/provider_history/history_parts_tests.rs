@@ -117,6 +117,11 @@ fn claude_code_2_1_fixture_projects_parts_and_unknown_versions_fail_closed() {
     assert_eq!(parts[4]["call_id"], "tool-1");
     let serialized = serde_json::to_string(&masked_view(&parts)).unwrap();
     assert!(!serialized.contains("fixture-secret"));
+    assert!(
+        !serde_json::to_string(&parts)
+            .unwrap()
+            .contains("fixture-secret")
+    );
     assert!(!serialized.contains("/workspace/fixture"));
 
     let mut unknown = records[0].clone();
@@ -162,8 +167,13 @@ fn summaries_redact_credentials_and_relative_paths() {
     );
     let (parts, _) = record_parts("codex", Some("0.134.0"), &call, true, &[], "fallback");
     let input = serde_json::to_string(&masked_view(&parts)).unwrap();
+    let both_forms = serde_json::to_string(&parts).unwrap();
     for secret in ["credential-value", "session-value", "another-secret"] {
         assert!(!input.contains(secret));
+        assert!(
+            !both_forms.contains(secret),
+            "credential exposed in owner form: {secret}"
+        );
     }
 
     let mut result = fixture("codex").remove(3);

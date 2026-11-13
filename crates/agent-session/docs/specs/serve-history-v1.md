@@ -150,8 +150,11 @@ Tool parts carry two display forms. `tool_call.input_summary`, `tool_result.summ
 and `question.text` retain their path/URL and sensitive-key masking. Their optional
 siblings `owner_input_summary`, `owner_summary`, and `owner_text` preserve paths,
 working directories, repository slugs, and URLs, while applying the same
-credential/secret-key masking. Owner URLs mask userinfo and values of credential-named
-query parameters, including `access_token`. This projector does not add bare
+credential/secret-key masking. Owner text masks values of credential-named assignments (`KEY=value` and
+`KEY: value`) and flags (`--password=value` and `--password value`), using the
+credential-key policy. Userinfo passwords are masked with or without a URL scheme
+while preserving username and host context. Credential-named URL query values,
+including `access_token`, are also masked. This projector does not add bare
 token-pattern masking. An owner sibling is omitted, never null, when its
 bounded value equals the corresponding masked field. An absent question text has
 no owner sibling. Ordinary visible text parts have no owner sibling.

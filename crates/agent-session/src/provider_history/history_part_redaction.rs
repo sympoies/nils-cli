@@ -1,3 +1,6 @@
+#[path = "history_owner_credentials.rs"]
+mod owner_credentials;
+
 use serde_json::Value;
 
 pub(super) fn redact_value(value: &mut Value, key: Option<&str>) {
@@ -218,14 +221,17 @@ pub(super) fn owner_text(value: &str) -> String {
         rest = &rest[end..];
     }
     output.push_str(rest);
-    output
+    owner_credentials::redact(&output)
 }
 
 fn owner_url_tail(value: &str) -> String {
     let authority_end = value.find(['/', '?', '#']).unwrap_or(value.len());
     let (authority, suffix) = value.split_at(authority_end);
     let mut output = match authority.rsplit_once('@') {
-        Some((_, host)) => format!("[redacted]@{host}"),
+        Some((userinfo, host)) => match userinfo.split_once(':') {
+            Some((user, _)) => format!("{user}:[redacted]@{host}"),
+            None => format!("[redacted]@{host}"),
+        },
         None => authority.to_string(),
     };
     output.push_str(&owner_url_query(suffix));

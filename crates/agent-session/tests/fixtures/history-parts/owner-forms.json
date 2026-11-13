@@ -60,7 +60,7 @@
     "name": "url_userinfo",
     "value": "https://example:synthetic-password@forge.example/project",
     "masked": "[redacted]",
-    "owner": "https://[redacted]@forge.example/project"
+    "owner": "https://example:[redacted]@forge.example/project"
   },
   {
     "name": "url_credential_query",
@@ -78,7 +78,7 @@
     "name": "url_parenthesis_userinfo",
     "value": "https://example:pa(ss@forge.example/project",
     "masked": "[redacted]",
-    "owner": "https://[redacted]@forge.example/project"
+    "owner": "https://example:[redacted]@forge.example/project"
   },
   {
     "name": "url_parenthesis_query",
@@ -90,7 +90,7 @@
     "name": "url_apostrophe_userinfo",
     "value": "https://example:pa'ss@forge.example/project",
     "masked": "[redacted]",
-    "owner": "https://[redacted]@forge.example/project"
+    "owner": "https://example:[redacted]@forge.example/project"
   },
   {
     "name": "url_apostrophe_query",
@@ -114,6 +114,36 @@
     "name": "labelled_url_userinfo",
     "value": "url:https://example:synthetic-password@forge.example/project",
     "masked": "[redacted]",
-    "owner": "url:https://[redacted]@forge.example/project"
+    "owner": "url:https://example:[redacted]@forge.example/project"
+  },
+  {
+    "name": "credential_environment_assignment",
+    "value": "export AWS_SECRET_ACCESS_KEY=SYNTHETIC/ACCESS/CANARY",
+    "masked": "[redacted]",
+    "owner": "export AWS_SECRET_ACCESS_KEY=[redacted]"
+  },
+  {
+    "name": "credential_flag_assignment",
+    "value": "run --password=abc/def now",
+    "masked": "run [redacted] now",
+    "owner": "run --password=[redacted] now"
+  },
+  {
+    "name": "credential_colon_assignment",
+    "value": "password: COLON/CANARY",
+    "masked": "[redacted]",
+    "owner": "password: [redacted]"
+  },
+  {
+    "name": "credential_space_flag",
+    "value": "run --password SPACE/CANARY now",
+    "masked": "run --password [redacted] now",
+    "owner": "run --password [redacted] now"
+  },
+  {
+    "name": "schemeless_userinfo",
+    "value": "scp example:SCPCANARY@host:/data",
+    "masked": "[redacted]",
+    "owner": "scp example:[redacted]@host:/data"
   }
 ]
