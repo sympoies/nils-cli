@@ -1,11 +1,10 @@
 //! `hook batch` — apply many webhook changes from one file in one process.
 //!
-//! The file is a JSON array of `{"target","hook","action","from","to"}` rows
-//! (`set-url` with string values, `set-active` with boolean values). It is
-//! validated completely before the first provider call. Rows are independent
-//! and each is all-or-nothing (compare-and-swap, one write, read-back); a
-//! failed row never stops the others, and any failed row makes the exit code
-//! non-zero. The one exception is a read-back mismatch, which may mean a write
+//! The JSON array selects `set-url`, `set-active`, or `redeliver`, with the
+//! fields of that action. It is validated before the first provider call.
+//! Change rows compare-and-swap one field and read it back; redeliver rows emit
+//! one result per selected delivery. A failed row makes the exit code non-zero
+//! and does not stop the others. The exception is a hook read-back mismatch, which may mean a write
 //! changed more than intended: the remaining rows are then skipped. Every row
 //! runs under its own identity scope in this one process, so the verified
 //! actor is reused instead of probed per row.
@@ -16,25 +15,101 @@ use std::path::Path;
 use nils_common::cli_contract::{OutputFormat, exit, schema_version_for};
 use nils_common::forge_identity::Operation;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use super::engine::{Change, HookSpec, Kind, RowReport, apply, schema_err};
+use super::redeliver::{DeliveryReport, RedeliverSpec, Selection};
 use super::target::HookTarget;
 use crate::backend::BackendRunner;
-use crate::cli::{BINARY, GlobalFlags};
+use crate::cli::{BINARY, GlobalFlags, HookDeliveryStatus};
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
 use crate::provider::{Provider, ProviderContext};
 use crate::rate_limit::default_runner;
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawRow {
-    target: String,
-    hook: u64,
-    action: String,
-    from: Value,
-    to: Value,
+#[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
+enum RawRow {
+    SetUrl {
+        target: String,
+        hook: u64,
+        from: String,
+        to: String,
+    },
+    SetActive {
+        target: String,
+        hook: u64,
+        from: bool,
+        to: bool,
+    },
+    Redeliver {
+        target: String,
+        hook: u64,
+        #[serde(default)]
+        status: HookDeliveryStatus,
+        since: String,
+        until: String,
+    },
+}
+
+enum BatchSpec {
+    Change(HookSpec),
+    Delivery(RedeliverSpec),
+}
+
+impl BatchSpec {
+    fn target(&self) -> &HookTarget {
+        match self {
+            Self::Change(spec) => &spec.target,
+            Self::Delivery(spec) => &spec.target,
+        }
+    }
+
+    fn key(&self) -> (String, u64, &'static str) {
+        let (hook, action) = match self {
+            Self::Change(spec) => (spec.hook, spec.change.action()),
+            Self::Delivery(spec) => (spec.hook, "redeliver"),
+        };
+        (self.target().name().to_ascii_lowercase(), hook, action)
+    }
+
+    fn failed(&self, error: &ForgeError) -> BatchReport {
+        match self {
+            Self::Change(spec) => BatchReport::Change(RowReport::failed(spec, error)),
+            Self::Delivery(spec) => {
+                BatchReport::Delivery(DeliveryReport::failed(spec, None, error))
+            }
+        }
+    }
+
+    fn skipped(&self) -> BatchReport {
+        match self {
+            Self::Change(spec) => BatchReport::Change(RowReport::skipped(spec)),
+            Self::Delivery(spec) => BatchReport::Delivery(DeliveryReport::skipped(spec)),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+pub(super) enum BatchReport {
+    Change(RowReport),
+    Delivery(DeliveryReport),
+}
+
+impl BatchReport {
+    fn status(&self) -> &'static str {
+        match self {
+            Self::Change(row) => row.status,
+            Self::Delivery(row) => row.status,
+        }
+    }
+
+    fn line(&self) -> String {
+        match self {
+            Self::Change(row) => row.line(),
+            Self::Delivery(row) => row.line(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -43,35 +118,19 @@ struct BatchPayload {
     dry_run: bool,
     total: usize,
     failed: usize,
-    rows: Vec<RowReport>,
+    rows: Vec<BatchReport>,
 }
 
 fn invalid(message: String) -> ForgeError {
     ForgeError::validation(schema_err(), "batch_invalid", message, None)
 }
 
-fn change(row: &RawRow) -> Result<Change, String> {
-    match (row.action.as_str(), &row.from, &row.to) {
-        ("set-url", Value::String(from), Value::String(to)) => Ok(Change::Url {
-            from: from.clone(),
-            to: to.clone(),
-        }),
-        ("set-active", Value::Bool(from), Value::Bool(to)) => Ok(Change::Active {
-            from: *from,
-            to: *to,
-        }),
-        ("set-url", ..) => Err("set-url needs string from and to".to_string()),
-        ("set-active", ..) => Err("set-active needs boolean from and to".to_string()),
-        _ => Err("action must be set-url or set-active".to_string()),
-    }
-}
-
 /// Read and fully validate the batch file; nothing here touches the provider.
-fn load(file: &Path, kind: Kind) -> Result<Vec<HookSpec>, ForgeError> {
+fn load(file: &Path, kind: Kind) -> Result<Vec<BatchSpec>, ForgeError> {
     let text = std::fs::read_to_string(file)
         .map_err(|_| invalid("unable to read the batch file".to_string()))?;
     let raw: Vec<RawRow> = serde_json::from_str(&text)
-        .map_err(|error| invalid(format!("batch file is not a valid row array: {error}")))?;
+        .map_err(|_| invalid("batch file is not a valid row array".to_string()))?;
     if raw.is_empty() {
         return Err(invalid("batch file has no rows".to_string()));
     }
@@ -79,31 +138,60 @@ fn load(file: &Path, kind: Kind) -> Result<Vec<HookSpec>, ForgeError> {
     let mut specs = Vec::with_capacity(raw.len());
     for (index, row) in raw.into_iter().enumerate() {
         let number = index + 1;
-        let change = change(&row).map_err(|message| invalid(format!("row {number}: {message}")))?;
-        let target = match kind {
-            Kind::Repo => HookTarget::Repo(row.target),
-            Kind::Org => HookTarget::Org(row.target),
+        let target = |name| match kind {
+            Kind::Repo => HookTarget::Repo(name),
+            Kind::Org => HookTarget::Org(name),
         };
-        let spec = HookSpec {
-            target,
-            hook: row.hook,
-            change,
+        let spec = match row {
+            RawRow::SetUrl {
+                target: name,
+                hook,
+                from,
+                to,
+            } => BatchSpec::Change(HookSpec {
+                target: target(name),
+                hook,
+                change: Change::Url { from, to },
+            }),
+            RawRow::SetActive {
+                target: name,
+                hook,
+                from,
+                to,
+            } => BatchSpec::Change(HookSpec {
+                target: target(name),
+                hook,
+                change: Change::Active { from, to },
+            }),
+            RawRow::Redeliver {
+                target: name,
+                hook,
+                status,
+                since,
+                until,
+            } => {
+                let selection = Selection::new(status, &since, &until)
+                    .map_err(|error| invalid(format!("row {number}: {}", error.message())))?;
+                BatchSpec::Delivery(RedeliverSpec {
+                    target: target(name),
+                    hook,
+                    selection,
+                })
+            }
         };
-        spec.check()
-            .map_err(|issue| invalid(format!("row {number}: {}: {}", issue.kind, issue.message)))?;
+        match &spec {
+            BatchSpec::Change(spec) => spec.check().map_err(|issue| {
+                invalid(format!("row {number}: {}: {}", issue.kind, issue.message))
+            })?,
+            BatchSpec::Delivery(spec) => spec
+                .check()
+                .map_err(|error| invalid(format!("row {number}: {}", error.message())))?,
+        }
         // One hook may carry several changes, but never the same field twice:
         // the second row's expected value would depend on the first.
-        let key = (
-            spec.target.name().to_ascii_lowercase(),
-            spec.hook,
-            spec.change.action(),
-        );
-        if !seen.insert(key) {
+        if !seen.insert(spec.key()) {
             return Err(invalid(format!(
-                "row {number}: {} hook {} {} appears more than once",
-                spec.target.name(),
-                spec.hook,
-                spec.change.action()
+                "row {number}: target, hook and action appear more than once"
             )));
         }
         specs.push(spec);
@@ -114,14 +202,20 @@ fn load(file: &Path, kind: Kind) -> Result<Vec<HookSpec>, ForgeError> {
 fn run_row<R: BackendRunner>(
     runner: &R,
     ctx: &ProviderContext,
-    spec: &HookSpec,
+    spec: &BatchSpec,
     dry_run: bool,
-) -> Result<RowReport, ForgeError> {
-    let target = spec.target.identity(&ctx.host).map_err(|error| {
+) -> Result<Vec<BatchReport>, ForgeError> {
+    let target = spec.target().identity(&ctx.host).map_err(|error| {
         ForgeError::validation(schema_err(), "hook_target_invalid", error.to_string(), None)
     })?;
     let _scope = crate::identity::enter_scope(Some((target, Operation::ApiWrite)));
-    apply(runner, ctx, spec, dry_run)
+    match spec {
+        BatchSpec::Change(spec) => {
+            apply(runner, ctx, spec, dry_run).map(|row| vec![BatchReport::Change(row)])
+        }
+        BatchSpec::Delivery(spec) => super::redeliver::apply(runner, ctx, spec, dry_run)
+            .map(|rows| rows.into_iter().map(BatchReport::Delivery).collect()),
+    }
 }
 
 pub(super) fn run(
@@ -137,26 +231,36 @@ pub(super) fn run(
     let mut aborted = false;
     for spec in &specs {
         if aborted {
-            rows.push(RowReport::skipped(spec));
+            rows.push(spec.skipped());
             continue;
         }
-        rows.push(match run_row(&runner, ctx, spec, global.dry_run) {
-            Ok(report) => report,
+        match run_row(&runner, ctx, spec, global.dry_run) {
+            Ok(reports) => rows.extend(reports),
             Err(error) => {
                 aborted = error.kind() == "hook_readback_mismatch";
-                RowReport::failed(spec, &error)
+                rows.push(spec.failed(&error));
             }
-        });
+        }
     }
+    emit(kind, "batch", global.dry_run, rows, format)
+}
+
+pub(super) fn emit(
+    kind: Kind,
+    action: &str,
+    dry_run: bool,
+    rows: Vec<BatchReport>,
+    format: OutputFormat,
+) -> Result<i32, ForgeError> {
     let failed = rows
         .iter()
-        .filter(|row| matches!(row.status, "failed" | "skipped"))
+        .filter(|row| matches!(row.status(), "failed" | "skipped"))
         .count();
     let code = emit_success(
-        schema_version_for(BINARY, &kind.op("batch"), 1),
+        schema_version_for(BINARY, &kind.op(action), 1),
         BatchPayload {
             provider: Provider::GitHub.as_str(),
-            dry_run: global.dry_run,
+            dry_run,
             total: rows.len(),
             failed,
             rows,

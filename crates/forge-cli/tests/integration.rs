@@ -15,6 +15,7 @@ mod integration {
     mod fixture_lint;
     mod forgejo_http;
     mod gitlab_merge_fixture;
+    mod hook_redeliver;
     mod inbox;
     mod issue_atoms;
     mod issue_tracker;

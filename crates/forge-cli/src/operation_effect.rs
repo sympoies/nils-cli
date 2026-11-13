@@ -134,6 +134,7 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
             RepoHookCommand::List => ("repo.hook.list", read, network, vec!["provider"]),
             RepoHookCommand::SetUrl(_) => hook_write("repo.hook.set-url"),
             RepoHookCommand::SetActive(_) => hook_write("repo.hook.set-active"),
+            RepoHookCommand::Redeliver(_) => hook_write("repo.hook.redeliver"),
             RepoHookCommand::Batch(_) => hook_write("repo.hook.batch"),
         },
         Some(Command::Org(OrgArgs {
@@ -144,6 +145,7 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
             OrgHookCommand::Create(_) => hook_write("org.hook.create"),
             OrgHookCommand::SetUrl(_) => hook_write("org.hook.set-url"),
             OrgHookCommand::SetActive(_) => hook_write("org.hook.set-active"),
+            OrgHookCommand::Redeliver(_) => hook_write("org.hook.redeliver"),
             OrgHookCommand::Batch(_) => hook_write("org.hook.batch"),
         },
         Some(Command::Repo(RepoArgs {
@@ -486,6 +488,36 @@ mod tests {
             "https://b.test/h",
         ];
         for (argv, operation) in [
+            (
+                vec![
+                    "repo",
+                    "hook",
+                    "redeliver",
+                    "--hook",
+                    "7",
+                    "--since",
+                    "2026-01-02T00:00:00Z",
+                    "--until",
+                    "2026-01-03T00:00:00Z",
+                ],
+                "repo.hook.redeliver",
+            ),
+            (
+                vec![
+                    "org",
+                    "hook",
+                    "redeliver",
+                    "--org",
+                    "acme",
+                    "--hook",
+                    "7",
+                    "--since",
+                    "2026-01-02T00:00:00Z",
+                    "--until",
+                    "2026-01-03T00:00:00Z",
+                ],
+                "org.hook.redeliver",
+            ),
             (
                 [&["repo", "hook", "set-url"][..], &url].concat(),
                 "repo.hook.set-url",

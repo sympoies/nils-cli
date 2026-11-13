@@ -47,6 +47,7 @@ pub fn run(global: &GlobalFlags, args: OrgArgs, format: OutputFormat) -> Result<
             return create(global, &ctx, &org, create_args, format);
         }
         OrgHookCommand::List => Action::List,
+        OrgHookCommand::Redeliver(args) => Action::Redeliver(args),
         OrgHookCommand::SetUrl(set) => Action::SetUrl {
             hook: set.hook,
             from: set.from,

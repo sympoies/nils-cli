@@ -3046,9 +3046,27 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(redeliver)
+_arguments "${_arguments_options[@]}" : \
+'--hook=[Webhook id (see \`hook list\`)]:ID:_default' \
+'--status=[Delivery outcome to select]:STATUS:(failed success all)' \
+'--since=[Inclusive start of the delivery window (RFC 3339 timestamp)]:TIMESTAMP:_default' \
+'--until=[Exclusive end of the delivery window (RFC 3339 timestamp)]:TIMESTAMP:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
 (batch)
 _arguments "${_arguments_options[@]}" : \
-'--file=[JSON array of \`{"target","hook","action","from","to"}\` rows. \`action\` is \`set-url\` (string \`from\`/\`to\`) or \`set-active\` (boolean \`from\`/\`to\`); \`target\` is \`OWNER/NAME\` for \`repo hook\` and the organization for \`org hook\`]:FILE:_files' \
+'--file=[JSON rows with target, hook and action\: set-url (from/to URLs), set-active (from/to booleans), or redeliver (status, since, until); \`target\` is \`OWNER/NAME\` for \`repo hook\` and the organization for \`org hook\`]:FILE:_files' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
@@ -3082,6 +3100,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (set-active)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(redeliver)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3178,6 +3200,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (set-active)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(redeliver)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3319,9 +3345,28 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(redeliver)
+_arguments "${_arguments_options[@]}" : \
+'--hook=[Webhook id (see \`hook list\`)]:ID:_default' \
+'--status=[Delivery outcome to select]:STATUS:(failed success all)' \
+'--since=[Inclusive start of the delivery window (RFC 3339 timestamp)]:TIMESTAMP:_default' \
+'--until=[Exclusive end of the delivery window (RFC 3339 timestamp)]:TIMESTAMP:_default' \
+'--org=[Organization login the command acts on]:ORG:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
 (batch)
 _arguments "${_arguments_options[@]}" : \
-'--file=[JSON array of \`{"target","hook","action","from","to"}\` rows. \`action\` is \`set-url\` (string \`from\`/\`to\`) or \`set-active\` (boolean \`from\`/\`to\`); \`target\` is \`OWNER/NAME\` for \`repo hook\` and the organization for \`org hook\`]:FILE:_files' \
+'--file=[JSON rows with target, hook and action\: set-url (from/to URLs), set-active (from/to booleans), or redeliver (status, since, until); \`target\` is \`OWNER/NAME\` for \`repo hook\` and the organization for \`org hook\`]:FILE:_files' \
 '--org=[Organization login the command acts on]:ORG:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
@@ -3360,6 +3405,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (set-active)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(redeliver)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3416,6 +3465,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (set-active)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(redeliver)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -4533,6 +4586,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(redeliver)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (batch)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -4582,6 +4639,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (set-active)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(redeliver)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -5176,7 +5237,8 @@ _forge-cli__subcmd__help__subcmd__org__subcmd__hook_commands() {
 'create:Create a webhook; the secret is read only from \`--secret-env\`' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+'redeliver:Redeliver deliveries selected by status and time window' \
+'batch:Apply webhook changes or redeliveries from one file' \
     )
     _describe -t commands 'forge-cli help org hook commands' commands "$@"
 }
@@ -5194,6 +5256,11 @@ _forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__create_commands() {
 _forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help org hook list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__redeliver_commands] )) ||
+_forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__redeliver_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help org hook redeliver commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__set-active_commands] )) ||
 _forge-cli__subcmd__help__subcmd__org__subcmd__hook__subcmd__set-active_commands() {
@@ -5575,7 +5642,8 @@ _forge-cli__subcmd__help__subcmd__repo__subcmd__hook_commands() {
 'list:List the repository'\''s webhooks. The secret is never printed' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+'redeliver:Redeliver deliveries selected by status and time window' \
+'batch:Apply webhook changes or redeliveries from one file' \
     )
     _describe -t commands 'forge-cli help repo hook commands' commands "$@"
 }
@@ -5588,6 +5656,11 @@ _forge-cli__subcmd__help__subcmd__repo__subcmd__hook__subcmd__batch_commands() {
 _forge-cli__subcmd__help__subcmd__repo__subcmd__hook__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help repo hook list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__repo__subcmd__hook__subcmd__redeliver_commands] )) ||
+_forge-cli__subcmd__help__subcmd__repo__subcmd__hook__subcmd__redeliver_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help repo hook redeliver commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__repo__subcmd__hook__subcmd__set-active_commands] )) ||
 _forge-cli__subcmd__help__subcmd__repo__subcmd__hook__subcmd__set-active_commands() {
@@ -6112,7 +6185,8 @@ _forge-cli__subcmd__org__subcmd__help__subcmd__hook_commands() {
 'create:Create a webhook; the secret is read only from \`--secret-env\`' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+'redeliver:Redeliver deliveries selected by status and time window' \
+'batch:Apply webhook changes or redeliveries from one file' \
     )
     _describe -t commands 'forge-cli org help hook commands' commands "$@"
 }
@@ -6131,6 +6205,11 @@ _forge-cli__subcmd__org__subcmd__help__subcmd__hook__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli org help hook list commands' commands "$@"
 }
+(( $+functions[_forge-cli__subcmd__org__subcmd__help__subcmd__hook__subcmd__redeliver_commands] )) ||
+_forge-cli__subcmd__org__subcmd__help__subcmd__hook__subcmd__redeliver_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org help hook redeliver commands' commands "$@"
+}
 (( $+functions[_forge-cli__subcmd__org__subcmd__help__subcmd__hook__subcmd__set-active_commands] )) ||
 _forge-cli__subcmd__org__subcmd__help__subcmd__hook__subcmd__set-active_commands() {
     local commands; commands=()
@@ -6148,7 +6227,8 @@ _forge-cli__subcmd__org__subcmd__hook_commands() {
 'create:Create a webhook; the secret is read only from \`--secret-env\`' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+'redeliver:Redeliver deliveries selected by status and time window' \
+'batch:Apply webhook changes or redeliveries from one file' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'forge-cli org hook commands' commands "$@"
@@ -6170,7 +6250,8 @@ _forge-cli__subcmd__org__subcmd__hook__subcmd__help_commands() {
 'create:Create a webhook; the secret is read only from \`--secret-env\`' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+'redeliver:Redeliver deliveries selected by status and time window' \
+'batch:Apply webhook changes or redeliveries from one file' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'forge-cli org hook help commands' commands "$@"
@@ -6195,6 +6276,11 @@ _forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli org hook help list commands' commands "$@"
 }
+(( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__redeliver_commands] )) ||
+_forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__redeliver_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org hook help redeliver commands' commands "$@"
+}
 (( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__set-active_commands] )) ||
 _forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__set-active_commands() {
     local commands; commands=()
@@ -6209,6 +6295,11 @@ _forge-cli__subcmd__org__subcmd__hook__subcmd__help__subcmd__set-url_commands() 
 _forge-cli__subcmd__org__subcmd__hook__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli org hook list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__redeliver_commands] )) ||
+_forge-cli__subcmd__org__subcmd__hook__subcmd__redeliver_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli org hook redeliver commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__org__subcmd__hook__subcmd__set-active_commands] )) ||
 _forge-cli__subcmd__org__subcmd__hook__subcmd__set-active_commands() {
@@ -7198,7 +7289,8 @@ _forge-cli__subcmd__repo__subcmd__help__subcmd__hook_commands() {
 'list:List the repository'\''s webhooks. The secret is never printed' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+'redeliver:Redeliver deliveries selected by status and time window' \
+'batch:Apply webhook changes or redeliveries from one file' \
     )
     _describe -t commands 'forge-cli repo help hook commands' commands "$@"
 }
@@ -7211,6 +7303,11 @@ _forge-cli__subcmd__repo__subcmd__help__subcmd__hook__subcmd__batch_commands() {
 _forge-cli__subcmd__repo__subcmd__help__subcmd__hook__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli repo help hook list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__help__subcmd__hook__subcmd__redeliver_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__help__subcmd__hook__subcmd__redeliver_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo help hook redeliver commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__repo__subcmd__help__subcmd__hook__subcmd__set-active_commands] )) ||
 _forge-cli__subcmd__repo__subcmd__help__subcmd__hook__subcmd__set-active_commands() {
@@ -7243,7 +7340,8 @@ _forge-cli__subcmd__repo__subcmd__hook_commands() {
 'list:List the repository'\''s webhooks. The secret is never printed' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+'redeliver:Redeliver deliveries selected by status and time window' \
+'batch:Apply webhook changes or redeliveries from one file' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'forge-cli repo hook commands' commands "$@"
@@ -7259,7 +7357,8 @@ _forge-cli__subcmd__repo__subcmd__hook__subcmd__help_commands() {
 'list:List the repository'\''s webhooks. The secret is never printed' \
 'set-url:Change only a webhook'\''s delivery URL (compare-and-swap on the current URL)' \
 'set-active:Change only a webhook'\''s active flag (compare-and-swap on the current flag)' \
-'batch:Apply many \`set-url\` / \`set-active\` rows from one file' \
+'redeliver:Redeliver deliveries selected by status and time window' \
+'batch:Apply webhook changes or redeliveries from one file' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'forge-cli repo hook help commands' commands "$@"
@@ -7279,6 +7378,11 @@ _forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli repo hook help list commands' commands "$@"
 }
+(( $+functions[_forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__redeliver_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__redeliver_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo hook help redeliver commands' commands "$@"
+}
 (( $+functions[_forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__set-active_commands] )) ||
 _forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__set-active_commands() {
     local commands; commands=()
@@ -7293,6 +7397,11 @@ _forge-cli__subcmd__repo__subcmd__hook__subcmd__help__subcmd__set-url_commands()
 _forge-cli__subcmd__repo__subcmd__hook__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli repo hook list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__hook__subcmd__redeliver_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__hook__subcmd__redeliver_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo hook redeliver commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__repo__subcmd__hook__subcmd__set-active_commands] )) ||
 _forge-cli__subcmd__repo__subcmd__hook__subcmd__set-active_commands() {

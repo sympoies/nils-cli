@@ -43,6 +43,7 @@ pub fn run(
     }
     let (op, action) = match command {
         RepoHookCommand::List => ("repo.hook.list", Action::List),
+        RepoHookCommand::Redeliver(args) => ("repo.hook.redeliver", Action::Redeliver(args)),
         RepoHookCommand::SetUrl(args) => (
             "repo.hook.set-url",
             Action::SetUrl {

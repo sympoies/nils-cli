@@ -2,10 +2,38 @@
 use std::path::PathBuf;
 
 use clap::{ArgGroup, Args, Subcommand, ValueEnum};
+use serde::Deserialize;
 
 /// Webhook id (see `hook list`).
 fn hook_id() -> clap::builder::RangedU64ValueParser<u64> {
     clap::value_parser!(u64).range(1..)
+}
+
+/// Delivery outcomes to select. Timeouts (status code zero) count as failed.
+#[derive(Debug, Clone, Copy, Default, Deserialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum HookDeliveryStatus {
+    #[default]
+    Failed,
+    Success,
+    All,
+}
+
+/// Select deliveries for one hook; dry-run lists the selection without writing.
+#[derive(Args, Debug, Clone)]
+pub struct HookRedeliverArgs {
+    /// Webhook id (see `hook list`).
+    #[arg(long, value_name = "ID", value_parser = hook_id())]
+    pub hook: u64,
+    /// Delivery outcome to select.
+    #[arg(long, value_enum, default_value = "failed")]
+    pub status: HookDeliveryStatus,
+    /// Inclusive start of the delivery window (RFC 3339 timestamp).
+    #[arg(long, value_name = "TIMESTAMP")]
+    pub since: String,
+    /// Exclusive end of the delivery window (RFC 3339 timestamp).
+    #[arg(long, value_name = "TIMESTAMP")]
+    pub until: String,
 }
 
 /// `hook set-url` arguments.
@@ -41,8 +69,8 @@ pub struct HookSetActiveArgs {
 /// `hook batch` arguments.
 #[derive(Args, Debug, Clone)]
 pub struct HookBatchArgs {
-    /// JSON array of `{"target","hook","action","from","to"}` rows. `action` is
-    /// `set-url` (string `from`/`to`) or `set-active` (boolean `from`/`to`);
+    /// JSON rows with target, hook and action: set-url (from/to URLs),
+    /// set-active (from/to booleans), or redeliver (status, since, until);
     /// `target` is `OWNER/NAME` for `repo hook` and the organization for `org hook`.
     #[arg(long, value_name = "FILE")]
     pub file: PathBuf,
@@ -64,7 +92,9 @@ pub enum RepoHookCommand {
     SetUrl(HookSetUrlArgs),
     /// Change only a webhook's active flag (compare-and-swap on the current flag).
     SetActive(HookSetActiveArgs),
-    /// Apply many `set-url` / `set-active` rows from one file.
+    /// Redeliver deliveries selected by status and time window.
+    Redeliver(HookRedeliverArgs),
+    /// Apply webhook changes or redeliveries from one file.
     Batch(HookBatchArgs),
 }
 
@@ -103,7 +133,9 @@ pub enum OrgHookCommand {
     SetUrl(HookSetUrlArgs),
     /// Change only a webhook's active flag (compare-and-swap on the current flag).
     SetActive(HookSetActiveArgs),
-    /// Apply many `set-url` / `set-active` rows from one file.
+    /// Redeliver deliveries selected by status and time window.
+    Redeliver(HookRedeliverArgs),
+    /// Apply webhook changes or redeliveries from one file.
     Batch(HookBatchArgs),
 }
 
