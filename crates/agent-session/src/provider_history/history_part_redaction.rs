@@ -118,7 +118,7 @@ fn strip_source_location(mut value: &str) -> &str {
 }
 
 pub(super) fn redact_text(value: &str) -> String {
-    if path_like_fragment(path_or_url_candidate(value)) {
+    let masked = if path_like_fragment(path_or_url_candidate(value)) {
         "[redacted]".to_string()
     } else {
         let mut output = String::with_capacity(value.len());
@@ -133,7 +133,8 @@ pub(super) fn redact_text(value: &str) -> String {
             output.push_str(spacing);
         }
         output
-    }
+    };
+    owner_text(&masked)
 }
 
 pub(super) fn owner_value(value: &mut Value, key: Option<&str>) {

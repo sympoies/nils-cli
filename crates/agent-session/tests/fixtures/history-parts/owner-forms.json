@@ -65,13 +65,13 @@
   {
     "name": "url_credential_query",
     "value": "https://forge.example/project?access_token=synthetic-value&view=files",
-    "masked": "https://forge.example/project?access_token=synthetic-value&view=files",
+    "masked": "https://forge.example/project?access_token=[redacted]&view=files",
     "owner": "https://forge.example/project?access_token=[redacted]&view=files"
   },
   {
     "name": "encoded_credential_query",
     "value": "https://forge.example/project?%61ccess_token=first&access_token=second&view=files#result",
-    "masked": "https://forge.example/project?%61ccess_token=first&access_token=second&view=files#result",
+    "masked": "https://forge.example/project?%61ccess_token=[redacted]&access_token=[redacted]&view=files#result",
     "owner": "https://forge.example/project?%61ccess_token=[redacted]&access_token=[redacted]&view=files#result"
   },
   {
@@ -83,7 +83,7 @@
   {
     "name": "url_parenthesis_query",
     "value": "https://forge.example/project?access_token=abc(def)",
-    "masked": "https://forge.example/project?access_token=abc(def)",
+    "masked": "https://forge.example/project?access_token=[redacted]",
     "owner": "https://forge.example/project?access_token=[redacted]"
   },
   {
@@ -95,19 +95,19 @@
   {
     "name": "url_apostrophe_query",
     "value": "https://forge.example/project?access_token=abc'def",
-    "masked": "https://forge.example/project?access_token=abc'def",
+    "masked": "https://forge.example/project?access_token=[redacted]",
     "owner": "https://forge.example/project?access_token=[redacted]"
   },
   {
     "name": "file_url_without_authority",
     "value": "file:/workspace/project?access_token=synthetic-value",
-    "masked": "file:/workspace/project?access_token=synthetic-value",
+    "masked": "file:/workspace/project?access_token=[redacted]",
     "owner": "file:/workspace/project?access_token=[redacted]"
   },
   {
     "name": "quoted_url_command",
     "value": "curl 'https://forge.example/project?access_token=abc'; echo ok",
-    "masked": "curl 'https://forge.example/project?access_token=abc'; echo ok",
+    "masked": "curl 'https://forge.example/project?access_token=[redacted]'; echo ok",
     "owner": "curl 'https://forge.example/project?access_token=[redacted]'; echo ok"
   },
   {
@@ -193,5 +193,89 @@
     "value": "run --password = FLAG/CANARY now",
     "masked": "run --password = [redacted] now",
     "owner": "run --password = [redacted] now"
+  },
+  {
+    "name": "assigned_url_credential_query",
+    "value": "fetch target=https://forge.example/project?client_secret=synthetic-value&view=files then",
+    "masked": "fetch target=https://forge.example/project?client_secret=[redacted]&view=files then",
+    "owner": "fetch target=https://forge.example/project?client_secret=[redacted]&view=files then"
+  },
+  {
+    "name": "quoted_credential_assignment",
+    "value": "run --password='synthetic-value' then",
+    "masked": "run --password='[redacted]' then",
+    "owner": "run --password='[redacted]' then"
+  },
+  {
+    "name": "shared_assignment_policy",
+    "value": "session_id=synthetic-session then",
+    "masked": "session_id=[redacted] then",
+    "owner": "session_id=[redacted] then"
+  },
+  {
+    "name": "marker_prefix_is_not_redacted_value",
+    "value": "password=[redacted]synthetic-suffix",
+    "masked": "password=[redacted]",
+    "owner": "password=[redacted]"
+  },
+  {
+    "name": "quoted_marker_single_concat",
+    "value": "password='[redacted]''synthetic-suffix'",
+    "masked": "password='[redacted]'",
+    "owner": "password='[redacted]'"
+  },
+  {
+    "name": "unquoted_marker_double_concat",
+    "value": "password=[redacted]\"synthetic-suffix\"",
+    "masked": "password=[redacted]",
+    "owner": "password=[redacted]"
+  },
+  {
+    "name": "unquoted_marker_single_concat",
+    "value": "password=[redacted]'synthetic-suffix'",
+    "masked": "password=[redacted]",
+    "owner": "password=[redacted]"
+  },
+  {
+    "name": "quoted_marker_mixed_concat",
+    "value": "password='[redacted]'\"synthetic-suffix\"",
+    "masked": "password=[redacted]",
+    "owner": "password=[redacted]"
+  },
+  {
+    "name": "flag_marker_single_concat",
+    "value": "--password='[redacted]''synthetic-suffix'",
+    "masked": "--password='[redacted]'",
+    "owner": "--password='[redacted]'"
+  },
+  {
+    "name": "authorization_bearer_marker_concat",
+    "value": "Authorization: Bearer [redacted]\"synthetic-suffix\"",
+    "masked": "Authorization: [redacted]",
+    "owner": "Authorization: [redacted]"
+  },
+  {
+    "name": "authorization_marker_concat",
+    "value": "Authorization: [redacted]'synthetic-suffix'",
+    "masked": "Authorization: [redacted]",
+    "owner": "Authorization: [redacted]"
+  },
+  {
+    "name": "json_marker_double_concat",
+    "value": "{\"password\":\"[redacted]\"\"synthetic-suffix\"}",
+    "masked": "{\"password\":\"[redacted]\"}",
+    "owner": "{\"password\":\"[redacted]\"}"
+  },
+  {
+    "name": "quoted_marker_double_concat",
+    "value": "password=\"[redacted]\"\"synthetic-suffix\"",
+    "masked": "password=\"[redacted]\"",
+    "owner": "password=\"[redacted]\""
+  },
+  {
+    "name": "unquoted_marker_concat_with_space",
+    "value": "password=[redacted]\" synthetic-suffix\"",
+    "masked": "password=[redacted]",
+    "owner": "password=[redacted]"
   }
 ]

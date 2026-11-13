@@ -1,7 +1,89 @@
 use super::credential_key;
 
 pub(super) fn redact(value: &str) -> String {
-    redact_assignments(&redact_userinfo(value))
+    let value =
+        preserve_marked_assignments(value, |value| redact_assignments(&redact_userinfo(value)));
+    preserve_marked_assignments(&value, |value| {
+        nils_common::redact::redact_text(value)
+            .value
+            .replace("[REDACTED]", "[redacted]")
+    })
+}
+
+// Reprocessing already-masked assignments must retain their markers, quotes,
+// and Authorization schemes. Use the shared matcher's assignment boundaries.
+fn preserve_marked_assignments(value: &str, mask: impl Fn(&str) -> String) -> String {
+    const MARKER: &str = "[redacted]";
+    let mut output = String::with_capacity(value.len());
+    let mut copied = 0;
+    let mut quote_scan = 0;
+    let mut quote = None;
+    let mut escaped = false;
+    for captures in nils_common::redact::assignment_secret_regex().captures_iter(value) {
+        let assignment = captures.get(0).expect("assignment match");
+        let raw = captures.name("value").expect("assignment value");
+        let end = if value[raw.start()..].starts_with(MARKER) {
+            raw.start() + MARKER.len()
+        } else if raw.as_str().trim_matches(['\'', '"']) == MARKER {
+            assignment.end()
+        } else if captures["key"].eq_ignore_ascii_case("authorization")
+            && ["bearer", "basic"]
+                .iter()
+                .any(|scheme| raw.as_str().eq_ignore_ascii_case(scheme))
+        {
+            let tail = &value[raw.end()..];
+            let trimmed = tail.trim_start();
+            if !trimmed.starts_with(MARKER) {
+                continue;
+            }
+            raw.end() + tail.len() - trimmed.len() + MARKER.len()
+        } else {
+            continue;
+        };
+        // A quote only terminates an unquoted marker when it closes an outer
+        // wrapper. Otherwise it can start another fragment of the secret.
+        let closing_quote = value[end..].chars().next().is_some_and(|character| {
+            if !matches!(character, '\'' | '"') || raw.as_str().starts_with(['\'', '"']) {
+                return false;
+            }
+            for character in value[quote_scan..raw.start()].chars() {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if quote == Some(character) {
+                    quote = None;
+                } else if quote.is_none() && matches!(character, '\'' | '"') {
+                    quote = Some(character);
+                }
+            }
+            quote_scan = raw.start();
+            quote == Some(character)
+                && value[end + character.len_utf8()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|next| next.is_whitespace() || ",;&}])|".contains(next))
+        });
+        // A marker prefix followed by credential text is still a secret value.
+        if value[end..].chars().next().is_some_and(|character| {
+            !character.is_whitespace()
+                && !",;&}]".contains(character)
+                && !closing_quote
+                && !(character == '#'
+                    && super::credential_query_key(&captures["key"])
+                    && value[..raw.start()]
+                        .rsplit(char::is_whitespace)
+                        .next()
+                        .is_some_and(|word| word.contains('?') && word.contains(':')))
+        }) {
+            continue;
+        }
+        output.push_str(&mask(&value[copied..assignment.start()]));
+        output.push_str(&value[assignment.start()..end]);
+        copied = end;
+    }
+    output.push_str(&mask(&value[copied..]));
+    output
 }
 
 fn credential_name(value: &str) -> bool {
@@ -22,6 +104,14 @@ fn redact_assignments(value: &str) -> String {
     {
         let position = scan + offset;
         scan = position + separator.len_utf8();
+        if separator.is_whitespace()
+            && value[..position]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_whitespace)
+        {
+            continue;
+        }
         let key_end = value[..position].trim_end();
         let left = key_end.trim_end_matches(['\'', '"']);
         let key = left
