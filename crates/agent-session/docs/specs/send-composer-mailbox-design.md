@@ -178,15 +178,25 @@ behavior at this pin.
 
 [#2887's reopened acceptance](https://github.com/sympoies/nils-cli/issues/2887#issuecomment-6831841737)
 separately owns a documented terminal bound for pre-attempt
-`recipient-composer-unobservable` on a binding-less terminal-started Codex
-record, with a sender-readable reason. The attempt-path fixes #3345/#3618 do
-not satisfy that acceptance. Its implementation owner has
-[PR #3650](https://github.com/sympoies/nils-cli/pull/3650) in review: the fifth
-consecutive such refusal settles the generation as `undeliverable`; the first
-four retain the 1 s retry. That implementation is outside the source pin.
+`recipient-composer-unobservable` on Codex records whose provider binding is
+not captured yet and that have no structured prompt route, with a sender-readable
+reason. A terminal-started record can later obtain its binding from a hook or
+session metadata. The attempt-path fixes #3345/#3618 did not satisfy that acceptance.
+
+[PR #3650](https://github.com/sympoies/nils-cli/pull/3650) delivered the bound in
+[`cb325526bd3d41217115eb2072bbda9326c7ce4b`](https://github.com/sympoies/nils-cli/commit/cb325526bd3d41217115eb2072bbda9326c7ce4b),
+after the source pin: the fifth consecutive such refusal of one generation
+settles it as `undeliverable` with reason `recipient-composer-unobservable`;
+the first four retain the 1 s retry. Another recorded reason resets the count;
+a later message starts a new generation. Draft refusals,
 `recipient-working` / `provider-not-ready` remain transient, bound
 Console-started controls must keep working, and resident acceptance remains
 with [#3448](https://github.com/sympoies/nils-cli/issues/3448).
+This post-pin delivery does not change the shared design's proposed status.
+
+The size of the five-attempt bound (about 4 s at the retry cadence) remains a
+[documented non-blocking follow-up, F2 on #2887](https://github.com/sympoies/nils-cli/issues/2887#issuecomment-6847858442).
+This note records the delivered bound without selecting a new size or policy.
 
 ## Proposed shared design
 
@@ -288,7 +298,7 @@ Operator exact-envelope notices remain unsupported on the Claude terminal route.
 | Idle, active/uncertain operation or restart/auth fence | Structured/local guard state | Defer before release with bounded blocking condition. |
 | Working/needs-input Codex checkpoint | Exact authoritative active turn plus in-turn quiescence | Preserve existing steer policy and claim fence; no general busy bypass. |
 | Occupied or unreadable human composer | Authoritative native notice read where supported, otherwise frozen screen | Preserve the draft; use existing stale-draft policy only on routes that already own it. |
-| Binding-less terminal-started Codex, pre-attempt composer unobservable | `recipient-composer-unobservable`, no usable provider binding | [#2887](https://github.com/sympoies/nils-cli/issues/2887#issuecomment-6831841737) owns bounded terminal settlement with a sender-readable reason. [#3650](https://github.com/sympoies/nils-cli/pull/3650), in review and outside the pin, settles `undeliverable` on the fifth consecutive refusal; earlier refusals retry at 1 s. Keep `recipient-working` / `provider-not-ready` transient and bound Console-started controls intact. |
+| Codex records whose provider binding is not captured yet, pre-attempt composer unobservable | `recipient-composer-unobservable`, no usable provider binding or structured prompt route | [#2887](https://github.com/sympoies/nils-cli/issues/2887#issuecomment-6831841737) owns bounded terminal settlement with a sender-readable reason. [#3650](https://github.com/sympoies/nils-cli/pull/3650), merged as `cb325526bd3d41217115eb2072bbda9326c7ce4b` after the pin, settles `undeliverable` with that reason on the fifth consecutive refusal of one generation; earlier refusals retry at 1 s, and a later message starts a new generation. Keep draft refusals, `recipient-working` / `provider-not-ready` transient and bound Console-started controls intact. The bound's size remains [F2's follow-up](https://github.com/sympoies/nils-cli/issues/2887#issuecomment-6847858442). |
 | Routine coalesced generation before due time | Recipient policy, unread generation and saved window | Stay queued; urgent/service bypass remains destination-controlled. |
 | Unoffered native receiver timeout | Authenticated release/CAS fact | Same unconsumed generation may retry after the receipt-owned backoff. |
 | Attempted generation, unknown result | Durable consumed attempt | Keep unknown, even if no row is yet visible; newer unread mail follows existing generation recovery. |
