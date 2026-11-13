@@ -22,7 +22,9 @@ stderr_log="$startup_dir/.startup-stderr.log"
 rm -f "$stderr_input" "$stderr_tail"
 invoke() { :; "$@"; status=$?; }
 if [ -d "$startup_dir" ] && mkfifo "$stderr_input" "$stderr_tail"; then
-  tail -c 16384 < "$stderr_tail" > "$stderr_log" &
+  # Feed tail an anonymous pipe: reopening a FIFO stdin after its writer exits
+  # can block forever (observed with uutils coreutils 0.10.0).
+  (cat < "$stderr_tail" | tail -c 16384 > "$stderr_log") &
   collector=$!
   tee "$stderr_tail" < "$stderr_input" >&2 &
   forwarding=$!
