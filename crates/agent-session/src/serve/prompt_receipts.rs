@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 mod client_message;
+#[cfg(test)]
+mod idle_failure_tests;
 pub(crate) mod owner_commands;
 mod reconcile;
 mod store;
@@ -59,6 +61,8 @@ struct Receipt {
     /// Which composer observation step failed, when a guard refusal says so.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     observation: Option<crate::send_submit::Unobserved>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_idle_reason: Option<codex_app_server::guarded::IdleReason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     confirmation_diagnostic: Option<ConfirmationDiagnostic>,
 }
@@ -73,6 +77,7 @@ impl Receipt {
             code: Some("structured-prompt-outcome-unknown".into()),
             composer_cleanup: None,
             observation: None,
+            native_idle_reason: None,
             confirmation_diagnostic: Some(ConfirmationDiagnostic::AcceptanceUnobservable),
         }
     }
@@ -122,14 +127,18 @@ impl ResultRecord {
             }
             envelope_ok(data)
         } else {
+            let mut body = json!({"schema_version":serve_schema(), "ok":false,
+                "error":{"code":self.receipt.code,
+                    "message":if self.receipt.outcome == Outcome::Refused {
+                        "prompt attempt was refused before delivery"
+                    } else { "structured prompt submission outcome is unknown" },
+                    "details":{"receipt":self.receipt}}});
+            if let Some(reason) = self.receipt.native_idle_reason {
+                body["error"]["hint"] = json!(reason.hint());
+            }
             (
                 StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                Json(json!({"schema_version":serve_schema(), "ok":false,
-                    "error":{"code":self.receipt.code,
-                        "message":if self.receipt.outcome == Outcome::Refused {
-                            "prompt attempt was refused before delivery"
-                        } else { "structured prompt submission outcome is unknown" },
-                        "details":{"receipt":self.receipt}}})),
+                Json(body),
             )
                 .into_response()
         }
@@ -563,6 +572,10 @@ async fn classify(response: Response, mut receipt: Receipt) -> ResultRecord {
         receipt.outcome = Outcome::Refused;
         receipt.code = Some(code.to_string());
         receipt.observation = serde_json::from_value(details["observation"].clone()).ok();
+        if code == "send-idle-unobservable" {
+            receipt.native_idle_reason =
+                serde_json::from_value(details["native_idle_reason"].clone()).ok();
+        }
         receipt.confirmation_diagnostic = None;
         ResultRecord {
             receipt,

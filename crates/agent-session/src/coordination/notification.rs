@@ -994,6 +994,11 @@ fn provider_not_ready_detail(detail: &str) -> Option<String> {
         } else {
             branch.to_string()
         }),
+        ("send-idle-unobservable", Some(reason)) => serde_json::from_value::<
+            crate::codex_app_server::guarded::IdleReason,
+        >(serde_json::json!(reason))
+        .ok()
+        .map(|reason| reason.notification_detail()),
         _ => None,
     }
 }
@@ -1553,3 +1558,6 @@ mod tests {
 #[cfg(test)]
 #[path = "notification_prompt_tests.rs"]
 mod short_prompt_tests;
+
+#[cfg(test)]
+mod notification_idle_failure_tests;

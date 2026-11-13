@@ -275,6 +275,16 @@ There is no allow-blocked, arbitrary-key or terminal fallback mode.
 The JSON envelope is `cli.agent-session.notice.v1`, with the guarded send
 receipt fields. `send` retains general input semantics and adds no marker.
 
+A Codex native `send-idle-unobservable` notice refusal carries the same
+`error.details.native_idle_reason` and `error.hint` as a guarded send. The
+closed-set reasons and recovery actions are defined in
+[Send v1](send-v1.md#observation-limits); unknown provider status strings and
+error payloads are never retained. This diagnostic does not admit another
+state, bypass identity checks, or change key consumption. Where the daemon
+records such a pre-attempt notice refusal, its `provider-not-ready` reason
+detail is `send-idle-unobservable:<native_idle_reason>`, using the same closed
+set. No new observation or transport fallback is introduced.
+
 Codex app-server runtimes use native submission. Codex terminal runtimes require
 exact composer verification of the known multiline envelope before submission;
 Claude uses the supported native module route above or refuses before input.

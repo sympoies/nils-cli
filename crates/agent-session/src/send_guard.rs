@@ -437,13 +437,13 @@ impl Admission<'_> {
                 ));
             }
             return crate::codex_app_server::guarded::idle(self.record, self.deadline).map_err(
-                |code| {
-                    self.refusal(
-                        code,
+                |error| {
+                    error.annotate(self.refusal(
+                        error.code(),
                         "native thread idle or identity could not be verified",
                         "idle",
                         stage,
-                    )
+                    ))
                 },
             );
         }

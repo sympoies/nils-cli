@@ -1,8 +1,10 @@
 //! Native guarded dispatch. Thread idle never substitutes for composer proof.
 mod confirmation;
+mod error;
 pub(crate) mod trace;
 use super::*;
 use confirmation::input_observed;
+pub(crate) use error::{Error, IdleReason};
 use trace::{Method, Outcome, Request};
 
 type Socket = tokio_tungstenite::WebSocketStream<UnixStream>;
@@ -20,24 +22,24 @@ pub(crate) struct Client {
 }
 
 impl Client {
-    pub(crate) fn connect(record: &SessionRecord, deadline: Instant) -> Result<Self, &'static str> {
+    pub(crate) fn connect(record: &SessionRecord, deadline: Instant) -> Result<Self, Error> {
         let thread_id = record
             .provider_resume
             .as_ref()
             .filter(|resume| resume.provider == "codex" && protocol_id_is_valid(&resume.session_id))
             .map(|resume| resume.session_id.clone())
-            .ok_or("send-identity-unobservable")?;
-        let attached = thread_attached_path(record).ok_or("send-identity-unobservable")?;
+            .ok_or(Error::IdentityUnobservable)?;
+        let attached = thread_attached_path(record).ok_or(Error::IdentityUnobservable)?;
         if fs::read_to_string(attached).ok().as_deref()
             != Some(&projected_thread_binding(&thread_id))
         {
-            return Err("send-identity-mismatch");
+            return Err(Error::IdentityMismatch);
         }
-        let path = socket_path(record).ok_or("send-guard-unsupported")?;
+        let path = socket_path(record).ok_or(Error::Unsupported)?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(|_| "send-idle-unobservable")?;
+            .map_err(error::runtime_failure)?;
         let remaining = deadline.saturating_duration_since(Instant::now());
         let connect = Request::start(Method::Connect, deadline, None);
         let socket = runtime.block_on(async {
@@ -45,14 +47,14 @@ impl Client {
                 // One connection attempt: never retry delivery on another socket.
                 let stream = UnixStream::connect(path)
                     .await
-                    .map_err(|_| Outcome::Unavailable)?;
+                    .map_err(|_| (Outcome::Unavailable, IdleReason::ConnectFailed))?;
                 let (mut socket, _) = tokio_tungstenite::client_async_with_config(
                     "ws://localhost",
                     stream,
                     Some(proxy_websocket_config()),
                 )
                 .await
-                .map_err(|_| Outcome::Unavailable)?;
+                .map_err(|_| (Outcome::Unavailable, IdleReason::ConnectFailed))?;
                 let initialize = Request::start(Method::Initialize, deadline, None);
                 let initialized = async {
                     send_json(&mut socket, initialize_request(1))
@@ -69,17 +71,29 @@ impl Client {
                         .as_ref()
                         .map_or_else(|error| *error, |_| Outcome::Ok),
                 );
-                initialized?;
+                initialized.map_err(|outcome| {
+                    (
+                        outcome,
+                        match outcome {
+                            Outcome::Timeout => IdleReason::ObservationDeadlineExpired,
+                            _ => IdleReason::InitializeFailed,
+                        },
+                    )
+                })?;
                 send_json(&mut socket, initialized_notification())
                     .await
-                    .map_err(|_| Outcome::Unavailable)?;
-                Ok::<_, Outcome>(socket)
+                    .map_err(|_| (Outcome::Unavailable, IdleReason::InitializeFailed))?;
+                Ok::<_, (Outcome, IdleReason)>(socket)
             })
             .await
-            .map_err(|_| Outcome::Timeout)?
+            .map_err(|_| (Outcome::Timeout, IdleReason::ObservationDeadlineExpired))?
         });
-        connect.finish(socket.as_ref().map_or_else(|error| *error, |_| Outcome::Ok));
-        let socket = socket.map_err(|_| "send-idle-unobservable")?;
+        connect.finish(
+            socket
+                .as_ref()
+                .map_or_else(|(outcome, _)| *outcome, |_| Outcome::Ok),
+        );
+        let socket = socket.map_err(|(_, reason)| Error::Unobservable(reason))?;
         let mut client = Self {
             runtime,
             socket,
@@ -89,14 +103,14 @@ impl Client {
         };
         let loaded = client
             .request("thread/loaded/list", json!({}))
-            .map_err(|_| "send-idle-unobservable")?;
-        let ids = loaded_thread_ids(&loaded).ok_or("send-identity-unobservable")?;
+            .map_err(|_| Error::Unobservable(IdleReason::LoadedListRpcFailed))?;
+        let ids = loaded_thread_ids(&loaded).ok_or(Error::IdentityUnobservable)?;
         if loaded
             .get("nextCursor")
             .is_some_and(|cursor| !cursor.is_null())
             || !ids.iter().any(|id| id == &client.thread_id)
         {
-            return Err("send-identity-mismatch");
+            return Err(Error::IdentityMismatch);
         }
         Ok(client)
     }
@@ -138,15 +152,15 @@ impl Client {
         result.map_err(|_| ())
     }
 
-    pub(crate) fn idle(&mut self) -> Result<(), &'static str> {
+    pub(crate) fn idle(&mut self) -> Result<(), Error> {
         let result = self
             .request(
                 "thread/read",
                 json!({"threadId":self.thread_id,"includeTurns":false}),
             )
-            .map_err(|_| "send-idle-unobservable")?;
+            .map_err(|_| Error::Unobservable(IdleReason::ThreadReadRpcFailed))?;
         if result.pointer("/thread/id").and_then(Value::as_str) != Some(&self.thread_id) {
-            return Err("send-identity-mismatch");
+            return Err(Error::IdentityMismatch);
         }
         match result
             .pointer("/thread/status/type")
@@ -156,8 +170,10 @@ impl Client {
             // is not running and has no pending request as `systemError`,
             // until its next turn starts. That is idle for a guarded send.
             Some("idle" | "systemError") => Ok(()),
-            Some("active") => Err("send-session-not-idle"),
-            _ => Err("send-idle-unobservable"),
+            Some("active") => Err(Error::NotIdle),
+            Some("notLoaded") => Err(Error::Unobservable(IdleReason::ThreadNotLoaded)),
+            None => Err(Error::Unobservable(IdleReason::ThreadStatusMissing)),
+            Some(_) => Err(Error::Unobservable(IdleReason::ThreadStatusUnknown)),
         }
     }
 
@@ -260,6 +276,6 @@ impl Client {
     }
 }
 
-pub(crate) fn idle(record: &SessionRecord, deadline: Instant) -> Result<(), &'static str> {
+pub(crate) fn idle(record: &SessionRecord, deadline: Instant) -> Result<(), Error> {
     Client::connect(record, deadline)?.idle()
 }

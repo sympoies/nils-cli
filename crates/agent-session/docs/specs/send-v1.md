@@ -136,6 +136,31 @@ Unknown or invalid app-server profiles and other providers or runtime kinds
 fail closed for these checks. Exact composer
 verification supports an unambiguous, single visible input line.
 
+Native `send-idle-unobservable` errors identify the failed observation with
+`error.details.native_idle_reason` and a one-line `error.hint`. Reasons are a
+closed set; raw provider errors, unknown status strings, thread ids and socket
+paths are never copied into these fields:
+
+| `native_idle_reason` | Failed observation and recovery |
+| --- | --- |
+| `runtime_construction_failed` | The local observation runtime could not start; check process and file-descriptor limits. |
+| `connect_failed` | The app-server socket or WebSocket handshake was unavailable; restart the session. |
+| `initialize_failed` | App-server initialization failed; restart the session. |
+| `observation_deadline_expired` | The connection/initialization budget expired; inspect app-server health and restart if it persists. |
+| `loaded_list_rpc_failed` | The loaded-thread RPC failed or timed out; inspect app-server health and restart if it persists. |
+| `thread_read_rpc_failed` | The thread-state RPC failed or timed out; inspect app-server health and restart if it persists. |
+| `thread_not_loaded` | Status was the provider's `notLoaded`; restart the session to reload its conversation. |
+| `thread_status_missing` | Status was absent or not a string; check the configured app-server version before restarting. |
+| `thread_status_unknown` | Status was an unrecognized string; check the configured app-server version before restarting. |
+
+The diagnostic is present on shared admission and retained-client native
+checks, including the recheck after the key claim. It changes no admission
+decision: `idle` and `systemError` admit, `active` refuses as busy, and
+unverifiable identities retain their identity refusal codes. A refusal after
+key claim still consumes that key; hints do not authorize automatic replay.
+Non-native idle/activity and pending-ingress observation failures do not carry
+this native diagnostic.
+
 With Claude and Codex,
 a known single-line paste may also wrap across visible rows after
 empty-composer admission. The entire region must uniquely match the paste;

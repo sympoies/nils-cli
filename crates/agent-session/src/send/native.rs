@@ -47,12 +47,14 @@ pub(super) fn deliver(
     let _account_gate = codex_app_server::acquire_account_mutation_gate(context, &record.id)?;
     codex_account::ensure_proxy_input_allowed(&record)?;
     let mut client = codex_app_server::guarded::Client::connect(&record, admission.deadline)
-        .map_err(|code| refusal(&record, code, "admission", false, false))?;
+        .map_err(|error| {
+            error.annotate(refusal(&record, error.code(), "admission", false, false))
+        })?;
     admission.check_key()?;
     admission.check(None, "admission")?;
-    client
-        .idle()
-        .map_err(|code| refusal(&record, code, "admission", false, false))?;
+    client.idle().map_err(|error| {
+        error.annotate(refusal(&record, error.code(), "admission", false, false))
+    })?;
     let notice = if args.guards.notice_envelope {
         Some(codex_notice::Prepared::new(
             context,
@@ -70,7 +72,7 @@ pub(super) fn deliver(
     admission.check(None, "claimed")?;
     client
         .idle()
-        .map_err(|code| refusal(&record, code, "claimed", false, false))?;
+        .map_err(|error| error.annotate(refusal(&record, error.code(), "claimed", false, false)))?;
     let mut prepared = false;
     prepare_guarded_input(context, &mut record, true, &mut prepared)?;
     record.updated_at = Zoned::now().timestamp().to_string();

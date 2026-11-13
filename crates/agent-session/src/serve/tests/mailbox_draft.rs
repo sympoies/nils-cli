@@ -210,3 +210,7 @@ mod unresponsive {
 mod residue_discard {
     include!("mailbox_draft/residue_discard.rs");
 }
+
+mod idle_failure {
+    include!("mailbox_draft/idle_failure.rs");
+}

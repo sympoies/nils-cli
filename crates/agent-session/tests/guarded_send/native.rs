@@ -1,6 +1,8 @@
 //! Native RPC regressions retain independent modeled composer evidence.
 #[path = "confirmation_lock.rs"]
 mod confirmation_lock;
+#[path = "idle_failures.rs"]
+mod idle_failures;
 #[path = "trace.rs"]
 mod trace;
 use super::*;
@@ -67,6 +69,13 @@ impl Server {
                             let Some(id) = request.get("id") else { continue };
                             let method = request["method"].as_str().unwrap();
                             if mode == "initialize-timeout" && method == "initialize" { tokio::time::sleep(std::time::Duration::from_secs(5)).await; }
+                            if (mode == "initialize-error" && method == "initialize")
+                                || (mode == "loaded-list-error" && method == "thread/loaded/list")
+                                || (mode == "thread-read-error" && method == "thread/read") {
+                                let error = json!({"id":id,"error":{"code":-1,"message":"private-observation-error","data":{"token":"private-observation-token"}}});
+                                if socket.send(Message::Text(error.to_string().into())).await.is_err() { break; }
+                                continue;
+                            }
                             if mode == "rpc-error" && method == "turn/start" {
                                 let error = json!({"id":id,"error":{"code":-1,"message":"private-error-marker","data":{"token":"private-token-marker"}}});
                                 if socket.send(Message::Text(error.to_string().into())).await.is_err() { break; }
@@ -99,7 +108,7 @@ impl Server {
                                         prefix.extend(turns.as_array().unwrap().iter().cloned());
                                         turns = json!(prefix);
                                     }
-                                    json!({"thread":{"id":if mode == "wrong-thread" {"other-thread"} else {"provider-one"}, "status":{"type":if busy {"active"} else if mode == "system-error" && submitted_before.is_none() {"systemError"} else if mode == "not-loaded" {"notLoaded"} else if mode == "unknown-status" {"futureStatus"} else {"idle"}}, "turns":turns}})
+                                    json!({"thread":{"id":if mode == "wrong-thread" {"other-thread"} else {"provider-one"}, "status":if mode == "missing-status" { Value::Null } else {json!({"type":if busy {"active"} else if mode == "system-error" && submitted_before.is_none() {"systemError"} else if mode == "not-loaded" {"notLoaded"} else if mode == "unknown-status" || (mode == "unknown-retained" && read_count == 5) || (mode == "unknown-retained-claimed" && read_count == 8) {"futureStatus"} else {"idle"}})}, "turns":turns}})
                                 }
                                 "turn/start" => {
                                     if mode.starts_with("hook-lock") {
