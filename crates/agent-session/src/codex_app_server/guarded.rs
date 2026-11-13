@@ -71,15 +71,7 @@ impl Client {
                         .as_ref()
                         .map_or_else(|error| *error, |_| Outcome::Ok),
                 );
-                initialized.map_err(|outcome| {
-                    (
-                        outcome,
-                        match outcome {
-                            Outcome::Timeout => IdleReason::ObservationDeadlineExpired,
-                            _ => IdleReason::InitializeFailed,
-                        },
-                    )
-                })?;
+                initialized.map_err(error::initialize_failure)?;
                 send_json(&mut socket, initialized_notification())
                     .await
                     .map_err(|_| (Outcome::Unavailable, IdleReason::InitializeFailed))?;

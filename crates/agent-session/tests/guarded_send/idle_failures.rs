@@ -4,6 +4,34 @@ use crate::Fixture;
 use pretty_assertions::assert_eq;
 use std::fs;
 
+fn expected_hint(reason: &str) -> &'static str {
+    match reason {
+        "connect_failed" => "App-server not reachable: restart the session before sending again.",
+        "initialize_failed" => {
+            "App-server initialization failed: restart the session before sending again."
+        }
+        "observation_deadline_expired" => {
+            "Native idle observation timed out: inspect app-server health; restart the session if the timeout persists."
+        }
+        "loaded_list_rpc_failed" => {
+            "Loaded thread identities could not be read: inspect app-server health; restart the session if the failure persists."
+        }
+        "thread_read_rpc_failed" => {
+            "Native thread state could not be read: inspect app-server health; restart the session if the failure persists."
+        }
+        "thread_not_loaded" => {
+            "Thread not loaded: restart the session to reload its conversation before sending again."
+        }
+        "thread_status_missing" => {
+            "Provider thread status is missing: check the configured Codex app-server version before restarting the session."
+        }
+        "thread_status_unknown" => {
+            "Provider thread status is unrecognized: check the configured Codex app-server version before restarting the session."
+        }
+        _ => panic!("unexpected fixture reason"),
+    }
+}
+
 fn refuses(mode: &'static str, reason: &str) {
     for notice in [false, true] {
         let fixture = Fixture::new("codex");
@@ -20,12 +48,7 @@ fn refuses(mode: &'static str, reason: &str) {
         };
         let value = fixture.refused(&output, "send-idle-unobservable");
         assert_eq!(value["error"]["details"]["native_idle_reason"], reason);
-        assert!(
-            value["error"]["hint"]
-                .as_str()
-                .is_some_and(|hint| !hint.is_empty()),
-            "{value}"
-        );
+        assert_eq!(value["error"]["hint"], expected_hint(reason));
         for private in [
             "private-observation-error",
             "private-observation-token",
@@ -38,8 +61,8 @@ fn refuses(mode: &'static str, reason: &str) {
         fixture.no_delivery();
         assert!(server.mutations().is_empty());
         if mode.starts_with("unknown-retained") {
-            // send_observing and native::deliver each do two shared reads;
-            // the retained client then reads once, and again after claim.
+            // send_observing, guarded routing and native::deliver each do
+            // two shared reads. Retained reads are then 7 and 10.
             let claimed = mode == "unknown-retained-claimed";
             assert_eq!(
                 server
@@ -49,7 +72,7 @@ fn refuses(mode: &'static str, reason: &str) {
                     .iter()
                     .filter(|r| r["method"] == "thread/read")
                     .count(),
-                if claimed { 8 } else { 5 }
+                if claimed { 10 } else { 7 }
             );
             assert_eq!(
                 value["error"]["details"]["stage"],
@@ -65,12 +88,39 @@ fn refuses(mode: &'static str, reason: &str) {
                 assert!(server.mutations().is_empty());
             }
         }
+        if mode == "retained-connect-error" {
+            let requests = server.requests.lock().unwrap();
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|r| r["method"] == "thread/loaded/list")
+                    .count(),
+                5
+            );
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|r| r["method"] == "thread/read")
+                    .count(),
+                4
+            );
+        }
     }
 }
 
 #[test]
 fn native_idle_reason_connect_failure() {
     refuses("connect-error", "connect_failed");
+}
+
+#[test]
+fn native_idle_reason_websocket_handshake_failure() {
+    refuses("handshake-error", "connect_failed");
+}
+
+#[test]
+fn native_idle_reason_retained_connect_preserves_failure() {
+    refuses("retained-connect-error", "loaded_list_rpc_failed");
 }
 
 #[test]

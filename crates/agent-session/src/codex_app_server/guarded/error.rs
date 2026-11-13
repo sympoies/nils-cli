@@ -1,4 +1,5 @@
 //! Closed-set diagnostics: never retain provider errors, status strings or paths.
+use super::trace::Outcome;
 use crate::CliError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -101,6 +102,16 @@ pub(super) fn runtime_failure(_: std::io::Error) -> Error {
     Error::Unobservable(IdleReason::RuntimeConstructionFailed)
 }
 
+pub(super) fn initialize_failure(outcome: Outcome) -> (Outcome, IdleReason) {
+    (
+        outcome,
+        match outcome {
+            Outcome::Timeout => IdleReason::ObservationDeadlineExpired,
+            _ => IdleReason::InitializeFailed,
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,8 +128,18 @@ mod tests {
         );
         assert_eq!(
             error.clone().into_inner().hint.as_deref(),
-            Some(IdleReason::RuntimeConstructionFailed.hint())
+            Some(
+                "Observation runtime unavailable: check local process and file-descriptor limits before another guarded send."
+            )
         );
         assert!(!format!("{error:?}").contains("private-runtime-error"));
+    }
+
+    #[test]
+    fn native_idle_reason_inner_initialize_timeout_is_deadline_expired() {
+        // Exercise the inner receive-timeout mapping independently of the
+        // enclosing connection timer; racing real timers cannot pin this path.
+        let (_, reason) = initialize_failure(Outcome::Timeout);
+        assert_eq!(reason, IdleReason::ObservationDeadlineExpired);
     }
 }
