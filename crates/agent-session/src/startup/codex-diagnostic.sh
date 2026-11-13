@@ -1,5 +1,6 @@
 collect_startup_diagnostic() {
-  if (umask 077; tail -c 16384 > "$startup_diagnostic_buffer"); then
+  # Keep tail on an anonymous pipe, as in the held-launch stderr collector.
+  if (umask 077; cat | tail -c 16384 > "$startup_diagnostic_buffer"); then
     runtime_exit="$(cat "$runtime_exit_status" 2>/dev/null)"
     if { [ "$(cat "$startup_stage" 2>/dev/null)" != initial_connection ] ||
          { [ -n "$runtime_exit" ] && [ "$runtime_exit" != 0 ]; }; } &&
