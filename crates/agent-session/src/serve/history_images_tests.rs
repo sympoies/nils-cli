@@ -207,6 +207,18 @@ async fn history_parts_are_opt_in_and_keep_provider_item_identity() {
     assert_eq!(body["data"]["messages"][2]["parts"][0]["id"], "result-item");
     assert_eq!(body["data"]["messages"][2]["parts"][0]["call_id"], "tool-1");
 
+    let call = &body["data"]["messages"][1]["parts"][0];
+    assert_eq!(call["input_summary"], r#"{"file_path":"[redacted]"}"#);
+    assert_eq!(
+        call["owner_input_summary"],
+        r#"{"file_path":"src/config.rs"}"#
+    );
+    assert!(
+        body["data"]["messages"][2]["parts"][0]
+            .get("owner_summary")
+            .is_none()
+    );
+
     let default_shape = app
         .clone()
         .oneshot(request(

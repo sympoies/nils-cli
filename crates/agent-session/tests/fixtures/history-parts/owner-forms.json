@@ -65,7 +65,55 @@
   {
     "name": "url_credential_query",
     "value": "https://forge.example/project?access_token=synthetic-value&view=files",
-    "masked": "[redacted]",
+    "masked": "https://forge.example/project?access_token=synthetic-value&view=files",
     "owner": "https://forge.example/project?access_token=[redacted]&view=files"
+  },
+  {
+    "name": "encoded_credential_query",
+    "value": "https://forge.example/project?%61ccess_token=first&access_token=second&view=files#result",
+    "masked": "https://forge.example/project?%61ccess_token=first&access_token=second&view=files#result",
+    "owner": "https://forge.example/project?%61ccess_token=[redacted]&access_token=[redacted]&view=files#result"
+  },
+  {
+    "name": "url_parenthesis_userinfo",
+    "value": "https://example:pa(ss@forge.example/project",
+    "masked": "[redacted]",
+    "owner": "https://[redacted]@forge.example/project"
+  },
+  {
+    "name": "url_parenthesis_query",
+    "value": "https://forge.example/project?access_token=abc(def)",
+    "masked": "https://forge.example/project?access_token=abc(def)",
+    "owner": "https://forge.example/project?access_token=[redacted]"
+  },
+  {
+    "name": "url_apostrophe_userinfo",
+    "value": "https://example:pa'ss@forge.example/project",
+    "masked": "[redacted]",
+    "owner": "https://[redacted]@forge.example/project"
+  },
+  {
+    "name": "url_apostrophe_query",
+    "value": "https://forge.example/project?access_token=abc'def",
+    "masked": "https://forge.example/project?access_token=abc'def",
+    "owner": "https://forge.example/project?access_token=[redacted]"
+  },
+  {
+    "name": "file_url_without_authority",
+    "value": "file:/workspace/project?access_token=synthetic-value",
+    "masked": "file:/workspace/project?access_token=synthetic-value",
+    "owner": "file:/workspace/project?access_token=[redacted]"
+  },
+  {
+    "name": "quoted_url_command",
+    "value": "curl 'https://forge.example/project?access_token=abc'; echo ok",
+    "masked": "curl 'https://forge.example/project?access_token=abc'; echo ok",
+    "owner": "curl 'https://forge.example/project?access_token=[redacted]'; echo ok"
+  },
+  {
+    "name": "labelled_url_userinfo",
+    "value": "url:https://example:synthetic-password@forge.example/project",
+    "masked": "[redacted]",
+    "owner": "url:https://[redacted]@forge.example/project"
   }
 ]

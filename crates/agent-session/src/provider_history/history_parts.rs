@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+#[path = "history_part_redaction.rs"]
+mod redaction;
+use redaction::{appears_path_or_url, owner_text, owner_value, redact_text, redact_value};
+
 const MAX_PART_SUMMARY_CHARS: usize = 2_048;
 const MAX_QUESTION_CHARS: usize = 4_096;
 const MAX_PARTS_PER_MESSAGE: usize = 256;
@@ -25,6 +29,8 @@ pub(crate) enum HistoryPart {
         timestamp: Option<String>,
         name: String,
         input_summary: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        owner_input_summary: Option<String>,
         status: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         started_at: Option<String>,
@@ -38,6 +44,8 @@ pub(crate) enum HistoryPart {
         #[serde(skip_serializing_if = "Option::is_none")]
         timestamp: Option<String>,
         summary: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        owner_summary: Option<String>,
         truncated: bool,
         is_error: bool,
     },
@@ -75,6 +83,8 @@ pub(crate) enum HistoryPart {
         source: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         text: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        owner_text: Option<String>,
     },
     Notice {
         id: String,
@@ -194,18 +204,29 @@ pub(super) fn bound_parts(parts: Vec<HistoryPart>) -> Vec<HistoryPart> {
         let max_chars = (remaining - 256) / 6;
         match &mut part {
             HistoryPart::Text { text, .. } => *text = truncate(text, max_chars),
-            HistoryPart::ToolCall { input_summary, .. } => {
-                *input_summary = truncate(input_summary, max_chars)
+            HistoryPart::ToolCall {
+                input_summary,
+                owner_input_summary,
+                ..
+            } => {
+                bound_pair(input_summary, owner_input_summary, max_chars);
             }
             HistoryPart::ToolResult {
-                summary, truncated, ..
+                summary,
+                owner_summary,
+                truncated,
+                ..
             } => {
-                *summary = truncate(summary, max_chars);
-                *truncated = true;
+                let had_owner = owner_summary.is_some();
+                let masked_len = summary.len();
+                bound_pair(summary, owner_summary, max_chars);
+                *truncated |= !had_owner || summary.len() < masked_len;
             }
-            HistoryPart::Question { text, .. } => {
+            HistoryPart::Question {
+                text, owner_text, ..
+            } => {
                 if let Some(text) = text {
-                    *text = truncate(text, max_chars);
+                    bound_pair(text, owner_text, max_chars);
                 }
             }
             HistoryPart::Image { .. } | HistoryPart::File { .. } | HistoryPart::Notice { .. } => {}
@@ -476,12 +497,18 @@ fn push_tool_call(
     let source = question_source(&name);
     let parsed_input = input.map(parse_json_string).unwrap_or(Value::Null);
     let summary = bounded_summary(&parsed_input);
+    let owner_input_summary = owner_sibling(
+        &summary,
+        &owner_input_summary(&parsed_input),
+        MAX_PART_SUMMARY_CHARS,
+    );
     parts.push(HistoryPart::ToolCall {
         id: id.to_string(),
         call_id: call_id.clone(),
         timestamp: timestamp.map(str::to_string),
         name: name.clone(),
         input_summary: summary,
+        owner_input_summary,
         status: "unknown".to_string(),
         started_at: timestamp
             .filter(|_| !timestamp.is_some_and(appears_path_or_url))
@@ -493,12 +520,17 @@ fn push_tool_call(
             .map(parse_json_string)
             .as_ref()
             .and_then(question_text)
-            .map(|value| truncate(&value, MAX_QUESTION_CHARS));
+            .map(|value| {
+                let masked = truncate(&redact_text(&value), MAX_QUESTION_CHARS);
+                let owner = owner_sibling(&masked, &owner_text(&value), MAX_QUESTION_CHARS);
+                (masked, owner)
+            });
         parts.push(HistoryPart::Question {
             id: id.to_string(),
             timestamp: timestamp.map(str::to_string),
             source: source.to_string(),
-            text,
+            text: text.as_ref().map(|(masked, _)| masked.clone()),
+            owner_text: text.and_then(|(_, owner)| owner),
         });
     }
 }
@@ -522,11 +554,18 @@ fn push_tool_result(
     };
     let redacted = redact_text(&raw);
     let truncated = redacted.chars().count() > MAX_PART_SUMMARY_CHARS;
+    let summary = truncate(&redacted, MAX_PART_SUMMARY_CHARS);
+    let owner_summary = owner_sibling(
+        &summary,
+        &owner_value_summary(output.unwrap_or(&Value::Null)),
+        MAX_PART_SUMMARY_CHARS,
+    );
     parts.push(HistoryPart::ToolResult {
         id: id.to_string(),
         call_id,
         timestamp: timestamp.map(str::to_string),
-        summary: truncate(&redacted, MAX_PART_SUMMARY_CHARS),
+        summary,
+        owner_summary,
         truncated,
         is_error,
     });
@@ -745,7 +784,7 @@ fn question_text(input: &Value) -> Option<String> {
                 .and_then(|question| question.get("question"))
                 .and_then(Value::as_str)
         })?;
-    Some(redact_text(text))
+    Some(text.to_string())
 }
 
 fn bounded_summary(input: &Value) -> String {
@@ -755,155 +794,43 @@ fn bounded_summary(input: &Value) -> String {
     truncate(&summary, MAX_PART_SUMMARY_CHARS)
 }
 
+fn owner_sibling(masked: &str, owner: &str, max: usize) -> Option<String> {
+    let owner = truncate(owner, max);
+    (owner != masked).then_some(owner)
+}
+
+fn owner_input_summary(input: &Value) -> String {
+    let mut value = input.clone();
+    owner_value(&mut value, None);
+    serde_json::to_string(&value).unwrap_or_default()
+}
+
+fn owner_value_summary(input: &Value) -> String {
+    let mut value = input.clone();
+    owner_value(&mut value, None);
+    match value {
+        Value::String(text) => text,
+        value => serde_json::to_string(&value).unwrap_or_default(),
+    }
+}
+
+fn bound_pair(masked: &mut String, owner: &mut Option<String>, max_chars: usize) {
+    let max_chars = if owner.is_some() {
+        max_chars / 2
+    } else {
+        max_chars
+    };
+    *masked = truncate(masked, max_chars);
+    *owner = owner
+        .as_ref()
+        .and_then(|value| owner_sibling(masked, value, max_chars));
+}
+
 fn parse_json_string(value: &Value) -> Value {
     value
         .as_str()
         .and_then(|text| serde_json::from_str(text).ok())
         .unwrap_or_else(|| value.clone())
-}
-
-fn redact_value(value: &mut Value, key: Option<&str>) {
-    if key.is_some_and(sensitive_key) {
-        *value = Value::String("[redacted]".to_string());
-        return;
-    }
-    match value {
-        Value::Object(object) => {
-            for (key, value) in object.iter_mut() {
-                redact_value(value, Some(key));
-            }
-        }
-        Value::Array(values) => {
-            for value in values {
-                redact_value(value, None);
-            }
-        }
-        Value::String(text) => *text = redact_text(text),
-        _ => {}
-    }
-}
-
-fn sensitive_key(key: &str) -> bool {
-    let key = key.to_ascii_lowercase();
-    let normalized: String = key.chars().filter(char::is_ascii_alphanumeric).collect();
-    [
-        "path",
-        "file",
-        "directory",
-        "cwd",
-        "token",
-        "secret",
-        "password",
-        "authorization",
-        "cookie",
-        "credential",
-        "privatekey",
-        "apikey",
-        "accesskey",
-        "clientsecret",
-    ]
-    .iter()
-    .any(|needle| normalized.contains(needle) || key.contains(needle))
-}
-
-fn appears_path_or_url(value: &str) -> bool {
-    let value = path_or_url_candidate(value);
-    path_like_fragment(value) || word_contains_path_or_url(value)
-}
-
-fn path_or_url_candidate(value: &str) -> &str {
-    let value = value.trim();
-    let value = value.trim_matches(|character: char| {
-        matches!(
-            character,
-            '(' | ')' | '[' | ']' | '{' | '}' | '\'' | '"' | ',' | ';' | ':'
-        )
-    });
-    value
-        .rsplit_once('=')
-        .or_else(|| {
-            value
-                .rsplit_once(':')
-                .filter(|(prefix, _)| !prefix.contains('/'))
-        })
-        .map(|(_, value)| value.trim())
-        .unwrap_or(value)
-}
-
-fn word_contains_path_or_url(value: &str) -> bool {
-    value
-        .split(|character: char| {
-            !(character.is_ascii_alphanumeric() || "/\\._-~:".contains(character))
-        })
-        .filter(|fragment| !fragment.is_empty())
-        .any(|fragment| {
-            path_like_fragment(fragment)
-                || fragment
-                    .find('/')
-                    .is_some_and(|slash| path_like_fragment(&fragment[slash..]))
-        })
-}
-
-fn path_like_fragment(value: &str) -> bool {
-    value.starts_with('/')
-        || value.starts_with("~/")
-        || value.starts_with("file:")
-        || value.contains("://")
-        || value.contains("\\")
-        || looks_like_relative_path(value)
-}
-
-fn looks_like_relative_path(value: &str) -> bool {
-    let value = value.trim_matches(|character: char| {
-        matches!(
-            character,
-            '(' | ')' | '[' | ']' | '{' | '}' | '\'' | '"' | ',' | ';' | ':'
-        )
-    });
-    let value = strip_source_location(value);
-    let segments: Vec<_> = value.split('/').collect();
-    segments.len() > 1
-        && segments.iter().all(|segment| {
-            !segment.is_empty()
-                && segment.chars().all(|character| {
-                    character.is_ascii_alphanumeric() || "._-~".contains(character)
-                })
-        })
-}
-
-fn strip_source_location(mut value: &str) -> &str {
-    for _ in 0..2 {
-        let Some((prefix, suffix)) = value.rsplit_once(':') else {
-            break;
-        };
-        if !prefix.contains('/')
-            || suffix.is_empty()
-            || !suffix.bytes().all(|byte| byte.is_ascii_digit())
-        {
-            break;
-        }
-        value = prefix;
-    }
-    value
-}
-
-fn redact_text(value: &str) -> String {
-    if path_like_fragment(path_or_url_candidate(value)) {
-        "[redacted]".to_string()
-    } else {
-        let mut output = String::with_capacity(value.len());
-        for segment in value.split_inclusive(char::is_whitespace) {
-            let whitespace = segment.find(char::is_whitespace).unwrap_or(segment.len());
-            let (word, spacing) = segment.split_at(whitespace);
-            output.push_str(if appears_path_or_url(word) {
-                "[redacted]"
-            } else {
-                word
-            });
-            output.push_str(spacing);
-        }
-        output
-    }
 }
 
 fn bounded_name(value: &str) -> String {

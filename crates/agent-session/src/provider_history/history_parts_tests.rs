@@ -68,7 +68,7 @@ fn codex_response_item_v1_fixture_projects_all_typed_parts_with_safe_summaries()
     assert_eq!(parts[1]["mime"], "image/png");
     assert_eq!(parts[1]["bytes"], 1);
     assert_eq!(parts[2]["text"], "and report what you see");
-    let serialized = serde_json::to_string(&parts).unwrap();
+    let serialized = serde_json::to_string(&masked_view(&parts)).unwrap();
     assert!(!serialized.contains("/workspace/fixture"));
     assert!(
         parts[3]["input_summary"]
@@ -115,7 +115,7 @@ fn claude_code_2_1_fixture_projects_parts_and_unknown_versions_fail_closed() {
     assert_eq!(parts[4]["id"], "claude-result-1");
     assert_eq!(parts[3]["call_id"], "tool-1");
     assert_eq!(parts[4]["call_id"], "tool-1");
-    let serialized = serde_json::to_string(&parts).unwrap();
+    let serialized = serde_json::to_string(&masked_view(&parts)).unwrap();
     assert!(!serialized.contains("fixture-secret"));
     assert!(!serialized.contains("/workspace/fixture"));
 
@@ -161,7 +161,7 @@ fn summaries_redact_credentials_and_relative_paths() {
         .to_string(),
     );
     let (parts, _) = record_parts("codex", Some("0.134.0"), &call, true, &[], "fallback");
-    let input = serde_json::to_string(&parts).unwrap();
+    let input = serde_json::to_string(&masked_view(&parts)).unwrap();
     for secret in ["credential-value", "session-value", "another-secret"] {
         assert!(!input.contains(secret));
     }
@@ -172,7 +172,7 @@ fn summaries_redact_credentials_and_relative_paths() {
             .to_string(),
     );
     let (parts, _) = record_parts("codex", Some("0.134.0"), &result, true, &[], "fallback");
-    let output = serde_json::to_string(&parts).unwrap();
+    let output = serde_json::to_string(&masked_view(&parts)).unwrap();
     for private_path in [
         "src/private/config",
         "/private/location/file",
@@ -227,6 +227,7 @@ fn matching_tool_results_set_call_status() {
             timestamp: None,
             name: "Read".to_string(),
             input_summary: "{}".to_string(),
+            owner_input_summary: None,
             status: "unknown".to_string(),
             started_at: None,
             ended_at: None,
@@ -238,6 +239,7 @@ fn matching_tool_results_set_call_status() {
         call_id: Some("tool-1".to_string()),
         timestamp: Some("2026-10-23T00:00:03Z".to_string()),
         summary: "ok".to_string(),
+        owner_summary: None,
         truncated: false,
         is_error: false,
     }];
@@ -299,7 +301,7 @@ fn tool_ids_fall_back_when_unbounded_or_path_like() {
     let mut call = fixture("claude").remove(1);
     call["message"]["content"][2]["id"] = Value::String("/private/session/tool".to_string());
     let (parts, _) = record_parts("claude", None, &call, true, &[], "fallback");
-    let serialized = serde_json::to_string(&parts).unwrap();
+    let serialized = serde_json::to_string(&masked_view(&parts)).unwrap();
     assert!(!serialized.contains("/private/session/tool"));
     assert!(serialized.contains("claude-call-1"));
 
@@ -319,7 +321,7 @@ fn tool_ids_fall_back_when_unbounded_or_path_like() {
     question["message"]["content"][0]["input"]["questions"][0]["question"] =
         Value::String("Open (/private/session/question.txt)?".to_string());
     let (parts, _) = record_parts("claude", None, &question, true, &[], "fallback");
-    let serialized = serde_json::to_string(&parts).unwrap();
+    let serialized = serde_json::to_string(&masked_view(&parts)).unwrap();
     assert!(!serialized.contains("/private/session/question.txt"));
 }
 
@@ -385,6 +387,35 @@ fn owner_forms_fixture_preserves_masked_values_and_exposes_only_owner_paths() {
                 "{provider}: {}",
                 case["name"]
             );
+            if let Some(question) = case["value"].as_str() {
+                let record = if provider == "codex" {
+                    serde_json::json!({"type":"response_item", "payload":{
+                        "type":"function_call", "name":"request_user_input",
+                        "arguments":{"question":question}
+                    }})
+                } else {
+                    serde_json::json!({"type":"assistant", "version":"2.1.3", "message":{
+                        "content":[{"type":"tool_use", "name":"AskUserQuestion",
+                            "input":{"questions":[{"question":question}]}}]
+                    }})
+                };
+                let question_parts = project(provider, &[record]);
+                let question_part = &question_parts[1];
+                assert_eq!(
+                    question_part["text"], case["masked"],
+                    "{provider}: {}",
+                    case["name"]
+                );
+                if case["masked"] == case["owner"] {
+                    assert!(question_part.get("owner_text").is_none());
+                } else {
+                    assert_eq!(
+                        question_part["owner_text"], case["owner"],
+                        "{provider}: {}",
+                        case["name"]
+                    );
+                }
+            }
             for (part, field, masked, owner) in [
                 (&parts[0], "owner_input_summary", masked_input, owner_input),
                 (&parts[1], "owner_summary", masked_result, owner_result),
@@ -448,4 +479,92 @@ fn owner_result_bounds_use_owner_text_instead_of_masked_offsets() {
             .take(MAX_PART_SUMMARY_CHARS)
             .collect::<String>()
     );
+}
+
+#[test]
+fn existing_provider_fixtures_keep_byte_identical_masked_parts() {
+    for (provider, expected) in [
+        (
+            "codex",
+            include_str!("../../tests/fixtures/history-parts/codex-masked-parts.json"),
+        ),
+        (
+            "claude",
+            include_str!("../../tests/fixtures/history-parts/claude-masked-parts.json"),
+        ),
+    ] {
+        let parts = project(provider, &fixture(provider));
+        assert_eq!(
+            serde_json::to_string(&masked_view(&parts)).unwrap(),
+            expected.trim(),
+            "{provider}"
+        );
+    }
+}
+
+fn masked_view(parts: &impl serde::Serialize) -> Value {
+    let mut value = serde_json::to_value(parts).unwrap();
+    for part in value.as_array_mut().unwrap() {
+        let object = part.as_object_mut().unwrap();
+        for key in ["owner_input_summary", "owner_summary", "owner_text"] {
+            object.remove(key);
+        }
+    }
+    value
+}
+
+#[test]
+fn owner_forms_keep_credential_keys_masked_inside_path_objects() {
+    let record = serde_json::json!({"type":"response_item", "payload":{
+        "type":"function_call", "name":"inspect", "arguments":{
+            "cwd":"/workspace/project", "file_path":{
+                "path":"src/lib.rs", "client-secret":"synthetic-credential"
+            }
+        }
+    }});
+    let parts = project("codex", &[record]);
+    assert_eq!(
+        parts[0]["input_summary"],
+        r#"{"cwd":"[redacted]","file_path":"[redacted]"}"#
+    );
+    assert_eq!(
+        parts[0]["owner_input_summary"],
+        r#"{"cwd":"/workspace/project","file_path":{"client-secret":"[redacted]","path":"src/lib.rs"}}"#
+    );
+    assert!(!parts[0].to_string().contains("synthetic-credential"));
+}
+
+#[test]
+fn owner_siblings_are_omitted_when_independent_bounds_make_them_equal() {
+    let text = format!("{} /workspace/project", "x".repeat(MAX_PART_SUMMARY_CHARS));
+    let record = serde_json::json!({"type":"response_item", "payload":{
+        "type":"function_call_output", "output":text
+    }});
+    let parts = project("codex", &[record]);
+    assert_eq!(parts[0]["summary"], "x".repeat(MAX_PART_SUMMARY_CHARS));
+    assert!(parts[0].get("owner_summary").is_none());
+}
+
+#[test]
+fn owner_summaries_share_the_aggregate_message_byte_budget() {
+    let record = serde_json::json!({"type":"assistant", "version":"2.1.3", "message":{
+        "content":(0..40).map(|_| serde_json::json!({"type":"tool_result",
+            "content":format!("read /workspace/{}", "界".repeat(MAX_PART_SUMMARY_CHARS))
+        })).collect::<Vec<_>>()
+    }});
+    let parts = project("claude", &[record]);
+    assert!(parts.len() > 1);
+    assert!(parts.len() < 40);
+    assert!(serde_json::to_vec(&parts).unwrap().len() <= MAX_PART_BYTES_PER_MESSAGE);
+    assert!(
+        parts
+            .iter()
+            .all(|part| part["summary"] == "read [redacted]")
+    );
+    assert!(parts.iter().all(|part| part["truncated"] == false));
+    assert!(parts.iter().all(|part| {
+        part["owner_summary"]
+            .as_str()
+            .is_some_and(|text| text.chars().count() <= MAX_PART_SUMMARY_CHARS)
+    }));
 }
