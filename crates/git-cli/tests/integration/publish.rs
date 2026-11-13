@@ -136,6 +136,9 @@ fn push_from_a_single_branch_clone_leaves_the_pr_head_resolvable() {
     git(clone.path(), &["config", "user.email", "test@example.com"]);
     git(clone.path(), &["config", "user.name", "Test"]);
     git(clone.path(), &["config", "commit.gpgsign", "false"]);
+    // Publishing requires a cached default branch; make that fixture
+    // precondition explicit instead of relying on clone to cache origin/HEAD.
+    git(clone.path(), &["remote", "set-head", "origin", "main"]);
     let narrow = "+refs/heads/main:refs/remotes/origin/main";
     assert_eq!(
         git(
@@ -173,7 +176,13 @@ fn push_from_a_single_branch_clone_leaves_the_pr_head_resolvable() {
     let head = rev_parse(worktree, "HEAD");
 
     let dry_run = harness.run(worktree, &["push", "--dry-run", "--format", "json"]);
-    assert_eq!(dry_run.code, 0, "{}", dry_run.stderr_text());
+    assert_eq!(
+        dry_run.code,
+        0,
+        "{}{}",
+        dry_run.stdout_text(),
+        dry_run.stderr_text()
+    );
     assert_eq!(
         git(worktree, &["config", "--get-all", "remote.origin.fetch"]).trim(),
         narrow
