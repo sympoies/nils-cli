@@ -1,0 +1,71 @@
+[
+  {
+    "name": "home_absolute",
+    "value": "/home/example/project/file",
+    "masked": "[redacted]",
+    "owner": "/home/example/project/file"
+  },
+  {
+    "name": "working_directory",
+    "value": "/workspace/project",
+    "masked": "[redacted]",
+    "owner": "/workspace/project"
+  },
+  {
+    "name": "repo_relative",
+    "value": "src/lib.rs",
+    "masked": "[redacted]",
+    "owner": "src/lib.rs"
+  },
+  {
+    "name": "repository_slug",
+    "value": "example/project",
+    "masked": "[redacted]",
+    "owner": "example/project"
+  },
+  {
+    "name": "public_forge_url",
+    "value": "https://github.com/example/project",
+    "masked": "[redacted]",
+    "owner": "https://github.com/example/project"
+  },
+  {
+    "name": "file_url",
+    "value": "file:///workspace/project/file",
+    "masked": "[redacted]",
+    "owner": "file:///workspace/project/file"
+  },
+  {
+    "name": "windows_path",
+    "value": "C:\\workspace\\project\\file",
+    "masked": "[redacted]",
+    "owner": "C:\\workspace\\project\\file"
+  },
+  {
+    "name": "credential_key_and_token",
+    "value": {
+      "api_key": "sk-example-canary",
+      "Authorization": "Bearer example-canary"
+    },
+    "masked": {
+      "api_key": "[redacted]",
+      "Authorization": "[redacted]"
+    },
+    "owner": {
+      "api_key": "[redacted]",
+      "Authorization": "[redacted]"
+    }
+  },
+  {
+    "name": "url_userinfo",
+    "value": "https://example:synthetic-password@forge.example/project",
+    "masked": "[redacted]",
+    "owner": "https://[redacted]@forge.example/project"
+  },
+  {
+    "name": "url_credential_query",
+    "value": "https://forge.example/project?access_token=synthetic-value&view=files",
+    "masked": "[redacted]",
+    "owner": "https://forge.example/project?access_token=[redacted]&view=files"
+  }
+]

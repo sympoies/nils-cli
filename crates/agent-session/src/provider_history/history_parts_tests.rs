@@ -335,3 +335,117 @@ fn command_summaries_preserve_words_around_path_fragments() {
     );
     assert_eq!(redact_text("/private/path with spaces"), "[redacted]");
 }
+
+#[test]
+fn owner_forms_fixture_preserves_masked_values_and_exposes_only_owner_paths() {
+    let cases: Vec<Value> = serde_json::from_str(include_str!(
+        "../../tests/fixtures/history-parts/owner-forms.json"
+    ))
+    .unwrap();
+    for provider in ["codex", "claude"] {
+        for case in &cases {
+            let input = serde_json::json!({"description": case["value"]});
+            let records = if provider == "codex" {
+                vec![
+                    serde_json::json!({"type":"response_item", "payload":{
+                        "type":"function_call", "name":"inspect", "arguments": input.to_string()
+                    }}),
+                    serde_json::json!({"type":"response_item", "payload":{
+                        "type":"function_call_output", "output": case["value"]
+                    }}),
+                ]
+            } else {
+                vec![
+                    serde_json::json!({"type":"assistant", "version":"2.1.3", "message":{
+                        "content":[
+                            {"type":"tool_use", "name":"inspect", "input":input},
+                            {"type":"tool_result", "content":case["value"]}
+                        ]
+                    }}),
+                ]
+            };
+            let parts = project(provider, &records);
+            let masked_input = serde_json::json!({"description":case["masked"]}).to_string();
+            let owner_input = serde_json::json!({"description":case["owner"]}).to_string();
+            let masked_result = case["masked"]
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| case["masked"].to_string());
+            let owner_result = case["owner"]
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| case["owner"].to_string());
+            assert_eq!(
+                parts[0]["input_summary"], masked_input,
+                "{provider}: {}",
+                case["name"]
+            );
+            assert_eq!(
+                parts[1]["summary"], masked_result,
+                "{provider}: {}",
+                case["name"]
+            );
+            for (part, field, masked, owner) in [
+                (&parts[0], "owner_input_summary", masked_input, owner_input),
+                (&parts[1], "owner_summary", masked_result, owner_result),
+            ] {
+                if masked == owner {
+                    assert!(
+                        part.get(field).is_none(),
+                        "identical sibling must be omitted: {part}"
+                    );
+                } else {
+                    assert_eq!(part[field], owner, "{provider}: {}", case["name"]);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn owner_question_text_is_optional_and_independently_bounded() {
+    let question = format!("Open /workspace/{}", "界".repeat(MAX_QUESTION_CHARS));
+    let record = serde_json::json!({"type":"response_item", "payload":{
+        "type":"function_call", "name":"request_user_input", "arguments":{"question":question}
+    }});
+    let parts = project("codex", &[record]);
+    assert_eq!(parts[1]["text"], "Open [redacted]");
+    assert_eq!(
+        parts[1]["owner_text"],
+        question
+            .chars()
+            .take(MAX_QUESTION_CHARS)
+            .collect::<String>()
+    );
+    assert_eq!(
+        parts[0]["owner_input_summary"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count(),
+        MAX_PART_SUMMARY_CHARS
+    );
+    let record = serde_json::json!({"type":"response_item", "payload":{
+        "type":"function_call", "name":"request_user_input", "arguments":{"question":"Continue?"}
+    }});
+    let parts = project("codex", &[record]);
+    assert!(parts[0].get("owner_input_summary").is_none());
+    assert!(parts[1].get("owner_text").is_none());
+}
+
+#[test]
+fn owner_result_bounds_use_owner_text_instead_of_masked_offsets() {
+    let text = format!("read /workspace/{}", "界".repeat(MAX_PART_SUMMARY_CHARS));
+    let record = serde_json::json!({"type":"response_item", "payload":{
+        "type":"function_call_output", "output":text
+    }});
+    let parts = project("codex", &[record]);
+    assert_eq!(parts[0]["summary"], "read [redacted]");
+    assert_eq!(parts[0]["truncated"], false);
+    assert_eq!(
+        parts[0]["owner_summary"],
+        text.chars()
+            .take(MAX_PART_SUMMARY_CHARS)
+            .collect::<String>()
+    );
+}

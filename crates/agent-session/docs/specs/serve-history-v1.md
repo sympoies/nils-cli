@@ -146,6 +146,27 @@ with `started_at` and `ended_at` when provider timestamps are available. Image `
 `mime` and `bytes` may be absent when the source does not safely expose them. The `parts` query value
 is versioned and unknown values are rejected. Without it, the existing response shape is unchanged.
 
+Tool parts carry two display forms. `tool_call.input_summary`, `tool_result.summary`,
+and `question.text` retain their path/URL and sensitive-key masking. Their optional
+siblings `owner_input_summary`, `owner_summary`, and `owner_text` preserve paths,
+working directories, repository slugs, and URLs, while applying the same
+credential/secret-key masking. Owner URLs mask userinfo and values of credential-named
+query parameters, including `access_token`. This projector does not add bare
+token-pattern masking. An owner sibling is omitted, never null, when its
+bounded value equals the corresponding masked field. An absent question text has
+no owner sibling. Ordinary visible text parts have no owner sibling.
+
+Each form is truncated independently from its own text: tool summaries are capped
+at 2,048 Unicode characters and question text at 4,096. The result's `truncated`
+flag continues to describe the masked summary. Both forms count toward the same
+64 KiB serialized message-parts budget and the 256-part limit. Consumers must not
+use the masked text's offsets to truncate the owner form.
+
+These fields travel through history HTTP `parts=v1` responses. The runtime
+carries both forms and does not determine viewer identity. The consumer selects owner text only for the
+session owner or an owner-equivalent principal and selects the masked form for
+other viewers; absence of an owner sibling means both bounded values are equal.
+
 Claude Code typed parts are projected only from transcript records tagged with version `2.1.x`; records
 with missing or other versions remain available through the existing text and image projection. Codex
 typed parts are projected only when the session metadata records a `0.x.y` CLI version, and are gated
