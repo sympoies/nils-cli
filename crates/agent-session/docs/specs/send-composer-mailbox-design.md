@@ -121,7 +121,7 @@ No private issue content or environment-specific evidence is reproduced here.
 | Issue / state | Decision and input / matrix rows | Failure and delivered fix | Acceptance retained or explicitly transferred |
 | --- | --- | --- | --- |
 | [#3051](https://github.com/sympoies/nils-cli/issues/3051), closed | Canonical producer route and physical machine row; structured + local + exact recorded bytes; B02, B07, B12 | Raw continuation/provenance and missing busy correlation; #3205/#3400 delivered source, #3452 later extends mailbox/operator attestation. | Bootstrap/start, queued continuation, compaction/history, provider/terminal distinctions, invalid metadata no-effect, duplicate/unknown controls, exact bytes and generated trailing-space prevention stay identifiable. Remaining scheduler/native lifecycle acceptance is [#3448](https://github.com/sympoies/nils-cli/issues/3448), unchecked; this PR claims no new native result. |
-| [#3180](https://github.com/sympoies/nils-cli/issues/3180), closed | Readable wake wording versus route constraints; local route and screen width; C01, C09 | Compact category letters obscure action; #3199 changed notice wording; later current-format retirement and command guidance supersede that intermediate split. | Source acceptance closed by [recorded disposition](https://github.com/sympoies/nils-cli/issues/3180#issuecomment-6570231422). The earlier dual-recognizer rollout criterion was explicitly replaced, not silently satisfied; current producers/recognizers migrate together. Wording never permits replay of old unknown attempts. |
+| [#3180](https://github.com/sympoies/nils-cli/issues/3180), closed | Readable wake wording versus route constraints; local route and screen width; C01, C09 | Compact category letters obscure action; #3199 changed notice wording; later current-format retirement and command guidance supersede that intermediate split. | Source acceptance closed by [recorded disposition](https://github.com/sympoies/nils-cli/issues/3180#issuecomment-6570231422). The earlier dual-recognizer rollout criterion was explicitly replaced by the [first decision](https://github.com/sympoies/nils-cli/issues/3180#issuecomment-6560863372) and [later retirement decision](https://github.com/sympoies/nils-cli/issues/3180#issuecomment-6568718488), not silently satisfied; current producers/recognizers migrate together. Wording never permits replay of old unknown attempts. |
 | [#3089](https://github.com/sympoies/nils-cli/issues/3089), closed | Exact notice transport supported before input? local capability, not screen similarity; B06 | Unsupported Claude terminal envelope could paste before failing; #3090 refuses before a new claim/load/paste/Enter. | [Closeout](https://github.com/sympoies/nils-cli/issues/3089#issuecomment-6625249535) records release acceptance. Keep short/long pre-input refusal, genuine earlier guards and consumed-key semantics; full delivery belongs to the native owner. |
 | [#3002](https://github.com/sympoies/nils-cli/issues/3002), closed | Can trailing-space notice bytes be proved? structured module + bound row versus opaque screen; B06, B07 | Terminal renderer cannot prove the hidden exact body; #3090 containment and #3104/#3140 native route replace that proof source. | [Restated acceptance](https://github.com/sympoies/nils-cli/issues/3002#issuecomment-6561423170) deliberately keeps terminal notices refused. [#3448 comparison](https://github.com/sympoies/nils-cli/issues/3448#issuecomment-6754734648) records terminal no-input refusal and exact native trailing-space/final-LF, long and non-ASCII body/history checks; row checked. Cleanup inventory had a disclosed limit. No new run here. |
 | [#2994](https://github.com/sympoies/nils-cli/issues/2994), closed | Supported notice delivery now or after busy queue? structured/local route and composer proof; B06, B07 | Codex-only support left Claude/terminal and busy queue gaps; #2997 queue/terminal support plus #3090 containment/#3104 native alternative. | [Closeout](https://github.com/sympoies/nils-cli/issues/2994#issuecomment-6625274774) cites native delivery under #3068 and transfers the trailing-space remainder to #3002. Keep one delivery after idle, no partial input on refusal and native/terminal capability distinctions. |
@@ -171,11 +171,22 @@ Boundaries examined but not folded into implementation here: mailbox
 storage/quota/federation (D04), account/auth recovery, image-content projection,
 mailbox read-event display, broad turn-state changes and runtime replacement.
 They may supply inputs or controls; their own issue acceptance stays with them.
-The active [#3215](https://github.com/sympoies/nils-cli/issues/3215),
-[#2887](https://github.com/sympoies/nils-cli/issues/2887) and
+The active [#3215](https://github.com/sympoies/nils-cli/issues/3215) and
 [#3592](https://github.com/sympoies/nils-cli/issues/3592) owners retain their
-native-refusal, unbound-startup and Claude-state slices. Their unmerged work is
-not evidence of behavior at this pin.
+native-refusal and Claude-state slices. Their unmerged work is not evidence of
+behavior at this pin.
+
+[#2887's reopened acceptance](https://github.com/sympoies/nils-cli/issues/2887#issuecomment-6831841737)
+separately owns a documented terminal bound for pre-attempt
+`recipient-composer-unobservable` on a binding-less terminal-started Codex
+record, with a sender-readable reason. The attempt-path fixes #3345/#3618 do
+not satisfy that acceptance. Its implementation owner has
+[PR #3650](https://github.com/sympoies/nils-cli/pull/3650) in review: the fifth
+consecutive such refusal settles the generation as `undeliverable`; the first
+four retain the 1 s retry. That implementation is outside the source pin.
+`recipient-working` / `provider-not-ready` remain transient, bound
+Console-started controls must keep working, and resident acceptance remains
+with [#3448](https://github.com/sympoies/nils-cli/issues/3448).
 
 ## Proposed shared design
 
@@ -277,6 +288,7 @@ Operator exact-envelope notices remain unsupported on the Claude terminal route.
 | Idle, active/uncertain operation or restart/auth fence | Structured/local guard state | Defer before release with bounded blocking condition. |
 | Working/needs-input Codex checkpoint | Exact authoritative active turn plus in-turn quiescence | Preserve existing steer policy and claim fence; no general busy bypass. |
 | Occupied or unreadable human composer | Authoritative native notice read where supported, otherwise frozen screen | Preserve the draft; use existing stale-draft policy only on routes that already own it. |
+| Binding-less terminal-started Codex, pre-attempt composer unobservable | `recipient-composer-unobservable`, no usable provider binding | [#2887](https://github.com/sympoies/nils-cli/issues/2887#issuecomment-6831841737) owns bounded terminal settlement with a sender-readable reason. [#3650](https://github.com/sympoies/nils-cli/pull/3650), in review and outside the pin, settles `undeliverable` on the fifth consecutive refusal; earlier refusals retry at 1 s. Keep `recipient-working` / `provider-not-ready` transient and bound Console-started controls intact. |
 | Routine coalesced generation before due time | Recipient policy, unread generation and saved window | Stay queued; urgent/service bypass remains destination-controlled. |
 | Unoffered native receiver timeout | Authenticated release/CAS fact | Same unconsumed generation may retry after the receipt-owned backoff. |
 | Attempted generation, unknown result | Durable consumed attempt | Keep unknown, even if no row is yet visible; newer unread mail follows existing generation recovery. |
