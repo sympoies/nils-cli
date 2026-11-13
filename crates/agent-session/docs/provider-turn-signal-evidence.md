@@ -70,7 +70,7 @@ created.
 | Provider | Audited floor | Classification | Start | Completion | Attention | Failure | Setup |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Codex | 0.144.1 baseline; exact-attention versions 0.144.1, 0.144.3 and 0.162.1; capacity enum re-audited at 0.153.4 | supported; exact attention and structured failure recovery require an audited agent-session app-server v2 runtime | `UserPromptSubmit`, observed | matching `agent-turn-complete`, authoritative; raw `Stop` remains journal evidence only | managed protocol authority: typed exact request/resolution; raw/unmanaged hook authority: `PermissionRequest` conservative latch | live app-server terminal `failed` + exact `usageLimitExceeded` or `serverOverloaded`, authoritative; raw TUI remains unavailable | additive hooks/notify plus capability-probed private Unix app-server runtime for fresh sessions |
-| Claude Code | 2.1.206 baseline; Elicitation audit 2.1.210; prompt-identity audit 2.1.285 | partial; usage failure supported; Elicitation exact only when both callbacks carry the same non-empty id | `UserPromptSubmit`, observed; general `PreToolUse` provides observed progress/reactivation; `SubagentStop` is ignored | qualifying `Stop`, observed after a one-second quiet window; `idle_prompt` is late confirmation | exact `AskUserQuestion`; conditional exact `Elicitation`; `PermissionRequest` bound to its tool call when unambiguous (exact), otherwise conservative latch; notification conservative latch | structured `StopFailure.error`, authoritative; only `rate_limit` can arm auto-resume | additive merge into `CLAUDE_CONFIG_DIR/settings.json` when the override is absolute; otherwise `~/.claude/settings.json` |
+| Claude Code | 2.1.206 baseline; Elicitation audit 2.1.210; prompt-identity audit 2.1.285 | partial; usage failure supported; Elicitation exact only when both callbacks carry the same non-empty id | `UserPromptSubmit`, observed; general `PreToolUse` provides observed progress/reactivation; `SubagentStop` is ignored | qualifying `Stop` plus fresh runtime/revision-bound structured idle; `idle_prompt` completes immediately | exact `AskUserQuestion`; conditional exact `Elicitation`; `PermissionRequest` bound to its tool call when unambiguous (exact), otherwise conservative latch; notification conservative latch | structured `StopFailure.error`, authoritative; only `rate_limit` can arm auto-resume | additive merge into `CLAUDE_CONFIG_DIR/settings.json` when the override is absolute; otherwise `~/.claude/settings.json` |
 
 Versions below the audited floor remain usable. `activity doctor` reports them
 as unverified and session views retain optional-field/activity fallback rather
@@ -168,15 +168,13 @@ manual input clears that chain.
 ### Claude Code
 
 Matching hooks also run in parallel, and `Stop` hooks may continue the turn.
-An inactive `Stop` with no background tasks now supplies observed completion
-after a one-second quiet window with no newer accepted event. Missing fields,
-active stop hooks, and background tasks remain non-final. This follows the
-[official Stop contract](https://code.claude.com/docs/en/hooks#stop), checked on
-2026-10-07 for the existing 2.1.206 floor through 2.1.289. Continuation inside
-the window cancels completion; later progress reopens working. `idle_prompt`
-is only late confirmation, since it is delayed and can be suppressed by typing.
-`StopFailure` remains immediately terminal and authoritative. Concurrent hooks
-mean the quiet-window completion is observed, not authoritative.
+An inactive Stop with no background tasks supplies a completion candidate.
+Fresh structured idle in the same runtime and accepted revision confirms it;
+elapsed time does not. Missing fields, active Stop hooks, background tasks and
+later accepted work prevent completion. The hook contract was audited through
+Claude Code 2.1.289; the structured listing was audited at 2.1.317. StopFailure
+remains immediately terminal and authoritative. Concurrent hooks mean raw Stop
+alone is not proof that the turn ended.
 
 `idle_prompt` is a later provider notification meaning that Claude is done and waiting
 for another prompt, so it may yield observed Waiting.
@@ -346,10 +344,13 @@ contract. Both fixtures record only allowlisted metadata and expected
 categories; neither contains captured pane, prompt, command, response,
 transcript, or provider identifier.
 
-The optional terminal observer is a shadow diagnostic, not another lifecycle
-adapter. It samples only uncertain running Claude or Codex sessions, publishes
-bounded rule/version/projection metadata, and cannot mutate phase, attention,
-completion, or auto-resume authority.
+The activity sampler reads structured Claude state and terminal shadow
+diagnostics for Codex. It publishes bounded rule/version/projection metadata.
+Fresh same-runtime/revision Claude idle plus a qualifying Stop projects
+completion; unavailable Claude state projects unknown with a fixed reason.
+Other idle evidence can only establish sustained interrupt uncertainty and
+cannot resolve approval attention or invent a terminal outcome. Pane data is
+never used for Claude activity classification.
 
 ## Setup selection and failure behavior
 
@@ -441,14 +442,14 @@ are never lifecycle input and never enter activity persistence.
 The [official hooks reference](https://code.claude.com/docs/en/hooks#stop),
 checked on 2026-10-07 through Claude Code 2.1.289, excludes user interrupts
 from Stop. Cancelling a tool also does not emit PostToolUseFailure. The chosen
-contract is explicit uncertainty: two runtime/revision-fenced samples of the
-interrupt marker with an empty composer, at least 15 seconds apart, project
-`unknown` / `interrupted_suspected`. No completion, attention resolution, or
-automation authority is inferred. A normal working indicator takes precedence.
-The nominal serve-collector detection bound is 30 seconds plus collection
-latency; without a collector the observation is unavailable. New hooks, prompts,
-or runtimes invalidate it. Fixture coverage includes sustained samples, drafts,
-long tools, new-prompt races, and stale runtime identity.
+Claude contract now uses two runtime/revision-fenced structured idle samples
+at least 15 seconds apart for `unknown` / `interrupted_suspected` when no
+qualifying completion exists. Generic idle does not distinguish an interrupt
+from a lost completion. No pane marker or empty-composer requirement remains.
+New hooks, prompts, attention, non-idle readings or runtimes invalidate the
+inference. The nominal detection bound remains 30 seconds plus collection
+latency; without a collector it is unavailable. Fresh matching idle together
+with a qualifying Stop instead establishes completion without a timer.
 
 Codex's `Conversation interrupted` marker uses the same sustained window and
 runtime/revision/current-turn/attention fences. Action-required titles and active
@@ -456,7 +457,7 @@ working indicators take precedence. Codex's visible `esc to interrupt` affordanc
 remains working evidence when the renderer changes the work header; a stale
 interruption marker cannot override it. Composer text remains uncertainty because
 plain captures cannot distinguish renderer placeholders from drafts; it never
-confirms completion or waiting. Claude retains its empty-composer requirement.
+confirms completion or waiting. Claude safe-input composer checks remain separate from activity classification.
 
 ## Claude permission resolution addendum
 
@@ -515,6 +516,29 @@ no prompt, command or path text is retained.
 
 The `tool_call` rules, the bounded `tool_name` and the limits are normative in
 the [turn-state contract](turn-state-contract.md#approval-and-tool-call-correlation).
-The one-second Stop window is unchanged by this audit: no payload field shows
-that no other Stop hook will continue the turn (see the Claude Code finality
-findings above).
+No Stop payload field proves that no other Stop hook will continue the turn.
+The timer has now been removed: completion requires fresh structured idle
+bound to the candidate runtime and accepted revision. Missing or unavailable
+structured state keeps Stop pending; it cannot complete through elapsed time.
+
+## Claude activity rule removal (#3592)
+
+The approved [inventory](specs/session-runtime-v1.md#claude-rule-inventory-for-3592)
+maps every removed activity screen rule to its structured field or hook
+event, and names the retained rules with no equivalent. The listing integration
+requires Claude Code 2.1.317 or newer, audited at 2.1.317; this is a supported
+integration floor, not evidence of the provider's first listing release.
+Unavailable sources project unknown with fixed reasons in the activity
+diagnostic and observation, without terminal fallback. Per-cause fixtures cover
+missing/old binary, timeout, malformed output, missing/unmatched identity,
+unknown state and conflicting entries.
+
+Safe composer/dialog checks still guard terminal input: structured state does
+not expose drafts, cursor location, exact pasted bytes or whether Enter would
+answer a dialog. Manual denial still has no result hook to correlate; exact
+and conservative approval latches retain their existing boundaries. Terminal
+authentication recognition remains for incidents without a structured failure.
+
+Validation here uses sanitized structured fixtures only. It claims no new live
+denial/interrupt measurement and no measurement of app-server serialization
+between TUI and control-channel turns (F4).
