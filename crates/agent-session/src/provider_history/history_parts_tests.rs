@@ -505,8 +505,8 @@ fn existing_provider_fixtures_keep_byte_identical_masked_parts() {
     ] {
         let parts = project(provider, &fixture(provider));
         assert_eq!(
-            serde_json::to_string(&masked_view(&parts)).unwrap(),
-            expected.trim(),
+            masked_view(&parts),
+            serde_json::from_str::<Value>(expected).unwrap(),
             "{provider}"
         );
     }
@@ -534,12 +534,12 @@ fn owner_forms_keep_credential_keys_masked_inside_path_objects() {
     }});
     let parts = project("codex", &[record]);
     assert_eq!(
-        parts[0]["input_summary"],
-        r#"{"cwd":"[redacted]","file_path":"[redacted]"}"#
+        serde_json::from_str::<Value>(parts[0]["input_summary"].as_str().unwrap()).unwrap(),
+        serde_json::json!({"cwd":"[redacted]","file_path":"[redacted]"})
     );
     assert_eq!(
-        parts[0]["owner_input_summary"],
-        r#"{"cwd":"/workspace/project","file_path":{"client-secret":"[redacted]","path":"src/lib.rs"}}"#
+        serde_json::from_str::<Value>(parts[0]["owner_input_summary"].as_str().unwrap()).unwrap(),
+        serde_json::json!({"cwd":"/workspace/project","file_path":{"client-secret":"[redacted]","path":"src/lib.rs"}})
     );
     assert!(!parts[0].to_string().contains("synthetic-credential"));
 }
