@@ -495,8 +495,10 @@ class GateIntegration(unittest.TestCase):
         ci = root / 'scripts/ci'
         ci.mkdir(parents=True)
         (ci / 'lib').mkdir()
-        for name in ('nils-cli-checks-entrypoint.sh', 'nils-cli-local-fast.sh', 'test-env.sh'):
+        for name in ('nils-cli-checks-entrypoint.sh', 'nils-cli-local-fast.sh', 'test-env.sh',
+                     'test-shell-portability-audit.py'):
             shutil.copy(ROOT / 'scripts/ci' / name, ci / name)
+        (ci / 'test-shell-portability-allowlist.json').write_text('[]\n')
         for name in ('doc_classify.py', 'sibling_bins.py', 'cargo-target-dir.sh', 'target_guard.py'):
             shutil.copy(ROOT / 'scripts/ci/lib' / name, ci / 'lib' / name)
         (ci / 'nils-cli-verification.sh').write_text('touch "$DOCS_CALLED"\n')
@@ -567,10 +569,12 @@ class GateIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'scripts/ci').mkdir(parents=True)
-            for name in ('nils-cli-checks-entrypoint.sh', 'test-env.sh', 'gate-resources.py'):
+            for name in ('nils-cli-checks-entrypoint.sh', 'test-env.sh', 'gate-resources.py',
+                         'test-shell-portability-audit.py'):
                 source = ROOT / 'scripts/ci' / name
                 if source.exists():
                     shutil.copy(source, root / 'scripts/ci' / name)
+            (root / 'scripts/ci/test-shell-portability-allowlist.json').write_text('[]\n')
             (root / 'scripts/ci/nils-cli-verification.sh').write_text(
                 'touch "$STARTED/$LABEL"\n'
                 'if [[ "$LABEL" == "first" ]]; then\n'
