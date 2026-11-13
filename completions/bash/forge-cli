@@ -295,6 +295,9 @@ _forge__cli() {
             forge__cli__help__org__hook,list)
                 cmd="forge__cli__help__org__hook__list"
                 ;;
+            forge__cli__help__org__hook,redeliver)
+                cmd="forge__cli__help__org__hook__redeliver"
+                ;;
             forge__cli__help__org__hook,set-active)
                 cmd="forge__cli__help__org__hook__set__active"
                 ;;
@@ -483,6 +486,9 @@ _forge__cli() {
                 ;;
             forge__cli__help__repo__hook,list)
                 cmd="forge__cli__help__repo__hook__list"
+                ;;
+            forge__cli__help__repo__hook,redeliver)
+                cmd="forge__cli__help__repo__hook__redeliver"
                 ;;
             forge__cli__help__repo__hook,set-active)
                 cmd="forge__cli__help__repo__hook__set__active"
@@ -715,6 +721,9 @@ _forge__cli() {
             forge__cli__org__help__hook,list)
                 cmd="forge__cli__org__help__hook__list"
                 ;;
+            forge__cli__org__help__hook,redeliver)
+                cmd="forge__cli__org__help__hook__redeliver"
+                ;;
             forge__cli__org__help__hook,set-active)
                 cmd="forge__cli__org__help__hook__set__active"
                 ;;
@@ -733,6 +742,9 @@ _forge__cli() {
             forge__cli__org__hook,list)
                 cmd="forge__cli__org__hook__list"
                 ;;
+            forge__cli__org__hook,redeliver)
+                cmd="forge__cli__org__hook__redeliver"
+                ;;
             forge__cli__org__hook,set-active)
                 cmd="forge__cli__org__hook__set__active"
                 ;;
@@ -750,6 +762,9 @@ _forge__cli() {
                 ;;
             forge__cli__org__hook__help,list)
                 cmd="forge__cli__org__hook__help__list"
+                ;;
+            forge__cli__org__hook__help,redeliver)
+                cmd="forge__cli__org__hook__help__redeliver"
                 ;;
             forge__cli__org__hook__help,set-active)
                 cmd="forge__cli__org__hook__help__set__active"
@@ -1246,6 +1261,9 @@ _forge__cli() {
             forge__cli__repo__help__hook,list)
                 cmd="forge__cli__repo__help__hook__list"
                 ;;
+            forge__cli__repo__help__hook,redeliver)
+                cmd="forge__cli__repo__help__hook__redeliver"
+                ;;
             forge__cli__repo__help__hook,set-active)
                 cmd="forge__cli__repo__help__hook__set__active"
                 ;;
@@ -1261,6 +1279,9 @@ _forge__cli() {
             forge__cli__repo__hook,list)
                 cmd="forge__cli__repo__hook__list"
                 ;;
+            forge__cli__repo__hook,redeliver)
+                cmd="forge__cli__repo__hook__redeliver"
+                ;;
             forge__cli__repo__hook,set-active)
                 cmd="forge__cli__repo__hook__set__active"
                 ;;
@@ -1275,6 +1296,9 @@ _forge__cli() {
                 ;;
             forge__cli__repo__hook__help,list)
                 cmd="forge__cli__repo__hook__help__list"
+                ;;
+            forge__cli__repo__hook__help,redeliver)
+                cmd="forge__cli__repo__hook__help__redeliver"
                 ;;
             forge__cli__repo__hook__help,set-active)
                 cmd="forge__cli__repo__hook__help__set__active"
@@ -2742,7 +2766,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__help__org__hook)
-            opts="list create set-url set-active batch"
+            opts="list create set-url set-active redeliver batch"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2784,6 +2808,20 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__help__org__hook__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__help__org__hook__redeliver)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -3652,7 +3690,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__help__repo__hook)
-            opts="list set-url set-active batch"
+            opts="list set-url set-active redeliver batch"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3680,6 +3718,20 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__help__repo__hook__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__help__repo__hook__redeliver)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -5788,7 +5840,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__org__help__hook)
-            opts="list create set-url set-active batch"
+            opts="list create set-url set-active redeliver batch"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -5843,6 +5895,20 @@ _forge__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        forge__cli__org__help__hook__redeliver)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         forge__cli__org__help__hook__set__active)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
@@ -5872,7 +5938,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__org__hook)
-            opts="-h --org --format --remote --provider --host --repo --store-root --dry-run --help list create set-url set-active batch help"
+            opts="-h --org --format --remote --provider --host --repo --store-root --dry-run --help list create set-url set-active redeliver batch help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -6018,7 +6084,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__org__hook__help)
-            opts="list create set-url set-active batch help"
+            opts="list create set-url set-active redeliver batch help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -6087,6 +6153,20 @@ _forge__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        forge__cli__org__hook__help__redeliver)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         forge__cli__org__hook__help__set__active)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
@@ -6122,6 +6202,64 @@ _forge__cli() {
                 return 0
             fi
             case "${prev}" in
+                --org)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --remote)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --provider)
+                    COMPREPLY=($(compgen -W "github gitlab local" -- "${cur}"))
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --store-root)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__org__hook__redeliver)
+            opts="-h --hook --status --since --until --org --format --remote --provider --host --repo --store-root --dry-run --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --hook)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --status)
+                    COMPREPLY=($(compgen -W "failed success all" -- "${cur}"))
+                    return 0
+                    ;;
+                --since)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --until)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --org)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
@@ -10480,7 +10618,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__repo__help__hook)
-            opts="list set-url set-active batch"
+            opts="list set-url set-active redeliver batch"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -10508,6 +10646,20 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__repo__help__hook__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__repo__help__hook__redeliver)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -10592,7 +10744,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__repo__hook)
-            opts="-h --format --remote --provider --host --repo --store-root --dry-run --help list set-url set-active batch help"
+            opts="-h --format --remote --provider --host --repo --store-root --dry-run --help list set-url set-active redeliver batch help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -10672,7 +10824,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__repo__hook__help)
-            opts="list set-url set-active batch help"
+            opts="list set-url set-active redeliver batch help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -10727,6 +10879,20 @@ _forge__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        forge__cli__repo__hook__help__redeliver)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         forge__cli__repo__hook__help__set__active)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
@@ -10762,6 +10928,60 @@ _forge__cli() {
                 return 0
             fi
             case "${prev}" in
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --remote)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --provider)
+                    COMPREPLY=($(compgen -W "github gitlab local" -- "${cur}"))
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --store-root)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__repo__hook__redeliver)
+            opts="-h --hook --status --since --until --format --remote --provider --host --repo --store-root --dry-run --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --hook)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --status)
+                    COMPREPLY=($(compgen -W "failed success all" -- "${cur}"))
+                    return 0
+                    ;;
+                --since)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --until)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0

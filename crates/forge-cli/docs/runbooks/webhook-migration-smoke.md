@@ -42,6 +42,21 @@ or repositories.
 5. Confirm `hook list` shows `HOOK_URL_B` and the secret still marked
    `[redacted]`; trigger a delivery and confirm it reaches `HOOK_URL_B` and its
    signature still verifies with the original `SECRET`.
+   Recover failures during the switch: record the stop window as RFC 3339
+   `SINCE` (inclusive) and `UNTIL` (exclusive), then preview with
+   `forge-cli repo hook redeliver --repo REPO --hook ID --status failed
+   --since SINCE --until UNTIL --dry-run`. Remove `--dry-run` to attempt each
+   selected id once.
+
+   For organization hooks use `org hook redeliver --org ORG`
+   with the same selection flags. For multiple hooks, put `action: "redeliver"`
+   rows in the existing `hook batch --file FILE` (see the
+   [row format](../specs/forge-webhooks-v1.md#hook-redeliver)). GitHub only
+   retains deliveries eligible for redelivery for the
+   [past three days](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks),
+   so run this promptly. Check every row's observed delivery status and the
+   receiver; `pending` means the asynchronous attempt is not yet confirmed.
+   Resolve failed/unknown rows before retrying to avoid duplicate effects.
 6. Switch back with the same command with `--from` and `--to` swapped. Expect
    `status: updated`; confirm `hook list` shows `HOOK_URL_A` and a delivery to
    `HOOK_URL_A` still verifies with `SECRET`.

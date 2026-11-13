@@ -33,6 +33,7 @@ impl Kind {
 
 pub(crate) enum Action {
     List,
+    Redeliver(crate::cli::HookRedeliverArgs),
     SetUrl { hook: u64, from: String, to: String },
     SetActive { hook: u64, to: bool },
     Batch(PathBuf),
@@ -489,6 +490,9 @@ pub(crate) fn execute(
         .checked()
     };
     let (op, spec) = match action {
+        Action::Redeliver(args) => {
+            return super::redeliver::run(global, ctx, kind, target, args, format);
+        }
         Action::Batch(file) => return super::batch::run(global, ctx, kind, &file, format),
         Action::List => {
             let target = target.ok_or_else(|| refuse("target_required", "a target is required"))?;
