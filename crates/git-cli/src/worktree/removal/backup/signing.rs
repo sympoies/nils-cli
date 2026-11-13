@@ -8,6 +8,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+const DEFAULT_SIGNER_RECOVERY: &str = "Target and index retained; the configured signing identity could not sign. With a configured identity policy, select a principal using FORGE_IDENTITY_PRINCIPAL=<principal> git-cli worktree remove <target> (session-bound policies require a matching session principal). Run forge-cli identity doctor --operation commit to check selection and secret-key availability, then retry";
+
 const IDENTITY_RECOVERY: &str = "Target and index retained; run forge-cli identity doctor --operation commit, repair the selected identity or signing setup, and retry";
 
 fn identity_failure(error: forge_identity::Error) -> CliError {
@@ -46,11 +48,31 @@ pub(super) fn commit(target: &Path, args: &[&str]) -> Result<String, CliError> {
             auth.redact_output(&mut output);
         }
         if !output.status.success() {
-            return Err(caused_failure(
+            let reason = git_error_reason(&output);
+            let mut error = caused_failure(
                 "snapshot commit could not be written",
-                failure("snapshot Git operation failed")
-                    .with_details(json!({"reason": git_error_reason(&output)})),
-            ));
+                failure("snapshot Git operation failed").with_details(json!({"reason": reason})),
+            );
+            if authorization.is_none() && reason.contains("signing") {
+                // Git permits arbitrary signing-key selectors (including paths).
+                // Expose only a full OpenPGP fingerprint, never raw config or stderr.
+                let fingerprint = super::config(target, "user.signingkey").filter(|value| {
+                    matches!(value.len(), 40 | 64)
+                        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+                });
+                error = error
+                    .with_hint(format!(
+                        "Signing fingerprint: {}. {DEFAULT_SIGNER_RECOVERY}",
+                        fingerprint
+                            .as_deref()
+                            .unwrap_or("unavailable (not a full fingerprint)")
+                    ))
+                    .with_details(json!({
+                        "reason": reason,
+                        "signing_fingerprint": fingerprint,
+                    }));
+            }
+            return Err(error);
         }
         String::from_utf8(output.stdout)
             .map(|text| text.trim().to_owned())

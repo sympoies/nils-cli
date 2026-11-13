@@ -184,6 +184,17 @@ probe, fetch, or provider call occurs. The retained `delivery_proof` field is nu
 when undelivered; otherwise its `basis` is `cached-origin-default-ancestry`,
 with `default_branch` and `default_head`. This is local informational evidence.
 
+Snapshot commits use the repository identity policy for the logical `commit`
+operation, including its selected principal and command-local signing key. No
+Git configuration is changed. Without an active policy selection, Git uses its
+configured signing identity. A signing failure retains the target and index;
+`details.signing_fingerprint` reports a configured full OpenPGP fingerprint
+(or null for other key selectors). The refusal suggests
+`FORGE_IDENTITY_PRINCIPAL=<principal> git-cli worktree remove <target>` with a
+configured identity policy, and `forge-cli identity doctor --operation commit`
+to inspect selection and secret-key availability. Session-bound policies require
+a matching session principal. Signing failures never retry unsigned.
+
 List backups and their sizes with `git-cli worktree backup list --format json`
 (or list raw refs with `git for-each-ref refs/worktree-backup`). Restore by full ref:
 
