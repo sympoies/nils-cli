@@ -153,6 +153,9 @@ pub(super) enum Refusal {
 
 pub(super) fn refusal(response: &Response) -> Refusal {
     let error = response.extensions().get::<CliError>();
+    if let Some(reason) = error.and_then(codex_app_server::guarded::IdleReason::from_error) {
+        return Refusal::ProviderNotReady(reason.notification_detail());
+    }
     if let Some(condition) = error
         .filter(|error| error.code() == crate::coordination::NOTIFICATION_NOT_QUIESCENT_CODE)
         .and_then(|error| error.details())
@@ -204,4 +207,34 @@ async fn defer_not_quiescent(
         )
     })
     .await;
+}
+
+#[cfg(test)]
+mod idle_failure_tests {
+    use super::*;
+    use codex_app_server::guarded::IdleReason;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn native_idle_notice_refusal_preserves_only_the_typed_reason() {
+        let error = IdleReason::ThreadNotLoaded.annotate(CliError::runtime(
+            "send-idle-unobservable",
+            "private-provider-error",
+            None,
+        ));
+        let response = envelope_err(error);
+        let Refusal::ProviderNotReady(detail) = refusal(&response) else {
+            panic!("provider-not-ready")
+        };
+        assert_eq!(detail, "send-idle-unobservable:thread_not_loaded");
+        let untrusted = envelope_err(CliError::runtime(
+            "send-idle-unobservable",
+            "private-provider-error",
+            Some(json!({"native_idle_reason":"private-provider-status"})),
+        ));
+        let Refusal::ProviderNotReady(detail) = refusal(&untrusted) else {
+            panic!("provider-not-ready")
+        };
+        assert!(!detail.contains("private-provider"));
+    }
 }

@@ -5,7 +5,7 @@ use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
 use pretty_assertions::assert_eq;
 
 impl Fixture {
-    fn notice(&self, extra: &[&str]) -> CmdOutput {
+    pub(super) fn notice(&self, extra: &[&str]) -> CmdOutput {
         self.notice_kind(&[&["--kind", "schedule.tick"][..], extra].concat())
     }
 

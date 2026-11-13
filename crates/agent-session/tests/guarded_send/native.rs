@@ -1,6 +1,8 @@
 //! Native RPC regressions retain independent modeled composer evidence.
 #[path = "confirmation_lock.rs"]
 mod confirmation_lock;
+#[path = "idle_failures.rs"]
+mod idle_failures;
 #[path = "trace.rs"]
 mod trace;
 use super::*;
@@ -60,13 +62,28 @@ impl Server {
                     let claim_dir = claim_dir.clone();
                     let notice_root = notice_root.clone();
                     tokio::spawn(async move {
+                        if mode == "handshake-error" {
+                            use tokio::io::AsyncWriteExt;
+                            let mut stream = stream;
+                            stream.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+                            return;
+                        }
                         let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
                         while let Some(Ok(Message::Text(text))) = socket.next().await {
                             let request: Value = serde_json::from_str(&text).unwrap();
                             observed.lock().unwrap().push(request.clone());
                             let Some(id) = request.get("id") else { continue };
                             let method = request["method"].as_str().unwrap();
+                            let loaded_count = observed.lock().unwrap().iter().filter(|r| r["method"] == "thread/loaded/list").count();
                             if mode == "initialize-timeout" && method == "initialize" { tokio::time::sleep(std::time::Duration::from_secs(5)).await; }
+                            if (mode == "initialize-error" && method == "initialize")
+                                || (mode == "loaded-list-error" && method == "thread/loaded/list")
+                                || (mode == "thread-read-error" && method == "thread/read")
+                                || (mode == "retained-connect-error" && method == "thread/loaded/list" && loaded_count == 5) {
+                                let error = json!({"id":id,"error":{"code":-1,"message":"private-observation-error","data":{"token":"private-observation-token"}}});
+                                if socket.send(Message::Text(error.to_string().into())).await.is_err() { break; }
+                                continue;
+                            }
                             if mode == "rpc-error" && method == "turn/start" {
                                 let error = json!({"id":id,"error":{"code":-1,"message":"private-error-marker","data":{"token":"private-token-marker"}}});
                                 if socket.send(Message::Text(error.to_string().into())).await.is_err() { break; }
@@ -99,7 +116,7 @@ impl Server {
                                         prefix.extend(turns.as_array().unwrap().iter().cloned());
                                         turns = json!(prefix);
                                     }
-                                    json!({"thread":{"id":if mode == "wrong-thread" {"other-thread"} else {"provider-one"}, "status":{"type":if busy {"active"} else if mode == "system-error" && submitted_before.is_none() {"systemError"} else if mode == "not-loaded" {"notLoaded"} else if mode == "unknown-status" {"futureStatus"} else {"idle"}}, "turns":turns}})
+                                    json!({"thread":{"id":if mode == "wrong-thread" {"other-thread"} else {"provider-one"}, "status":if mode == "missing-status" { Value::Null } else {json!({"type":if busy {"active"} else if mode == "system-error" && submitted_before.is_none() {"systemError"} else if mode == "not-loaded" {"notLoaded"} else if mode == "unknown-status" || (mode == "unknown-retained" && read_count == 7) || (mode == "unknown-retained-claimed" && read_count == 10) {"futureStatus"} else {"idle"}})}, "turns":turns}})
                                 }
                                 "turn/start" => {
                                     if mode.starts_with("hook-lock") {

@@ -123,16 +123,21 @@ pub(super) async fn dispatch(
                 })
                 .await;
             } else {
-                let detail = if matches!(&result, Ok(Err(error))
+                let detail = if let Ok(Err(error)) = &result
+                    && let Some(reason) = codex_app_server::guarded::IdleReason::from_error(error)
+                {
+                    reason.notification_detail()
+                } else if matches!(&result, Ok(Err(error))
                     if error.code() == "notice-native-unavailable"
                         && error.details().and_then(|details| details["reason"].as_str())
                             == Some("authorization-timeout"))
                 {
-                    "authorization-timeout"
+                    "authorization-timeout".to_owned()
                 } else {
-                    "notice-attempt-not-admitted"
+                    "notice-attempt-not-admitted".to_owned()
                 };
-                super::mailbox_dispatch::defer_provider_not_ready(&state, &candidate, detail).await;
+                super::mailbox_dispatch::defer_provider_not_ready(&state, &candidate, &detail)
+                    .await;
             }
         }
     }

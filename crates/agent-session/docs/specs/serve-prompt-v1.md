@@ -81,6 +81,12 @@ the contract below describes implemented behavior.
   refusals and for receipts written before it existed; the code and status are
   unchanged.
 
+  Native `send-idle-unobservable` refusals retain the fixed
+  `native_idle_reason` in the refused receipt, including durable lookup, and
+  render its recovery as `error.hint`. These use the
+  [Send v1 native idle reasons](send-v1.md#observation-limits), never raw
+  provider error/status content. Non-native idle failures omit this field.
+
   A Claude queued-reply hint is empty only when its sole input row is the
   native dim-styled hint and contains no owner text. A second direct reply is
   then admitted. Unstyled literal text matching the hint, or owner input beside

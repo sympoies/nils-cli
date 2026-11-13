@@ -155,6 +155,10 @@ For `provider-not-ready` it names the branch that deferred:
   `prompt-submission-refused`.
 - `notice-attempt-not-admitted`: the guarded notice send did not admit the
   attempt.
+- `send-idle-unobservable:<native_idle_reason>`: a native idle observation
+  refused the notice before an attempt. The suffix is one of the fixed
+  [Send v1 native idle reasons](send-v1.md#observation-limits); unknown suffixes
+  are discarded. It never includes a raw provider error or status value.
 - `authorization-timeout`: the Claude native receiver did not authorize the
   notice before the deadline.
 
