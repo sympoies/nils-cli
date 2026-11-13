@@ -1,0 +1,197 @@
+[
+  {
+    "name": "home_absolute",
+    "value": "/home/example/project/file",
+    "masked": "[redacted]",
+    "owner": "/home/example/project/file"
+  },
+  {
+    "name": "working_directory",
+    "value": "/workspace/project",
+    "masked": "[redacted]",
+    "owner": "/workspace/project"
+  },
+  {
+    "name": "repo_relative",
+    "value": "src/lib.rs",
+    "masked": "[redacted]",
+    "owner": "src/lib.rs"
+  },
+  {
+    "name": "repository_slug",
+    "value": "example/project",
+    "masked": "[redacted]",
+    "owner": "example/project"
+  },
+  {
+    "name": "public_forge_url",
+    "value": "https://github.com/example/project",
+    "masked": "[redacted]",
+    "owner": "https://github.com/example/project"
+  },
+  {
+    "name": "file_url",
+    "value": "file:///workspace/project/file",
+    "masked": "[redacted]",
+    "owner": "file:///workspace/project/file"
+  },
+  {
+    "name": "windows_path",
+    "value": "C:\\workspace\\project\\file",
+    "masked": "[redacted]",
+    "owner": "C:\\workspace\\project\\file"
+  },
+  {
+    "name": "credential_key_and_token",
+    "value": {
+      "api_key": "sk-example-canary",
+      "Authorization": "Bearer example-canary"
+    },
+    "masked": {
+      "api_key": "[redacted]",
+      "Authorization": "[redacted]"
+    },
+    "owner": {
+      "api_key": "[redacted]",
+      "Authorization": "[redacted]"
+    }
+  },
+  {
+    "name": "url_userinfo",
+    "value": "https://example:synthetic-password@forge.example/project",
+    "masked": "[redacted]",
+    "owner": "https://example:[redacted]@forge.example/project"
+  },
+  {
+    "name": "url_credential_query",
+    "value": "https://forge.example/project?access_token=synthetic-value&view=files",
+    "masked": "https://forge.example/project?access_token=synthetic-value&view=files",
+    "owner": "https://forge.example/project?access_token=[redacted]&view=files"
+  },
+  {
+    "name": "encoded_credential_query",
+    "value": "https://forge.example/project?%61ccess_token=first&access_token=second&view=files#result",
+    "masked": "https://forge.example/project?%61ccess_token=first&access_token=second&view=files#result",
+    "owner": "https://forge.example/project?%61ccess_token=[redacted]&access_token=[redacted]&view=files#result"
+  },
+  {
+    "name": "url_parenthesis_userinfo",
+    "value": "https://example:pa(ss@forge.example/project",
+    "masked": "[redacted]",
+    "owner": "https://example:[redacted]@forge.example/project"
+  },
+  {
+    "name": "url_parenthesis_query",
+    "value": "https://forge.example/project?access_token=abc(def)",
+    "masked": "https://forge.example/project?access_token=abc(def)",
+    "owner": "https://forge.example/project?access_token=[redacted]"
+  },
+  {
+    "name": "url_apostrophe_userinfo",
+    "value": "https://example:pa'ss@forge.example/project",
+    "masked": "[redacted]",
+    "owner": "https://example:[redacted]@forge.example/project"
+  },
+  {
+    "name": "url_apostrophe_query",
+    "value": "https://forge.example/project?access_token=abc'def",
+    "masked": "https://forge.example/project?access_token=abc'def",
+    "owner": "https://forge.example/project?access_token=[redacted]"
+  },
+  {
+    "name": "file_url_without_authority",
+    "value": "file:/workspace/project?access_token=synthetic-value",
+    "masked": "file:/workspace/project?access_token=synthetic-value",
+    "owner": "file:/workspace/project?access_token=[redacted]"
+  },
+  {
+    "name": "quoted_url_command",
+    "value": "curl 'https://forge.example/project?access_token=abc'; echo ok",
+    "masked": "curl 'https://forge.example/project?access_token=abc'; echo ok",
+    "owner": "curl 'https://forge.example/project?access_token=[redacted]'; echo ok"
+  },
+  {
+    "name": "labelled_url_userinfo",
+    "value": "url:https://example:synthetic-password@forge.example/project",
+    "masked": "[redacted]",
+    "owner": "url:https://example:[redacted]@forge.example/project"
+  },
+  {
+    "name": "credential_environment_assignment",
+    "value": "export AWS_SECRET_ACCESS_KEY=SYNTHETIC/ACCESS/CANARY",
+    "masked": "[redacted]",
+    "owner": "export AWS_SECRET_ACCESS_KEY=[redacted]"
+  },
+  {
+    "name": "credential_flag_assignment",
+    "value": "run --password=abc/def now",
+    "masked": "run [redacted] now",
+    "owner": "run --password=[redacted] now"
+  },
+  {
+    "name": "credential_colon_assignment",
+    "value": "password: COLON/CANARY",
+    "masked": "[redacted]",
+    "owner": "password: [redacted]"
+  },
+  {
+    "name": "credential_space_flag",
+    "value": "run --password SPACE/CANARY now",
+    "masked": "run --password [redacted] now",
+    "owner": "run --password [redacted] now"
+  },
+  {
+    "name": "schemeless_userinfo",
+    "value": "scp example:SCPCANARY@host:/data",
+    "masked": "[redacted]",
+    "owner": "scp example:[redacted]@host:/data"
+  },
+  {
+    "name": "authorization_header_scheme",
+    "value": "Authorization: Bearer AUTHORIZATION/CANARY",
+    "masked": "Authorization: Bearer [redacted]",
+    "owner": "Authorization: [redacted]"
+  },
+  {
+    "name": "proxy_authorization_header_scheme",
+    "value": "Proxy-Authorization: Basic PROXY/CANARY",
+    "masked": "Proxy-Authorization: Basic [redacted]",
+    "owner": "Proxy-Authorization: [redacted]"
+  },
+  {
+    "name": "api_key_header",
+    "value": "X-Api-Key: API/KEY/CANARY",
+    "masked": "[redacted]",
+    "owner": "X-Api-Key: [redacted]"
+  },
+  {
+    "name": "spaced_credential_assignment",
+    "value": "password = PASSWORD/CANARY",
+    "masked": "[redacted]",
+    "owner": "password = [redacted]"
+  },
+  {
+    "name": "tabbed_authorization_header",
+    "value": "Authorization:\tBearer\tTABBED/AUTH/CANARY",
+    "masked": "Authorization:\tBearer\t[redacted]",
+    "owner": "Authorization:\t[redacted]"
+  },
+  {
+    "name": "tabbed_credential_assignment",
+    "value": "password\t=\tTABBED/PASSWORD/CANARY",
+    "masked": "[redacted]",
+    "owner": "password\t=\t[redacted]"
+  },
+  {
+    "name": "quoted_authorization_command",
+    "value": "curl -H 'Authorization: Bearer QUOTED/AUTH/CANARY' then",
+    "masked": "curl -H 'Authorization: Bearer [redacted] then",
+    "owner": "curl -H 'Authorization: [redacted]' then"
+  },
+  {
+    "name": "spaced_credential_flag_assignment",
+    "value": "run --password = FLAG/CANARY now",
+    "masked": "run --password = [redacted] now",
+    "owner": "run --password = [redacted] now"
+  }
+]
