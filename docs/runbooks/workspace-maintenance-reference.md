@@ -73,6 +73,41 @@ Coverage checks also require:
 
 For optional runtime tools used by individual CLIs, see `BINARY_DEPENDENCIES.md`.
 
+### 1.3 Rust toolchain pin and bump procedure
+
+`rust-toolchain.toml` pins one exact release (`channel = "X.Y.Z"`) and is the only
+source of the version. A floating `stable` moved under CI without a change in the
+repository, so every place that selects a toolchain names that same release:
+
+- each `dtolnay/rust-toolchain@X.Y.Z` step in `.github/workflows/`; every job that
+  runs `cargo` or `rustc` installs it explicitly before its first cargo step,
+  including the release-preparation and dependabot workflows
+- `rustup`, `cargo +channel` and `RUSTUP_TOOLCHAIN` uses in workflows and under
+  `scripts/`
+- `scripts/setup-rust-tooling.sh`, which reads the channel from the file
+
+`python3 scripts/ci/toolchain-pin-audit.py` fails on a version other than the file's,
+on a floating or missing ref (`stable`, `beta`, `nightly`, `@master`, no `@`), and on a
+job that runs cargo without the pinned step. It runs in `--local-fast`, the scoped CI
+checks and the full checks. It sees cargo only as a command word in a `run:` block, so
+a job that reaches cargo only through a script (`cargo-deny-audit.sh`) is not detected.
+
+Bump the toolchain in one reviewed PR that does nothing else:
+
+1. Change the version in `rust-toolchain.toml` and every `dtolnay/rust-toolchain@`
+   ref, then run the audit; it names any place left on the old release.
+2. Fix the new compiler and clippy lints in the same PR.
+3. Check that tooling reading the `target/` layout still handles it
+   (`scripts/ci/lib/target_guard.py` and the test-binary resolvers).
+4. Run the full gates on Linux and macOS before merge, including the jobs PR-time CI
+   skips: `macos_clippy` (merge groups only) and `full_validation` (nightly, manual
+   and release-candidate merge groups). Locally that is
+   `NILS_CLI_TEST_RUNNER=nextest bash scripts/ci/nils-cli-checks-entrypoint.sh` on Linux
+   and, on a macOS host, `cargo clippy --all-targets --all-features -- -D warnings`
+   plus `cargo nextest run --profile ci --workspace`.
+5. Merge through the queue, which requires the merge group's `macos_clippy`, then
+   dispatch CI on `main` so `full_validation` runs, and revert the bump if it fails.
+
 ## 2. Build and quick smoke checks
 
 - Build workspace: `cargo build`
@@ -588,6 +623,8 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/tests/workspace-test-stale-audit.test.sh`
 - `python3 scripts/ci/tests/assert-import-audit.test.py`
 - `python3 scripts/ci/tests/public-boundary-audit.test.py`
+- `python3 scripts/ci/toolchain-pin-audit.py` and
+  `python3 scripts/ci/tests/toolchain-pin-audit.test.py` (see section 1.3)
 - `bash scripts/ci/tests/file-size-audit.test.sh`
 - `bash scripts/ci/tests/docs-prose-audit.test.sh`
 - `bash scripts/ci/tests/prepare-private-release-workflow.test.sh`

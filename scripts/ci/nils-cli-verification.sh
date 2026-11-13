@@ -16,6 +16,8 @@ Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/forge-cli-fixture-lint.sh --strict
   - python3 scripts/ci/public-boundary-audit.py
   - python3 scripts/ci/tests/public-boundary-audit.test.py
+  - python3 scripts/ci/toolchain-pin-audit.py
+  - python3 scripts/ci/tests/toolchain-pin-audit.test.py
   - bash scripts/ci/tests/node-scope.test.sh
   - bash scripts/ci/tests/install-local-release-binaries.test.sh
   - bash scripts/ci/tests/completion-freshness-audit.test.sh
@@ -224,6 +226,8 @@ fi
 ci_disk_report "job start"
 trap ci_disk_report_on_failure EXIT
 
+run python3 scripts/ci/toolchain-pin-audit.py
+run python3 scripts/ci/tests/toolchain-pin-audit.test.py
 run python3 scripts/ci/tests/gate-resources.test.py
 run bash scripts/ci/tests/ci-build-guard.test.sh
 run python3 scripts/ci/tests/gate-reports.test.py

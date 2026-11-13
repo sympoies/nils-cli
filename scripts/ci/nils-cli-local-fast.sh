@@ -571,6 +571,8 @@ run python3 scripts/ci/assert-import-audit.py
 run python3 scripts/ci/tests/assert-import-audit.test.py
 run python3 scripts/ci/public-boundary-audit.py
 run python3 scripts/ci/tests/public-boundary-audit.test.py
+run python3 scripts/ci/toolchain-pin-audit.py
+run python3 scripts/ci/tests/toolchain-pin-audit.test.py
 run python3 scripts/ci/tests/gate-resources.test.py
 run python3 scripts/ci/tests/gate-reports.test.py
 run python3 scripts/ci/tests/devlog-policy.test.py

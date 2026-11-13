@@ -15,14 +15,23 @@ import stat
 import sys
 
 PROFILE_DIR = 'debug'
+# Binaries sit in the profile directory and test executables in `deps/`. Cargo 1.100
+# puts lib test executables in `build/<pkg>/<hash>/out/` and has no `deps/`, so both
+# layouts are scanned. `build/<pkg>-<hash>/out/` holds build-script output and is not.
 SCAN_DIRS = ('', 'deps')
+PACKAGE_BUILD_OUT_GLOB = 'build/*/*/out'
+
+
+def scan_directories(target_dir):
+    profile = target_dir / PROFILE_DIR
+    yield from (profile / scan for scan in SCAN_DIRS)
+    yield from sorted(profile.glob(PACKAGE_BUILD_OUT_GLOB))
 
 
 def executables(target_dir):
     """Map each built executable to its size and mtime, relative to the target dir."""
     found = {}
-    for scan in SCAN_DIRS:
-        directory = target_dir / PROFILE_DIR / scan
+    for directory in scan_directories(target_dir):
         if not directory.is_dir():
             continue
         for entry in os.scandir(directory):
