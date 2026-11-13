@@ -22,7 +22,8 @@ fn redact_assignments(value: &str) -> String {
     {
         let position = scan + offset;
         scan = position + separator.len_utf8();
-        let left = value[..position].trim_end_matches(['\'', '"']);
+        let key_end = value[..position].trim_end();
+        let left = key_end.trim_end_matches(['\'', '"']);
         let key = left
             .rsplit(|character: char| {
                 !(character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
@@ -50,9 +51,14 @@ fn redact_assignments(value: &str) -> String {
         {
             start += character.len_utf8();
         }
-        let outer_quote =
-            previous.filter(|character| matches!(character, '\'' | '"') && left.len() == position);
-        let end = start + value_end(&value[start..], outer_quote);
+        if separator.is_whitespace() && value[start..].starts_with(['=', ':']) {
+            continue;
+        }
+        let outer_quote = previous
+            .filter(|character| matches!(character, '\'' | '"') && left.len() == key_end.len());
+        // Authorization values include a scheme and credentials separated by spaces.
+        let authorization = key.to_ascii_lowercase().contains("authorization");
+        let end = start + value_end(&value[start..], outer_quote, authorization);
         if start == end {
             continue;
         }
@@ -78,7 +84,7 @@ fn redact_assignments(value: &str) -> String {
     output
 }
 
-fn value_end(value: &str, outer_quote: Option<char>) -> usize {
+fn value_end(value: &str, outer_quote: Option<char>, authorization: bool) -> usize {
     let mut quote = None;
     let mut escaped = false;
     for (index, character) in value.char_indices() {
@@ -109,7 +115,8 @@ fn value_end(value: &str, outer_quote: Option<char>) -> usize {
         } else if matches!(character, '\'' | '"') {
             quote = Some(character);
         } else if outer_quote.is_none()
-            && (character.is_whitespace() || matches!(character, ';' | '|' | '&'))
+            && ((character.is_whitespace() && (!authorization || matches!(character, '\r' | '\n')))
+                || matches!(character, ';' | '|' | '&'))
         {
             return index;
         }

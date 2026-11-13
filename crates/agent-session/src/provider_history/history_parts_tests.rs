@@ -172,7 +172,7 @@ fn summaries_redact_credentials_and_relative_paths() {
         assert!(!input.contains(secret));
         assert!(
             !both_forms.contains(secret),
-            "credential exposed in owner form: {secret}"
+            "credential exposed in owner form"
         );
     }
 

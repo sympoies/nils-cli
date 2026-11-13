@@ -145,5 +145,53 @@
     "value": "scp example:SCPCANARY@host:/data",
     "masked": "[redacted]",
     "owner": "scp example:[redacted]@host:/data"
+  },
+  {
+    "name": "authorization_header_scheme",
+    "value": "Authorization: Bearer AUTHORIZATION/CANARY",
+    "masked": "Authorization: Bearer [redacted]",
+    "owner": "Authorization: [redacted]"
+  },
+  {
+    "name": "proxy_authorization_header_scheme",
+    "value": "Proxy-Authorization: Basic PROXY/CANARY",
+    "masked": "Proxy-Authorization: Basic [redacted]",
+    "owner": "Proxy-Authorization: [redacted]"
+  },
+  {
+    "name": "api_key_header",
+    "value": "X-Api-Key: API/KEY/CANARY",
+    "masked": "[redacted]",
+    "owner": "X-Api-Key: [redacted]"
+  },
+  {
+    "name": "spaced_credential_assignment",
+    "value": "password = PASSWORD/CANARY",
+    "masked": "[redacted]",
+    "owner": "password = [redacted]"
+  },
+  {
+    "name": "tabbed_authorization_header",
+    "value": "Authorization:\tBearer\tTABBED/AUTH/CANARY",
+    "masked": "Authorization:\tBearer\t[redacted]",
+    "owner": "Authorization:\t[redacted]"
+  },
+  {
+    "name": "tabbed_credential_assignment",
+    "value": "password\t=\tTABBED/PASSWORD/CANARY",
+    "masked": "[redacted]",
+    "owner": "password\t=\t[redacted]"
+  },
+  {
+    "name": "quoted_authorization_command",
+    "value": "curl -H 'Authorization: Bearer QUOTED/AUTH/CANARY' then",
+    "masked": "curl -H 'Authorization: Bearer [redacted] then",
+    "owner": "curl -H 'Authorization: [redacted]' then"
+  },
+  {
+    "name": "spaced_credential_flag_assignment",
+    "value": "run --password = FLAG/CANARY now",
+    "masked": "run --password = [redacted] now",
+    "owner": "run --password = [redacted] now"
   }
 ]
