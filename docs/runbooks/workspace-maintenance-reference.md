@@ -86,11 +86,24 @@ repository, so every place that selects a toolchain names that same release:
   `scripts/`
 - `scripts/setup-rust-tooling.sh`, which reads the channel from the file
 
+The audit reads only the root `rust-toolchain.toml`. Do not add a root
+`rust-toolchain` or nested toolchain file: this Cargo workspace uses one release,
+and rustup can prefer those files over the root pin. Recursive toolchain-file
+discovery is outside this audit's scope so synthetic fixtures and vendored trees
+cannot become additional version sources; review additions of these files against
+this root-only rule.
+
 `python3 scripts/ci/toolchain-pin-audit.py` fails on a version other than the file's,
 on a floating or missing ref (`stable`, `beta`, `nightly`, `@master`, no `@`), and on a
 job that runs cargo without the pinned step. It runs in `--local-fast`, the scoped CI
 checks and the full checks. It sees cargo only as a command word in a `run:` block, so
 a job that reaches cargo only through a script (`cargo-deny-audit.sh`) is not detected.
+This is an accepted exception for the `cargo_deny` jobs in `ci.yml` and
+`full-validation.yml`: they install a prebuilt `cargo-deny` and run advisory and
+duplicate-version checks through Cargo metadata, without compiling workspace code.
+Their Cargo version comes from the runner rather than an explicit pinned setup
+step. Revisit the exception if either job starts compiling code; script-only Cargo
+discovery is outside this text audit, so review such changes explicitly.
 
 Bump the toolchain in one reviewed PR that does nothing else:
 

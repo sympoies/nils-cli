@@ -11,6 +11,7 @@ toolchain explicitly before its first cargo step (sympoies/nils-cli#3624).
 import argparse
 from pathlib import Path
 import re
+import shlex
 import sys
 
 SETUP_ACTION = 'dtolnay/rust-toolchain'
@@ -19,12 +20,13 @@ CHANNEL_LINE = re.compile(r'^\s*channel\s*=\s*"([^"]*)"')
 # Each pattern captures the toolchain a command or setting selects; the first
 # group is the value, absent when the command names none.
 LINE_PATTERNS = (
-    re.compile(r'\brustup\s+(?:default|override\s+set|toolchain\s+install|run)\s+(?:-\S+\s+)*(\S+)'),
-    re.compile(r'\brustup\s+update\b(?:\s+(?:-\S+\s+)*([^\s-]\S*))?'),
     re.compile(r'--default-toolchain[\s=]+(\S+)'),
     re.compile(r'\b(?:cargo|rustc)\s+\+(\S+)'),
     re.compile(r'\bRUSTUP_TOOLCHAIN\s*[:=]\s*(\S+)'),
 )
+RUSTUP_COMMAND = re.compile(
+    r'\brustup\s+(?:default|override\s+set|toolchain\s+install|run|update)\b([^;|&]*)')
+RUSTUP_VALUE_OPTIONS = {'--profile', '--component', '-c', '--target', '-t', '--path'}
 TOOLCHAIN_INPUT = re.compile(r'^\s*toolchain:\s*(\S+)')
 USES = re.compile(r'^\s*(?:-\s+)?uses:\s*(\S+)')
 RUST_ACTION_NAME = re.compile(r'rust-toolchain|setup-rust|rustup', re.IGNORECASE)
@@ -42,6 +44,22 @@ def is_expected(token, pin):
     """A literal must be the pin; a shell/expression reference is resolved elsewhere."""
     token = clean(token)
     return token == pin or token.startswith(('$', '${{'))
+
+
+def rustup_channel(arguments):
+    """Select the first positional argument, skipping rustup option operands."""
+    try:
+        tokens = iter(shlex.split(arguments, comments=True))
+    except ValueError:
+        return None
+    for token in tokens:
+        if token in RUSTUP_VALUE_OPTIONS:
+            next(tokens, None)
+        elif token == '--':
+            return next(tokens, None)
+        elif not token.startswith('-'):
+            return token
+    return None
 
 
 def toolchain_pin(root, problems):
@@ -66,6 +84,17 @@ def scan_lines(relative, text, pin, problems, workflow):
     for number, line in enumerate(text.splitlines(), 1):
         if line.lstrip().startswith('#'):
             continue
+        # An inline YAML quote encloses the command, not its final shell token.
+        command_line = line
+        run = RUN_KEY.match(line)
+        if run:
+            inline = run.group(3).strip()
+            if len(inline) >= 2 and inline[0] in ('"', "'") and inline[-1] == inline[0]:
+                command_line = inline[1:-1]
+        for match in RUSTUP_COMMAND.finditer(command_line):
+            value = rustup_channel(match.group(1))
+            if value is None or not is_expected(value, pin):
+                problems.append(f'{relative}:{number}: {line.strip()} (expected {pin})')
         for pattern in LINE_PATTERNS:
             for match in pattern.finditer(line):
                 value = match.group(1) if match.groups() else None
