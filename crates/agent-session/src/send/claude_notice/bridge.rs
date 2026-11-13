@@ -21,6 +21,8 @@ pub(super) struct Authorize {
     pub(super) binding: Binding,
     pub(super) nonce: String,
     pub(super) terminal: bool,
+    // The first native read supplies these facts, including negative observations.
+    // The validator refuses them before any claim or notice text response.
     pub(super) box_empty: bool,
     pub(super) cursor: usize,
 }

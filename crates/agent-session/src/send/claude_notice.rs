@@ -66,6 +66,44 @@ pub(crate) struct Binding {
     pub(crate) module_sha256: Option<String>,
 }
 
+/// Select only the existing supported attached notice profile.
+pub(super) fn capability(
+    context: &CliContext,
+    record: &SessionRecord,
+    args: &cli::SendArgs,
+    text: Option<&str>,
+    terminal_command: bool,
+) -> Option<(runtime::Bootstrap, runtime::Ready)> {
+    if !terminal_command
+        && args.guards.notice_envelope
+        && record.agent == "claude"
+        && args.guards.require_idle
+        && args.guards.require_empty_composer
+        && super::carries_literal_text(text)
+        && args.keys == [crate::SpecialKey::Enter]
+    {
+        runtime::readiness(context, record)
+    } else {
+        None
+    }
+}
+
+/// The fresh, bound module authorization supplies the composer fact before
+/// release. Readiness only selects this route; it never authorizes text.
+pub(super) fn check_admission(
+    admission: &send_guard::Admission<'_>,
+    stage: &str,
+) -> Result<(), CliError> {
+    let mut guards = admission.args.clone();
+    guards.require_empty_composer = false;
+    send_guard::Admission {
+        args: &guards,
+        verify_composer: false,
+        ..*admission
+    }
+    .check(None, stage)
+}
+
 fn unconfirmed(record: &SessionRecord, stage: &str) -> CliError {
     CliError::runtime(
         "notice-native-unconfirmed",
@@ -99,14 +137,7 @@ pub(super) fn deliver(
         verify_composer: true,
         deadline,
     };
-    let preserve_draft = attempt.recovery.is_some();
-    let check = |stage| {
-        if preserve_draft {
-            admission.check_preserving_draft(stage)
-        } else {
-            admission.check(None, stage)
-        }
-    };
+    let check = |stage| check_admission(&admission, stage);
     if text.len() > crate::provider_prompt::MAX_PROVIDER_PROMPT_BYTES
         || text.contains('\r')
         || crate::notice::parse_notice(&text).is_none()

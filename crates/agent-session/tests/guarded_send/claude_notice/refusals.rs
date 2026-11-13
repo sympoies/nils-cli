@@ -2,7 +2,7 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
-fn no_claim(fixture: &super::super::Fixture) {
+pub(super) fn no_claim(fixture: &super::super::Fixture) {
     let session = fixture.root().join("state/sessions/guarded");
     assert!(!fs::read_dir(session).unwrap().any(|entry| {
         entry
@@ -28,6 +28,8 @@ fn preclaim_authorization_refusals_identify_the_failed_check() {
         ("op", json!("wrong-operation"), "authorization-operation"),
         ("binding", Value::Null, "authorization-binding"),
         ("nonce", json!("wrong-nonce"), "authorization-nonce"),
+        ("module", Value::Null, "authorization-binding"),
+        ("runtime", Value::Null, "authorization-binding"),
         ("terminal", json!(false), "authorization-surface"),
         (
             "box_empty",
@@ -60,6 +62,8 @@ fn preclaim_authorization_refusals_identify_the_failed_check() {
             match field {
                 "path" => path = "/result",
                 "binding" => request["binding"]["provider_session_id"] = json!("other-provider"),
+                "module" => request["binding"]["module_sha256"] = json!("a".repeat(64)),
+                "runtime" => request["binding"]["launch"]["incarnation"] = json!("other-runtime"),
                 "malformed" => {
                     request.as_object_mut().unwrap().remove("nonce");
                 }

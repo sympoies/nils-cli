@@ -109,10 +109,30 @@ pub(super) async fn dispatch(
         })
         .await;
         if matches!(attempted, Ok(Ok(false))) {
-            let multi_row = matches!(&result, Ok(Err(error))
-                if error.code() == "send-composer-unobservable"
-                    && error.details().and_then(|details| details["observation"].as_str())
-                        == Some("region-not-single-row"));
+            let composer_refusal = match &result {
+                Ok(Err(error))
+                    if error.code() == "notice-native-unavailable"
+                        && error
+                            .details()
+                            .and_then(|details| details["reason"].as_str())
+                            == Some("authorization-composer-not-empty") =>
+                {
+                    Some(("recipient-composer-not-empty", None))
+                }
+                Ok(Err(error))
+                    if error.code() == "send-composer-unobservable"
+                        && error
+                            .details()
+                            .and_then(|details| details["observation"].as_str())
+                            == Some("region-not-single-row") =>
+                {
+                    Some((
+                        "recipient-composer-unobservable",
+                        Some("region-not-single-row"),
+                    ))
+                }
+                _ => None,
+            };
             let composer_unobservable = matches!(&result, Ok(Err(error))
                 if error.code() == "send-composer-unobservable");
             if unbound_codex && composer_unobservable {
@@ -126,15 +146,15 @@ pub(super) async fn dispatch(
                     )
                 })
                 .await;
-            } else if multi_row {
+            } else if let Some((reason, detail)) = composer_refusal {
                 let context = state.context.clone();
                 let candidate = candidate.clone();
                 let _ = tokio::task::spawn_blocking(move || {
                     crate::coordination::defer_notification_with_detail(
                         &context,
                         &candidate,
-                        "recipient-composer-unobservable",
-                        Some("region-not-single-row"),
+                        reason,
+                        detail,
                         COORDINATION_NOTIFICATION_RETRY,
                     )
                 })

@@ -62,14 +62,16 @@ export function register(on) {
             || !/^[a-f0-9-]{36}$/.test(offer.op) || !bindingEqual(offer.binding, binding)
             || offer.socket_path !== boot.socket_path || offer.nonce !== boot.nonce) return;
         lastOp = offer.op; // No retry of a lingering offer, even after unknown I/O.
-        if (!current(await observe()) || !(await empty())) return;
+        if (!current(await observe())) return;
+        const before = await $.prompt.read();
         const authorization = await $.http.fetch('http://notice.invalid/authorize', {
           method: 'POST', socketPath: boot.socket_path,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ schema_version: schema('authorize'), op: offer.op, binding,
-            nonce: boot.nonce, terminal: true, box_empty: true, cursor: 0 }),
+            nonce: boot.nonce, terminal: true, box_empty: before.text === '', cursor: before.cursor }),
         });
-        if (!authorization.ok || authorization.status !== 200) return;
+        // Negative facts diagnose the refusal, but can never admit a draft.
+        if (before.text !== '' || before.cursor !== 0 || !authorization.ok || authorization.status !== 200) return;
         const authorized = JSON.parse(authorization.text);
         if (!keys(authorized, ['schema_version', 'op', 'binding', 'envelope_bytes', 'envelope_sha256', 'text'])
             || authorized.schema_version !== schema('authorized') || authorized.op !== offer.op

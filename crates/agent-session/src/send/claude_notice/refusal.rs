@@ -29,6 +29,8 @@ pub(super) fn authorize(
     bootstrap: &runtime::Bootstrap,
     ready: &runtime::Ready,
 ) -> Result<(), CliError> {
+    // Authenticate the operation before interpreting negative native composer facts.
+    // A nonempty/cursor refusal never grants authorization or consumes the attempt.
     for (failed, reason) in [
         (path != "/authorize", "authorization-path"),
         (

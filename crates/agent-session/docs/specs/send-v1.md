@@ -74,9 +74,11 @@ Each option is independent:
   through the native protocol. Outstanding activity attention still refuses,
   including when `--allow-blocked` is present.
 - `--require-empty-composer` requires an observable empty composer before paste.
-  A fresh draft is refused without paste or Enter. An eligible stale draft uses
-  [saved draft admission](stale-drafts-v1.md) before delivery; setting the bound
-  to 0 preserves refusal. `--allow-blocked` cannot override guards.
+  A fresh draft is refused without paste or Enter. On screen-based terminal
+  routes, an eligible stale draft uses [saved draft admission](stale-drafts-v1.md)
+  before delivery; setting the bound to 0 preserves refusal. Supported attached
+  Claude native notices preserve any human draft, stale or fresh, until the human
+  clears it; they never stash or clear it. `--allow-blocked` cannot override guards.
 - `--idempotency-key` accepts 1–256 bytes and claims one delivery attempt for
   the stable managed session, across CLI retries and runtime replacements.
 
@@ -305,9 +307,21 @@ mode, runtime injection or terminal fallback.
 
 The native notice input is the complete LF-only UTF-8 envelope, at most 16 KiB.
 Its spaces and final LF are never trimmed. Identity, idle, pending-ingress,
-mounted-empty and used-key checks precede native authorization. A fresh native
-handshake is required before durable key/operation consumption, and consumption
-is synchronized before text release. The record lock is released before native
+account and used-key checks remain. The supported attached notice route uses
+the fresh module authorization's `prompt.read` result (empty text, cursor zero)
+as its composer fact, bound to the current offer, nonce, module and
+runtime/provider identity. It does not require an additional screen-empty
+verdict. The module reads again immediately before submit; a late human edit
+causes no submit or clear, retains the consumed attempt and never switches to
+terminal text. A fresh native handshake is required before durable
+key/operation consumption, and consumption is synchronized before text release.
+
+An occupied native composer refuses with `authorization-composer-not-empty`;
+the daemon defers its queued notice as `recipient-composer-not-empty` without
+consuming the generation. Native notices do not run screen-based stale-draft
+repair or update its timer. A stale human draft still requires human clearing.
+
+The record lock is released before native
 API entry so required hooks can run; no record writes occur while it is
 released. Confirmation reacquires and checks identity in the same original
 Claude send budget, without renewing it.
@@ -496,8 +510,11 @@ codes also apply.
 
 ## Stale draft admission
 
-Guarded admission with `--require-empty-composer` may save an unchanged draft
-older than the configured bound, then clear it through the shared cleanup path
+Screen-based guarded admission with `--require-empty-composer` may save an
+unchanged draft older than the configured bound, then clear it through the shared cleanup path
 before delivering input. See [saved stale drafts](stale-drafts-v1.md) for the
 600-second default, disabling value 0, exact observation limits, durable event,
 store bounds and read routes. Unobservable panes retain their refusal.
+Supported attached Claude native notices do not use this repair: any native
+human draft defers the notice until the human clears it. Ordinary terminal
+stale-draft admission is unchanged.
