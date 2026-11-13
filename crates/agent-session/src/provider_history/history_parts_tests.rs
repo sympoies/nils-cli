@@ -590,3 +590,16 @@ fn both_history_forms_mask_shared_bare_token_patterns() {
     assert!(parts[0].get("owner_summary").is_none());
     assert_eq!(owner_text(text), "inspect [redacted] then");
 }
+
+#[test]
+fn credential_masking_handles_long_whitespace_runs_within_budget() {
+    let value = " ".repeat(64_000);
+    let started = std::time::Instant::now();
+    let masked = redact_text(&value);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "masking whitespace took {elapsed:?}"
+    );
+    assert_eq!(masked, value);
+}

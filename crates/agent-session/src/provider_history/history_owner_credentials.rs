@@ -16,6 +16,9 @@ fn preserve_marked_assignments(value: &str, mask: impl Fn(&str) -> String) -> St
     const MARKER: &str = "[redacted]";
     let mut output = String::with_capacity(value.len());
     let mut copied = 0;
+    let mut quote_scan = 0;
+    let mut quote = None;
+    let mut escaped = false;
     for captures in nils_common::redact::assignment_secret_regex().captures_iter(value) {
         let assignment = captures.get(0).expect("assignment match");
         let raw = captures.name("value").expect("assignment value");
@@ -37,10 +40,35 @@ fn preserve_marked_assignments(value: &str, mask: impl Fn(&str) -> String) -> St
         } else {
             continue;
         };
+        // A quote only terminates an unquoted marker when it closes an outer
+        // wrapper. Otherwise it can start another fragment of the secret.
+        let closing_quote = value[end..].chars().next().is_some_and(|character| {
+            if !matches!(character, '\'' | '"') || raw.as_str().starts_with(['\'', '"']) {
+                return false;
+            }
+            for character in value[quote_scan..raw.start()].chars() {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if quote == Some(character) {
+                    quote = None;
+                } else if quote.is_none() && matches!(character, '\'' | '"') {
+                    quote = Some(character);
+                }
+            }
+            quote_scan = raw.start();
+            quote == Some(character)
+                && value[end + character.len_utf8()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|next| next.is_whitespace() || ",;&}])|".contains(next))
+        });
         // A marker prefix followed by credential text is still a secret value.
         if value[end..].chars().next().is_some_and(|character| {
             !character.is_whitespace()
-                && !"\"',;&}]".contains(character)
+                && !",;&}]".contains(character)
+                && !closing_quote
                 && !(character == '#'
                     && super::credential_query_key(&captures["key"])
                     && value[..raw.start()]
@@ -76,6 +104,14 @@ fn redact_assignments(value: &str) -> String {
     {
         let position = scan + offset;
         scan = position + separator.len_utf8();
+        if separator.is_whitespace()
+            && value[..position]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_whitespace)
+        {
+            continue;
+        }
         let key_end = value[..position].trim_end();
         let left = key_end.trim_end_matches(['\'', '"']);
         let key = left

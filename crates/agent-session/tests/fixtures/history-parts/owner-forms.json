@@ -217,5 +217,65 @@
     "value": "password=[redacted]synthetic-suffix",
     "masked": "password=[redacted]",
     "owner": "password=[redacted]"
+  },
+  {
+    "name": "quoted_marker_single_concat",
+    "value": "password='[redacted]''synthetic-suffix'",
+    "masked": "password='[redacted]'",
+    "owner": "password='[redacted]'"
+  },
+  {
+    "name": "unquoted_marker_double_concat",
+    "value": "password=[redacted]\"synthetic-suffix\"",
+    "masked": "password=[redacted]",
+    "owner": "password=[redacted]"
+  },
+  {
+    "name": "unquoted_marker_single_concat",
+    "value": "password=[redacted]'synthetic-suffix'",
+    "masked": "password=[redacted]",
+    "owner": "password=[redacted]"
+  },
+  {
+    "name": "quoted_marker_mixed_concat",
+    "value": "password='[redacted]'\"synthetic-suffix\"",
+    "masked": "password=[redacted]",
+    "owner": "password=[redacted]"
+  },
+  {
+    "name": "flag_marker_single_concat",
+    "value": "--password='[redacted]''synthetic-suffix'",
+    "masked": "--password='[redacted]'",
+    "owner": "--password='[redacted]'"
+  },
+  {
+    "name": "authorization_bearer_marker_concat",
+    "value": "Authorization: Bearer [redacted]\"synthetic-suffix\"",
+    "masked": "Authorization: [redacted]",
+    "owner": "Authorization: [redacted]"
+  },
+  {
+    "name": "authorization_marker_concat",
+    "value": "Authorization: [redacted]'synthetic-suffix'",
+    "masked": "Authorization: [redacted]",
+    "owner": "Authorization: [redacted]"
+  },
+  {
+    "name": "json_marker_double_concat",
+    "value": "{\"password\":\"[redacted]\"\"synthetic-suffix\"}",
+    "masked": "{\"password\":\"[redacted]\"}",
+    "owner": "{\"password\":\"[redacted]\"}"
+  },
+  {
+    "name": "quoted_marker_double_concat",
+    "value": "password=\"[redacted]\"\"synthetic-suffix\"",
+    "masked": "password=\"[redacted]\"",
+    "owner": "password=\"[redacted]\""
+  },
+  {
+    "name": "unquoted_marker_concat_with_space",
+    "value": "password=[redacted]\" synthetic-suffix\"",
+    "masked": "password=[redacted]",
+    "owner": "password=[redacted]"
   }
 ]

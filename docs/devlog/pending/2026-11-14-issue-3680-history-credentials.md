@@ -5,6 +5,8 @@
 
 - Both masked and owner history forms redact URL query credentials and shared
   assignment/token patterns while retaining owner path and URL context.
+- Concatenated quoted credential fragments remain secret, and long whitespace
+  runs avoid repeatedly scanning the same prefix.
 
 ### Why / context
 
@@ -16,7 +18,8 @@
 ### Evidence
 
 - Red: 18 focused tests passed and the URL-query and bare-token regressions
-  failed (exit 101). Green: all 20 focused history-parts tests passed,
+  failed (exit 101). Review regressions also reproduced a quoted suffix leak
+  and an 81-second whitespace scan. Green: all 21 focused history-parts tests passed,
   including unchanged provider snapshot bytes.
 
 ### Links
