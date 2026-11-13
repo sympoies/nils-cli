@@ -776,6 +776,61 @@ pub(crate) fn defer_with_detail(
     })
 }
 
+/// Pre-claim refusals for an unobservable composer that a record without a
+/// provider binding may accumulate before its wake settles as undeliverable.
+const UNOBSERVABLE_COMPOSER_BOUND: usize = 5;
+
+/// Defers a wake whose composer could not be observed, for a record without a
+/// provider binding. Its composer may never become observable, so the
+/// `UNOBSERVABLE_COMPOSER_BOUND`th consecutive refusal of the generation
+/// settles it as `undeliverable` instead of retrying until the message expires.
+pub(crate) fn defer_unbound_unobservable_composer(
+    context: &CliContext,
+    candidate: &NotificationCandidate,
+    retry_after_seconds: i64,
+) -> Result<bool, CliError> {
+    update_attempt(context, |registry, now| {
+        transition_unbound_unobservable_composer(registry, candidate, retry_after_seconds, now)
+    })
+}
+
+fn transition_unbound_unobservable_composer(
+    registry: &mut Registry,
+    candidate: &NotificationCandidate,
+    retry_after_seconds: i64,
+    now: i64,
+) -> bool {
+    const REASON: &str = "recipient-composer-unobservable";
+    normalize_registry(registry, now);
+    let Some(receipt) = registry.notifications.get_mut(&receipt_key(
+        &candidate.target_session_id,
+        &candidate.target_incarnation,
+    )) else {
+        return false;
+    };
+    if receipt.generation != candidate.generation || receipt.state != "queued" {
+        return false;
+    }
+    let refusals = 1 + receipt
+        .attempt_history
+        .iter()
+        .rev()
+        .take_while(|attempt| {
+            attempt.generation == candidate.generation && attempt.reason == REASON
+        })
+        .count();
+    receipt.updated_at_epoch = now;
+    receipt.last_reason = Some(REASON.to_string());
+    receipt.last_reason_detail = None;
+    receipt.record_attempt(candidate.generation, REASON, now);
+    if refusals >= UNOBSERVABLE_COMPOSER_BOUND {
+        receipt.state = "undeliverable".to_string();
+    } else {
+        receipt.next_attempt_at_epoch = now.saturating_add(retry_after_seconds.max(0));
+    }
+    true
+}
+
 pub(crate) fn reconcile_submitted(
     context: &CliContext,
     candidate: &NotificationCandidate,
@@ -1320,6 +1375,101 @@ mod tests {
             "target",
             "incarnation"
         ));
+    }
+
+    fn queued_candidate(registry: &mut Registry, now: i64) -> NotificationCandidate {
+        let scheduled = schedule(registry, "target", "incarnation", now);
+        NotificationCandidate {
+            prompt: None,
+            target_session_id: "target".to_string(),
+            target_incarnation: "incarnation".to_string(),
+            generation: scheduled.generation,
+            queued_at_epoch: 0,
+            attempted_at_epoch: 0,
+            attempted_at: None,
+        }
+    }
+
+    fn refuse_unobservable(registry: &mut Registry, candidate: &NotificationCandidate, now: i64) {
+        assert!(transition_unbound_unobservable_composer(
+            registry, candidate, 1, now
+        ));
+    }
+
+    fn receipt_of(registry: &Registry) -> &NotificationReceipt {
+        registry
+            .notifications
+            .get(&receipt_key("target", "incarnation"))
+            .expect("receipt")
+    }
+
+    #[test]
+    fn unobservable_composer_settles_on_the_fifth_consecutive_refusal_and_retries_before() {
+        let mut registry = Registry::default();
+        let candidate = queued_candidate(&mut registry, 100);
+        for (index, now) in (101..105).enumerate() {
+            refuse_unobservable(&mut registry, &candidate, now);
+            let receipt = receipt_of(&registry);
+            assert_eq!(receipt.state, "queued", "refusal {}", index + 1);
+            assert_eq!(receipt.next_attempt_at_epoch, now + 1);
+            assert_eq!(
+                receipt.last_reason.as_deref(),
+                Some("recipient-composer-unobservable")
+            );
+        }
+        assert_eq!(pending_candidates(&mut registry, 105).len(), 1);
+        refuse_unobservable(&mut registry, &candidate, 105);
+        assert_eq!(receipt_of(&registry).state, "undeliverable");
+        assert!(pending_candidates(&mut registry, 10_000).is_empty());
+        assert!(!transition_unbound_unobservable_composer(
+            &mut registry,
+            &candidate,
+            1,
+            106
+        ));
+    }
+
+    #[test]
+    fn another_recorded_reason_restarts_the_unobservable_composer_count() {
+        let mut registry = Registry::default();
+        let candidate = queued_candidate(&mut registry, 100);
+        for now in 101..104 {
+            refuse_unobservable(&mut registry, &candidate, now);
+        }
+        registry
+            .notifications
+            .get_mut(&receipt_key("target", "incarnation"))
+            .expect("receipt")
+            .record_attempt(candidate.generation, "provider-not-ready", 104);
+        for now in 105..109 {
+            refuse_unobservable(&mut registry, &candidate, now);
+            assert_eq!(receipt_of(&registry).state, "queued", "now {now}");
+        }
+        refuse_unobservable(&mut registry, &candidate, 109);
+        assert_eq!(receipt_of(&registry).state, "undeliverable");
+    }
+
+    #[test]
+    fn a_new_generation_restarts_the_unobservable_composer_count() {
+        let mut registry = Registry::default();
+        let first = queued_candidate(&mut registry, 100);
+        for now in 101..105 {
+            refuse_unobservable(&mut registry, &first, now);
+        }
+        let second = queued_candidate(&mut registry, 105);
+        assert_eq!(second.generation, first.generation + 1);
+        assert!(!transition_unbound_unobservable_composer(
+            &mut registry,
+            &first,
+            1,
+            106
+        ));
+        for now in 106..110 {
+            refuse_unobservable(&mut registry, &second, now);
+            assert_eq!(receipt_of(&registry).state, "queued", "now {now}");
+        }
+        refuse_unobservable(&mut registry, &second, 110);
+        assert_eq!(receipt_of(&registry).state, "undeliverable");
     }
 
     #[test]

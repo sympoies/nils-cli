@@ -459,3 +459,81 @@ async fn mailbox_notice_unbound_terminal_codex_settles_without_unbounded_retry()
         "a settled wake is not retried"
     );
 }
+
+async fn dispatch_wake(fixture: &WakeFixture) {
+    crate::serve::terminal_notification::dispatch_coordination_notification(
+        fixture.state.clone(),
+        fixture.candidate.clone(),
+    )
+    .await;
+}
+
+fn bind_codex_provider(fixture: &WakeFixture) {
+    let path = session_dir(&fixture.state.context, "beta").join("session.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    record["provider_resume"] = json!({"provider":"codex", "session_id":"provider-beta", "capture_method":"test", "captured_at":"2000-01-01T00:00:00Z", "resume_args":[]});
+    fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
+}
+
+#[tokio::test]
+async fn mailbox_notice_unbound_terminal_codex_unobservable_composer_settles_undeliverable() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let fixture = WakeFixture::new(AgentKind::Codex).await;
+    let record = load_session_record(&fixture.state.context, "beta").unwrap();
+    assert!(record.provider_resume.is_none());
+    fs::write(fixture.temp.path().join("capture-unavailable"), "").unwrap();
+    // The fifth consecutive refusal settles the wake; earlier ones retry.
+    for refusal in 1..=4 {
+        dispatch_wake(&fixture).await;
+        let receipt = notification_fixture(fixture.temp.path());
+        assert_eq!(receipt["state"], "queued", "refusal {refusal}: {receipt}");
+        assert_eq!(
+            receipt["last_reason"], "recipient-composer-unobservable",
+            "refusal {refusal}: {receipt}"
+        );
+    }
+    dispatch_wake(&fixture).await;
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["state"], "undeliverable", "{receipt}");
+    assert_eq!(receipt["last_reason"], "recipient-composer-unobservable", "{receipt}");
+    fixture.assert_no_input("");
+    dispatch_wake(&fixture).await;
+    assert_eq!(
+        notification_fixture(fixture.temp.path()),
+        receipt,
+        "a settled wake is not retried"
+    );
+}
+
+#[tokio::test]
+async fn mailbox_notice_bound_terminal_codex_unobservable_composer_keeps_retrying() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let fixture = WakeFixture::new(AgentKind::Codex).await;
+    bind_codex_provider(&fixture);
+    fs::write(fixture.temp.path().join("capture-unavailable"), "").unwrap();
+    for _ in 0..6 {
+        dispatch_wake(&fixture).await;
+    }
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["state"], "queued", "{receipt}");
+    fixture.assert_no_input("");
+}
+
+#[tokio::test]
+async fn mailbox_notice_unbound_terminal_codex_draft_refusal_keeps_retrying() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let fixture = WakeFixture::new(AgentKind::Codex).await;
+    let record = load_session_record(&fixture.state.context, "beta").unwrap();
+    assert!(record.provider_resume.is_none());
+    fs::write(fixture.temp.path().join("composer"), "operator partial draft").unwrap();
+    for _ in 0..6 {
+        dispatch_wake(&fixture).await;
+    }
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["state"], "queued", "{receipt}");
+    assert_eq!(receipt["last_reason"], "provider-not-ready", "{receipt}");
+    fixture.assert_no_input("operator partial draft");
+}

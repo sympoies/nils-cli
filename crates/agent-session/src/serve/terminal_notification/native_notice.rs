@@ -55,6 +55,10 @@ pub(super) async fn dispatch(
         .is_text_wake()
         .then(|| crate::send::claude_notice::attach::mailbox_text_reason(&state.context, &record))
         .flatten();
+    // A terminal-started Codex record has no provider binding and no
+    // structured prompt route, so an unobservable composer may never recover.
+    let unbound_codex =
+        record.agent == AgentKind::Codex.as_str() && record.provider_resume.is_none();
     let context = state.context.clone();
     let tmux = state.tmux_bin.clone();
     let sending = candidate.clone();
@@ -109,7 +113,20 @@ pub(super) async fn dispatch(
                 if error.code() == "send-composer-unobservable"
                     && error.details().and_then(|details| details["observation"].as_str())
                         == Some("region-not-single-row"));
-            if multi_row {
+            let composer_unobservable = matches!(&result, Ok(Err(error))
+                if error.code() == "send-composer-unobservable");
+            if unbound_codex && composer_unobservable {
+                let context = state.context.clone();
+                let candidate = candidate.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::coordination::defer_notification_unbound_unobservable_composer(
+                        &context,
+                        &candidate,
+                        COORDINATION_NOTIFICATION_RETRY,
+                    )
+                })
+                .await;
+            } else if multi_row {
                 let context = state.context.clone();
                 let candidate = candidate.clone();
                 let _ = tokio::task::spawn_blocking(move || {
