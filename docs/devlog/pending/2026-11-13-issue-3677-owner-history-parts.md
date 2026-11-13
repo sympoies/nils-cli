@@ -14,7 +14,9 @@
 
 ### Evidence
 
-- Designated review exposed credential assignment and scheme-less userinfo disclosure; synthetic canaries reproduce the assignment failure before repair, and all 19 focused history-parts tests pass after repair.
+- Designated review exposed credential assignment and scheme-less userinfo disclosure; synthetic
+  canaries reproduce the assignment failure before repair, and all 19 focused history-parts tests
+  pass after repair.
 
 - Pre-implementation red: 25 passed and 3 new owner tests failed. Focused
   history-parts tests: 19 passed, including HTTP serialization and exact masked
