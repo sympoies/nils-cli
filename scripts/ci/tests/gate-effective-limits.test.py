@@ -6,6 +6,8 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -200,6 +202,37 @@ class ReceiptFailures(unittest.TestCase):
         stderr.write.side_effect = BrokenPipeError('fixture')
         self.assertEqual(self.run_worker(stderr), 7)
         self.assertIn('effective', json.loads(self.receipt.read_text()))
+
+    def test_closed_stderr_process_exit_retains_workload_status(self):
+        script = '''import sys
+sys.stdin.buffer.read(1)
+import importlib.util
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('gate', sys.argv[1])
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+gate.SELF_CGROUP, gate.CGROUP_ROOT = Path(sys.argv[2]), Path(sys.argv[3])
+gate.sys.platform = 'linux'
+gate.subprocess.run = lambda *args, **kwargs: None
+command = 'import os, stat; raise SystemExit(7 if stat.S_ISFIFO(os.fstat(2).st_mode) else 9)'
+sys.exit(gate.main(['--inside', '--', sys.executable, '-c', command]))
+'''
+        env = dict(os.environ, NILS_CLI_GATE_SUPERVISOR_PID=str(os.getpid()),
+                   NILS_CLI_GATE_SLICE='fixture.slice', NILS_CLI_GATE_RECEIPT=str(self.receipt))
+        with subprocess.Popen([sys.executable, '-c', script, str(ROOT / 'scripts/ci/gate-resources.py'),
+                               str(self.proc), str(self.tree)], env=env, stdin=subprocess.PIPE,
+                              stderr=subprocess.PIPE, stdout=subprocess.DEVNULL) as worker:
+            worker.stderr.close()
+            # Release only after the reader is closed; no scheduling race.
+            worker.stdin.write(b'x')
+            worker.stdin.close()
+            try:
+                status = worker.wait(timeout=10)
+            finally:
+                if worker.poll() is None:
+                    worker.kill()
+                    worker.wait()
+        self.assertEqual(status, 7)
 
     def test_non_utf8_limit_is_typed_and_workload_starts(self):
         (self.tree / 'gate/workload/memory.max').write_bytes(b'\xff')

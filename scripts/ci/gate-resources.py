@@ -3,6 +3,7 @@
 import contextlib
 import datetime
 import fcntl
+import io
 import json
 import os
 from pathlib import Path
@@ -106,7 +107,10 @@ def write_resource_receipt(linux):
             print(f'warning: gate resource receipt unavailable ({type(error).__name__})',
                   file=sys.stderr, flush=True)
         except (OSError, ValueError):
-            pass  # stderr can itself be closed or broken
+            # Do not retry a broken buffer at interpreter shutdown (exit 120).
+            # Only silence this worker's Python diagnostics; preserve fd 2
+            # for the workload, whose stderr behavior must remain unchanged.
+            sys.stderr = io.StringIO()
 
 
 def validate_systemd():
