@@ -1,0 +1,31 @@
+  Total                       ~120 tok/turn
+
+  Current session
+  █████████████████████                             42% used
+  Resets 4:59am (Example/Zone)
+
+  Current week (all models)
+  ██████████████████████████████                    61% used
+  Resets Nov 15, 8:59pm (Example/Zone)
+
+  Current week (Fable)
+                                                     0% used
+  Resets Nov 15, 9pm (Example/Zone)
+
+  What's contributing to your usage?
+  Approximate · sessions on this machine only
+  Last 24h · shares overlap
+
+  79%  Start fresh when you switch tasks · run /clear
+  59%  Run fewer sessions at once · up to 9 at once
+  16%  See what fills your context · run /context
+
+  Skills                  % of usage
+  /example:skill                  1%
+
+  Loops                                      every  runs  tokens  per run last run
+  Check example status once                 dynamic     2   28.6m    14.3m   9h ago
+  /loop                                    dynamic     5    9.2m     1.8m  15h ago
+
+  d to day · w to week
+  Esc to cancel

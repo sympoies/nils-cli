@@ -14,15 +14,14 @@ fn usage_auto_falls_back_to_claude_cli_and_writes_cache() {
         r#"#!/usr/bin/env sh
 cat >/dev/null
 cat <<'OUT'
-Claude Code Usage
+  Current session
+  █████████████▌                                     25% used
+  Resets 4:59am (Example/Zone)
 
-Current session
-5-hour limit: 25% used, 75% remaining
-Resets at 2026-01-01T00:00:00+00:00
+  Current week (all models)
+  █████████████████████████                          50% used
+  Resets Nov 15, 8:59pm (Example/Zone)
 
-Current week
-Weekly limit: 50% used, 50% remaining
-Resets at 2026-01-03T12:30:00+00:00
 OUT
 "#,
     );
