@@ -53,7 +53,7 @@ case "$2" in
   */hooks\?per_page=100) cat "$dir/list.json" ;;
   orgs/acme/hooks)
     [ "$#" -eq 6 ] && [ "$3" = --method ] && [ "$4" = POST ] && [ "$5" = --input ] || {{ echo "unexpected create args: $*" >&2; exit 96; }}
-    stat -c %a "$6" > "$dir/post-mode"
+    (stat -c '%a' "$6" 2>/dev/null || stat -f '%Lp' "$6") > "$dir/post-mode"
     printf '%s' "$6" > "$dir/post-path"
     cp "$6" "$dir/post-body.json"
     printf '{{"id":42,"active":true,"events":["push","pull_request"],"config":{{"url":"https://new.example.test/hook","content_type":"json","insecure_ssl":"0","secret":"********"}}}}\n'
