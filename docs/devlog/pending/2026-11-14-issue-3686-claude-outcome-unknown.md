@@ -6,6 +6,8 @@
 - Claude structured idle over an unmatched open turn now projects unknown
   immediately with claude_turn_outcome_unknown, while preserving durable
   attention and late completion handling.
+- Terminal text admission reads control state, so pending approvals still refuse
+  send, prompt delivery and unattended rename when the view displays unknown.
 
 ### Why / context
 
@@ -19,6 +21,8 @@
 - Five retained red assertions preceded production edits; all 51 focused shadow
   tests passed after the change, including late Stop settlement and pending
   approval preservation.
+- Four caller regressions failed before the input-admission repair and verify
+  refusal without pane writes under the unknown projection.
 
 ### Links
 

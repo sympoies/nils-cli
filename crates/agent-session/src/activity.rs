@@ -1790,7 +1790,7 @@ pub(crate) fn refuse_if_blocked(
     record: &SessionRecord,
     remedy: &str,
 ) -> Result<(), CliError> {
-    let Some(turn) = state_for_view(context, record) else {
+    let Some(turn) = controller_state_for_record(context, record) else {
         return Ok(());
     };
     if turn.phase != TurnPhase::NeedsInput {
