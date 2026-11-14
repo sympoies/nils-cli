@@ -107,7 +107,7 @@ _arguments "${_arguments_options[@]}" : \
 enforce\:"Require authenticated claims and mutation admission leases"
 off\:"Disable agent-session collision warnings and admission"))' \
 '--paste-delay-ms=[Delay before pasting the initial prompt into the tmux pane]:PASTE_DELAY_MS:_default' \
-'--operation-id=[Time-bearing UUIDv7 for a Console start; replay never creates another session]:UUID:_default' \
+'--operation-id=[Canonical UUIDv7 for a Console start; replay never creates another session]:UUID:_default' \
 '(--resume)--service=[Admitted service ID; starts a Console-owned root as that service]:ID:_default' \
 '--service-generation=[Admitted generation of the service]:GENERATION:_default' \
 '--credential-file=[Private service credential file; never a session capability]:PATH:_files' \
@@ -117,7 +117,7 @@ off\:"Disable agent-session collision warnings and admission"))' \
 '--account=[Broker account for --via-console or direct --resume. Resume defaults to the unique original account and cannot switch accounts]:NAME:_default' \
 '--agent-profile=[Launch profile for --via-console, as the target daemon advertises it. A profile owns its launch command, so Agent Console ignores --agent-arg with it]:ID:_default' \
 '--role=[Configurable launch role; stored once and never inherited. A coordinator requires a root]:ROLE:_default' \
-'--title-mode=[Automatic provider titles or an operator-pinned title (default\: auto)]:TITLE_MODE:(auto pinned)' \
+'--title-mode=[Auto mode may replace a supplied title with a generated topic. Use --title-mode pinned to keep it (default\: auto)]:TITLE_MODE:(auto pinned)' \
 '(--via-console)--forge-initiator=[Operator-only configured initiator for forge identity binding. Managed children inherit it]:ID:_default' \
 '--program=[Work-mode program tracker issue this session belongs to, as OWNER/REPO#N. Replaces the inherited program]:OWNER/REPO#N:_default' \
 '*--issue=[Issue this session works on, as OWNER/REPO#N. Repeatable, at most 4; replaces the inherited issues]:OWNER/REPO#N:_default' \
@@ -129,7 +129,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--prompt-stdin[Read prompt from stdin]' \
 '(--id --tmux-bin --agent-bin --paste-delay-ms --coordination-mode)--via-console[Start the session through Agent Console, owned by the Console owner of the managed session this command runs in. Requires AGENT_SESSION_ID, its capability, and a daemon with federation configured]' \
 '(--prompt --prompt-file --prompt-stdin --env)--reconcile[Inspect a prior Console start operation without creating a session]' \
-'--no-parent[Start a new root session\: do not record the managed session this command runs in as the parent]' \
+'--no-parent[Start a new lineage root. Launch origin still records the caller]' \
 '(--resume)--attest-role[Operator-only attestation of this session'\''s role; never inherited by children]' \
 '--no-inherit-work[Do not inherit the parent session'\''s program and issues]' \
 '-h[Print help (see more with '\''--help'\'')]' \

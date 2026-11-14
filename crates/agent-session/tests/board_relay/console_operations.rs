@@ -15,6 +15,97 @@ fn operation() -> &'static str {
     ID.as_str()
 }
 
+#[test]
+fn console_start_invalid_operation_id_explains_the_uuidv7_requirement() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let serve = fixture.serve(&[], Some(&aggregator));
+    for id in ["00000000-0000-4000-8000-000000000007", "invalid"] {
+        let output = fixture.start_via_console(
+            &[
+                "--agent",
+                "claude",
+                "--operation-id",
+                id,
+                "--format",
+                "json",
+            ],
+            true,
+        );
+        assert_eq!(output.code, 64);
+        assert_eq!(error_of(&output)["code"], "console-start-invalid");
+        assert_eq!(
+            error_of(&output)["message"],
+            "operation_id must be a canonical UUIDv7"
+        );
+        let (status, result) = route(
+            &serve,
+            json!({"operation_id":id,"session":{"agent":"claude"}}),
+        );
+        assert_eq!(status, 400);
+        assert_eq!(
+            result["error"]["message"],
+            "operation_id must be a canonical UUIDv7"
+        );
+    }
+    assert!(aggregator.seen().is_empty());
+}
+
+fn start_help() -> String {
+    run_resolved("agent-session", &["start", "--help"], &CmdOptions::new()).stdout_text()
+}
+
+#[test]
+fn console_start_help_explains_that_auto_mode_can_replace_a_supplied_title() {
+    assert!(start_help().contains("Use --title-mode pinned to keep it"));
+}
+
+#[test]
+fn console_start_help_distinguishes_root_lineage_from_launch_origin() {
+    assert!(start_help().contains("Launch origin still records the caller"));
+}
+
+#[test]
+fn console_start_cli_replays_a_supplied_uuidv7_without_a_second_create() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let _serve = fixture.serve(&[], Some(&aggregator));
+    aggregator.reply_json(
+        201,
+        &json!({"ok":true,"data":{"session":{"id":"created-child","agent":"claude"}}}),
+    );
+    let id = operation();
+    let args = [
+        "--agent",
+        "claude",
+        "--operation-id",
+        id,
+        "--no-parent",
+        "--title",
+        "Fixture title",
+        "--format",
+        "json",
+    ];
+    for _ in 0..2 {
+        let output = fixture.start_via_console(&args, true);
+        assert_eq!(output.code, 0, "{}", output.stdout_text());
+        assert_eq!(
+            output.stdout_json()["data"]["session"]["id"],
+            "created-child"
+        );
+    }
+    let seen = aggregator.seen();
+    assert_eq!(seen.len(), 1, "replay must not launch a second child");
+    let session = &seen[0].body.as_ref().unwrap()["session"];
+    assert_eq!(session["title"], "Fixture title");
+    assert_eq!(session["lineage"]["parent"], Value::Null);
+    assert_eq!(session["lineage"]["depth"], 0);
+    assert_eq!(
+        session["origin"]["parent"],
+        json!({"machine":MACHINE,"session_id":SESSION})
+    );
+}
+
 fn diagnostics(value: &Value) {
     assert!(uuid::Uuid::parse_str(value["operation_id"].as_str().expect("operation id")).is_ok());
     let wait = value["diagnostics"]["coordination_lock_wait_ms"]

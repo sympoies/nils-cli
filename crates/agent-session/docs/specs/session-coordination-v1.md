@@ -485,6 +485,12 @@ target daemon owns the launch.
 `--no-parent`, `--program`, `--issue`, and `--no-inherit-work` reach the daemon as `no_parent` (boolean)
 and `work` (`{"program", "issues", "inherit"}`, references as JSON objects); see [Session lineage and
 work v1](session-lineage-work-v1.md#console-starts).
+`--no-parent` makes a new lineage root; `origin.parent` still records the authenticated caller
+as launch provenance. It does not imply an authenticated lineage parent.
+
+`--title` supplies the initial title. The default `--title-mode auto` allows generated topics
+to replace it, including after a provider resume. Use `--title-mode pinned` to retain the supplied
+title; see [Session display metadata](session-display-metadata-v1.md).
 
 As with federated messaging, the CLI reads the private
 `coordination/daemon-endpoint.json` and calls its own daemon at
@@ -513,6 +519,12 @@ caller's record and sets them in `session`, replacing any the caller supplied
 field that names an owner: the aggregator takes the owner from the caller's
 exact Console grant. With federation unconfigured the route fails with
 `console-start-disabled` (HTTP 409).
+
+The CLI's `--operation-id` has the same canonical UUIDv7 requirement; a UUID of another version
+or a malformed ID fails with `console-start-invalid` and a UUIDv7 diagnostic. A valid ID with
+session fields creates or reconciles the identical submission without another launch;
+changed fields return `console-start-operation-conflict`. An explicit lookup sends only
+`operation_id` and `reconcile: true`; see [operation diagnostics and reconciliation](coordination-runtime-v1.md#operation-diagnostics-and-reconciliation).
 
 Notice starts add optional `notice_kind`, `notice_source`, and `notice_id` to
 `session`, alongside the already encoded `prompt`. Both managed-session and
