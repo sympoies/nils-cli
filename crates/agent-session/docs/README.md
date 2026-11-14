@@ -20,6 +20,8 @@ or integrating a specific subsystem.
   repaired/admitted and unrepaired/refused outcomes.
 - [Work coordination](runbooks/work-coordination.md): coordination modes,
   declared paths, authority boundaries, advisory flow, and enforce flow.
+- [State retirement inventory](runbooks/state-retirement-inventory.md): read-only
+  closed-ledger counts and deployment-owner evidence definitions for #3081.
 - [Serve daemon operations](runbooks/serve-daemon.md): safe startup,
   authentication boundaries, HTTP session creation, restart survival, and the
   versioned `serve --config` file.
