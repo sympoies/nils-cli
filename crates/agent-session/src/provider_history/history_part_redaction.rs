@@ -187,7 +187,10 @@ pub(super) fn owner_text(value: &str) -> String {
             })
             .next()
             .unwrap_or_default();
-        let single_quoted = rest[..colon - scheme.len()].ends_with('\'');
+        let outer_quote = rest[..colon - scheme.len()]
+            .chars()
+            .next_back()
+            .filter(|character| matches!(character, '\'' | '"'));
         let is_scheme = scheme
             .as_bytes()
             .first()
@@ -200,8 +203,8 @@ pub(super) fn owner_text(value: &str) -> String {
         let end = rest
             .find(|character: char| {
                 character.is_whitespace()
-                    || matches!(character, '"' | '<' | '>' | '`' | '{' | '}')
-                    || (single_quoted && character == '\'')
+                    || matches!(character, '<' | '>' | '`' | '{' | '}')
+                    || outer_quote == Some(character)
             })
             .unwrap_or(rest.len());
         let url = &rest[..end];
@@ -222,7 +225,41 @@ pub(super) fn owner_text(value: &str) -> String {
         rest = &rest[end..];
     }
     output.push_str(rest);
-    owner_credentials::redact(&output)
+    owner_credentials::redact(&owner_relative_queries(&output))
+}
+
+fn owner_relative_queries(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for segment in value.split_inclusive(char::is_whitespace) {
+        let whitespace = segment.find(char::is_whitespace).unwrap_or(segment.len());
+        let (word, spacing) = segment.split_at(whitespace);
+        let path = word.trim_start_matches(['\'', '"', '(', '[', '{']);
+        if path.starts_with('/') || path.starts_with("./") || path.starts_with("../") {
+            let prefix = &word[..word.len() - path.len()];
+            output.push_str(prefix);
+            let closing = prefix
+                .chars()
+                .next_back()
+                .and_then(|character| match character {
+                    '\'' | '"' => Some(character),
+                    '(' => Some(')'),
+                    '[' => Some(']'),
+                    '{' => Some('}'),
+                    _ => None,
+                });
+            let end = if closing.is_some_and(|character| path.ends_with(character)) {
+                path.len() - 1
+            } else {
+                path.len()
+            };
+            output.push_str(&owner_url_query(&path[..end]));
+            output.push_str(&path[end..]);
+        } else {
+            output.push_str(word);
+        }
+        output.push_str(spacing);
+    }
+    output
 }
 
 fn owner_url_tail(value: &str) -> String {
@@ -259,12 +296,27 @@ fn owner_url_query(value: &str) -> String {
         if index > 0 {
             output.push('&');
         }
-        match pair.split_once('=') {
-            Some((key, _)) if credential_query_key(key) => {
-                output.push_str(key);
-                output.push_str("=[redacted]");
-            }
-            _ => output.push_str(pair),
+        // Some history text percent-encodes the assignment separator too.
+        // Inspect it without decoding/reserializing the surrounding URL.
+        let assignment = pair.char_indices().find_map(|(index, character)| {
+            let width = if character == '=' {
+                1
+            } else if pair[index..]
+                .get(..3)
+                .is_some_and(|text| text.eq_ignore_ascii_case("%3d"))
+            {
+                3
+            } else {
+                return None;
+            };
+            Some((&pair[..index], &pair[index..index + width]))
+        });
+        if let Some((key, separator)) = assignment.filter(|(key, _)| credential_query_key(key)) {
+            output.push_str(key);
+            output.push_str(separator);
+            output.push_str("[redacted]");
+        } else {
+            output.push_str(pair);
         }
     }
     if let Some(fragment) = fragment {
