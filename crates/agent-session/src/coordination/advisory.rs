@@ -23,6 +23,9 @@ use super::{
     request_digest, timestamp, worktree_fingerprint,
 };
 
+#[path = "owner_recovery.rs"]
+mod owner_recovery;
+
 const STATUS_VERSION: &str = "agent-session.work-context-status.v1";
 const ADVISORY_VERSION: &str = "agent-session.work-context-advisory.v1";
 const ACK_VERSION: &str = "agent-session.work-context-acknowledgement.v1";
@@ -181,7 +184,11 @@ pub(crate) fn status(
 }
 
 pub(crate) fn set(context: &CliContext, args: WorkContextSetArgs) -> Result<Value, CliError> {
-    let (record, incarnation) = require_self(context)?;
+    let (record, incarnation) = if args.if_absent {
+        owner_recovery::authenticate(context)?
+    } else {
+        require_self(context)?
+    };
     let checkout = work_context_checkout_root(Path::new(&record.cwd))?;
     let repository = args
         .repository

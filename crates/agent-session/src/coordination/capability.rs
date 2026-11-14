@@ -6,9 +6,8 @@ use crate::{CliContext, CliError, SessionRecord, load_session_record};
 /// Keep the existing outer code so callers continue to fail closed.
 pub(super) fn refusal(reason_code: &'static str) -> CliError {
     let next_action = match reason_code {
-        "capability-file-missing" | "capability-file-invalid" | "capability-mismatch" => {
-            "verify-session-capability-file"
-        }
+        "capability-file-invalid" => "recover-exact-runtime-owner",
+        "capability-file-missing" | "capability-mismatch" => "verify-session-capability-file",
         _ => "preserve-session-and-request-replacement",
     };
     let diagnostic = match reason_code {
@@ -16,7 +15,11 @@ pub(super) fn refusal(reason_code: &'static str) -> CliError {
             "check `{} broker status` for heartbeat_fresh and capability_available; if the stale heartbeat was transient, retry once the broker reports ready",
             crate::command_identity::executable(),
         ),
-        "capability-file-missing" | "capability-file-invalid" | "capability-mismatch" => {
+        "capability-file-invalid" => format!(
+            "inside the exact current runtime, try `{} work-context set --if-absent` to recover an absent canonical file; unsafe or wrong existing files remain refused",
+            crate::command_identity::executable(),
+        ),
+        "capability-file-missing" | "capability-mismatch" => {
             "check that the selected capability file is the runtime-supplied file".to_string()
         }
         _ => format!(
