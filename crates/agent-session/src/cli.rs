@@ -343,8 +343,7 @@ pub struct StartArgs {
     #[arg(long = "agent-profile", value_name = "ID", requires = "via_console")]
     pub agent_profile: Option<String>,
 
-    /// Start a new root session: do not record the managed session this
-    /// command runs in as the parent.
+    /// Start a new lineage root. Launch origin still records the caller.
     #[arg(long)]
     pub no_parent: bool,
 
@@ -352,7 +351,8 @@ pub struct StartArgs {
     #[arg(long, value_name = "ROLE")]
     pub role: Option<String>,
 
-    /// Automatic provider titles or an operator-pinned title (default: auto).
+    /// Auto mode may replace a supplied title with a generated topic.
+    /// Use --title-mode pinned to keep it (default: auto).
     #[arg(long, default_value = "auto", value_parser = ["auto", "pinned"])]
     pub title_mode: String,
 

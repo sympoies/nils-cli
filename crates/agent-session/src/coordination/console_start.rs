@@ -73,7 +73,15 @@ fn unavailable(
 fn invalid() -> CliError {
     CliError::usage(
         INVALID_CODE,
-        "a console start takes operation_id with session fields, or operation_id with reconcile:true",
+        "a console start requires session fields with optional operation_id, or only operation_id and reconcile:true",
+        None,
+    )
+}
+
+fn invalid_operation_id() -> CliError {
+    CliError::usage(
+        INVALID_CODE,
+        "operation_id must be a canonical UUIDv7",
         None,
     )
 }
@@ -321,7 +329,7 @@ pub(crate) fn relay_route(
     body: &Value,
 ) -> Result<Value, CliError> {
     if body.get("operation_id").is_some_and(|id| !id.is_string()) {
-        return Err(invalid());
+        return Err(invalid_operation_id());
     }
     let operation = body
         .get("operation_id")
@@ -329,7 +337,7 @@ pub(crate) fn relay_route(
         .map(str::to_owned)
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     if !operation::valid_id(&operation) {
-        return Err(invalid());
+        return Err(invalid_operation_id());
     }
     diagnostics::run(&operation, false, || {
         relay_operation(context, federation, session, token, body, &operation)
@@ -555,7 +563,7 @@ fn cli_operation(
         .clone()
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     if !operation::valid_id(&operation_id) {
-        return Err(invalid());
+        return Err(invalid_operation_id());
     }
     cli_request(
         context,
