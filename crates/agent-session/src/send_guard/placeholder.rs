@@ -138,7 +138,7 @@ fn submit(
         |timeout| crate::send::recorded_tmux_runtime_stopped(tmux, record, timeout),
         || {
             !changed.get()
-                && crate::activity::state_for_view(context, record)
+                && crate::activity::controller_state_for_record(context, record)
                     .is_none_or(|turn| turn.phase != crate::activity::TurnPhase::NeedsInput)
         },
         || {

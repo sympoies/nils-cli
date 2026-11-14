@@ -1,0 +1,28 @@
+{
+  "audited_version": "2.1.317",
+  "basis": "Synthetic documented interactive listing shapes; no exact provider outcome is claimed.",
+  "scenarios": [
+    {
+      "name": "interrupted_turn",
+      "approval_pending": false,
+      "listing": [
+        {
+          "kind": "interactive",
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "status": "idle"
+        }
+      ]
+    },
+    {
+      "name": "manually_denied_approval",
+      "approval_pending": true,
+      "listing": [
+        {
+          "kind": "interactive",
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "status": "idle"
+        }
+      ]
+    }
+  ]
+}

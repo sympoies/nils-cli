@@ -442,14 +442,15 @@ are never lifecycle input and never enter activity persistence.
 The [official hooks reference](https://code.claude.com/docs/en/hooks#stop),
 checked on 2026-10-07 through Claude Code 2.1.289, excludes user interrupts
 from Stop. Cancelling a tool also does not emit PostToolUseFailure. The chosen
-Claude contract now uses two runtime/revision-fenced structured idle samples
-at least 15 seconds apart for `unknown` / `interrupted_suspected` when no
-qualifying completion exists. Generic idle does not distinguish an interrupt
-from a lost completion. No pane marker or empty-composer requirement remains.
-New hooks, prompts, attention, non-idle readings or runtimes invalidate the
-inference. The nominal detection bound remains 30 seconds plus collection
-latency; without a collector it is unavailable. Fresh matching idle together
-with a qualifying Stop instead establishes completion without a timer.
+Claude contract uses the first fresh runtime/revision-fenced structured idle
+observation for `unknown` / `claude_turn_outcome_unknown` when an open turn has
+no qualifying completion. Generic idle does not distinguish an interrupt,
+manual denial or lost completion. The #3686 [audit](specs/session-runtime-v1.md#claude-interrupt-and-denial-audit-3686)
+removes Claude’s sustained-idle timer: there is no suspected-interrupt inference.
+Pending attention remains intact, and no pane marker or composer requirement
+participates. New hooks, non-idle readings and runtime/revision changes invalidate
+the observation. A later qualifying Stop plus fresh matching post-Stop idle still
+establishes completion without a timer.
 
 Codex's `Conversation interrupted` marker uses the same sustained window and
 runtime/revision/current-turn/attention fences. Action-required titles and active

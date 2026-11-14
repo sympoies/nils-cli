@@ -16,6 +16,7 @@ use super::{
 };
 
 mod claude_agents;
+mod claude_outcome;
 
 pub(crate) const SHADOW_FILE: &str = "activity.shadow.json";
 const SHADOW_LOCK_FILE: &str = ".activity.shadow.lock";
@@ -85,6 +86,7 @@ pub(crate) fn annotate_for_view(
         state.shadow_observation =
             Some(with_disagreement(cached.observation.clone(), &state.phase));
         project_unavailable(record, cached, &mut state);
+        claude_outcome::project(record, cached, &mut state);
         project_interrupt_uncertainty(record, cached, &mut state);
     }
     if cached
@@ -105,8 +107,8 @@ pub(crate) fn annotate_for_view(
     state
 }
 
-/// Activity status and list/stream views expose the same structured failure.
-pub(super) fn project_claude_unavailable(
+/// Activity status and list/stream views expose the same structured uncertainty.
+pub(super) fn project_claude_observation(
     context: &CliContext,
     record: &SessionRecord,
     state: &mut TurnState,
@@ -116,6 +118,7 @@ pub(super) fn project_claude_unavailable(
             read_current(&session_dir(context, &record.id).join(SHADOW_FILE), record)
     {
         project_unavailable(record, &cached, state);
+        claude_outcome::project(record, &cached, state);
     }
 }
 
@@ -133,14 +136,10 @@ fn project_unavailable(record: &SessionRecord, cached: &ShadowDocument, state: &
     }
 }
 
-/// Rules whose sustained reading over an open turn is interrupt uncertainty.
-/// Claude has no interrupt hook; sustained provider idle remains uncertainty.
+/// Only Codex retains sustained interrupt-marker uncertainty. Claude idle
+/// cannot identify an interrupted or denied turn (Claude Code 2.1.317).
 fn is_interrupt_rule(provider: &str, rule_id: &str) -> bool {
-    match provider {
-        "claude" => rule_id == "claude_agents_idle",
-        "codex" => rule_id == "codex_interrupt_marker",
-        _ => false,
-    }
+    provider == "codex" && rule_id == "codex_interrupt_marker"
 }
 
 fn project_interrupt_uncertainty(
@@ -288,15 +287,23 @@ fn eligible(provider: &str, status: &str, state: &TurnState) -> bool {
     if status != "running" || !matches!(provider, "claude" | "codex") {
         return false;
     }
-    if provider == "claude"
-        && state
+    if provider == "claude" {
+        if state
             .semantic_event
             .as_ref()
             .is_some_and(|event| event.kind == "stop_observed")
-    {
-        // A completed Stop keeps its revision-bound proof until newer work.
-        // Resampling a projected revision would overwrite the proof's revision.
-        return state.current_turn.is_some();
+        {
+            // Completed Stop keeps its original revision-bound idle proof.
+            return state.current_turn.is_some();
+        }
+        // Keep sampling open turns even with approval attention: a manual
+        // denial has no result hook. Completed turns retain their Stop proof.
+        return state.current_turn.is_some()
+            || state.phase == TurnPhase::Unknown
+            || state.semantic_event.as_ref().map_or_else(
+                || is_older_than(&state.phase_changed_at, SEMANTIC_STALE_AFTER_SECONDS),
+                |event| is_older_than(&event.observed_at, SEMANTIC_STALE_AFTER_SECONDS),
+            );
     }
     if state.phase == TurnPhase::Working
         && state

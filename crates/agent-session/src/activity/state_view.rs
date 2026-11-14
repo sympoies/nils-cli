@@ -64,7 +64,7 @@ fn read_state(context: &CliContext, record: &SessionRecord, quiet: bool) -> Opti
                 completion_uncertainty::project(&mut document.state, &now());
                 super::codex_quiet::project(record, &mut document.state, &now());
                 crate::send_guard::response::project(context, record, &mut document.state);
-                super::shadow::project_claude_unavailable(context, record, &mut document.state);
+                super::shadow::project_claude_observation(context, record, &mut document.state);
             }
             runtime_stopped::project(context, record, &mut document.state);
             Some(document.state)

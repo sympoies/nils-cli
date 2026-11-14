@@ -382,7 +382,7 @@ fn confirm_prompt_submission(
         |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
         |timeout| recorded_tmux_runtime_stopped(tmux_bin, record, timeout),
         || {
-            activity::state_for_view(context, record)
+            activity::controller_state_for_record(context, record)
                 .is_none_or(|turn| turn.phase != activity::TurnPhase::NeedsInput)
         },
         press_enter,

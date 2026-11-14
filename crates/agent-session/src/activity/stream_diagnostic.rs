@@ -19,6 +19,7 @@ pub(super) fn project(diagnostic: &ActivityDiagnosticView) -> Option<StreamActiv
             | "provider_projection_unavailable"
             | "runtime_activity_unhealthy"
             | "activity_state_unavailable"
+            | "claude_turn_outcome_unknown"
             | "interrupted_suspected"
             | "codex_progress_quiet"
             | "codex_startup_idle_unverified"

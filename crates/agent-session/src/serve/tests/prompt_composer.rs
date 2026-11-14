@@ -3,6 +3,8 @@ use super::*;
 
 #[path = "prompt_composer/recording.rs"]
 pub(super) mod recording;
+#[path = "prompt_composer/unknown_approval.rs"]
+mod unknown_approval;
 
 pub(super) fn empty_composer_tmux(dir: &Path) -> PathBuf {
     let bin = minimal_tmux(dir);
