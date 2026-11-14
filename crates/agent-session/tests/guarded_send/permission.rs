@@ -424,7 +424,7 @@ fn claude_permission_pending_ingress_refuses_terminal_answers() {
         unsafe { libc::flock(ingress.as_raw_fd(), libc::LOCK_SH) },
         0
     );
-    f.refused(&f.send_text(None, &[]), "permission-event-pending");
+    f.refused(&f.send_text(None, &[]), "send-provider-event-pending");
     assert!(f.calls().is_empty());
 }
 

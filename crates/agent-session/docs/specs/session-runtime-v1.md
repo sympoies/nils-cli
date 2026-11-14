@@ -336,7 +336,9 @@ request UUIDs return `permission-request-gone`. Stale runtime/turn/attention,
 uncorrelated calls and a disconnected hook send no answer. The waiter repeats
 identity checks while waiting and on delivery. A later request has a new UUID,
 so an old answer cannot land on it or in the composer. Pending provider ingress
-returns `permission-event-pending` before delivery. Terminal admission checks all
+returns `permission-event-pending` before hook-answer delivery. Terminal writes
+retain the existing `send-provider-event-pending` refusal for queued ingress.
+Terminal admission checks all
 pending attention entries, including approvals behind other attention and unknown
 overflow, and retains the ingress fence only during immediate pane writes, never
 while waiting for a provider acknowledgement.

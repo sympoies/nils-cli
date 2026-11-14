@@ -89,8 +89,13 @@ pub(crate) fn terminal_admission(
     if record.agent != "claude" {
         return Ok(None);
     }
-    let ingress = activity::pending::probe_lock(context, &record.id)?
-        .ok_or_else(|| refusal("permission-event-pending"))?;
+    let ingress = activity::pending::probe_lock(context, &record.id)?.ok_or_else(|| {
+        CliError::runtime(
+            "send-provider-event-pending",
+            "provider event ingestion is pending",
+            None,
+        )
+    })?;
     if activity::claude_attention::has_permission(context, record)? {
         return Err(refusal("claude-permission-hook-required"));
     }
