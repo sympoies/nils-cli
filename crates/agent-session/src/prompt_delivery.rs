@@ -163,7 +163,7 @@ pub(crate) fn deliver_claude_structured_prompt_locked(
     activity::refuse_if_blocked(
         context,
         &record,
-        "answer the permission through permission answer, then resubmit the prompt",
+        "resolve the pending dialog, then resubmit the prompt",
     )?;
     send_guard::require_empty_composer(context, &record, tmux_bin)?;
     codex_account::ensure_input_allowed(&record)?;

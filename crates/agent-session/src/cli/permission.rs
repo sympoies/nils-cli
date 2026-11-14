@@ -39,10 +39,13 @@ pub struct Answer {
 #[derive(Clone, Debug, ClapArgs, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnswerRequest {
+    /// Fresh request UUID returned by permission list.
     #[arg(long)]
     pub request_id: String,
+    /// Exact call identifier returned by permission list.
     #[arg(long)]
     pub call_id: String,
+    /// Allow or deny this request once without saving permission rules.
     #[arg(long, value_enum)]
     pub decision: Decision,
 }

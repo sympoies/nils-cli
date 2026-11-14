@@ -307,9 +307,9 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (answer)
 _arguments "${_arguments_options[@]}" : \
-'--request-id=[]:REQUEST_ID:_default' \
-'--call-id=[]:CALL_ID:_default' \
-'--decision=[]:DECISION:(allow deny)' \
+'--request-id=[Fresh request UUID returned by permission list]:REQUEST_ID:_default' \
+'--call-id=[Exact call identifier returned by permission list]:CALL_ID:_default' \
+'--decision=[Allow or deny this request once without saving permission rules]:DECISION:(allow deny)' \
 '--format=[]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
