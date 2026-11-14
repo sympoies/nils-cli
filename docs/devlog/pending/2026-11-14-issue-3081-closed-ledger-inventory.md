@@ -14,10 +14,13 @@
 
 ### Evidence
 
-- Ten synthetic CLI tests pass, including retention cutoffs, unknown status,
+- Twelve synthetic CLI tests pass, including retention cutoffs, unknown status,
   privacy, unchanged ledger bytes and modification metadata, a held writer lock,
   and runtime-invalid encoding rejection. The encoding regression was retained
   RED before the one-line parser fix.
+- Designated review F1 exposed duplicate typed fields and nonstandard constants
+  falsely certifying counts. Five malformed JSON cases failed before the parser
+  repair; the final suite rejects them while preserving record map semantics.
 
 ### Links
 

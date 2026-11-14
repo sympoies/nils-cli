@@ -31,6 +31,9 @@ The ledger must be UTF-8 JSON, as required by the runtime reader. The JSON outpu
 contains fixed field names, observation epoch, status and
 counts only. It never prints file paths, ledger identity, record values,
 session/account identifiers or launch environment values.
+Duplicate fields in the typed ledger or entry objects and nonstandard numeric
+constants are invalid. Record metadata retains the runtime JSON map semantics;
+it is not given a new field-uniqueness contract by this inventory.
 
 | Output | Meaning |
 | --- | --- |
@@ -81,7 +84,8 @@ python3 -B -m unittest discover -s crates/agent-session/scripts -p 'test_*.py' -
 
 The suite also covers the inclusive age cutoff, timezone offsets, fractional
 seconds, the 256-entry cutoff after age pruning, missing versus observed-empty,
-invalid content/encoding/schema/sequence, non-regular/untrusted inputs, unchanged ledger
+invalid content/encoding/schema/sequence, duplicate typed fields, nonstandard
+constants, non-regular/untrusted inputs, unchanged ledger
 bytes and modification metadata, and a held writer lock.
 
 For the first retirement slice, the owner receipt must include the observation

@@ -155,6 +155,36 @@ class ProbeTests(unittest.TestCase):
         self.assertIsNone(report["counts"])
         self.assertEqual(self.ledger.read_bytes(), unsupported)
 
+    def test_runtime_invalid_json_is_never_counted(self):
+        self.write([entry(1, private="sensitive-fixture-value", launch_env={})])
+        valid = self.ledger.read_text()
+        malformed = [
+            valid[:-1] + ', "entries": []}',
+            valid.replace('"seq": 1', '"seq": 0, "seq": 1'),
+        ]
+        malformed.extend(
+            valid.replace('"launch_env": {}', '"launch_env": ' + constant)
+            for constant in ("NaN", "Infinity", "-Infinity")
+        )
+        for index, content in enumerate(malformed):
+            with self.subTest(case=index):
+                self.ledger.write_text(content)
+                report = self.probe(expected_exit=2)
+                self.assertEqual(report["status"], "invalid")
+                self.assertIsNone(report["counts"])
+                self.assertEqual(self.ledger.read_text(), content)
+
+    def test_record_value_duplicate_members_match_runtime_values(self):
+        self.write([entry(1, launch_env={})])
+        content = self.ledger.read_text().replace(
+            '"launch_env": {}', '"launch_env": null, "launch_env": {}'
+        )
+        self.ledger.write_text(content)
+        report = self.probe()
+        self.assertEqual(report["counts"]["visible_launch_env_objects"], 1)
+        self.assertEqual(report["counts"]["visible_invalid_launch_env"], 0)
+        self.assertEqual(self.ledger.read_text(), content)
+
     def test_untrusted_file_is_not_read_and_symlink_is_not_followed(self):
         self.write([entry(1)])
         self.ledger.chmod(0o644)

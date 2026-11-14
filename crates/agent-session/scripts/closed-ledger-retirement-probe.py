@@ -32,6 +32,10 @@ def integer(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def reject_constant(_constant):
+    raise ValueError("nonstandard JSON constant")
+
+
 def closed_at_epoch(record):
     raw = record.get("closed_at") if isinstance(record, dict) else None
     if not isinstance(raw, str) or TIMESTAMP.fullmatch(raw) is None:
@@ -127,8 +131,26 @@ def inspect(path, now):
             raw = source.read(MAX_BYTES + 1)
         if len(raw) > MAX_BYTES:
             return "invalid", None
-        ledger = json.loads(raw.decode("utf-8"))
+        duplicate_objects = []
+
+        def object_from_pairs(pairs):
+            value = dict(pairs)
+            if len(value) != len(pairs):
+                duplicate_objects.append(value)
+            return value
+
+        ledger = json.loads(
+            raw.decode("utf-8"), object_pairs_hook=object_from_pairs,
+            parse_constant=reject_constant,
+        )
+        # Keep duplicate objects alive through these identity checks. The
+        # runtime rejects typed Ledger/Entry duplicates; record is a JSON Value.
+        duplicate_ids = {id(value) for value in duplicate_objects}
         if not valid_ledger(ledger):
+            return "invalid", None
+        if id(ledger) in duplicate_ids or any(
+            id(entry) in duplicate_ids for entry in ledger["entries"]
+        ):
             return "invalid", None
         return "observed", counts(ledger, now)
     except (OSError, ValueError, RecursionError):
