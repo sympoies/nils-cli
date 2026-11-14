@@ -18,7 +18,11 @@ pub(super) fn check(record: &SessionRecord) -> Result<(), CliError> {
             .ok()
             .filter(|o| o.status.success())
             .and_then(|o| Version::parse_banner(&String::from_utf8_lossy(&o.stdout)))
-            .ok_or_else(|| super::refusal("permission-provider-version-unavailable"))?;
+            .ok_or_else(|| CliError::runtime(
+                "permission-provider-version-unavailable",
+                "Claude version is unavailable; retry to recheck it or answer at the attached terminal",
+                Some(serde_json::json!({"retryable": true, "recovery": {"kind": "retry", "safe_to_retry": true}})),
+            ))?;
     if !version.in_range(
         Version::parse(SUPPORTED_MIN).unwrap(),
         Version::parse(SUPPORTED_MAX).unwrap(),

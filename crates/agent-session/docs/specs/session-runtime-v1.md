@@ -177,8 +177,9 @@ Order only; each step is its own issue.
    names the retained rules that have no structured equivalent.
 2. Single-writer lease, handoff command and pre-attach liveness check.
 3. Approval answers through the `PermissionRequest` hook with id correlation
-   are implemented (#3687). Claude approval keystroke admission is removed;
-   ordinary composer/send guards remain.
+   are implemented (#3687). Claude Code 2.1.317 uses hook-only answers;
+   known versions outside that audit use guarded dialog keys (#3718).
+   Ordinary composer/send guards remain.
 4. Codex slices #3582, #3583 and #3584 under this document.
 
 Not scheduled: an opt-in unattended stream-json runtime (option B). It would
@@ -223,7 +224,7 @@ Matching uses `sessionId` in the session's provider configuration directory;
 | `project_interrupt_uncertainty`/`interrupt_since`: two samples at least 15 seconds apart | Claude Code 2.1.317 exposes no documented exact interactive interrupt/manual-denial outcome; generic idle cannot identify the cause. | Removed Claude from this inference and its timer accumulation. First fresh runtime/revision-bound structured idle over an open turn projects `unknown` with `claude_turn_outcome_unknown`, including pending approval. Codex retains its separate marker/timer behavior. |
 | `claude_completion`: one-second post-Stop window | Same-runtime, same-revision structured idle plus the qualifying current-turn Stop can confirm idleness without a quiet timer. `StopFailure` and `Notification(idle_prompt)` already complete immediately. Raw Stop cannot prove other hooks will not continue. | Removed timer completion and deadline-driven wakeups. Keep candidate identity/cancellation fences; missing/busy/blocked state cannot settle it. |
 | Structured-reader failure falling through to Claude screen arms | No structured state is available; missing binary, timeout, malformed/unknown entry or unmatched identity does not justify pane inference. | Removed Claude pane fallback; project unknown with an unavailable diagnostic while preserving durable hook state. No fallback switch. |
-| Claude approval keystrokes and approval-dialog screen admission | The live `PermissionRequest` hook owns one fresh request id, bound to the exact current-turn `PreToolUse` call. | Removed terminal answer admission; keys, bare newline and `allow_blocked` cannot answer a recorded Claude approval. No screen guard or fallback switch authorizes an answer. |
+| Claude approval keystrokes and approval-dialog screen admission | On Claude Code 2.1.317, the live `PermissionRequest` hook owns one fresh request id, bound to the exact current-turn `PreToolUse` call. | The audited version refuses terminal answers. Known versions outside the audit admit one guarded dialog key with a typed reason; an unreadable version refuses retryably. The screen guard authorizes input only, never activity or completion. |
 | `send_submit`/`composer` and send guards: editor boundaries, drafts, pasted/queued text, dialog exclusion, Enter readback | Neither listing nor hooks reveal editor contents, cursor position, exact submitted bytes, or whether Enter answers a dialog. `SessionStart` supplies initial readiness only. | Still required for safe terminal input; retain checks/tests. They do not determine activity completion. |
 | Terminal authentication-pattern detection | `StopFailure.error=authentication_failed` covers emitted failures, but generic structured state does not identify an unreported terminal authentication incident. | Still required for terminal-only incidents under the separate health/recovery contract; retain bounded recognition. |
 
@@ -295,9 +296,36 @@ permission gate reuses the native notice version parser but owns its narrower
 bounds: the notice module's audited range does not authorize permission
 answers. Missing/unreadable versions return
 `permission-provider-version-unavailable`; versions outside the reviewed range
-return `permission-provider-version-unsupported`. Raising the range requires a
+return `permission-provider-version-unsupported` from the hook relay. Raising the range requires a
 reviewed permission-contract audit. Fixtures exercise these boundaries; no live
 approval probe is claimed by this implementation.
+
+Terminal admission applies this fence per session, using that session's selected
+Claude binary (`agent_bin`, or the configured Claude binary when unspecified).
+The version is read on each attempt; a fleet with mixed provider versions can
+therefore use different answer paths. For **2.1.317**, any pending permission
+attention refuses terminal input with `claude-permission-hook-required`.
+For a positively identified version **below or above 2.1.317**, explicit `send`
+or authenticated `/send` may deliver a single `enter`, `escape`, `up` or `down`,
+or a bare newline alone. Text, including `--allow-blocked`, and batches are
+refused with `permission-terminal-input-unsupported`.
+
+Immediately before that key, under the record lock and provider-ingress fence,
+a fresh pane capture must show a permission question, a selected numbered
+choice, Yes/No choices and an escape-to-cancel footer, with no composer below
+the dialog. Missing, failed or unrecognized screen evidence refuses with
+`permission-dialog-unobservable`. Existing runtime/provider identity guards
+still apply. This external-provider path cannot correlate the answer to a tool
+call; a screen observation is not an atomic provider acknowledgement.
+An admitted attempt records the content-free typed reason
+`permission-provider-version-unsupported`, runtime id, key and timestamp in
+private `permission-terminal-admission.json`; this is admission evidence, not
+proof of delivery or execution. It contains no pane text or tool arguments.
+
+An unreadable, failing or timed-out version refuses with
+`permission-provider-version-unavailable`, `retryable: true`, and a message
+that the attached terminal remains available. No version failure is cached:
+retry re-reads the binary and can admit a newly readable out-of-fence version.
 
 The hook requires exactly one open `PreToolUse` call matching the recorded
 approval in the current runtime, provider session and turn. Missing or
@@ -350,8 +378,9 @@ as drift and refreshes its owned handler; activity readiness reports a missing
 or stale owned `PermissionRequest` registration. Refresh hook setup before or
 with the upgrade on each host. Install `agent-hook` and `agent-session` from the
 same release and restart the provider so its hook configuration is current.
-A host with absent/incomplete hooks cannot answer remotely; attention stays
-open. There is no keystroke fallback, including `--allow-blocked`.
+On the audited provider version, absent/incomplete hooks leave remote answers
+unavailable and attention stays open. Only known out-of-fence versions use the
+guarded key path above; `--allow-blocked` never opts into it.
 
 Ordinary composer/send guards remain required. Direct interactive terminal
 attach remains the human takeover path; it is not the structured permission

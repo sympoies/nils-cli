@@ -46,7 +46,9 @@ fn paste_prompt_file_observing(
     let before = capture_pane_digest(tmux_bin, &target);
     {
         let _permission_admission = response_context
-            .map(|(context, _)| cli::permission::terminal_admission(context, record))
+            .map(|(context, text)| {
+                cli::permission::input_admission(context, record, tmux_bin, Some(text), &[])
+            })
             .transpose()?;
         load_and_paste_buffer(tmux_bin, &buffer_name, &target, prompt_file)
             .map_err(prompt_delivery_failure)?;
@@ -92,8 +94,13 @@ fn paste_prompt_file_observing(
                     tmux_bin,
                     send_guard::response::Operation::Submit,
                     || {
-                        let _permission_admission =
-                            cli::permission::terminal_admission(context, record)?;
+                        let _permission_admission = cli::permission::input_admission(
+                            context,
+                            record,
+                            tmux_bin,
+                            Some(text),
+                            &[SpecialKey::Enter],
+                        )?;
                         send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
                     },
                 )

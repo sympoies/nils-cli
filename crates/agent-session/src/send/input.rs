@@ -10,7 +10,8 @@ pub(crate) fn send_input_unlocked(
     manual_input: Option<&mut ManualInputSection>,
     paste_mode: PasteMode,
 ) -> Result<(), CliError> {
-    let _permission_admission = crate::cli::permission::terminal_admission(context, record)?;
+    let _permission_admission =
+        crate::cli::permission::input_admission(context, record, tmux_bin, text, keys)?;
     crate::auth_incident::recovery::guard_input(context, record, text, keys)?;
     deliver_input_unlocked(
         context,

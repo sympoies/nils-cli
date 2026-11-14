@@ -3313,7 +3313,7 @@ struct SendBody {
     text: Option<String>,
     #[serde(default)]
     keys: Vec<String>,
-    /// Opt in to dialog text; Claude approvals require the permission API.
+    /// Opt in to dialog text; Claude approvals use per-session admission.
     #[serde(default)]
     allow_blocked: bool,
 }

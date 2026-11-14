@@ -140,7 +140,7 @@ fn send_observing(
     let mut manual_input = ManualInputSection::new(record_lock);
     let mut record = load_session_record(context, &observed.id)?;
     ensure_same_session_identity(&observed, &record)?;
-    cli::permission::refuse_terminal(context, &record)?;
+    cli::permission::refuse_terminal(context, &record, text.as_deref(), &args.keys)?;
     if !(record.agent == "claude"
         && owner_command.as_ref().is_some_and(|command| {
             command.is_login(text.as_deref()) && args.keys == [SpecialKey::Enter]
@@ -351,7 +351,13 @@ fn confirm_prompt_submission(
 ) -> Result<send_submit::SubmitReport, CliError> {
     let target = format!("{}:0.0", record.tmux_session);
     let mut press_enter = || {
-        let _permission_admission = cli::permission::terminal_admission(context, record)?;
+        let _permission_admission = cli::permission::input_admission(
+            context,
+            record,
+            tmux_bin,
+            Some(text),
+            &[SpecialKey::Enter],
+        )?;
         manual_input.arm(context, record)?;
         send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
     };
@@ -617,7 +623,7 @@ fn guarded(
                     crate::serve::begin_mailbox_notice(context, &record, tmux_bin, candidate)?;
                 }
                 prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
-                cli::permission::terminal_admission(context, &record)
+                cli::permission::input_admission(context, &record, tmux_bin, Some(text), &[])
             },
         );
         let _ = fs::remove_file(temp);

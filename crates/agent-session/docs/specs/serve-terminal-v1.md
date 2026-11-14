@@ -29,10 +29,13 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   `409 agent-blocked` with a `{ id, phase, remedy }` detail before anything
   reaches the terminal:
 
-  Claude approval attention is stricter: every `/send` input (keys, bare
-  newline and `allow_blocked` included) returns
-  `409 claude-permission-hook-required`. Use the authenticated
-  [permission hook API](session-runtime-v1.md#claude-permission-answers-3687).
+  Claude approval attention is stricter: the session's audited Claude Code
+  2.1.317 binary requires the authenticated permission hook API and returns
+  `409 claude-permission-hook-required` for `/send`. A known version outside
+  that fence admits one guarded dialog key; unreadable versions refuse with
+  retryable `permission-provider-version-unavailable`. Text and key batches
+  remain refused. See the
+  [per-session answer contract](session-runtime-v1.md#claude-permission-answers-3687).
   The table below applies to other provider dialogs.
 
   | Route | While `needs_input` |

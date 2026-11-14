@@ -43,6 +43,7 @@ async fn send_refuses_pending_approval_with_unknown_idle_view() {
     let (tmux, journal) = super::recording::tmux(tmp.path());
     seed_claude_prompt_session(tmp.path(), "blocked");
     let state = state(tmp.path(), Some(TOKEN), tmux);
+    super::permission::provider_version(tmp.path(), &state.context, "blocked", "2.1.317");
     pending_approval_with_fresh_idle(&state);
 
     let (status, body) = call(

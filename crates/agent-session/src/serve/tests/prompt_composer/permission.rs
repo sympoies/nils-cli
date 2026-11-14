@@ -2,6 +2,49 @@
 use super::super::*;
 use pretty_assertions::assert_eq;
 
+pub(super) fn provider_version(dir: &Path, context: &CliContext, id: &str, version: &str) {
+    let provider = dir.join("claude-version-fixture");
+    fs::write(
+        &provider,
+        format!("#!/bin/sh\nprintf '%s\\n' '{version} (Claude Code)'\n"),
+    )
+    .unwrap();
+    fs::set_permissions(&provider, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut record = load_session_record(context, id).unwrap();
+    record.agent_bin = Some(provider.to_string_lossy().into_owned());
+    crate::write_session_record(context, &record).unwrap();
+}
+
+#[tokio::test]
+async fn claude_permission_http_outside_fence_admits_visible_dialog_key() {
+    for version in ["2.1.316", "2.1.318"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (tmux, journal) = recording_tmux(tmp.path());
+        let script = fs::read_to_string(&tmux).unwrap().replace(
+            "capture-pane) printf 'pane\\n'; exit 0 ;;",
+            "capture-pane) printf 'Do you want to proceed?\\n❯ 1. Yes\\n  2. No\\nEsc to cancel\\n'; exit 0 ;;",
+        );
+        fs::write(&tmux, script).unwrap();
+        seed_session_with_runtime(tmp.path(), "blocked", "claude", "hs-claude-blocked");
+        let st = state(tmp.path(), Some(TOKEN), tmux);
+        provider_version(tmp.path(), &st.context, "blocked", version);
+        block_on_provider_attention(&st, "blocked", "claude");
+        let (status, body) = call(
+            router(st),
+            post_json(
+                "/sessions/blocked/send",
+                Some(TOKEN),
+                json!({"keys":["enter"]}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let calls = fs::read_to_string(journal).unwrap();
+        assert_eq!(calls.lines().filter(|v| *v == "send-keys").count(), 1);
+        assert!(!calls.lines().any(|v| v == "paste-buffer"));
+    }
+}
+
 #[tokio::test]
 async fn permission_http_requires_operator_bearer_before_read_or_answer() {
     let tmp = tempfile::tempdir().unwrap();
@@ -47,6 +90,7 @@ async fn claude_permission_http_refuses_keys_even_with_allow_blocked() {
     let (tmux, journal) = recording_tmux(tmp.path());
     seed_session_with_runtime(tmp.path(), "blocked", "claude", "hs-claude-blocked");
     let st = state(tmp.path(), Some(TOKEN), tmux);
+    provider_version(tmp.path(), &st.context, "blocked", "2.1.317");
     let record = load_session_record(&st.context, "blocked").unwrap();
     crate::activity::activate_runtime(&st.context, &record).unwrap();
     crate::activity::ingest_event(&st.context, "blocked", serde_json::from_value(json!({
