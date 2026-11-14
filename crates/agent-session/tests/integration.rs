@@ -38,6 +38,8 @@ mod mailbox_expiry;
 mod mailbox_quota_warning;
 #[path = "integration/metadata.rs"]
 mod metadata;
+#[path = "integration/owner_capability_recovery.rs"]
+mod owner_capability_recovery;
 #[path = "integration/readiness.rs"]
 mod readiness;
 #[path = "integration/reply_deadline.rs"]

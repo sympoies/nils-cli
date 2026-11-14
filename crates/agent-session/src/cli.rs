@@ -540,6 +540,7 @@ pub struct WorkContextStatusArgs {
 #[derive(Debug, Args)]
 pub struct WorkContextSetArgs {
     /// Preserve an existing active declaration and create this context only when none exists.
+    /// An exact Linux runtime owner can also recover its absent canonical capability.
     #[arg(long)]
     pub if_absent: bool,
     /// Short public description of the current work.

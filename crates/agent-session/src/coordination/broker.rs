@@ -1274,7 +1274,7 @@ pub(crate) fn recover_unjournaled(
     Ok(result)
 }
 
-fn spawn_heartbeat_sidecar(
+pub(super) fn spawn_heartbeat_sidecar(
     context: &CliContext,
     session_id: &str,
     incarnation: &str,

@@ -68,6 +68,59 @@ another session or a replaced incarnation is rejected. This security boundary
 does not require a fresh heartbeat, because stale or absent heartbeat evidence
 is the state recovery repairs.
 
+### Exact running owner after capability loss
+
+Inside the affected managed runtime, run:
+
+```bash
+agent-session work-context set --if-absent --repository example/repository --format json
+```
+
+This existing recovery command can run through the enforce-mode hook without a
+mutation lease. It grants no general shell authority. Runtime status and
+operation admission still require a valid capability. `set` without
+`--if-absent`, broker adoption and HTTP recovery do not mint owner credentials.
+
+Recovery requires the exported session and launch selectors to match the current
+persisted runtime and the capability selector to name its exact canonical file.
+These selectors alone are not proof: on Linux the requesting process must be a
+kernel-observed descendant of the persisted pane, with the same pane birth time,
+boot identity and PID namespace. The parent walk is bounded and the proof is
+rechecked under the session and registry locks. A stale runtime or unrelated
+session cannot recover by selecting another owner's id or path.
+
+An absent canonical capability may be reissued only for the matching ready or
+recovering broker, generation and runtime identity. Its claim and operations are
+preserved. Wrong, unreadable, non-private, linked or otherwise unsafe existing
+capability files are refused and never overwritten.
+
+A split replacement may rebind the same session's earlier broker and its sole
+active claim only after proving that predecessor stopped, its heartbeat stale,
+and every operation terminal. Rebinding increments the claim revision and changes
+its incarnation while preserving its id, scope and expiry; unread mailbox state
+uses the existing verified-resume transfer. Live or unknown predecessors,
+competing claims, revoked brokers and unresolved operations remain refused.
+
+The fresh private capability and broker binding are persisted in `recovering`
+state before the exact current heartbeat owner is started or reused. The retained
+heartbeat is removed after capability publication; success requires a fresh
+post-restoration heartbeat before the broker returns to `ready`. If the heartbeat
+owner is unavailable, `owner-recovery-heartbeat-unavailable` is retryable and
+ordinary capability operations remain fenced. Retry the same command with the
+matching restored capability; partial restoration does not require deleting it.
+Each attempted recovery records its outcome as
+`owner-capability-reissue` or `owner-capability-rebind` in the bounded existing
+`logs <id> --lifecycle` diagnostics, including time and runtime generation, without
+capability bytes. Refusals return fixed `owner-recovery-*` reason codes.
+
+This proof path is currently Linux-only. macOS and other platforms, or Linux
+records without exact pane birth or namespace evidence, remain refused rather
+than reconstructing authority from mutable selectors. A trusted controller must
+re-provision those runtimes. A missing or incorrect exported capability selector
+also requires the trusted launcher to restore its environment. Synthetic recovery
+coverage does not establish natural provider compaction behavior or acceptance
+of an installed shared runtime.
+
 ### Operator recovery after an external runtime stop
 
 If a runtime was stopped outside `agent-session` and ordinary `resume` refuses
