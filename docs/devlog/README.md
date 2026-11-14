@@ -128,6 +128,7 @@ are optional: omit the whole section rather than leaving a placeholder in it.
 
 ## Months
 
+- [2026-11](2026-11.md)
 - [2026-10](2026-10.md)
 - [2026-09](2026-09.md)
 - [2026-08](2026-08.md)
@@ -138,3 +139,12 @@ are optional: omit the whole section rather than leaving a placeholder in it.
 - [2026-03](2026-03.md)
 - [2026-02](2026-02.md)
 - [2026-01](2026-01.md)
+
+## Pending
+
+<!-- devlog-pending-index -->
+
+- [2026-11-14-issue-3680-history-credentials](pending/2026-11-14-issue-3680-history-credentials.md)
+- [2026-11-14-issue-3684-same-account-auth-restart](pending/2026-11-14-issue-3684-same-account-auth-restart.md)
+- [2026-11-14-issue-3686-claude-outcome-unknown](pending/2026-11-14-issue-3686-claude-outcome-unknown.md)
+- [2026-11-14-issue-3692-runtime-adoption](pending/2026-11-14-issue-3692-runtime-adoption.md)
