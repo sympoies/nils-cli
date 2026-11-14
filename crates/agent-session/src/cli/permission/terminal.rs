@@ -22,16 +22,8 @@ pub(crate) fn input_admission(
     // first Enter; arbitrary text could edit tool input or save a rule.
     let key = input_key(text, keys)?;
     let target = format!("{}:0.0", record.tmux_session);
-    let mut capture = std::process::Command::new(tmux);
-    capture.args(["capture-pane", "-p", "-t", &target]);
-    let pane = crate::run_output_with_timeout_and_strict_cap(
-        capture,
-        crate::PANE_OBSERVATION_COMMAND_TIMEOUT,
-        crate::PANE_OBSERVATION_MAX_OUTPUT_BYTES,
-    )
-    .ok()
-    .filter(|output| output.status.success())
-    .and_then(|output| String::from_utf8(output.stdout).ok())
+    // Share the existing strict timeout, byte-cap and UTF-8 capture owner.
+    let pane = crate::send_guard::capture_styled(tmux, &target, crate::PANE_OBSERVATION_COMMAND_TIMEOUT)
     .filter(|pane| visible_dialog(pane))
     .ok_or_else(|| CliError::runtime(
         "permission-dialog-unobservable",
