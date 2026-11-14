@@ -176,3 +176,83 @@ pub(super) fn observe_permission(document: &mut ActivityDocument, event: &TurnEv
         pending.certainty = AttentionCertainty::Exact;
     }
 }
+
+/// Run an answer operation while the exact current permission binding is locked.
+/// Callers hold the session record lock first, matching activity ingress order.
+pub(crate) fn with_permission_call<T>(
+    context: &CliContext,
+    record: &SessionRecord,
+    attention_id: &str,
+    operation: impl FnOnce(&str) -> Result<T, CliError>,
+) -> Result<T, CliError> {
+    let _ingress = pending::probe_lock(context, &record.id)?
+        .ok_or_else(|| crate::cli::permission::refusal("permission-event-pending"))?;
+    let dir = session_dir(context, &record.id);
+    let _lock = acquire_lock(&dir)?;
+    let document = read_document(&dir.join(ACTIVITY_FILE))?;
+    let runtime = record.runtime.as_ref();
+    let turn = document
+        .state
+        .current_turn
+        .as_ref()
+        .and_then(|t| t.provider_turn_id.as_ref());
+    let pending = document
+        .pending_attention
+        .iter()
+        .find(|p| p.id == attention_id && p.kind == "approval");
+    if record.agent != "claude"
+        || runtime.is_none_or(|r| {
+            r.launch_id != document.runtime_id || r.generation != document.runtime_generation
+        })
+        || document.runtime_unhealthy_reason.is_some()
+        || provider_session_for_runtime(record, &document.runtime_id)?
+            != document.provider_session_id
+        || pending.is_none_or(|p| {
+            p.certainty != AttentionCertainty::Exact
+                || matches!(
+                    p.extra.get("tool_name").and_then(Value::as_str),
+                    Some("AskUserQuestion" | "ExitPlanMode")
+                )
+        })
+    {
+        return Err(crate::cli::permission::refusal(
+            "permission-request-uncorrelated",
+        ));
+    }
+    let mut calls = document.open_tool_calls.0.iter().filter(|call| {
+        call.approval_id.as_deref() == Some(attention_id) && Some(&call.turn_id) == turn
+    });
+    match (calls.next(), calls.next()) {
+        (Some(call), None) => operation(&call.call_id),
+        _ => Err(crate::cli::permission::refusal(
+            "permission-request-uncorrelated",
+        )),
+    }
+}
+
+/// Public attention summarizes only its first entry. Any approval or overflow
+/// in the current runtime must refuse uncorrelated terminal input.
+pub(crate) fn has_permission(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Result<bool, CliError> {
+    // The caller holds the record lock and exclusive ingress probe: permission
+    // writers cannot enter. Snapshots are atomically replaced, so reading here
+    // needs no nested activity lock (native conversation commands hold it).
+    let dir = session_dir(context, &record.id);
+    let path = dir.join(ACTIVITY_FILE);
+    if !path.exists() {
+        return Ok(false);
+    }
+    let document = read_document(&path)?;
+    if record.runtime.as_ref().is_none_or(|r| {
+        r.launch_id != document.runtime_id || r.generation != document.runtime_generation
+    }) {
+        return Ok(false);
+    }
+    Ok(document
+        .pending_attention
+        .iter()
+        .any(|p| p.kind == "approval")
+        || document.overflow_attention.is_some())
+}

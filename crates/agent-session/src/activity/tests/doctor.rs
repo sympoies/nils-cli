@@ -12,7 +12,7 @@ version = "2026.10.19.1"
 [[rules]]
 id = "fixture.claude-activity"
 products = ["claude"]
-events = ["UserPromptSubmit"]
+events = ["UserPromptSubmit", "PermissionRequest"]
 priority = 10
 mode = "enforce"
 failure_posture = "closed"

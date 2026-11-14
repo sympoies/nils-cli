@@ -3313,8 +3313,7 @@ struct SendBody {
     text: Option<String>,
     #[serde(default)]
     keys: Vec<String>,
-    /// Opt in to typing literal text while the agent is blocked on an approval
-    /// or question. Keys are always admitted, so answering never needs this.
+    /// Opt in to dialog text; Claude approvals require the permission API.
     #[serde(default)]
     allow_blocked: bool,
 }

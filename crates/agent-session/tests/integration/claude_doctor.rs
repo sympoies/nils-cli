@@ -16,7 +16,7 @@ version = "2026.10.19.1"
 [[rules]]
 id = "fixture.claude-activity"
 products = ["claude"]
-events = ["UserPromptSubmit"]
+events = ["UserPromptSubmit", "PermissionRequest"]
 priority = 10
 mode = "enforce"
 failure_posture = "closed"
@@ -229,6 +229,16 @@ fn claude_activity_doctor_reports_registration_and_configuration_states() {
             .contains("PreToolUse")
     );
 
+    let mut stale: Value = serde_json::from_slice(&original_settings).unwrap();
+    stale["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"] = serde_json::json!(60);
+    fs::write(&fixture.settings_path, stale.to_string()).unwrap();
+    let stale = claude_provider(&fixture.doctor(&fixture.agent_hook));
+    assert_eq!(stale["configured"], false);
+    assert_eq!(
+        stale["missing_owned_events"],
+        serde_json::json!(["PermissionRequest"])
+    );
+
     fs::write(&fixture.settings_path, b"{").expect("malformed settings");
     let malformed = fixture.doctor(&fixture.agent_hook);
     assert_configuration_error(&malformed, "agent-hook-setup-output-invalid");
@@ -254,7 +264,10 @@ fn claude_activity_doctor_reports_registration_and_configuration_states() {
         .map(|event| event.as_str().expect("event name"))
         .collect::<Vec<_>>();
     missing_events.sort_unstable();
-    assert_eq!(missing_events, ["PreToolUse", "UserPromptSubmit"]);
+    assert_eq!(
+        missing_events,
+        ["PermissionRequest", "PreToolUse", "UserPromptSubmit"]
+    );
 
     let unavailable_hook = fixture.root.join("missing-agent-hook");
     let unavailable = fixture.doctor(&unavailable_hook);
