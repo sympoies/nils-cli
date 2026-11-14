@@ -242,6 +242,7 @@ def run(repo, event_name, event, candidate, output, bash='bash', plan_only=False
     github_output = os.environ.get('GITHUB_OUTPUT')
     executor_env = dict(os.environ)
     executor_env.pop('GITHUB_OUTPUT', None)
+    executor_env['GITHUB_EVENT_NAME'] = event_name
     executor_env['NILS_CLI_SCOPED_COVERAGE_BASE'] = expected['base']
     returncode = subprocess.run(command, cwd=repo, env=executor_env).returncode
     receipt.update(status='PASS' if returncode == 0 else 'FAIL')

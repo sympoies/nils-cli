@@ -220,6 +220,9 @@ else:
         stream.write(json.dumps({'kind': 'cargo', 'args': args, 'identity_present': 'FORGE_IDENTITY_FIXTURE_MARKER' in os.environ}) + '\\n')
     if args[0] == os.environ.get('FAIL_CARGO_COMMAND'):
         raise SystemExit(17)
+    if (os.environ.get('FAIL_UNIFIED_TESTS') and args[0] == 'nextest'
+            and '--workspace' in args and '--no-run' not in args):
+        raise SystemExit(18)
 ''')
         cargo.chmod(0o755)
         rustc = self.bin / 'rustc'
@@ -309,6 +312,38 @@ else:
         self.assertEqual(next(c for c in calls if c[0] == 'clippy')[-2:], ['-D', 'warnings'])
         self.assertTrue(all(not r['identity_present'] for r in rows
                             if r['args'][0] in ('nextest', 'test') and '--no-run' not in r['args']))
+
+    def test_only_queue_runs_selected_tests_with_workspace_features(self):
+        self.candidate()
+        for event in ('pull_request', 'merge_group'):
+            with self.subTest(event=event):
+                self.log.unlink(missing_ok=True)
+                opposite = 'pull_request' if event == 'merge_group' else 'merge_group'
+                result, rows = self.execute(name=event, env={'GITHUB_EVENT_NAME': opposite})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                unified = [row for row in rows if row['args'][0] == 'nextest'
+                           and '--workspace' in row['args']]
+                if event == 'pull_request':
+                    self.assertEqual(unified, [], 'PR pushes must keep the scoped fast lane')
+                    continue
+                self.assertEqual(len(unified), 2, 'missing workspace-unified build/run')
+                for row in unified:
+                    args = row['args']
+                    self.assertIn('--all-features', args)
+                    self.assertNotIn('-p', args)
+                    self.assertEqual(args[args.index('-E') + 1],
+                                     'package(=consumer) | package(=selected)')
+                self.assertIn('--no-run', unified[0]['args'])
+                self.assertNotIn('--no-run', unified[1]['args'])
+                self.assertFalse(unified[1]['identity_present'])
+
+    def test_workspace_feature_failure_blocks_queue(self):
+        self.candidate()
+        result, _ = self.execute(name='merge_group', env={'FAIL_UNIFIED_TESTS': '1'})
+        self.assertNotEqual(result.returncode, 0, 'workspace feature failure passed CI')
+        self.assertEqual(self.receipt()['status'], 'FAIL')
+        self.assertFalse(Path(self.env['GITHUB_OUTPUT']).exists(),
+                         'failed unified pass published authoritative scope')
 
     def test_bin_only_selected_package_skips_doctests(self):
         self.selected_binary()
