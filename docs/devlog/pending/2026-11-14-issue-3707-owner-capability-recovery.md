@@ -6,6 +6,8 @@
 - Linux owners can reissue an absent canonical capability or rebind a stopped
   predecessor through work-context set --if-absent; unsafe and foreign owners
   remain refused.
+- Recovery remains pending until a post-restoration heartbeat is established;
+  an unavailable heartbeat owner returns a typed retryable refusal.
 
 ### Why / context
 

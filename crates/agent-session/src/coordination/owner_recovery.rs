@@ -3,7 +3,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::coordination::{
     CAPABILITY_ENV, broker, capability, capability_path, digest_bytes, digest_eq, incarnation,
@@ -16,9 +16,12 @@ pub(super) fn authenticate(context: &CliContext) -> Result<(SessionRecord, Strin
         Ok(owner) => Ok(owner),
         Err(error)
             if error.code() == "coordination-broker-lost"
-                || error
-                    .details()
-                    .is_some_and(|details| details["reason_code"] == "capability-file-invalid") =>
+                || error.details().is_some_and(|details| {
+                    matches!(
+                        details["reason_code"].as_str(),
+                        Some("capability-file-invalid" | "broker-not-ready")
+                    )
+                }) =>
         {
             let id = crate::non_empty_env("AGENT_SESSION_ID")
                 .ok_or_else(|| refused("owner-recovery-identity-missing"))?;
@@ -43,6 +46,18 @@ pub(super) fn authenticate(context: &CliContext) -> Result<(SessionRecord, Strin
 
 fn refused(reason: &'static str) -> CliError {
     capability::refusal(reason)
+}
+
+fn heartbeat_unavailable() -> CliError {
+    let mut error = refused("owner-recovery-heartbeat-unavailable").with_hint(
+        "owner capability restoration is incomplete; inside the exact current runtime, retry `work-context set --if-absent` once the heartbeat owner is available; preserve the session and restored capability",
+    );
+    if let Some(details) = error.details_mut() {
+        details["retryable"] = serde_json::json!(true);
+        details["next_action"] = serde_json::json!("retry-exact-runtime-owner");
+        details["recovery"]["action"] = serde_json::json!("retry-exact-runtime-owner");
+    }
+    error
 }
 
 fn recover(
@@ -175,13 +190,13 @@ fn recover(
         owner.incarnation = current.clone();
         owner.generation = generation;
         owner.runtime_identity = Some(runtime.identity.clone());
-        owner.runtime_identity_digest = runtime.identity_digest;
+        owner.runtime_identity_digest = runtime.identity_digest.clone();
         owner.capability_digest = digest_bytes(token.as_bytes());
-        owner.state = "ready".into();
-        owner.lost_since_epoch = None;
+        owner.state = "recovering".into();
+        owner.lost_since_epoch = Some(now);
+        owner.heartbeat_epoch = 0;
+        owner.heartbeat_at.clear();
         if rebind {
-            owner.heartbeat_epoch = 0;
-            owner.heartbeat_at.clear();
             for claim in &mut locked.registry.claims {
                 if claim.session_id == id
                     && claim.session_incarnation == previous.incarnation
@@ -208,12 +223,54 @@ fn recover(
         staged
             .persist_noclobber(&path)
             .map_err(|_| refused("owner-recovery-file-unavailable"))?;
+    } else {
+        let owner = locked.registry.brokers.get_mut(id).expect("locked broker");
+        owner.state = "recovering".into();
+        owner.lost_since_epoch = Some(now);
+        owner.heartbeat_epoch = 0;
+        owner.heartbeat_at.clear();
+        locked
+            .save()
+            .map_err(|_| refused("owner-recovery-store-unavailable"))?;
+    }
+    // Invalidate retained liveness only after the complete capability is published.
+    // A failed startup stays recovering, so an immediate retry cannot authenticate
+    // normally using the restored token and a pre-restoration heartbeat.
+    match fs::remove_file(crate::coordination::heartbeat_path(&context.state_dir, id)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(heartbeat_unavailable()),
     }
     drop(locked);
     broker::spawn_heartbeat_sidecar(context, id, &current, generation, &path)
-        .map_err(|_| refused("owner-recovery-heartbeat-unavailable"))?;
-    broker::activate_ready(context, &record)
-        .map_err(|_| refused("owner-recovery-heartbeat-unavailable"))?;
+        .map_err(|_| heartbeat_unavailable())?;
+    let started = Instant::now();
+    while !broker::heartbeat_fresh(context, id, &current, 0) {
+        if started.elapsed() >= Duration::from_secs(4) {
+            return Err(heartbeat_unavailable());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let mut locked = lock_registry_observational(context)?;
+    prove_caller(&record)?;
+    let owner = locked
+        .registry
+        .brokers
+        .get_mut(id)
+        .filter(|owner| {
+            owner.incarnation == current
+                && owner.generation == generation
+                && owner.runtime_identity_digest == runtime.identity_digest
+                && owner.state == "recovering"
+        })
+        .ok_or_else(heartbeat_unavailable)?;
+    owner.state = "ready".into();
+    owner.heartbeat_epoch = now_epoch();
+    owner.heartbeat_at = timestamp(owner.heartbeat_epoch);
+    owner.lost_since_epoch = None;
+    locked.save().map_err(|_| heartbeat_unavailable())?;
+    drop(locked);
+    broker::ensure_ready(context, &record).map_err(|_| heartbeat_unavailable())?;
     Ok((record, current))
 }
 

@@ -1,10 +1,10 @@
 //! Exact-owner recovery uses disposable state and the test process as the runtime root.
 #![cfg(target_os = "linux")]
 
-use std::{fs, os::unix::fs::MetadataExt};
+use std::{fs, os::unix::fs::MetadataExt, path::Path};
 
 use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
 
 use super::coordination::{
@@ -109,6 +109,15 @@ impl Fixture {
             .state
             .join("sessions/owner/coordination")
             .join(format!("capability-{}", digest(incarnation)));
+        self.run_with_selector(incarnation, &selected, arguments)
+    }
+
+    fn run_with_selector(
+        &self,
+        incarnation: &str,
+        selected: &Path,
+        arguments: &[&str],
+    ) -> CmdOutput {
         let mut args = vec!["--state-dir", self.state.to_str().unwrap()];
         args.extend_from_slice(arguments);
         run_resolved(
@@ -124,8 +133,17 @@ impl Fixture {
     }
 
     fn set(&self, incarnation: &str) -> CmdOutput {
-        self.run(
+        let selected = self
+            .state
+            .join("sessions/owner/coordination")
+            .join(format!("capability-{}", digest(incarnation)));
+        self.set_with_selector(incarnation, &selected)
+    }
+
+    fn set_with_selector(&self, incarnation: &str, selected: &Path) -> CmdOutput {
+        self.run_with_selector(
             incarnation,
+            selected,
             &[
                 "work-context",
                 "set",
@@ -144,7 +162,53 @@ impl Fixture {
         )
     }
 
+    fn match_broker_to_record(&self) {
+        let document: Value = serde_json::from_slice(
+            &fs::read(self.state.join("sessions/owner/session.json")).unwrap(),
+        )
+        .unwrap();
+        let record: agent_session::SessionRecord = serde_json::from_slice(
+            &fs::read(self.state.join("sessions/owner/session.json")).unwrap(),
+        )
+        .unwrap();
+        let runtime = agent_session::coordination_runtime_evidence(
+            &agent_session::CliContext {
+                state_dir: self.state.clone(),
+                host: None,
+            },
+            &record,
+        )
+        .unwrap();
+        // Keep every later binding fence valid so only the caller proof rejects.
+        assert_eq!(
+            runtime.status,
+            agent_session::CoordinationRuntimeStatus::Running
+        );
+        rewrite_registry(&self.state, |registry| {
+            registry["brokers"]["owner"]["runtime_identity"] =
+                document["delete_tmux_identity"].clone();
+            registry["brokers"]["owner"]["runtime_identity_digest"] =
+                json!(runtime.identity_digest);
+        });
+    }
+
+    fn assert_refused(&self, output: &CmdOutput, reason: &str, before: &Value) {
+        assert_eq!(output.code, 65, "{}", output.stdout_text());
+        assert_eq!(
+            output.stdout_json()["error"]["details"]["reason_code"],
+            reason
+        );
+        assert_eq!(load_coordination_registry(&self.state), *before);
+        assert!(!Path::new(&capability(&self.state, "owner")).exists());
+        assert_eq!(
+            fs::read_to_string(self.checkout.join("user-edit.txt")).unwrap(),
+            "unfinished user edit\n"
+        );
+    }
+
     fn assert_owner_works(&self, incarnation: &str, claim_id: &Value) {
+        let status = self.run(incarnation, &["work-context", "status", "--format", "json"]);
+        assert_eq!(status.code, 0, "{}", status.stdout_text());
         let shown = self.run(
             incarnation,
             &[
@@ -339,7 +403,20 @@ fn owner_capability_recovery_refuses_stale_peer_and_unproven_runtime_without_sta
         match mismatch {
             "peer" => {
                 let child = super::cli::spawn_scoped_test_process_group().unwrap();
+                let stat = fs::read_to_string(format!("/proc/{}/stat", child.pid())).unwrap();
+                let fields: Vec<_> = stat
+                    .rsplit_once(") ")
+                    .unwrap()
+                    .1
+                    .split_whitespace()
+                    .collect();
                 record["delete_tmux_identity"]["pane_pid"] = json!(child.pid());
+                record["delete_tmux_identity"]["pane_start_time"] =
+                    json!(fields[19].parse::<u64>().unwrap());
+                record["delete_tmux_identity"]["process_group_id"] =
+                    json!(fields[2].parse::<i32>().unwrap());
+                record["delete_tmux_identity"]["process_session_id"] =
+                    json!(fields[3].parse::<i32>().unwrap());
                 peer = Some(child);
             }
             "birth" => record["delete_tmux_identity"]["pane_start_time"] = json!(1),
@@ -347,25 +424,119 @@ fn owner_capability_recovery_refuses_stale_peer_and_unproven_runtime_without_sta
             _ => {}
         }
         write_private_json(&path, &record);
+        fixture.match_broker_to_record();
         let before = load_coordination_registry(&fixture.state);
-        let refused = fixture.set(if mismatch == "stale" {
-            "stale"
-        } else {
-            "original"
-        });
-        assert_eq!(refused.code, 65, "{mismatch}: {}", refused.stdout_text());
-        assert_eq!(
-            load_coordination_registry(&fixture.state),
-            before,
-            "{mismatch}"
+        let refused = fixture.set_with_selector(
+            if mismatch == "stale" {
+                "stale"
+            } else {
+                "original"
+            },
+            Path::new(&capability(&fixture.state, "owner")),
         );
-        assert!(!std::path::Path::new(&capability(&fixture.state, "owner")).exists());
-        assert_eq!(
-            fs::read_to_string(fixture.checkout.join("user-edit.txt")).unwrap(),
-            "unfinished user edit\n"
+        fixture.assert_refused(
+            &refused,
+            if mismatch == "stale" {
+                "owner-recovery-stale-runtime"
+            } else {
+                "owner-recovery-caller-unverified"
+            },
+            &before,
         );
         drop(peer);
     }
+}
+
+#[test]
+fn owner_capability_recovery_requires_the_canonical_selector() {
+    let fixture = Fixture::new();
+    fs::remove_file(capability(&fixture.state, "owner")).unwrap();
+    let before = load_coordination_registry(&fixture.state);
+    let selected = fixture.root.path().join("wrong-capability");
+    let refused = fixture.set_with_selector("original", &selected);
+    fixture.assert_refused(&refused, "owner-recovery-selector-mismatch", &before);
+    assert!(!selected.exists());
+}
+
+#[test]
+fn owner_capability_recovery_waits_for_the_session_transition_lock() {
+    let fixture = Fixture::new();
+    fs::remove_file(capability(&fixture.state, "owner")).unwrap();
+    let before = load_coordination_registry(&fixture.state);
+    let context = agent_session::CliContext {
+        state_dir: fixture.state.clone(),
+        host: None,
+    };
+    let held = agent_session::acquire_session_record_lock(&context, "owner").unwrap();
+    let started = std::time::Instant::now();
+    let refused = std::thread::scope(|scope| {
+        let (send, receive) = std::sync::mpsc::channel();
+        let fixture = &fixture;
+        scope.spawn(move || send.send(fixture.set("original")).unwrap());
+        let result = receive.recv_timeout(std::time::Duration::from_secs(5));
+        // Even a missing recovery fence must not hang the fixture at the later
+        // claim fence. Release it before inspecting the CLI's final response.
+        drop(held);
+        result.unwrap_or_else(|_| {
+            receive
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap()
+        })
+    });
+    fixture.assert_refused(&refused, "owner-recovery-session-busy", &before);
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert_eq!(fixture.set("original").code, 0);
+}
+
+#[test]
+fn owner_capability_recovery_requires_a_post_restoration_heartbeat_and_allows_retry() {
+    use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
+    let fixture = Fixture::new();
+    let before = load_coordination_registry(&fixture.state);
+    let claim = before["claims"][0]["claim_id"].clone();
+    let lock_path = fixture
+        .state
+        .join("sessions/owner/coordination")
+        .join(format!("broker-{}.lock", digest("original")));
+    let held = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(lock_path)
+        .unwrap();
+    assert_eq!(
+        unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+        0
+    );
+    fs::remove_file(capability(&fixture.state, "owner")).unwrap();
+    let first = fixture.set("original");
+    let retry = fixture.set("original");
+    for result in [&first, &retry] {
+        assert_ne!(result.code, 0, "{}", result.stdout_text());
+        assert_eq!(
+            result.stdout_json()["error"]["details"]["reason_code"],
+            "owner-recovery-heartbeat-unavailable"
+        );
+        assert_eq!(result.stdout_json()["error"]["details"]["retryable"], true);
+    }
+    assert_eq!(
+        load_coordination_registry(&fixture.state)["claims"],
+        before["claims"]
+    );
+    // The restored token remains complete, but capability-authenticated reads stay fenced.
+    assert!(Path::new(&capability(&fixture.state, "owner")).is_file());
+    let status = fixture.run("original", &["work-context", "status", "--format", "json"]);
+    assert_eq!(status.code, 65, "{}", status.stdout_text());
+    assert_eq!(
+        status.stdout_json()["error"]["details"]["reason_code"],
+        "broker-not-ready"
+    );
+    drop(held);
+    let recovered = fixture.set("original");
+    assert_eq!(recovered.code, 0, "{}", recovered.stdout_text());
+    fixture.assert_owner_works("original", &claim);
 }
 
 #[test]

@@ -77,8 +77,8 @@ agent-session work-context set --if-absent --repository example/repository --for
 ```
 
 This existing recovery command can run through the enforce-mode hook without a
-mutation lease. It grants no general shell authority. Ordinary authentication,
-reads and operation admission still require a valid capability. `set` without
+mutation lease. It grants no general shell authority. Runtime status and
+operation admission still require a valid capability. `set` without
 `--if-absent`, broker adoption and HTTP recovery do not mint owner credentials.
 
 Recovery requires the exported session and launch selectors to match the current
@@ -101,10 +101,14 @@ its incarnation while preserving its id, scope and expiry; unread mailbox state
 uses the existing verified-resume transfer. Live or unknown predecessors,
 competing claims, revoked brokers and unresolved operations remain refused.
 
-The fresh private capability and broker binding are persisted before the exact
-current heartbeat owner is started or reused. Success requires normal readiness.
-An interrupted heartbeat restoration can be retried with the same command and
-the matching capability. Each attempted recovery records its outcome as
+The fresh private capability and broker binding are persisted in `recovering`
+state before the exact current heartbeat owner is started or reused. The retained
+heartbeat is removed after capability publication; success requires a fresh
+post-restoration heartbeat before the broker returns to `ready`. If the heartbeat
+owner is unavailable, `owner-recovery-heartbeat-unavailable` is retryable and
+ordinary capability operations remain fenced. Retry the same command with the
+matching restored capability; partial restoration does not require deleting it.
+Each attempted recovery records its outcome as
 `owner-capability-reissue` or `owner-capability-rebind` in the bounded existing
 `logs <id> --lifecycle` diagnostics, including time and runtime generation, without
 capability bytes. Refusals return fixed `owner-recovery-*` reason codes.
