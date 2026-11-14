@@ -236,8 +236,10 @@ pub(crate) fn has_permission(
     context: &CliContext,
     record: &SessionRecord,
 ) -> Result<bool, CliError> {
+    // The caller holds the record lock and exclusive ingress probe: permission
+    // writers cannot enter. Snapshots are atomically replaced, so reading here
+    // needs no nested activity lock (native conversation commands hold it).
     let dir = session_dir(context, &record.id);
-    let _lock = acquire_lock(&dir)?;
     let path = dir.join(ACTIVITY_FILE);
     if !path.exists() {
         return Ok(false);
