@@ -237,21 +237,22 @@ fn owner_relative_queries(value: &str) -> String {
         if path.starts_with('/') || path.starts_with("./") || path.starts_with("../") {
             let prefix = &word[..word.len() - path.len()];
             output.push_str(prefix);
-            let closing = prefix
-                .chars()
-                .next_back()
-                .and_then(|character| match character {
-                    '\'' | '"' => Some(character),
-                    '(' => Some(')'),
-                    '[' => Some(']'),
-                    '{' => Some('}'),
-                    _ => None,
-                });
-            let end = if closing.is_some_and(|character| path.ends_with(character)) {
-                path.len() - 1
-            } else {
-                path.len()
-            };
+            let mut end = path.len();
+            // Match from the outermost opener against the trailing closers.
+            // Keep the complete wrapper sequence outside the query value.
+            for opener in prefix.chars() {
+                let closing = match opener {
+                    '\'' | '"' => opener,
+                    '(' => ')',
+                    '[' => ']',
+                    '{' => '}',
+                    _ => unreachable!("prefix contains only wrapper openers"),
+                };
+                if !path[..end].ends_with(closing) {
+                    break;
+                }
+                end -= closing.len_utf8();
+            }
             output.push_str(&owner_url_query(&path[..end]));
             output.push_str(&path[end..]);
         } else {

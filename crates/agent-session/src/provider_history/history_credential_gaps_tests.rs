@@ -116,6 +116,24 @@ fn relative_url_query_credential_is_masked() {
 }
 
 #[test]
+fn relative_query_nested_list_quote_wrappers_are_preserved() {
+    assert_forms(
+        "['/cb?token=SYNTHETIC']",
+        "['/cb?token=[redacted]']",
+        "['/cb?token=[redacted]']",
+    );
+}
+
+#[test]
+fn relative_query_parenthesized_quote_wrappers_are_preserved() {
+    assert_forms(
+        "(\"/cb?token=SYNTHETIC\")",
+        "(\"/cb?token=[redacted]\")",
+        "(\"/cb?token=[redacted]\")",
+    );
+}
+
+#[test]
 fn ordinary_wrappers_and_noncredential_queries_are_preserved() {
     for text in [
         "echo \"status=ready\"SUFFIX then",

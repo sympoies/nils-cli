@@ -5,7 +5,7 @@
 
 - History masked and owner forms mask concatenated outer-quote suffixes,
   encoded query assignments, and relative URL query credentials without stray
-  delimiters.
+  delimiters, retaining complete nested closing wrappers around relative URLs.
 - Short query aliases match name components, preserving ordinary query names
   that merely contain those substrings.
 
@@ -18,8 +18,9 @@
 ### Evidence
 
 - Five independent synthetic regressions failed on the unmodified main
-  baseline; all 25 focused history-parts tests pass after the fix, including
-  unchanged provider goldens and ordinary-text controls.
+  baseline; two nested-wrapper regressions also failed before their repair. All
+  27 focused history-parts tests pass after the fix, including unchanged provider
+  goldens and ordinary-text controls.
 
 ### Links
 
