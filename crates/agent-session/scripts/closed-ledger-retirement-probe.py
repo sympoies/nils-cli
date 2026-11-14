@@ -127,7 +127,7 @@ def inspect(path, now):
             raw = source.read(MAX_BYTES + 1)
         if len(raw) > MAX_BYTES:
             return "invalid", None
-        ledger = json.loads(raw)
+        ledger = json.loads(raw.decode("utf-8"))
         if not valid_ledger(ledger):
             return "invalid", None
         return "observed", counts(ledger, now)

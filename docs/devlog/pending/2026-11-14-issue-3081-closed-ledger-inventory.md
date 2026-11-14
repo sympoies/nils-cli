@@ -14,9 +14,10 @@
 
 ### Evidence
 
-- Nine synthetic CLI tests pass, including retention cutoffs, unknown status,
-  privacy, unchanged ledger bytes and modification metadata, and a held writer
-  lock.
+- Ten synthetic CLI tests pass, including retention cutoffs, unknown status,
+  privacy, unchanged ledger bytes and modification metadata, a held writer lock,
+  and runtime-invalid encoding rejection. The encoding regression was retained
+  RED before the one-line parser fix.
 
 ### Links
 

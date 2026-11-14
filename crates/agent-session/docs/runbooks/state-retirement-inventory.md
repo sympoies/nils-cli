@@ -27,7 +27,8 @@ Do not use a board HTTP/CLI projection to count missing fields. The current
 reader synthesizes `launch_env`; its ledger access can also create, prune or
 replace the file.
 
-The JSON output contains fixed field names, observation epoch, status and
+The ledger must be UTF-8 JSON, as required by the runtime reader. The JSON output
+contains fixed field names, observation epoch, status and
 counts only. It never prints file paths, ledger identity, record values,
 session/account identifiers or launch environment values.
 
@@ -80,7 +81,7 @@ python3 -B -m unittest discover -s crates/agent-session/scripts -p 'test_*.py' -
 
 The suite also covers the inclusive age cutoff, timezone offsets, fractional
 seconds, the 256-entry cutoff after age pruning, missing versus observed-empty,
-invalid content/schema/sequence, non-regular/untrusted inputs, unchanged ledger
+invalid content/encoding/schema/sequence, non-regular/untrusted inputs, unchanged ledger
 bytes and modification metadata, and a held writer lock.
 
 For the first retirement slice, the owner receipt must include the observation

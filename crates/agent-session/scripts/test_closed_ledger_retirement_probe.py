@@ -146,6 +146,15 @@ class ProbeTests(unittest.TestCase):
                 self.write(rows)
                 self.assertEqual(self.probe(2)["status"], "invalid")
 
+    def test_runtime_invalid_encoding_cannot_certify_an_observed_zero(self):
+        self.write([])
+        unsupported = self.ledger.read_text().encode("utf-16")
+        self.ledger.write_bytes(unsupported)
+        report = self.probe(expected_exit=2)
+        self.assertEqual(report["status"], "invalid")
+        self.assertIsNone(report["counts"])
+        self.assertEqual(self.ledger.read_bytes(), unsupported)
+
     def test_untrusted_file_is_not_read_and_symlink_is_not_followed(self):
         self.write([entry(1)])
         self.ledger.chmod(0o644)
