@@ -186,6 +186,26 @@ release full-validation workflow. Run them locally only when you need CI
 parity, release-quality verification, coverage maintenance, or explicit
 debugging evidence.
 
+PR pushes keep the affected-package Linux checks. In merge groups, the
+required Linux `test` check uses a workspace-unified nextest pass for those
+same affected packages:
+`cargo nextest run --profile ci --workspace --all-features -E 'package(=<name>) | ...'`.
+`--workspace` resolves dependency features across every workspace member; the
+exact package filter limits test execution to the affected packages. This
+catches differences such as `serde_json/preserve_order` changing JSON key order
+when another member enables it. Package-scoped `--all-features` alone misses
+that difference.
+
+The unified selection replaces the queue's scoped nextest pass, so queue tests
+execute once. Clippy, binary builds and doctests retain package selection;
+Cargo uses the existing target directory and dependency cache. Workspace test
+targets still compile, although unrelated package tests do not execute. Required
+check names stay unchanged. The queue is the final pre-merge feature-unification
+gate; feedback on this class arrives at queue entry rather than on every push.
+This keeps added per-push cost within the two-minute budget. Full Linux fallback
+and nightly/release validation already run workspace tests. Local-fast package
+checks and coverage lanes keep their existing selection and thresholds.
+
 Primary local entrypoint for day-to-day implementation work:
 
 ```bash

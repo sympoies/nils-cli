@@ -116,10 +116,20 @@ fi
 
 case "${NILS_CLI_TEST_RUNNER:-nextest}" in
   nextest)
-    # Build apart from the run so a linker crash is retried without ever
-    # re-running tests; the run below reuses the same build.
-    run ci_build_with_linker_retry cargo nextest run --profile ci "${package_args[@]}" --all-features --no-run
-    run_test cargo nextest run --profile ci "${package_args[@]}" --all-features
+    # Keep PR pushes scoped. The required queue check resolves features across
+    # the workspace, filtering execution to the same affected packages. Use one
+    # test pass per event so queue tests are not executed twice.
+    test_args=("${package_args[@]}")
+    if [[ "${GITHUB_EVENT_NAME:-}" == "merge_group" ]]; then
+      workspace_filter=""
+      for package in "$@"; do
+        workspace_filter+="${workspace_filter:+ | }package(=$package)"
+      done
+      test_args=(--workspace -E "$workspace_filter")
+    fi
+    # Retry only a crashed build, never a test execution.
+    run ci_build_with_linker_retry cargo nextest run --profile ci "${test_args[@]}" --all-features --no-run
+    run_test cargo nextest run --profile ci "${test_args[@]}" --all-features
     ;;
   llvm-cov)
     # -p selects tests, not the report corpus. The exact selected corpus is
