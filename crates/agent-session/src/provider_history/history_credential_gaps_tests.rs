@@ -108,6 +108,11 @@ fn relative_url_query_credential_is_masked() {
         "fetch /cb?token=[redacted]#section then",
         "fetch /cb?token=[redacted]#section then",
     );
+    assert_forms(
+        "/cb?key=SYNTHETIC&auth=SYNTHETIC&x-amz-signature=SYNTHETIC",
+        "/cb?key=[redacted]&auth=[redacted]&x-amz-signature=[redacted]",
+        "/cb?key=[redacted]&auth=[redacted]&x-amz-signature=[redacted]",
+    );
 }
 
 #[test]
@@ -117,6 +122,8 @@ fn ordinary_wrappers_and_noncredential_queries_are_preserved() {
         "['status=ready'SUFFIX']",
         "question?status=ready then",
         "/cb?view=files",
+        "/cb?monkey=banana&author=example",
+        "/cb?monkey%3Dbanana&view=files",
         "tokenization is ordinary text",
     ] {
         assert_forms(text, text, text);

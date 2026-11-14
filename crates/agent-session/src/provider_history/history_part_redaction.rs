@@ -334,13 +334,12 @@ fn credential_query_key(key: &str) -> bool {
     let Some((decoded, _)) = url.query_pairs().next() else {
         return false;
     };
-    let normalized: String = decoded
-        .chars()
-        .filter(char::is_ascii_alphanumeric)
-        .collect::<String>()
-        .to_ascii_lowercase();
     credential_key(&decoded)
-        || ["key", "auth", "signature"]
-            .iter()
-            .any(|name| normalized.contains(name))
+        || decoded
+            .split(|character: char| !character.is_ascii_alphanumeric())
+            .any(|name| {
+                ["key", "auth", "signature"]
+                    .iter()
+                    .any(|alias| name.eq_ignore_ascii_case(alias))
+            })
 }

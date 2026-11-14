@@ -6,6 +6,8 @@
 - History masked and owner forms mask concatenated outer-quote suffixes,
   encoded query assignments, and relative URL query credentials without stray
   delimiters.
+- Short query aliases match name components, preserving ordinary query names
+  that merely contain those substrings.
 
 ### Why / context
 
