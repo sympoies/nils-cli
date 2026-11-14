@@ -44,8 +44,13 @@ fn paste_prompt_file_observing(
     // queued while the visible pane stays unchanged; no pane digest can prove
     // non-delivery or authorize replaying the prompt bytes.
     let before = capture_pane_digest(tmux_bin, &target);
-    load_and_paste_buffer(tmux_bin, &buffer_name, &target, prompt_file)
-        .map_err(prompt_delivery_failure)?;
+    {
+        let _permission_admission = response_context
+            .map(|(context, _)| cli::permission::terminal_admission(context, record))
+            .transpose()?;
+        load_and_paste_buffer(tmux_bin, &buffer_name, &target, prompt_file)
+            .map_err(prompt_delivery_failure)?;
+    }
 
     // The initial prompt is submitted; `send` deliberately leaves this to
     // an explicit `--key enter`. Tmux confirms that it wrote the paste bytes,
@@ -86,7 +91,11 @@ fn paste_prompt_file_observing(
                     record,
                     tmux_bin,
                     send_guard::response::Operation::Submit,
-                    || send_tmux_key(tmux_bin, &target, SpecialKey::Enter),
+                    || {
+                        let _permission_admission =
+                            cli::permission::terminal_admission(context, record)?;
+                        send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
+                    },
                 )
             },
         )?;
@@ -154,7 +163,7 @@ pub(crate) fn deliver_claude_structured_prompt_locked(
     activity::refuse_if_blocked(
         context,
         &record,
-        "answer the dialog with send --key, then resubmit the prompt",
+        "answer the permission through permission answer, then resubmit the prompt",
     )?;
     send_guard::require_empty_composer(context, &record, tmux_bin)?;
     codex_account::ensure_input_allowed(&record)?;

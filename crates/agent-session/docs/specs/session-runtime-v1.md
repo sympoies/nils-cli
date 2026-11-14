@@ -159,8 +159,9 @@ Hook signals as implemented by
 - **No hook on denial.** A manual denial and an interrupt emit no hook **[F]**
   (n=1 each), so a recorded wait ends only at the next prompt, a same-turn
   `Stop` or a runtime boundary until a structured state source observes it.
-- **Not answered here.** The hook only records; the terminal dialog stays the
-  answerer. Answering through the hook is staging step 3.
+- **Explicit hook answers.** Staging step 3 is implemented by #3687. A live
+  synchronous hook accepts one owner answer bound to its fresh request id and
+  projected tool-call id. See the [answer contract](#claude-permission-answers-3687).
 - **Without hooks.** A session whose managed hooks are absent or incomplete
   uses structured state observations without inferring completion from
   generic idle alone; approvals stay conservative, and `activity doctor`
@@ -175,7 +176,9 @@ Order only; each step is its own issue.
    Stop completion are removed. The [inventory](#claude-rule-inventory-for-3592)
    names the retained rules that have no structured equivalent.
 2. Single-writer lease, handoff command and pre-attach liveness check.
-3. Approval answers through the `PermissionRequest` hook with id correlation.
+3. Approval answers through the `PermissionRequest` hook with id correlation
+   are implemented (#3687). Claude approval keystroke admission is removed;
+   ordinary composer/send guards remain.
 4. Codex slices #3582, #3583 and #3584 under this document.
 
 Not scheduled: an opt-in unattended stream-json runtime (option B). It would
@@ -220,6 +223,7 @@ Matching uses `sessionId` in the session's provider configuration directory;
 | `project_interrupt_uncertainty`/`interrupt_since`: two samples at least 15 seconds apart | Claude Code 2.1.317 exposes no documented exact interactive interrupt/manual-denial outcome; generic idle cannot identify the cause. | Removed Claude from this inference and its timer accumulation. First fresh runtime/revision-bound structured idle over an open turn projects `unknown` with `claude_turn_outcome_unknown`, including pending approval. Codex retains its separate marker/timer behavior. |
 | `claude_completion`: one-second post-Stop window | Same-runtime, same-revision structured idle plus the qualifying current-turn Stop can confirm idleness without a quiet timer. `StopFailure` and `Notification(idle_prompt)` already complete immediately. Raw Stop cannot prove other hooks will not continue. | Removed timer completion and deadline-driven wakeups. Keep candidate identity/cancellation fences; missing/busy/blocked state cannot settle it. |
 | Structured-reader failure falling through to Claude screen arms | No structured state is available; missing binary, timeout, malformed/unknown entry or unmatched identity does not justify pane inference. | Removed Claude pane fallback; project unknown with an unavailable diagnostic while preserving durable hook state. No fallback switch. |
+| Claude approval keystrokes and approval-dialog screen admission | The live `PermissionRequest` hook owns one fresh request id, bound to the exact current-turn `PreToolUse` call. | Removed terminal answer admission; keys, bare newline and `allow_blocked` cannot answer a recorded Claude approval. No screen guard or fallback switch authorizes an answer. |
 | `send_submit`/`composer` and send guards: editor boundaries, drafts, pasted/queued text, dialog exclusion, Enter readback | Neither listing nor hooks reveal editor contents, cursor position, exact submitted bytes, or whether Enter answers a dialog. `SessionStart` supplies initial readiness only. | Still required for safe terminal input; retain checks/tests. They do not determine activity completion. |
 | Terminal authentication-pattern detection | `StopFailure.error=authentication_failed` covers emitted failures, but generic structured state does not identify an unreported terminal authentication incident. | Still required for terminal-only incidents under the separate health/recovery contract; retain bounded recognition. |
 
@@ -277,3 +281,79 @@ The local shadow cache omits `interrupt_since` for newly sampled Claude state;
 that optional member remains owned by the Codex marker sampler. No public turn
 outcome or event kind is removed. Unknown cannot authorize send, settle a
 mailbox notice, manufacture completion, or clear pending approval attention.
+
+## Claude permission answers (#3687)
+
+The managed `agent-hook dispatch --product claude` provider-output path keeps
+its synchronous `PermissionRequest` process alive for an explicit answer. The
+existing activity policy records the request first. A policy block is never
+overridden; shadow and diagnostic JSON dispatch do not wait or answer. Raw
+`activity hook` telemetry alone cannot answer a permission request.
+
+The reviewed external range is **Claude Code 2.1.317 through 2.1.317**. The
+permission gate reuses the native notice version parser but owns its narrower
+bounds: the notice module's audited range does not authorize permission
+answers. Missing/unreadable versions return
+`permission-provider-version-unavailable`; versions outside the reviewed range
+return `permission-provider-version-unsupported`. Raising the range requires a
+reviewed permission-contract audit. Fixtures exercise these boundaries; no live
+approval probe is claimed by this implementation.
+
+The hook requires exactly one open `PreToolUse` call matching the recorded
+approval in the current runtime, provider session and turn. Missing or
+ambiguous calls remain conservative. A private per-call lease prevents duplicate
+waiters. Each live hook publishes a fresh UUID plus the projected call id through:
+
+```sh
+agent-session permission list <id> --format json
+agent-session permission answer <id> --request-id <uuid> \
+  --call-id <projected-call-id> --decision allow --format json
+# Use --decision deny to refuse exactly this call.
+```
+
+The operator-authenticated daemon exposes the same inventory at
+`GET /sessions/{id}/permissions` and answers at
+`POST /sessions/{id}/permissions` with the strict JSON body
+`{ "request_id": "<uuid>", "call_id": "<projected-call-id>", "decision": "allow" }`
+(or `deny`). Authority is the local OS owner for CLI operations, or the existing
+daemon operator bearer token for HTTP. Mailbox and coordination credentials
+cannot authorize the HTTP operation. There is no automatic approval policy.
+The inventory and receipt contain no raw provider ids, input or socket path.
+
+An answer is checked again by the live hook under record/activity locks and an
+exclusive provider-ingress fence,
+immediately before it emits `hookSpecificOutput.decision.behavior`. It cannot
+update tool input, save permission rules or widen permission modes.
+`AskUserQuestion` and `ExitPlanMode` require their own interactive input contract
+and are not handled by this permission relay. A successful receipt reports
+`outcome: delivered_to_hook`, never tool execution or a provider acknowledgement.
+Missing acknowledgement is `permission-delivery-unknown`; do not replay it to a
+new request. Attention is settled only by the existing correlated result or turn
+lifecycle, including after an explicitly delivered denial.
+
+Wrong call ids return `permission-call-mismatch`; absent, expired or consumed
+request UUIDs return `permission-request-gone`. Stale runtime/turn/attention,
+uncorrelated calls and a disconnected hook send no answer. The waiter repeats
+identity checks while waiting and on delivery. A later request has a new UUID,
+so an old answer cannot land on it or in the composer. Pending provider ingress
+returns `permission-event-pending` before delivery. Terminal admission checks all
+pending attention entries, including approvals behind other attention and unknown
+overflow, and retains the ingress fence only during immediate pane writes, never
+while waiting for a provider acknowledgement.
+
+Setup writes a **600-second** timeout for Claude `PermissionRequest`; the
+internal wait expires at **540 seconds**, and its dispatcher bound is **550
+seconds**. Expiry returns no permission decision. Setup reports a stale timeout
+as drift and refreshes its owned handler; activity readiness reports a missing
+or stale owned `PermissionRequest` registration. Refresh hook setup before or
+with the upgrade on each host. Install `agent-hook` and `agent-session` from the
+same release and restart the provider so its hook configuration is current.
+A host with absent/incomplete hooks cannot answer remotely; attention stays
+open. There is no keystroke fallback, including `--allow-blocked`.
+
+Ordinary composer/send guards remain required. Direct interactive terminal
+attach remains the human takeover path; it is not the structured permission
+answer API. Codex is unchanged. After release, the tester uses a disposable
+session on a reviewed provider version: trigger one permission, list its request,
+refuse a wrong call id, allow the matching request, then trigger another request
+and deny it. Verify the old UUID is refused and a missing hook stays unanswerable.

@@ -15,6 +15,8 @@ mod live_composer;
 mod native_composer;
 #[path = "guarded_send/observation_deadline.rs"]
 mod observation_deadline;
+#[path = "guarded_send/permission.rs"]
+mod permission;
 #[path = "guarded_send/placeholder.rs"]
 mod placeholder;
 #[path = "guarded_send/repair.rs"]

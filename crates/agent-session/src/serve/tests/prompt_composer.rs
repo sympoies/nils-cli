@@ -1,6 +1,8 @@
 //! Composer observations for delivery fixtures.
 use super::*;
 
+#[path = "prompt_composer/permission.rs"]
+mod permission;
 #[path = "prompt_composer/recording.rs"]
 pub(super) mod recording;
 #[path = "prompt_composer/unknown_approval.rs"]
