@@ -187,9 +187,10 @@ need its own maintainer decision and would reuse the single-writer rule.
   Code 2.1.317 or newer (audited at 2.1.317). Missing or older binaries and
   unavailable/unknown listings project unknown with a fixed diagnostic reason,
   without pane fallback. Future provider changes still need auditing.
-- A manual approval denial and an interrupt emit no Claude hook. Which
-  structured source ends the recorded wait sooner than the next prompt: the
-  `claude agents --json` state (#3590), or the transcript?
+- The #3686 audit below found no documented exact interactive interrupt or
+  manual-denial outcome. What future provider contract could expose one with
+  stable turn correlation and a bounded publication delay? The current runtime
+  projects unknown instead of inferring a cause from elapsed idle time.
 - Each `claude agents --json` call took about a third of a second. What polling
   cadence, or event source, keeps cost acceptable across many sessions?
 - Can `claude --bg` sessions with `attach` be a better live-view base, given
@@ -215,8 +216,8 @@ Matching uses `sessionId` in the session's provider configuration directory;
 | `shadow::classify`: `claude_working_indicator` (`esc to interrupt`, current Running tool) | `state=working` or `status=busy`; `UserPromptSubmit` starts a turn and `PreToolUse` supplies progress. | Removed Claude working screen arm and Running-tool helper. |
 | `claude_prompt_visible` (last three rows) | `state=done/failed/stopped` or `status=idle` supplies idleness; primary `SessionStart(startup/resume)` supplies initial readiness. Idle alone does not identify a completed turn. | Removed screen idle/prompt arm. |
 | `claude_permission_form` (proceed/allow text) | `state=blocked` or `status=waiting`, with `waitingFor=permission prompt`, supplies approval-wait observation. `PermissionRequest` records attention; matched `PostToolUse`/`PostToolUseFailure` resolves its tool call. | Removed activity dialog detection; retain hook correlation and conservative attention where resolution is unproven. |
-| `claude_interrupt_marker`, empty composer, latest-marker/current-viewport/Running-tool guards | `state=stopped` and provider idleness replace pane evidence. The reader groups `done/failed/stopped` as idle; `status=idle` cannot identify an interrupt. Manual denial and interrupt emit no hook (#3599). | Removed screen marker and composer/history guards. Retain uncertainty for an open turn without qualifying completion; generic idle does not prove an outcome. |
-| `project_interrupt_uncertainty`/`interrupt_since`: two samples at least 15 seconds apart | Inputs can be structured idle observations only. Generic idle and hooks do not prove why an unmatched open turn stopped. | Removed screen-marker input. Retain runtime/revision-fenced sustained structured-idle uncertainty, except where a qualifying Stop establishes completion. This delay is conservative inference, not confirmed interrupt. |
+| `claude_interrupt_marker`, empty composer, latest-marker/current-viewport/Running-tool guards | `state=stopped` describes a stopped background session; interactive `status=idle` cannot identify an interrupt. Manual denial and interrupt emit no hook (#3599). | Removed screen marker and composer/history guards. Keep a fixed unknown outcome for an unmatched open turn; generic idle does not prove an outcome. |
+| `project_interrupt_uncertainty`/`interrupt_since`: two samples at least 15 seconds apart | Claude Code 2.1.317 exposes no documented exact interactive interrupt/manual-denial outcome; generic idle cannot identify the cause. | Removed Claude from this inference and its timer accumulation. First fresh runtime/revision-bound structured idle over an open turn projects `unknown` with `claude_turn_outcome_unknown`, including pending approval. Codex retains its separate marker/timer behavior. |
 | `claude_completion`: one-second post-Stop window | Same-runtime, same-revision structured idle plus the qualifying current-turn Stop can confirm idleness without a quiet timer. `StopFailure` and `Notification(idle_prompt)` already complete immediately. Raw Stop cannot prove other hooks will not continue. | Removed timer completion and deadline-driven wakeups. Keep candidate identity/cancellation fences; missing/busy/blocked state cannot settle it. |
 | Structured-reader failure falling through to Claude screen arms | No structured state is available; missing binary, timeout, malformed/unknown entry or unmatched identity does not justify pane inference. | Removed Claude pane fallback; project unknown with an unavailable diagnostic while preserving durable hook state. No fallback switch. |
 | `send_submit`/`composer` and send guards: editor boundaries, drafts, pasted/queued text, dialog exclusion, Enter readback | Neither listing nor hooks reveal editor contents, cursor position, exact submitted bytes, or whether Enter answers a dialog. `SessionStart` supplies initial readiness only. | Still required for safe terminal input; retain checks/tests. They do not determine activity completion. |
@@ -226,3 +227,53 @@ Manual denial remains a hook-correlation gap: no result hook proves which
 approval was denied. Generic idle must not silently resolve exact attention or
 invent tool success. The structured waiting observation and durable hook
 attention remain distinguishable. This inventory claims no new live probe.
+
+## Claude interrupt and denial audit (#3686)
+
+Audited 2026-11-14 against **Claude Code 2.1.317**. Findings were posted
+[before production edits](https://github.com/sympoies/nils-cli/issues/3686#issuecomment-6868576668).
+
+- **[F, documented]** The [listing contract](https://code.claude.com/docs/en/agent-view#list-sessions-as-json)
+  assigns `state` to background sessions and `status` to live processes.
+  Background `stopped` includes process termination; it is not an interactive
+  turn outcome. Interactive idle alone cannot classify completion or its cause.
+- **[F, documented]** [Stop](https://code.claude.com/docs/en/hooks#stop)
+  excludes user interrupts; [PermissionDenied](https://code.claude.com/docs/en/hooks#permissiondenied)
+  excludes manual dialog denial. `PostToolUseFailure.is_interrupt` describes
+  an abort delivered to that hook; cancelling a running tool does not fire it.
+- **[F, static binary audit; undocumented internals]** The installed binary
+  constructs transcript records with `toolDenialKind`, `toolDenialEndsTurn`
+  and `interruptedByShutdown`. Its synthetic result path also assigns
+  `user-rejected` to a general `user_interrupted` abort. Other `interrupted`
+  records cover ending a turn to deliver new input. These names alone do not
+  establish a distinct manual denial or user interrupt. Prose marker matching
+  would be another heuristic; no such reader is added.
+- **[I]** None of the documented sources audited here provides an unambiguous,
+  current-turn outcome for these two interactive actions. The issue’s no-signal
+  branch therefore applies: unknown with a fixed diagnostic, without waiting
+  for a second idle sample. A long genuine idle gets the same honest uncertainty,
+  never a suspected-interrupt diagnosis.
+- **[F, disposable probe]** An empty isolated configuration returned an empty
+  listing in 257 ms (n=1). A disposable TUI attempt reached login selection
+  and ended without authentication or a model turn. No managed session was
+  queried or driven.
+- **[N]** Actual interrupt/denial-to-listing delay, transcript publication delay
+  and exact undocumented-field classification were not measured. The provider
+  documents asynchronous transcript writes without a publication bound.
+  A disposable post-release live check remains tester-owned.
+
+The projection is presentation only. It preserves the current turn, attention,
+revision, progress timestamps and last outcome; it does not persist unknown or
+clear an approval. Fresh idle applies only to the same runtime and accepted
+revision. A later qualifying Stop still needs fresh post-Stop idle, while
+StopFailure and idle_prompt retain their existing terminal behavior. No grace
+period or additional outcome timer is used. The regular sampler cadence remains
+15 seconds; this is observation scheduling, not evidence of an interrupt.
+
+Public behavior change: Claude no longer emits `diagnostic.reason:
+interrupted_suspected`; unmatched open idle now emits
+`claude_turn_outcome_unknown`. The former code remains available for Codex.
+The local shadow cache omits `interrupt_since` for newly sampled Claude state;
+that optional member remains owned by the Codex marker sampler. No public turn
+outcome or event kind is removed. Unknown cannot authorize send, settle a
+mailbox notice, manufacture completion, or clear pending approval attention.

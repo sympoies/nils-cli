@@ -429,7 +429,8 @@ Old snapshots omit the field and therefore deserialize conservatively.
 Optional `diagnostic.reason` values are producer-owned allowlisted codes:
 `completion_evidence_pending`, `attention_authority_mismatch`,
 `provider_projection_unavailable`, `runtime_activity_unhealthy`,
-`activity_state_unavailable`, `interrupted_suspected`, `codex_progress_quiet`,
+`activity_state_unavailable`, `claude_turn_outcome_unknown`,
+`interrupted_suspected` (Codex only), `codex_progress_quiet`,
 `codex_startup_idle_unverified`, and `completion_evidence_missing`. Quiet diagnostics include only bounded
 `quiet_threshold_seconds`, `quiet_since`, and `quiet_signal` fields described
 above, plus the optional allowlisted `completion_candidate_reason`. They never
@@ -493,7 +494,7 @@ the research-preview agent view; see
   `rule_id` of `claude_agents_busy`, `claude_agents_idle`,
   `claude_agents_waiting_permission_prompt` or `claude_agents_waiting_other`.
   The `disagrees` flag compares the projection with the hook-derived phase. An
-  idle reading over an open turn is sustained as uncertainty below, unless
+  idle reading over an open turn projects fixed uncertainty below, unless
   a qualifying Stop plus current structured idle establishes completion.
 - **Unavailable.** Claude Code 2.1.317 is the minimum supported version for
   this listing integration (the audited version, not a claim about when the
@@ -518,15 +519,21 @@ The `state` fixtures are synthetic and follow provider documentation.
 The [rule inventory](specs/session-runtime-v1.md#claude-rule-inventory-for-3592)
 names every removed activity screen rule and each retained terminal guard.
 
-For Claude, two consecutive structured idle observations at least 15 seconds
-apart over an otherwise open turn may still project `unknown` with
-`interrupted_suspected`. This is conservative uncertainty: generic idle groups
-done, failed and stopped states, and no interrupt hook identifies the cause.
-It never confirms completion, clears attention or changes the last outcome.
-A qualifying current-turn Stop plus fresh structured idle instead completes
-under the rule below. Both observations remain runtime/revision-fenced;
-new work, attention, busy state or unavailable evidence prevents inference.
-No pane, marker or empty-composer requirement participates.
+For Claude, the first fresh structured idle observation over an open turn
+projects `unknown` with `claude_turn_outcome_unknown`, including when approval
+attention is pending. Claude Code 2.1.317 provides no documented exact
+interactive-turn interrupt/manual-denial outcome; background `state=stopped`
+is not that signal. This projection never confirms completion, clears attention
+or changes the last outcome. It preserves the semantic clock and does not write
+reducer/control state.
+
+A later qualifying current-turn Stop plus fresh
+post-Stop structured idle still completes under the rule below; StopFailure and
+idle_prompt still settle immediately. No grace window or sustained-idle timer
+participates. Runtime, revision, freshness, current-turn and idle-state fences
+apply; newer work and non-idle evidence invalidate the projection. Source is
+`console_observation` with observed confidence: idle was observed, its cause
+was not. See the [versioned audit](specs/session-runtime-v1.md#claude-interrupt-and-denial-audit-3686).
 
 For Codex, two consecutive interrupt-marker samples at least 15 seconds apart
 retain the same runtime/revision and current-turn/attention fences. They project
@@ -750,8 +757,9 @@ Limits:
   `PermissionDenied`, `PostToolUseFailure` or `Stop` followed), so the recorded
   wait ends only at the next `UserPromptSubmit`, a same-turn `Stop`,
   `StopFailure`, completion or a runtime boundary. The structured source that
-  can observe denial is the `claude agents --json` state
-  ([#3590](https://github.com/sympoies/nils-cli/issues/3590)).
+  can observe the dialog ending is `claude agents --json`; it cannot identify
+  manual denial as the cause. Fresh idle projects `claude_turn_outcome_unknown`
+  without resolving the recorded attention ([#3686](https://github.com/sympoies/nils-cli/issues/3686)).
 - Two open calls with the same tool and input are ambiguous by construction;
   the approval is not bound and a result for either call does not clear it.
 - A result clears the approval when the tool runs after approval, including

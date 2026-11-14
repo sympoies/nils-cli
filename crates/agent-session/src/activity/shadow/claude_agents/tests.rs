@@ -475,41 +475,6 @@ fn sampler_prefers_the_structured_state_over_the_screen() {
 }
 
 #[test]
-fn idle_provider_state_over_an_open_turn_is_sustained_uncertainty() {
-    let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
-    let (bin, _) = counting_claude(tmp.path());
-    let _bin = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_BIN", bin.to_str().unwrap());
-    let _config = EnvGuard::remove(&lock, "CLAUDE_CONFIG_DIR");
-    let sampled = running_turn(IDLE_ID);
-
-    sampled.collect(true);
-    let mut first = sampled.wait_for_document(|_| true);
-    assert_eq!(first.observation.rule_id, "claude_agents_idle");
-    assert!(first.observation.disagrees);
-    assert_eq!(sampled.collect(false).phase, activity::TurnPhase::Working);
-
-    // The same idle reading twenty seconds later, on the same revision.
-    let earlier = Timestamp::now()
-        .checked_sub(jiff::SignedDuration::from_secs(20))
-        .unwrap()
-        .to_string();
-    first.observation.observed_at = earlier.clone();
-    first.interrupt_since = Some(earlier.clone());
-    fs::write(sampled.path(), serde_json::to_vec(&first).unwrap()).unwrap();
-    sampled.collect(true);
-    let second = sampled.wait_for_document(|document| document.observation.observed_at != earlier);
-    assert_eq!(second.interrupt_since.as_deref(), Some(earlier.as_str()));
-
-    let state = sampled.collect(false);
-    assert_eq!(state.phase, activity::TurnPhase::Unknown);
-    assert_eq!(
-        state.diagnostic.map(|diagnostic| diagnostic.reason),
-        Some("interrupted_suspected".to_string())
-    );
-}
-
-#[test]
 fn state_field_decides_and_status_only_says_whether_the_process_is_busy() {
     let snapshot = parse(WITH_STATE.as_bytes()).unwrap();
     // `state: working` outranks `status: idle`.
@@ -873,8 +838,12 @@ fn pre_stop_cached_idle_is_not_retimestamped_as_completion_evidence() {
         let state = activity::state_for_view(&sampled.context, &sampled.record).unwrap();
         assert_eq!(
             state.phase,
-            activity::TurnPhase::Working,
+            activity::TurnPhase::Unknown,
             "in-flight={in_flight}"
+        );
+        assert_eq!(
+            state.diagnostic.as_ref().unwrap().reason,
+            "claude_turn_outcome_unknown"
         );
         assert!(state.current_turn.is_some());
         assert!(state.last_turn.is_none());
@@ -883,7 +852,7 @@ fn pre_stop_cached_idle_is_not_retimestamped_as_completion_evidence() {
 }
 
 #[test]
-fn sustained_structured_idle_uncertainty_keeps_runtime_revision_and_attention_fences() {
+fn structured_idle_outcome_unknown_keeps_runtime_revision_and_freshness_fences() {
     let sampled = running_turn(IDLE_ID);
     let before = activity::state_for_view(&sampled.context, &sampled.record).unwrap();
     let earlier = Timestamp::now()
@@ -930,7 +899,7 @@ fn sustained_structured_idle_uncertainty_keeps_runtime_revision_and_attention_fe
         );
         assert_eq!(
             view.phase,
-            if case == "current" {
+            if matches!(case, "current" | "attention") {
                 activity::TurnPhase::Unknown
             } else {
                 activity::TurnPhase::Working
@@ -944,3 +913,5 @@ fn sustained_structured_idle_uncertainty_keeps_runtime_revision_and_attention_fe
         assert_eq!(view.last_turn, before.last_turn);
     }
 }
+
+mod outcome;

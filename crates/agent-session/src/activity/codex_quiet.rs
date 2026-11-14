@@ -43,7 +43,10 @@ pub(crate) fn diagnostic_for_board(fields: &Map<String, Value>) -> Option<Value>
     let reason = fields.get("reason")?.as_str()?;
     let mut value = if matches!(
         reason,
-        "completion_evidence_pending" | "codex_startup_idle_unverified" | "codex_runtime_stopped"
+        "completion_evidence_pending"
+            | "codex_startup_idle_unverified"
+            | "codex_runtime_stopped"
+            | "claude_turn_outcome_unknown"
     ) {
         json!({})
     } else {

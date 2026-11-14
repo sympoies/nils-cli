@@ -282,13 +282,19 @@ fn qualifying_stop_requires_a_fresh_runtime_and_revision_bound_structured_idle()
             after.phase,
             if matches!(case, "current" | "settled-history") {
                 TurnPhase::Waiting
-            } else if case == "unavailable" {
+            } else if matches!(case, "unavailable" | "before-stop") {
                 TurnPhase::Unknown
             } else {
                 TurnPhase::Working
             },
             "{case}"
         );
+        if case == "before-stop" {
+            assert_eq!(
+                after.diagnostic.as_ref().unwrap().reason,
+                "claude_turn_outcome_unknown"
+            );
+        }
         if matches!(case, "current" | "settled-history") {
             assert!(after.current_turn.is_none());
             assert_eq!(after.last_turn.unwrap().outcome, "completed");
