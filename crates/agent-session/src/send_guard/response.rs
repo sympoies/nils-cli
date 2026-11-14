@@ -16,7 +16,11 @@ use crate::{CliContext, CliError, SessionRecord, activity, session_dir};
 impl super::Admission<'_> {
     pub(crate) fn send_key(&self, key: crate::SpecialKey) -> Result<(), CliError> {
         let target = format!("{}:0.0", self.record.tmux_session);
-        let action = || crate::send_tmux_key(self.tmux_bin, &target, key);
+        let action = || {
+            let _permission_admission =
+                crate::cli::permission::terminal_admission(self.context, self.record)?;
+            crate::send_tmux_key(self.tmux_bin, &target, key)
+        };
         if key == crate::SpecialKey::Enter {
             watch(
                 self.context,

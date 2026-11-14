@@ -8,6 +8,11 @@ use crate::cli::{self, Command};
 
 pub(crate) fn command_name(command: &Command) -> Option<&'static str> {
     match command {
+        Command::Permission(args) => Some(match &args.command {
+            cli::permission::Command::List(_) => "permission.list",
+            cli::permission::Command::Answer(_) => "permission.answer",
+            cli::permission::Command::Wait(_) => "permission.wait",
+        }),
         Command::AuthAlert(args) => Some(cli::auth_alert::name(args)),
         Command::Rules(_) => Some("rules"),
         Command::AutoResume(_) => Some("auto-resume"),
@@ -132,6 +137,8 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             ("title", "set") => Some("title-set"),
             ("title", "auto") => Some("title-auto"),
             ("metadata", "attach") => Some("metadata-attach"),
+            ("permission", "list") => Some("permission.list"),
+            ("permission", "answer") => Some("permission.answer"),
             ("metadata", "show") => Some("metadata-show"),
             ("account", "show") => Some("account-show"),
             ("account", "switch") => Some("account-switch"),
@@ -142,6 +149,12 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
 
 pub(crate) fn command_format(command: &Command) -> OutputFormat {
     match command {
+        Command::Permission(args) => match &args.command {
+            crate::cli::permission::Command::List(args) => args.format,
+            crate::cli::permission::Command::Answer(args) => args.format,
+            crate::cli::permission::Command::Wait(_) => OutputFormat::Text,
+        },
+
         Command::AuthAlert(args) => cli::auth_alert::format(args),
         Command::Rules(args) => args.format,
         Command::Workspace(args) => crate::origin::format(args),

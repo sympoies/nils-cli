@@ -29,6 +29,12 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   `409 agent-blocked` with a `{ id, phase, remedy }` detail before anything
   reaches the terminal:
 
+  Claude approval attention is stricter: every `/send` input (keys, bare
+  newline and `allow_blocked` included) returns
+  `409 claude-permission-hook-required`. Use the authenticated
+  [permission hook API](session-runtime-v1.md#claude-permission-answers-3687).
+  The table below applies to other provider dialogs.
+
   | Route | While `needs_input` |
   | --- | --- |
   | `POST /sessions/{id}/send` carrying literal `text` | refused, unless `allow_blocked: true` (CLI `--allow-blocked`) |
@@ -59,7 +65,7 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   `/attach`. The refusal stops an automated caller from typing into a dialog by
   accident; it does not stop one that means to. A consumer whose HTTP `/send`
   call carries human keystrokes — an interactive terminal falling back from a
-  closed WebSocket, for example — should send `allow_blocked: true`, because that
+  closed WebSocket, for example — can send `allow_blocked: true` for other dialogs, because that
   input is deliberate by construction.
 - Attachment upload uses a raw binary request body (not multipart). The daemon
   streams it into a private same-directory temporary file, enforces the declared

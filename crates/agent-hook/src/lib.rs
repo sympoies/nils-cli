@@ -27,6 +27,7 @@ mod model;
 mod observe;
 mod path_binding;
 mod paths;
+mod permission;
 pub mod policy_parity;
 mod read_only;
 pub mod recovery;
@@ -726,6 +727,9 @@ fn run_dispatch(
     }
     if let Some(recovery) = recovery {
         recovery.commit(&mut decision);
+    }
+    if !args.shadow && matches!(args.format, DispatchFormat::Provider) {
+        permission::await_decision(&request, &raw, &mut decision);
     }
     complete_dispatch(args.format, started, &request, &decision)
 }

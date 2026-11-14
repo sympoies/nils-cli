@@ -140,6 +140,7 @@ fn send_observing(
     let mut manual_input = ManualInputSection::new(record_lock);
     let mut record = load_session_record(context, &observed.id)?;
     ensure_same_session_identity(&observed, &record)?;
+    cli::permission::refuse_terminal(context, &record)?;
     if !(record.agent == "claude"
         && owner_command.as_ref().is_some_and(|command| {
             command.is_login(text.as_deref()) && args.keys == [SpecialKey::Enter]
@@ -350,6 +351,7 @@ fn confirm_prompt_submission(
 ) -> Result<send_submit::SubmitReport, CliError> {
     let target = format!("{}:0.0", record.tmux_session);
     let mut press_enter = || {
+        let _permission_admission = cli::permission::terminal_admission(context, record)?;
         manual_input.arm(context, record)?;
         send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
     };
@@ -404,7 +406,7 @@ pub(crate) fn load_and_paste_buffer_with_timeout(
         file,
         timeout,
         paste_mode,
-        || Ok(()),
+        || Ok(None),
     )
 }
 
@@ -415,16 +417,19 @@ pub(crate) fn load_and_paste_guarded(
     file: &Path,
     timeout: Duration,
     paste_mode: PasteMode,
-    admit: impl FnOnce() -> Result<(), CliError>,
+    admit: impl FnOnce() -> Result<Option<fs::File>, CliError>,
 ) -> Result<(), CliError> {
     let mut load = ProcessCommand::new(tmux_bin);
     load.arg("load-buffer").arg("-b").arg(buffer_name).arg(file);
     run_status_with_timeout(load, "tmux load-buffer", timeout)?;
 
-    if let Err(err) = admit() {
-        delete_tmux_buffer(tmux_bin, buffer_name);
-        return Err(err);
-    }
+    let _permission_admission = match admit() {
+        Ok(admission) => admission,
+        Err(err) => {
+            delete_tmux_buffer(tmux_bin, buffer_name);
+            return Err(err);
+        }
+    };
 
     let paste = |raw_bytes: bool| {
         let mut paste = ProcessCommand::new(tmux_bin);
@@ -611,7 +616,8 @@ fn guarded(
                 if let Some(candidate) = text_wake {
                     crate::serve::begin_mailbox_notice(context, &record, tmux_bin, candidate)?;
                 }
-                prepare_guarded_input(context, &mut record, submits, &mut input_prepared)
+                prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
+                cli::permission::terminal_admission(context, &record)
             },
         );
         let _ = fs::remove_file(temp);

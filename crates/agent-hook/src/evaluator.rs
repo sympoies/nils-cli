@@ -1674,7 +1674,7 @@ fn activity_failure_label(error: &HookError) -> String {
 }
 
 /// Resolve activity using the explicit override, approved roots, or the trusted sibling.
-fn resolve_activity_helper() -> Result<std::ffi::OsString, HookError> {
+pub(crate) fn resolve_activity_helper() -> Result<std::ffi::OsString, HookError> {
     if let Some(override_path) = std::env::var_os(HELPER_BIN_ENV).filter(|value| !value.is_empty())
     {
         if let Some(candidate) = canonical_executable(Path::new(&override_path)) {
@@ -2037,7 +2037,7 @@ fn run_with_budget(
     Ok(output)
 }
 
-fn run_bounded(
+pub(crate) fn run_bounded(
     mut command: Command,
     input: &[u8],
     timeout: Duration,

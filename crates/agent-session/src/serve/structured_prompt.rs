@@ -378,7 +378,7 @@ pub(super) async fn submit_structured_prompt_handler_with_fence(
         if let Err(err) = crate::activity::refuse_if_blocked(
             &state.context,
             &record,
-            "answer the dialog with send --key, then resubmit the prompt",
+            "answer approvals with permission answer, then resubmit the prompt",
         ) {
             return envelope_err(err);
         }

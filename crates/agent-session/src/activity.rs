@@ -23,7 +23,7 @@ use crate::{
 };
 
 #[path = "activity/claude_attention.rs"]
-mod claude_attention;
+pub(crate) mod claude_attention;
 use claude_attention::{
     claude_attention_supersedes_open_turn, late_claude_attention_for_closed_turn,
 };
@@ -3699,9 +3699,9 @@ pub(crate) fn doctor(
                 AgentKind::Claude => (
                     "partial",
                     "qualifying Stop requires current runtime/revision-bound claude agents --json idle; unavailable structured state is unknown with claude_agents_unavailable diagnostics; StopFailure and idle_prompt complete immediately; PreToolUse reactivates work and SubagentStop is ignored",
-                    "AskUserQuestion uses exact runtime-scoped tool_use_id correlation; Elicitation uses exact elicitation_id when both callbacks provide it and otherwise latches conservatively; other PermissionRequest and configured notification signals remain conservative latches",
+                    "AskUserQuestion and Elicitation use exact available ids; PermissionRequest binds one current-turn PreToolUse call by tool/input digest for explicit hook answers, otherwise remains conservative",
                     "Claude settings hooks compose additively and execute with the user's permissions",
-                    "Run activity setup --agent claude --dry-run and then --apply",
+                    "Refresh activity setup --agent claude before upgrade: PermissionRequest requires a 600s hook; answers support reviewed Claude Code 2.1.317 only",
                 ),
                 AgentKind::Dsh => (
                     "unverified",

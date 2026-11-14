@@ -56,8 +56,8 @@ async fn send_refuses_pending_approval_with_unknown_idle_view() {
     .await;
 
     assert_eq!(status, StatusCode::CONFLICT, "body={body}");
-    assert_eq!(body["error"]["code"], "agent-blocked");
-    assert!(!tmux_wrote_to_the_pane(&journal));
+    assert_eq!(body["error"]["code"], "claude-permission-hook-required");
+    assert!(tmux_never_ran(&journal));
 }
 
 #[tokio::test]
