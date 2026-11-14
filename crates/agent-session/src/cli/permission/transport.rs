@@ -282,19 +282,15 @@ pub(super) fn wait(context: &CliContext, args: Wait) -> Result<(), CliError> {
                 if request.request_id != pending.request_id || request.call_id != pending.call_id {
                     continue;
                 }
-                check(context, &args.id, &pending, || {
-                    let output = json!({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": request.decision}}});
-                    let mut stdout = std::io::stdout().lock();
-                    serde_json::to_writer(&mut stdout, &output)
-                        .map_err(|_| refusal("permission-delivery-unknown"))?;
-                    stdout
-                        .flush()
-                        .map_err(|_| refusal("permission-delivery-unknown"))?;
-                    Ok(())
-                })?;
-                // The decision is already emitted; losing this acknowledgement
-                // is uncertain delivery, never permission to retry another hook.
-                let _ = stream.write_all(b"{\"outcome\":\"delivered_to_hook\"}");
+                deliver(
+                    context,
+                    &args.id,
+                    &pending,
+                    &request,
+                    deadline,
+                    &mut stream,
+                    &mut std::io::stdout().lock(),
+                )?;
                 return Ok(());
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -304,3 +300,36 @@ pub(super) fn wait(context: &CliContext, args: Wait) -> Result<(), CliError> {
         }
     }
 }
+
+// The received answer crosses the final identity/expiry fence before any output
+// or acknowledgement. A writer argument lets fixtures observe this boundary
+// without adding a provider protocol message or runtime testing switch.
+fn deliver(
+    context: &CliContext,
+    id: &str,
+    pending: &Pending,
+    request: &AnswerRequest,
+    deadline: Instant,
+    stream: &mut UnixStream,
+    output: &mut impl Write,
+) -> Result<(), CliError> {
+    check(context, id, pending, || {
+        if Instant::now() >= deadline {
+            return Err(refusal("permission-hook-expired"));
+        }
+        let decision = json!({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": request.decision}}});
+        serde_json::to_writer(&mut *output, &decision)
+            .map_err(|_| refusal("permission-delivery-unknown"))?;
+        output
+            .flush()
+            .map_err(|_| refusal("permission-delivery-unknown"))?;
+        Ok(())
+    })?;
+    // The decision is already emitted; losing this acknowledgement is uncertain
+    // delivery, never permission to retry another hook.
+    let _ = stream.write_all(b"{\"outcome\":\"delivered_to_hook\"}");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

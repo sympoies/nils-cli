@@ -336,8 +336,9 @@ fn claude_permission_prompt_resolved_during_answer_sends_no_decision() {
     let private: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     let mut stream =
         std::os::unix::net::UnixStream::connect(private["socket"].as_str().unwrap()).unwrap();
-    // Hold the connected socket open so its owner has to revalidate *after*
-    // reading the answer, instead of trusting registration or preflight.
+    // Resolving this prompt invalidates its socket and UUID. Final emission
+    // after a complete answer is covered deterministically by transport tests;
+    // connect alone does not prove the waiter has accepted this socket.
     hook(&f, "PostToolUse", Some("call-one"));
     let bytes = json!({"request_id": request["request_id"], "call_id": request["call_id"], "decision":"allow"}).to_string();
     let _ = stream.write_all(bytes.as_bytes());
