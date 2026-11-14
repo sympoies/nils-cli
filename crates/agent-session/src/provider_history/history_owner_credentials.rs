@@ -74,7 +74,14 @@ fn preserve_marked_assignments(value: &str, mask: impl Fn(&str) -> String) -> St
                     && value[..raw.start()]
                         .rsplit(char::is_whitespace)
                         .next()
-                        .is_some_and(|word| word.contains('?') && word.contains(':')))
+                        .is_some_and(|word| {
+                            word.split_once('?').is_some_and(|(path, _)| {
+                                word.contains(':')
+                                    || super::path_like_fragment(
+                                        path.trim_start_matches(['\'', '"', '(', '[', '{']),
+                                    )
+                            })
+                        }))
         }) {
             continue;
         }
@@ -167,6 +174,14 @@ fn redact_assignments(value: &str) -> String {
         if let Some(quote) = wrapper {
             output.push(quote);
         }
+        // Concatenation can consume the original outer closing quote. Keep
+        // one wrapper at the new value boundary, rather than its secret suffix.
+        if let Some(quote) = outer_quote
+            && raw.contains(quote)
+            && !value[end..].starts_with(quote)
+        {
+            output.push(quote);
+        }
         copied = end;
         scan = end;
     }
@@ -175,7 +190,7 @@ fn redact_assignments(value: &str) -> String {
 }
 
 fn value_end(value: &str, outer_quote: Option<char>, authorization: bool) -> usize {
-    let mut quote = None;
+    let mut quote = outer_quote;
     let mut escaped = false;
     for (index, character) in value.char_indices() {
         if escaped {
@@ -186,27 +201,27 @@ fn value_end(value: &str, outer_quote: Option<char>, authorization: bool) -> usi
             escaped = true;
             continue;
         }
-        if outer_quote == Some(character) {
+        let next = index + character.len_utf8();
+        let at_boundary = || {
+            value[next..].chars().next().is_none_or(|next| {
+                next.is_whitespace() || matches!(next, ';' | '|' | '&' | ',' | '}' | ']' | ')')
+            })
+        };
+        if outer_quote == Some(character) && at_boundary() {
             return index;
         }
         if let Some(current) = quote {
             if character == current {
                 quote = None;
-                let next = index + character.len_utf8();
-                if value.starts_with(current)
-                    && value[next..].chars().next().is_none_or(|next| {
-                        next.is_whitespace()
-                            || matches!(next, ';' | '|' | '&' | ',' | '}' | ']' | ')')
-                    })
-                {
+                if outer_quote.is_none() && value.starts_with(current) && at_boundary() {
                     return next;
                 }
             }
         } else if matches!(character, '\'' | '"') {
             quote = Some(character);
-        } else if outer_quote.is_none()
-            && ((character.is_whitespace() && (!authorization || matches!(character, '\r' | '\n')))
-                || matches!(character, ';' | '|' | '&'))
+        } else if (character.is_whitespace()
+            && (!authorization || matches!(character, '\r' | '\n')))
+            || matches!(character, ';' | '|' | '&')
         {
             return index;
         }

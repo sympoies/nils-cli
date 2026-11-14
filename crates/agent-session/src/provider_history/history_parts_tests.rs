@@ -1,6 +1,9 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+#[path = "history_credential_gaps_tests.rs"]
+mod credential_gaps;
+
 fn fixture(name: &str) -> Vec<Value> {
     let contents = match name {
         "codex" => include_str!("../../tests/fixtures/history-parts/codex-response-item-v1.jsonl"),
