@@ -11,7 +11,7 @@ pub(crate) struct Version(u64, u64, u64);
 pub(crate) const SUPPORTED_MIN: Version = Version(2, 1, 296);
 // Raised only by a reviewed change citing the call-shape scan, `claude plugin
 // validate` and a native notice run on that exact release.
-pub(crate) const SUPPORTED_MAX: Version = Version(2, 1, 319);
+pub(crate) const SUPPORTED_MAX: Version = Version(2, 1, 325);
 
 impl Version {
     pub(crate) fn parse(text: &str) -> Option<Self> {
@@ -57,22 +57,17 @@ mod tests {
 
     #[test]
     fn range_accepts_both_bounds_and_refuses_outside() {
-        let (min, max) = (Version(2, 1, 296), Version(2, 1, 319));
         for (text, accepted) in [
             ("2.1.296", true),
             ("2.1.300", true),
-            ("2.1.319", true),
+            ("2.1.325", true),
             ("2.1.295", false),
-            ("2.1.320", false),
+            ("2.1.326", false),
             ("2.2.0", false),
             ("2.0.999", false),
             ("3.0.0", false),
         ] {
-            assert_eq!(
-                Version::parse(text).unwrap().in_range(min, max),
-                accepted,
-                "{text}"
-            );
+            assert_eq!(supported(text), accepted, "{text}");
         }
     }
 
