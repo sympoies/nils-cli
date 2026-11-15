@@ -10,7 +10,10 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let root = tempfile::tempdir().unwrap();
+        Self::with_root(tempfile::tempdir().unwrap())
+    }
+
+    fn with_root(root: tempfile::TempDir) -> Self {
         let home = root.path().join("home");
         let tmp = root.path().join("tmp");
         std::fs::create_dir_all(&home).unwrap();
@@ -43,6 +46,8 @@ impl Fixture {
             .env("CARGO_HOME", self.home.join("cargo"))
             .env("CARGO_TARGET_DIR", self.root.path().join("build"))
             .env("CARGO_BUILD_JOBS", "1")
+            .env("CARGO_BUILD_RUSTC_WRAPPER", "")
+            .env("RUSTC_WRAPPER", "")
             .env("RUSTC", self.sysroot.join("bin/rustc"));
         if self
             .sysroot
@@ -84,6 +89,36 @@ impl Fixture {
             String::from_utf8_lossy(&stderr)
         )
     }
+}
+
+#[test]
+fn nested_cargo_ignores_ancestor_rustc_wrapper() {
+    let parent = tempfile::tempdir().unwrap();
+    std::fs::create_dir(parent.path().join(".cargo")).unwrap();
+    std::fs::write(
+        parent.path().join(".cargo/config.toml"),
+        "[build]\nrustc-wrapper = 'nonexistent-fixture-wrapper'\n",
+    )
+    .unwrap();
+    let fixture = Fixture::with_root(tempfile::tempdir_in(parent.path()).unwrap());
+    let repo = fixture.root.path().join("repo");
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    std::fs::write(
+        repo.join("Cargo.toml"),
+        "[package]\nname='fixture'\nversion='0.0.0'\nedition='2024'\n",
+    )
+    .unwrap();
+    std::fs::write(repo.join("src/lib.rs"), "pub fn fixture() {}\n").unwrap();
+    let output = fixture
+        .command(env!("CARGO"), &repo)
+        .args(["check", "--offline"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
