@@ -16,6 +16,9 @@ mod fixture_tests;
 mod fixture;
 use fixture::fake_tmux;
 
+#[path = "provider_continuity_tests.rs"]
+mod provider_continuity_tests;
+
 const ID: &str = "restart-fixture";
 const OLD: &str = "exited-incarnation";
 const CONVERSATION: &str = "provider-conversation";

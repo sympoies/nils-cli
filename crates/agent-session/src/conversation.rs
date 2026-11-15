@@ -531,7 +531,7 @@ fn operation(
     if !clear {
         persist_locked(context, &current, &session_id, true)?;
     }
-    let confirmed = load_session_record(context, &expected.id)?;
+    let mut confirmed = load_session_record(context, &expected.id)?;
     if confirmed
         .provider_resume
         .as_ref()
@@ -543,6 +543,14 @@ fn operation(
             "provider identity persistence did not confirm the observed conversation",
             &confirmed,
         ));
+    }
+    if clear {
+        crate::provider_continuity::append(
+            &expected,
+            &mut confirmed,
+            crate::provider_continuity::Kind::Clear,
+        );
+        write_session_record(context, &confirmed)?;
     }
     Ok(ResultView {
         id: expected.id,

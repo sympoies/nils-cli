@@ -496,7 +496,12 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
         ));
     }
     receipt.relaunched_at = Some(now());
-    let resumed = match crate::resume_session_locked(context, record, &tmux) {
+    let resumed = match crate::resume_session::resume_session_with_kind(
+        context,
+        record,
+        &tmux,
+        crate::provider_continuity::Kind::Restart,
+    ) {
         Ok(resumed) => resumed,
         Err(cause) => {
             return Err(failure(

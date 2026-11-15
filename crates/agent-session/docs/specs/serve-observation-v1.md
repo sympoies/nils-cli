@@ -4,6 +4,11 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
 
 ## Health and session projections
 
+Running session snapshots may include identifier-only `provider_continuity`
+for daemon-owned clear, restart, and resume operations. Its schema, bounded
+chain, persistence, and relay ownership rules are defined by
+[Owned provider lifecycle continuity](coordination-federation-v1.md#owned-provider-lifecycle-continuity).
+
 `GET /healthz` additively reports the distinguishable health states a console
 needs. `data.status` keeps its historical meaning — this handler answered — so an
 existing consumer is unaffected. Beyond that:
