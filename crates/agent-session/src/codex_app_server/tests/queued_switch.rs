@@ -304,3 +304,165 @@ async fn terminal_usage_switch_rechecks_intent_and_new_input_before_adoption() {
     assert_eq!(view.selected_account.as_deref(), Some("acct1"));
     assert_eq!(view.next.unwrap().state, "queued");
 }
+
+fn queued_terminal_fixture(
+    tmp: &tempfile::TempDir,
+    failure: StructuredFailureKind,
+) -> (CliContext, SessionRecord) {
+    let context = CliContext {
+        state_dir: tmp.path().join("state"),
+        host: None,
+    };
+    let mut record = record_with_runtime("terminal-guards", &tmp.path().join("fixture.sock"));
+    crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
+    fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+    crate::write_session_record(&context, &record).unwrap();
+    let runtime = record.runtime.as_ref().unwrap().launch_id.clone();
+    crate::codex_account::finish_binding(&context, &record.id, &runtime, "acct1", 1, Ok(()))
+        .unwrap();
+    record = crate::load_session_record(&context, &record.id).unwrap();
+    crate::activity::activate_runtime(&context, &record).unwrap();
+    crate::codex_account::authorize_input_locked(&context, &mut record).unwrap();
+    crate::activity::ingest_codex_app_server_failure_with_kind(
+        &context,
+        &record.id,
+        &runtime,
+        "fixture-thread",
+        "fixture-turn",
+        failure,
+    )
+    .unwrap();
+    crate::codex_account::queue_next_account(&context, &record.id, &runtime, "omega").unwrap();
+    (context, record)
+}
+
+#[tokio::test]
+async fn terminal_usage_switch_rejects_other_failures_and_success() {
+    let lock = GlobalStateLock::new();
+    let _broker = EnvGuard::set(
+        &lock,
+        "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+        r#"["/configured/broker"]"#,
+    );
+    for failure in [
+        StructuredFailureKind::Authentication,
+        StructuredFailureKind::ProviderCapacity,
+    ] {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = queued_terminal_fixture(&tmp, failure);
+        assert!(
+            queued_switch_has_authoritative_idle(&context, &record)
+                .await
+                .is_none()
+        );
+    }
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (context, record) = queued_terminal_fixture(&tmp, StructuredFailureKind::UsageExhausted);
+    // A later successful turn replaces the exhaustion proof.
+    for kind in ["turn_started", "turn_completed"] {
+        let event = serde_json::from_value(json!({
+            "schema_version": crate::activity::TURN_EVENT_VERSION,
+            "event_id": format!("successful-{kind}"),
+            "runtime_id": record.runtime.as_ref().unwrap().launch_id,
+            "provider": "codex",
+            "provider_session_id": "fixture-thread",
+            "provider_turn_id": "successful-turn",
+            "kind": kind,
+            "confidence": "authoritative"
+        }))
+        .unwrap();
+        crate::activity::ingest_event(&context, &record.id, event).unwrap();
+    }
+    let activity = crate::activity::state_for_view(&context, &record).unwrap();
+    assert_eq!(activity.last_turn.unwrap().outcome, "completed");
+    assert!(
+        queued_switch_has_authoritative_idle(&context, &record)
+            .await
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn terminal_usage_switch_rejects_refreshed_binding() {
+    let lock = GlobalStateLock::new();
+    let _broker = EnvGuard::set(
+        &lock,
+        "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+        r#"["/configured/broker"]"#,
+    );
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (context, record) = queued_terminal_fixture(&tmp, StructuredFailureKind::UsageExhausted);
+    let runtime = &record.runtime.as_ref().unwrap().launch_id;
+    let expected = queued_switch_has_authoritative_idle(&context, &record)
+        .await
+        .unwrap();
+    let attempt =
+        crate::codex_account::begin_refresh_binding(&context, &record.id, runtime, "acct1")
+            .unwrap();
+    let view = crate::codex_account::restore_binding_after_refresh_failure(
+        &context, &record.id, runtime, "acct1", attempt,
+    )
+    .unwrap();
+    assert_eq!(view.selected_account.as_deref(), Some("acct1"));
+    assert_eq!(view.revision, 2);
+    // Refresh advances the revision even when the account name is unchanged.
+    // An account change also advances it, so the revision fences both cases.
+    assert!(
+        crate::codex_account::begin_next_apply_if_unchanged(
+            &context, &record.id, runtime, &expected,
+        )
+        .unwrap()
+        .is_none()
+    );
+    let current = crate::load_session_record(&context, &record.id).unwrap();
+    assert_eq!(
+        crate::codex_account::view_for_record(&current)
+            .next
+            .unwrap()
+            .state,
+        "queued"
+    );
+}
+
+#[tokio::test]
+async fn terminal_usage_switch_rejects_in_flight_turn() {
+    let lock = GlobalStateLock::new();
+    let _broker = EnvGuard::set(
+        &lock,
+        "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+        r#"["/configured/broker"]"#,
+    );
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (context, record) = queued_terminal_fixture(&tmp, StructuredFailureKind::UsageExhausted);
+    let runtime = &record.runtime.as_ref().unwrap().launch_id;
+    let expected = queued_switch_has_authoritative_idle(&context, &record)
+        .await
+        .unwrap();
+    let event = serde_json::from_value(json!({
+        "schema_version": crate::activity::TURN_EVENT_VERSION,
+        "event_id": "new-turn-started",
+        "runtime_id": runtime,
+        "provider": "codex",
+        "provider_session_id": "fixture-thread",
+        "provider_turn_id": "new-turn",
+        "kind": "turn_started",
+        "confidence": "authoritative"
+    }))
+    .unwrap();
+    crate::activity::ingest_event(&context, &record.id, event).unwrap();
+    let activity = crate::activity::state_for_view(&context, &record).unwrap();
+    assert!(activity.current_turn.is_some());
+    assert!(
+        queued_switch_has_authoritative_idle(&context, &record)
+            .await
+            .is_none()
+    );
+    assert!(
+        crate::codex_account::begin_next_apply_if_unchanged(
+            &context, &record.id, runtime, &expected,
+        )
+        .unwrap()
+        .is_none()
+    );
+}
