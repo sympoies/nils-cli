@@ -263,6 +263,7 @@ than 30 seconds, no future timestamp and no pending attention or newer event.
 The observer must report `claude_agents_idle` / `waiting`; composer emptiness
 and quiet time cannot substitute. This send-only admission does not close the
 turn, change its outcome, write activity or relax controller/lease state.
+
 See [guarded send recovery](specs/send-v1.md) for admission rechecks and the
 explicit preclaim `safe_to_retry` refusal metadata. A later accepted completion
 still establishes normal waiting state. Consumed attempts remain consumed
