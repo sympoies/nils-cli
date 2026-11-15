@@ -124,6 +124,7 @@ pub(crate) fn send_codex(
         ..Default::default()
     };
     let admission = send_guard::Admission {
+        stopped_idle: &Default::default(),
         context,
         record: &record,
         args: &guards,

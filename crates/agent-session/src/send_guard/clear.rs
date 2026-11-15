@@ -62,6 +62,7 @@ impl Admission<'_> {
 
     pub(super) fn clear_pasted(&self, text: &str, observed_paste: bool) -> (Option<String>, bool) {
         let cleanup = Admission {
+            stopped_idle: &Default::default(),
             deadline: Instant::now()
                 + if self.record.agent == "codex" && self.args.notice_envelope {
                     // The wrapped notice proof needs multiple cursor observations.

@@ -127,6 +127,7 @@ where
                 ..Default::default()
             };
             crate::send_guard::Admission {
+                stopped_idle: &Default::default(),
                 context: &observe_context,
                 record: &observe_record,
                 args: &guards,

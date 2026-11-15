@@ -279,6 +279,7 @@ impl Navigation<'_> {
         }
         let args = GuardArgs::default();
         Admission {
+            stopped_idle: &Default::default(),
             context: self.context,
             record: self.record,
             args: &args,
@@ -452,6 +453,7 @@ pub(crate) fn report_failure(
         ..Default::default()
     };
     let admission = Admission {
+        stopped_idle: &Default::default(),
         context,
         record,
         args: &args,

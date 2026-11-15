@@ -457,10 +457,18 @@ admission from its structured provider observer: `claude-agents.v1`, rule
 Stop, at the exact runtime launch, generation and activity revision. The
 observation must be less than 30 seconds old and cannot be future-dated. The
 stored provider-hook turn must still match that Stop, with observed confidence
-and no pending attention or intervening accepted event. Each admission recheck
-requires this evidence again. Busy, blocked, unavailable, stale or mismatched
-observations cannot authorize input; neither elapsed time nor an empty composer
-alone proves idle. Codex keeps its existing native idle observation.
+and no pending attention or intervening accepted event. Every preclaim admission
+recheck requires fresh evidence. Busy, blocked, unavailable, stale or mismatched
+observations cannot authorize admission; neither elapsed time nor an empty
+composer alone proves idle. Codex keeps its existing native idle observation.
+
+After claim, age alone does not revoke the proof admitted by this same bounded
+send attempt. Claimed and submit checks still require the exact admitted runtime,
+generation, revision, turn and Stop, with current structured idle and no pending
+ingress. A newer idle sample may replace the sample at that same binding; a
+backwards/future sample, busy, attention, newer work or changed binding refuses.
+The ephemeral proof never transfers to another attempt or releases a consumed
+key. Post-claim refusals remain unsafe to retry, even when they report no submit.
 
 This recovery authorizes only the guarded send. It leaves the uncertain turn
 outcome, stored activity and completion history unchanged. Identity, pending

@@ -26,6 +26,7 @@ pub(super) fn deliver(
 ) -> Result<SendResult, CliError> {
     let observed = record.clone();
     let admission = send_guard::Admission {
+        stopped_idle: &Default::default(),
         context,
         record: &observed,
         args: &args.guards,

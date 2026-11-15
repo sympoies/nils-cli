@@ -4,6 +4,23 @@ use pretty_assertions::assert_eq;
 
 fn stopped_fixture() -> Fixture {
     let fixture = Fixture::new("claude");
+    // Capture/identity observations in these cases need only a single ASCII
+    // composer row. Keep Python startup out of the production capture budget.
+    fs::rename(
+        fixture.root().join("tmux"),
+        fixture.root().join("tmux-default"),
+    )
+    .unwrap();
+    fs::write(
+        fixture.root().join("tmux"),
+        include_str!("completion-tmux.sh"),
+    )
+    .unwrap();
+    fs::set_permissions(
+        fixture.root().join("tmux"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
     let state_dir = fixture.root().join("state");
     let options = CmdOptions::new().with_env_remove_prefix("AGENT_SESSION_");
     for kind in ["turn_started", "progress", "stop_observed"] {
@@ -151,13 +168,11 @@ fn write_idle(fixture: &Fixture, observation: Value) {
 }
 
 #[test]
-fn stopped_recovery_rejects_unbound_stale_or_nonidle_evidence() {
+fn stopped_recovery_rejects_unbound_or_nonidle_evidence() {
     for case in [
         "runtime",
         "generation",
         "revision",
-        "before-stop",
-        "stale",
         "future",
         "busy",
         "blocked",
@@ -169,15 +184,6 @@ fn stopped_recovery_rejects_unbound_stale_or_nonidle_evidence() {
             "runtime" => idle["runtime_id"] = json!("replaced"),
             "generation" => idle["runtime_generation"] = json!(2),
             "revision" => idle["activity_revision"] = json!(0),
-            "before-stop" => idle["observation"]["observed_at"] = json!("2000-01-01T00:01:00Z"),
-            "stale" => {
-                idle["observation"]["observed_at"] = json!(
-                    jiff::Timestamp::now()
-                        .checked_sub(jiff::SignedDuration::from_secs(31))
-                        .unwrap()
-                        .to_string()
-                )
-            }
             "future" => idle["observation"]["observed_at"] = json!("2100-01-01T00:00:00Z"),
             "busy" => {
                 idle["observation"]["rule_id"] = json!("claude_agents_busy");

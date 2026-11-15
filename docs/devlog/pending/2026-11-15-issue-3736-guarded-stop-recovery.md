@@ -6,7 +6,8 @@
 - Guarded Claude sends can admit a stopped turn using fresh
   runtime/generation/revision-bound structured idle without inventing a
   successful turn outcome. Preclaim refusals expose safe_to_retry; consumed
-  attempts remain non-replayable.
+  attempts remain non-replayable. Admitted proof survives aging within the same
+  bounded attempt while changed bindings and new busy/attention still revoke.
 
 ### Why / context
 

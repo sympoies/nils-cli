@@ -172,6 +172,7 @@ fn send_observing(
     }
     if args.guards.enabled() {
         let admission = send_guard::Admission {
+            stopped_idle: &Default::default(),
             context,
             record: &record,
             args: &args.guards,
@@ -537,6 +538,7 @@ fn guarded(
     let hold_started = attempt.started;
     let observed = record.clone();
     let admission = send_guard::Admission {
+        stopped_idle: &Default::default(),
         context,
         record: &observed,
         args: &args.guards,

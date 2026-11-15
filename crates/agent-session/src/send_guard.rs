@@ -78,6 +78,7 @@ pub(crate) struct GuardReport {
 }
 
 pub(crate) struct Admission<'a> {
+    pub(crate) stopped_idle: &'a std::cell::RefCell<Option<activity::shadow::StoppedIdle>>,
     pub(crate) context: &'a CliContext,
     pub(crate) record: &'a SessionRecord,
     pub(crate) args: &'a GuardArgs,
@@ -212,6 +213,7 @@ impl Admission<'_> {
         let mut reason = send_submit::Unobserved::CaptureFailed;
         loop {
             let observation = Admission {
+                stopped_idle: self.stopped_idle,
                 context: self.context,
                 record: self.record,
                 args: self.args,
@@ -402,6 +404,10 @@ impl Admission<'_> {
     }
 
     fn idle(&self, stage: &str) -> Result<(), CliError> {
+        self.idle_at(stage, jiff::Timestamp::now())
+    }
+
+    fn idle_at(&self, stage: &str, at: jiff::Timestamp) -> Result<(), CliError> {
         if !self.args.require_idle {
             return Ok(());
         }
@@ -449,8 +455,36 @@ impl Admission<'_> {
             );
         }
         let state = activity::state_for_view(self.context, self.record);
-        if activity::shadow::stopped_claude_idle(self.context, self.record) {
+        let admitted = self.stopped_idle.borrow();
+        let was_bound = stage != "admission" && admitted.is_some();
+        let proof = if stage == "admission" || admitted.is_some() {
+            activity::shadow::stopped_claude_idle(
+                self.context,
+                self.record,
+                if stage == "admission" {
+                    None
+                } else {
+                    admitted.as_ref()
+                },
+                at,
+            )
+        } else {
+            None
+        };
+        drop(admitted);
+        if let Some(proof) = proof {
+            *self.stopped_idle.borrow_mut() = Some(proof);
             return Ok(());
+        }
+        // A failed observation never preserves an earlier authorization.
+        self.stopped_idle.borrow_mut().take();
+        if was_bound {
+            return Err(self.refusal(
+                "send-idle-unobservable",
+                "the admitted stopped-turn idle evidence changed or became unavailable",
+                "idle",
+                stage,
+            ));
         }
         if state.as_ref().is_some_and(|state| {
             state.phase == activity::TurnPhase::Unknown
