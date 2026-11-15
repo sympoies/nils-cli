@@ -70,7 +70,7 @@ pub(super) fn scan_catalog(
         );
         paths.sort();
         for path in paths {
-            if Instant::now() >= deadline {
+            if deadline_expired(deadline) {
                 truncated = true;
                 break;
             }
@@ -97,7 +97,7 @@ pub(super) fn scan_catalog(
                 continue;
             }
             sessions.push(session);
-            if Instant::now() >= deadline {
+            if deadline_expired(deadline) {
                 truncated = true;
                 break;
             }
@@ -109,7 +109,7 @@ pub(super) fn scan_catalog(
 
     for source in dsh_sources {
         let remaining = SCAN_MAX_ENTRIES.saturating_sub(visited);
-        if remaining == 0 || Instant::now() >= deadline {
+        if remaining == 0 || deadline_expired(deadline) {
             truncated = true;
             break;
         }
@@ -301,7 +301,7 @@ fn bounded_registry_document(path: &Path, optional: bool) -> bool {
 }
 
 fn scan_step(visited: &mut usize, deadline: Instant, truncated: &mut bool) -> bool {
-    if *visited >= SCAN_MAX_ENTRIES || Instant::now() >= deadline {
+    if *visited >= SCAN_MAX_ENTRIES || deadline_expired(deadline) {
         *truncated = true;
         return false;
     }
@@ -312,3 +312,12 @@ fn scan_step(visited: &mut usize, deadline: Instant, truncated: &mut bool) -> bo
 #[cfg(test)]
 #[path = "catalog_scan_tests.rs"]
 mod tests;
+
+// Tests can freeze the scan clock for assertions unrelated to time limits.
+pub(super) fn deadline_expired(deadline: Instant) -> bool {
+    #[cfg(test)]
+    if tests::scan_clock_frozen() {
+        return false;
+    }
+    Instant::now() >= deadline
+}
