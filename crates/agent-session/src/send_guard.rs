@@ -372,6 +372,10 @@ impl Admission<'_> {
         } else {
             None
         };
+        #[cfg(all(test, target_os = "linux"))]
+        if crate::restart::test_control::stalled(self.tmux_bin, "stall", self.timeout(stage)?) {
+            return Err(unobservable());
+        }
         for (index, (name, expected)) in [
             ("AGENT_SESSION_ID", current.id.as_str()),
             ("AGENT_SESSION_STATE_DIR", expected_state.as_str()),
@@ -383,13 +387,21 @@ impl Admission<'_> {
             let actual = if let Some(values) = &cleanup_values {
                 values[index].clone()
             } else {
-                tmux_environment_value(
-                    self.tmux_bin,
-                    &current.tmux_session,
-                    name,
-                    self.timeout(stage)?,
-                )
-                .map_err(|_| unobservable())?
+                #[cfg(all(test, target_os = "linux"))]
+                let fixture = crate::restart::test_control::environment(self.tmux_bin, name);
+                #[cfg(not(all(test, target_os = "linux")))]
+                let fixture: Option<Option<String>> = None;
+                if let Some(value) = fixture {
+                    value.ok_or_else(unobservable)?
+                } else {
+                    tmux_environment_value(
+                        self.tmux_bin,
+                        &current.tmux_session,
+                        name,
+                        self.timeout(stage)?,
+                    )
+                    .map_err(|_| unobservable())?
+                }
             };
             if actual != expected {
                 return Err(self.refusal(
@@ -535,6 +547,8 @@ impl Admission<'_> {
 
     fn timeout(&self, stage: &str) -> Result<Duration, CliError> {
         let remaining = self.deadline.saturating_duration_since(Instant::now());
+        #[cfg(all(test, target_os = "linux"))]
+        let remaining = crate::restart::test_control::remaining(self.deadline).unwrap_or(remaining);
         if remaining.is_zero() {
             return Err(self.refusal(
                 "send-guard-observation-timeout",
@@ -558,6 +572,10 @@ impl Admission<'_> {
 }
 
 pub(crate) fn capture_styled(tmux_bin: &Path, target: &str, timeout: Duration) -> Option<String> {
+    #[cfg(all(test, target_os = "linux"))]
+    if let Some(pane) = crate::restart::test_control::capture(tmux_bin) {
+        return pane;
+    }
     let mut command = std::process::Command::new(tmux_bin);
     // Preserve occupied trailing spaces without padding the row to pane width.
     command.args(["capture-pane", "-p", "-e", "-N", "-T", "-t", target]);

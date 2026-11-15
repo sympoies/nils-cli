@@ -12,8 +12,14 @@ pub(crate) use fresh_startup::{
     conversation_guards, eligible as fresh_startup, launch_plan, release_bootstrap,
 };
 use std::process::{Command as ProcessCommand, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(all(test, target_os = "linux")))]
+use std::{convert::identity as admission_deadline, thread::sleep, time::Instant};
+#[cfg(all(test, target_os = "linux"))]
+#[path = "restart_test_control.rs"]
+pub(crate) mod test_control;
+#[cfg(all(test, target_os = "linux"))]
+use test_control::{Instant, admission_deadline, sleep};
 
 use jiff::Timestamp;
 use serde::Serialize;
@@ -150,7 +156,7 @@ pub(crate) fn resume_status(tmux: &Path, record: &SessionRecord) -> ResumeStatus
             ResumeStatus::Unknown { retryable: true } => {}
             status => return status,
         }
-        thread::sleep(POLL_INTERVAL.min(budget.saturating_sub(started.elapsed())));
+        sleep(POLL_INTERVAL.min(budget.saturating_sub(started.elapsed())));
     }
 }
 
@@ -348,6 +354,8 @@ impl Drop for RestartFence {
 pub(super) const FAIL_POST_LAUNCH: &str = "restart-fail-post-launch";
 
 fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError> {
+    #[cfg(all(test, target_os = "linux"))]
+    let _clock = test_control::enter(context);
     let started_at = now();
     let tmux = crate::resolve_tmux_bin(args.tmux_bin.as_deref());
     let expected = load_session_record(context, &args.id)?;
@@ -395,6 +403,8 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
         crate::command_identity::executable(),
         expected.id
     );
+    #[cfg(all(test, target_os = "linux"))]
+    test_control::fire(context, test_control::Phase::ExitRequested, &old_launch);
     let stop_deadline = Instant::now() + Duration::from_secs(args.stop_timeout);
     while exit_requested && Instant::now() < stop_deadline {
         let current = load_session_record(context, &expected.id).ok();
@@ -403,7 +413,7 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
         {
             break;
         }
-        thread::sleep(POLL_INTERVAL);
+        sleep(POLL_INTERVAL);
     }
 
     let record_lock = match crate::acquire_session_record_lock_timed(
@@ -639,7 +649,7 @@ fn request_provider_exit(
         args: &guards,
         tmux_bin: tmux,
         verify_composer: false,
-        deadline: Instant::now() + crate::send_submit::HOLD_BUDGET,
+        deadline: admission_deadline(Instant::now() + crate::send_submit::HOLD_BUDGET),
     };
     let admitted = match admission.check(None, "admission") {
         Ok(()) => true,
@@ -713,7 +723,7 @@ fn await_prior_lease(context: &CliContext, record: &SessionRecord) -> Result<(),
                 record,
             ));
         }
-        thread::sleep(POLL_INTERVAL);
+        sleep(POLL_INTERVAL);
     }
     Ok(())
 }
@@ -733,6 +743,8 @@ fn await_ready(
         require_idle: true,
         ..GuardArgs::default()
     };
+    #[cfg(all(test, target_os = "linux"))]
+    test_control::fire(context, test_control::Phase::Ready, launch);
     let mut cause = "ready-timeout".to_string();
     while Instant::now() < deadline {
         if status_before(tmux, record, deadline) == "stopped" {
@@ -749,7 +761,9 @@ fn await_ready(
             args: &guards,
             tmux_bin: tmux,
             verify_composer: false,
-            deadline: deadline.min(Instant::now() + crate::send_submit::HOLD_BUDGET),
+            deadline: admission_deadline(
+                deadline.min(Instant::now() + crate::send_submit::HOLD_BUDGET),
+            ),
         };
         match crate::codex_account::ensure_input_allowed(&current)
             .and_then(|()| admission.check(None, "readiness"))
@@ -757,7 +771,7 @@ fn await_ready(
             Ok(()) => return Ok(()),
             Err(refused) => cause = refused.code().to_string(),
         }
-        thread::sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())));
+        sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())));
     }
     Err(cause)
 }
@@ -769,6 +783,14 @@ fn status_before(tmux: &Path, record: &SessionRecord, deadline: Instant) -> Stri
         return "stopped".to_string();
     }
     let remaining = deadline.saturating_duration_since(Instant::now());
+    #[cfg(all(test, target_os = "linux"))]
+    if test_control::stalled(
+        tmux,
+        "stall-status",
+        crate::PANE_INPUT_COMMAND_TIMEOUT.min(remaining),
+    ) {
+        return "unknown".to_string();
+    }
     crate::live_status_with_timeout(
         tmux,
         &record.tmux_session,

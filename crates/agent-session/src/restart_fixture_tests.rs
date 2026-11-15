@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Instant;
 
 fn pane_is_running(pid: &str) -> bool {
     let output = std::process::Command::new("ps")

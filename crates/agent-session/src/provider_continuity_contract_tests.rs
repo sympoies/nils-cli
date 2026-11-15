@@ -91,9 +91,6 @@ fn provider_continuity_omits_invalid_proofs_without_breaking_the_snapshot() {
         *invalid.pointer_mut(pointer).unwrap() = value;
         invalids.push(invalid);
     }
-    let mut oversized = valid.clone();
-    oversized["links"] = json!(vec![valid["links"][0].clone(); 17]);
-    invalids.push(oversized);
     let mut extra_field = valid.clone();
     extra_field["account"] = json!("must-not-project");
     invalids.push(extra_field);
@@ -124,4 +121,39 @@ fn provider_continuity_cannot_bridge_an_unowned_identity_change() {
     other.id = "another-managed-session".into();
     append(&next, &mut other, Kind::Resume);
     assert!(projection(&other, "running").is_none());
+}
+
+#[test]
+fn provider_continuity_snapshot_rejects_only_the_seventeenth_valid_link() {
+    for provider in ["claude", "codex"] {
+        let mut current = record(provider, "runtime-17", "conversation-17");
+        // Construct the persisted proof directly: append() already truncates
+        // at sixteen and would hide a missing read-side bound.
+        let links: Vec<_> = (1..=17)
+            .map(|index| {
+                json!({
+                    "kind": "clear",
+                    "from_incarnation": format!("runtime-{}", index - 1),
+                    "to_incarnation": format!("runtime-{index}"),
+                    "from_conversation": format!("conversation-{}", index - 1),
+                    "to_conversation": format!("conversation-{index}"),
+                    "at_epoch": index,
+                })
+            })
+            .collect();
+        current.extra.insert(
+            KEY.into(),
+            json!({
+                "schema_version": SCHEMA, "provider": provider, "links": links,
+            }),
+        );
+        assert!(projection(&current, "running").is_none());
+        // The same valid suffix, ending at the same running endpoint, is
+        // publishable at the exact boundary. Only its length changed.
+        current.extra.get_mut(KEY).unwrap()["links"]
+            .as_array_mut()
+            .unwrap()
+            .remove(0);
+        assert_eq!(projection(&current, "running").unwrap().links.len(), 16);
+    }
 }
