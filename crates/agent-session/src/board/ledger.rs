@@ -358,18 +358,20 @@ pub(crate) fn read_since(
             .iter()
             .filter(|entry| entry.seq > after_seq)
             .map(|entry| {
+                if entry.record.get("launch_env").is_none() {
+                    return Err(unavailable());
+                }
                 let mut record = entry.record.clone();
                 if let Some(object) = record.as_object_mut() {
                     object.insert("machine".to_string(), Value::String(machine.to_string()));
-                    object.entry("launch_env").or_insert_with(|| json!({}));
                     // An entry closed before these members existed has none.
                     for key in ["role", "lineage", "work", "model", "reasoning_effort"] {
                         object.entry(key).or_insert(Value::Null);
                     }
                 }
-                json!({ "cursor": cursor(&ledger.ledger_id, entry.seq), "record": record })
+                Ok(json!({ "cursor": cursor(&ledger.ledger_id, entry.seq), "record": record }))
             })
-            .collect();
+            .collect::<Result<_, CliError>>()?;
         let next_cursor = entries
             .last()
             .and_then(|entry| entry["cursor"].as_str().map(str::to_string))
@@ -404,7 +406,7 @@ mod tests {
     }
 
     fn record(id: &str) -> Value {
-        json!({"session_id": id, "state": "closed", "close_reason": "deleted", "closed_at": null})
+        json!({"session_id": id, "state": "closed", "close_reason": "deleted", "closed_at": null, "launch_env": {}})
     }
 
     fn ledger_path(context: &CliContext) -> PathBuf {
@@ -487,20 +489,67 @@ mod tests {
     }
 
     #[test]
-    fn launch_env_legacy_closed_records_project_an_empty_map_without_rewriting_history() {
+    fn rejects_closed_record_missing_launch_env_without_rewriting_history() {
         let (_tmp, context) = fresh();
-        append(&context, record("pre-upgrade")).unwrap();
-        let all = read(&context, None).unwrap();
-        assert!(
-            all["extensions"]
-                .as_array()
+        let before = head_cursor(&context).expect("head");
+        append(&context, record("old")).expect("append");
+        let after = head_cursor(&context).expect("head after append");
+        rewrite(&context, |ledger| {
+            ledger["entries"][0]["record"]
+                .as_object_mut()
                 .unwrap()
-                .contains(&json!("launch_env.v1"))
-        );
-        assert_eq!(all["entries"][0]["record"]["launch_env"], json!({}));
-        let stored: Value =
-            serde_json::from_slice(&fs::read(ledger_path(&context)).unwrap()).unwrap();
-        assert!(stored["entries"][0]["record"].get("launch_env").is_none());
+                .remove("launch_env");
+        });
+        let original = fs::read(ledger_path(&context)).unwrap();
+        for since in [None, Some(before.as_str()), None] {
+            let error = read(&context, since).expect_err("missing launch_env must fail");
+            assert_eq!(error.into_inner().code, "board-ledger-unavailable");
+            assert_eq!(fs::read(ledger_path(&context)).unwrap(), original);
+            assert!(
+                !context
+                    .state_dir
+                    .join("board")
+                    .join(LEDGER_MOVED_ASIDE)
+                    .exists()
+            );
+        }
+        // A cursor past the rejected entry still has a continuous empty tail.
+        let tail = read(&context, Some(&after)).expect("tail");
+        assert_eq!(tail["entries"], json!([]));
+        assert_eq!(tail["next_cursor"], after);
+        assert_eq!(fs::read(ledger_path(&context)).unwrap(), original);
+    }
+
+    #[test]
+    fn current_closed_producer_preserves_launch_env_through_repeated_reads() {
+        for launch_env in [json!({}), json!({"AGENT_RUNTIME_SUPPRESS_MEMORY": "1"})] {
+            for reason in [CloseReason::Deleted, CloseReason::Archived] {
+                let (_tmp, context) = fresh();
+                let session: crate::SessionRecord = serde_json::from_value(json!({
+                    "schema_version": crate::SESSION_DOCUMENT_VERSION,
+                    "id": "closing", "agent": "codex", "mode": "interactive",
+                    "title": "Closing", "cwd": "/srv/project", "tmux_session": "closing",
+                    "created_at": "2030-01-01T00:00:00Z", "updated_at": "2030-01-01T00:00:00Z",
+                    "launch_env": launch_env
+                }))
+                .expect("session");
+                let produced =
+                    super::super::closed_record(&context, &session, reason).expect("producer");
+                assert_eq!(produced["launch_env"], launch_env);
+                super::super::record_close(&context, Some(produced));
+                let original = fs::read(ledger_path(&context)).expect("stored producer output");
+                let first = read(&context, None).expect("read producer output");
+                assert_eq!(first["entries"][0]["record"]["launch_env"], launch_env);
+                assert_eq!(
+                    first["entries"][0]["record"]["close_reason"],
+                    reason.as_str()
+                );
+                let repeated = read(&context, None).expect("repeat");
+                assert_eq!(repeated["entries"], first["entries"]);
+                assert_eq!(repeated["next_cursor"], first["next_cursor"]);
+                assert_eq!(fs::read(ledger_path(&context)).unwrap(), original);
+            }
+        }
     }
 
     #[test]
@@ -599,6 +648,10 @@ mod tests {
             .to_string();
         rewrite(&context, |ledger| {
             ledger["entries"][0]["record"]["closed_at"] = json!(old);
+            ledger["entries"][0]["record"]
+                .as_object_mut()
+                .unwrap()
+                .remove("launch_env");
         });
         let all = read(&context, None).expect("read");
         assert_eq!(ids(&all), vec!["new"]);

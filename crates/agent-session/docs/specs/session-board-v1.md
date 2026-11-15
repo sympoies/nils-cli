@@ -450,9 +450,14 @@ is recorded content-free, and the aggregator later classifies the record as
 moved aside and replaced by an empty ledger with a new `ledger_id` at the
 next append **or read**, under the ledger lock, so earlier cursors become
 `board-cursor-expired` and reads recover without waiting for a deletion.
-`board-ledger-unavailable` is reserved for a lock timeout or an untrusted
-store (wrong owner, mode, symlink, or location), which is never repaired
-automatically.
+
+`board-ledger-unavailable` reports a lock timeout or an untrusted store
+(wrong owner, mode, symlink, or location), which is never repaired automatically.
+It also rejects a closed-ledger read that would return a retained record missing
+`launch_env`: HTTP 503, no partial entries or replacement cursor. Repeated reads
+fail the same way without rewriting, moving aside, or replacing the stored
+history, ledger identity, or sequences. A cursor already past that record can
+continue normally; ordinary retention still applies.
 
 ### Bound
 
@@ -826,7 +831,7 @@ type within v1.
 | `board-query-invalid` | 400 | Aggregator query, relay route, CLI filter validation |
 | `board-cursor-invalid` | 400 | Closed-ledger read with a malformed cursor |
 | `board-cursor-expired` | 410 | Closed-ledger read; triggers [Full resync](#full-resync) |
-| `board-ledger-unavailable` | 503 | Snapshot or closed-ledger read on lock timeout or untrusted store |
+| `board-ledger-unavailable` | 503 | Snapshot or closed-ledger read on lock timeout or untrusted store; closed-ledger read that would return a record missing `launch_env` |
 | `board-relay-disabled` | 409 | Relay route with federation unconfigured |
 | `board-relay-unavailable` | 502 | Relay network failure, non-success, or unexpected schema |
 | `board-relay-unauthorized` | 502 | Aggregator rejected the relay credential |
@@ -872,6 +877,9 @@ Implementation items must cover:
 - the snapshot `ledger_cursor` read before enumeration: a record removed
   between the two steps (through a test hook, not timing) appears in
   `GET /board/closed/v1?since=<ledger_cursor>`;
+- current closed-record producer to reader round trips with empty and populated
+  `launch_env` maps; a missing member rejected without rewriting history,
+  stable repeated reads, and a cursor past the rejected record continuing;
 - the 7-day and 256-entry bounds, cursor order, an empty-ledger `next_cursor`
   round trip, `board-cursor-invalid` only for a malformed cursor, and
   `board-cursor-expired` after pruning, after a `ledger_id` change (checked
@@ -889,11 +897,14 @@ Implementation items must cover:
 
 `launch_env.v1` advertises the additive `launch_env` record member: an object
 of approved non-secret runtime switch names and their string values. Missing
-older metadata projects as `{}`. Values are validated against the daemon's
+session metadata projects as `{}`. Values are validated against the daemon's
 configured launch allowlist before projection; malformed or unapproved stored
 metadata projects as `{}`. The same map appears in `list --format json` and
-session create/resume views. Closed records retain the validated projection
-captured at close time. This field never includes ambient environment variables.
+session create/resume views. Current closed-record producers always capture this
+validated projection at close time, including an explicit `{}` for an empty map.
+Closed-ledger reads preserve that captured map; a retained record missing the
+member is rejected as described under [Closed-session ledger](#closed-session-ledger).
+This field never includes ambient environment variables.
 
 ## Saved draft event
 
