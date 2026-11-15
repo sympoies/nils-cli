@@ -28,6 +28,7 @@ pub mod readiness;
 mod receipt_retention;
 pub use readiness::checkpoint_path_for_state;
 pub(crate) mod remote;
+mod remote_peer_exclusions;
 pub(crate) mod retirement;
 pub(crate) mod server;
 pub(crate) mod service;
@@ -521,6 +522,11 @@ fn render_coordination(
 }
 
 fn render_value_text(value: &Value) -> String {
+    if value["schema_version"] == "agent-session.remote-peers.v1"
+        && let Some(excluded) = value["excluded"].as_array().filter(|rows| !rows.is_empty())
+    {
+        return remote_peer_exclusions::render_text(value, excluded);
+    }
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_string()) + "\n"
 }
 
