@@ -84,8 +84,10 @@ agent-session notice <id> --kind schedule.pulse --source scheduler \
   --summary "Check the scheduled task" --body-file notice.txt --idempotency-key <key>
 agent-session --state-dir <state-directory> notice-store audit --format json
 agent-session send <id> --key c-c
-agent-session send <id> --key down --key enter   # answer a dialog while blocked
+agent-session send <id> --key down --key enter   # terminal questions; not Claude approvals
 agent-session send <id> --text "custom answer" --allow-blocked
+agent-session permission list <id> --format json
+agent-session permission answer <id> --request-id <uuid> --call-id <projected-call-id> --decision allow
 agent-session clear <id> --expect-idle --format json
 agent-session rebind <id> --format json
 agent-session resume <id>

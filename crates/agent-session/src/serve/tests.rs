@@ -9817,7 +9817,8 @@ async fn claude_structured_prompt_is_unknown_when_the_queue_lists_another_messag
 async fn claude_structured_prompt_ignores_progress_on_an_existing_turn() {
     let tmp = tempfile::TempDir::new().unwrap();
     let launch_id = seed_claude_prompt_session(tmp.path(), "claude-in-flight");
-    let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
+    let (tmux, entered) = empty_composer_tmux_marking_enter(tmp.path());
+    let st = state(tmp.path(), Some(TOKEN), tmux);
     let record = load_session_record(&st.context, "claude-in-flight").unwrap();
     crate::activity::activate_runtime(&st.context, &record).unwrap();
     crate::activity::ingest_event(
@@ -9826,12 +9827,11 @@ async fn claude_structured_prompt_ignores_progress_on_an_existing_turn() {
         claude_turn_started_event(&launch_id, "in-flight-start", "turn-in-flight"),
     )
     .unwrap();
-
     let ack_context = st.context.clone();
     let ack_id = record.id.clone();
     let ack_launch_id = launch_id.clone();
     let progress = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        wait_for_file(&entered).await;
         tokio::task::spawn_blocking(move || {
             let event: crate::activity::TurnEvent = serde_json::from_value(json!({
                 "schema_version": crate::activity::TURN_EVENT_VERSION,

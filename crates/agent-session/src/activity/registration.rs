@@ -11,7 +11,6 @@ use super::{AgentKind, CliError};
 use crate::{Envelope, run_output_with_timeout_and_strict_cap, valid_sha256};
 
 const AGENT_HOOK_DOCTOR_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
-const AGENT_HOOK_DISPATCH_TIMEOUT_SECONDS: i64 = 60;
 const ENTRYPOINT_UNAVAILABLE: &[u8] = b"agent-hook-entrypoint-unavailable\n";
 
 fn readiness_command() -> ProcessCommand {
@@ -192,6 +191,13 @@ pub(super) fn agent_hook_claude_readiness(
             missing_owned_events.push(group.event.clone());
         }
     }
+    if !result
+        .owned_groups
+        .iter()
+        .any(|group| group.event == "PermissionRequest")
+    {
+        missing_owned_events.push("PermissionRequest".to_string());
+    }
     let configured = result.configured
         && result.status == agent_hook::setup::ProviderStatus::Converged
         && result.owned_count == result.owned_groups.len()
@@ -214,12 +220,16 @@ fn has_dispatch_group(config: &Value, event: &str, matcher: Option<&str>) -> boo
                     && group
                         .get("hooks")
                         .and_then(Value::as_array)
-                        .is_some_and(|handlers| handlers.iter().any(is_owned_dispatch))
+                        .is_some_and(|handlers| {
+                            handlers
+                                .iter()
+                                .any(|handler| is_owned_dispatch(handler, event))
+                        })
             })
         })
 }
 
-fn is_owned_dispatch(handler: &Value) -> bool {
+fn is_owned_dispatch(handler: &Value, event: &str) -> bool {
     handler.as_object().is_some_and(|object| object.len() == 3)
         && handler.get("type").and_then(Value::as_str) == Some("command")
         && handler.get("command").and_then(Value::as_str)
@@ -231,7 +241,10 @@ fn is_owned_dispatch(handler: &Value) -> bool {
                 .as_str(),
             )
         && handler.get("timeout").and_then(Value::as_i64)
-            == Some(AGENT_HOOK_DISPATCH_TIMEOUT_SECONDS)
+            == Some(agent_hook::setup::dispatch_timeout_seconds(
+                agent_hook::HookProduct::Claude,
+                event,
+            ))
 }
 
 #[cfg(test)]
@@ -239,6 +252,17 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::has_dispatch_group;
+
+    #[test]
+    fn claude_permission_registration_requires_current_wait_timeout() {
+        let handler = json!({"type": "command",
+            "command": nils_common::provider_entrypoint::command(true, &["dispatch", "--product", "claude"]), "timeout": 600});
+        let mut config = json!({"hooks": {"PermissionRequest": [{"hooks": [handler]}]}});
+        assert!(has_dispatch_group(&config, "PermissionRequest", None));
+        config["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"] = json!(60);
+        assert!(!has_dispatch_group(&config, "PermissionRequest", None));
+        assert!(!has_dispatch_group(&Value::Null, "PermissionRequest", None));
+    }
 
     #[test]
     fn claude_dispatch_group_requires_exact_matcher_and_handler() {

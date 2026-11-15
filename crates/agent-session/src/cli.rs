@@ -3,6 +3,7 @@ pub mod broker_proof;
 pub(crate) mod dispatch;
 pub(crate) mod drafts;
 pub(crate) mod operator_rules;
+pub(crate) mod permission;
 pub(crate) mod send_key;
 
 use std::path::PathBuf;
@@ -99,6 +100,8 @@ pub enum Command {
     Diagnose(DiagnoseArgs),
     /// Send input (literal text and/or special keys) to a live session.
     Send(SendArgs),
+    /// Inspect and explicitly answer Claude permission hooks.
+    Permission(permission::Args),
     /// Submit a display-only notice through guarded native delivery.
     Notice(crate::notice::NoticeArgs),
     /// Verify retained native notice archives and the authenticated checkpoint.
@@ -1447,9 +1450,8 @@ pub struct SendArgs {
     #[arg(long = "key", value_parser = send_key::Parser, value_name = "KEY")]
     pub keys: Vec<SpecialKey>,
 
-    /// Type the literal text even while the agent is waiting on an approval or
-    /// question. Without this, text is refused so it cannot land in the dialog;
-    /// special keys are always allowed, so answering a dialog never needs it.
+    /// Type literal text into a provider question or supported terminal dialog.
+    /// Claude approvals require permission answer; this flag cannot bypass it.
     #[arg(long = "allow-blocked")]
     pub allow_blocked: bool,
 

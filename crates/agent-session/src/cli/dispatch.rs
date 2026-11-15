@@ -18,6 +18,7 @@ pub(crate) fn run(context: &CliContext, command: Command) -> i32 {
         Command::Logs(args) => run_logs(context, args),
         Command::Diagnose(args) => diagnose::run_diagnose(context, args),
         Command::Send(args) => send::run(context, args),
+        Command::Permission(args) => cli::permission::run(context, args),
         Command::Notice(args) => notice::run(context, args),
         Command::NoticeStore(args) => send::claude_notice::store::audit::run(context, args),
         Command::Glance(args) => run_glance(context, args),

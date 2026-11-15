@@ -1,10 +1,12 @@
 //! Routes that read or refresh one session's displayed facts.
 use super::*;
 mod drafts;
+mod permission;
 
 pub(super) fn routes() -> Router<Arc<ServeState>> {
     Router::new()
         .merge(drafts::routes())
+        .merge(permission::routes())
         .route("/sessions/{id}/retitle", post(session_retitle_handler))
         .route("/sessions/{id}/refresh", post(session_refresh_handler))
         .route("/sessions/{id}/metrics/v1", get(session_metrics_handler))

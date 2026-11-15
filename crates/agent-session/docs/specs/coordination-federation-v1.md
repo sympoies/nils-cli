@@ -83,6 +83,23 @@ using `message peers`. Absence may also reflect an omitted unavailable-host
 snapshot and does not prove deletion or lack of capability. Failed or invalid
 peer discovery retains `remote-messaging-unavailable`.
 
+The optional `excluded` array is separate from authorized `peers`. Each entry
+contains `machine`, `session_id`, and `reason`. `message peers --format json`
+preserves these entries, including unknown reasons; text output labels them as
+excluded with the reason. An endpoint without `excluded` keeps the existing
+output and discovery behavior.
+
+If no authorized exact peer exists, an exact excluded address returns
+`remote-recipient-excluded` (CLI 65), with `machine`, `session_id`, and the
+unchanged relay `reason` in error details. No envelope is enqueued. For
+`ownership-binding-stale`, the message and structured `recovery` name the
+owner-authorized relay operation `import-owner --claim-session --expected-incarnation`:
+check first, then apply, fencing the current recipient incarnation. This is an
+operator recovery step, never an automatic re-bind or a grant of authority.
+The relay's [owner re-bind procedure](https://github.com/sympoies/salon/blob/main/docs/coordination-resume.md#re-bind-through-the-existing-owner-maintenance-command)
+defines the scoped arguments and check/apply sequence.
+Unknown reasons retain the typed exclusion without prescribing that recovery.
+
 A discovered exact peer whose `messaging_supported` is not true returns
 `remote-messaging-unsupported` for definitive or unknown unsupported reasons. An
 explicit `coordination-unavailable` row receives one fresh discovery attempt bound

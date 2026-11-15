@@ -983,6 +983,14 @@ where
                 })
                 .cloned()
                 .ok_or_else(|| {
+                    if let Some(error) = super::remote_peer_exclusions::recipient_error(
+                        &discovered,
+                        &args.to_machine,
+                        &args.to_session,
+                    ) {
+                        observe_discovery_refusal(context, "recipient-excluded");
+                        return error;
+                    }
                     observe_discovery_refusal(context, "recipient-not-discovered");
                     CliError::data(
                         "remote-recipient-not-discovered",

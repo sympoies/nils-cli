@@ -1,4 +1,7 @@
 mod config_path;
+mod permission;
+pub use permission::dispatch_timeout_seconds;
+use permission::owned_json_handler;
 mod notification_entrypoint;
 
 use std::collections::BTreeSet;
@@ -1548,6 +1551,7 @@ fn inspect_json_handlers(
                 if owned_json_handler(handler, product) {
                     owned += 1;
                     owned_groups.insert((event.clone(), matcher.clone()));
+                    prior_owned |= permission::stale_timeout(handler, product, event);
                 } else if prior_owned_json_handler(handler, product) {
                     owned += 1;
                     owned_groups.insert((event.clone(), matcher.clone()));
@@ -1657,19 +1661,11 @@ fn append_json_group(
         json!([{
             "type": "command",
             "command": dispatch_command(product),
-            "timeout": DISPATCH_TIMEOUT_SECONDS,
+            "timeout": dispatch_timeout_seconds(product, &group.event),
         }]),
     );
     groups.push(Value::Object(object));
     Ok(())
-}
-
-fn owned_json_handler(handler: &Value, product: Product) -> bool {
-    handler.as_object().is_some_and(|object| object.len() == 3)
-        && handler.get("type").and_then(Value::as_str) == Some("command")
-        && handler.get("command").and_then(Value::as_str)
-            == Some(dispatch_command(product).as_str())
-        && handler.get("timeout").and_then(Value::as_i64) == Some(DISPATCH_TIMEOUT_SECONDS)
 }
 
 fn prior_owned_json_handler(handler: &Value, product: Product) -> bool {

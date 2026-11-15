@@ -56,7 +56,10 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         | "auth-quarantined"
         | "send-submit-stuck"
         | "session-has-live-children" => StatusCode::CONFLICT,
-        "composer-not-empty" | "composer-unobservable" => StatusCode::CONFLICT,
+        "composer-not-empty" | "composer-unobservable" | "claude-permission-hook-required" => {
+            StatusCode::CONFLICT
+        }
+        code if code.starts_with("permission-") => StatusCode::CONFLICT,
         "retitle-v3-memory-not-ready" => StatusCode::UNPROCESSABLE_ENTITY,
         "retitle-v3-objective-unavailable" => StatusCode::UNPROCESSABLE_ENTITY,
         "board-cursor-expired" => StatusCode::GONE,

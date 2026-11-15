@@ -353,7 +353,15 @@ submission. `send` reads the pane back and reports
   unrecognized layout, a dialog, or a first line that looks like a numbered
   choice (`1. …`).
 
-While a session is `needs_input`, its pane belongs to a provider approval or
+Claude approval attention on the session's Claude Code 2.1.317 binary requires
+`permission list` and `permission answer`; terminal sends are refused with
+`claude-permission-hook-required`. A known version outside that fence permits
+one guarded dialog key; text and batches remain refused, including with
+`--allow-blocked`. An unreadable version refuses retryably; retry rechecks the
+binary, or answer at the attached terminal. Refresh managed hook setup before
+the upgrade. See the [permission answer contract](../specs/session-runtime-v1.md#claude-permission-answers-3687).
+
+For other dialogs, while a session is `needs_input`, its pane belongs to a provider approval or
 question dialog, not to a prompt box. The routes that write to the pane refuse
 input carrying literal text with `agent-blocked` before anything reaches the
 terminal. Named special keys stay admitted, because that is how the dialog gets
