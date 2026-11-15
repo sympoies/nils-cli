@@ -1370,7 +1370,7 @@ fn collect_jsonl(
         return;
     };
     for entry in entries.flatten() {
-        if *visited >= SCAN_MAX_ENTRIES || Instant::now() >= deadline {
+        if *visited >= SCAN_MAX_ENTRIES || catalog_scan::deadline_expired(deadline) {
             *truncated = true;
             return;
         }
@@ -1406,7 +1406,7 @@ fn first_prompt(
     let mut reader = BufReader::new(file);
     let mut line = Vec::new();
     for _ in 0..MAX_PREVIEW_LINES {
-        if Instant::now() >= deadline {
+        if catalog_scan::deadline_expired(deadline) {
             return None;
         }
         let bounded = read_bounded_line(&mut reader, &mut line).ok()?;
@@ -1773,7 +1773,7 @@ fn directory_generation_stamp(
         *count += 1;
     }
     let mut stamp = directory.to_string_lossy().into_owned();
-    if Instant::now() >= deadline {
+    if catalog_scan::deadline_expired(deadline) {
         *truncated = true;
         stamp.push_str("|deadline");
         return digest_parts(&[stamp.as_bytes()]);
@@ -1793,7 +1793,7 @@ fn directory_generation_stamp(
     if let Ok(entries) = fs::read_dir(directory) {
         let mut names = Vec::new();
         for entry in entries {
-            if names.len() > SCAN_MAX_ENTRIES || Instant::now() >= deadline {
+            if names.len() > SCAN_MAX_ENTRIES || catalog_scan::deadline_expired(deadline) {
                 *truncated = true;
                 break;
             }
@@ -2244,7 +2244,7 @@ fn read_archives(
         return archives;
     };
     for entry in entries.flatten().take(SCAN_MAX_ENTRIES) {
-        if Instant::now() >= deadline {
+        if catalog_scan::deadline_expired(deadline) {
             *truncated = true;
             break;
         }
@@ -2273,7 +2273,7 @@ fn read_stars(root: &Path, deadline: Instant, truncated: &mut bool) -> BTreeMap<
         return stars;
     };
     for entry in entries.flatten().take(SCAN_MAX_ENTRIES) {
-        if Instant::now() >= deadline {
+        if catalog_scan::deadline_expired(deadline) {
             *truncated = true;
             break;
         }

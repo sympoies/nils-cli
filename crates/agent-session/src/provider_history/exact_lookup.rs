@@ -315,7 +315,7 @@ pub(super) fn inspect_history_file(
     truncated: &mut bool,
     include_stamp: bool,
 ) -> Option<HistorySession> {
-    if Instant::now() >= deadline {
+    if catalog_scan::deadline_expired(deadline) {
         return None;
     }
     let metadata = fs::metadata(path).ok()?;

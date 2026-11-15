@@ -66,16 +66,18 @@ fn saved_overlays(root: &Path) -> String {
 #[test]
 fn seeded_sessions_keep_source_identity_overlays_and_do_not_duplicate() {
     let tmp = tempfile::tempdir().unwrap();
-    registry_record(tmp.path());
+    let root = tmp.path().join("fixture");
+    registry_record(&root);
     let sources = vec![
-        source(tmp.path().join("first"), Some("profile-a")),
-        source(tmp.path().join("second"), Some("profile-b")),
+        source(root.join("first"), Some("profile-a")),
+        source(root.join("second"), Some("profile-b")),
     ];
-    let archives = tmp.path().join("archives");
-    let stars = tmp.path().join("stars");
-    let id = saved_overlays(tmp.path());
-    let catalog =
-        HistoryCatalog::new(sources, archives, stars).with_session_state_dir(tmp.path().into());
+    let archives = root.join("archives");
+    let stars = root.join("stars");
+    let id = saved_overlays(&root);
+    let catalog = HistoryCatalog::new(sources, archives, stars).with_session_state_dir(root);
+    let _clock = FrozenScanClock::new();
+    assert!(!deadline_expired(Instant::now() - Duration::from_secs(1)));
     let page = catalog.list("test", None, None, None, 50).unwrap();
     assert!(!page.truncated);
     assert_eq!(page.sessions.len(), 2);
@@ -215,4 +217,27 @@ fn managed_probe_deadline_preserves_saved_overlays() {
     );
     assert_eq!(session.archived_at.as_deref(), Some("2026-01-02T00:00:00Z"));
     assert_eq!(session.starred_at.as_deref(), Some("2026-01-03T00:00:00Z"));
+}
+
+thread_local! {
+    static FROZEN_SCAN_CLOCK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(super) fn scan_clock_frozen() -> bool {
+    FROZEN_SCAN_CLOCK.with(std::cell::Cell::get)
+}
+
+struct FrozenScanClock;
+
+impl FrozenScanClock {
+    fn new() -> Self {
+        FROZEN_SCAN_CLOCK.with(|frozen| assert!(!frozen.replace(true)));
+        Self
+    }
+}
+
+impl Drop for FrozenScanClock {
+    fn drop(&mut self) {
+        FROZEN_SCAN_CLOCK.with(|frozen| frozen.set(false));
+    }
 }
