@@ -51,11 +51,21 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   fail-closed.
 
   The public `next` projection contains only the desired nickname, revision, `queued` / `applying` /
-  `failed` state, and a safe failure reason. A successful mutation response also echoes the current
+  `failed` state, a safe failure reason, and `blocking_reason`:
+  `awaiting_idle_confirmation`, `account_binding_in_progress`,
+  `account_switch_failed`, or `next_invalid`. The same projection appears in
+  account show, status, and list. A successful mutation response also echoes the current
   `session_incarnation`, allowing an intermediary to verify an unbound queued outcome against the request
   fence without exposing credential metadata. The control loop drains a queued intent after the live
   app-server reports no in-progress turn for the bound thread, even when the hook-derived activity
   projection has not yet caught up to `waiting`.
+
+  After an authoritative structured usage-limit failure, an explicit queued switch can also use the
+  durable terminal boundary without a live idle read. This requires a waiting
+  runtime with no current turn, a failure from the currently bound account and
+  revision, and no newer accepted input. Runtime, intent identity and terminal
+  evidence are checked again under the record lock and account mutation gate.
+  Other manual switches retain the live idle probe.
 
   The TUI proxy serializes account mutation with every forwarded `turn/start` until its matching provider
   response, so an accepted-but-not-yet-observed turn cannot cross that idle boundary. It resolves
@@ -63,7 +73,11 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   Success flips the durable binding and clears `next`; failure preserves the applied binding and marks
   the intent failed. Prompt, terminal-input, and auto-resume submission paths fail closed while a
   selected binding is `pending` or `failed`, or while any live or malformed next intent exists, so the
-  next accepted prompt uses the newly selected account.
+  next accepted prompt uses the newly selected account. If the bounded
+  `turn/start` wait cannot confirm readiness, `account_not_ready` is retryable,
+  with `next_action: "inspect-account-switch"`, a recovery hint, and
+  `recovery.outcome: "not_forwarded"`. Inspect account show or list; retry the
+  account switch or restart if control remains blocked, then resend the prompt.
 
   An interrupted `applying` intent is re-queued when the session runtime restarts. The local
   `agent-session account switch` CLI shares this route's code path. Without the daemon's in-process Codex

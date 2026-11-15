@@ -2236,7 +2236,7 @@ async fn apply_pending_next_account_at_idle(
     context: &CliContext,
     record: &SessionRecord,
     request_id: &mut u64,
-    expected_auto_failover: Option<&crate::codex_account::NextAccountIdentity>,
+    expected_terminal_intent: Option<&crate::codex_account::NextAccountIdentity>,
 ) -> Option<String> {
     let launch_id = record
         .runtime
@@ -2245,8 +2245,8 @@ async fn apply_pending_next_account_at_idle(
     let begin_context = context.clone();
     let begin_id = record.id.clone();
     let begin_launch = launch_id.clone();
-    let expected_auto_failover = expected_auto_failover.cloned();
-    let queued = tokio::task::spawn_blocking(move || match expected_auto_failover.as_ref() {
+    let expected_terminal_intent = expected_terminal_intent.cloned();
+    let queued = tokio::task::spawn_blocking(move || match expected_terminal_intent.as_ref() {
         Some(expected) => crate::codex_account::begin_next_apply_if_unchanged(
             &begin_context,
             &begin_id,
@@ -2403,7 +2403,7 @@ async fn control_account_ready_with(
     }
 }
 
-async fn automatic_failover_has_authoritative_idle(
+async fn queued_switch_has_authoritative_idle(
     context: &CliContext,
     record: &SessionRecord,
 ) -> Option<crate::codex_account::NextAccountIdentity> {
@@ -2423,8 +2423,8 @@ async fn automatic_failover_has_authoritative_idle(
         {
             return None;
         }
-        let identity = crate::codex_account::pending_auto_failover_apply(&current).ok()??;
-        crate::auto_resume::has_authoritative_usage_exhaustion_idle(&context, &current)
+        let identity = crate::codex_account::next_account_identity(&current).ok()??;
+        crate::codex_account::next_apply_has_authoritative_idle(&context, &current)
             .then_some(identity)
     })
     .await
@@ -2860,13 +2860,12 @@ pub(crate) async fn run_control(
                         // A structured `usageLimitExceeded` completion is an
                         // authoritative terminal boundary. Codex may stop
                         // answering `thread/turns/list` after that workspace
-                        // rejection, so an auto-failover intent must be able to
-                        // drain from the durable terminal evidence. All manual
-                        // next-account intents retain the live idle probe and
-                        // its interleaved-turn race protection.
-                        let terminal_auto_failover =
-                            automatic_failover_has_authoritative_idle(&context, &record).await;
-                        let idle = if terminal_auto_failover.is_some() {
+                        // rejection. Both automatic and explicit switches can
+                        // use fenced terminal evidence; other intents retain
+                        // the live idle probe and interleaved-turn protection.
+                        let terminal_intent =
+                            queued_switch_has_authoritative_idle(&context, &record).await;
+                        let idle = if terminal_intent.is_some() {
                             true
                         } else {
                             request_id = request_id.saturating_add(1);
@@ -2921,7 +2920,7 @@ pub(crate) async fn run_control(
                                 &context,
                                 &record,
                                 &mut request_id,
-                                terminal_auto_failover.as_ref(),
+                                terminal_intent.as_ref(),
                             )
                             .await
                         {
