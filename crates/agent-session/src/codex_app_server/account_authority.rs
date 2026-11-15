@@ -282,6 +282,12 @@ impl TuiMutationRejection {
 
 pub(super) fn tui_busy_response(id: &Value, rejection: TuiMutationRejection) -> Message {
     let mut data = match rejection {
+        TuiMutationRejection::AccountNotReady => json!({
+            "reason": rejection.code(),
+            "retryable": true,
+            "next_action": "inspect-account-switch",
+            "hint": "Inspect account show or list for the pending switch; retry account switch or restart the session if it remains blocked, then resend the prompt."
+        }),
         TuiMutationRejection::AccountAuthorityUnavailable {
             operation,
             stage,

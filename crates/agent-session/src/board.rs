@@ -495,7 +495,7 @@ fn project_turn_state(turn_state: &Map<String, Value>) -> Value {
     let last_turn = object(turn_state, "last_turn")
         .map(|last| {
             let mut projected = json!({ "outcome": pick(&last, "outcome") });
-            if let Some(kind @ ("authentication" | "provider_capacity")) =
+            if let Some(kind @ ("authentication" | "provider_capacity" | "usage_exhausted")) =
                 last.get("provider_failure_kind").and_then(Value::as_str)
             {
                 projected["provider_failure_kind"] = json!(kind);

@@ -18,7 +18,9 @@ use crate::{
     write_session_record,
 };
 
+mod queued_switch;
 mod restart;
+pub(crate) use queued_switch::next_apply_has_authoritative_idle;
 pub(crate) use restart::{authorize_restart_exit_locked, prepare_resume_runtime};
 
 pub(crate) const BROKER_SCHEMA_VERSION: &str = "agent-session.codex-auth-broker.v1";
@@ -184,6 +186,7 @@ pub struct CodexNextAccountView {
     pub state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_reason: Option<String>,
+    pub blocking_reason: &'static str,
 }
 
 pub(crate) type CodexAccountSummary = AccountSummary;
@@ -1099,6 +1102,7 @@ fn next_view(record: &SessionRecord) -> Option<CodexNextAccountView> {
             revision: 0,
             state: "failed",
             failure_reason: Some("next_invalid".to_string()),
+            blocking_reason: "next_invalid",
         }),
         DecodedNext::Valid(next) => {
             let state = match next.state.as_str() {
@@ -1111,6 +1115,11 @@ fn next_view(record: &SessionRecord) -> Option<CodexNextAccountView> {
                 revision: next.revision,
                 state,
                 failure_reason: next.failure_reason,
+                blocking_reason: match state {
+                    "queued" => "awaiting_idle_confirmation",
+                    "applying" => "account_binding_in_progress",
+                    _ => "account_switch_failed",
+                },
             })
         }
     }
@@ -1143,29 +1152,6 @@ pub(crate) fn pending_next_apply(
         DecodedNext::Invalid => Err(invalid_next_error(record)),
         DecodedNext::Valid(next) if next.state == "queued" => {
             Ok(Some((next.account, next.revision)))
-        }
-        DecodedNext::Valid(_) => Ok(None),
-    }
-}
-
-/// Whether the drainable next-account intent was selected by automatic
-/// failover after a provider-declared account exhaustion.
-pub(crate) fn pending_auto_failover_apply(
-    record: &SessionRecord,
-) -> Result<Option<NextAccountIdentity>, CliError> {
-    match decode_next(record) {
-        DecodedNext::Absent => Ok(None),
-        DecodedNext::Invalid => Err(invalid_next_error(record)),
-        DecodedNext::Valid(next)
-            if next.state == "queued"
-                && next.selection_source.as_deref() == Some("auto_failover") =>
-        {
-            Ok(Some(NextAccountIdentity {
-                account: next.account,
-                revision: next.revision,
-                intent_id: next.intent_id,
-                selection_source: next.selection_source,
-            }))
         }
         DecodedNext::Valid(_) => Ok(None),
     }
@@ -1549,9 +1535,7 @@ fn begin_next_apply_inner(
         selection_source: next.selection_source.clone(),
     };
     if let Some(expected) = expected
-        && (&current != expected
-            || current.selection_source.as_deref() != Some("auto_failover")
-            || !crate::auto_resume::has_authoritative_usage_exhaustion_idle(context, &record))
+        && (&current != expected || !next_apply_has_authoritative_idle(context, &record))
     {
         return Ok(None);
     }
@@ -2603,7 +2587,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             let mut current = load_session_record(&context, &record.id).unwrap();
             queue_auto_failover_locked(&context, &mut current, "acct2").unwrap();
         }
-        let expected = pending_auto_failover_apply(&reload(&context, &record.id))
+        let expected = next_account_identity(&reload(&context, &record.id))
             .unwrap()
             .expect("automatic failover identity");
 
