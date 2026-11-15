@@ -685,21 +685,10 @@ fn guarded_send_turn_start_after_paste_refuses_without_submit() {
 #[test]
 fn guarded_send_unobservable_capture_and_activity_fail_closed() {
     let fixture = Fixture::new("claude");
-    let observation = fixture
-        .root()
-        .join("state/sessions/guarded/drafts/observation.json");
-    fs::create_dir_all(observation.parent().unwrap()).unwrap();
-    fs::write(&observation, "{}").unwrap();
     fs::write(fixture.root().join("capture-fails"), "").unwrap();
-    let refusal = fixture.refused(
+    fixture.refused(
         &fixture.send(&["--require-empty-composer"]),
         "send-composer-unobservable",
-    );
-    assert_eq!(refusal["error"]["details"]["stage"], "admission");
-    assert_eq!(refusal["error"]["details"]["observation"], "capture-failed");
-    assert!(
-        !observation.exists(),
-        "unknown input resets the stale timer"
     );
     fixture.no_delivery();
     fs::remove_file(fixture.root().join("capture-fails")).unwrap();

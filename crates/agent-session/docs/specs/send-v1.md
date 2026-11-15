@@ -126,19 +126,6 @@ paste, Enter or cleanup keys. Cleanup cannot exclude simultaneous human edits
 between its observations and keys. A native atomic provider operation is tracked separately in
 [#2374](https://github.com/sympoies/nils-cli/issues/2374).
 
-A `send-composer-unobservable` refusal reports `error.details.stage` (`admission`,
-`claimed`, or `submit`) and `error.details.observation`. Observation reasons
-are fixed tokens: `capture-failed`, `pane-unparsable`, `composer-not-located`,
-`region-not-single-row`, `footer-dialog-hint`, `queued-hint-not-admitted`,
-`paste-placeholder`, `suggestion-literal-unstyled`, `row-unrecognized`, and
-`paste-not-verified` (a known paste's cursor or ownership proof failed).
-The latest captured pane's reason survives a later capture failure during the
-bounded retry interval; `capture-failed` applies when no pane was captured.
-Post-paste cleanup preserves the failed observation's stage and reason; its
-`remaining_input` describes the later cleanup observation. An empty remaining
-input does not establish that admission refused before paste. These details
-never include capture bytes, composer text, hyperlink targets, or raw errors.
-
 Idle and composer observations support Claude Code and Codex tmux runtimes,
 including supported Codex `codex_app_server` profiles with their managed tmux
 pane. App-server idle is native; composer capture remains a separate signal.
