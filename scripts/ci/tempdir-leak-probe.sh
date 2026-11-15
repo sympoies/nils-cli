@@ -200,7 +200,7 @@ fi
 probe_state="$(mktemp -d "$probe_root_abs/tempdir-leak-probe.XXXXXX")"
 probe_dir="$probe_state/tmp"
 mkdir "$probe_dir" "$probe_state/index"
-# Nextest 0.9.98+ supports per-test wrappers. Keep the repository profile and
+# Nextest 0.9.116+ supplies the per-test name used for attribution. Keep the profile and
 # add the wrapper only for this probe, so ordinary nextest runs are unchanged.
 python3 - "$repo_root" "$probe_state/config.toml" <<'PYCONFIG'
 import json
@@ -210,7 +210,7 @@ root = pathlib.Path(sys.argv[1])
 config = (root / ".config/nextest.toml").read_text()
 wrapper = json.dumps(str(root / "scripts/ci/tempdir-leak-wrapper.sh"))
 pathlib.Path(sys.argv[2]).write_text(
-    'experimental = ["wrapper-scripts"]\n' + config +
+    'nextest-version = "0.9.116"\nexperimental = ["wrapper-scripts"]\n' + config +
     '\n[scripts.wrapper.tempdir-probe]\ncommand = ["bash", ' + wrapper + ']\n'
     '[[profile.default.scripts]]\nfilter = "all()"\nrun-wrapper = "tempdir-probe"\n')
 PYCONFIG

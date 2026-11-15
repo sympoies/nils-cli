@@ -193,6 +193,30 @@ if ! grep -q 'test="suite::fixture" binary="fixture-test"' "$work/out.txt" ||
 fi
 echo "ok: the test and value-free metadata are reported"
 
+echo "== large leaks have bounded output =="
+write_cargo_stub 'mkdir -p "$TMPDIR/leak"; i=0; while [ "$i" -lt 2000 ]; do : >"$TMPDIR/leak/file-$i"; i=$((i + 1)); done'
+expect_status 1 "large leak still fails"
+if [[ "$(wc -c <"$work/out.txt")" -ge 65536 ]] || ! grep -q 'metadata truncated' "$work/out.txt"; then
+  echo "FAIL: large leak output is not bounded or lacks a truncation notice"
+  exit 1
+fi
+
+echo "== deep leaks have bounded traversal =="
+write_cargo_stub 'dir="$TMPDIR/leak"; i=0; while [ "$i" -lt 40 ]; do dir="$dir/d"; i=$((i + 1)); done; mkdir -p "$dir"'
+expect_status 1 "deep leak still fails"
+if ! grep -q 'metadata truncated' "$work/out.txt"; then
+  echo "FAIL: deep leak lacks a truncation notice"
+  exit 1
+fi
+
+echo "== nextest attribution version is required =="
+write_cargo_stub 'last=""; for arg in "$@"; do if [ "$last" = "--config-file" ]; then cp "$arg" "$CARGO_STUB_CONFIG"; fi; last="$arg"; done'
+CARGO_STUB_CONFIG="$work/nextest-config.toml" expect_status 0 "generated nextest config is accepted"
+if ! grep -q '^nextest-version = "0.9.116"$' "$work/nextest-config.toml"; then
+  echo "FAIL: attribution-capable nextest minimum is missing"
+  exit 1
+fi
+
 echo "== a leaked file fails too =="
 write_cargo_stub ': >"$TMPDIR/.tmpSTRAY.allocation.lock"'
 expect_status 1 "a leaked sibling file fails the probe"
