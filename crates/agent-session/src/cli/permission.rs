@@ -1,4 +1,5 @@
 //! Explicit owner answers to one live Claude PermissionRequest hook.
+mod terminal;
 mod transport;
 mod version;
 use crate::{CliContext, CliError, SessionRecord, activity};
@@ -6,6 +7,7 @@ use clap::{Args as ClapArgs, Subcommand, ValueEnum};
 use nils_common::cli_contract::OutputFormat;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+pub(crate) use terminal::input_admission;
 
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -76,8 +78,14 @@ pub(crate) fn refusal(code: &str) -> CliError {
 pub(crate) fn refuse_terminal(
     context: &CliContext,
     record: &SessionRecord,
+    text: Option<&str>,
+    keys: &[crate::SpecialKey],
 ) -> Result<(), CliError> {
-    terminal_admission(context, record).map(drop)
+    let _ingress = terminal_admission(context, record)?;
+    if record.agent == "claude" && activity::claude_attention::has_permission(context, record)? {
+        terminal::input_key(text, keys)?;
+    }
+    Ok(())
 }
 
 /// Caller holds the record lock. Never retain this across hook acknowledgement
@@ -97,7 +105,11 @@ pub(crate) fn terminal_admission(
         )
     })?;
     if activity::claude_attention::has_permission(context, record)? {
-        return Err(refusal("claude-permission-hook-required"));
+        match version::check(record) {
+            Ok(()) => return Err(refusal("claude-permission-hook-required")),
+            Err(error) if error.code() == "permission-provider-version-unsupported" => {}
+            Err(error) => return Err(error),
+        }
     }
     Ok(Some(ingress))
 }

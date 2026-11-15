@@ -2,6 +2,9 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+#[path = "permission/fence.rs"]
+mod fence;
+
 fn hook(f: &Fixture, name: &str, call: Option<&str>) {
     hook_tool(f, name, call, "Bash");
 }
@@ -36,6 +39,7 @@ fn hook_tool(f: &Fixture, name: &str, call: Option<&str>, tool: &str) {
 #[test]
 fn claude_permission_keystroke_cannot_be_bound_to_the_pending_call() {
     let f = Fixture::new("claude");
+    fence::set_version(&f, "2.1.317");
     hook(&f, "UserPromptSubmit", None);
     hook(&f, "PreToolUse", Some("call-one"));
     hook(&f, "PermissionRequest", None);
@@ -374,6 +378,7 @@ fn claude_permission_prompt_resolved_during_answer_sends_no_decision() {
 #[test]
 fn claude_permission_after_clarification_still_refuses_all_terminal_answers() {
     let f = Fixture::new("claude");
+    fence::set_version(&f, "2.1.317");
     hook(&f, "UserPromptSubmit", None);
     hook_tool(&f, "PreToolUse", Some("question-call"), "AskUserQuestion");
     hook(&f, "PreToolUse", Some("call-one"));
