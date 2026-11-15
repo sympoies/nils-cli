@@ -133,7 +133,7 @@ pub(super) fn close_turn(document: &mut ActivityDocument, event: &TurnEvent, at:
         },
         extra: if matches!(
             event.failure_reason.as_deref(),
-            Some("provider_capacity" | "authentication")
+            Some("provider_capacity" | "authentication" | "usage_exhausted")
         ) {
             let mut extra = extra;
             extra.insert(

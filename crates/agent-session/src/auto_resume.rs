@@ -2884,7 +2884,7 @@ mod tests {
             crate::codex_account::queue_auto_failover_locked(&context, &mut current, "account-b")
                 .unwrap();
         }
-        let expected = crate::codex_account::pending_auto_failover_apply(
+        let expected = crate::codex_account::next_account_identity(
             &load_session_record(&context, &record.id).unwrap(),
         )
         .unwrap()

@@ -13,6 +13,14 @@ Consumers must ignore additive unknown fields. A future, unrecognized
 `turn_state.schema_version` must be treated as unknown rather than interpreted
 as a v1 phase.
 
+## Usage exhaustion
+
+Authoritative usage-limit failures retain
+`last_turn.provider_failure_kind="usage_exhausted"`. A queued explicit Codex
+account switch uses this terminal evidence only when it still matches the
+current binding and no newer input was accepted. See the
+[account contract](specs/serve-accounts-v1.md).
+
 ## Provider authentication incidents
 
 Claude prompt quarantine and same-account recovery are defined in the
