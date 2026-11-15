@@ -23,7 +23,7 @@ pub(crate) use composer::cleanup::{
 pub(crate) use composer::placeholder::{claude_paste_placeholder, has_claude_paste_placeholder};
 pub(crate) use composer::{
     Unobserved, composer_holds, direct_composer_observation, exact_composer_input,
-    known_multiline_cursor_holds, known_multiline_input,
+    exact_composer_observation, known_multiline_cursor_holds, known_multiline_input,
 };
 pub(crate) use composer::{codex_notice_cursor_path, command_ui_observed};
 

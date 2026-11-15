@@ -13,7 +13,11 @@ mod unobserved;
 pub(crate) use unobserved::Unobserved;
 
 pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
-    composer_input(agent, pane, false)
+    exact_composer_observation(agent, pane).ok()
+}
+
+pub(crate) fn exact_composer_observation(agent: &str, pane: &str) -> Result<String, Unobserved> {
+    observe_input(agent, pane, false)
 }
 
 /// Match a known multiline notice only in a logical capture where tmux has
@@ -225,10 +229,6 @@ pub(crate) fn direct_composer_observation(agent: &str, pane: &str) -> Result<Str
 #[cfg(test)]
 pub(crate) fn direct_composer_input(agent: &str, pane: &str) -> Option<String> {
     direct_composer_observation(agent, pane).ok()
-}
-
-fn composer_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Option<String> {
-    observe_input(agent, pane, allow_queued_hint).ok()
 }
 
 /// The same classification, naming the first observation step that failed.
