@@ -254,6 +254,20 @@ unchanged; control admission and lease renewal retain the stored working state.
 Fresh progress removes this uncertainty, and an admitted completion still
 produces normal waiting state. This rule does not infer completion or attention.
 
+Current idleness and prior turn outcome are separate facts. A stopped Claude
+turn may retain `completion_evidence_missing` or `claude_turn_outcome_unknown`
+while a fresh structured provider idle observation permits a guarded wake.
+This requires the exact current runtime launch, generation and activity
+revision, an observation after the matching latest accepted Stop, age less
+than 30 seconds, no future timestamp and no pending attention or newer event.
+The observer must report `claude_agents_idle` / `waiting`; composer emptiness
+and quiet time cannot substitute. This send-only admission does not close the
+turn, change its outcome, write activity or relax controller/lease state.
+See [guarded send recovery](specs/send-v1.md) for admission rechecks and the
+explicit preclaim `safe_to_retry` refusal metadata. A later accepted completion
+still establishes normal waiting state. Consumed attempts remain consumed
+regardless of subsequent idle or completion evidence.
+
 `failure_reason` is valid only on an authoritative `turn_failed` event and is
 limited to `usage_exhausted`, `authentication`, `organization`, `billing`,
 `invalid_request`, `service`, `max_output_tokens`, or `unknown`. Claude Code's

@@ -17,6 +17,8 @@ use super::{
 
 mod claude_agents;
 mod claude_outcome;
+mod guarded_idle;
+pub(crate) use guarded_idle::stopped_claude_idle;
 
 pub(crate) const SHADOW_FILE: &str = "activity.shadow.json";
 const SHADOW_LOCK_FILE: &str = ".activity.shadow.lock";

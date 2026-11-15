@@ -449,16 +449,24 @@ impl Admission<'_> {
             );
         }
         let state = activity::state_for_view(self.context, self.record);
+        if activity::shadow::stopped_claude_idle(self.context, self.record) {
+            return Ok(());
+        }
         if state.as_ref().is_some_and(|state| {
             state.phase == activity::TurnPhase::Unknown
-                && state
-                    .diagnostic
-                    .as_ref()
-                    .is_some_and(|diagnostic| diagnostic.reason == "completion_evidence_missing")
+                && state.diagnostic.as_ref().is_some_and(|diagnostic| {
+                    diagnostic.reason == "completion_evidence_missing"
+                        || (diagnostic.reason == "claude_turn_outcome_unknown"
+                            && activity::controller_state_for_record(self.context, self.record)
+                                .and_then(|state| state.diagnostic)
+                                .is_some_and(|diagnostic| {
+                                    diagnostic.reason == "completion_evidence_pending"
+                                }))
+                })
         }) {
             return Err(self.refusal(
                 "send-completion-evidence-missing",
-                "provider completion evidence is missing; inspect activity status; operator recovery: use --require-empty-composer without --require-idle after confirming the turn is idle",
+                "provider completion evidence is missing; inspect activity status and retry after fresh runtime-bound provider idle evidence",
                 "idle",
                 stage,
             ));
@@ -509,7 +517,8 @@ impl Admission<'_> {
             code,
             message,
             Some(json!({"id": self.record.id,
-            "guard": guard, "stage": stage, "atomic": false, "pasted": stage == "submit" && self.verify_composer, "submitted": false})),
+            "guard": guard, "stage": stage, "atomic": false, "pasted": stage == "submit" && self.verify_composer, "submitted": false,
+            "safe_to_retry": stage == "admission"})),
         )
     }
 }

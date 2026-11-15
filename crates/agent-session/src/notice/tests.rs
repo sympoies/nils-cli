@@ -115,16 +115,26 @@ fn history_notice_bytes_survive_existing_provider_admission() {
 }
 
 #[test]
-fn queue_retries_only_a_preclaim_busy_admission() {
-    let error = |stage: Option<&str>| {
+fn queue_retries_only_an_explicitly_safe_preclaim_admission() {
+    let error = |code: &str, stage: Option<&str>, safe: Option<bool>| {
         CliError::runtime(
-            "send-session-not-idle",
+            code,
             "busy",
-            stage.map(|stage| serde_json::json!({"stage": stage})),
+            stage.map(|stage| serde_json::json!({"stage": stage, "safe_to_retry": safe})),
         )
     };
-    assert!(queue_retryable(&error(Some("admission"))));
-    assert!(!queue_retryable(&error(Some("claimed"))));
-    assert!(!queue_retryable(&error(Some("submit"))));
-    assert!(!queue_retryable(&error(None)));
+    for code in ["send-session-not-idle", "send-completion-evidence-missing"] {
+        assert!(queue_retryable(&error(code, Some("admission"), Some(true))));
+        for stage in [Some("claimed"), Some("submit"), None] {
+            assert!(!queue_retryable(&error(code, stage, Some(true))));
+        }
+        for safe in [None, Some(false)] {
+            assert!(!queue_retryable(&error(code, Some("admission"), safe)));
+        }
+    }
+    assert!(!queue_retryable(&error(
+        "send-submit-unconfirmed",
+        Some("admission"),
+        Some(true)
+    )));
 }

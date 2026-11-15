@@ -73,6 +73,8 @@ Each option is independent:
   Codex app-server runtimes verify the exact attached, loaded thread is `idle`
   through the native protocol. Outstanding activity attention still refuses,
   including when `--allow-blocked` is present.
+  A stopped Claude turn can also use the fresh structured provider idle
+  evidence described below without asserting that its prior turn completed.
 - `--require-empty-composer` requires an observable empty composer before paste.
   A fresh draft is refused without paste or Enter. On screen-based terminal
   routes, an eligible stale draft uses [saved draft admission](stale-drafts-v1.md)
@@ -433,7 +435,7 @@ included in refusal output. Use `--format json` to consume `error.code` and
 | `send-session-not-idle` | A provider-reported phase or current turn is not idle. |
 | `send-provider-event-pending` | Provider event ingestion is queued/in progress. |
 | `send-idle-unobservable` | Provider-reported activity or ingress status cannot be observed. |
-| `send-completion-evidence-missing` | A Stop lacks provider completion evidence after the quiet window; inspect activity status and choose operator recovery. |
+| `send-completion-evidence-missing` | A Stop lacks completion or admissible fresh provider idle evidence; inspect activity status and retry only a preclaim refusal. |
 | `send-composer-not-empty` | A visible draft exists before paste. |
 | `send-composer-unobservable` | The composer cannot be read exactly. |
 | `send-composer-mismatch` | After paste, the composer differs from the submitted text. |
@@ -448,13 +450,33 @@ included in refusal output. Use `--format json` to consume `error.code` and
 | `send-submit-stuck` | Text remains after at most two guarded Enter presses; the claim is retained. |
 | `send-submit-unconfirmed` | Pane observations cannot prove submission; the claim is retained. |
 
-When activity is unknown because `completion_evidence_missing` follows a Stop,
-`--require-idle` returns `send-completion-evidence-missing`. It does not infer
-idle or deliver input. The operator can inspect `activity status`, confirm the
-turn is idle, and explicitly send with `--require-empty-composer` without
-`--require-idle`, retaining identity and idempotency guards. The CLI never
-performs this recovery automatically. Draft and unconfirmed-submission
-protections still apply.
+After a Stop without provider completion, a later accepted provider completion
+restores ordinary waiting state. A Claude terminal can also recover guarded
+admission from its structured provider observer: `claude-agents.v1`, rule
+`claude_agents_idle`, projection `waiting`, observed after the latest accepted
+Stop, at the exact runtime launch, generation and activity revision. The
+observation must be less than 30 seconds old and cannot be future-dated. The
+stored provider-hook turn must still match that Stop, with observed confidence
+and no pending attention or intervening accepted event. Each admission recheck
+requires this evidence again. Busy, blocked, unavailable, stale or mismatched
+observations cannot authorize input; neither elapsed time nor an empty composer
+alone proves idle. Codex keeps its existing native idle observation.
+
+This recovery authorizes only the guarded send. It leaves the uncertain turn
+outcome, stored activity and completion history unchanged. Identity, pending
+ingress, composer ownership, native notice authorization and idempotency guards
+still apply. A human draft is preserved by the notice route. Ordinary sends
+retain their separately configured saved-draft admission behavior.
+
+Without sufficient evidence, unknown stopped activity returns the typed
+`send-completion-evidence-missing` refusal. Callers may retry with the original
+idempotency key only when `error.details.safe_to_retry` is explicitly `true`:
+this indicates admission refused before a claim or pane input. Guard refusals
+at `claimed` or `submit` report `false`; missing retry metadata never authorizes
+replay. The notice queue retries safe busy or missing-completion refusals.
+Later idle evidence never releases a consumed key or retries an uncertain
+submission. A caller must inspect those outcomes rather than choose a new key
+automatically.
 
 Observation refusals include the failed `guard` and `stage` (`admission`,
 `claimed` for the recheck right after the idempotency claim, or `submit`),
