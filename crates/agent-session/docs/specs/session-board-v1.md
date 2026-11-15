@@ -450,6 +450,7 @@ is recorded content-free, and the aggregator later classifies the record as
 moved aside and replaced by an empty ledger with a new `ledger_id` at the
 next append **or read**, under the ledger lock, so earlier cursors become
 `board-cursor-expired` and reads recover without waiting for a deletion.
+
 `board-ledger-unavailable` reports a lock timeout or an untrusted store
 (wrong owner, mode, symlink, or location), which is never repaired automatically.
 It also rejects a closed-ledger read that would return a retained record missing
