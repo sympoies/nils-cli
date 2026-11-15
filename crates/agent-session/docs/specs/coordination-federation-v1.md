@@ -31,6 +31,60 @@ allowance or bypasses discovery for a new send. The edge binds its outbound serv
 machine and chooses destinations from its configured machine inventory. Configure an allowance in the
 owning relay implementation; no additional daemon setting is required.
 
+### Owned provider lifecycle continuity
+
+Running sessions in the daemon's `GET /sessions` snapshot may publish
+`provider_continuity` under this contract:
+
+```json
+{
+  "provider_continuity": {
+    "schema_version": "agent-session.provider-continuity.v1",
+    "provider": "claude",
+    "links": [
+      {
+        "kind": "clear",
+        "from_incarnation": "runtime-one",
+        "to_incarnation": "runtime-one",
+        "from_conversation": "conversation-one",
+        "to_conversation": "conversation-two",
+        "at_epoch": 1794700000
+      }
+    ]
+  }
+}
+```
+
+Only an owned `clear`, `restart`, or `resume` on the same managed session id
+appends a link. Fresh records, provider imports, and adopted external
+conversations begin without links. A native provider observation or explicit
+`rebind` does not mint continuity. A no-op resume adds nothing; a failed
+relaunch that restores the previous record also restores its prior chain.
+
+`clear` changes the provider conversation; `restart` and `resume` preserve it
+while replacing the runtime incarnation. Links persist in the session record,
+oldest first, retaining at most the last 16. Each link's `from_*` equals the
+previous link's `to_*`; `at_epoch` is a nonnegative integer and never
+decreases, including when the clock moves backward. The last link matches
+`session_incarnation` and `provider_resume.session_id`. Identifiers are
+nonblank, control-free strings of at most 256 bytes. The provider matches the
+session and its resume metadata. The field contains only identifiers already
+exposed to the relay, never prompts, transcripts, paths, or account data.
+Stopped/unknown sessions and malformed or endpoint-mismatched chains omit it.
+An unproven transition breaks retained continuity; a later owned operation can
+begin a new suffix but cannot bridge that gap.
+
+This field supplies evidence, not authority. The relay consumes its configured
+machine's authenticated snapshot, validates the chain back to an existing
+grant, and advances that grant's incarnation and conversation in one
+compare-and-set. The principal, machine, managed session id, and selectors
+remain unchanged. Missing or invalid evidence preserves the relay's refusal
+and ownership recovery behavior. See the
+[relay contract](https://github.com/sympoies/salon/issues/529).
+Automatic rediscovery and mailbox delivery after clear plus restart require
+both daemon and relay releases; this daemon does not claim, transfer, or
+rebind ownership.
+
 The JSON envelope is `agent-session.remote-message.v1`:
 
 ```json

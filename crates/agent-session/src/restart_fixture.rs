@@ -86,6 +86,7 @@ case "$1" in
   load-buffer) cat "$4" >> "$root/pasted-input" ;;
   paste-buffer) [ -f "$root/echo-paste" ] && printf '%s\n' '────────────────────' "❯$(printf '\302\240')$(tail -n 1 "$root/pasted-input")" '────────────────────' '  status' > "$root/screen" ;;
   send-keys) case " $* " in *" Enter "*)
+    if [ -f "$root/clear-requested" ]; then rm -f "$root/clear-requested"; exit 0; fi
     if [ -f "$root/echo-paste" ]; then
       printf '%s\n' '────────────────────' "❯$(printf '\302\240')" '────────────────────' '  status' > "$root/screen"
     else [ -f "$root/hold-exit" ] || stop_pane; fi ;; esac ;;
