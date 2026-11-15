@@ -11,6 +11,9 @@ use std::sync::{
 use std::thread::JoinHandle;
 use std::time::Instant;
 
+#[path = "remote_exclusion_tests.rs"]
+mod exclusion_tests;
+
 const SENDER: &str = "recipient";
 const SENDER_INCARNATION: &str = "recipient-incarnation";
 const TARGET: &str = "remote-recipient";
