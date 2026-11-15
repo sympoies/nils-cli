@@ -151,7 +151,7 @@ write_cargo_stub 'exit 0'
 expect_status 0 "no leftovers is a pass"
 
 echo "== a leaked directory fails and is named =="
-write_cargo_stub 'mkdir -p "$TMPDIR/.tmpLEAKED" && : >"$TMPDIR/.tmpLEAKED/usage.refresh.at"'
+write_cargo_stub 'mkdir -p "$TMPDIR/.tmpLEAKED/nested" && printf SECRET_CONTENT >"$TMPDIR/.tmpLEAKED/nested/usage.refresh.at"'
 expect_status 1 "a leaked directory fails the probe"
 if ! grep -q '.tmpLEAKED' "$work/out.txt"; then
   echo "FAIL: probe did not name the leaked entry"
@@ -163,7 +163,35 @@ if ! grep -q 'usage.refresh.at' "$work/out.txt"; then
   cat "$work/out.txt"
   exit 1
 fi
+if ! grep -Eq 'directory.*\.tmpLEAKED.*mtime|\.tmpLEAKED.*directory.*mtime' "$work/out.txt" ||
+  ! grep -Eq 'file.*nested/usage.refresh.at.*mtime|nested/usage.refresh.at.*file.*mtime' "$work/out.txt"; then
+  echo "FAIL: leak metadata lacks recursive paths, types, or mtimes"
+  cat "$work/out.txt"
+  exit 1
+fi
+if grep -q SECRET_CONTENT "$work/out.txt"; then
+  echo "FAIL: leak metadata exposed file contents"
+  exit 1
+fi
 echo "ok: the leaked entry and its contents are reported"
+
+echo "== a leak is attributed to its test =="
+cat >"$work/bin/fixture-test" <<'FIXTURE'
+#!/bin/sh
+mkdir -p "$TMPDIR/fixture"
+printf SECRET_CONTENT >"$TMPDIR/fixture/tmux.log"
+FIXTURE
+chmod +x "$work/bin/fixture-test"
+write_cargo_stub 'NEXTEST_TEST_NAME="suite::fixture" bash "'"$repo_root"'/scripts/ci/tempdir-leak-wrapper.sh" "'"$work"'/bin/fixture-test"'
+expect_status 1 "a per-test leak fails the probe"
+if ! grep -q 'test="suite::fixture" binary="fixture-test"' "$work/out.txt" ||
+  ! grep -q 'fixture/tmux.log.*mtime=' "$work/out.txt" ||
+  grep -q SECRET_CONTENT "$work/out.txt"; then
+  echo "FAIL: per-test leak attribution is missing or exposed file contents"
+  cat "$work/out.txt"
+  exit 1
+fi
+echo "ok: the test and value-free metadata are reported"
 
 echo "== a leaked file fails too =="
 write_cargo_stub ': >"$TMPDIR/.tmpSTRAY.allocation.lock"'

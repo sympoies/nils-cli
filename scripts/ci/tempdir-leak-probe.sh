@@ -197,9 +197,25 @@ if [ $# -eq 0 ]; then
   set -- --workspace
 fi
 
-probe_dir="$(mktemp -d "$probe_root_abs/tempdir-leak-probe.XXXXXX")"
+probe_state="$(mktemp -d "$probe_root_abs/tempdir-leak-probe.XXXXXX")"
+probe_dir="$probe_state/tmp"
+mkdir "$probe_dir" "$probe_state/index"
+# Nextest 0.9.98+ supports per-test wrappers. Keep the repository profile and
+# add the wrapper only for this probe, so ordinary nextest runs are unchanged.
+python3 - "$repo_root" "$probe_state/config.toml" <<'PYCONFIG'
+import json
+import pathlib
+import sys
+root = pathlib.Path(sys.argv[1])
+config = (root / ".config/nextest.toml").read_text()
+wrapper = json.dumps(str(root / "scripts/ci/tempdir-leak-wrapper.sh"))
+pathlib.Path(sys.argv[2]).write_text(
+    'experimental = ["wrapper-scripts"]\n' + config +
+    '\n[scripts.wrapper.tempdir-probe]\ncommand = ["bash", ' + wrapper + ']\n'
+    '[[profile.default.scripts]]\nfilter = "all()"\nrun-wrapper = "tempdir-probe"\n')
+PYCONFIG
 cleanup() {
-  rm -rf "$probe_dir"
+  rm -rf "$probe_state"
 }
 trap cleanup EXIT
 
@@ -221,55 +237,13 @@ while [ "$i" -le "$runs" ]; do
   if [ "$runs" -gt 1 ]; then
     echo "tempdir-leak-probe: run $i/$runs"
   fi
-  if ! TMPDIR="$probe_dir" python3 "$repo_root/scripts/ci/gate-reports.py" cargo nextest run "$@"; then
+  if ! TMPDIR="$probe_dir" TEMP_PROBE_STATE="$probe_state" python3 "$repo_root/scripts/ci/gate-reports.py" cargo nextest run --config-file "$probe_state/config.toml" "$@"; then
     run_status=1
   fi
   i=$((i + 1))
 done
 
-is_allowed() {
-  candidate="$1"
-  for glob in ${allow_globs+"${allow_globs[@]}"}; do
-    # shellcheck disable=SC2053 # glob match is the point
-    if [[ "$candidate" == $glob ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-leaked=""
-while IFS= read -r entry; do
-  [ -n "$entry" ] || continue
-  if is_allowed "$entry"; then
-    echo "tempdir-leak-probe: allowed reusable entry: $entry"
-    continue
-  fi
-  leaked="${leaked}${entry}
-"
-done <<EOF
-$(ls -A "$probe_dir" 2>/dev/null || true)
-EOF
-leaked="$(printf '%s' "$leaked")"
-
-if [ -n "$leaked" ]; then
-  echo "" >&2
-  echo "tempdir-leak-probe: the test run left these behind in its TMPDIR:" >&2
-  echo "" >&2
-  printf '%s\n' "$leaked" |
-    while IFS= read -r entry; do
-      if [ -d "$probe_dir/$entry" ]; then
-        contents="$(ls -A "$probe_dir/$entry" 2>/dev/null | tr '\n' ' ')"
-        printf '  %s/  contains: %s\n' "$entry" "${contents:-<empty>}"
-      else
-        printf '  %s\n' "$entry"
-      fi
-    done >&2
-  echo "" >&2
-  echo "The contents above identify the writer. Find the test that produces" >&2
-  echo "them, then make it wait for the background work to finish before its" >&2
-  echo "fixture drops, or give the writer a parent it owns inside the fixture." >&2
-  echo "See docs/specs/test-temp-directory-policy.md." >&2
+if ! python3 "$repo_root/scripts/ci/tempdir-leak-report.py" "$probe_dir" "$probe_state/index" ${allow_globs+"${allow_globs[@]}"}; then
   exit 1
 fi
 
