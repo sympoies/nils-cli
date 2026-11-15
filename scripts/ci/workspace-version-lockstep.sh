@@ -6,7 +6,7 @@ usage() {
 Usage:
   scripts/ci/workspace-version-lockstep.sh [--strict]
 
-Verifies that every `crates/*/Cargo.toml` `version =` line matches the
+Verifies that every `crates/*/Cargo.toml` version matches or inherits the
 workspace root `Cargo.toml` `version =`, and that every internal cross-dep
 pin (the `version = "X.Y.Z"` field on a `path = "../<crate>"` dependency)
 matches the same workspace version. Catches the "partial bump" anti-pattern
@@ -97,6 +97,10 @@ while IFS= read -r -d '' cargo; do
   crate_version="$(awk '
     /^\[package\]/ { in_pkg = 1; next }
     /^\[/ { in_pkg = 0 }
+    in_pkg && /^version\.workspace[[:space:]]*=[[:space:]]*true([[:space:]]*(#.*)?)?$/ {
+      print "__workspace__"
+      exit
+    }
     in_pkg && /^version[[:space:]]*=/ {
       if (match($0, /"[^"]*"/)) {
         print substr($0, RSTART + 1, RLENGTH - 2)
@@ -109,7 +113,7 @@ while IFS= read -r -d '' cargo; do
     drift_lines+=("  [missing-version] $cargo")
     continue
   fi
-  if [[ "$crate_version" != "$workspace_version" ]]; then
+  if [[ "$crate_version" != "__workspace__" && "$crate_version" != "$workspace_version" ]]; then
     drift_count=$((drift_count + 1))
     drift_lines+=("  [crate-version] $cargo: $crate_version != $workspace_version")
   fi
