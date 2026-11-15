@@ -339,6 +339,7 @@ pub(crate) fn clear_observed(
     let args = GuardArgs::default();
     clear(
         &Admission {
+            stopped_idle: &Default::default(),
             context,
             record,
             args: &args,

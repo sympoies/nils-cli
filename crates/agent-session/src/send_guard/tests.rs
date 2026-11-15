@@ -29,6 +29,7 @@ fn malformed_composer_and_expired_budget_report_distinct_stages() {
         ..GuardArgs::default()
     };
     let admission = Admission {
+        stopped_idle: &Default::default(),
         context: &context,
         record: &record,
         args: &args,
@@ -60,3 +61,5 @@ fn malformed_composer_and_expired_budget_report_distinct_stages() {
     assert_eq!(error.details().unwrap()["stage"], "submit");
     assert_eq!(error.details().unwrap()["guard"], "observation");
 }
+
+mod stopped_idle;

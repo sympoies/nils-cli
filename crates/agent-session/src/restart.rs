@@ -633,6 +633,7 @@ fn request_provider_exit(
         ..GuardArgs::default()
     };
     let admission = Admission {
+        stopped_idle: &Default::default(),
         context,
         record: &current,
         args: &guards,
@@ -742,6 +743,7 @@ fn await_ready(
         crate::ensure_same_session_identity(record, &current)
             .map_err(|error| error.code().to_string())?;
         let admission = Admission {
+            stopped_idle: &Default::default(),
             context,
             record: &current,
             args: &guards,

@@ -281,6 +281,7 @@ async fn direct_reply_and_guarded_send_share_stale_draft_admission() {
                     )
                 } else {
                     crate::send_guard::Admission {
+                        stopped_idle: &Default::default(),
                         context: &fixture.state.context,
                         record: &record,
                         args: &args,

@@ -130,6 +130,7 @@ pub(super) fn deliver(
 ) -> Result<super::SendResult, CliError> {
     let observed = record.clone();
     let admission = send_guard::Admission {
+        stopped_idle: &Default::default(),
         context,
         record: &observed,
         args: &args.guards,
@@ -162,7 +163,7 @@ pub(super) fn deliver(
     let listener = bridge::Listener::open(dir, &bootstrap, &ready.binding, op.clone()).map_err(|error| {
         if error.kind() == std::io::ErrorKind::WouldBlock {
             CliError::runtime("send-session-not-idle", "another native notice is in progress",
-                Some(json!({"id":record.id,"guard":"idle","stage":"admission","atomic":false,"pasted":false,"submitted":false})))
+                Some(json!({"id":record.id,"guard":"idle","stage":"admission","atomic":false,"pasted":false,"submitted":false,"safe_to_retry":true})))
         } else { refusal::unavailable("listener-open") }
     })?;
     let consumed = Cell::new(false);
