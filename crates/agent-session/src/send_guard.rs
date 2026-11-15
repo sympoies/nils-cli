@@ -16,6 +16,11 @@ use crate::{
 const POST_PASTE_OBSERVATION_RETRY_WINDOW: Duration = Duration::from_millis(500);
 const POST_PASTE_OBSERVATION_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 
+#[cfg(test)]
+thread_local! {
+    static TEST_RETRY_WINDOW: std::cell::Cell<Duration> = const { std::cell::Cell::new(POST_PASTE_OBSERVATION_RETRY_WINDOW) };
+}
+
 mod clear;
 mod codex_notice;
 mod composer;
@@ -27,6 +32,8 @@ mod observation;
 mod ownership;
 mod pasted;
 pub(crate) mod placeholder;
+#[cfg(test)]
+mod tests;
 mod text;
 
 #[derive(Clone, Debug, Default, Args)]
@@ -194,6 +201,10 @@ impl Admission<'_> {
         pasted_text: Option<&str>,
         stage: &str,
     ) -> Result<String, CliError> {
+        #[cfg(test)]
+        let retry_window = TEST_RETRY_WINDOW.get();
+        #[cfg(not(test))]
+        let retry_window = POST_PASTE_OBSERVATION_RETRY_WINDOW;
         let retryable = stage == "submit" && pasted_text.is_some();
         let mut retry_until = None;
         // A final short-budget capture can time out after an earlier captured
@@ -264,9 +275,8 @@ impl Admission<'_> {
             if !retryable {
                 return Err(self.unobserved_composer(reason, stage));
             }
-            let retry_until = *retry_until.get_or_insert_with(|| {
-                (Instant::now() + POST_PASTE_OBSERVATION_RETRY_WINDOW).min(self.deadline)
-            });
+            let retry_until = *retry_until
+                .get_or_insert_with(|| (Instant::now() + retry_window).min(self.deadline));
             if Instant::now() >= retry_until {
                 return Err(self.unobserved_composer(reason, stage));
             }

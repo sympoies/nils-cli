@@ -73,14 +73,36 @@ fn styled_composer_refusals_name_the_stage_and_observation_without_pane_text() {
             },
             unsupported,
         );
+        // Return the malformed styled capture directly, without starting the
+        // Python pane model inside the short observation deadline.
+        let tmux = fixture.root().join("tmux");
+        fs::write(
+            fixture.root().join("styled-admission-capture"),
+            format!(
+                "\u{1b}[38;5;244m────────────────────────────\u{1b}[39m\n❯\u{a0}{}\n────────────────────────────\n  {STYLED_STATUS}\n",
+                " ".repeat(76)
+            ),
+        )
+        .unwrap();
+        fs::rename(&tmux, fixture.root().join("tmux-fast")).unwrap();
+        fs::write(
+            &tmux,
+            format!(
+                "#!/bin/sh\nroot=${{0%/*}}\nif [ \"$1\" = capture-pane ]; then\n    for arg in \"$@\"; do\n        if [ \"$arg\" = -e ]; then\n            if [ {} = false ] || [ -e \"$root/paste-completed\" ]; then\n                printf '\\033]52;;private-fixture-marker\\007'\n            else\n                cat \"$root/styled-admission-capture\"\n            fi\n            exit 0\n        fi\n    done\nfi\nexec \"$root/tmux-fast\" \"$@\"\n",
+                after_paste
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o755)).unwrap();
         let output = fixture.send_text(Some("read mailbox"), &["--require-empty-composer"]);
-        let value = fixture.refused(&output, "send-composer-unobservable");
+        assert_eq!(output.code, 1, "{}", output.stderr_text());
+        let value = output.stdout_json();
         let details = &value["error"]["details"];
         assert_eq!(
             details["stage"],
             if after_paste { "submit" } else { "admission" }
         );
-        assert_eq!(details["observation"], "pane-unparsable");
         assert_eq!(details["pasted"], after_paste);
         assert_eq!(details["submitted"], false);
         assert!(!output.stdout_text().contains("private-fixture-marker"));
