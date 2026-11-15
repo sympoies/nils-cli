@@ -8,6 +8,8 @@
 use std::path::{Path, PathBuf};
 pub(crate) mod auth_recovery;
 mod fresh_startup;
+#[cfg(not(all(test, target_os = "linux")))]
+use crate::live_status_with_timeout;
 pub(crate) use fresh_startup::{
     conversation_guards, eligible as fresh_startup, launch_plan, release_bootstrap,
 };
@@ -19,7 +21,7 @@ use std::{convert::identity as admission_deadline, thread::sleep, time::Instant}
 #[path = "restart_test_control.rs"]
 pub(crate) mod test_control;
 #[cfg(all(test, target_os = "linux"))]
-use test_control::{Instant, admission_deadline, sleep};
+use test_control::{Instant, admission_deadline, live_status_with_timeout, sleep};
 
 use jiff::Timestamp;
 use serde::Serialize;
@@ -783,15 +785,7 @@ fn status_before(tmux: &Path, record: &SessionRecord, deadline: Instant) -> Stri
         return "stopped".to_string();
     }
     let remaining = deadline.saturating_duration_since(Instant::now());
-    #[cfg(all(test, target_os = "linux"))]
-    if test_control::stalled(
-        tmux,
-        "stall-status",
-        crate::PANE_INPUT_COMMAND_TIMEOUT.min(remaining),
-    ) {
-        return "unknown".to_string();
-    }
-    crate::live_status_with_timeout(
+    live_status_with_timeout(
         tmux,
         &record.tmux_session,
         crate::PANE_INPUT_COMMAND_TIMEOUT.min(remaining),

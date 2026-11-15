@@ -192,7 +192,7 @@ pub(crate) fn fire(context: &CliContext, phase: Phase, launch: &str) {
 
 /// Model a blocked fixture command at its observation boundary, consuming the
 /// actual supplied timeout without starting a sleeping subprocess.
-pub(crate) fn stalled(tmux: &Path, marker: &str, timeout: Duration) -> bool {
+fn stalled(tmux: &Path, marker: &str, timeout: Duration) -> bool {
     CURRENT.with_borrow(|clock| {
         let Some(clock) = clock else {
             return false;
@@ -213,6 +213,31 @@ pub(crate) fn stalled(tmux: &Path, marker: &str, timeout: Duration) -> bool {
     })
 }
 
+// Receive the exact timeout at the production call boundary. Keeping the
+// adapter below argument evaluation lets the readiness tests detect a missing
+// cap or an oversized timeout in the caller.
+pub(crate) fn live_status_with_timeout(tmux: &Path, session: &str, timeout: Duration) -> String {
+    if stalled(tmux, "stall-status", timeout) {
+        return "unknown".to_string();
+    }
+    crate::live_status_with_timeout(tmux, session, timeout)
+}
+
+pub(crate) fn tmux_environment_value(
+    tmux: &Path,
+    session: &str,
+    name: &str,
+    timeout: Duration,
+) -> Result<String, crate::SessionTerminationFailure> {
+    if stalled(tmux, "stall", timeout) {
+        return Err(crate::SessionTerminationFailure::VerificationFailed);
+    }
+    if let Some(value) = environment(tmux, name) {
+        return value.ok_or(crate::SessionTerminationFailure::RuntimeIdentityUnavailable);
+    }
+    crate::tmux_environment_value(tmux, session, name, timeout)
+}
+
 /// The synthetic composer is already stored as fixture bytes. Reading it in
 /// process avoids racing a one-second shell capture against the stress load.
 pub(crate) fn capture(tmux: &Path) -> Option<Option<String>> {
@@ -230,7 +255,7 @@ pub(crate) fn capture(tmux: &Path) -> Option<Option<String>> {
 
 /// Preserve the fixture's actual runtime identity values without launching
 /// three deadline-bound shells merely to read an already-materialized file.
-pub(crate) fn environment(tmux: &Path, name: &str) -> Option<Option<String>> {
+fn environment(tmux: &Path, name: &str) -> Option<Option<String>> {
     let root = tmux.parent()?;
     if !CLOCKS.lock().unwrap().contains_key(&root.join("state")) {
         return None;

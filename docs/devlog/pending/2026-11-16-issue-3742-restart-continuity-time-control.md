@@ -21,3 +21,6 @@
 ### Links
 
 - <https://github.com/sympoies/nils-cli/issues/3742>
+
+- Keep timeout-budget assertions coupled to the production observation arguments; removing the remaining-time status cap
+  or supplying a 30-second identity timeout now fails the corresponding deterministic readiness test.
