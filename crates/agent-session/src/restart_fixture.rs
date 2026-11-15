@@ -5,6 +5,7 @@ use super::*;
 pub(super) struct FakeTmux {
     bin: PathBuf,
     root: PathBuf,
+    _clock: test_control::Fixture,
 }
 
 impl std::ops::Deref for FakeTmux {
@@ -106,5 +107,6 @@ exit 0
     FakeTmux {
         bin: executable(&root.join("tmux"), &script),
         root: root.to_path_buf(),
+        _clock: test_control::install(root),
     }
 }

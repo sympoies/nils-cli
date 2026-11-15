@@ -7,10 +7,14 @@ use clap::Args;
 use serde::Serialize;
 use serde_json::json;
 
+#[cfg(all(test, target_os = "linux"))]
+use crate::restart::test_control::tmux_environment_value;
+#[cfg(not(all(test, target_os = "linux")))]
+use crate::tmux_environment_value;
 use crate::{
     CliContext, CliError, PANE_OBSERVATION_COMMAND_TIMEOUT, PANE_OBSERVATION_MAX_OUTPUT_BYTES,
     SessionRecord, activity, load_session_record, run_output_with_timeout_and_strict_cap,
-    send_submit, tmux_environment_value,
+    send_submit,
 };
 
 const POST_PASTE_OBSERVATION_RETRY_WINDOW: Duration = Duration::from_millis(500);
@@ -535,6 +539,8 @@ impl Admission<'_> {
 
     fn timeout(&self, stage: &str) -> Result<Duration, CliError> {
         let remaining = self.deadline.saturating_duration_since(Instant::now());
+        #[cfg(all(test, target_os = "linux"))]
+        let remaining = crate::restart::test_control::remaining(self.deadline).unwrap_or(remaining);
         if remaining.is_zero() {
             return Err(self.refusal(
                 "send-guard-observation-timeout",
@@ -558,6 +564,10 @@ impl Admission<'_> {
 }
 
 pub(crate) fn capture_styled(tmux_bin: &Path, target: &str, timeout: Duration) -> Option<String> {
+    #[cfg(all(test, target_os = "linux"))]
+    if let Some(pane) = crate::restart::test_control::capture(tmux_bin) {
+        return pane;
+    }
     let mut command = std::process::Command::new(tmux_bin);
     // Preserve occupied trailing spaces without padding the row to pane width.
     command.args(["capture-pane", "-p", "-e", "-N", "-T", "-t", target]);

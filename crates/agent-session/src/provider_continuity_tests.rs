@@ -83,27 +83,18 @@ fn two_root_clear_restart_snapshot_carries_owned_provider_continuity() {
     // Only this synthetic recipient receives the clear; the other root has
     // the same managed id and must not acquire its continuity evidence.
     fs::write(recipient.path().join("clear-requested"), "").unwrap();
-    let observer_context = recipient_context.clone();
-    let root = recipient.path().to_path_buf();
-    let launch = original_launch.clone();
-    let observer = thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !fs::read_to_string(root.join("pasted-input"))
-            .unwrap_or_default()
-            .contains("/clear")
-        {
-            assert!(
-                Instant::now() < deadline,
-                "synthetic clear was not submitted"
+    let observer = test_control::on(
+        &recipient_context,
+        test_control::Phase::ClearSubmitted,
+        "",
+        move |context, launch| {
+            claude_hook(
+                context,
+                launch,
+                json!({"hook_event_name":"SessionStart","source":"clear","session_id":NEXT}),
             );
-            thread::sleep(Duration::from_millis(10));
-        }
-        claude_hook(
-            &observer_context,
-            &launch,
-            json!({"hook_event_name":"SessionStart","source":"clear","session_id":NEXT}),
-        );
-    });
+        },
+    );
     let clear_status = crate::conversation::run(
         &recipient_context,
         crate::cli::ConversationArgs {
@@ -119,23 +110,13 @@ fn two_root_clear_restart_snapshot_carries_owned_provider_continuity() {
     assert_eq!(clear_status, 0);
     let after_clear = snapshot(&recipient_context, &tmux);
 
-    let root = recipient.path().to_path_buf();
-    let ready = on_relaunch(
-        &recipient_context,
-        &original_launch,
-        move |context, launch| {
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while log(&root).matches("new-session").count() < 2 {
-                assert!(Instant::now() < deadline);
-                thread::sleep(Duration::from_millis(20));
-            }
-            claude_hook(
-                context,
-                launch,
-                json!({"hook_event_name":"SessionStart","source":"resume","session_id":NEXT}),
-            );
-        },
-    );
+    let ready = on_relaunch(&recipient_context, &original_launch, |context, launch| {
+        claude_hook(
+            context,
+            launch,
+            json!({"hook_event_name":"SessionStart","source":"resume","session_id":NEXT}),
+        );
+    });
     let restarted = restart(&recipient_context, &restart_args(&tmux, false, 30));
     ready.join().unwrap();
     restarted.unwrap();

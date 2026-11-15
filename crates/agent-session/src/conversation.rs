@@ -467,6 +467,14 @@ fn operation(
             require_claude_recovery_idle(context, &current)?;
         }
     }
+    #[cfg(all(test, target_os = "linux"))]
+    if clear && let Some(runtime) = &expected.runtime {
+        crate::restart::test_control::fire(
+            context,
+            crate::restart::test_control::Phase::ClearSubmitted,
+            &runtime.launch_id,
+        );
+    }
     let deadline = Instant::now() + Duration::from_secs(args.timeout);
     let session_id = if clear {
         loop {
