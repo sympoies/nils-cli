@@ -16,6 +16,11 @@ use crate::{
 const POST_PASTE_OBSERVATION_RETRY_WINDOW: Duration = Duration::from_millis(500);
 const POST_PASTE_OBSERVATION_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 
+#[cfg(test)]
+thread_local! {
+    static TEST_RETRY_WINDOW: std::cell::Cell<Duration> = const { std::cell::Cell::new(POST_PASTE_OBSERVATION_RETRY_WINDOW) };
+}
+
 mod clear;
 mod codex_notice;
 mod composer;
@@ -27,6 +32,8 @@ mod observation;
 mod ownership;
 mod pasted;
 pub(crate) mod placeholder;
+#[cfg(test)]
+mod tests;
 mod text;
 
 #[derive(Clone, Debug, Default, Args)]
@@ -143,7 +150,9 @@ impl Admission<'_> {
                         && error
                             .details()
                             .and_then(|details| details["observation"].as_str())
-                            == Some("region-not-single-row")
+                            .is_some_and(|reason| {
+                                self.record.agent != "claude" || reason != "paste-placeholder"
+                            })
                     {
                         drafts::observe(self.context, self.record, None)?;
                     }
@@ -154,15 +163,8 @@ impl Admission<'_> {
                 && self.args.require_empty_composer
                 && pasted_text.is_none()
                 && stage == "admission"
-                && drafts::observe(self.context, self.record, observed.as_deref())?;
-            let input = observed.ok_or_else(|| {
-                self.refusal(
-                    "send-composer-unobservable",
-                    "composer content cannot be observed exactly",
-                    "empty_composer",
-                    stage,
-                )
-            })?;
+                && drafts::observe(self.context, self.record, Some(observed.as_str()))?;
+            let input = observed;
             if let Some(expected) = pasted_text {
                 if !send_submit::composer_holds(&self.record.agent, &input, expected) {
                     return Err(self.refusal(
@@ -198,9 +200,16 @@ impl Admission<'_> {
         target: &str,
         pasted_text: Option<&str>,
         stage: &str,
-    ) -> Result<Option<String>, CliError> {
+    ) -> Result<String, CliError> {
+        #[cfg(test)]
+        let retry_window = TEST_RETRY_WINDOW.get();
+        #[cfg(not(test))]
+        let retry_window = POST_PASTE_OBSERVATION_RETRY_WINDOW;
         let retryable = stage == "submit" && pasted_text.is_some();
         let mut retry_until = None;
+        // A final short-budget capture can time out after an earlier captured
+        // pane named the failed parser step. Retain that diagnostic evidence.
+        let mut reason = send_submit::Unobserved::CaptureFailed;
         loop {
             let observation = Admission {
                 context: self.context,
@@ -217,13 +226,18 @@ impl Admission<'_> {
             let join_wrapped = self.args.notice_envelope && pasted_text.is_some();
             let input = if join_wrapped {
                 capture_notice_pane(self.tmux_bin, target, timeout).and_then(|(pane, cursor)| {
+                    reason = send_submit::exact_composer_observation(&self.record.agent, &pane)
+                        .err()
+                        .unwrap_or(send_submit::Unobserved::PasteNotVerified);
                     let input = observation.pasted_composer_input(&pane, pasted_text, stage)?;
                     if self.record.agent == "claude"
                         && pasted_text.is_some_and(|expected| {
                             send_submit::composer_holds("claude", &input, expected)
                         })
                     {
+                        reason = send_submit::Unobserved::CaptureFailed;
                         let normal = capture_styled(self.tmux_bin, target, timeout)?;
+                        reason = send_submit::Unobserved::PasteNotVerified;
                         if !send_submit::known_multiline_cursor_holds(
                             "claude",
                             &normal,
@@ -238,55 +252,42 @@ impl Admission<'_> {
                 })
             } else {
                 let pane = capture_styled(self.tmux_bin, target, timeout);
-                if pasted_text.is_none()
-                    && self.record.agent == "claude"
-                    && pane.as_deref().is_some_and(|pane| {
-                        send_submit::direct_composer_observation("claude", pane)
-                            == Err(send_submit::Unobserved::PastePlaceholder)
-                    })
-                {
-                    let mut error = self.refusal(
-                        "send-composer-unobservable",
-                        "composer contains a paste placeholder",
-                        "empty_composer",
-                        stage,
-                    );
-                    error.0.details.as_mut().expect("guard details")["observation"] =
-                        json!("paste-placeholder");
-                    return Err(error);
-                }
-                if pasted_text.is_none()
-                    && self.record.agent == "claude"
-                    && pane.as_deref().is_some_and(|pane| {
-                        send_submit::direct_composer_observation("claude", pane)
-                            == Err(send_submit::Unobserved::RegionNotSingleRow)
-                    })
-                {
-                    let mut error = self.refusal(
-                        "send-composer-unobservable",
-                        "multi-row composer cannot be read exactly; send or clear the draft first",
-                        "empty_composer",
-                        stage,
-                    );
-                    error.0.details.as_mut().expect("guard details")["observation"] =
-                        json!("region-not-single-row");
-                    return Err(error);
+                if let Some(pane) = &pane {
+                    reason = send_submit::exact_composer_observation(&self.record.agent, pane)
+                        .err()
+                        .unwrap_or(send_submit::Unobserved::PasteNotVerified);
+                    if pasted_text.is_none()
+                        && self.record.agent == "claude"
+                        && matches!(
+                            reason,
+                            send_submit::Unobserved::PastePlaceholder
+                                | send_submit::Unobserved::RegionNotSingleRow
+                        )
+                    {
+                        return Err(self.unobserved_composer(reason, stage));
+                    }
                 }
                 pane.and_then(|pane| observation.pasted_composer_input(&pane, pasted_text, stage))
             };
-            if input.is_some() || !retryable {
+            if let Some(input) = input {
                 return Ok(input);
             }
-            let retry_until = *retry_until.get_or_insert_with(|| {
-                (Instant::now() + POST_PASTE_OBSERVATION_RETRY_WINDOW).min(self.deadline)
-            });
+            if !retryable {
+                return Err(self.unobserved_composer(reason, stage));
+            }
+            let retry_until = *retry_until
+                .get_or_insert_with(|| (Instant::now() + retry_window).min(self.deadline));
             if Instant::now() >= retry_until {
-                return Ok(None);
+                return Err(self.unobserved_composer(reason, stage));
             }
             thread::sleep(
                 POST_PASTE_OBSERVATION_RETRY_INTERVAL
                     .min(retry_until.saturating_duration_since(Instant::now())),
             );
+            if Instant::now() >= retry_until {
+                self.timeout(stage)?;
+                return Err(self.unobserved_composer(reason, stage));
+            }
         }
     }
 
