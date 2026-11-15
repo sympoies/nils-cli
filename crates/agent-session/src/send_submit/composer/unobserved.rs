@@ -24,6 +24,8 @@ pub(crate) enum Unobserved {
     SuggestionLiteralUnstyled,
     /// The region's row does not start with the prompt glyph or cannot be located.
     RowUnrecognized,
+    /// A known paste could not be verified by its cursor or ownership proof.
+    PasteNotVerified,
 }
 
 impl Unobserved {
@@ -38,6 +40,7 @@ impl Unobserved {
             Self::PastePlaceholder => "paste-placeholder",
             Self::SuggestionLiteralUnstyled => "suggestion-literal-unstyled",
             Self::RowUnrecognized => "row-unrecognized",
+            Self::PasteNotVerified => "paste-not-verified",
         }
     }
 }
