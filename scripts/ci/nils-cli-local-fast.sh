@@ -116,7 +116,7 @@ cd "$repo_root"
 source "$repo_root/scripts/ci/test-env.sh"
 
 # Both the server and every client must use the same short socket path.
-export SCCACHE_SERVER_UDS="${SCCACHE_SERVER_UDS:-/tmp/nils-cli-sccache-$(id -u)/server.sock}"
+export SCCACHE_SERVER_UDS="${SCCACHE_SERVER_UDS:-/tmp/nils-cli-sccache-$UID/server.sock}"
 
 run() {
   local -a cmd=( "$@" )

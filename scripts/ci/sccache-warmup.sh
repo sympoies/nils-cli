@@ -7,7 +7,7 @@ if ! command -v sccache >/dev/null 2>&1; then
   exit 0
 fi
 
-socket_tmp="/tmp/nils-cli-sccache-$(id -u)"
+socket_tmp="/tmp/nils-cli-sccache-$UID"
 if [[ -L "$socket_tmp" ]]; then
   echo "error: sccache temporary directory is a symlink: $socket_tmp" >&2
   exit 1
