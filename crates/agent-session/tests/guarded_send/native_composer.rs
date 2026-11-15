@@ -37,6 +37,17 @@ fn styled_nbsp_empty_composer_observes_the_exact_paste_and_preserves_drafts() {
         let fixture = Fixture::new("claude");
         styled_claude(&fixture, STYLED_STATUS, STYLED_STATUS);
         fs::write(fixture.root().join("composer"), draft).unwrap();
+        // Capture the current synthetic composer without starting the pane model
+        // inside the observation budget; other tmux operations keep the model.
+        let tmux = fixture.root().join("tmux");
+        fs::rename(&tmux, fixture.root().join("tmux-fast")).unwrap();
+        fs::write(
+            &tmux,
+            "#!/bin/sh\nroot=${0%/*}\nif [ \"$1\" = capture-pane ]; then\n    IFS= read -r composer < \"$root/composer\" || :\n    styled=false\n    for arg in \"$@\"; do [ \"$arg\" = -e ] && styled=true; done\n    if [ \"$styled\" = true ]; then\n        printf '\\033[38;5;244m────────────────────────────\\033[39m\\n❯ %-76s\\n────────────────────────────\\n  ' \"$composer\"\n        while IFS= read -r line || [ -n \"$line\" ]; do printf '%s\\n' \"$line\"; done < \"$root/styled-footer\"\n    else\n        printf '────────────────────────────\\n❯ %s\\n────────────────────────────\\n  status\\n' \"$composer\"\n    fi\n    for arg in \"$@\"; do\n        if [ \"$arg\" = display-message ]; then\n            cursor=${#composer}\n            if [ -e \"$root/cursor\" ]; then IFS= read -r cursor < \"$root/cursor\" || :; fi\n            printf '%s 1\\n' \"$((cursor + 2))\"\n        fi\n    done\n    exit 0\nfi\nexec \"$root/tmux-fast\" \"$@\"\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o755)).unwrap();
         let output = fixture.send_text(Some("read mailbox"), &["--require-empty-composer"]);
         if draft.is_empty() {
             assert_eq!(output.code, 0, "{}", output.stdout_text());
