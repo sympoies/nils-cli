@@ -495,7 +495,7 @@ class GateIntegration(unittest.TestCase):
         ci = root / 'scripts/ci'
         ci.mkdir(parents=True)
         (ci / 'lib').mkdir()
-        for name in ('nils-cli-checks-entrypoint.sh', 'nils-cli-local-fast.sh', 'test-env.sh',
+        for name in ('nils-cli-checks-entrypoint.sh', 'nils-cli-local-fast.sh', 'test-env.sh', 'sccache-warmup.sh',
                      'test-shell-portability-audit.py'):
             shutil.copy(ROOT / 'scripts/ci' / name, ci / name)
         (ci / 'test-shell-portability-allowlist.json').write_text('[]\n')

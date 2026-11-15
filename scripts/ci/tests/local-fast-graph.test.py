@@ -42,6 +42,7 @@ print((root / 'metadata.json').read_text())
         cargo_home.mkdir()
         self.env = dict(os.environ, PATH=f'{directory}{os.pathsep}{tools}',
                         CARGO_HOME=str(cargo_home))
+        self.env.pop('SCCACHE_SERVER_UDS', None)
         self.assertEqual(shutil.which("cargo", path=self.env["PATH"]), str(cargo))
         self.assertTrue(os.access(cargo, os.X_OK), "fake cargo must be executable")
         self.assertFalse((tools / 'cargo').exists(), "no ambient cargo fallback")

@@ -14,6 +14,7 @@ if [[ -z "$repo_root" || ! -d "$repo_root" ]]; then
 fi
 
 script="$repo_root/scripts/ci/nils-cli-local-fast.sh"
+bash "$repo_root/scripts/ci/tests/sccache-warmup.test.sh"
 if [[ ! -f "$script" ]]; then
   echo "error: missing local fast script: $script" >&2
   exit 2

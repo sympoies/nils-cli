@@ -115,8 +115,16 @@ cd "$repo_root"
 
 source "$repo_root/scripts/ci/test-env.sh"
 
+# Both the server and every client must use the same short socket path.
+export SCCACHE_SERVER_UDS="${SCCACHE_SERVER_UDS:-/tmp/nils-cli-sccache-$UID/server.sock}"
+
 run() {
   local -a cmd=( "$@" )
+  case "${1##*/}:${2:-}" in
+    cargo:*|python3:*/gate-reports.py|bash:scripts/ci/tempdir-leak-probe.sh)
+      bash "$repo_root/scripts/ci/sccache-warmup.sh"
+      ;;
+  esac
   echo "+ ${cmd[*]}"
   if "${cmd[@]}"; then
     return 0
@@ -208,6 +216,7 @@ if shutil.which("cargo") is None:
     sys.exit(2)
 
 try:
+    subprocess.run(["bash", str(repo / "scripts/ci/sccache-warmup.sh")], cwd=repo, check=True)
     metadata_result = subprocess.run(
         ["cargo", "metadata", "--offline", "--locked", "--all-features", "--format-version", "1"],
         cwd=repo,
@@ -463,6 +472,10 @@ if [[ "$plan_only" -eq 1 ]]; then
   exit 0
 fi
 
+if [[ "$mode" == "packages" || "$mode" == "workspace" ]]; then
+  run bash scripts/ci/sccache-warmup.sh
+fi
+
 export NILS_CLI_DEVLOG_BASE="${NILS_CLI_DEVLOG_BASE:-$base}"
 
 bash_bin="${BASH:-}"
@@ -582,6 +595,7 @@ run bash scripts/ci/tests/test-env.test.sh
 run bash scripts/ci/tests/node-scope.test.sh
 run bash scripts/ci/tests/tempdir-leak-audit.test.sh
 run bash scripts/ci/tests/tempdir-leak-probe.test.sh
+run bash scripts/ci/tests/sccache-warmup.test.sh
 run bash scripts/ci/tests/test-env-isolation-guard.test.sh
 run bash scripts/ci/tests/crates-io-status.test.sh
 run bash scripts/ci/tests/own-compat-audit.test.sh
