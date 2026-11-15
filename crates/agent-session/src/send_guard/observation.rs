@@ -8,32 +8,6 @@ pub(super) const IDENTITY_KEYS: [&str; 3] = [
     "AGENT_SESSION_RUNTIME_ID",
 ];
 
-impl super::Admission<'_> {
-    pub(super) fn unobserved_composer(
-        &self,
-        reason: crate::send_submit::Unobserved,
-        stage: &str,
-    ) -> crate::CliError {
-        use crate::send_submit::Unobserved;
-        let message = match reason {
-            Unobserved::PastePlaceholder => "composer contains a paste placeholder",
-            Unobserved::RegionNotSingleRow => {
-                "multi-row composer cannot be read exactly; send or clear the draft first"
-            }
-            _ => "composer content cannot be observed exactly",
-        };
-        let mut error = self.refusal(
-            "send-composer-unobservable",
-            message,
-            "empty_composer",
-            stage,
-        );
-        error.0.details.as_mut().expect("guard details")["observation"] =
-            serde_json::json!(reason.as_str());
-        error
-    }
-}
-
 pub(super) fn environment(tmux: &Path, session: &str, timeout: Duration) -> Option<[String; 3]> {
     let mut command = Command::new(tmux);
     for (i, key) in IDENTITY_KEYS.iter().enumerate() {
