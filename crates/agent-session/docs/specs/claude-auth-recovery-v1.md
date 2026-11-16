@@ -179,12 +179,12 @@ retry contract; neither is established by this adapter or its acceptance
 evidence. Startup readiness is not a successful provider request.
 
 The credential-free lifecycle fixture models rejection at t=0, publication at
-t=15 seconds and a consumer observation at t=30 seconds. Its safe-request model
+t=15 seconds and a consumer observation at t=29 seconds. Its safe-request model
 requires admission and the replacement launch generation. The modeled
-interruption is 30 seconds plus measured lifecycle elapsed time; the residual
-publication-to-safe-request window is 15 seconds plus that elapsed time. These
+interruption is 29 seconds plus measured lifecycle elapsed time; the residual
+publication-to-safe-request window is 14 seconds plus that elapsed time. These
 are synthetic measurements, not a live provider bound. Missing/failed
-publication stops at the existing 120-second/eight-poll lifecycle budget and
+publication stops at the 30-second elapsed-time lifecycle budget and
 three scheduled attempts, retaining quarantine and escalation. All live
 publication, resident-adoption and safe-request timing rows remain **UNRUN**
 pending the disposable provider/publication prerequisite in
@@ -231,9 +231,12 @@ unknown-effect metadata. It is retained with the original incident; it is not
 an independent public history endpoint. Current-runtime incident projections
 retain their existing visibility rules.
 
-The controller commits identity and a 120-second publication deadline before
-broker or lifecycle work. It admits at most eight publication polls. Temporary
-broker failures wait within that budget; expiry reports `publication_deadline`.
+The controller commits identity and a 30-second publication deadline before
+broker or lifecycle work. Controller ticks poll local publication metadata;
+frequent ticks do not shorten the elapsed-time window. Waiting ticks return
+and release their per-session operation and record locks; no sleep or global
+lock spans the window. Temporary broker failures wait within that budget;
+expiry reports `publication_deadline`.
 An account intent, changed conversation, invalid canonical resume metadata or
 superseded runtime blocks the operation. It never selects another account.
 

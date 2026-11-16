@@ -156,7 +156,7 @@ fn synthetic_publication_recovers_only_after_verified_completion() {
     assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
     fs::write(tmp.path().join("exit-on-probe"), "").unwrap();
     let watcher = on_relaunched_prompt(&context, tmp.path(), &launch);
-    tick(&context, &record, &tmux, 130);
+    tick(&context, &record, &tmux, 129);
     watcher.join().unwrap();
     let current = load_session_record(&context, ID).unwrap();
     let receipt = recovery_receipt(&context);
