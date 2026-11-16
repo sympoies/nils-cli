@@ -4,6 +4,8 @@ pub(crate) mod codex_notice;
 pub(crate) mod daemon_notice;
 pub(crate) mod input;
 mod native;
+#[cfg(test)]
+pub(crate) mod test_budget;
 use std::cell::Cell;
 use std::fs;
 use std::io::{self, Read};
@@ -19,13 +21,17 @@ use serde_json::json;
 use crate::{
     CliContext, CliError, ManualInputSection, PANE_INPUT_COMMAND_TIMEOUT,
     POST_PASTE_KEY_SETTLE_DELAY, PasteMode, SessionRecord, SpecialKey, acquire_session_record_lock,
-    activity, auto_resume, capture_visible_pane_with_timeout, carries_literal_text, cli,
-    codex_account, codex_app_server, delete_tmux_buffer, ensure_same_session_identity,
-    exit_status_result, live_status, load_session_record, resolve_tmux_bin,
-    run_output_with_timeout, run_output_with_timeout_and_cap, run_status_with_timeout, send_guard,
-    send_input_unlocked, send_submit, send_tmux_key, session_dir, write_private_file,
-    write_session_record,
+    activity, auto_resume, carries_literal_text, cli, codex_account, codex_app_server,
+    delete_tmux_buffer, ensure_same_session_identity, exit_status_result, live_status,
+    load_session_record, resolve_tmux_bin, run_output_with_timeout,
+    run_output_with_timeout_and_cap, run_status_with_timeout, send_guard, send_input_unlocked,
+    send_submit, send_tmux_key, session_dir, write_private_file, write_session_record,
 };
+
+#[cfg(not(test))]
+use crate::capture_visible_pane_with_timeout;
+#[cfg(test)]
+use test_budget::capture_visible_pane_with_timeout;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SendResult {
@@ -50,6 +56,10 @@ pub(crate) struct SendResult {
 // Terminal admission and each guarded Enter require several tmux round trips;
 // reserve those checks as well as the swallowed-Enter confirmation interval.
 pub(crate) fn guarded_hold_budget(record: &SessionRecord, terminal_command: bool) -> Duration {
+    #[cfg(test)]
+    if let Some(budget) = test_budget::current() {
+        return budget;
+    }
     if codex_app_server::runtime_is_supported(record) && !terminal_command {
         send_submit::HOLD_BUDGET
     } else {
