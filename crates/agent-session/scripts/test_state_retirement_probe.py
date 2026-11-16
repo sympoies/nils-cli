@@ -9,18 +9,18 @@ import tempfile
 import unittest
 
 PROBE = Path(__file__).with_name('state-retirement-probe.py')
-SECRET = 'sensitive-fixture-value'
+CANARY = 'omitted-fixture-value'
 
 
 def record(**fields):
     return dict(schema_version='agent-session.session.v1', agent='claude',
-                title_revision=0, runtime={'launch_id': SECRET}, **fields)
+                title_revision=0, runtime={'launch_id': CANARY}, **fields)
 
 
 def terminal():
     return dict(schema_version='agent-session.auto-resume.v1', enabled=False,
                 state='terminal_failure', updated_at='2026-01-01T00:00:00Z',
-                failure_reason='usage_window_not_exhausted', blocked_turn_id=SECRET,
+                failure_reason='usage_window_not_exhausted', blocked_turn_id=CANARY,
                 blocked_revision=0)
 
 
@@ -50,7 +50,7 @@ class StateProbeTests(unittest.TestCase):
                              timeout=5, check=False)
         self.assertEqual(run.returncode, expected, run.stderr)
         self.assertEqual(run.stderr, '')
-        for value in (str(self.root), SECRET):
+        for value in (str(self.root), CANARY):
             self.assertNotIn(value, run.stdout)
         return json.loads(run.stdout)
 
@@ -58,7 +58,7 @@ class StateProbeTests(unittest.TestCase):
         return self.probe()['stores'][store]['counts']
 
     def test_terminal_predicate_provider_split_absence_and_malformed_fields(self):
-        for i, agent in enumerate(('claude', 'codex', SECRET)):
+        for i, agent in enumerate(('claude', 'codex', CANARY)):
             data = record()
             data['agent'] = agent
             self.write(f'sessions/{i}/session.json', data)
@@ -83,7 +83,7 @@ class StateProbeTests(unittest.TestCase):
                                         {'intent_id': ''}, {'intent_id': 42})):
                 self.write(f'sessions/{state}{i}/session.json', record(codex_account_next={
                     'schema_version': 'agent-session.codex-account-next.v1', 'state': state,
-                    'account': SECRET, **fields}))
+                    'account': CANARY, **fields}))
         self.write('sessions/absent/session.json', record())
         self.write('sessions/invalid/session.json', record(codex_account_next=None))
         counts = self.counts('sessions')['switch_intents']
@@ -121,7 +121,7 @@ class StateProbeTests(unittest.TestCase):
 
     def test_title_fences_are_raw_revision_and_runtime_launch_id(self):
         for field, values in (('title_revision', (None, 0, True, -1)),
-                              ('runtime', (None, {'launch_id': None}, {'launch_id': ''}, {'launch_id': SECRET}))):
+                              ('runtime', (None, {'launch_id': None}, {'launch_id': ''}, {'launch_id': CANARY}))):
             for i, value in enumerate(values):
                 data = record()
                 data[field] = value
@@ -163,7 +163,7 @@ class StateProbeTests(unittest.TestCase):
                     self.assertEqual(self.probe(2)['stores'][section], {'status': 'invalid', 'counts': None})
                     self.assertEqual(target.read_bytes(), content)
             target.write_text(json.dumps(value))
-        self.write('sessions/bad/session.json', {'schema_version': SECRET})
+        self.write('sessions/bad/session.json', {'schema_version': CANARY})
         self.assertIsNone(self.probe(2)['stores']['sessions']['counts'])
 
     def test_untrusted_nonregular_missing_and_symlink_paths_are_unobserved(self):
@@ -185,9 +185,9 @@ class StateProbeTests(unittest.TestCase):
         self.assertEqual(self.probe(2, path.parent)['status'], 'unobserved')
 
     def test_no_state_changes_or_writer_lock_and_no_value_output(self):
-        self.write('sessions/one/session.json', record(title=SECRET))
+        self.write('sessions/one/session.json', record(title=CANARY))
         self.write('sessions/one/auto-resume.json', terminal())
-        self.write('coordination/registry.json', {'private': SECRET})
+        self.write('coordination/registry.json', {'private': CANARY})
         files = [p for p in self.root.rglob('*') if p.is_file()]
         before = {p: (p.read_bytes(), p.stat()) for p in files}
         lock_path = self.root / 'coordination/registry.lock'
@@ -207,7 +207,7 @@ class StateProbeTests(unittest.TestCase):
                            ({}, {'terminal_at_epoch': None}, {'terminal_at_epoch': 1}, {'terminal_at_epoch': 'bad'})]
                           + [{'state': 'active'}, {'state': 'completing'}, {'state': 'reconcile_pending'}, {}],
             'brokers': {'a': {}, 'b': {'runtime_identity': None, 'binary_version': None},
-                        'c': {'runtime_identity': {}, 'binary_version': SECRET},
+                        'c': {'runtime_identity': {}, 'binary_version': CANARY},
                         'd': {'runtime_identity': [], 'binary_version': 1}},
             'completion_events': [{}], 'messages': [{},
                 {'created_at_epoch_millis': 0, 'created_at_epoch': 1},
@@ -238,11 +238,11 @@ class StateProbeTests(unittest.TestCase):
             self.write('coordination/federation-journal.json', {
                 'schema_version': f'agent-session.federation-journal.v{version}',
                 'remote_outbox': [{'state': 'queued', 'envelope': {
-                    'schema_version': 'agent-session.remote-message.v1', 'body': SECRET}},
+                    'schema_version': 'agent-session.remote-message.v1', 'body': CANARY}},
                     {'envelope': {'schema_version': 'agent-session.remote-message.v2', 'category': 'report', 'forwarding': {}}},
                     {'envelope': {'schema_version': 'agent-session.remote-service-message.v2', 'category': None, 'forwarding': None}},
-                    {'envelope': {'schema_version': SECRET, 'category': SECRET, 'forwarding': []}}, {'envelope': None}],
-                'retained': [{'private': SECRET}]})
+                    {'envelope': {'schema_version': CANARY, 'category': CANARY, 'forwarding': []}}, {'envelope': None}],
+                'retained': [{'private': CANARY}]})
             counts = self.counts('journal')
             self.assertEqual(counts['schema'][f'v{version}'], 1)
             self.assertEqual((counts['outbox'], counts['queued'], counts['retained'], counts['invalid_envelopes']), (5, 1, 1, 1))
