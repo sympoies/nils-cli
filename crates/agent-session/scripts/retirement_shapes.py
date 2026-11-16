@@ -128,7 +128,9 @@ def add_auto(result, state, provider):
         result["other_records"] += 1
 
 
-def collection(obj, key, kind):
+def collection(obj, key, kind, *, required=False):
+    if required and key not in obj:
+        raise ValueError()
     value = obj.get(key, kind())
     if not isinstance(value, kind):
         raise ValueError()
@@ -185,7 +187,7 @@ def heartbeat_counts(state):
     stamp_shape = presence(state, "completion_registry", lambda v: isinstance(v, dict))
     return {
         "schema": schema(state, "agent-session.broker-state.", ("v1",)),
-        "owners": len(collection(state, "owners", dict)),
+        "owners": len(collection(state, "owners", dict, required=True)),
         "completion_pending": {key: int(key == pending_shape)
                                for key in ("true", "false", "invalid")},
         "completion_registry": {key: int(key == stamp_shape)
@@ -194,7 +196,7 @@ def heartbeat_counts(state):
 
 
 def journal_counts(journal):
-    outbox = collection(journal, "remote_outbox", list)
+    outbox = collection(journal, "remote_outbox", list, required=True)
     retained = collection(journal, "retained", list)
     result = {
         "schema": schema(journal, "agent-session.federation-journal.", tuple(f"v{i}" for i in range(1, 7))),

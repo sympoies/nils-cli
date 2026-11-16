@@ -161,8 +161,8 @@ class StateProbeTests(unittest.TestCase):
             ('sessions/one/session.json', 'sessions', record()),
             ('sessions/one/auto-resume.json', 'auto_resume', terminal()),
             ('coordination/registry.json', 'registry', {}),
-            ('coordination/broker-state.json', 'heartbeat', {}),
-            ('coordination/federation-journal.json', 'journal', {}),
+            ('coordination/broker-state.json', 'heartbeat', {'schema_version': 'agent-session.broker-state.v1', 'owners': {}, 'completion_pending': False}),
+            ('coordination/federation-journal.json', 'journal', {'schema_version': 'agent-session.federation-journal.v2', 'remote_outbox': []}),
         ):
             self.write('sessions/one/session.json', record())
             target = self.write(path, value)
@@ -244,7 +244,7 @@ class StateProbeTests(unittest.TestCase):
             self.assertEqual(self.counts('heartbeat')['completion_registry'],
                              {key: int(key == expected) for key in ('missing', 'null', 'present', 'invalid')})
         for pending, expected in ((False, 'false'), (True, 'true'), (None, 'invalid')):
-            self.write('coordination/broker-state.json', {'completion_pending': pending})
+            self.write('coordination/broker-state.json', {'schema_version': 'agent-session.broker-state.v1', 'owners': {}, 'completion_pending': pending})
             self.assertEqual(self.counts('heartbeat')['completion_pending'],
                              {key: int(key == expected) for key in ('true', 'false', 'invalid')})
 
@@ -277,13 +277,41 @@ class StateProbeTests(unittest.TestCase):
         self.assertEqual(counts['schema']['v2'], 1)
         self.assertEqual(counts['observation'], {'missing': 1, 'null': 1, 'present': 1, 'invalid': 1})
 
+    def test_required_collections_missing_invalid_and_explicit_empty_observed(self):
+        cases = (
+            ('broker-state.json', 'heartbeat',
+             {'schema_version': 'agent-session.broker-state.v1', 'completion_pending': False},
+             'owners', {}, 'owners'),
+            ('federation-journal.json', 'journal',
+             {'schema_version': 'agent-session.federation-journal.v2'},
+             'remote_outbox', [], 'outbox'),
+        )
+        for name, section, base, member, empty, count in cases:
+            with self.subTest(section=section):
+                self.write('coordination/' + name, base)
+                report = self.probe(2)
+                self.assertEqual(report['stores'][section], {'status': 'invalid', 'counts': None})
+                self.write('coordination/' + name, {**base, member: empty})
+                observed = self.probe()['stores'][section]
+                self.assertEqual(observed['status'], 'observed')
+                self.assertEqual(observed['counts'][count], 0)
+                if section == 'journal':
+                    self.assertEqual(observed['counts']['retained'], 0)
+        # Registry alone declares struct-wide serde defaults for collections.
+        self.write('coordination/registry.json', {'schema_version': 'agent-session.coordination-registry.v1'})
+        counts = self.counts('registry')
+        self.assertEqual((counts['operations']['total'], counts['brokers']['total'],
+                          counts['completion_events'], counts['mailbox']['total']), (0, 0, 0, 0))
+
     def test_malformed_store_collections_never_certify_zero(self):
         for name, section, key, bad in (
             ('registry.json', 'registry', 'operations', {}), ('registry.json', 'registry', 'brokers', []),
             ('registry.json', 'registry', 'messages', [None]), ('broker-state.json', 'heartbeat', 'owners', None),
             ('federation-journal.json', 'journal', 'remote_outbox', {}), ('federation-journal.json', 'journal', 'retained', [None])):
             with self.subTest(section=section, key=key):
-                path = self.write('coordination/' + name, {key: bad})
+                base = {'owners': {}, 'completion_pending': False} if section == 'heartbeat' else (
+                    {'remote_outbox': []} if section == 'journal' else {})
+                path = self.write('coordination/' + name, {**base, key: bad})
                 self.assertEqual(self.probe(2)['stores'][section], {'status': 'invalid', 'counts': None})
                 path.unlink()
 

@@ -9,13 +9,13 @@
 
 ### Why / context
 
-- Missing stores and malformed fields cannot stand in for observed absence;
+- Missing stores, required collections and malformed fields cannot stand in for observed absence;
   title-pair evidence requires exact renderer comparison and provider-split
   terminals preserve current Codex behavior.
 
 ### Evidence
 
-- Synthetic CLI suite passed 25 tests, including strict JSON rejection, exact
+- Synthetic CLI suite passed 26 tests, including strict JSON rejection, exact
   title boundaries, file trust, privacy and unchanged state metadata.
 
 ### Links

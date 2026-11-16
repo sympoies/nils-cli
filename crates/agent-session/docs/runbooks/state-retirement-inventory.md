@@ -147,6 +147,11 @@ In the table, paths are relative to the supplied root. `missing` means no member
 Other malformed field values enter `invalid`; container errors discard the
 store aggregate. Unknown schema strings enter `other`, never a dynamic key.
 
+Collection omissions follow the owning stored format: heartbeat `owners` and
+journal `remote_outbox` are required. Omitting either makes that store invalid
+with null counts. Explicit empty collections are observed zeroes. Registry
+collections and journal `retained` keep their declared empty defaults.
+
 | Slice / output under `stores` | Exact store and count definition |
 | --- | --- |
 | 2 / `auto_resume.recovery_terminals` | `sessions/*/auto-resume.json`: schema `agent-session.auto-resume.v1`, `enabled=false`, `state=terminal_failure`, `failure_reason=usage_window_not_exhausted`, string non-null `blocked_turn_id` and unsigned 64-bit non-null `blocked_revision`. Provider is `agent` from the sibling `session.json`, split into `claude`, `codex`, `other`. Zero revision and empty string follow the source predicate's non-null test. `other_records`, `invalid_records` and `absent_files` are separate. Current Codex terminals are not classified as retired Claude records. |
