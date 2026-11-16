@@ -123,7 +123,8 @@ class TestShellPortability(unittest.TestCase):
             "xargs --max-a 1 -r echo", "xargs -I 'a b' -r echo",
             r"xargs -I a\ b -r echo", "xargs --delimiter=' ' -r echo",
             'let cmd = "xargs --no-run-if-empty";',
-            'let cmd = r#"xargs --no-run-if-empty"#;'))
+            'let cmd = r#"xargs --no-run-if-empty"#;',
+            'echo $(xargs --no-run-if-empty)', 'echo `xargs --no-run-if-empty`'))
 
     def test_xargs_option_corpus(self):
         spec = importlib.util.spec_from_file_location("portability_audit", AUDIT)

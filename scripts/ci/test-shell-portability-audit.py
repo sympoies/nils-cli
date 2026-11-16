@@ -48,7 +48,8 @@ def xargs_has_gnu_option(arguments):
             break
         if token.startswith("--"):
             name, equals, _ = token.partition("=")
-            if name == "--no-run-if-empty":
+            spelling = re.match(r"--[a-z][a-z-]*", name)
+            if spelling and spelling[0] == "--no-run-if-empty":
                 return True
             matches = [option for option in long_options if option.startswith(name)]
             if len(matches) == 1 and matches[0] in long_values and not equals:
