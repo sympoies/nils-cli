@@ -128,6 +128,7 @@ pub(super) fn preview<R: BackendRunner>(
     format: nils_common::cli_contract::OutputFormat,
 ) -> Result<i32, ForgeError> {
     let (subject, patch, findings) = comparison(runner, ctx, number, head)?;
+    validate_declarations(&subject.body)?;
     let digest = digest(&subject, &patch);
     let confirmation = format!("Test changes confirmed: {digest}");
     let warnings = row_warnings(&findings, &declared_rows(&declarations(&subject.body)));
@@ -169,6 +170,7 @@ pub(super) fn ensure<R: BackendRunner>(
     report: &str,
 ) -> Result<(), ForgeError> {
     let (subject, patch, findings) = comparison(runner, ctx, number, head)?;
+    validate_declarations(&subject.body)?;
     let declarations = declarations(&subject.body);
     let rows = declared_rows(&declarations);
     if findings.is_empty() && provenance::summary(&patch).is_none() {
@@ -213,6 +215,21 @@ pub(super) fn ensure<R: BackendRunner>(
             Some(format!(
                 "{confirmation}\nRead-only pre-review preview: `forge-cli pr review-handoff test-changes {number} --expected-head {head}`. Review every declared/allowlisted change and publish that exact line in the designated review report. Confirmation expires when the head, base, diff or declaration changes."
             )),
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_declarations(body: &str) -> Result<(), ForgeError> {
+    let declaration = declarations(body);
+    if declaration.lines().any(|line| {
+        let line = line.trim();
+        !line.is_empty() && declared_rows(line).is_empty()
+    }) {
+        return Err(error(
+            "test_changes_undeclared",
+            "invalid ## Test changes declaration; use - path | kind | reason with a reason of at least 12 characters",
+            None,
         ));
     }
     Ok(())

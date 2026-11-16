@@ -204,10 +204,10 @@ fn fixture_with_unbound_native_and_comments(
         r#"#!/bin/sh
 echo "$*" >> "{log}"
 case "$1 $2" in
-  "pr view") cat <<'JSON'
+  "pr view") if [ -n "${{TEST_PR_VIEW:-}}" ]; then cat "$TEST_PR_VIEW"; else cat <<'JSON'
 {view}
 JSON
-    exit 0 ;;
+    fi; exit 0 ;;
   "api repos/acme/widgets/compare/"*)
     cat "${{TEST_INTEGRITY_DIFF:-/dev/null}}"; exit 0 ;;
   "api repos/acme/widgets/pulls/7/files?"*)

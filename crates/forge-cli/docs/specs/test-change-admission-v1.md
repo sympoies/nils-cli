@@ -101,6 +101,8 @@ before the path. Use it for intentional removals, quarantines, or false positive
 
 There is no file/kind pair or declaration row count cap. Globs and repository-wide
 exemptions are not accepted.
+Nonblank declarations must use the list form `- path | kind | reason`; preview
+and check reject malformed declarations before review ledger admission.
 Rows inside fenced examples do not count. An allowlisted finding still requires
 reviewer confirmation. Missing declarations fail with `test_changes_undeclared`.
 No command-line override bypasses this requirement.
