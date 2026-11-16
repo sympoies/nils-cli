@@ -63,8 +63,32 @@ refresh. Stage only your fragment; `new` leaves the month and index untouched.
 
 ### Folding accepted fragments
 
-After each release, the maintainer prepares one dedicated maintenance PR
-from current `origin/main` in a managed worktree:
+The **Devlog fold** GitHub Actions workflow runs on `release: published` and
+opens one dedicated maintenance PR from current `main`, on
+`chore/devlog-fold-<UTC date>`. It invokes `scripts/ci/fold-devlog.sh` and uses
+the existing `BOT_APP_ID` / `BOT_APP_PRIVATE_KEY` App credentials (Contents:
+write and Pull requests: write) to create a verified signed API commit with
+subject `chore(devlog): fold accepted fragments`. Missing credentials or an
+unverified commit fail the run. The workflow never pushes to main or updates
+an existing branch. The steward delivers the PR through normal required
+checks, review and the merge queue.
+
+An empty fold opens no PR. An existing PR for that UTC date, including a
+closed or merged PR, is preserved and the run skips. Publication runs are
+serialized across release and manual events. Dry runs use a separate concurrency
+group, so inspection cannot replace a queued publication. If a date branch exists
+without a PR, the run stops for maintainer reconciliation; it does not overwrite
+that branch.
+
+For recovery, select **Actions › Devlog fold › Run workflow** on `main`.
+`dry_run` defaults to `true`: the existing script performs the fold locally,
+reports the changed paths and diff statistics, and makes no remote writes.
+Set `dry_run` to `false` to open the PR. Fixture tests run without bot secrets
+on workflow PRs and before release/manual preparation; live App signing and
+required checks are verified by the resulting provider run and PR.
+
+A maintainer can also prepare the same dedicated PR locally from current
+`origin/main` in a managed worktree:
 
 ```bash
 git-cli worktree add devlog-fold-YYYY-MM-DD --kind chore --from origin/main
