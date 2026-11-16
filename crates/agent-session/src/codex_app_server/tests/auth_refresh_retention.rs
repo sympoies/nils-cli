@@ -1,10 +1,20 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
-#[tokio::test]
-async fn external_auth_refresh_retention_allows_65th_refresh_after_closed_connections() {
-    let lock = GlobalStateLock::new();
+#[test]
+fn external_auth_refresh_retention_allows_65th_refresh_after_closed_connections() {
     let tmp = tempfile::TempDir::new().unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(run_retention_test(&tmp));
+    // Runtime shutdown waits for connection retirement before fixture cleanup.
+    drop(runtime);
+}
+
+async fn run_retention_test(tmp: &tempfile::TempDir) {
+    let lock = GlobalStateLock::new();
     let broker = tmp.path().join("broker");
     fs::write(&broker, r#"#!/bin/sh
 printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"acct1","access_token":"retention-fixture-token","chatgpt_account_id":"fixture-workspace"}'
@@ -15,7 +25,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
         &serde_json::to_string(&vec![broker]).unwrap(),
     );
-    let (context, mut record) = recovery_fixture(&tmp);
+    let (context, mut record) = recovery_fixture(tmp);
     bind_thread(&record, "fixture-thread").unwrap();
     let (_socket_dir, socket_file) = nils_test_support::short_socket_path("server.sock");
     record
