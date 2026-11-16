@@ -142,7 +142,7 @@ pub(crate) fn prepare_launch(
             let stopped_at =
                 owner_of(&dir, &record.id, state_dir).and_then(|owner| owner.stopped_at_epoch);
             if stopped_at.is_some_and(|at| expired(at, grace)) {
-                fs::remove_dir_all(&dir)
+                sweep::reclaim_for_launch(&root, &record.id)
                     .map_err(|err| io_error("session-tmpdir-reclaim-failed", &dir, err))?;
             }
         }

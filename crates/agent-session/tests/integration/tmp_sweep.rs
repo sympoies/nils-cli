@@ -10,6 +10,10 @@ use serde_json::{Value, json};
 
 const OWNER_FILE: &str = ".agent-session-tmp";
 
+#[cfg(target_os = "linux")]
+#[path = "tmp_sweep/mounts.rs"]
+mod mounts;
+
 fn sweep(home: &Path, state_dir: &Path, args: &[&str]) -> CmdOutput {
     let mut full = vec![
         "--state-dir",
@@ -36,6 +40,8 @@ fn owned_dir(home: &Path, state_dir: &Path, id: &str) {
     });
     fs::write(dir.join(OWNER_FILE), owner.to_string()).expect("owner file");
     fs::write(dir.join("scratch.txt"), "data").expect("scratch file");
+    fs::create_dir(dir.join("nested")).expect("nested directory");
+    fs::write(dir.join("nested/scratch.txt"), "nested data").expect("nested scratch file");
 }
 
 #[test]

@@ -3,11 +3,21 @@ use super::*;
 use std::collections::BTreeMap;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
+mod filesystem;
+
 #[derive(Debug, Serialize)]
 pub(crate) struct SweepReport {
     pub(crate) grace_secs: u64,
     pub(crate) removed: usize,
     pub(crate) retained: BTreeMap<&'static str, usize>,
+}
+
+pub(super) fn reclaim_for_launch(root: &Path, id: &str) -> io::Result<()> {
+    let boundary = filesystem::Boundary::open(root)?;
+    if !boundary.trusted_tree(id) {
+        return Err(io::Error::other("session tmp tree is untrusted"));
+    }
+    boundary.remove_tree(id)
 }
 
 impl SweepReport {
@@ -41,24 +51,6 @@ pub(super) fn read_owned_owner(dir: &Path, id: &str) -> Option<Owner> {
         .ok()?;
     let owner: Owner = serde_json::from_reader(file).ok()?;
     (owner.schema_version == OWNER_SCHEMA && owner.session_id == id).then_some(owner)
-}
-
-fn owned_tree(dir: &Path) -> bool {
-    let Some(metadata) = owned_metadata(dir) else {
-        return false;
-    };
-    if metadata.is_file() {
-        return true;
-    }
-    if !metadata.is_dir() {
-        return false;
-    }
-    let Ok(entries) = fs::read_dir(dir) else {
-        return false;
-    };
-    entries
-        .into_iter()
-        .all(|entry| entry.is_ok_and(|entry| owned_tree(&entry.path())))
 }
 
 fn stopped(context: &CliContext, tmux: &Path, record: &SessionRecord) -> &'static str {
@@ -112,6 +104,13 @@ pub(crate) fn sweep(
             ));
         }
     }
+    let boundary = filesystem::Boundary::open(&root).map_err(|_| {
+        CliError::runtime(
+            "session-tmpdir-root-untrusted",
+            "session tmp mount boundary could not be verified",
+            None,
+        )
+    })?;
     let entries = fs::read_dir(&root).map_err(|_| {
         CliError::runtime(
             "session-tmpdir-list-failed",
@@ -178,12 +177,12 @@ pub(crate) fn sweep(
         };
         if !due {
             report.keep("grace");
-        } else if !owned_tree(&dir)
+        } else if !boundary.trusted_tree(&id)
             || !owner_of(&dir, &id, &context.state_dir)
                 .is_some_and(|current| current.stopped_at_epoch == owner.stopped_at_epoch)
         {
             report.keep("untrusted");
-        } else if fs::remove_dir_all(&dir).is_ok() {
+        } else if boundary.remove_tree(&id).is_ok() {
             report.removed += 1;
         } else {
             report.keep("remove-failed");

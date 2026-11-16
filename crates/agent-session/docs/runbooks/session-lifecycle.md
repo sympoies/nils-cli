@@ -853,6 +853,9 @@ launchd services are unchanged.
   record in the same state root. Foreign state roots are always preserved, even
   when the foreign root no longer exists. Unreadable records, uncertain liveness,
   locked sessions, symlinks and untrusted filesystem ownership are preserved.
+  Mounted subtrees, including same-device bind mounts, are retained. Both the
+  preflight and deletion walk verify mount identity; unavailable mount evidence
+  prevents reclamation. Linux requires `STATX_MNT_ID` (Linux 5.8 or newer).
   The session lock remains held through reclamation.
 - Every `serve` role runs a complete sweep after binding its listener and then
   hourly, using its configured tmux executable. This does not depend on the board,
