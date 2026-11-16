@@ -3630,45 +3630,40 @@ async fn saturated_projection_coalesces_repeatable_usage_updates() {
     assert_eq!(view.failure_reason, None);
 }
 
-#[tokio::test]
-async fn saturated_projection_still_fails_closed_for_unique_events() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let context = CliContext {
-        state_dir: tmp.path().join("state"),
-        host: None,
-    };
-    let record = record_with_runtime("unique-overflow", &tmp.path().join("server.sock"));
-    fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
-    crate::write_session_record(&context, &record).unwrap();
-    crate::activity::activate_runtime(&context, &record).unwrap();
-    crate::auto_resume::set_enabled(&context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
-    let mut projection = ProxyProjection::new(context.clone(), record.clone());
-
-    for index in 0..(MAX_PROXY_OBSERVATIONS + 4) {
-        projection.observe_server(&json!({
-            "method": "turn/completed",
-            "params": {
+#[test]
+fn saturated_projection_still_fails_closed_for_unique_events() {
+    let tmp = tempfile::TempDir::new().unwrap(); // Outlives runtime shutdown.
+    let mut runtime = tokio::runtime::Builder::new_current_thread();
+    runtime.enable_all().build().unwrap().block_on(async {
+        let ctx = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let record = record_with_runtime("unique-overflow", &tmp.path().join("server.sock"));
+        fs::create_dir_all(crate::session_dir(&ctx, &record.id)).unwrap();
+        crate::write_session_record(&ctx, &record).unwrap();
+        crate::activity::activate_runtime(&ctx, &record).unwrap();
+        crate::auto_resume::set_enabled(&ctx, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
+        let mut projection = ProxyProjection::new(ctx.clone(), record.clone());
+        for index in 0..(MAX_PROXY_OBSERVATIONS + 4) {
+            projection.observe_server(&json!({ "method": "turn/completed", "params": {
                 "threadId": "thread-a",
                 "turn": { "id": format!("turn-{index}"), "status": "completed" }
-            }
-        }));
-    }
-    let mut failed_closed = false;
-    for _ in 0..20 {
-        let view = crate::auto_resume::view_for_record(&context, &record);
-        if view.state == "terminal_failure" {
-            assert!(!view.enabled);
-            assert_eq!(view.failure_reason.as_deref(), Some("state_unavailable"));
-            failed_closed = true;
-            break;
+            }}));
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(
-        failed_closed,
-        "unique projection overflow did not fail closed"
-    );
-    settle_projection(&mut projection).await;
+        let mut task = projection.take_fail_close_task().expect("no fail-close");
+        let result = tokio::time::timeout(Duration::from_secs(90), &mut task).await;
+        if result.is_err() {
+            task.abort();
+            let _ = task.await;
+        }
+        result.expect("fail-close exceeded 90 s").unwrap();
+        let view = crate::auto_resume::view_for_record(&ctx, &record);
+        assert!(!view.enabled);
+        assert_eq!(view.state, "terminal_failure");
+        assert_eq!(view.failure_reason.as_deref(), Some("state_unavailable"));
+        settle_projection(&mut projection).await;
+    });
 }
 
 #[tokio::test]

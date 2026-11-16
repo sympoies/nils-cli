@@ -48,10 +48,8 @@ async fn thread_start_contention_is_retried_before_forwarding_exactly_once() {
             .await
             .unwrap();
         let lock = crate::acquire_session_record_lock(&context, &record.id).unwrap();
-        let release = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(if exhaust { 6500 } else { 1300 }));
-            drop(lock);
-        });
+        let cancellation =
+            crate::auto_resume::cancellation_test::Scope::new(&context, &record.id, lock, exhaust);
         let started = Instant::now();
         tui.send(Message::Text(
             json!({ "id":17, "method":"thread/start", "params":{} })
@@ -79,7 +77,8 @@ async fn thread_start_contention_is_retried_before_forwarding_exactly_once() {
         } else {
             assert_eq!(response["result"]["thread"]["id"], "fixture-thread");
         }
-        release.join().unwrap();
+        assert_eq!(cancellation.counts(), if exhaust { (1, 1) } else { (2, 1) });
+        drop(cancellation);
         tui.send(Message::Text(
             json!({ "id":18, "method":"thread/read", "params":{} })
                 .to_string()

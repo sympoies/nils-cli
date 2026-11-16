@@ -710,6 +710,9 @@ pub(crate) fn try_cancel_for_manual_input_for_runtime(
     )
 }
 
+#[cfg(test)]
+pub(crate) mod cancellation_test;
+
 pub(crate) fn cancel_for_manual_input_for_runtime_with_timeout(
     context: &CliContext,
     id: &str,
@@ -717,15 +720,30 @@ pub(crate) fn cancel_for_manual_input_for_runtime_with_timeout(
     now: &str,
     record_turn_fence: bool,
 ) -> Result<ManualInputCancelOutcome, CliError> {
-    let result = crate::contention::retry(crate::contention::LIFECYCLE_WAIT, |remaining| {
-        match cancel_for_manual_input_for_runtime(
+    #[cfg(test)]
+    let control = cancellation_test::for_session(context, id);
+    #[cfg(test)]
+    let budget = control
+        .as_ref()
+        .map_or(crate::contention::LIFECYCLE_WAIT, |c| c.budget());
+    #[cfg(not(test))]
+    let budget = crate::contention::LIFECYCLE_WAIT;
+    let result = crate::contention::retry(budget, |remaining| {
+        #[cfg(test)]
+        let remaining = control.as_ref().map_or(remaining, |_| Duration::ZERO);
+        let outcome = cancel_for_manual_input_for_runtime(
             context,
             id,
             expected_launch_id,
             now,
             record_turn_fence,
             Some(remaining.min(PROTOCOL_STATE_LOCK_TIMEOUT)),
-        )? {
+        )?;
+        #[cfg(test)]
+        if let Some(control) = &control {
+            control.observe(outcome);
+        }
+        match outcome {
             ManualInputCancelOutcome::Busy => Err(CliError::runtime(
                 "session-record-lock-timeout",
                 "session state is busy",
