@@ -3653,21 +3653,16 @@ async fn saturated_projection_still_fails_closed_for_unique_events() {
             }
         }));
     }
-    let mut failed_closed = false;
-    for _ in 0..20 {
-        let view = crate::auto_resume::view_for_record(&context, &record);
-        if view.state == "terminal_failure" {
-            assert!(!view.enabled);
-            assert_eq!(view.failure_reason.as_deref(), Some("state_unavailable"));
-            failed_closed = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(
-        failed_closed,
-        "unique projection overflow did not fail closed"
-    );
+    // Overflow must itself schedule fail-close; do not let teardown create it.
+    projection
+        .take_fail_close_task()
+        .expect("unique projection overflow did not schedule fail-close")
+        .await
+        .unwrap();
+    let view = crate::auto_resume::view_for_record(&context, &record);
+    assert!(!view.enabled);
+    assert_eq!(view.state, "terminal_failure");
+    assert_eq!(view.failure_reason.as_deref(), Some("state_unavailable"));
     settle_projection(&mut projection).await;
 }
 
