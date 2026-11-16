@@ -186,3 +186,10 @@ test("dirty source trees fail before running the fold or publishing", async () =
   assert.deepEqual(f.state.writes, []);
   assert.equal(f.git("branch", "--show-current"), "main");
 });
+
+test("PR fixture runs cannot displace queued fold publication", () => {
+  const workflow = fs.readFileSync(path.join(root, ".github/workflows/devlog-fold.yml"), "utf8");
+  assert.doesNotMatch(workflow, /^concurrency:/m, "PR fixtures must not share the publication lock");
+  const foldJob = workflow.split("\n  fold:\n")[1];
+  assert.match(foldJob, /    concurrency:\n      group: devlog-fold\n      cancel-in-progress: false/);
+});

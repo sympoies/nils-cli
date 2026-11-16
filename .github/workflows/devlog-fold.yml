@@ -20,11 +20,6 @@ permissions:
   contents: read
   pull-requests: read
 
-# Serialize manual recovery and release events so only one date PR can be made.
-concurrency:
-  group: devlog-fold
-  cancel-in-progress: false
-
 jobs:
   fixtures:
     runs-on: ubuntu-24.04
@@ -46,6 +41,10 @@ jobs:
 
   fold:
     needs: fixtures
+    # PR fixtures must not replace a queued release in this publication lock.
+    concurrency:
+      group: devlog-fold
+      cancel-in-progress: false
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
