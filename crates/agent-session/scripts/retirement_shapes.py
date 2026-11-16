@@ -181,11 +181,15 @@ def registry_counts(registry):
 
 def heartbeat_counts(state):
     pending = state.get("completion_pending")
+    pending_shape = "true" if pending is True else "false" if pending is False else "invalid"
+    stamp_shape = presence(state, "completion_registry", lambda v: isinstance(v, dict))
     return {
         "schema": schema(state, "agent-session.broker-state.", ("v1",)),
         "owners": len(collection(state, "owners", dict)),
-        "completion_pending": "true" if pending is True else "false" if pending is False else "invalid",
-        "completion_registry": presence(state, "completion_registry", lambda v: isinstance(v, dict)),
+        "completion_pending": {key: int(key == pending_shape)
+                               for key in ("true", "false", "invalid")},
+        "completion_registry": {key: int(key == stamp_shape)
+                                for key in ("missing", "null", "present", "invalid")},
     }
 
 

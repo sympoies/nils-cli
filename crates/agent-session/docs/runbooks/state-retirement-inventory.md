@@ -108,7 +108,8 @@ python3 -B crates/agent-session/scripts/state-retirement-probe.py \
 
 The output schema is `agent-session.state-retirement-probe.v1`. It contains
 fixed keys, statuses, aggregate counts and `observed_at_epoch`; unknown schema
-or provider strings enter fixed buckets. No persisted values become output keys.
+or provider strings enter fixed buckets. No persisted values become output keys. All leaves under observed `counts` are
+non-negative integers, including buckets for singleton heartbeat flags.
 The probe opens only `sessions/*/{session.json,auto-resume.json}` and the three
 named coordination files below. It does not open prompts, logs, credentials or
 provider settings. Files can contain unrelated sensitive fields; these are

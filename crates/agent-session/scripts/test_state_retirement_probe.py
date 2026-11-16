@@ -52,7 +52,20 @@ class StateProbeTests(unittest.TestCase):
         self.assertEqual(run.stderr, '')
         for value in (str(self.root), CANARY):
             self.assertNotIn(value, run.stdout)
-        return json.loads(run.stdout)
+        report = json.loads(run.stdout)
+
+        def assert_counts(value):
+            if isinstance(value, dict):
+                for child in value.values():
+                    assert_counts(child)
+            else:
+                self.assertIs(type(value), int)
+                self.assertGreaterEqual(value, 0)
+
+        for store in report['stores'].values():
+            if store['counts'] is not None:
+                assert_counts(store['counts'])
+        return report
 
     def counts(self, store):
         return self.probe()['stores'][store]['counts']
@@ -228,10 +241,12 @@ class StateProbeTests(unittest.TestCase):
                                 ({'completion_registry': {}}, 'present'), ({'completion_registry': False}, 'invalid')):
             self.write('coordination/broker-state.json', {'schema_version': 'agent-session.broker-state.v1',
                        'owners': {'private': {}}, 'completion_pending': True, **field})
-            self.assertEqual(self.counts('heartbeat')['completion_registry'], expected)
+            self.assertEqual(self.counts('heartbeat')['completion_registry'],
+                             {key: int(key == expected) for key in ('missing', 'null', 'present', 'invalid')})
         for pending, expected in ((False, 'false'), (True, 'true'), (None, 'invalid')):
             self.write('coordination/broker-state.json', {'completion_pending': pending})
-            self.assertEqual(self.counts('heartbeat')['completion_pending'], expected)
+            self.assertEqual(self.counts('heartbeat')['completion_pending'],
+                             {key: int(key == expected) for key in ('true', 'false', 'invalid')})
 
     def test_journal_envelope_schema_category_forwarding_and_totals(self):
         for version in range(1, 7):
