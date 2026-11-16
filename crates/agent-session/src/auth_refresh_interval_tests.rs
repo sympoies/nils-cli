@@ -64,7 +64,7 @@ fn assert_refresh_interval(lock: &GlobalStateLock, delayed_first: bool) {
     assert!(!safe_request(&context, &record, "2"));
 
     // A delayed first tick runs scheduled recheck before lifecycle recovery.
-    crate::auth_incident::auto_settle::tick(&context, &record, start + 30).unwrap();
+    crate::auth_incident::auto_settle::tick(&context, &record, start + 29).unwrap();
     assert!(
         crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err(),
         "publication cleared quarantine without adoption; a safe request still fails"
@@ -80,7 +80,7 @@ fn assert_refresh_interval(lock: &GlobalStateLock, delayed_first: bool) {
     fs::write(tmp.path().join("exit-on-probe"), "").unwrap();
     let watcher = on_relaunched_prompt(&context, tmp.path(), &launch);
     let lifecycle_started = Instant::now();
-    tick(&context, &record, &tmux, start + 30);
+    tick(&context, &record, &tmux, start + 29);
     watcher.join().unwrap();
     let current = load_session_record(&context, ID).unwrap();
     assert_eq!(recovery_receipt(&context)["state"], "runtime_resumed");
@@ -95,7 +95,7 @@ fn assert_refresh_interval(lock: &GlobalStateLock, delayed_first: bool) {
     assert!(!log(tmp.path())[before.len()..].contains("paste-buffer"));
     super::guarded_send::assert_submitted(&context, tmp.path(), &tmux, &current);
     eprintln!(
-        "synthetic timeline (delayed_first={delayed_first}): rejection=0s publication=15s adoption/guarded-submission=30s + {}ms lifecycle and send; publication-to-guarded-submission=15s + lifecycle and send; live timing UNRUN",
+        "synthetic timeline (delayed_first={delayed_first}): rejection=0s publication=15s adoption/guarded-submission=29s + {}ms lifecycle and send; publication-to-guarded-submission=14s + lifecycle and send; live timing UNRUN",
         lifecycle_started.elapsed().as_millis()
     );
 }

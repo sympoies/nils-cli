@@ -1,6 +1,8 @@
 use super::*;
 #[path = "auth_failover_claude_tests.rs"]
 mod failover;
+#[path = "auth_generation_wait_tests.rs"]
+mod generation_wait;
 #[path = "auth_recovery_send_fixture.rs"]
 mod guarded_send;
 #[path = "auth_publication_acceptance_tests.rs"]
@@ -433,25 +435,6 @@ fn auth_quarantine_blocks_raw_terminal_and_notifications_but_allows_interrupt() 
         ),
     )
     .unwrap();
-}
-
-#[test]
-fn auth_recovery_caps_publication_polls_even_without_clock_progress() {
-    let lock = GlobalStateLock::new();
-    let tmp = tempfile::tempdir().unwrap();
-    let _broker = broker(tmp.path(), &lock);
-    let context = context(tmp.path());
-    let tmux = fake_tmux(tmp.path());
-    let record = failed_runtime(&context, tmp.path(), &tmux, true);
-    for _ in 0..12 {
-        tick(&context, &record, &tmux, 100);
-    }
-    assert_eq!(recovery_receipt(&context)["polls"], 8);
-    assert_eq!(
-        recovery_receipt(&context)["last_reason"],
-        "publication_deadline"
-    );
-    assert_eq!(log(tmp.path()).matches("new-session").count(), 1);
 }
 
 fn assert_quarantined_operator_restart(force: bool) {

@@ -5,8 +5,7 @@ use crate::claude_account::generation::{self, Publication};
 use crate::cli::SpecialKey;
 use crate::coordination::auth_effects::UnknownOperation;
 
-const WAIT_SECONDS: i64 = 120;
-const MAX_POLLS: u32 = 8;
+const WAIT_SECONDS: i64 = 30;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -262,13 +261,12 @@ pub(crate) fn tick(
     {
         blocked(&mut receipt, "launch_generation_missing");
     } else if receipt.state == "waiting_generation" {
-        if now < receipt.started_at_epoch
-            || now >= receipt.deadline_epoch
-            || receipt.polls >= MAX_POLLS
-        {
+        // Controller cadence must not consume the publication window early.
+        // Waiting returns below, releasing both per-session locks until a later tick.
+        if now < receipt.started_at_epoch || now >= receipt.deadline_epoch {
             blocked(&mut receipt, "publication_deadline");
         } else {
-            receipt.polls += 1;
+            receipt.polls = receipt.polls.saturating_add(1);
             match generation::published(account) {
                 Ok(Some(p)) if p.newer_than(receipt.baseline.as_ref().unwrap()) => {
                     receipt.replacement = Some(p);
