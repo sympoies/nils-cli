@@ -782,20 +782,8 @@ fn invalid_agent_launch_profiles(message: &str) -> CliError {
     CliError::usage("invalid-agent-launch-profiles", message, None)
 }
 
-async fn bind_listener_and_start_delete_tombstone_cleanup(
-    context: &CliContext,
-    bind: SocketAddr,
-) -> io::Result<tokio::net::TcpListener> {
-    let listener = tokio::net::TcpListener::bind(bind).await?;
-    let cleanup_context = context.clone();
-    std::thread::spawn(move || {
-        let _ = cleanup_session_delete_tombstones(
-            &cleanup_context,
-            SESSION_DELETE_TOMBSTONE_CLEANUP_LIMIT,
-        );
-    });
-    Ok(listener)
-}
+mod cleanup;
+use cleanup::bind_listener_and_start_delete_tombstone_cleanup;
 
 const SERVE_OWNER_LOCK: &str = "serve.lock";
 // Long enough for a supervised restart whose predecessor is still exiting.
@@ -1161,13 +1149,16 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             provider_usage: Arc::new(crate::usage::UsageService::from_environment()),
             board_programs: Arc::new(crate::board::ProgramCache::from_environment()),
         });
-        let listener = match bind_listener_and_start_delete_tombstone_cleanup(context, bind).await {
-            Ok(listener) => listener,
-            Err(err) => {
-                eprintln!("error: failed to bind {bind}: {err}");
-                return exit::RUNTIME;
-            }
-        };
+        let listener =
+            match bind_listener_and_start_delete_tombstone_cleanup(context, bind, &state.tmux_bin)
+                .await
+            {
+                Ok(listener) => listener,
+                Err(err) => {
+                    eprintln!("error: failed to bind {bind}: {err}");
+                    return exit::RUNTIME;
+                }
+            };
         eprintln!(
             "{} serve listening on http://{bind} (machine={})",
             crate::command_identity::executable(),

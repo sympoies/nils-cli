@@ -27,19 +27,8 @@ struct Owner {
     stopped_at_epoch: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
-pub(crate) struct SweepEntry {
-    pub(crate) id: String,
-    pub(crate) reason: &'static str,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct SweepReport {
-    pub(crate) root: String,
-    pub(crate) grace_secs: u64,
-    pub(crate) removed: Vec<SweepEntry>,
-    pub(crate) retained: Vec<SweepEntry>,
-}
+mod sweep;
+pub(crate) use sweep::sweep;
 
 fn agent_home() -> Result<PathBuf, CliError> {
     if let Some(path) = non_empty_env("AGENT_HOME") {
@@ -94,12 +83,7 @@ fn io_error(code: &'static str, path: &Path, err: io::Error) -> CliError {
 
 /// The owner file of `dir` when it names `id`.
 fn read_owner(dir: &Path, id: &str) -> Option<Owner> {
-    let path = dir.join(OWNER_FILE);
-    if !fs::symlink_metadata(&path).ok()?.is_file() {
-        return None;
-    }
-    let owner: Owner = serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
-    (owner.schema_version == OWNER_SCHEMA && owner.session_id == id).then_some(owner)
+    sweep::read_owned_owner(dir, id)
 }
 
 /// The owner file of `dir` when it names `id` and `state_dir`.
@@ -120,7 +104,9 @@ fn write_owner(dir: &Path, owner: &Owner) -> Result<(), CliError> {
 }
 
 fn expired(stopped_at: u64, grace: Duration) -> bool {
-    now_epoch().saturating_sub(stopped_at) >= grace.as_secs()
+    now_epoch()
+        .checked_sub(stopped_at)
+        .is_some_and(|age| age >= grace.as_secs())
 }
 
 /// Create the session's `TMPDIR` for a launch and return it, or `None` when the
@@ -199,111 +185,6 @@ pub(crate) fn mark_stopped(state_dir: &Path, id: &str) {
     }
 }
 
-/// Remove stopped-session directories past `grace`, and directories of deleted
-/// session records. A session that is not provably stopped, or whose record is
-/// locked, keeps its directory. `budget` bounds the walk for callers on a
-/// latency-sensitive path.
-pub(crate) fn sweep(
-    context: &CliContext,
-    tmux_bin: &Path,
-    grace: Duration,
-    budget: Option<Duration>,
-) -> Result<SweepReport, CliError> {
-    let root = tmp_root(&context.state_dir)?;
-    let mut report = SweepReport {
-        root: display_path(&root),
-        grace_secs: grace.as_secs(),
-        removed: Vec::new(),
-        retained: Vec::new(),
-    };
-    let entries = match fs::read_dir(&root) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(report),
-        Err(err) => return Err(io_error("session-tmpdir-list-failed", &root, err)),
-    };
-    let mut ids: Vec<String> = entries
-        .flatten()
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| validate_id(name).is_ok())
-        .collect();
-    ids.sort();
-    let started = Instant::now();
-    for id in ids {
-        if budget.is_some_and(|budget| started.elapsed() >= budget) {
-            break;
-        }
-        let dir = root.join(&id);
-        let Some(mut owner) = read_owner(&dir, &id) else {
-            continue;
-        };
-        // Another live state directory owns its sessions' dirs. A state directory
-        // that no longer exists leaves nothing to reclaim them, so they are orphans.
-        let ours = owner.state_dir == display_path(&context.state_dir);
-        if !ours && Path::new(&owner.state_dir).is_dir() {
-            continue;
-        }
-        let record_gone = !ours || !session_dir(context, &id).join("session.json").exists();
-        let (remove, reason) = if record_gone {
-            let age = fs::metadata(&dir)
-                .and_then(|meta| meta.modified())
-                .ok()
-                .and_then(|modified| modified.elapsed().ok())
-                .unwrap_or_default();
-            (age >= grace, "orphan")
-        } else {
-            let Ok(Some(_lock)) = try_acquire_session_record_lock(context, &id) else {
-                report.retained.push(SweepEntry { id, reason: "busy" });
-                continue;
-            };
-            let Ok(record) = load_session_record(context, &id) else {
-                report.retained.push(SweepEntry {
-                    id,
-                    reason: "unreadable",
-                });
-                continue;
-            };
-            match session_status(context, tmux_bin, &record).as_str() {
-                "stopped" => {
-                    let stopped_at = *owner.stopped_at_epoch.get_or_insert_with(now_epoch);
-                    let due = expired(stopped_at, grace);
-                    if !due {
-                        let _ = write_owner(&dir, &owner);
-                    }
-                    (due, "expired")
-                }
-                "running" => {
-                    if owner.stopped_at_epoch.take().is_some() {
-                        let _ = write_owner(&dir, &owner);
-                    }
-                    report.retained.push(SweepEntry { id, reason: "live" });
-                    continue;
-                }
-                _ => {
-                    report.retained.push(SweepEntry {
-                        id,
-                        reason: "unknown",
-                    });
-                    continue;
-                }
-            }
-        };
-        if !remove {
-            report.retained.push(SweepEntry {
-                id,
-                reason: "grace",
-            });
-        } else if fs::remove_dir_all(&dir).is_ok() {
-            report.removed.push(SweepEntry { id, reason });
-        } else {
-            report.retained.push(SweepEntry {
-                id,
-                reason: "remove-failed",
-            });
-        }
-    }
-    Ok(report)
-}
-
 const SWEEP_COMMAND: &str = "tmp-sweep";
 
 pub(crate) fn run(context: &CliContext, args: cli::TmpArgs) -> i32 {
@@ -323,21 +204,13 @@ pub(crate) fn run(context: &CliContext, args: cli::TmpArgs) -> i32 {
     }
 }
 
-fn render_sweep_text(report: &SweepReport) -> String {
-    let mut text = format!(
-        "root: {}\ngrace_secs: {}\nremoved: {}\n",
-        report.root,
+fn render_sweep_text(report: &sweep::SweepReport) -> String {
+    format!(
+        "grace_secs: {}\nremoved: {}\nretained: {}\n",
         report.grace_secs,
-        report.removed.len()
-    );
-    for entry in &report.removed {
-        text.push_str(&format!("  {} ({})\n", entry.id, entry.reason));
-    }
-    text.push_str(&format!("retained: {}\n", report.retained.len()));
-    for entry in &report.retained {
-        text.push_str(&format!("  {} ({})\n", entry.id, entry.reason));
-    }
-    text
+        report.removed,
+        report.retained.values().sum::<usize>()
+    )
 }
 
 #[cfg(test)]
@@ -432,12 +305,7 @@ mod tests {
             .collect()
     }
 
-    fn ids(entries: &[SweepEntry]) -> Vec<(&str, &str)> {
-        entries
-            .iter()
-            .map(|entry| (entry.id.as_str(), entry.reason))
-            .collect()
-    }
+    mod safety;
 
     #[test]
     fn prepare_launch_creates_a_private_dir_under_agent_home() {
@@ -532,8 +400,8 @@ mod tests {
         .unwrap();
 
         assert!(dir.is_dir());
-        assert!(report.removed.is_empty());
-        assert_eq!(ids(&report.retained), vec![("sess-live", "live")]);
+        assert_eq!(report.removed, 0);
+        assert_eq!(report.retained.get("live"), Some(&1));
     }
 
     #[test]
@@ -547,15 +415,11 @@ mod tests {
 
         let report = sweep(&fixture.context(), &tmux, Duration::from_secs(3600), None).unwrap();
         assert!(dir.is_dir());
-        assert_eq!(ids(&report.retained), vec![("sess-stopped", "grace")]);
+        assert_eq!(report.retained.get("grace"), Some(&1));
 
         let report = sweep(&fixture.context(), &tmux, Duration::ZERO, None).unwrap();
         assert!(!dir.exists());
-        assert_eq!(ids(&report.removed), vec![("sess-stopped", "expired")]);
-        assert_eq!(
-            report.root,
-            fixture.dir.path().join("home/tmp").display().to_string()
-        );
+        assert_eq!(report.removed, 1);
     }
 
     #[test]
@@ -584,13 +448,10 @@ mod tests {
         .unwrap();
 
         assert!(!orphan_dir.exists());
-        assert!(!vanished_dir.exists());
+        assert!(vanished_dir.is_dir());
         assert!(foreign_dir.is_dir());
         assert!(unowned.is_dir());
-        assert_eq!(
-            ids(&report.removed),
-            vec![("sess-orphan", "orphan"), ("sess-vanished-state", "orphan")]
-        );
-        assert!(report.retained.is_empty());
+        assert_eq!(report.removed, 1);
+        assert_eq!(report.retained.get("foreign"), Some(&2));
     }
 }

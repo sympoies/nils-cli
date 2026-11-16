@@ -849,9 +849,19 @@ launchd services are unchanged.
   `AGENT_SESSION_TMP_GRACE_SECS`). Relaunching the session within the grace period
   keeps the contents; after it, the contents are removed before the relaunch.
 - `agent-session tmp sweep [--grace-secs N] [--format json]` removes directories of
-  stopped sessions past the grace period and of deleted session records, and reports
-  what it removed and kept. A running or unprovable session, or one whose record is
-  locked, is never removed. Every launch also sweeps best effort, within two seconds.
+  provably stopped sessions past the grace period and aged orphans with an absent
+  record in the same state root. Foreign state roots are always preserved, even
+  when the foreign root no longer exists. Unreadable records, uncertain liveness,
+  locked sessions, symlinks and untrusted filesystem ownership are preserved.
+  The session lock remains held through reclamation.
+- Every `serve` role runs a complete sweep after binding its listener and then
+  hourly, using its configured tmux executable. This does not depend on the board,
+  a relay connection or session launches. Passes do not overlap. A CLI-only host
+  without `serve` must schedule `agent-session tmp sweep` itself; every launch also
+  retains its best-effort two-second sweep.
+- Sweep JSON contains `grace_secs`, a `removed` count and `retained` counts by fixed
+  reason; text and daemon diagnostics contain counts only. Roots, session IDs,
+  filenames and filesystem error values are never included in sweep reporting.
 - To keep the system `TMPDIR` for one session, start it with
   `--env AGENT_RUNTIME_SESSION_TMPDIR=system` (a public launch switch, see below).
 
