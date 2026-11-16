@@ -138,6 +138,31 @@ fn auth_recovery_waits_for_publication_and_resumes_once_without_replaying_input(
     );
     crate::coordination::auth_effects::test_support::assert_retired(&context, &record);
     assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &current).is_ok());
+    assert!(crate::auth_incident::view(&context, &current).is_none());
+    crate::auth_incident::tick(&context, &current, &tmux, "fixture", Some(false)).unwrap();
+    let store: Value = serde_json::from_slice(
+        &fs::read(crate::session_dir(&context, ID).join("auth-incidents.json")).unwrap(),
+    )
+    .unwrap();
+    let incident = &store["incidents"][0];
+    assert_eq!(incident["status"], "runtime_replaced");
+    let alerts = crate::auth_incident::alert_delivery::list(&context, 100).unwrap();
+    for (phase, result) in [
+        ("incident", "authentication"),
+        ("recovery", "runtime_replaced"),
+    ] {
+        assert!(
+            alerts["alerts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|alert| alert["incident_id"] == incident["incident_id"]
+                    && alert["phase"] == phase
+                    && alert["result"] == result),
+            "missing {phase}/{result}: {alerts}"
+        );
+    }
+    assert!(crate::auth_incident::view(&context, &current).is_none());
     let effects = &log(tmp.path())[before.len()..];
     assert!(!effects.contains("load-buffer"));
     assert!(!effects.contains("send-keys"));
