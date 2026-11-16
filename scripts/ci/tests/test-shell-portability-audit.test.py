@@ -108,6 +108,13 @@ class TestShellPortability(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout)
         self.assert_spellings_rejected(("xargs -r cmd",))
 
+    def test_xargs_options_after_option_values_are_rejected(self):
+        self.assert_spellings_rejected((
+            "xargs -n 1 -r echo", "xargs -P 2 -r echo", "xargs -I {} -r echo",
+            "xargs -s 1024 --no-run-if-empty echo",
+            "xargs --max-args 1 --no-run-if-empty echo",
+            "xargs -n1 -r echo", "xargs -P2 -r echo"))
+
     def test_multiline_fallback_must_remain_present(self):
         line = "if stat -c '%a' file; then"
         context = line + "\n  return\nfi\nstat -f '%Lp' file"

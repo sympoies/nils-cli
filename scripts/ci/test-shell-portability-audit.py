@@ -21,16 +21,42 @@ ALLOWLIST = "scripts/ci/test-shell-portability-allowlist.json"
 RULE_TEST = "scripts/ci/tests/test-shell-portability-audit.test.py"
 
 
+def xargs_has_gnu_option(arguments):
+    # GNU findutils xargs: these options require a value, including when separate.
+    short_values = "adEILnPs"
+    long_values = {"--arg-file", "--delimiter", "--max-lines", "--max-args",
+                   "--max-procs", "--process-slot-var", "--max-chars"}
+    words = iter(arguments.split())
+    for token in words:
+        if token == "--" or not token.startswith("-") or token == "-":
+            break
+        if token.startswith("--"):
+            name, equals, _ = token.partition("=")
+            if name == "--no-run-if-empty":
+                return True
+            if name in long_values and not equals:
+                next(words, None)
+        else:
+            for index, flag in enumerate(token[1:], 1):
+                if flag == "r":
+                    return True
+                if flag in short_values:
+                    if index == len(token) - 1:
+                        next(words, None)
+                    break
+    return False
+
+
 def gnu_forms(line):
     hits = set()
     for command in COMMANDS.finditer(line):
         name = command[1]
         arguments = re.split(r"[;|&]", line[command.end():], maxsplit=1)[0]
-        previous_end = 0
+        if name == "xargs":
+            if xargs_has_gnu_option(arguments):
+                hits.add(name)
+            continue
         for option in OPTIONS.finditer(arguments):
-            if name == "xargs" and arguments[previous_end:option.start()].strip():
-                break
-            previous_end = option.end()
             token = option[0]
             if token == "--":
                 break
