@@ -113,7 +113,8 @@ class TestShellPortability(unittest.TestCase):
             "xargs -n 1 -r echo", "xargs -P 2 -r echo", "xargs -I {} -r echo",
             "xargs -s 1024 --no-run-if-empty echo",
             "xargs --max-args 1 --no-run-if-empty echo",
-            "xargs -n1 -r echo", "xargs -P2 -r echo"))
+            "xargs -n1 -r echo", "xargs -P2 -r echo", "xargs -0n 1 -r echo",
+            "xargs -I '{}' -r echo", "xargs -E marker -r echo", "xargs -L 1 -r echo"))
 
     def test_multiline_fallback_must_remain_present(self):
         line = "if stat -c '%a' file; then"
