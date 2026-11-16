@@ -914,6 +914,39 @@ mod tests {
         })).unwrap()
     }
 
+    fn incident_for_runtime(record: &SessionRecord) -> AuthIncident {
+        let mut store = Store::default();
+        observe_locked(
+            &mut store,
+            record,
+            "event",
+            AuthSource::ClaudeStopFailure,
+            Confidence::Authoritative,
+            "2030-01-01T00:00:00Z",
+        );
+        store.incidents.remove(0)
+    }
+
+    #[test]
+    fn runtime_identity_requires_launch_id() {
+        let record = record();
+        let incident = incident_for_runtime(&record);
+        assert!(same_runtime(&incident, &record));
+        let mut replacement = record.clone();
+        replacement.runtime.as_mut().unwrap().launch_id = "runtime-b".into();
+        assert!(!same_runtime(&incident, &replacement));
+    }
+
+    #[test]
+    fn runtime_identity_requires_generation() {
+        let record = record();
+        let incident = incident_for_runtime(&record);
+        assert!(same_runtime(&incident, &record));
+        let mut replacement = record.clone();
+        replacement.runtime.as_mut().unwrap().generation += 1;
+        assert!(!same_runtime(&incident, &replacement));
+    }
+
     #[test]
     fn auth_loss_runtime_replacement_does_not_strand_owner_outbox() {
         let tmp = tempfile::TempDir::new().unwrap();
