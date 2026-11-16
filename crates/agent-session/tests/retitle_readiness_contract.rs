@@ -20,6 +20,9 @@ use nils_test_support::bin;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
+#[path = "retitle_readiness_contract/broker_replay.rs"]
+mod broker_replay;
+
 const TOKEN: &str = "retitle-readiness-contract-bearer";
 const MACHINE: &str = "retitle-readiness-contract-machine";
 const SESSION_ID: &str = "retitle-readiness-contract";

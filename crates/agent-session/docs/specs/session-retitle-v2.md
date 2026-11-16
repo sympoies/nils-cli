@@ -305,7 +305,11 @@ At request time, account-broker rejection reports `retitle-account-missing`.
 Broker start failure or an unusable response reports `retitle-provider-unavailable`
 with `failure_class: account_broker_unavailable` and `configure_account_broker`
 as its action and recovery strategy. Broker timeouts retain
-`retitle-provider-timeout` and its existing retry contract.
+`retitle-provider-timeout` and its existing retry contract. Repeating an identical
+failed request and idempotency key preserves the broker-specific recovery
+details, including after a serving-process restart. Replay derives this variant
+from the last provider in the last durable attempt; a generic terminal fallback
+failure retains its generic recovery contract.
 
 `session-not-found` is the ordinary serve not-found contract. Any unexpected
 storage or worker error is collapsed to `retitle-worker-failed`; private paths

@@ -1,6 +1,9 @@
 use crate::CliError;
 use crate::retitle::RetitleReadiness;
 
+pub(super) const BROKER_UNAVAILABLE_REASON: &str = "account_broker_unavailable";
+const BROKER_UNAVAILABLE_ACTION: &str = "configure_account_broker";
+
 /// Classify a broker failure for readiness and request-time account handling.
 ///
 /// The broker protocol has no typed "no account" signal: a non-zero exit is
@@ -12,7 +15,7 @@ pub(super) fn selection_failure(error: &CliError) -> RetitleReadiness {
     if error.code() == "codex-account-broker-rejected" {
         RetitleReadiness::unavailable("account_missing", "select_account")
     } else {
-        RetitleReadiness::unavailable("account_broker_unavailable", "configure_account_broker")
+        RetitleReadiness::unavailable(BROKER_UNAVAILABLE_REASON, BROKER_UNAVAILABLE_ACTION)
     }
 }
 
@@ -31,17 +34,21 @@ pub(super) fn map_account_broker_error(error: CliError, message: &'static str) -
             "refresh_account",
         )
     } else {
-        CliError::unavailable(
-            "retitle-provider-unavailable",
-            "title account broker is unavailable",
-            Some(serde_json::json!({
-                "retryable": true,
-                "next_action": readiness.next_action,
-                "recovery": {"strategy": "configure_account_broker", "safe_to_retry": true},
-                "failure_class": readiness.reason_code,
-            })),
-        )
+        broker_unavailable()
     }
+}
+
+pub(super) fn broker_unavailable() -> CliError {
+    CliError::unavailable(
+        "retitle-provider-unavailable",
+        "title account broker is unavailable",
+        Some(serde_json::json!({
+            "retryable": true,
+            "next_action": BROKER_UNAVAILABLE_ACTION,
+            "recovery": {"strategy": BROKER_UNAVAILABLE_ACTION, "safe_to_retry": true},
+            "failure_class": BROKER_UNAVAILABLE_REASON,
+        })),
+    )
 }
 
 #[cfg(test)]

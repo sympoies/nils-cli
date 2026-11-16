@@ -1135,6 +1135,9 @@ use history_pairing::pair_turns;
 #[path = "retitle/account_readiness.rs"]
 mod account_readiness;
 use account_readiness::map_account_broker_error;
+#[path = "retitle/error_replay.rs"]
+mod error_replay;
+use error_replay::replayed_error;
 
 fn select_turns(
     mut turns: Vec<TitleContextTurn>,
@@ -2972,7 +2975,7 @@ pub(crate) fn admit(
             return Ok(Admission::Evaluate(record));
         }
         if receipt.state == "failed" {
-            return Err(replayed_error(&receipt.diagnostic_code));
+            return Err(replayed_error(receipt));
         }
         // Every in-process caller holds the per-session async gate before
         // admission. An in-progress receipt that remains here therefore came
@@ -3193,48 +3196,6 @@ fn latest_attempt_observation_from_marker(marker: &Value) -> Option<RetitleAttem
         .get("observation")
         .cloned()
         .and_then(|observation| serde_json::from_value(observation).ok())
-}
-
-fn replayed_error(code: &str) -> CliError {
-    match code {
-        "retitle-queue-saturated" => retitle_error(
-            "retitle-queue-saturated",
-            "title provider queue is saturated",
-            true,
-            "wait_and_retry",
-            "bounded_backoff",
-        ),
-        "retitle-context-unavailable" => context_unavailable(),
-        "retitle-account-missing" => retitle_error(
-            "retitle-account-missing",
-            "configured title account is unavailable",
-            true,
-            "select_account",
-            "refresh_account",
-        ),
-        "retitle-provider-timeout" => provider_timeout(),
-        "retitle-provider-unavailable" => provider_unavailable(),
-        "retitle-provider-rate-limited" => provider_rate_limited(),
-        "retitle-provider-quota-exceeded" => provider_quota_exceeded(),
-        "retitle-provider-malformed-response" => provider_malformed(),
-        "retitle-worker-failed" => retitle_error(
-            "retitle-worker-failed",
-            "title worker failed",
-            true,
-            "retry",
-            "retry_request",
-        ),
-        "retitle-api-key-missing" => api_key_missing(),
-        "retitle-state-conflict" => retitle_error(
-            "retitle-state-conflict",
-            "retitle state changed before completion",
-            false,
-            "refresh_session",
-            "refresh_session",
-        ),
-        "retitle-turn-conflict" => turn_conflict(),
-        _ => provider_unavailable(),
-    }
 }
 
 pub(crate) struct CommitResult {
