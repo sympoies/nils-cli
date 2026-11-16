@@ -63,3 +63,5 @@ fn malformed_composer_and_expired_budget_report_distinct_stages() {
 }
 
 mod stopped_idle;
+
+mod transaction;

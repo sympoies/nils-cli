@@ -1,0 +1,446 @@
+// Shared synthetic tmux state; each harness owns its send invocation.
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+
+use nils_test_support::cmd::CmdOutput;
+use serde_json::{Value, json};
+
+const TMUX_FAST_PATH: &str = include_str!("tmux-fast-path.sh");
+
+struct Fixture {
+    temp: tempfile::TempDir,
+}
+
+impl Fixture {
+    fn new(provider: &str) -> Self {
+        let temp = tempfile::tempdir_in("/tmp").expect("short fixture socket paths");
+        let dir = temp.path().join("state/sessions/guarded");
+        fs::create_dir_all(&dir).unwrap();
+        let record = json!({
+            "schema_version": "agent-session.session.v1", "id": "guarded",
+            "agent": provider, "mode": "interactive", "title": null,
+            "cwd": temp.path(), "tmux_session": "modeled-guarded",
+            "prompt_file": null, "log_file": null,
+            "created_at": "2000-01-01T00:00:00Z", "updated_at": "2000-01-01T00:00:00Z",
+            "runtime": { "kind": "tmux", "tmux_session": "modeled-guarded",
+                "generation": 1, "launch_id": "runtime-one", "started_at": "2000-01-01T00:00:00Z" },
+            "delete_tmux_identity": { "launch_id": "runtime-one", "session_id": "$42",
+                "pane_id": "%42", "pane_pid": 42 },
+            "provider_resume": { "provider": provider, "session_id": "provider-one",
+                "captured_at": "2000-01-01T00:00:00Z", "capture_method": "fixture", "resume_args": [] }
+        });
+        fs::write(
+            dir.join("session.json"),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+        fs::write(temp.path().join("provider"), provider).unwrap();
+        fs::write(temp.path().join("composer"), "").unwrap();
+        fs::write(temp.path().join("calls"), "").unwrap();
+        let script = r#"#!/usr/bin/env python3
+import atexit, json, pathlib, re, sys, textwrap, time, unicodedata
+root = pathlib.Path(__file__).parent
+args = sys.argv[1:]
+with (root / 'calls').open('a') as out: out.write(json.dumps(args) + '\n')
+command = args[0]
+provider = (root / 'provider').read_text()
+if (root / 'slow-cleanup-roundtrip').exists() and (root / 'paste-completed').exists():
+    time.sleep(0.7)
+def cell_width(value):
+    return sum(0 if unicodedata.combining(ch) else 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1 for ch in value)
+def print_cursor():
+    text = (root / 'composer').read_text()
+    cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
+    if (root / 'notice-mode').exists():
+        prefix = text[:cursor]
+        logical_rows = prefix.split('\n')
+        active_row = logical_rows[-1]
+        x, y = 2 + cell_width(active_row), len(logical_rows) - (1 if provider == 'codex' else 0)
+        if (root / 'wrap-80').exists() and cell_width(active_row) > 78:
+            chunks = [active_row[i:i + 78] for i in range(0, len(active_row), 78)]
+            if (root / 'word-wrap').exists(): chunks = textwrap.wrap(active_row, width=78, drop_whitespace=False)
+            x, y = 2 + cell_width(chunks[-1]), len(logical_rows) + len(chunks) - 1
+    else:
+        x, y = 2 + cursor, 1
+        if (root / 'wrap-80').exists() and len(text) > 78:
+            chunks = [text[i:i + 78] for i in range(0, len(text), 78)]
+            if (root / 'word-wrap').exists(): chunks = textwrap.wrap(text, width=78, drop_whitespace=False)
+            for row, chunk in enumerate(chunks):
+                if cursor <= len(chunk): x, y = 2 + cursor, 1 + row; break
+                cursor -= len(chunk)
+    if (root / 'captured-layout').exists():
+        snapshot = json.loads((root / 'captured-layout').read_text())
+        if text == snapshot['input']:
+            cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
+            x, y = snapshot.get('start', [2, 13]) if cursor == 0 else snapshot['prefix_end']
+            if cursor == len(text) - 1 and 'before_end' in snapshot: x, y = snapshot['before_end']
+            x, y = snapshot.get('cursor_positions', {}).get(str(cursor), [x, y])
+    if (root / 'late-home').exists():
+        count_path = root / 'cursor-reads'
+        count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+        count_path.write_text(str(count))
+        if count < 3: x, y = 3, 1
+    if (root / 'cursor-not-at-start').exists(): x, y = 3, 1
+    if (root / 'wrong-prefix-end').exists() and (root / 'right-sent').exists(): x += 1
+    if (root / 'slow-right-observation-ms').exists() and (root / 'slow-right-count').exists():
+        right_count = int((root / 'slow-right-count').read_text())
+        started = float((root / f'slow-right-start-{right_count}').read_text())
+        delay = int((root / 'slow-right-observation-ms').read_text()) / 1000
+        if time.monotonic() - started < delay: x, y = 3, 1
+    if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()):
+        label = (root / 'collapsed-label').read_text()
+        x, y = (2 if cursor == 0 else 2 + len(label) + cell_width(text[len(label):][:cursor - 1])), (0 if provider == 'codex' else 1)
+    print(x, y)
+
+if command == 'capture-pane' and 'display-message' in args: atexit.register(print_cursor)
+def append_draft_after_capture():
+    if (root / 'collapse-after-exact').exists() and (root / 'paste-completed').exists() and not (root / 'collapsed-label').exists():
+        count_path = root / 'collapse-capture-count'
+        count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+        count_path.write_text(str(count))
+        if count < 2: return
+        label = '[Pasted text #1]'
+        (root / 'composer').write_text(label)
+        (root / 'collapsed-label').write_text(label)
+        (root / 'cursor').write_text('1')
+        p = root / 'state/sessions/guarded/activity.json'
+        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
+        p.write_text(json.dumps(d))
+    if (root / 'replace-after-paste').exists(): return
+    if (root / 'draft-after-exact').exists() and (root / 'paste-completed').exists() and not (root / 'draft-injected').exists():
+        with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text() if (root / 'draft-text').exists() else ' user addition')
+        (root / 'draft-injected').touch()
+if command == 'capture-pane': atexit.register(append_draft_after_capture)
+if command == 'has-session':
+    if (root / 'entered').exists() and (root / 'exit-after-enter').exists():
+        if (root / 'exit-pending-pane').exists() and not (root / 'exit-pending-captured').exists(): sys.exit(0)
+        if (root / 'probe-unknown-after-enter').exists():
+            print('permission denied', file=sys.stderr); sys.exit(1)
+        print("can't find session: modeled-guarded", file=sys.stderr); sys.exit(1)
+    if (root / 'start-turn').exists():
+        p = root / 'state/sessions/guarded/activity.json'
+        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
+        p.write_text(json.dumps(d))
+    sys.exit(0)
+if command == 'show-environment':
+    commands = []
+    for arg in args:
+        if arg == ';': commands.append([])
+        elif not commands: commands = [[arg]]
+        else: commands[-1].append(arg)
+    for row in commands:
+        key = row[-1]
+        values = {'AGENT_SESSION_ID': 'guarded', 'AGENT_SESSION_RUNTIME_ID': 'runtime-one', 'AGENT_SESSION_STATE_DIR': str(root / 'state')}
+        if key == 'AGENT_SESSION_RUNTIME_ID':
+            path = root / 'runtime-read-count'
+            count = int(path.read_text()) + 1 if path.exists() else 1
+            path.write_text(str(count))
+            if (root / 'flip-second-runtime-read').exists() and count == 2: values[key] = 'runtime-replaced'
+            if (root / 'runtime-replaced').exists(): values[key] = 'runtime-replaced'
+        if key not in values: sys.exit(1)
+        print(key + '=' + values[key])
+    sys.exit(0)
+if command == 'load-buffer':
+    (root / 'buffer').write_bytes(pathlib.Path(args[-1]).read_bytes())
+    if (root / 'draft-on-load').exists(): (root / 'composer').write_text('new user draft')
+    if (root / 'capture-fails-on-load').exists(): (root / 'capture-fails').touch()
+    if (root / 'start-on-load').exists():
+        p = root / 'state/sessions/guarded/activity.json'
+        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
+        p.write_text(json.dumps(d))
+elif command == 'paste-buffer':
+    if (root / 'draft-before-paste').exists(): (root / 'composer').write_text('hello world ')
+    if (root / 'late-render').exists(): (root / 'late').write_text((root / 'buffer').read_text())
+    else:
+        with (root / 'composer').open('a') as out: out.write((root / 'buffer').read_text())
+    if (root / 'collapse-paste').exists():
+        count = len(re.findall(r'\r\n|\r|\n', (root / 'buffer').read_text()))
+        label = '[Pasted text #1' + (f' +{count} lines' if count else '') + ']'
+        (root / 'composer').write_text(label)
+        (root / 'collapsed-label').write_text(label)
+        (root / 'cursor').write_text('1')
+    if (root / 'codex-collapse-paste').exists():
+        pasted = (root / 'buffer').read_text().replace('\r\n', '\n').replace('\r', '\n')
+        label = f'[Pasted Content {len(pasted)} chars]'
+        (root / 'composer').write_text(label)
+        (root / 'collapsed-label').write_text(label)
+        (root / 'cursor').write_text('1')
+    if (root / 'fail-capture-after-paste').exists(): (root / 'capture-fails').touch()
+    if (root / 'inject-draft').exists() and not (root / 'draft-after-exact').exists():
+        with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text() if (root / 'draft-text').exists() else ' user addition')
+    (root / 'paste-completed').touch()
+    if (root / 'paste-replacement').exists(): (root / 'composer').write_text((root / 'paste-replacement').read_text())
+    if (root / 'replace-after-paste').exists(): (root / 'composer').write_text('replacement draft')
+    if (root / 'start-after-paste').exists():
+        p = root / 'state/sessions/guarded/activity.json'
+        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
+        p.write_text(json.dumps(d))
+elif command == 'display-message':
+    print_cursor()
+elif command == 'send-keys' and args[-2:] == ['Right', 'Left']:
+    cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len((root / 'composer').read_text())
+    count = int(args[args.index('-N') + 1])
+    text = (root / 'composer').read_text()
+    length = 1 + len(text) - len((root / 'collapsed-label').read_text()) if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()) else len(text)
+    (root / 'cursor').write_text(str(max(0, min(length, cursor + count) - count)))
+elif command == 'send-keys' and args[-1] in ('Home', 'End'):
+    text = (root / 'composer').read_text()
+    cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
+    if args[-1] == 'Home': cursor = text.rfind('\n', 0, cursor) + 1
+    else:
+        end = text.find('\n', cursor)
+        cursor = len(text) if end < 0 else end
+    (root / 'cursor').write_text(str(cursor))
+elif command == 'send-keys' and args[-1] == 'Right':
+    cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len((root / 'composer').read_text())
+    count = int(args[args.index('-N') + 1])
+    text = (root / 'composer').read_text()
+    length = 1 + len(text) - len((root / 'collapsed-label').read_text()) if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()) else len(text)
+    (root / 'cursor').write_text(str(min(length, cursor + count)))
+    (root / 'right-sent').touch()
+    if (root / 'slow-right-observation-ms').exists():
+        count_path = root / 'slow-right-count'
+        slow_count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+        count_path.write_text(str(slow_count))
+        (root / f'slow-right-start-{slow_count}').write_text(str(time.monotonic()))
+    if (root / 'replace-after-right').exists():
+        path = root / 'right-count'
+        count = int(path.read_text()) + 1 if path.exists() else 1
+        path.write_text(str(count))
+        if count == int((root / 'replace-after-right').read_text()): (root / 'runtime-replaced').touch()
+    if (root / 'draft-on-right').exists() and not (root / 'right-draft-injected').exists():
+        with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text())
+        (root / 'captured-layout').write_text((root / 'right-layout').read_text())
+        (root / 'right-draft-injected').touch()
+elif command == 'send-keys' and args[-1] == 'Left':
+    cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len((root / 'composer').read_text())
+    count = int(args[args.index('-N') + 1])
+    (root / 'cursor').write_text(str(max(0, cursor - count)))
+elif command == 'send-keys' and args[-1] == 'C-a':
+    (root / 'cursor').write_text('0')
+    if (root / 'draft-on-clear-home').exists() and (root / 'entered').exists(): (root / 'composer').write_text('replacement draft')
+    if (root / 'draft-on-home').exists(): (root / 'composer').write_text('replacement draft')
+    if (root / 'replace-on-home').exists(): (root / 'runtime-replaced').touch()
+elif command == 'send-keys' and args[-1] in ('BSpace', 'DC'):
+    if (root / 'backspace-stalls').exists():
+        (root / 'capture-fails').touch()
+        import time
+        time.sleep(3)
+    if not (root / 'backspace-ignored').exists():
+        count = int(args[args.index('-N') + 1]) if '-N' in args else 1
+        text = (root / 'composer').read_text()
+        cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
+        if (root / 'collapsed-label').exists() and text.startswith((root / 'collapsed-label').read_text()) and cursor > 0:
+            label = (root / 'collapsed-label').read_text()
+            units = [label] + list(text[len(label):])
+            text = ''.join(units[:max(0, cursor - count)] + units[cursor:])
+        elif args[-1] == 'DC': text = text[:cursor] + text[cursor + count:]
+        else: text = text[:max(0, cursor - count)] + text[cursor:]
+        (root / 'composer').write_text(text)
+        if (root / 'redraw-after-delete').exists(): (root / 'redraw-pending').touch()
+elif command == 'send-keys' and args[-1] == 'Enter':
+    if (root / 'start-turn-on-enter').exists():
+        p = root / 'state/sessions/guarded/activity.json'
+        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
+        p.write_text(json.dumps(d))
+    if (root / 'exit-after-enter').exists():
+        (root / 'entered').touch(); sys.exit(0)
+    if (root / 'unverified-after-enter').exists():
+        (root / 'entered').touch(); sys.exit(0)
+    submitted = (root / 'composer').read_text()
+    if (root / 'codex-collapse-paste').exists() and submitted == (root / 'collapsed-label').read_text():
+        submitted = (root / 'buffer').read_text().replace('\r\n', '\n').replace('\r', '\n')
+    with (root / 'submissions').open('a') as out: out.write(json.dumps(submitted) + '\n')
+    (root / 'composer').write_text('')
+    if (root / 'replace-after-enter').exists(): (root / 'runtime-replaced').touch()
+elif command == 'capture-pane':
+    if (root / 'slow-cleanup-capture').exists() and (root / 'paste-completed').exists():
+        time.sleep(int((root / 'slow-cleanup-capture').read_text()) / 1000)
+    if (root / 'exit-after-enter').exists() and (root / 'entered').exists():
+        if (root / 'exit-pending-pane').exists() and not (root / 'exit-pending-captured').exists():
+            (root / 'exit-pending-captured').touch()
+        else: sys.exit(1)
+    if (root / 'unverified-after-enter').exists() and (root / 'entered').exists() and '-e' not in args:
+        print('provider view unavailable'); sys.exit(0)
+    if (root / 'redraw-pending').exists():
+        (root / 'redraw-pending').unlink()
+        sys.exit(1)
+    if (root / 'late').exists():
+        # A slow renderer shows the paste only from the third capture after it.
+        n = int((root / 'late-n').read_text()) + 1 if (root / 'late-n').exists() else 1
+        (root / 'late-n').write_text(str(n))
+        if n >= 3:
+            with (root / 'composer').open('a') as out: out.write((root / 'late').read_text())
+            (root / 'late').unlink()
+    count_path = root / 'capture-count'
+    count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+    count_path.write_text(str(count))
+    mismatch_race = (root / 'composer-mismatch-disappears-before-retry').exists()
+    fail_capture = (root / 'fail-post-paste-capture-once').exists()
+    if (fail_capture or mismatch_race) and (root / 'paste-completed').exists():
+        post_paste_count_path = root / 'post-paste-capture-count'
+        post_paste_count = int(post_paste_count_path.read_text()) + 1 if post_paste_count_path.exists() else 1
+        post_paste_count_path.write_text(str(post_paste_count))
+        if fail_capture:
+            fail_at = int((root / 'fail-post-paste-capture-once').read_text())
+            if post_paste_count == fail_at: sys.exit(1)
+        mismatch_at = int((root / 'mismatch-on-capture').read_text()) if (root / 'mismatch-on-capture').exists() else 3
+        if mismatch_race and post_paste_count in (mismatch_at, mismatch_at + 1):
+            snapshot_name = 'mismatch-layout' if post_paste_count == mismatch_at else 'exact-layout'
+            snapshot = json.loads((root / snapshot_name).read_text())
+            (root / 'composer').write_text(snapshot['input'])
+            (root / 'captured-layout').write_text(json.dumps(snapshot))
+    if (root / 'fail-second-capture').exists() and count == 2: sys.exit(1)
+    if (root / 'capture-fails').exists(): sys.exit(1)
+    if (root / 'capture-oversize').exists():
+        if provider == 'claude': print('────────────────────────────\n❯ \x1b[2mTry \"edit <filepath> to...\"\x1b[22m\n────────────────────────────')
+        else: print('› \x1b[2mAsk Codex to do anything\x1b[22m\n')
+        print('x' * (2 * 1024 * 1024))
+        sys.exit(0)
+    if (root / 'draft-fourth-capture').exists() and count >= 4: (root / 'composer').write_text('user addition')
+    text = (root / 'composer').read_text()
+    if (root / 'captured-layout').exists():
+        snapshot = json.loads((root / 'captured-layout').read_text())
+        if text == snapshot['input']:
+            print(snapshot['pane'] if '-e' in args else re.sub(r'\x1b\[[0-9;]*m', '', snapshot['pane']))
+            sys.exit(0)
+    # Native capture trims occupied spaces without -N; -T excludes unused cells.
+    occupied = text if '-N' in args else text.rstrip(' ')
+    padding = ' ' * 8 if '-N' in args and '-T' not in args else ''
+    native = (root / 'native-layout').exists()
+    rows = ''
+    # An 80-column pane leaves 78 cells after the prompt/continuation prefix.
+    if (root / 'wrap-80').exists() and len(occupied) > 78 and '-J' not in args and not ((root / 'notice-mode').exists() and provider == 'claude'):
+        chunks = [occupied[i:i + 78] for i in range(0, len(occupied), 78)]
+        if (root / 'word-wrap').exists():
+            chunks = textwrap.wrap(occupied, width=78, drop_whitespace=False)
+            # Preserve spaces belonging to the logical input as well as padding.
+            chunks = [row.ljust(78) for row in chunks[:-1]] + chunks[-1:]
+        occupied = chunks[0]
+        rows = ''.join('  ' + row + (' ' * (78 - len(row)) if provider == 'claude' else '') + '\n' for row in chunks[1:])
+    footer = '\x1b]8;;https://example.invalid/\x1b\\status\x1b]8;;\x1b\\' if native else 'status'
+    suggestion = (root / 'suggestion').read_text() if (root / 'suggestion').exists() else None
+    top = '─── a long session title that fills the width of the pane ─' if (root / 'titled-border').exists() else '────────────────────────────'
+    # Live Claude: a long title leaves no border dashes, and every composer row
+    # is padded with written spaces that -N and -T keep.
+    if (root / 'long-title').exists(): top = ' a deliberately long session title for the composer border lookup… ─'
+    live = (root / 'live-layout').exists() and provider == 'claude'
+    def pad(row):
+        if live and (root / 'wrap-80').exists(): return row + ' ' * max(0, 78 - len(row))
+        return row + ' ' * 20 if live else row
+    if suggestion and not text:
+        shown = ('\x1b[2m' + suggestion + '\x1b[22m') if '-e' in args else suggestion
+        # Claude styles every suggestion word on its own; the spaces stay plain.
+        if (root / 'suggestion-words').exists() and '-e' in args: shown = ' '.join('\x1b[2m' + w + '\x1b[0m' for w in suggestion.split(' '))
+        if (root / 'suggestion-padding').exists(): shown += (root / 'suggestion-padding').read_text()
+        if provider == 'claude': print(top + '\n❯\u00a0' + pad(shown) + '\n────────────────────────────\n  ' + footer)
+        else: print('› ' + shown + '\n\n  ' + footer)
+        sys.exit(0)
+    if provider == 'claude':
+        shown = occupied + padding if text or (root / 'bare-composer').exists() else ('\x1b[2mTry "edit <filepath> to..."\x1b[22m' if '-e' in args else 'Try "edit <filepath> to..."')
+        if (root / 'notice-mode').exists() and text and ('\n' in shown or ((root / 'wrap-80').exists() and '-J' not in args and len(shown) > 78)):
+            logical_rows = shown.split('\n')
+            physical_rows = []
+            for logical_index, logical in enumerate(logical_rows):
+                chunks = [logical]
+                if (root / 'wrap-80').exists() and '-J' not in args and len(logical) > 78:
+                    chunks = [logical[i:i + 78] for i in range(0, len(logical), 78)]
+                    if (root / 'word-wrap').exists(): chunks = textwrap.wrap(logical, width=78, drop_whitespace=False)
+                for chunk_index, chunk in enumerate(chunks):
+                    if logical_index == 0 and chunk_index == 0:
+                        physical_rows.append(chunk)
+                    else:
+                        physical_rows.append(('  ' + chunk) if chunk else '')
+            physical_rows[-1] = pad(physical_rows[-1])
+            print(top + '\n❯\u00a0' + physical_rows[0] + '\n' + '\n'.join(physical_rows[1:]) + '\n────────────────────────────\n  ' + footer)
+        else:
+            print(top + '\n❯\u00a0' + pad(shown) + '\n' + rows + '────────────────────────────\n  ' + footer)
+    else:
+        shown = occupied + padding if text else ('\x1b[2mAsk Codex to do anything\x1b[22m' if '-e' in args else 'Ask Codex to do anything')
+        if (root / 'notice-mode').exists() and text:
+            logical_rows = shown.split('\n')
+            shown = logical_rows[0] + ''.join('\n' + ('  ' + row if row.strip(' ') else ' ') for row in logical_rows[1:])
+        print('› ' + shown + '\n' + rows + '\n  ' + footer)
+"#;
+        // The model is a Python process per call; its shell fast path answers
+        // the repeated default-state identity probes without starting Python.
+        for (name, body) in [("tmux-model", script), ("tmux", TMUX_FAST_PATH)] {
+            let path = temp.path().join(name);
+            fs::write(&path, body).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let fixture = Self { temp };
+        fixture.idle();
+        fixture
+    }
+
+    fn root(&self) -> &Path {
+        self.temp.path()
+    }
+
+    fn idle(&self) {
+        let document = json!({
+            "schema_version": "agent-session.activity.v1", "runtime_id": "runtime-one",
+            "runtime_generation": 1, "seen_event_count": 0,
+            "state": { "schema_version": "agent-session.turn-state.v1", "phase": "waiting",
+                "phase_changed_at": "2000-01-01T00:00:00Z", "revision": 2,
+                "source": { "kind": "provider_hook", "confidence": "authoritative" } }
+        });
+        fs::write(
+            self.root().join("state/sessions/guarded/activity.json"),
+            serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn send(&self, extra: &[&str]) -> CmdOutput {
+        self.send_text(Some("continue-fixture"), extra)
+    }
+
+    fn send_text(&self, text: Option<&str>, extra: &[&str]) -> CmdOutput {
+        let state = self.root().join("state");
+        let tmux = self.root().join("tmux");
+        let mut args = vec![
+            "--state-dir",
+            state.to_str().unwrap(),
+            "send",
+            "guarded",
+            "--tmux-bin",
+            tmux.to_str().unwrap(),
+            "--format",
+            "json",
+            "--key",
+            "enter",
+        ];
+        if let Some(text) = text {
+            args.extend_from_slice(&["--text", text]);
+        }
+        args.extend_from_slice(extra);
+        run_fixture(self.root(), &args)
+    }
+
+    fn calls(&self) -> Vec<Vec<String>> {
+        fs::read_to_string(self.root().join("calls"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    fn no_delivery(&self) {
+        assert!(
+            self.calls()
+                .iter()
+                .all(|call| !matches!(call[0].as_str(), "paste-buffer" | "send-keys"))
+        );
+        assert!(!self.root().join("submissions").exists());
+    }
+
+    fn refused(&self, output: &CmdOutput, code: &str) -> Value {
+        assert_eq!(output.code, 1, "{}", output.stderr_text());
+        let value = output.stdout_json();
+        assert_eq!(value["error"]["code"], code, "{value}");
+        value
+    }
+}

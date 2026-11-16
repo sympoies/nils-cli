@@ -549,7 +549,10 @@ impl Admission<'_> {
                 stage,
             ));
         }
-        Ok(remaining.min(PANE_OBSERVATION_COMMAND_TIMEOUT))
+        let timeout = remaining.min(PANE_OBSERVATION_COMMAND_TIMEOUT);
+        #[cfg(test)]
+        let timeout = crate::send::test_budget::current().unwrap_or(timeout);
+        Ok(timeout)
     }
 
     fn refusal(&self, code: &str, message: &str, guard: &str, stage: &str) -> CliError {
@@ -568,6 +571,8 @@ pub(crate) fn capture_styled(tmux_bin: &Path, target: &str, timeout: Duration) -
     if let Some(pane) = crate::restart::test_control::capture(tmux_bin) {
         return pane;
     }
+    #[cfg(test)]
+    let timeout = crate::send::test_budget::current().unwrap_or(timeout);
     let mut command = std::process::Command::new(tmux_bin);
     // Preserve occupied trailing spaces without padding the row to pane width.
     command.args(["capture-pane", "-p", "-e", "-N", "-T", "-t", target]);
