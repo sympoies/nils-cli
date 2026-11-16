@@ -74,9 +74,11 @@ an existing branch. The steward delivers the PR through normal required
 checks, review and the merge queue.
 
 An empty fold opens no PR. An existing PR for that UTC date, including a
-closed or merged PR, is preserved and the run skips. Runs are serialized across
-release and manual events. If a date branch exists without a PR, the run stops
-for maintainer reconciliation; it does not overwrite that branch.
+closed or merged PR, is preserved and the run skips. Publication runs are
+serialized across release and manual events. Dry runs use a separate concurrency
+group, so inspection cannot replace a queued publication. If a date branch exists
+without a PR, the run stops for maintainer reconciliation; it does not overwrite
+that branch.
 
 For recovery, select **Actions › Devlog fold › Run workflow** on `main`.
 `dry_run` defaults to `true`: the existing script performs the fold locally,

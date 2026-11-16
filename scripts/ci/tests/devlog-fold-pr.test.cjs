@@ -52,7 +52,9 @@ function fixture({ pending = true, entryDate = "2020-01-02" } = {}) {
   git("add", ".");
   git("commit", "-qm", "Fixture baseline");
   const base = git("rev-parse", "HEAD");
-  const date = new Date().toISOString().slice(0, 10);
+  // The fixed instant also checks conversion to the previous UTC calendar date.
+  const now = new Date("2030-01-02T00:30:00+02:00");
+  const date = now.toISOString().slice(0, 10);
   const branch = `chore/devlog-fold-${date}`;
   const state = { pulls: [], writes: [], verified: true, base, occupied: false, moved: false };
   const rest = {
@@ -88,7 +90,7 @@ function fixture({ pending = true, entryDate = "2020-01-02" } = {}) {
   };
   const github = { rest, paginate: async (method, args) => (await method(args)).data };
   return { state, git, dir, branch, options: { github,
-    context: { repo: { owner: "example", repo: "project" } }, root: dir, env } };
+    context: { repo: { owner: "example", repo: "project" } }, root: dir, env, now } };
 }
 function runFold(options) {
   return require("../../../.github/scripts/devlog-fold-pr.cjs").runFoldPR(options);
@@ -99,6 +101,7 @@ test("dry-run executes the real fold and leaves every remote ref untouched", asy
   const result = await runFold({ ...f.options, dryRun: true });
   assert.equal(result.status, "dry-run");
   assert.equal(result.branch, f.branch);
+  assert.equal(result.branch, "chore/devlog-fold-2030-01-01");
   assert.deepEqual(f.state.writes, []);
   assert.equal(f.git("rev-parse", "main"), f.state.base);
   assert.equal(f.git("rev-parse", "HEAD"), f.state.base);
@@ -191,5 +194,13 @@ test("PR fixture runs cannot displace queued fold publication", () => {
   const workflow = fs.readFileSync(path.join(root, ".github/workflows/devlog-fold.yml"), "utf8");
   assert.doesNotMatch(workflow, /^concurrency:/m, "PR fixtures must not share the publication lock");
   const foldJob = workflow.split("\n  fold:\n")[1];
-  assert.match(foldJob, /    concurrency:\n      group: devlog-fold\n      cancel-in-progress: false/);
+  assert.match(foldJob, /    concurrency:\n      group: devlog-fold[^\n]*\n      cancel-in-progress: false/);
+});
+
+test("manual dry runs cannot displace queued fold publication", () => {
+  const workflow = fs.readFileSync(path.join(root, ".github/workflows/devlog-fold.yml"), "utf8");
+  const foldJob = workflow.split("\n  fold:\n")[1];
+  const group = foldJob.match(/^      group: (.+)$/m)?.[1] ?? "";
+  assert.match(group, /\$\{\{ inputs[.]dry_run && '-dry-run' \|\| '' \}\}/,
+    "Manual dry runs must use a separate concurrency group");
 });
