@@ -26,7 +26,11 @@ def gnu_forms(line):
     for command in COMMANDS.finditer(line):
         name = command[1]
         arguments = re.split(r"[;|&]", line[command.end():], maxsplit=1)[0]
+        previous_end = 0
         for option in OPTIONS.finditer(arguments):
+            if name == "xargs" and arguments[previous_end:option.start()].strip():
+                break
+            previous_end = option.end()
             token = option[0]
             if token == "--":
                 break

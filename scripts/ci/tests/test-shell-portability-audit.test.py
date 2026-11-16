@@ -89,6 +89,25 @@ class TestShellPortability(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("stale allowlist", result.stdout)
 
+    def test_blank_allowlist_reason_is_rejected(self):
+        self.write("crates/example/tests/stub.rs", FALLBACK + "\n")
+        self.allow(FALLBACK)
+        path = self.root / "scripts/ci/test-shell-portability-allowlist.json"
+        rows = json.loads(path.read_text())
+        rows[0]["reason"] = "  "
+        path.write_text(json.dumps(rows))
+        result = self.audit()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("invalid or duplicate allowlist entry", result.stdout)
+
+    def test_xargs_command_operands_are_not_xargs_options(self):
+        for command in ("xargs rm -rf", "xargs grep -rn x", "xargs ls -ltr"):
+            with self.subTest(command=command):
+                self.write("tests/fixtures/stub.sh", command + "\n")
+                result = self.audit()
+                self.assertEqual(result.returncode, 0, result.stdout)
+        self.assert_spellings_rejected(("xargs -r cmd",))
+
     def test_multiline_fallback_must_remain_present(self):
         line = "if stat -c '%a' file; then"
         context = line + "\n  return\nfi\nstat -f '%Lp' file"
