@@ -1134,6 +1134,7 @@ mod history_pairing;
 use history_pairing::pair_turns;
 #[path = "retitle/account_readiness.rs"]
 mod account_readiness;
+use account_readiness::map_account_broker_error;
 
 fn select_turns(
     mut turns: Vec<TitleContextTurn>,
@@ -2173,20 +2174,6 @@ where
                 map_account_broker_error(error, "configured title account is unavailable")
             })
         }
-    }
-}
-
-fn map_account_broker_error(error: CliError, message: &'static str) -> CliError {
-    if error.code() == "codex-account-broker-timeout" {
-        provider_timeout()
-    } else {
-        retitle_error(
-            "retitle-account-missing",
-            message,
-            true,
-            "select_account",
-            "refresh_account",
-        )
     }
 }
 
