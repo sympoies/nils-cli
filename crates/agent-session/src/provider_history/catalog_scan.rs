@@ -311,7 +311,7 @@ fn scan_step(visited: &mut usize, deadline: Instant, truncated: &mut bool) -> bo
 
 #[cfg(test)]
 #[path = "catalog_scan_tests.rs"]
-mod tests;
+pub(super) mod tests;
 
 // Tests can freeze the scan clock for assertions unrelated to time limits.
 pub(super) fn deadline_expired(deadline: Instant) -> bool {

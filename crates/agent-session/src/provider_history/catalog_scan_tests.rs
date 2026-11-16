@@ -227,10 +227,10 @@ pub(super) fn scan_clock_frozen() -> bool {
     FROZEN_SCAN_CLOCK.with(std::cell::Cell::get)
 }
 
-struct FrozenScanClock;
+pub(in crate::provider_history) struct FrozenScanClock;
 
 impl FrozenScanClock {
-    fn new() -> Self {
+    pub(in crate::provider_history) fn new() -> Self {
         FROZEN_SCAN_CLOCK.with(|frozen| assert!(!frozen.replace(true)));
         Self
     }

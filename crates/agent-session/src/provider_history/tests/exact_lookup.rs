@@ -201,7 +201,8 @@ fn exact_claude_list_rejects_symlinked_project_and_transcript() {
 #[test]
 fn full_id_search_includes_mentions_after_exact_once() {
     let tmp = tempfile::tempdir().unwrap();
-    let project = tmp.path().join("projects/repo");
+    let root = tmp.path().join("fixture");
+    let project = root.join("projects/repo");
     fs::create_dir_all(&project).unwrap();
     let id = "12345678-1234-1234-1234-123456789abc";
     let mention = "87654321-4321-4321-4321-cba987654321";
@@ -209,7 +210,7 @@ fn full_id_search_includes_mentions_after_exact_once() {
         fs::write(project.join(format!("{session}.jsonl")), format!("{{\"sessionId\":\"{session}\",\"cwd\":\"/work/repo\",\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"{prompt}\"}}}}\n")).unwrap();
     }
     write_star(
-        &tmp.path().join("stars"),
+        &root.join("stars"),
         &stable_history_id("claude", None, mention),
         "2026-01-01T00:00:00Z",
     )
@@ -218,11 +219,12 @@ fn full_id_search_includes_mentions_after_exact_once() {
         vec![HistorySource {
             provider: "claude".into(),
             agent_profile: None,
-            root: tmp.path().join("projects"),
+            root: root.join("projects"),
         }],
-        tmp.path().join("archives"),
-        tmp.path().join("stars"),
+        root.join("archives"),
+        root.join("stars"),
     );
+    let _clock = catalog_scan::tests::FrozenScanClock::new();
     let page = catalog.list("test", Some(id), None, None, 50).unwrap();
     let ids: Vec<_> = page
         .sessions
