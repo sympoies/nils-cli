@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 
 
 COMMANDS = re.compile(r"\b(stat|sed|readlink|date|grep|xargs)\s+")
@@ -26,7 +27,22 @@ def xargs_has_gnu_option(arguments):
     short_values = "adEILnPs"
     long_values = {"--arg-file", "--delimiter", "--max-lines", "--max-args",
                    "--max-procs", "--process-slot-var", "--max-chars"}
-    words = iter(arguments.split())
+    long_options = long_values | {"--null", "--eof", "--replace", "--open-tty",
+                                 "--interactive", "--no-run-if-empty", "--show-limits",
+                                 "--verbose", "--exit", "--help", "--version"}
+    try:
+        words = iter(shlex.split(arguments))
+    except ValueError:
+        # Embedded source strings may not be a complete shell fragment.
+        for option in OPTIONS.finditer(arguments):
+            token = option[0]
+            if token == "--":
+                break
+            if (token.split("=", 1)[0] == "--no-run-if-empty"
+                    or token.startswith("-") and not token.startswith("--")
+                    and "r" in re.match(r"-([A-Za-z0-9]+)", token)[1]):
+                return True
+        return False
     for token in words:
         if token == "--" or not token.startswith("-") or token == "-":
             break
@@ -34,7 +50,8 @@ def xargs_has_gnu_option(arguments):
             name, equals, _ = token.partition("=")
             if name == "--no-run-if-empty":
                 return True
-            if name in long_values and not equals:
+            matches = [option for option in long_options if option.startswith(name)]
+            if len(matches) == 1 and matches[0] in long_values and not equals:
                 next(words, None)
         else:
             for index, flag in enumerate(token[1:], 1):

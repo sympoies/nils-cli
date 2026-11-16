@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Synthetic portability regressions; never execute the fixture shell text."""
 import json
+import importlib.util
+import itertools
 from pathlib import Path
 import shutil
 import subprocess
@@ -115,6 +117,35 @@ class TestShellPortability(unittest.TestCase):
             "xargs --max-args 1 --no-run-if-empty echo",
             "xargs -n1 -r echo", "xargs -P2 -r echo", "xargs -0n 1 -r echo",
             "xargs -I '{}' -r echo", "xargs -E marker -r echo", "xargs -L 1 -r echo"))
+
+    def test_xargs_quoted_values_and_embedded_strings_are_rejected(self):
+        self.assert_spellings_rejected((
+            "xargs --max-a 1 -r echo", "xargs -I 'a b' -r echo",
+            r"xargs -I a\ b -r echo", "xargs --delimiter=' ' -r echo",
+            'let cmd = "xargs --no-run-if-empty";',
+            'let cmd = r#"xargs --no-run-if-empty"#;'))
+
+    def test_xargs_option_corpus(self):
+        spec = importlib.util.spec_from_file_location("portability_audit", AUDIT)
+        audit = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(audit)
+        values = ("1", "'a b'", r"a\ b")
+        short = "adEILnPs"
+        long = ("arg-file", "delimiter", "max-lines", "max-args", "max-procs",
+                "process-slot-var", "max-chars")
+        forms = [f"-{option} {value} -r echo" for option, value in itertools.product(short, values)]
+        forms += [f"-{option}1 -r echo" for option in short]
+        forms += [f"--{option}{sep}{value} -r echo"
+                  for option, sep, value in itertools.product(long, (" ", "="), values)]
+        forms += ["--max-a 1 -r echo", "-0n 1 -r echo", "-0r echo", "-rn1 echo", "-r"]
+        contexts = (lambda s: s, lambda s: f'let cmd = "{s}";',
+                    lambda s: f'let cmd = r#"{s}"#;', lambda s: f'printf \'%s\' "{s}"')
+        for form, context in itertools.product(forms, contexts):
+            with self.subTest(form=form, context=context):
+                self.assertIn("xargs", audit.gnu_forms(context("xargs " + form)))
+        for form in ("-- -r", "echo", "rm -rf", "grep -rn x", "ls -ltr"):
+            with self.subTest(form=form):
+                self.assertNotIn("xargs", audit.gnu_forms("xargs " + form))
 
     def test_multiline_fallback_must_remain_present(self):
         line = "if stat -c '%a' file; then"
