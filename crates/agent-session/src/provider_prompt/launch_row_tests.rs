@@ -248,6 +248,46 @@ fn flattened_text_that_differs_from_the_notice_stays_visible_under_a_binding() {
     assert_eq!(current(&mut cold), Some(other));
 }
 
+#[test]
+fn flattened_notice_with_trailing_words_stays_visible_under_a_binding() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("synthetic.jsonl");
+    let other = format!("{} additional task", short_notice_echo().trim_end());
+    for echo in [
+        json!({"type":"last-prompt", "sessionId":"synthetic", "lastPrompt":other}),
+        json!({"type":"queue-operation", "operation":"enqueue", "sessionId":"synthetic",
+        "content":other}),
+    ] {
+        let binding = launched(&path);
+        let mut live = open(&path, &binding);
+        append(&path, echo.clone());
+        assert_eq!(current(&mut live), Some(other.clone()), "live: {echo}");
+        let mut cold = open(&path, &binding);
+        assert_eq!(current(&mut cold), Some(other.clone()), "cold: {echo}");
+    }
+}
+
+#[test]
+fn short_notice_prefix_without_ellipsis_stays_visible_under_a_binding() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("synthetic.jsonl");
+    // Keep the complete header and only the first body word, below the echo limit.
+    let flat = short_notice_echo();
+    let prefix = flat.strip_suffix(" task ").unwrap();
+    for echo in [
+        json!({"type":"last-prompt", "sessionId":"synthetic", "lastPrompt":prefix}),
+        json!({"type":"queue-operation", "operation":"enqueue", "sessionId":"synthetic",
+        "content":prefix}),
+    ] {
+        let binding = launched(&path);
+        let mut live = open(&path, &binding);
+        append(&path, echo.clone());
+        assert_eq!(current(&mut live), Some(prefix.to_string()), "live: {echo}");
+        let mut cold = open(&path, &binding);
+        assert_eq!(current(&mut cold), Some(prefix.to_string()), "cold: {echo}");
+    }
+}
+
 /// Each guard of the truncated-prefix predicate, alone, keeps a non-echo
 /// visible under a binding.
 #[test]
