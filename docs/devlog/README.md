@@ -144,7 +144,7 @@ are optional: omit the whole section rather than leaving a placeholder in it.
 
 <!-- devlog-pending-index -->
 
-- [2026-11-14-issue-3680-history-credentials](pending/2026-11-14-issue-3680-history-credentials.md)
-- [2026-11-14-issue-3684-same-account-auth-restart](pending/2026-11-14-issue-3684-same-account-auth-restart.md)
-- [2026-11-14-issue-3686-claude-outcome-unknown](pending/2026-11-14-issue-3686-claude-outcome-unknown.md)
-- [2026-11-14-issue-3692-runtime-adoption](pending/2026-11-14-issue-3692-runtime-adoption.md)
+- [2026-11-16-isolate-seeded-catalog-scan-fixture-18e852571761c5b4-4b9bb](pending/2026-11-16-isolate-seeded-catalog-scan-fixture-18e852571761c5b4-4b9bb.md)
+- [2026-11-16-issue-3081-state-shape-inventory](pending/2026-11-16-issue-3081-state-shape-inventory.md)
+- [2026-11-16-issue-3742-restart-continuity-time-control](pending/2026-11-16-issue-3742-restart-continuity-time-control.md)
+- [2026-11-16-issue-3747-credential-wait](pending/2026-11-16-issue-3747-credential-wait.md)
