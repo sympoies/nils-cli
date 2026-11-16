@@ -24,8 +24,8 @@ provides one snapshot of the atomically replaced ledger, not a fleet-wide
 transaction. Ordinary filesystem access-time accounting can still occur.
 
 Do not use a board HTTP/CLI projection to count missing fields. The current
-reader synthesizes `launch_env`; its ledger access can also create, prune or
-replace the file.
+reader rejects a visible record missing `launch_env`; its ledger access can
+also create, prune or replace the file.
 
 The ledger must be UTF-8 JSON, as required by the runtime reader. The JSON output
 contains fixed field names, observation epoch, status and
@@ -97,6 +97,96 @@ An absent, unavailable, invalid or unobserved root needs its own disposition;
 never silently convert it to zero. A probe result alone does not prove writer
 cutoff or authorize retirement.
 
+## State-root counts for slices 2–5
+
+Run once per configured root as its owner:
+
+```bash
+python3 -B crates/agent-session/scripts/state-retirement-probe.py \
+  --state-root "$AGENT_SESSION_STATE_DIR"
+```
+
+The output schema is `agent-session.state-retirement-probe.v1`. It contains
+fixed keys, statuses, aggregate counts and `observed_at_epoch`; unknown schema
+or provider strings enter fixed buckets. No persisted values become output keys.
+The probe opens only `sessions/*/{session.json,auto-resume.json}` and the three
+named coordination files below. It does not open prompts, logs, credentials or
+provider settings. Files can contain unrelated sensitive fields; these are
+parsed locally but never projected. There are no network calls, writer locks,
+repairs, migrations or bytecode-cache writes. Filesystem access times can change.
+
+Each store has independent `status` and `counts`. `observed` means that store
+was scanned, not that the runtime would admit every record. `unobserved` means
+missing, unreadable or untrusted input; `counts` is null. `invalid` means
+malformed input or a scan limit; `counts` is null. The root-level status reports
+whether the supplied directory was opened. A readable root can contain
+unobserved stores. An empty existing sessions directory is an observed zero;
+a missing directory is unobserved. Missing auto-resume sidecars are counted as
+`absent_files` only after their session records were observed.
+
+The probe refuses duplicate JSON members at every depth, NaN/Infinity,
+non-finite numeric overflow, non-UTF-8 data, lone surrogate escapes and non-object
+store documents. It accepts at most 64 MiB per file and 10,000 sessions-directory
+entries. A failed session read invalidates or leaves unobserved the entire
+session aggregate and its provider attribution; it never emits partial zeroes.
+A failed auto-resume read affects that store alone. Files must be owned by the
+caller, private (no group/other mode bits), regular and single-linked.
+The supplied directory and opened child directories must be owned by the caller;
+final-component and child symlinks are refused through descriptor-relative opens.
+The caller selects trusted ancestors of the supplied path. Files are separate
+inode snapshots, not a transaction across records or stores.
+
+Exit 2 means an unobserved root or at least one invalid store. Exit 0 can still
+contain unobserved stores or nonzero malformed-field buckets. Always inspect
+every required store and bucket before claiming absence. `--now-epoch INTEGER`
+pins the observation time for synthetic comparisons; it does not prune records.
+
+In the table, paths are relative to the supplied root. `missing` means no member;
+`null` means explicit JSON null. `present` validates only the stated field shape.
+Other malformed field values enter `invalid`; container errors discard the
+store aggregate. Unknown schema strings enter `other`, never a dynamic key.
+
+| Slice / output under `stores` | Exact store and count definition |
+| --- | --- |
+| 2 / `auto_resume.recovery_terminals` | `sessions/*/auto-resume.json`: schema `agent-session.auto-resume.v1`, `enabled=false`, `state=terminal_failure`, `failure_reason=usage_window_not_exhausted`, string non-null `blocked_turn_id` and unsigned 64-bit non-null `blocked_revision`. Provider is `agent` from the sibling `session.json`, split into `claude`, `codex`, `other`. Zero revision and empty string follow the source predicate's non-null test. `other_records`, `invalid_records` and `absent_files` are separate. Current Codex terminals are not classified as retired Claude records. |
+| 2 / `sessions.switch_intents` | `sessions/*/session.json`, flattened `codex_account_next`: schema `agent-session.codex-account-next.v1`; split `queued`, `applying`, `failed`, then `intent_id` missing/null/present/invalid. Present IDs match `[A-Za-z0-9-]{1,128}`. Absent intents and malformed intent objects/schema/state are separate counts. This counts the requested state/ID shape independently of account validity; it does not validate or allocate account/intent identity. |
+| 2 / `sessions.title_pairs` | Same session records, `title` plus non-null `title_state`: exact stored equality against normalized current and v1.22 renderer outputs. `current` includes pairs accepted by both; `old_only` matches v1.22 and differs from current; `mismatch` matches neither. Missing/null state is `unstructured`; malformed state/title is `invalid`. The mirror follows `lib.rs` normalization, JS whitespace, reference boundaries, code-point truncation and activity budget. It never infers age from substrings. |
+| 2 / `sessions.title_revision` | Same session records, raw `title_revision`: missing/null/present/invalid. Present means unsigned 64-bit integer, including zero, excluding booleans. No serde default is synthesized. |
+| 2 / `sessions.session_incarnation` | Same session records, `runtime.launch_id`, as used by the session view. Missing/null runtime or absent launch member counts missing; explicit null launch ID counts null; nonempty string counts present; malformed runtime/launch value counts invalid. No incarnation is fabricated. |
+| 3 / `registry.operations` | `coordination/registry.json`, `operations`: total; `state=expired` split by missing/null/integer/invalid `terminal_at_epoch`; known other states and malformed/unknown states counted separately. Claim expiry is not counted as operation expiry. |
+| 3 / `registry.brokers` | Same registry, `brokers` values: total, runtime identity missing/null/object/non-object, and `binary_version` missing/null/string/non-string. An object identity is a shape, not authenticated runtime evidence. |
+| 3 / `registry.completion_events`, `heartbeat` | Registry completion-event length; `coordination/broker-state.json` owner count, fixed v1 schema bucket, `completion_pending` true/false/invalid and `completion_registry` missing/null/object/non-object. Compare both files' separate snapshots; no registry stamp freshness or liveness claim is made. Missing heartbeat file remains unobserved. |
+| 4 / `registry.schema`, `journal.schema` | `coordination/registry.json` schema buckets v1–v3; `coordination/federation-journal.json` schema buckets v1–v6. Missing/null/non-string/other are distinct. These are distributions, not a claim that the largest number is current. |
+| 4 / `journal` envelope counters | Journal `remote_outbox` and `retained` lengths, outbox `state=queued` count, outbox envelope schema buckets session v1/v2 or service v2, category buckets and forwarding missing/null/object/non-object. Invalid envelopes are separate. Retained identities have no envelope bodies and are not included in envelope distributions. |
+| 5 / `registry.mailbox` | Registry `messages`: total; `created_at_epoch_millis` missing/zero/positive/invalid (null, negative, non-integer or outside signed 64-bit range); `created_at_epoch` missing/null/signed 64-bit integer/invalid. Seconds and millis are parallel distributions, not a consistency or ordering check. |
+| 5 / `sessions.retitle_markers` | Session `session_retitle_v2`: absent/invalid marker counts, fixed `agent-session.session-retitle-state.v2` schema bucket, receipt total, receipt `observation` missing/null/object/non-object. Empty receipt lists have zero observation counts. This does not validate observation readiness or inspect provider configuration. |
+
+Session documents must be objects with schema `agent-session.session.v1` and a
+nonempty string `agent`. These counters validate their named fields, not every
+unrelated runtime field. Malformed-field, mismatch, unknown-schema and
+unobserved counts require explicit owner disposition even when a target count
+is zero. Do not equate object-shaped identity/stamp/observation with validity.
+
+The slice-2 receipt must cover every configured sessions root and report the
+Claude terminal, missing/null switch ID, old-only title, missing/null/invalid
+revision and missing/null/invalid incarnation counts. It must also carry
+supported-producer cutoff and client-contract evidence. These persisted counts
+do not establish whether a supported client sends all title PATCH fences.
+
+`client_contracts` remains explicitly unobserved. History/list cursors,
+maintenance negotiation, transient PATCH requests and configured retitle command
+providers have no identified persisted store in this probe. Registry replay,
+idempotency and notification receipts, archived/history/closed-ledger title
+pairs and report-comparison inputs are also outside this state-root scan; their
+absence needs separate owner evidence where relevant. Run the slice-1 probe
+separately for retained ledger metadata. No live state was inspected to build
+these predicates.
+
+Run the synthetic suite with the command above under **Closed-ledger count**.
+It covers present, absent and malformed shapes, exact renderer boundary outputs,
+strict JSON, file trust, aggregate privacy, preserved bytes/modification metadata
+and a held writer lock.
+
 ## Remaining receipt definitions
 
 The deployment owner collects these aggregates once per configured state root,
@@ -104,8 +194,9 @@ with an observation timestamp, source version, observed/unobserved status and
 the last old-writer cutoff. No payloads, identities, digests, credentials or
 private paths belong in the public receipt. Schema-name distributions are
 public contract identifiers. An unknown shape is a separate count, not zero.
-The source owners below define the predicates; this probe implements only the
-closed-ledger count.
+The source owners below define the predicates. The closed-ledger probe covers
+slice 1; the state-root probe below covers the named persisted stores for
+slices 2–5. Neither covers transient client requests.
 
 | Slice | Requested counts or owner evidence | Source owner |
 | --- | --- | --- |
