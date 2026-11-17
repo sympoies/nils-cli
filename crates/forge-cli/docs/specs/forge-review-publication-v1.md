@@ -244,13 +244,14 @@ validation rules, and output schema versions.
 ### `pr review-dismiss`
 
 - `pr review-dismiss <id> --review-id <id> --expected-head <sha>
-  --reason-file <path>` dismisses one native GitHub review and emits
+  --reason-file <path> [--stale-head]` dismisses one native GitHub review and emits
   `cli.forge-cli.pr.review-dismiss.v1` with `review_id`, `review_url`,
-  `author`, `head_sha`, `state`, `reason`, `actor`, and `dismissed_at` (when
+  `author`, `head_sha`, `review_commit_sha`, `state`, `reason`, `actor`, and `dismissed_at` (when
   forge-cli observed the provider confirm the dismissal).
 - It refuses with exit 65 unless every guard holds: a non-empty reason
   (`review_dismiss_reason_missing`, checked before any provider call); the PR
-  head and the review commit both equal `--expected-head`
+  head equals `--expected-head`, and the review commit equals it or, with
+  `--stale-head`, GitHub's compare API confirms it is an ancestor
   (`review_dismiss_head_mismatch`); the review is `CHANGES_REQUESTED`
   (`review_dismiss_state_invalid`); and the author is a provider App account
   whose login is listed in the user-global `[[review_convergence.bots]]`
@@ -270,7 +271,7 @@ validation rules, and output schema versions.
 - The reason, head, and authenticated actor are posted as the provider
   dismissal message, which GitHub retains with the review. No review-loop
   ledger record is appended, so existing ledger readers stay compatible.
-  `--dry-run` runs every guard and prints the dismissal plan. An unreadable
+  `--dry-run` runs every guard and prints the review, both commits, and the dismissal plan. An unreadable
   actor (`review_dismiss_actor_unknown`) or an unconfirmed provider response
   (`review_dismiss_unconfirmed`) fails with exit 69. GitLab and local providers
   return `provider_unsupported` (exit 64).

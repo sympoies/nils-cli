@@ -660,8 +660,9 @@ The transfer preserves findings and keeps review verdicts reviewer-owned.
 
 When an automated review App configured in the user-global config still blocks
 a head the designated reviewer has passed, `pr review-dismiss <id> --review-id <id> --expected-head
-<sha> --reason-file <path>` dismisses that one CHANGES_REQUESTED review. It
-refuses human, unconfigured, wrong-head and wrong-state reviews, and any PR
+<sha> --reason-file <path> [--stale-head]` dismisses that one CHANGES_REQUESTED
+review. The optional flag permits a review on a provider-confirmed ancestor.
+It refuses human, unconfigured, unrelated-commit and wrong-state reviews, and any PR
 without a designated PASS at that head. See the
 [dismissal contract](docs/specs/forge-cli-spec-v1.md#pr-review-dismiss).
 

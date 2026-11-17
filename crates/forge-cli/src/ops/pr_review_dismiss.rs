@@ -40,6 +40,7 @@ pub struct PrReviewDismissPayload {
     pub review_url: String,
     pub author: String,
     pub head_sha: String,
+    pub review_commit_sha: String,
     pub state: String,
     pub reason: String,
     pub actor: String,
@@ -56,6 +57,7 @@ struct DismissDryRunPayload {
     review_url: String,
     author: String,
     head_sha: String,
+    review_commit_sha: String,
     actor: String,
 }
 
@@ -141,7 +143,11 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             ),
         ));
     }
-    if target.commit_sha != head {
+    let repository = super::pr_comments::github_repo_slug_from_url(&view.url)
+        .ok_or_else(|| refuse("repo_required", "review dismissal requires a repository"))?;
+    if target.commit_sha != head
+        && (!args.stale_head || !is_ancestor(runner, &ctx, &repository, &target.commit_sha, head)?)
+    {
         return Err(refuse(
             "review_dismiss_head_mismatch",
             "the review is not on --expected-head",
@@ -154,8 +160,6 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         ));
     }
 
-    let repository = super::pr_comments::github_repo_slug_from_url(&view.url)
-        .ok_or_else(|| refuse("repo_required", "review dismissal requires a repository"))?;
     let state = pr_review::read_review_loop_state_view(runner, &ctx, &repository, args.id)?;
     let Some(handoff) = pr_review_handoff::latest(&state.chain) else {
         return Err(refuse(
@@ -219,10 +223,17 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             review_url: target.url,
             author: target.author,
             head_sha: head.to_string(),
+            review_commit_sha: target.commit_sha,
             actor,
         };
         return Ok(emit_success(schema(), payload, format, |p| {
-            println!("would run: {}", p.mutation.plan.join(" "))
+            println!(
+                "review {} commit {} current head {}\nwould run: {}",
+                p.review_id,
+                p.review_commit_sha,
+                p.head_sha,
+                p.mutation.plan.join(" ")
+            )
         }));
     }
 
@@ -246,6 +257,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         review_url: target.url,
         author: target.author,
         head_sha: head.to_string(),
+        review_commit_sha: target.commit_sha,
         state: "DISMISSED".to_string(),
         reason,
         actor,
@@ -257,6 +269,28 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             p.review_id, p.author, p.head_sha, p.review_url
         )
     }))
+}
+
+fn is_ancestor<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    repository: &str,
+    review: &str,
+    head: &str,
+) -> Result<bool, ForgeError> {
+    let mut argv = vec![OsString::from("api")];
+    ctx.push_github_api_hostname(&mut argv);
+    argv.push(OsString::from(format!(
+        "repos/{repository}/compare/{review}...{head}"
+    )));
+    let output = runner.run(&BackendCall::new(BackendProgram::Gh, argv))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&output.stdout).map_err(|_| incomplete())?;
+    match value["status"].as_str() {
+        Some("ahead") => Ok(true),
+        Some("behind" | "diverged" | "identical") => Ok(false),
+        _ => Err(incomplete()),
+    }
 }
 
 /// Configuration is the only authority: a provider App account is automated
