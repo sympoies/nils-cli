@@ -131,19 +131,22 @@ an executable `AGENT_SESSION_BIN` selects its same-release companion for
 dispatch and fails closed if it is unavailable. Otherwise,
 `AGENT_RUNTIME_TRUSTED_CLI_ROOT` supplies ordered roots, or the standard managed
 roots are used. Default-root links must stay in their approved
-location or the corresponding Homebrew package. On all selection paths, the
-directory containing the resolved executable must be owned by the caller or
-root and must not be group- or world-writable. A rejected directory follows the
-same fallback and diagnostic as a rejected executable: ordered roots continue,
-an explicitly configured companion exits 127, and activity setup falls back
-from an unusable automatic sibling to the roots. A symlink in a writable bin
-directory that resolves into an accepted release directory passes this rule;
-the symlink's original directory and higher ancestors are not checked.
-The Rust executable preflight also requires the file itself to be owned by the
-caller and not group- or world-writable; the generated shell selector requires
-a regular executable file and applies the directory rule after resolution.
-Provider configuration does
+location or the corresponding Homebrew package. Provider configuration does
 not need to be rewritten when the selected runtime changes.
+
+Directory and file selection rules:
+
+- On all paths, the directory containing the resolved executable must be owned
+  by the caller or root and must not be group- or world-writable.
+- A rejected directory follows the same fallback and diagnostic as a rejected
+  executable. Ordered roots continue; an explicitly configured companion exits
+  127; activity setup falls back from an unusable automatic sibling to the roots.
+- A symlink in a writable bin directory that resolves into an accepted release
+  directory passes. The symlink's original directory and higher ancestors are
+  not checked.
+- Rust preflight also requires a caller-owned file without group/world write
+  bits. The generated shell selector requires a regular executable file and
+  applies the directory rule after resolution.
 
 Alternating Computer Use/agent-session wrapper growth is drift: preview does
 not authorize mutation, and an exact reviewed plan digest is required to
