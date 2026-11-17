@@ -2243,8 +2243,26 @@ mod tests {
 
     #[test]
     fn delete_incomplete_inventory_success_is_explicit_in_json_and_text() {
-        let (_tmp, context, record) = session_fixture();
+        let (tmp, context, record) = session_fixture();
         let directory = session_dir(&context, &record.id);
+        fs::write(
+            context.state_dir.join("admission.json"),
+            br#"{"max_active_sessions":1}"#,
+        )
+        .unwrap();
+        let tmux = tmp.path().join("tmux");
+        let _running =
+            tmux_probe_fixture::install_status(&tmux, tmux_probe_fixture::Status::Running);
+        let capacity =
+            || serde_json::to_value(admission::snapshot(&context, Some(&tmux)).unwrap()).unwrap();
+        assert_eq!(capacity()["active_sessions"], 1);
+        assert_eq!(
+            admission::reserve(&context, Some(&tmux), None)
+                .err()
+                .unwrap()
+                .code(),
+            "session-capacity-exceeded"
+        );
         let mut scan = ProcessScan {
             complete: true,
             inspected: 3,
@@ -2278,7 +2296,35 @@ mod tests {
         assert!(text.contains("process inventory incomplete"));
         assert!(text.contains("permission-denied: 1"));
         assert!(text.contains("additional processes may remain"));
+        assert!(result.deleted);
+        assert!(result.killed);
         assert!(!directory.join("session.json").exists());
+        assert_eq!(capacity()["active_sessions"], 0);
+        // Admission owns this assertion. Process termination is covered by the
+        // teardown tests; an injected inventory avoids unrelated host processes.
+        let replacement = admission::create_record_with_lineage(
+            RecordRequest {
+                context: &context,
+                agent: AgentKind::Claude,
+                mode: "interactive",
+                coordination_mode: cli::CoordinationMode::Advisory,
+                title: None,
+                title_state: None,
+                explicit_id: Some("replacement"),
+                cwd: tmp.path(),
+                prompt: None,
+                log_file_name: None,
+                provider_resume: None,
+                agent_args: Vec::new(),
+                agent_bin: None,
+            },
+            None,
+            Some(&tmux),
+        )
+        .unwrap();
+        assert_eq!(replacement.record.id, "replacement");
+        drop(replacement);
+        assert_eq!(capacity()["active_sessions"], 1);
     }
 
     #[test]

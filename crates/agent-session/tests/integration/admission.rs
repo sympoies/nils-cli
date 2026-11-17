@@ -1,7 +1,6 @@
 //! Admission contracts exercised through independent CLI processes and HTTP.
 use super::cli::{
-    fake_agent, fake_tmux, spawn_scoped_test_process_group, tmux_calls,
-    write_resumable_session_record_with_agent_bin,
+    fake_agent, fake_tmux, tmux_calls, write_resumable_session_record_with_agent_bin,
 };
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -82,44 +81,6 @@ impl Fixture {
             .args(["start", "--agent", agent, "--id", id, "--format", "json"])
             .arg("--cwd")
             .arg(self.dir.path());
-        command
-    }
-    fn exact_command(&self, id: &str) -> Command {
-        let record: Value = serde_json::from_slice(
-            &fs::read(
-                self.dir
-                    .path()
-                    .join("state/sessions")
-                    .join(id)
-                    .join("session.json"),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        let identity = &record["delete_tmux_identity"];
-        let mut command = self.command();
-        command
-            .env("AGENT_SESSION_FAKE_TMUX_AGENT_SESSION_ID", id)
-            .env(
-                "AGENT_SESSION_FAKE_TMUX_STATE_DIR",
-                self.dir.path().join("state"),
-            )
-            .env(
-                "AGENT_SESSION_FAKE_TMUX_RUNTIME_ID",
-                record["runtime"]["launch_id"].as_str().unwrap(),
-            )
-            .env(
-                "AGENT_SESSION_FAKE_TMUX_SESSION_ID",
-                identity["session_id"].as_str().unwrap(),
-            )
-            .env(
-                "AGENT_SESSION_FAKE_TMUX_PANE_ID",
-                identity["pane_id"].as_str().unwrap(),
-            )
-            .env(
-                "AGENT_SESSION_FAKE_TMUX_PANE_PID",
-                identity["pane_pid"].as_i64().unwrap().to_string(),
-            );
         command
     }
     fn starts(&self) -> usize {
@@ -346,7 +307,7 @@ fn admission_unlimited_and_read_only_occupancy() {
     );
 }
 #[test]
-fn admission_stopped_and_deleted_sessions_release_capacity() {
+fn admission_stopped_sessions_release_capacity() {
     let f = Fixture::new(Some(1));
     let first = f.start("first").output().unwrap();
     assert!(first.status.success(), "{first:?}");
@@ -357,50 +318,9 @@ fn admission_stopped_and_deleted_sessions_release_capacity() {
         .unwrap();
     assert!(stopped.status.success());
     assert_eq!(f.capacity()["active_sessions"], 0);
-    let pane = spawn_scoped_test_process_group().expect("scoped deletion fixture is required");
-    let pid = pane.pid().to_string();
-    let second = f
-        .start("second")
-        .env("AGENT_SESSION_FAKE_TMUX_PANE_PID", &pid)
-        .output()
-        .unwrap();
+    let second = f.start("second").output().unwrap();
     assert!(second.status.success(), "{second:?}");
-    // The kernel-backed scoped fixture owns process termination. Model tmux's
-    // removal of that exact pane with a shell-only receipt inside the existing
-    // short teardown command budget (no interpreter startup on the kill path).
-    let teardown_tmux = f.dir.path().join("teardown-tmux");
-    fs::write(
-        &teardown_tmux,
-        format!(
-            r#"#!/bin/sh
-if [ "$1" = if-shell ] && [ "$6" = "kill-session -t $AGENT_SESSION_FAKE_TMUX_SESSION_ID" ]; then
-  [ "$4" = "$AGENT_SESSION_FAKE_TMUX_PANE_ID" ] || exit 42
-  printf '%s\n' "$AGENT_SESSION_FAKE_TMUX_SESSION_ID" >> "$AGENT_SESSION_FAKE_TMUX_LOG.killed"
-  exit 0
-fi
-exec {} "$@"
-"#,
-            shell_words::quote(&f.tmux.to_string_lossy())
-        ),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(&teardown_tmux, fs::Permissions::from_mode(0o700)).unwrap();
-    let deleted = f
-        .exact_command("second")
-        .env("AGENT_SESSION_FAKE_TMUX_PROCESS_GROUP_ID", &pid)
-        .env("AGENT_SESSION_TMUX_BIN", &teardown_tmux)
-        .args(["delete", "second", "--format", "json"])
-        .output()
-        .unwrap();
-    assert!(
-        deleted.status.success(),
-        "{}; last operation={:?}",
-        envelope(&deleted)["error"],
-        tmux_calls(&f.log).last()
-    );
-    let third = f.start("third").output().unwrap();
-    assert!(third.status.success(), "{third:?}");
+    assert_eq!(f.capacity()["active_sessions"], 1);
 }
 #[test]
 fn admission_failed_and_cancelled_creates_release_capacity() {
