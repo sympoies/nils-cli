@@ -17,6 +17,7 @@ pub(super) fn reclaim_for_launch(root: &Path, id: &str) -> io::Result<()> {
     if !boundary.trusted_tree(id) {
         return Err(io::Error::other("session tmp tree is untrusted"));
     }
+    remove_short_path(&root.join(id))?;
     boundary.remove_tree(id)
 }
 
@@ -241,7 +242,7 @@ pub(super) fn sweep_with_runtime_check(
                 .is_some_and(|current| current.stopped_at_epoch == owner.stopped_at_epoch)
         {
             report.keep("untrusted");
-        } else if boundary.remove_tree(&id).is_ok() {
+        } else if remove_short_path(&dir).is_ok() && boundary.remove_tree(&id).is_ok() {
             report.removed += 1;
         } else {
             report.keep("remove-failed");

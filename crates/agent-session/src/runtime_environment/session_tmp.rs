@@ -1,13 +1,14 @@
 //! Per-session `TMPDIR` (agent write-location contract, class `tmp`).
 //!
 //! Each managed session gets `${AGENT_HOME}/tmp/<session-id>/` (mode 0700),
-//! injected as `TMPDIR` at launch. Once the session stops, the directory is
+//! exposed through a short symlink as `TMPDIR` at launch. Once the session stops, the directory is
 //! reclaimed after a grace period; a sweep also removes directories whose
 //! session record is gone. A directory is only ever touched when it carries this
 //! module's owner file naming the same session and state directory, so other
 //! tools' entries under `${AGENT_HOME}/tmp` and other agent-session state
 //! directories are never swept.
 use super::*;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, symlink};
 
 pub(crate) const OPT_OUT_KEY: &str = "AGENT_RUNTIME_SESSION_TMPDIR";
 pub(crate) const OPT_OUT_VALUE: &str = "system";
@@ -59,6 +60,151 @@ fn tmp_root(state_dir: &Path) -> Result<PathBuf, CliError> {
     }
     let _ = state_dir;
     Ok(agent_home()?.join("tmp"))
+}
+
+// The token is published inside the private backing directory before its
+// short directory is created, so a later sweep can reclaim an interrupted launch.
+const SHORT_TOKEN_FILE: &str = ".agent-session-short";
+
+fn short_root(dir: &Path) -> io::Result<Option<PathBuf>> {
+    let marker = dir.join(SHORT_TOKEN_FILE);
+    let metadata = match fs::symlink_metadata(&marker) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    if !metadata.is_file()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.mode() & 0o777 != 0o600
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "unsafe short path marker",
+        ));
+    }
+    let token = fs::read_to_string(marker)?;
+    if token.len() != 32
+        || !token
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid short path marker",
+        ));
+    }
+    Ok(Some(Path::new("/tmp").join(format!("ark-{token}"))))
+}
+
+fn create_short_marker(dir: &Path) -> io::Result<()> {
+    let token = uuid::Uuid::new_v4().simple().to_string();
+    let temporary = dir.join(format!(".agent-session-short-{token}"));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary)?;
+    let result = (|| {
+        std::io::Write::write_all(&mut file, token.as_bytes())?;
+        file.sync_all()?;
+        match fs::hard_link(&temporary, dir.join(SHORT_TOKEN_FILE)) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+            Err(err) => Err(err),
+        }
+    })();
+    let cleanup = fs::remove_file(temporary);
+    result.and(cleanup)
+}
+
+fn ensure_short_path(dir: &Path) -> Result<PathBuf, CliError> {
+    if short_root(dir)
+        .map_err(|err| io_error("session-tmpdir-unsafe", dir, err))?
+        .is_none()
+    {
+        create_short_marker(dir)
+            .map_err(|err| io_error("session-tmpdir-create-failed", dir, err))?;
+    }
+    let root = short_root(dir)
+        .map_err(|err| io_error("session-tmpdir-unsafe", dir, err))?
+        .ok_or_else(|| {
+            io_error(
+                "session-tmpdir-unsafe",
+                dir,
+                io::Error::other("short marker missing"),
+            )
+        })?;
+    match fs::DirBuilder::new().mode(0o700).create(&root) {
+        Ok(()) => {}
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(err) => return Err(io_error("session-tmpdir-create-failed", dir, err)),
+    }
+    let metadata =
+        fs::symlink_metadata(&root).map_err(|err| io_error("session-tmpdir-unsafe", dir, err))?;
+    if !metadata.is_dir()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.mode() & 0o777 != 0o700
+    {
+        return Err(io_error(
+            "session-tmpdir-unsafe",
+            dir,
+            io::Error::new(io::ErrorKind::PermissionDenied, "unsafe short root"),
+        ));
+    }
+    let link = root.join("t");
+    match symlink(dir, &link) {
+        Ok(()) => Ok(link),
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            let valid = fs::symlink_metadata(&link).is_ok_and(|meta| {
+                meta.file_type().is_symlink() && meta.uid() == unsafe { libc::geteuid() }
+            }) && fs::read_link(&link).is_ok_and(|target| target == dir);
+            if valid {
+                Ok(link)
+            } else {
+                Err(io_error("session-tmpdir-unsafe", dir, err))
+            }
+        }
+        Err(err) => Err(io_error("session-tmpdir-create-failed", dir, err)),
+    }
+}
+
+fn remove_short_path(dir: &Path) -> io::Result<()> {
+    let Some(root) = short_root(dir)? else {
+        return Ok(());
+    };
+    let metadata = match fs::symlink_metadata(&root) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    if !metadata.is_dir()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.mode() & 0o777 != 0o700
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "unsafe short root",
+        ));
+    }
+    let link = root.join("t");
+    match fs::symlink_metadata(&link) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+        Ok(meta)
+            if meta.file_type().is_symlink()
+                && meta.uid() == unsafe { libc::geteuid() }
+                && fs::read_link(&link).is_ok_and(|target| target == dir) =>
+        {
+            fs::remove_file(link)?
+        }
+        Ok(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "short path is occupied",
+            ));
+        }
+    }
+    fs::remove_dir(root)
 }
 
 pub(crate) fn grace_from_env() -> Duration {
@@ -166,7 +312,7 @@ pub(crate) fn prepare_launch(
             stopped_at_epoch: None,
         },
     )?;
-    Ok(Some(dir))
+    Ok(Some(ensure_short_path(&dir)?))
 }
 
 /// Start the grace period of a session whose runtime just exited. Best effort:
@@ -317,6 +463,17 @@ mod tests {
         }
     }
 
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let root = self.dir.path().join("home/tmp");
+            if let Ok(entries) = fs::read_dir(root) {
+                for entry in entries.flatten() {
+                    let _ = remove_short_path(&entry.path());
+                }
+            }
+        }
+    }
+
     fn args_of(command: &ProcessCommand) -> Vec<String> {
         command
             .get_args()
@@ -328,19 +485,167 @@ mod tests {
     mod safety;
 
     #[test]
+    fn managed_tmpdir_fits_chrome_socket_limits() {
+        let fixture = Fixture::new();
+        let long_home = fixture.dir.path().join("a".repeat(100));
+        let _home = EnvGuard::set(&fixture._lock, "AGENT_HOME", long_home.to_str().unwrap());
+        let record = fixture.record("01234567-89ab-cdef-0123-456789abcdef", json!({}));
+        let tmp = prepare_launch(&fixture.state_dir(), &record)
+            .unwrap()
+            .unwrap();
+        let socket = tmp.join("com.google.Chrome.XXXXXX/SingletonSocket");
+        let bytes = socket.as_os_str().as_encoded_bytes().len();
+        assert!(bytes < 104);
+        assert!(bytes < 108);
+        remove_short_path(&long_home.join("tmp").join(&record.id)).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn foreign_precreated_predictable_root_does_not_block_launch() {
+        const INNER: &str = "NILS_TEST_FOREIGN_SHORT_ROOT_INNER";
+        if std::env::var_os(INNER).is_some() {
+            let fixture = Fixture::new();
+            let record = fixture.record("foreign-preclaim", json!({}));
+            let old_name = Path::new("/tmp").join(format!("ark-{}", unsafe { libc::geteuid() }));
+            assert_ne!(fs::symlink_metadata(&old_name).unwrap().uid(), unsafe {
+                libc::geteuid()
+            });
+            let link = prepare_launch(&fixture.state_dir(), &record)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                fs::read_link(&link).unwrap(),
+                fixture.tmp_dir("foreign-preclaim")
+            );
+            assert!(old_name.is_dir());
+            return;
+        }
+        let uid = unsafe { libc::geteuid() };
+        let gid = unsafe { libc::getegid() };
+        if uid == 0 || uid == 65534 {
+            eprintln!("skipped: fixture requires an ordinary user");
+            return;
+        }
+        let available = ProcessCommand::new("sudo")
+            .args([
+                "-n",
+                "unshare",
+                "--mount",
+                "--propagation",
+                "private",
+                "true",
+            ])
+            .status();
+        if !available.is_ok_and(|status| status.success()) {
+            eprintln!("skipped: private privileged mount namespace unavailable");
+            return;
+        }
+        let script = r#"mount -t tmpfs -o mode=1777 tmpfs /tmp
+setpriv --reuid=65534 --regid=65534 --clear-groups mkdir "/tmp/ark-$1"
+exec setpriv --reuid="$1" --regid="$2" --clear-groups env TMPDIR=/tmp NILS_TEST_FOREIGN_SHORT_ROOT_INNER=1 "$3" runtime_environment::session_tmp::tests::foreign_precreated_predictable_root_does_not_block_launch --exact --nocapture"#;
+        let output = ProcessCommand::new("sudo")
+            .args([
+                "-n",
+                "unshare",
+                "--mount",
+                "--propagation",
+                "private",
+                "sh",
+                "-eu",
+                "-c",
+                script,
+                "fixture",
+            ])
+            .arg(uid.to_string())
+            .arg(gid.to_string())
+            .arg(std::env::current_exe().unwrap())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated cross-UID test failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
     fn prepare_launch_creates_a_private_dir_under_agent_home() {
         let fixture = Fixture::new();
         let record = fixture.record("sess-create", json!({}));
 
         let dir = prepare_launch(&fixture.state_dir(), &record).unwrap();
 
-        assert_eq!(dir, Some(fixture.tmp_dir("sess-create")));
+        assert_eq!(
+            fs::read_link(dir.as_ref().unwrap()).unwrap(),
+            fixture.tmp_dir("sess-create")
+        );
         let mode = fs::metadata(fixture.tmp_dir("sess-create"))
             .unwrap()
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o700);
+        assert_eq!(
+            fs::metadata(dir.as_ref().unwrap().parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
         assert!(fixture.tmp_dir("sess-create").join(OWNER_FILE).is_file());
+    }
+
+    #[test]
+    fn short_paths_isolate_sessions_and_refuse_occupied_paths() {
+        let fixture = Fixture::new();
+        let first = fixture.record("sess-first", json!({}));
+        let second = fixture.record("sess-second", json!({}));
+        let first_dir = prepare_launch(&fixture.state_dir(), &first)
+            .unwrap()
+            .unwrap();
+        let second_dir = prepare_launch(&fixture.state_dir(), &second)
+            .unwrap()
+            .unwrap();
+        assert_ne!(first_dir, second_dir);
+        fs::write(first_dir.join("private"), "first").unwrap();
+        assert!(!second_dir.join("private").exists());
+
+        fs::remove_file(&second_dir).unwrap();
+        fs::write(&second_dir, "foreign").unwrap();
+        assert!(ensure_short_path(&fixture.tmp_dir("sess-second")).is_err());
+        assert_eq!(fs::read_to_string(&second_dir).unwrap(), "foreign");
+        fs::remove_file(&second_dir).unwrap();
+        symlink(fixture.tmp_dir("sess-second"), &second_dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_launches_share_one_private_short_path() {
+        let fixture = Fixture::new();
+        let record = fixture.record("concurrent", json!({}));
+        let state = fixture.state_dir();
+        let barrier = std::sync::Barrier::new(16);
+        let links = std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..16 {
+                let barrier = &barrier;
+                let state = &state;
+                let record = &record;
+                handles.push(scope.spawn(move || {
+                    barrier.wait();
+                    prepare_launch(state, record).unwrap().unwrap()
+                }));
+            }
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert!(links.iter().all(|link| link == &links[0]));
+        assert_eq!(
+            fs::read_link(&links[0]).unwrap(),
+            fixture.tmp_dir("concurrent")
+        );
     }
 
     #[test]
@@ -362,7 +667,14 @@ mod tests {
         add_runtime_tmux_environment(&mut command, &fixture.state_dir(), &record).unwrap();
 
         let args = args_of(&command);
-        let expected = format!("TMPDIR={}", fixture.tmp_dir("sess-inject").display());
+        let expected = format!(
+            "TMPDIR={}",
+            short_root(&fixture.tmp_dir("sess-inject"))
+                .unwrap()
+                .unwrap()
+                .join("t")
+                .display()
+        );
         assert!(args.contains(&expected), "{args:?}");
         assert!(args.iter().all(|arg| !arg.starts_with("TMUX_TMPDIR")));
         assert!(
@@ -397,9 +709,12 @@ mod tests {
 
         mark_stopped(&fixture.state_dir(), "sess-relaunch");
         let _grace = EnvGuard::set(&fixture._lock, GRACE_ENV, "0");
-        prepare_launch(&fixture.state_dir(), &record).unwrap();
-        assert!(!dir.join("scratch.txt").exists());
-        assert!(dir.join(OWNER_FILE).is_file());
+        let replacement = prepare_launch(&fixture.state_dir(), &record)
+            .unwrap()
+            .unwrap();
+        assert!(!dir.exists());
+        assert!(!replacement.join("scratch.txt").exists());
+        assert!(replacement.join(OWNER_FILE).is_file());
     }
 
     #[test]
@@ -420,6 +735,7 @@ mod tests {
         .unwrap();
 
         assert!(dir.is_dir());
+        assert!(fixture.tmp_dir("sess-live").is_dir());
         assert_eq!(report.removed, 0);
         assert_eq!(report.retained.get("live"), Some(&1));
     }
@@ -435,10 +751,12 @@ mod tests {
 
         let report = sweep(&fixture.context(), &tmux, Duration::from_secs(3600), None).unwrap();
         assert!(dir.is_dir());
+        assert!(fixture.tmp_dir("sess-stopped").is_dir());
         assert_eq!(report.retained.get("grace"), Some(&1));
 
         let report = sweep(&fixture.context(), &tmux, Duration::ZERO, None).unwrap();
-        assert!(!dir.exists());
+        assert!(fs::symlink_metadata(&dir).is_err());
+        assert!(!fixture.tmp_dir("sess-stopped").exists());
         assert_eq!(report.removed, 1);
     }
 
@@ -467,9 +785,12 @@ mod tests {
         )
         .unwrap();
 
-        assert!(!orphan_dir.exists());
+        assert!(fs::symlink_metadata(&orphan_dir).is_err());
+        assert!(!fixture.tmp_dir("sess-orphan").exists());
         assert!(vanished_dir.is_dir());
+        assert!(fixture.tmp_dir("sess-vanished-state").is_dir());
         assert!(foreign_dir.is_dir());
+        assert!(fixture.tmp_dir("sess-other-state").is_dir());
         assert!(unowned.is_dir());
         assert_eq!(report.removed, 1);
         assert_eq!(report.retained.get("foreign"), Some(&2));
