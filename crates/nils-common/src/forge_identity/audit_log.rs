@@ -10,7 +10,7 @@ use std::io::{self, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const LOCK_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -44,7 +44,7 @@ struct Lock(#[allow(dead_code)] File);
 impl Lock {
     fn acquire(dir: &Path, timeout: Duration) -> io::Result<Self> {
         let file = open_private(&dir.join(LOCK_NAME), false)?;
-        let deadline = Instant::now() + timeout;
+        let deadline = super::probe::now() + timeout;
         loop {
             // SAFETY: the descriptor remains open while the lock is acquired.
             if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
@@ -56,7 +56,7 @@ impl Lock {
             {
                 return Err(error);
             }
-            let remaining = deadline.saturating_duration_since(Instant::now());
+            let remaining = deadline.saturating_duration_since(super::probe::now());
             if remaining.is_zero() {
                 return Err(io::Error::from(io::ErrorKind::TimedOut));
             }
@@ -145,7 +145,7 @@ mod tests {
             .read_line(&mut ready)
             .unwrap();
         assert_eq!(ready.trim(), "locked");
-        let start = std::time::Instant::now();
+        let start = super::super::probe::now();
         let result = append_with_timeout(dir.path(), b"{}\n", SMALL, Duration::from_millis(20))
             .map_err(super::super::audit_error);
         let required_code = super::super::unasserted::finish_audit(
