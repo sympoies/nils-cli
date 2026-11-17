@@ -433,12 +433,14 @@ The audit file is size-bounded. Before an append would push the active
 copies shift to `.2` through `.4`, and the previous `.4` is deleted; the record being
 written always lands whole in the new active file. At most five files exist (the
 active file plus four rotated copies, 20 MiB on disk, given records far smaller than
-the limit), all mode 0600. Writers serialise rotation and append on an advisory lock
+the limit), all mode 0600.
+
+Writers serialise rotation and append on an advisory lock
 file `identity-audit.lock` in the same directory, so concurrent writers neither lose
 nor interleave records. Lock acquisition waits at most one second. A timeout reports
 `identity_audit_lock_timeout`: required audit fails closed, while the optional
-unasserted warning audit emits that code and continues. Record format is unchanged. Rotation adds no provider call
-and no identity probe. A file larger than the limit left by an earlier version is
+unasserted warning audit emits that code and continues. Record format is unchanged.
+Rotation adds no provider call and no identity probe. A file larger than the limit left by an earlier version is
 rotated whole on its first append and leaves the retained set after four further
 rotations; a host may delete it earlier by hand.
 
