@@ -137,8 +137,9 @@ mod tests {
         use std::io::BufRead;
         use std::process::{Command, Stdio};
         let mut child = Command::new("python3")
-            .args(["-c", "import fcntl, sys, time; f = open(sys.argv[1], 'w'); fcntl.flock(f, fcntl.LOCK_EX); print('locked', flush=True); time.sleep(0.3)"])
+            .args(["-c", "import fcntl, select, sys; f = open(sys.argv[1], 'w'); fcntl.flock(f, fcntl.LOCK_EX); print('locked', flush=True); select.select([sys.stdin], [], [], 10)"])
             .arg(dir.path().join(LOCK_NAME))
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped()).spawn().unwrap();
         let mut ready = String::new();
         std::io::BufReader::new(child.stdout.take().unwrap())
@@ -146,7 +147,7 @@ mod tests {
             .unwrap();
         assert_eq!(ready.trim(), "locked");
         let start = super::super::probe::now();
-        let result = append_with_timeout(dir.path(), b"{}\n", SMALL, Duration::from_millis(20))
+        let result = append_with_timeout(dir.path(), b"{}\n", SMALL, Duration::ZERO)
             .map_err(super::super::audit_error);
         let required_code = super::super::unasserted::finish_audit(
             super::super::unasserted::Mode::Deny,
@@ -155,7 +156,7 @@ mod tests {
         )
         .unwrap_err()
         .code;
-        let optional = append_with_timeout(dir.path(), b"{}\n", SMALL, Duration::from_millis(20))
+        let optional = append_with_timeout(dir.path(), b"{}\n", SMALL, Duration::ZERO)
             .map_err(super::super::audit_error);
         let mut warning = Vec::new();
         super::super::unasserted::finish_audit(
@@ -165,9 +166,10 @@ mod tests {
         )
         .unwrap();
         let elapsed = start.elapsed();
+        drop(child.stdin.take());
         child.wait().unwrap();
         assert!(
-            elapsed < std::time::Duration::from_millis(200),
+            elapsed < std::time::Duration::from_secs(5),
             "lock wait took {elapsed:?}"
         );
         assert_eq!(required_code, "identity_audit_lock_timeout");
