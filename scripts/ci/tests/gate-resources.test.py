@@ -74,6 +74,97 @@ class GateUnits(unittest.TestCase):
         if diagnostic:
             self.assertRegex(output.getvalue(), diagnostic)
 
+    def test_stale_empty_active_slice_is_reaped_before_admission(self):
+        unit = 'nilsgate' + 'a' * 32 + '.slice'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'gate-0.lock').write_text(json.dumps({'pid': 999999, 'slice': unit}))
+            state = {'active': True}
+            def show(*args, **kwargs):
+                active = 'active' if state['active'] else 'inactive'
+                return f'LoadState=loaded\nActiveState={active}\nControlGroup=/fixture/{unit}\nJob=\n'
+            def read(path, *args, **kwargs):
+                return {'cgroup.events': 'populated 0\n', 'cgroup.procs': '',
+                        'cgroup.stat': 'nr_descendants 0\n'}[path.name]
+            def stop(command, **kwargs):
+                self.assertEqual(command, [resources.SYSTEMCTL, '--user', 'stop', unit])
+                state['active'] = False
+            with patch.object(resources.subprocess, 'check_output', side_effect=show), \
+                 patch.object(resources.subprocess, 'run', side_effect=stop) as stopped, \
+                 patch.object(Path, 'read_text', read), \
+                 patch.object(resources.os, 'kill', side_effect=ProcessLookupError), \
+                 patch.object(resources.time, 'sleep', side_effect=AssertionError('stale slice blocked admission')):
+                lease = resources.GateSemaphore(root, 1).acquire(.1)
+                lease.close()
+                stopped.assert_called_once()
+
+    def test_stale_reaper_leaves_unsafe_slices_alone(self):
+        unit = 'nilsgate' + 'a' * 32 + '.slice'
+        output = f'LoadState=loaded\nActiveState=active\nControlGroup=/fixture/{unit}\nJob=\n'
+        for case in ('process', 'descendant', 'live', 'foreign', 'changed'):
+            with self.subTest(case=case):
+                owner = {'pid': 12345, 'slice': 'foreign.slice' if case == 'foreign' else unit}
+                reads = {'procs': 0}
+                def read(path, *args, **kwargs):
+                    if path.name == 'cgroup.procs':
+                        reads['procs'] += 1
+                        return '42\n' if case == 'process' or (case == 'changed' and reads['procs'] == 2) else ''
+                    if path.name == 'cgroup.stat':
+                        return 'nr_descendants 1\n' if case == 'descendant' else 'nr_descendants 0\n'
+                    return 'populated 0\n'
+                with patch.object(resources.subprocess, 'check_output', return_value=output), \
+                     patch.object(resources.subprocess, 'run') as stop, \
+                     patch.object(Path, 'read_text', read), \
+                     patch.object(resources.os, 'kill', side_effect=None if case == 'live' else ProcessLookupError):
+                    self.assertFalse(resources.reap_stale_slice(owner))
+                    stop.assert_not_called()
+
+    def test_stale_reaper_requires_each_safety_guard(self):
+        unit = 'nilsgate' + 'b' * 32 + '.slice'
+        foreign = 'foreign.slice'
+        cases = ('missing_pid', 'bad_pid', 'zero_pid', 'negative_pid', 'permission',
+                 'unloaded', 'inactive', 'job', 'foreign', 'basename', 'relative',
+                 'traversal', 'populated', 'missing_file', 'unreadable_file')
+        for case in cases:
+            with self.subTest(case=case):
+                selected = foreign if case == 'foreign' else unit
+                owner = {'pid': 12345, 'slice': selected}
+                if case == 'missing_pid':
+                    del owner['pid']
+                elif case == 'bad_pid':
+                    owner['pid'] = '12345'
+                elif case == 'zero_pid':
+                    owner['pid'] = 0
+                elif case == 'negative_pid':
+                    owner['pid'] = -1
+                group = f'/fixture/{selected}'
+                if case == 'basename':
+                    group = '/fixture/other.slice'
+                elif case == 'relative':
+                    group = f'fixture/{unit}'
+                elif case == 'traversal':
+                    group = f'/fixture/../{unit}'
+                load = 'not-found' if case == 'unloaded' else 'loaded'
+                active = 'inactive' if case == 'inactive' else 'active'
+                job = '42' if case == 'job' else ''
+                output = f'LoadState={load}\nActiveState={active}\nControlGroup={group}\nJob={job}\n'
+                def read(path, *args, **kwargs):
+                    if case == 'missing_file':
+                        raise FileNotFoundError()
+                    if case == 'unreadable_file':
+                        raise PermissionError()
+                    return {'cgroup.procs': '', 'cgroup.stat': 'nr_descendants 0\n',
+                            'cgroup.events': 'populated 1\n' if case == 'populated' else 'populated 0\n'}[path.name]
+                error = PermissionError if case == 'permission' else ProcessLookupError
+                with patch.object(resources.os, 'kill', side_effect=error) as probe, \
+                     patch.object(resources.subprocess, 'check_output', return_value=output), \
+                     patch.object(resources.subprocess, 'run') as stop, \
+                     patch.object(Path, 'read_text', read):
+                    self.assertFalse(resources.reap_stale_slice(owner))
+                    stop.assert_not_called()
+                    if case in ('missing_pid', 'bad_pid', 'zero_pid', 'negative_pid', 'foreign'):
+                        probe.assert_not_called()
+
     def test_timeout_retains_original_ticket_and_fifo_position(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

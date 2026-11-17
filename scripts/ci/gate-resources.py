@@ -201,6 +201,45 @@ def slice_quiescent(unit):
         return True
 
 
+def reap_stale_slice(owner):
+    unit = owner.get('slice')
+    pid = owner.get('pid')
+    if not isinstance(unit, str) or not re.fullmatch(r'nilsgate[0-9a-f]{32}\.slice', unit):
+        return False
+    if type(pid) is not int or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return False
+    except ProcessLookupError:
+        pass
+    except OSError:
+        return False
+
+    def empty_active_group():
+        output = subprocess.check_output([SYSTEMCTL, '--user', 'show', unit,
+            '--property=LoadState', '--property=ActiveState', '--property=ControlGroup',
+            '--property=Job'], text=True, timeout=2)
+        properties = dict(line.split('=', 1) for line in output.splitlines() if '=' in line)
+        group = properties.get('ControlGroup', '')
+        if (properties.get('LoadState') != 'loaded' or properties.get('ActiveState') != 'active'
+                or properties.get('Job') not in ('', '0') or not group.startswith('/')
+                or '..' in group.split('/') or group.split('/')[-1] != unit):
+            return False
+        path = CGROUP_ROOT / group.lstrip('/')
+        try:
+            return (not (path / 'cgroup.procs').read_text().strip()
+                    and 'nr_descendants 0' in (path / 'cgroup.stat').read_text().splitlines()
+                    and 'populated 0' in (path / 'cgroup.events').read_text().splitlines())
+        except (OSError, UnicodeError):
+            return False
+
+    if not empty_active_group() or not empty_active_group():
+        return False
+    subprocess.run([SYSTEMCTL, '--user', 'stop', unit], check=True, timeout=30)
+    return slice_quiescent(unit)
+
+
 class GateSemaphore:
     """Urgent before normal, FIFO within each; kernel locks prove ownership."""
     def __init__(self, directory, slots, quiescent=slice_quiescent):
@@ -285,7 +324,8 @@ class GateSemaphore:
                                     owner = {}  # interrupted write before any scope launch
                                 if not isinstance(owner, dict):
                                     owner = {}
-                                if owner.get('slice') and not self.quiescent(owner['slice']):
+                                if (owner.get('slice') and not self.quiescent(owner['slice'])
+                                        and not reap_stale_slice(owner)):
                                     slot.close()
                                     continue  # crashed supervisor; scope/services still draining
                                 self.slot = slot
