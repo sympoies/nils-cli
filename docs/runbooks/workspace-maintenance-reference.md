@@ -335,20 +335,20 @@ calls, share a priority/FIFO semaphore under
 shared across worktrees and repositories using this entrypoint for the same
 user on a host. Kernel `flock` ownership and recorded unit quiescence govern admission:
 crashed holders and waiters do not require deleting lock files. A crashed
-supervisor slot remains unavailable while its scope/services are draining. Waiting callers print the holder
+supervisor slot remains unavailable while its scope/services are draining. Waiting callers print a "still queued" notice with the holder
 PID, UTC start time, and priority every five seconds. Diagnostics also list live
 queued tickets in admission order with their age in seconds and priority.
 
-After each `NILS_CLI_GATE_TIMEOUT_SECONDS` interval, admission reports "still
-queued" and keeps the same ticket and queue position until admitted or cancelled.
-This interval is a progress reminder, not a gate admission deadline. Cancellation
-removes the ticket, so a later invocation gets a new position.
+Admission keeps the same ticket and queue position until admitted, cancelled, or
+`NILS_CLI_GATE_TIMEOUT_SECONDS` expires. Cancellation or timeout removes the
+ticket, so a later invocation gets a new position. This timeout is best-effort:
+successful admission can win at the deadline, and lock waits can add delay.
 Help, plan-only inspection, and the explicit docs-only lane do not take a slot.
 
 | Knob | Default | Purpose |
 | --- | --- | --- |
 | `NILS_CLI_GATE_SLOTS` | `1` | Maximum concurrent code gates for the user on this host. |
-| `NILS_CLI_GATE_TIMEOUT_SECONDS` | `3600` | Gate "still queued" reminder interval; contained-runner queue waits remain bounded by this value. |
+| `NILS_CLI_GATE_TIMEOUT_SECONDS` | `3600` | Best-effort gate and contained-runner queue timeout in seconds. |
 | `NILS_CLI_GATE_PRIORITY` | `normal` | `urgent` tickets precede normal tickets; FIFO within each priority. Other values fail before queueing. |
 | `NILS_CLI_RUNNER_MAX` | `max(1, min(2, CPU count / 4, MemAvailable / 4 GiB))` | Host contained-runner slots and upper bound on nextest/libtest concurrency; integer division. |
 | `CARGO_BUILD_JOBS` | `1` | Cargo compilation concurrency, including coverage compilation; clamped to the runner maximum. |
