@@ -49,6 +49,7 @@ Schema `cli.forge-cli.{repo,org}.hook.{set-url,set-active}.v1`. Data:
 Each command reads the hook and compares the field with the expected value. For
 `set-active` the expected state is the opposite of the requested one. URLs must
 be distinct absolute `http(s)` URLs without whitespace or embedded credentials.
+A hook whose current URL contains credentials cannot be matched using `--from`.
 
 - Already the requested value: `status` is `already_set` and nothing is
   written, so a rerun after success is a clean no-op.
