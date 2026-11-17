@@ -1,7 +1,41 @@
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::json;
 
 use super::{Fixture, INCARNATION, SESSION_ID, ServeProcess, write_executable};
+
+#[test]
+fn restarted_servers_have_distinct_health_ownership() {
+    let fixture = Fixture::new();
+    let first = ServeProcess::spawn(&fixture, None, false, true);
+    assert!(
+        !super::serve_answers_healthz(first.address, "another-startup"),
+        "a foreign healthy server must not satisfy another startup"
+    );
+    assert!(super::serve_answers_healthz(first.address, &first.machine));
+    let first_health = first.request("GET", "/healthz").body;
+    let other_fixture = Fixture::new();
+    let other = ServeProcess::spawn(&other_fixture, None, false, true);
+    let other_health = other.request("GET", "/healthz").body;
+    assert_ne!(
+        first_health["data"]["machine"],
+        other_health["data"]["machine"]
+    );
+    drop(first);
+    let restarted = ServeProcess::spawn(&fixture, None, false, true);
+    let restarted_health = restarted.request("GET", "/healthz").body;
+    assert_ne!(
+        first_health["data"]["machine"],
+        restarted_health["data"]["machine"]
+    );
+    assert_ne!(
+        other_health["data"]["machine"],
+        restarted_health["data"]["machine"]
+    );
+    assert_eq!(
+        other.request("GET", "/healthz").body["data"]["machine"],
+        other_health["data"]["machine"]
+    );
+}
 
 #[test]
 fn failed_broker_requests_replay_the_same_recovery_details_after_restart() {

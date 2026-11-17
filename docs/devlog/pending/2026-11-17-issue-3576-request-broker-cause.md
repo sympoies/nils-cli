@@ -16,6 +16,9 @@
   rather than changing timeout behavior or expanding the v2/v3 allowlists.
   Reconstructing replay from the diagnostic code alone lost the new broker
   variant; reuse retained attempt evidence without adding durable fields.
+- The restart regression exposed a fixture port handoff race. Let each server
+  bind its own ephemeral port and publish its endpoint; verify a unique startup
+  identity so another fixture cannot satisfy health checks.
 
 ### Evidence
 
@@ -25,6 +28,8 @@
   unchanged. A request-level replay regression failed on lost recovery details,
   then passed across a serving-process restart for automatic and configured
   accounts while preserving a generic terminal fallback failure.
+- A real foreign-server health check was accepted before the fixture repair
+  and rejected afterward; restart ownership is distinct for every child.
 
 ### Links
 
