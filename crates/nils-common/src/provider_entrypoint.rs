@@ -34,7 +34,7 @@ directory_controlled() {{
   directory_ifs=$IFS; IFS=' '; set -- $metadata; IFS=$directory_ifs
   directory_policy "$@"
 }}
-caller_uid=$(/usr/bin/id -u) || exit 127
+caller_uid=$(/usr/bin/id -u) || {{ exit 127; }}
 configured=${{AGENT_SESSION_BIN:-}}
 case "$configured" in /*/{NAME}) if [ -f "$configured" ] && [ -x "$configured" ]; then selected=${{configured%/*}}/{executable}; session_real=$(resolve "$configured") && selected_real=$(resolve "$selected") && [ "${{session_real%/*}}" = "${{selected_real%/*}}" ] && [ -f "$selected_real" ] && [ -x "$selected_real" ] && directory_controlled "$selected_real" && exec "$selected_real" "$@"; exit 127; fi ;; esac
 configured_roots=${{AGENT_RUNTIME_TRUSTED_CLI_ROOT:-}}
