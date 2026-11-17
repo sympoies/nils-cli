@@ -61,6 +61,8 @@ case "$2" in
   */hooks/*/config)
     id=${{2%/config}}; id=${{id##*/}}
     [ "$#" -eq 6 ] && [ "$3" = --method ] && [ "$4" = PATCH ] && [ "$5" = -f ] && case "$6" in url=*) true;; *) false;; esac || {{ echo "unexpected config args: $*" >&2; exit 98; }}
+    if [ -e "$dir/patch-scope" ]; then echo 'This API operation needs the "admin:org_hook" scope' >&2; exit 1; fi
+    if [ -e "$dir/patch-fail" ]; then echo 'gh: Bad Gateway (HTTP 502)' >&2; exit 1; fi
     printf '%s' "${{6#url=}}" > "$dir/url-$id"
     touch "$dir/patched"
     if [ -e "$dir/drop-secret" ]; then touch "$dir/secret-gone"; fi
@@ -380,20 +382,68 @@ fn a_write_that_drops_the_secret_is_reported_as_a_readback_mismatch() {
 #[test]
 fn set_url_refuses_credentials_in_a_url() {
     let stub = stub(&[(7, OLD, true)]);
-    let out = set_url(
-        &stub,
-        "7",
-        OLD,
+    for url in [
         "https://user:pw@new.example.test/hook",
-        false,
-    );
+        "https://token@new.example.test/hook",
+    ] {
+        let out = set_url(&stub, "7", OLD, url, false);
+        assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+        assert_eq!(
+            parse_envelope(&out.stdout)["error"]["code"],
+            "hook_url_invalid"
+        );
+    }
+    assert!(calls(&stub).is_empty());
+}
 
-    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+#[test]
+fn patch_failure_is_reported_as_possibly_applied() {
+    let stub = stub(&[(7, OLD, true), (8, OLD, true)]);
+    flag(&stub, "patch-fail");
+    let out = set_url(&stub, "7", OLD, NEW, false);
+    assert_eq!(out.code, 1, "{}", out.stdout);
     assert_eq!(
         parse_envelope(&out.stdout)["error"]["code"],
-        "hook_url_invalid"
+        "hook_readback_mismatch"
     );
-    assert!(calls(&stub).is_empty());
+}
+
+#[test]
+fn batch_stops_after_patch_failure() {
+    let stub = stub(&[(7, OLD, true), (8, OLD, true)]);
+    flag(&stub, "patch-fail");
+    let file = batch_file(
+        &stub,
+        &format!(
+            "[{},{}]",
+            url_row("acme/widgets", 7, OLD, NEW),
+            url_row("acme/widgets", 8, OLD, NEW)
+        ),
+    );
+    let out = run_batch(&stub, "repo", &file, false);
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(
+        env["data"]["rows"][0]["error"]["kind"],
+        "hook_readback_mismatch"
+    );
+    assert_eq!(env["data"]["rows"][1]["status"], "skipped");
+    assert_eq!(patches(&stub).len(), 1);
+    assert_eq!(stored(&stub, "url", 8), OLD);
+}
+
+#[test]
+fn patch_scope_failure_is_preserved() {
+    let stub = stub(&[(7, OLD, true)]);
+    flag(&stub, "patch-scope");
+    let file = batch_file(&stub, &format!("[{}]", url_row("acme", 7, OLD, NEW)));
+    let out = run_batch(&stub, "org", &file, false);
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    assert_eq!(
+        parse_envelope(&out.stdout)["data"]["rows"][0]["error"]["kind"],
+        "org_hook_scope_missing"
+    );
+    assert_eq!(patches(&stub).len(), 1);
 }
 
 #[test]
@@ -557,6 +607,9 @@ fn batch_validates_the_whole_file_before_any_call() {
         // Embedded credentials are refused.
         format!(
             r#"[{good},{{"target":"acme/widgets","hook":8,"action":"set-url","from":"{OLD}","to":"https://user:pw@new.example.test/hook"}}]"#
+        ),
+        format!(
+            r#"[{good},{{"target":"acme/widgets","hook":8,"action":"set-url","from":"{OLD}","to":"https://token@new.example.test/hook"}}]"#
         ),
         // An organization is not a repository target, and from == to is refused.
         format!("[{}]", url_row("acme", 7, OLD, NEW)),

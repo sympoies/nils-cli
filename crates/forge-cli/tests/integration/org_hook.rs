@@ -295,18 +295,17 @@ fn create_dry_run_posts_nothing() {
 #[test]
 fn create_refuses_credentials_in_the_url() {
     let stub = stub(&[]);
-    let out = create(
-        &stub,
-        false,
+    for url in [
         "https://user:pw@new.example.test/hook",
-        &[("ORG_HOOK_SECRET", ENV_SECRET)],
-    );
-
-    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
-    assert_eq!(
-        parse_envelope(&out.stdout)["error"]["code"],
-        "hook_url_invalid"
-    );
+        "https://token@new.example.test/hook",
+    ] {
+        let out = create(&stub, false, url, &[("ORG_HOOK_SECRET", ENV_SECRET)]);
+        assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+        assert_eq!(
+            parse_envelope(&out.stdout)["error"]["code"],
+            "hook_url_invalid"
+        );
+    }
     assert!(calls(&stub).is_empty());
 }
 
