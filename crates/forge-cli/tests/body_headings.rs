@@ -326,6 +326,14 @@ fn invalid_configured_headings_fail_pr_operations_with_key_diagnostics() {
     for (config, key) in [
         ("[body]\nsummary_heading = ''\n", "body.summary_heading"),
         (
+            "[body]\nsummary_heading = '## ###'\n",
+            "body.summary_heading",
+        ),
+        (
+            "[body]\ntest_plan_heading = '## ###'\n",
+            "body.test_plan_heading",
+        ),
+        (
             "[body]\ntest_plan_heading = '### Tests'\n",
             "body.test_plan_heading",
         ),
@@ -377,5 +385,18 @@ fn missing_sections_hint_names_both_configured_headings() {
             command,
             out.stdout
         );
+    }
+}
+
+#[test]
+fn named_closing_hash_headings_are_accepted() {
+    let repo = repository(
+        "[body]\nsummary_heading = '## Notes ##'\ntest_plan_heading = '## Checks ###'\n",
+    );
+    let stub = StubEnv::new().gh_stub(FORBIDDEN_BACKEND);
+    let body = "## Notes ##\nDescription.\n## Checks ###\nTests.\n";
+    for command in ["create", "edit", "deliver"] {
+        let out = invoke(&stub, repo.path(), command, body, true);
+        assert_eq!(out.code, 0, "{command}: {} {}", out.stdout, out.stderr);
     }
 }

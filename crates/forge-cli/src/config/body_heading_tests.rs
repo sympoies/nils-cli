@@ -4,7 +4,17 @@ use super::ForgeConfig;
 fn invalid_heading_values_warn_and_are_rejected() {
     let mut failures = Vec::new();
     for key in ["summary_heading", "test_plan_heading"] {
-        for value in ["", "   ", "# Title", "### Title", "## "] {
+        for value in [
+            "",
+            "   ",
+            "# Title",
+            "### Title",
+            "## ",
+            "## ###",
+            "## Title ",
+            "## Title\nOther",
+            "## Title\rOther",
+        ] {
             let cfg = ForgeConfig::parse_content(&format!("[body]\n{key} = {value:?}\n")).unwrap();
             let warned = cfg
                 .warnings
@@ -48,4 +58,14 @@ fn equal_resolved_headings_are_rejected_after_layering_and_defaults() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn named_headings_with_closing_hashes_are_valid() {
+    for heading in ["## Notes ##", "## Notes ###"] {
+        let cfg = ForgeConfig::parse_content(&format!("[body]\nsummary_heading = {heading:?}\n"))
+            .unwrap();
+        assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+        assert!(crate::validations::BodyHeadings::validate_config(&cfg).is_ok());
+    }
 }
