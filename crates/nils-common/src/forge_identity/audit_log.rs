@@ -201,7 +201,7 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             FAKE.with_borrow_mut(|fake| {
                 *fake = Some(Fake {
-                    now: Instant::now(),
+                    now: super::super::probe::now(),
                     attempts: attempts.into(),
                     waits: Vec::new(),
                     always_busy,
