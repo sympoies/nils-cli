@@ -316,7 +316,10 @@ mod tests {
     #[test]
     fn startup_readers_share_the_fence_but_removal_is_exclusive() {
         const CHILD: &str = "NILS_LIFECYCLE_FENCE_TEST_CHILD";
-        if std::env::var_os(CHILD).is_none() {
+        let completion = std::env::var_os(CHILD);
+        if completion.is_none() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let completion = tmp.path().join("completed");
             // Other tests spawn processes concurrently. A child between fork and
             // exec can retain a CLOEXEC lock after this test drops its guard.
             // Run the assertions in a process with no concurrent test threads.
@@ -326,10 +329,11 @@ mod tests {
                     "worktree_lifecycle::tests::startup_readers_share_the_fence_but_removal_is_exclusive",
                     "--test-threads=1",
                 ])
-                .env(CHILD, "1")
+                .env(CHILD, &completion)
                 .status()
                 .unwrap();
             assert!(status.success());
+            assert_eq!(fs::read(&completion).unwrap(), b"completed");
             return;
         }
         let tmp = tempfile::TempDir::new().unwrap();
@@ -355,6 +359,7 @@ mod tests {
         ));
         drop(removal);
         assert!(Guard::acquire_startup(&namespace, &checkout).is_ok());
+        fs::write(completion.unwrap(), b"completed").unwrap();
     }
 
     #[test]
