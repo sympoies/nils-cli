@@ -890,9 +890,10 @@ that attempt before creating another session.
 
 ## Per-session temporary directory
 
-Every managed tmux session launches with `TMPDIR=${AGENT_HOME}/tmp/<session-id>`
-(mode 0700), so harness scratch directories and `mktemp` output stay under
-`AGENT_HOME` instead of the system `/tmp`. This is the `tmp` class of the agent
+Every managed tmux session launches with a short `TMPDIR` symlink to its
+mode-0700 `${AGENT_HOME}/tmp/<session-id>` directory. This keeps socket paths
+short while harness scratch directories and `mktemp` output stay under
+`AGENT_HOME`. The session owner removes the symlink along with the directory. This is the `tmp` class of the agent
 write-location contract in agent-runtime-kit
 ([`write-locations.md`](https://github.com/sympoies/agent-runtime-kit/blob/main/core/policies/write-locations.md)).
 `AGENT_HOME` defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/agent-runtime-kit`.

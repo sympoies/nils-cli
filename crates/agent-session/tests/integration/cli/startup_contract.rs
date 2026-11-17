@@ -117,6 +117,17 @@ pub(super) fn start_creates_session_state_without_printing_prompt() {
         .expect("new-session call");
     let new_session = &normalize_held_launch(new_session);
     let inherited_path = std::env::var("PATH").expect("test PATH");
+    let tmp_arg = new_session
+        .iter()
+        .find(|arg| arg.starts_with("TMPDIR="))
+        .unwrap();
+    let short_tmp = std::path::Path::new(tmp_arg.strip_prefix("TMPDIR=").unwrap());
+    assert_eq!(
+        fs::read_link(short_tmp).unwrap(),
+        tmp.path().join("agent-home/tmp").join(id)
+    );
+    fs::remove_file(short_tmp).unwrap();
+    fs::remove_dir(short_tmp.parent().unwrap()).unwrap();
     assert_eq!(
         new_session,
         &vec![
@@ -132,7 +143,7 @@ pub(super) fn start_creates_session_state_without_printing_prompt() {
             "-c".to_string(),
             cwd_arg.clone(),
             "-e".to_string(),
-            format!("TMPDIR={}", tmp.path().join("agent-home/tmp").join(id).display()),
+            tmp_arg.to_string(),
             "-e".to_string(),
             "AGENT_SESSION_TOKEN".to_string(),
             "-e".to_string(),
@@ -447,6 +458,17 @@ pub(super) fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
         .to_string_lossy()
         .to_string();
     let inherited_path = std::env::var("PATH").expect("test PATH");
+    let tmp_arg = new_session
+        .iter()
+        .find(|arg| arg.starts_with("TMPDIR="))
+        .unwrap();
+    let short_tmp = std::path::Path::new(tmp_arg.strip_prefix("TMPDIR=").unwrap());
+    assert_eq!(
+        fs::read_link(short_tmp).unwrap(),
+        tmp.path().join("agent-home/tmp/recoverable")
+    );
+    fs::remove_file(short_tmp).unwrap();
+    fs::remove_dir(short_tmp.parent().unwrap()).unwrap();
     assert_eq!(
         new_session,
         &vec![
@@ -462,7 +484,7 @@ pub(super) fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
             "-c".to_string(),
             cwd.to_string_lossy().to_string(),
             "-e".to_string(),
-            format!("TMPDIR={}", tmp.path().join("agent-home/tmp/recoverable").display()),
+            tmp_arg.to_string(),
             "-e".to_string(),
             "AGENT_SESSION_TOKEN".to_string(),
             "-e".to_string(),
