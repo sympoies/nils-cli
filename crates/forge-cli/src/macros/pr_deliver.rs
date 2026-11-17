@@ -153,6 +153,9 @@ pub fn run_with<R: BackendRunner, C: Clock>(
         label_target,
     )?;
 
+    let body_config = ForgeConfig::load_layered(workdir, find_git_toplevel(workdir).as_deref());
+    BodyHeadings::validate_config(&body_config)?;
+
     // The merge phase owns review convergence, but configuration validity is
     // part of the macro input contract. Validate before the dry-run/live split
     // so previews cannot report a deliverable plan that live delivery rejects.

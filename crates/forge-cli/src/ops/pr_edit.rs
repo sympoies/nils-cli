@@ -70,6 +70,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     if let Some(body) = &new_body {
         let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let cfg = ForgeConfig::load_layered(&workdir, find_git_toplevel(&workdir).as_deref());
+        BodyHeadings::validate_config(&cfg)?;
         let headings = BodyHeadings::from_config(&cfg);
         body_summary(body, &headings)?;
         body_test_plan(body, &headings)?;

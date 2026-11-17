@@ -415,7 +415,7 @@ impl ForgeConfig {
             } else {
                 (top.checks_none, top.checks_none_reason)
             };
-        Self {
+        let mut merged = Self {
             merge_method: top.merge_method.or(self.merge_method),
             merge_delete_branch: top.merge_delete_branch.or(self.merge_delete_branch),
             merge_hold_labels: self
@@ -467,7 +467,11 @@ impl ForgeConfig {
                 merged
             },
             source_path: top.source_path.or(self.source_path),
+        };
+        if merged.resolve_summary_heading(None) == merged.resolve_test_plan_heading(None) {
+            merged.warnings.push("invalid-config-value:body.summary_heading:body.test_plan_heading:headings_must_differ".into());
         }
+        merged
     }
 
     /// Resolve `[merge].method` against an optional explicit flag.
@@ -977,6 +981,10 @@ fn parse_review_handoff(table: &toml::map::Map<String, Value>, cfg: &mut ForgeCo
     }
 }
 
+pub(crate) fn valid_body_heading(s: &str) -> bool {
+    s.starts_with("## ") && !s[3..].trim().is_empty() && s.trim() == s && !s.contains(['\n', '\r'])
+}
+
 fn parse_body(table: &toml::map::Map<String, Value>, cfg: &mut ForgeConfig) {
     for (key, value) in table {
         if !KNOWN_BODY_KEYS.contains(&key.as_str()) {
@@ -988,6 +996,11 @@ fn parse_body(table: &toml::map::Map<String, Value>, cfg: &mut ForgeConfig) {
                 .push(format!("invalid-config-value:body.{key}:not_a_string"));
             continue;
         };
+        if !valid_body_heading(s) {
+            cfg.warnings.push(format!(
+                "invalid-config-value:body.{key}:expected_non_empty_h2"
+            ));
+        }
         match key.as_str() {
             "summary_heading" => cfg.body_summary_heading = Some(s.to_string()),
             "test_plan_heading" => cfg.body_test_plan_heading = Some(s.to_string()),
@@ -1846,3 +1859,6 @@ timeout = 42
         assert!(MergeMethod::from_str("").is_err());
     }
 }
+
+#[cfg(test)]
+mod body_heading_tests;

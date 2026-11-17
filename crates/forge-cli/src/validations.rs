@@ -258,8 +258,8 @@ pub fn body_summary(body: &str, headings: &BodyHeadings) -> Result<(), ForgeErro
                 heading = headings.summary
             ),
             Some(format!(
-                "rule=non-empty H2 '{}' section; {BODY_SCAFFOLD_HINT}",
-                headings.summary
+                "rule=non-empty H2 '{}' section; required headings: {} and {}; {BODY_SCAFFOLD_HINT}",
+                headings.summary, headings.summary, headings.test_plan
             )),
         ))
     }
@@ -278,8 +278,8 @@ pub fn body_test_plan(body: &str, headings: &BodyHeadings) -> Result<(), ForgeEr
                 heading = headings.test_plan
             ),
             Some(format!(
-                "rule=non-empty H2 '{}' section; {BODY_SCAFFOLD_HINT}",
-                headings.test_plan
+                "rule=non-empty H2 '{}' section; required headings: {} and {}; {BODY_SCAFFOLD_HINT}",
+                headings.test_plan, headings.summary, headings.test_plan
             )),
         ))
     }
@@ -338,9 +338,11 @@ pub fn body_sections(body: &str, headings: &BodyHeadings) -> Result<(), ForgeErr
                 headings.summary, headings.test_plan
             ),
             Some(format!(
-                "missing={},{}; {BODY_SCAFFOLD_HINT}",
+                "missing={},{}; required headings: {} and {}; {BODY_SCAFFOLD_HINT}",
                 summary_err.kind(),
-                test_plan_err.kind()
+                test_plan_err.kind(),
+                headings.summary,
+                headings.test_plan
             )),
         )),
     }

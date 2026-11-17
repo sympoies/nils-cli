@@ -320,3 +320,62 @@ fn repository_overrides_global_headings_from_a_nested_working_directory() {
         }
     }
 }
+
+#[test]
+fn invalid_configured_headings_fail_pr_operations_with_key_diagnostics() {
+    for (config, key) in [
+        ("[body]\nsummary_heading = ''\n", "body.summary_heading"),
+        (
+            "[body]\ntest_plan_heading = '### Tests'\n",
+            "body.test_plan_heading",
+        ),
+        (
+            "[body]\nsummary_heading = '## Test plan'\n",
+            "body.summary_heading",
+        ),
+    ] {
+        let repo = repository(config);
+        let stub = StubEnv::new().gh_stub(FORBIDDEN_BACKEND);
+        for command in ["create", "edit", "deliver"] {
+            let out = invoke(&stub, repo.path(), command, ENGLISH_BODY, true);
+            assert_eq!(out.code, 65, "{command}: {} {}", out.stdout, out.stderr);
+            assert!(
+                out.stdout.contains(key),
+                "{command}: {} {}",
+                out.stdout,
+                out.stderr
+            );
+        }
+    }
+}
+
+#[test]
+fn valid_repository_headings_override_invalid_global_headings() {
+    let repo = repository(LOCALIZED_CONFIG);
+    let stub = StubEnv::new().gh_stub(FORBIDDEN_BACKEND);
+    let global_dir = stub.tempdir.path().join("xdg-config/forge-cli");
+    fs::create_dir_all(&global_dir).unwrap();
+    fs::write(
+        global_dir.join("config.toml"),
+        "[body]\nsummary_heading = ''\n",
+    )
+    .unwrap();
+    let out = invoke(&stub, repo.path(), "create", LOCALIZED_BODY, true);
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+}
+
+#[test]
+fn missing_sections_hint_names_both_configured_headings() {
+    let repo = repository(LOCALIZED_CONFIG);
+    let stub = StubEnv::new().gh_stub(FORBIDDEN_BACKEND);
+    for command in ["create", "edit"] {
+        let out = invoke(&stub, repo.path(), command, "No sections here.", true);
+        assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
+        assert!(
+            out.stdout.contains("## 摘要") && out.stdout.contains("## 驗證"),
+            "{}: {}",
+            command,
+            out.stdout
+        );
+    }
+}

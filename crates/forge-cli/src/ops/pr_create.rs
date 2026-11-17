@@ -94,6 +94,9 @@ pub fn run(
     format: OutputFormat,
 ) -> Result<i32, ForgeError> {
     let runner = default_runner();
+    let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let cfg = ForgeConfig::load_layered(&workdir, find_git_toplevel(&workdir).as_deref());
+    BodyHeadings::validate_config(&cfg)?;
     let env = Environment::production();
     run_with(&runner, global, args, format, &env)
 }
