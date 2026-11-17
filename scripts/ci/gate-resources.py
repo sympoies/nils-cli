@@ -334,12 +334,10 @@ class GateSemaphore:
                             slot.close()
                 now = time.monotonic()
                 if now >= deadline:
-                    print(f'gate still queued after {timeout}s; holders: {self.holders()}',
-                          file=sys.stderr, flush=True)
-                    deadline = now + timeout
-                    last_notice = now
+                    raise RuntimeError(f'gate queue timed out after {timeout}s; increase '
+                                       f'NILS_CLI_GATE_TIMEOUT_SECONDS to wait longer; holders: {self.holders()}')
                 elif now - last_notice >= 5:
-                    print(f'gate queued; holders: {self.holders()}', file=sys.stderr, flush=True)
+                    print(f'gate still queued; holders: {self.holders()}', file=sys.stderr, flush=True)
                     last_notice = now
                 time.sleep(.1)
         finally:

@@ -165,7 +165,7 @@ class GateUnits(unittest.TestCase):
                     if case in ('missing_pid', 'bad_pid', 'zero_pid', 'negative_pid', 'foreign'):
                         probe.assert_not_called()
 
-    def test_timeout_retains_original_ticket_and_fifo_position(self):
+    def test_timeout_removes_ticket_after_retaining_fifo_position(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             earlier = root / 'queue-00000000000000000000-earlier.lock'
@@ -186,17 +186,15 @@ class GateUnits(unittest.TestCase):
                     if not original:
                         original.append(identity)
                     self.assertEqual(identity, original[0], 'waiter lost its original ticket')
-                    if clock[0] >= 100.5:
-                        predecessor.close()
-                    self.assertLess(clock[0], 102, 'waiter did not retain its FIFO position')
+                    self.assertLess(clock[0], 113, 'waiter did not time out')
                 with patch.object(resources.time, 'monotonic', side_effect=lambda: clock[0]), \
                      patch.object(resources.time, 'sleep', side_effect=advance), \
                      contextlib.redirect_stderr(notices):
-                    lease = resources.GateSemaphore(root, 1).acquire(.2)
-                    lease.close()
-                self.assertGreaterEqual(clock[0], 100.5)
-                self.assertIn('still queued', notices.getvalue())
-                self.assertFalse([path for path in root.glob('queue-*.lock') if path != later])
+                    with self.assertRaisesRegex(RuntimeError, 'queue timed out.*NILS_CLI_GATE_TIMEOUT_SECONDS'):
+                        resources.GateSemaphore(root, 1).acquire(12)
+                self.assertGreaterEqual(clock[0], 112)
+                self.assertGreaterEqual(notices.getvalue().count('still queued'), 2)
+                self.assertFalse([path for path in root.glob('queue-*.lock') if path not in (earlier, later)])
 
     def test_urgent_ticket_passes_two_normal_waiters_and_is_auditable(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -472,7 +470,7 @@ class GateUnits(unittest.TestCase):
             ticket = resources.lock_file(root / 'queue-00000000000000000000-live.lock')
             resources.try_lock(ticket)
             try:
-                with self.cancelled_wait('gate queued'):
+                with self.cancelled_wait('gate still queued'):
                     resources.GateSemaphore(root, 2).acquire(.1)
             finally:
                 ticket.close()

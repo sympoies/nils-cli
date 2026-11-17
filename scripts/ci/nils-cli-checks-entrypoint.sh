@@ -33,7 +33,7 @@ Options:
 
 Environment:
   NILS_CLI_GATE_SLOTS                 Concurrent gates per user/host (default: 1).
-  NILS_CLI_GATE_TIMEOUT_SECONDS       Queue timeout (default: 3600).
+  NILS_CLI_GATE_TIMEOUT_SECONDS       Gate and contained-runner queue timeout in seconds (default: 3600).
   NILS_CLI_RUNNER_MAX                 Contained runners and test threads (default: 1-2,
                                      derived from CPU count and available memory).
   CARGO_BUILD_JOBS                   Compilation jobs (default: 1).
