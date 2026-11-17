@@ -786,7 +786,13 @@ pub(crate) fn wait_with_cancellation(
                 None,
             ));
         }
-        let mut locked = lock_registry(context)?;
+        let mut locked = super::mailbox_wait::lock_for_wait(
+            context,
+            started,
+            timeout,
+            cancelled,
+            revision_wait_timeout,
+        )?;
         let registry_changed = clean_expired(&mut locked.registry, now_epoch());
         revalidate_capability_file(
             context,
@@ -838,14 +844,18 @@ pub(crate) fn wait_with_cancellation(
         }
         drop(locked);
         if started.elapsed() >= timeout {
-            return Err(CliError::runtime(
-                "wait-timeout",
-                "message wait reached its bounded timeout",
-                None,
-            ));
+            return Err(revision_wait_timeout());
         }
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(50).min(timeout.saturating_sub(started.elapsed())));
     }
+}
+
+fn revision_wait_timeout() -> CliError {
+    CliError::runtime(
+        "wait-timeout",
+        "message wait reached its bounded timeout",
+        None,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
