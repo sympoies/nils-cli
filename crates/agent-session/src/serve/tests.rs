@@ -11163,74 +11163,7 @@ async fn resume_rechecks_profile_readiness_and_fails_before_launch() {
     );
 }
 
-#[tokio::test]
-async fn list_fails_closed_immediately_after_a_profile_root_is_removed() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let cwd = tmp.path().join("repo");
-    let config_dir = tmp.path().join("claude-gpt-config");
-    fs::create_dir_all(&cwd).unwrap();
-    fs::create_dir_all(&config_dir).unwrap();
-    let log = tmp.path().join("tmux.log");
-    let tmux = resume_tmux(tmp.path(), &log);
-    let launcher = fake_agent(tmp.path(), "claude-gpt");
-    seed_resumable_session(
-        tmp.path(),
-        "profile-root-removed",
-        "claude",
-        "hs-claude-profile-root-removed",
-        &cwd,
-        &["--resume", "resume-session-id"],
-    );
-    let record_path = tmp
-        .path()
-        .join("sessions/profile-root-removed/session.json");
-    let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
-    record["agent_bin"] = json!(launcher);
-    record["runtime"]["agent_profile"] = json!("claude-gpt");
-    record["runtime"]["agent_profile_provider_config_dir"] = json!(config_dir);
-    record["runtime"]["agent_profile_auto_resume_supported"] = json!(false);
-    fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
-    let profiles = AgentLaunchProfiles::from_json(
-        &json!([{
-            "id":"claude-gpt",
-            "label":"Claude GPT",
-            "agent":"claude",
-            "agent_bin":launcher,
-            "provider_config_dir":config_dir,
-            "auto_resume_supported":false,
-        }])
-        .to_string(),
-    )
-    .unwrap();
-    let mut st = state(tmp.path(), Some(TOKEN), tmux);
-    Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
-
-    let (ready_status, ready_body) = call(router(st.clone()), get("/sessions")).await;
-    assert_eq!(ready_status, StatusCode::OK, "body={ready_body}");
-    assert_eq!(
-        ready_body["data"]["agent_profiles"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(ready_body["data"]["sessions"][0]["resumable"], true);
-
-    fs::remove_dir(&config_dir).unwrap();
-    let (removed_status, removed_body) = call(router(st), get("/sessions")).await;
-    assert_eq!(removed_status, StatusCode::OK, "body={removed_body}");
-    assert!(
-        removed_body["data"]["agent_profiles"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
-    assert_eq!(removed_body["data"]["sessions"][0]["resumable"], false);
-    assert_eq!(
-        removed_body["data"]["sessions"][0]["resume_blocked_reason"],
-        "agent-profile-unavailable"
-    );
-}
+mod resume_recovery;
 
 #[tokio::test]
 async fn resume_profile_pins_durable_provider_root_and_launcher() {
