@@ -341,13 +341,14 @@ queued tickets in admission order with their age in seconds and priority.
 
 Admission keeps the same ticket and queue position until admitted, cancelled, or
 `NILS_CLI_GATE_TIMEOUT_SECONDS` expires. Cancellation or timeout removes the
-ticket, so a later invocation gets a new position.
+ticket, so a later invocation gets a new position. This timeout is best-effort:
+successful admission can win at the deadline, and lock waits can add delay.
 Help, plan-only inspection, and the explicit docs-only lane do not take a slot.
 
 | Knob | Default | Purpose |
 | --- | --- | --- |
 | `NILS_CLI_GATE_SLOTS` | `1` | Maximum concurrent code gates for the user on this host. |
-| `NILS_CLI_GATE_TIMEOUT_SECONDS` | `3600` | Maximum gate and contained-runner queue wait in seconds. |
+| `NILS_CLI_GATE_TIMEOUT_SECONDS` | `3600` | Best-effort gate and contained-runner queue timeout in seconds. |
 | `NILS_CLI_GATE_PRIORITY` | `normal` | `urgent` tickets precede normal tickets; FIFO within each priority. Other values fail before queueing. |
 | `NILS_CLI_RUNNER_MAX` | `max(1, min(2, CPU count / 4, MemAvailable / 4 GiB))` | Host contained-runner slots and upper bound on nextest/libtest concurrency; integer division. |
 | `CARGO_BUILD_JOBS` | `1` | Cargo compilation concurrency, including coverage compilation; clamped to the runner maximum. |
