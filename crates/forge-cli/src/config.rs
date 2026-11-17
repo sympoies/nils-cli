@@ -983,7 +983,7 @@ fn parse_review_handoff(table: &toml::map::Map<String, Value>, cfg: &mut ForgeCo
 
 pub(crate) fn valid_body_heading(s: &str) -> bool {
     s.starts_with("## ")
-        && s[3..].trim().chars().any(|ch| ch != '#')
+        && s[3..].trim_matches([' ', '\t']).chars().any(|ch| ch != '#')
         && s.trim() == s
         && !s.contains(['\n', '\r'])
 }

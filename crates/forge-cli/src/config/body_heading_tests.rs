@@ -11,6 +11,7 @@ fn invalid_heading_values_warn_and_are_rejected() {
             "### Title",
             "## ",
             "## ###",
+            "## \t###",
             "## Title ",
             "## Title\nOther",
             "## Title\rOther",
@@ -67,5 +68,20 @@ fn named_headings_with_closing_hashes_are_valid() {
             .unwrap();
         assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
         assert!(crate::validations::BodyHeadings::validate_config(&cfg).is_ok());
+    }
+}
+
+#[test]
+fn unicode_space_before_hashes_is_literal_heading_content() {
+    for key in ["summary_heading", "test_plan_heading"] {
+        for heading in ["## \u{a0}#", "## \u{a0}###"] {
+            let cfg =
+                ForgeConfig::parse_content(&format!("[body]\n{key} = '{heading}'\n")).unwrap();
+            assert!(cfg.warnings.is_empty(), "{key}: {:?}", cfg.warnings);
+            assert!(
+                crate::validations::BodyHeadings::validate_config(&cfg).is_ok(),
+                "{key}={heading:?}"
+            );
+        }
     }
 }

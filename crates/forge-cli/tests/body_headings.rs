@@ -330,7 +330,15 @@ fn invalid_configured_headings_fail_pr_operations_with_key_diagnostics() {
             "body.summary_heading",
         ),
         (
+            "[body]\nsummary_heading = '## \t###'\n",
+            "body.summary_heading",
+        ),
+        (
             "[body]\ntest_plan_heading = '## ###'\n",
+            "body.test_plan_heading",
+        ),
+        (
+            "[body]\ntest_plan_heading = '## \t###'\n",
             "body.test_plan_heading",
         ),
         (
@@ -398,5 +406,37 @@ fn named_closing_hash_headings_are_accepted() {
     for command in ["create", "edit", "deliver"] {
         let out = invoke(&stub, repo.path(), command, body, true);
         assert_eq!(out.code, 0, "{command}: {} {}", out.stdout, out.stderr);
+    }
+}
+
+#[test]
+fn unicode_space_before_hashes_is_literal_in_configured_headings() {
+    for key in ["summary_heading", "test_plan_heading"] {
+        for heading in ["## \u{a0}#", "## \u{a0}###"] {
+            let repo = repository(&format!("[body]\n{key} = '{heading}'\n"));
+            let stub = StubEnv::new().gh_stub(FORBIDDEN_BACKEND);
+            let body = if key == "summary_heading" {
+                format!("{heading}\nDescription.\n## Test plan\nTests.\n")
+            } else {
+                format!("## Summary\nDescription.\n{heading}\nTests.\n")
+            };
+            for command in ["create", "edit", "deliver"] {
+                let out = invoke(&stub, repo.path(), command, &body, true);
+                assert_eq!(
+                    out.code, 0,
+                    "{key} {heading:?} {command}: {} {}",
+                    out.stdout, out.stderr
+                );
+                if command == "deliver" {
+                    let envelope = parse_envelope(&out.stdout);
+                    assert_eq!(verdict(&envelope, "body_summary")["ok"], true, "{envelope}");
+                    assert_eq!(
+                        verdict(&envelope, "body_test_plan")["ok"],
+                        true,
+                        "{envelope}"
+                    );
+                }
+            }
+        }
     }
 }
