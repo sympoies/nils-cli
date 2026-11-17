@@ -1,5 +1,6 @@
 pub(crate) mod cli;
 pub(crate) mod notice;
+pub(crate) mod selection_result;
 
 use std::fs;
 use std::path::PathBuf;

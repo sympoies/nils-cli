@@ -125,6 +125,8 @@ pub(super) async fn process_codex_auto_resume_id(
     let id = target.id;
     tokio::task::spawn_blocking(move || {
         let now_epoch = jiff::Timestamp::now().as_second();
+        let mut selection_error = None;
+        let mut selection_attempted = false;
         let failover_account = auto_resume::failover_selection_request(
             &context,
             &id,
@@ -135,9 +137,14 @@ pub(super) async fn process_codex_auto_resume_id(
         .ok()
         .flatten()
         .and_then(|request| {
-            crate::codex_account::select_next_account(&request.after, &request.excluded)
-                .ok()
-                .flatten()
+            selection_attempted = true;
+            match crate::codex_account::select_next_account(&request.after, &request.excluded) {
+                Ok(account) => account,
+                Err(error) => {
+                    selection_error = Some(error);
+                    None
+                }
+            }
         })
         .map(|account| account.account);
         if let Err(err) = auto_resume::tick_for_runtime_and_binding(
@@ -163,6 +170,21 @@ pub(super) async fn process_codex_auto_resume_id(
             },
         ) {
             eprintln!("warning: Codex auto-resume tick failed: {}", err.code());
+        }
+        if selection_attempted
+            && failover_account.is_none()
+            && let Err(error) = auto_resume::selection_result::record(
+                &context,
+                &id,
+                &expected_launch_id,
+                &target.binding,
+                selection_error.as_ref(),
+            )
+        {
+            eprintln!(
+                "warning: Codex auto-resume selection checkpoint failed: {}",
+                error.code()
+            );
         }
     })
     .await
