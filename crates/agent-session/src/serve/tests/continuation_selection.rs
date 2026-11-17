@@ -2,7 +2,12 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
-async fn selection_tick(script_body: &str, expected_reason: Option<&str>, selected: bool) {
+async fn selection_tick(
+    script_body: &str,
+    expected_reason: Option<&str>,
+    selected: bool,
+    exhausted: bool,
+) {
     let lock = GlobalStateLock::new();
     let tmp = tempfile::TempDir::new().unwrap();
     let broker = tmp.path().join("broker");
@@ -67,14 +72,19 @@ async fn selection_tick(script_body: &str, expected_reason: Option<&str>, select
             response
                 .send(Ok(UsageSnapshot {
                     authoritative: true,
-                    has_exhausted_windows: true,
-                    exhausted_reset_epochs: vec![4_102_444_800],
+                    has_exhausted_windows: exhausted,
+                    exhausted_reset_epochs: if exhausted {
+                        vec![4_102_444_800]
+                    } else {
+                        Vec::new()
+                    },
                     soonest_reset_epoch: None,
                 }))
                 .unwrap();
         }
     });
     let mut first_schedule = None;
+    let mut first_durable = None;
     for _ in 0..2 {
         process_codex_auto_resume_id(
             st.clone(),
@@ -91,8 +101,10 @@ async fn selection_tick(script_body: &str, expected_reason: Option<&str>, select
             view.state,
             if selected {
                 "switching_account"
-            } else {
+            } else if exhausted {
                 "scheduled"
+            } else {
+                "transient_failure"
             }
         );
         assert_eq!(view.attempts, 0);
@@ -106,7 +118,17 @@ async fn selection_tick(script_body: &str, expected_reason: Option<&str>, select
         )
         .unwrap();
         assert!(!durable.contains("BROKER_PRIVATE_CANARY"));
-        if !selected {
+        let mut durable: Value = serde_json::from_str(&durable).unwrap();
+        if !exhausted {
+            assert_eq!(durable["attempt"], 1);
+            assert!(durable["next_check_at"].is_string());
+        }
+        durable.as_object_mut().unwrap().remove("failure_reason");
+        if let Some(first) = &first_durable {
+            assert_eq!(&durable, first);
+        }
+        first_durable = Some(durable);
+        if !selected && exhausted {
             let scheduled = view
                 .scheduled_at
                 .as_ref()
@@ -119,6 +141,8 @@ async fn selection_tick(script_body: &str, expected_reason: Option<&str>, select
                 assert_eq!(scheduled, first);
             }
             first_schedule = Some(scheduled);
+        } else {
+            assert!(view.scheduled_at.is_none());
         }
     }
     if recover_to_no_account {
@@ -134,7 +158,14 @@ async fn selection_tick(script_body: &str, expected_reason: Option<&str>, select
         .await;
         let view = auto_resume::view_for_record(&st.context, &record);
         assert_eq!(view.failure_reason.as_deref(), Some("no_account_available"));
-        assert_eq!(view.state, "scheduled");
+        assert_eq!(
+            view.state,
+            if exhausted {
+                "scheduled"
+            } else {
+                "transient_failure"
+            }
+        );
         assert_eq!(view.attempts, 0);
         assert!(
             !serde_json::to_string(&view)
@@ -146,14 +177,21 @@ async fn selection_tick(script_body: &str, expected_reason: Option<&str>, select
         )
         .unwrap();
         assert!(!durable.contains("BROKER_PRIVATE_CANARY"));
-        assert_eq!(
-            view.scheduled_at
-                .unwrap()
-                .parse::<jiff::Timestamp>()
-                .unwrap()
-                .as_second(),
-            first_schedule.unwrap()
-        );
+        let mut durable: Value = serde_json::from_str(&durable).unwrap();
+        durable.as_object_mut().unwrap().remove("failure_reason");
+        assert_eq!(durable, first_durable.unwrap());
+        if exhausted {
+            assert_eq!(
+                view.scheduled_at
+                    .unwrap()
+                    .parse::<jiff::Timestamp>()
+                    .unwrap()
+                    .as_second(),
+                first_schedule.unwrap()
+            );
+        } else {
+            assert!(view.scheduled_at.is_none());
+        }
     }
     responder.await.unwrap();
     let current = crate::load_session_record(&st.context, &record.id).unwrap();
@@ -170,17 +208,29 @@ async fn continuation_selection_fault_surfaces_typed_cause_without_changing_sche
         "printf 'BROKER_PRIVATE_CANARY\\n'; printf 'BROKER_PRIVATE_CANARY\\n' >&2",
         Some("codex-account-broker-invalid-response"),
         false,
+        true,
     )
     .await;
 }
 
 #[tokio::test]
 async fn continuation_selection_no_account_keeps_existing_quiet_schedule() {
-    selection_tick("exit 10", Some("no_account_available"), false).await;
+    selection_tick("exit 10", Some("no_account_available"), false, true).await;
 }
 
 #[tokio::test]
 async fn continuation_selection_success_queues_the_selected_account_once() {
     selection_tick(r#"printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"account-b"}'"#,
-        None, true).await;
+        None, true, true).await;
+}
+
+#[tokio::test]
+async fn continuation_selection_fault_preserves_durable_retry_budget_until_no_account() {
+    selection_tick(
+        "printf 'BROKER_PRIVATE_CANARY\\n'; printf 'BROKER_PRIVATE_CANARY\\n' >&2",
+        Some("codex-account-broker-invalid-response"),
+        false,
+        false,
+    )
+    .await;
 }
