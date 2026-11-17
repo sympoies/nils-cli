@@ -10,7 +10,7 @@
 use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -19,6 +19,9 @@ use std::time::{Duration, Instant};
 use nils_test_support::bin;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
+
+#[path = "retitle_readiness_contract/broker_replay.rs"]
+mod broker_replay;
 
 const TOKEN: &str = "retitle-readiness-contract-bearer";
 const MACHINE: &str = "retitle-readiness-contract-machine";
@@ -304,7 +307,7 @@ fn v2_readiness_keys_and_values_stay_inside_the_published_allowlist() {
             "case={} body={}",
             case.name, response.body
         );
-        assert_outer_envelope(&response.body);
+        assert_outer_envelope(&response.body, &server.machine);
         let readiness = &response.body["data"]["retitle"];
 
         let keys = object_keys(readiness);
@@ -379,7 +382,7 @@ fn v3_machine_readiness_emits_exactly_the_published_keys_and_rows() {
         let server = ServeProcess::spawn(&fixture, config.as_deref(), false, false);
         let response = server.request("GET", "/retitle/v3/readiness");
         assert_eq!(response.status, 200, "case={name} body={}", response.body);
-        assert_outer_envelope(&response.body);
+        assert_outer_envelope(&response.body, &server.machine);
         let readiness = &response.body["data"]["retitle"];
         assert_eq!(object_keys(readiness), set(V3_MACHINE_KEYS), "case={name}");
         assert_eq!(
@@ -410,7 +413,7 @@ fn v3_session_readiness_emits_only_allowlisted_content_free_fields() {
     let session_path = format!("/sessions/{SESSION_ID}/retitle-v3/readiness");
 
     let initial = server.request("GET", &session_path);
-    assert_session_readiness(&fixture, "uninitialized memory", &initial, false);
+    assert_session_readiness(&fixture, &server, "uninitialized memory", &initial, false);
     assert_session_row(
         &initial.body,
         ("catching_up", "memory_not_initialized", "refresh_memory"),
@@ -420,7 +423,13 @@ fn v3_session_readiness_emits_only_allowlisted_content_free_fields() {
         "GET",
         &format!("/sessions/{PROVIDERLESS_SESSION_ID}/retitle-v3/readiness"),
     );
-    assert_session_readiness(&fixture, "no provider history", &providerless, false);
+    assert_session_readiness(
+        &fixture,
+        &server,
+        "no provider history",
+        &providerless,
+        false,
+    );
     assert_session_row(
         &providerless.body,
         (
@@ -457,15 +466,21 @@ fn v3_session_readiness_emits_only_allowlisted_content_free_fields() {
     server.poll_terminal(&operation_hash);
 
     let folded = server.request("GET", &session_path);
-    assert_session_readiness(&fixture, "folded memory", &folded, true);
+    assert_session_readiness(&fixture, &server, "folded memory", &folded, true);
     assert_session_row(&folded.body, ("ready", "ready", "none"));
     assert_eq!(folded.body["data"]["retitle"]["usable_memory"], true);
     assert_eq!(folded.body["data"]["retitle"]["title_status"], "current");
 }
 
-fn assert_session_readiness(fixture: &Fixture, name: &str, response: &HttpResponse, fenced: bool) {
+fn assert_session_readiness(
+    fixture: &Fixture,
+    server: &ServeProcess,
+    name: &str,
+    response: &HttpResponse,
+    fenced: bool,
+) {
     assert_eq!(response.status, 200, "case={name} body={}", response.body);
-    assert_outer_envelope(&response.body);
+    assert_outer_envelope(&response.body, &server.machine);
     let readiness = &response.body["data"]["retitle"];
     let keys = object_keys(readiness);
     let unexpected = keys
@@ -526,12 +541,12 @@ fn assert_session_row(body: &Value, expected: (&str, &str, &str)) {
     assert_eq!(readiness["context_status"], readiness["status"]);
 }
 
-fn assert_outer_envelope(body: &Value) {
+fn assert_outer_envelope(body: &Value, machine: &str) {
     assert_eq!(object_keys(body), set(&["data", "ok", "schema_version"]));
     assert_eq!(body["schema_version"], "cli.agent-session.serve.v1");
     assert_eq!(body["ok"], true);
     assert_eq!(object_keys(&body["data"]), set(&["machine", "retitle"]));
-    assert_eq!(body["data"]["machine"], MACHINE);
+    assert_eq!(body["data"]["machine"], machine);
 }
 
 fn assert_member(object: &Value, key: &str, allowed: &[&str]) {
@@ -688,6 +703,7 @@ struct ServeProcess {
     child: Child,
     stderr_path: PathBuf,
     address: SocketAddr,
+    machine: String,
 }
 
 impl ServeProcess {
@@ -718,13 +734,15 @@ impl ServeProcess {
     }
 
     fn spawn(fixture: &Fixture, config: Option<&str>, api_key: bool, broker: bool) -> Self {
-        // Every instance gets its own port. A killed predecessor's listening
-        // socket can outlive it briefly in a child process that has not yet
-        // exec'd, so a reused port can accept the readiness probe on that
-        // stale listener and then reset the request when it finally closes.
-        let listener = TcpListener::bind("127.0.0.1:0").expect("reserve loopback address");
-        let address = listener.local_addr().expect("loopback address");
-        drop(listener);
+        // Let this child bind its own port atomically. A restarted child must
+        // publish a fresh endpoint and answer health with its own identity.
+        let endpoint = fixture.state_dir.join("coordination/daemon-endpoint.json");
+        match fs::remove_file(&endpoint) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("remove previous fixture endpoint: {error}"),
+        }
+        let machine = format!("{MACHINE}-{}", uuid::Uuid::new_v4());
         let stderr_path = fixture.root.join("serve.stderr");
         let stderr = File::create(&stderr_path).expect("create serve stderr fixture");
         let mut command = Command::new(bin::resolve("agent-session"));
@@ -733,13 +751,13 @@ impl ServeProcess {
             .args([
                 "serve",
                 "--bind",
-                &address.to_string(),
+                "127.0.0.1:0",
                 "--state-dir",
                 fixture.state_dir.to_str().expect("UTF-8 state dir"),
                 "--token",
                 TOKEN,
                 "--machine",
-                MACHINE,
+                &machine,
                 "--tmux-bin",
                 fixture.tmux_bin.to_str().expect("UTF-8 tmux fixture"),
             ])
@@ -765,15 +783,26 @@ impl ServeProcess {
         let mut server = Self {
             child: command.spawn().expect("spawn agent-session serve"),
             stderr_path,
-            address,
+            address: "127.0.0.1:0".parse().expect("unpublished fixture address"),
+            machine,
         };
         let deadline = Instant::now() + Duration::from_secs(15);
-        while !serve_answers_healthz(address) {
+        loop {
             if let Some(status) = server.child.try_wait().expect("poll serve child") {
                 panic!(
                     "agent-session serve exited before listening: status={status}; stderr={}",
                     server.sanitized_stderr()
                 );
+            }
+            let published = fs::read(&endpoint).ok().and_then(|raw| {
+                let value: Value = serde_json::from_slice(&raw).ok()?;
+                value["url"].as_str()?.strip_prefix("http://")?.parse().ok()
+            });
+            if let Some(address) = published
+                && serve_answers_healthz(address, &server.machine)
+            {
+                server.address = address;
+                return server;
             }
             assert!(
                 Instant::now() < deadline,
@@ -782,7 +811,6 @@ impl ServeProcess {
             );
             std::thread::sleep(Duration::from_millis(10));
         }
-        server
     }
 
     fn sanitized_stderr(&self) -> String {
@@ -811,12 +839,8 @@ impl Drop for ServeProcess {
     }
 }
 
-/// True once the spawned serve itself answers `/healthz` for its machine.
-///
-/// A bare TCP connect is not enough: the port is reserved and released before
-/// serve binds it, so another process can briefly hold it and accept the probe
-/// before closing, leaving the first real request refused.
-fn serve_answers_healthz(address: SocketAddr) -> bool {
+/// True only when health answers for this particular spawned server.
+fn serve_answers_healthz(address: SocketAddr, machine: &str) -> bool {
     let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_secs(1)) else {
         return false;
     };
@@ -828,7 +852,7 @@ fn serve_answers_healthz(address: SocketAddr) -> bool {
     let mut response = Vec::new();
     stream.write_all(request.as_bytes()).is_ok()
         && stream.read_to_end(&mut response).is_ok()
-        && String::from_utf8_lossy(&response).contains(&format!("\"machine\":\"{MACHINE}\""))
+        && String::from_utf8_lossy(&response).contains(&format!("\"machine\":\"{machine}\""))
 }
 
 fn request_json(

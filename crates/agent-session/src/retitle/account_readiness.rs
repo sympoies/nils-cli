@@ -1,7 +1,10 @@
 use crate::CliError;
 use crate::retitle::RetitleReadiness;
 
-/// Readiness for an automatic account selection the broker could not complete.
+pub(super) const BROKER_UNAVAILABLE_REASON: &str = "account_broker_unavailable";
+const BROKER_UNAVAILABLE_ACTION: &str = "configure_account_broker";
+
+/// Classify a broker failure for readiness and request-time account handling.
 ///
 /// The broker protocol has no typed "no account" signal: a non-zero exit is
 /// `-rejected` whether the broker declined to select or crashed, so that code
@@ -12,8 +15,40 @@ pub(super) fn selection_failure(error: &CliError) -> RetitleReadiness {
     if error.code() == "codex-account-broker-rejected" {
         RetitleReadiness::unavailable("account_missing", "select_account")
     } else {
-        RetitleReadiness::unavailable("account_broker_unavailable", "configure_account_broker")
+        RetitleReadiness::unavailable(BROKER_UNAVAILABLE_REASON, BROKER_UNAVAILABLE_ACTION)
     }
+}
+
+pub(super) fn map_account_broker_error(error: CliError, message: &'static str) -> CliError {
+    // A broker timeout already has a bounded request-time recovery contract.
+    if error.code() == "codex-account-broker-timeout" {
+        return super::provider_timeout();
+    }
+    let readiness = selection_failure(&error);
+    if readiness.reason_code == "account_missing" {
+        super::retitle_error(
+            "retitle-account-missing",
+            message,
+            true,
+            readiness.next_action,
+            "refresh_account",
+        )
+    } else {
+        broker_unavailable()
+    }
+}
+
+pub(super) fn broker_unavailable() -> CliError {
+    CliError::unavailable(
+        "retitle-provider-unavailable",
+        "title account broker is unavailable",
+        Some(serde_json::json!({
+            "retryable": true,
+            "next_action": BROKER_UNAVAILABLE_ACTION,
+            "recovery": {"strategy": BROKER_UNAVAILABLE_ACTION, "safe_to_retry": true},
+            "failure_class": BROKER_UNAVAILABLE_REASON,
+        })),
+    )
 }
 
 #[cfg(test)]
@@ -100,6 +135,61 @@ mod tests {
             let _broker = nils_test_support::EnvGuard::set(&lock, BROKER_ENV, &argv.to_string());
             let readiness = RetitleService::from_environment().readiness();
             assert_eq!(reasons(&readiness), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn request_time_broker_failures_are_classified_by_cause() {
+        let lock = nils_test_support::GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let rejecting = write_broker(tmp.path(), "rejecting", "exit 3");
+        let malformed = write_broker(tmp.path(), "malformed", "printf '%s\\n' 'not json'");
+
+        for (broker, expected_code, expected_action) in [
+            (rejecting, "retitle-account-missing", "select_account"),
+            (
+                malformed,
+                "retitle-provider-unavailable",
+                "configure_account_broker",
+            ),
+            (
+                tmp.path().join("absent-broker"),
+                "retitle-provider-unavailable",
+                "configure_account_broker",
+            ),
+        ] {
+            let _broker =
+                nils_test_support::EnvGuard::set(&lock, BROKER_ENV, &json!([broker]).to_string());
+            for account_config in [
+                json!({"account_selection": "default_with_capacity"}),
+                json!({"account": "acct1"}),
+            ] {
+                let mut config = account_config;
+                config["provider"] = json!("codex_subscription");
+                config["codex_bin"] = json!("/bin/true");
+                config["model"] = json!("gpt-5.6-luna");
+                let config = crate::retitle::RetitleConfig::parse(&config.to_string()).unwrap();
+                let error = crate::retitle::invoke_codex(
+                    &config,
+                    "Retitle this session",
+                    std::time::Duration::from_secs(1),
+                )
+                .unwrap_err();
+
+                assert_eq!(error.code(), expected_code);
+                assert_eq!(error.details().unwrap()["next_action"], expected_action);
+                assert_eq!(error.details().unwrap()["retryable"], true);
+                if expected_action == "configure_account_broker" {
+                    assert_eq!(
+                        crate::retitle::provider_failure_class(&error),
+                        "account_broker_unavailable"
+                    );
+                    assert_eq!(
+                        error.details().unwrap()["recovery"]["strategy"],
+                        "configure_account_broker"
+                    );
+                }
+            }
         }
     }
 
