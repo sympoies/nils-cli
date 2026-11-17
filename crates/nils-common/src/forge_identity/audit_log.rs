@@ -44,25 +44,53 @@ struct Lock(#[allow(dead_code)] File);
 impl Lock {
     fn acquire(dir: &Path, timeout: Duration) -> io::Result<Self> {
         let file = open_private(&dir.join(LOCK_NAME), false)?;
-        let deadline = super::probe::now() + timeout;
+        let deadline = clock_now() + timeout;
         loop {
-            // SAFETY: the descriptor remains open while the lock is acquired.
-            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-                return Ok(Self(file));
-            }
-            let error = io::Error::last_os_error();
+            let error = match try_lock(&file) {
+                Ok(()) => return Ok(Self(file)),
+                Err(error) => error,
+            };
             if error.kind() != io::ErrorKind::WouldBlock
                 && error.kind() != io::ErrorKind::Interrupted
             {
                 return Err(error);
             }
-            let remaining = deadline.saturating_duration_since(super::probe::now());
+            let remaining = deadline.saturating_duration_since(clock_now());
             if remaining.is_zero() {
                 return Err(io::Error::from(io::ErrorKind::TimedOut));
             }
-            std::thread::sleep(remaining.min(Duration::from_millis(10)));
+            wait(remaining.min(Duration::from_millis(10)));
         }
     }
+}
+
+fn try_lock(file: &File) -> io::Result<()> {
+    #[cfg(test)]
+    if let Some(result) = tests::try_lock() {
+        return result;
+    }
+    // SAFETY: the descriptor remains open while the lock is acquired.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+fn clock_now() -> std::time::Instant {
+    #[cfg(test)]
+    if let Some(now) = tests::clock_now() {
+        return now;
+    }
+    super::probe::now()
+}
+
+fn wait(delay: Duration) {
+    #[cfg(test)]
+    if tests::wait(delay) {
+        return;
+    }
+    std::thread::sleep(delay);
 }
 
 fn rotated(dir: &Path, index: usize) -> std::path::PathBuf {
@@ -112,6 +140,102 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::collections::BTreeSet;
     use std::fs;
+
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use std::time::Instant;
+
+    struct Fake {
+        now: Instant,
+        attempts: VecDeque<io::ErrorKind>,
+        waits: Vec<Duration>,
+        always_busy: bool,
+        calls: usize,
+    }
+    thread_local! { static FAKE: RefCell<Option<Fake>> = const { RefCell::new(None) }; }
+
+    pub(super) fn try_lock() -> Option<io::Result<()>> {
+        FAKE.with_borrow_mut(|fake| {
+            fake.as_mut().map(|fake| {
+                fake.calls += 1;
+                assert!(fake.calls <= 10, "retry loop did not advance its budget");
+                match fake.attempts.pop_front() {
+                    Some(kind) => Err(io::Error::from(kind)),
+                    None if fake.always_busy => Err(io::Error::from(io::ErrorKind::WouldBlock)),
+                    None => Ok(()),
+                }
+            })
+        })
+    }
+    pub(super) fn clock_now() -> Option<Instant> {
+        FAKE.with_borrow(|fake| fake.as_ref().map(|fake| fake.now))
+    }
+    pub(super) fn wait(delay: Duration) -> bool {
+        FAKE.with_borrow_mut(|fake| match fake {
+            Some(fake) => {
+                fake.now += delay;
+                fake.waits.push(delay);
+                true
+            }
+            None => false,
+        })
+    }
+
+    #[test]
+    fn retry_waits_are_bounded_and_leave_no_partial_record() {
+        for (attempts, always_busy, expected_waits, success) in [
+            (
+                vec![io::ErrorKind::WouldBlock; 3],
+                false,
+                vec![10, 10, 10],
+                true,
+            ),
+            (vec![], true, vec![10, 10, 5], false),
+            (
+                vec![io::ErrorKind::WouldBlock, io::ErrorKind::Interrupted],
+                true,
+                vec![10, 10, 5],
+                false,
+            ),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            FAKE.with_borrow_mut(|fake| {
+                *fake = Some(Fake {
+                    now: Instant::now(),
+                    attempts: attempts.into(),
+                    waits: Vec::new(),
+                    always_busy,
+                    calls: 0,
+                })
+            });
+            let result = append_with_timeout(
+                dir.path(),
+                b"{}\n",
+                SMALL,
+                Duration::from_millis(25 + if success { 10 } else { 0 }),
+            );
+            let fake = FAKE.with_borrow_mut(|fake| fake.take().unwrap());
+            assert_eq!(
+                fake.waits,
+                expected_waits
+                    .into_iter()
+                    .map(Duration::from_millis)
+                    .collect::<Vec<_>>()
+            );
+            if success {
+                result.unwrap();
+                assert_eq!(fs::read(dir.path().join(ACTIVE_NAME)).unwrap(), b"{}\n");
+            } else {
+                let error = result.unwrap_err();
+                assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+                assert_eq!(
+                    super::super::audit_error(error).code,
+                    "identity_audit_lock_timeout"
+                );
+                assert!(!dir.path().join(ACTIVE_NAME).exists());
+            }
+        }
+    }
 
     const SMALL: Limits = Limits {
         max_active_bytes: 512,
