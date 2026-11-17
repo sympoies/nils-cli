@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `cf6e6517d3cefe49082ed1017c2a66d0aa0aef107a59803bded514bd9f9e3d7a`
+- Cargo.lock SHA256: `e85116a0ebe89294b32d448e75058d81a6cf4e1e99c9c253d8cd28eef60d7652`
 - Third-party crates (`source != null`): 487
 - Workspace crates (`source == null`, excluded below): 42
 
@@ -248,7 +248,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | libc | 0.2.191 | MIT OR Apache-2.0 | crates.io |
 | libgit2-sys | 0.18.8+1.9.7 | MIT OR Apache-2.0 | crates.io |
 | libm | 0.2.16 | MIT | crates.io |
-| libz-sys | 1.1.31 | MIT OR Apache-2.0 | crates.io |
+| libz-sys | 1.1.33 | MIT OR Apache-2.0 | crates.io |
 | linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io |
 | litemap | 0.8.2 | Unicode-3.0 | crates.io |
 | lock_api | 0.4.14 | MIT OR Apache-2.0 | crates.io |
