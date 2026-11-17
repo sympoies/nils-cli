@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 
 
 COMMANDS = re.compile(r"\b(stat|sed|readlink|date|grep|xargs)\s+")
@@ -21,11 +22,58 @@ ALLOWLIST = "scripts/ci/test-shell-portability-allowlist.json"
 RULE_TEST = "scripts/ci/tests/test-shell-portability-audit.test.py"
 
 
+def xargs_has_gnu_option(arguments):
+    # GNU findutils xargs: these options require a value, including when separate.
+    short_values = "adEILnPs"
+    long_values = {"--arg-file", "--delimiter", "--max-lines", "--max-args",
+                   "--max-procs", "--process-slot-var", "--max-chars"}
+    long_options = long_values | {"--null", "--eof", "--replace", "--open-tty",
+                                 "--interactive", "--no-run-if-empty", "--show-limits",
+                                 "--verbose", "--exit", "--help", "--version"}
+    try:
+        words = iter(shlex.split(arguments))
+    except ValueError:
+        # Embedded source strings may not be a complete shell fragment.
+        for option in OPTIONS.finditer(arguments):
+            token = option[0]
+            if token == "--":
+                break
+            if (token.split("=", 1)[0] == "--no-run-if-empty"
+                    or token.startswith("-") and not token.startswith("--")
+                    and "r" in re.match(r"-([A-Za-z0-9]+)", token)[1]):
+                return True
+        return False
+    for token in words:
+        if token == "--" or not token.startswith("-") or token == "-":
+            break
+        if token.startswith("--"):
+            name, equals, _ = token.partition("=")
+            spelling = re.match(r"--[a-z][a-z-]*", name)
+            if spelling and spelling[0] == "--no-run-if-empty":
+                return True
+            matches = [option for option in long_options if option.startswith(name)]
+            if len(matches) == 1 and matches[0] in long_values and not equals:
+                next(words, None)
+        else:
+            for index, flag in enumerate(token[1:], 1):
+                if flag == "r":
+                    return True
+                if flag in short_values:
+                    if index == len(token) - 1:
+                        next(words, None)
+                    break
+    return False
+
+
 def gnu_forms(line):
     hits = set()
     for command in COMMANDS.finditer(line):
         name = command[1]
         arguments = re.split(r"[;|&]", line[command.end():], maxsplit=1)[0]
+        if name == "xargs":
+            if xargs_has_gnu_option(arguments):
+                hits.add(name)
+            continue
         for option in OPTIONS.finditer(arguments):
             token = option[0]
             if token == "--":
