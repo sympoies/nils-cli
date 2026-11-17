@@ -190,22 +190,67 @@ where
         ));
     }
     if args.to_machine.as_deref().is_some_and(|m| m != machine) {
-        let config = config.ok_or_else(|| {
-            CliError::unavailable(
-                "remote-messaging-unavailable",
-                "federation is disabled",
-                None,
-            )
-        })?;
+        let config = config.ok_or_else(|| route_error(RouteFailure::DaemonFederation))?;
         return remote::submit_service(context, config, origin, args, authorize);
     }
     let digest = digest_bytes(&serde_json::to_vec(&args).map_err(|_| unauthorized())?);
     remote::submit_local_service(context, origin, args, digest, authorize)
 }
 
+#[derive(Clone, Copy)]
+enum RouteFailure {
+    DaemonFederation,
+    RelayUnsupported,
+    RelayForbidden,
+}
+
+fn route_error(failure: RouteFailure) -> CliError {
+    let (code, message, next_action) = match failure {
+        RouteFailure::DaemonFederation => (
+            "mailbox-service-route-missing",
+            "remote service route is not configured: set AGENT_SESSION_RELAY_URL, AGENT_SESSION_RELAY_TOKEN and AGENT_SESSION_RELAY_INGRESS_TOKEN in the owning daemon's environment, then restart that daemon",
+            "configure_daemon_federation",
+        ),
+        RouteFailure::RelayUnsupported => (
+            "mailbox-service-relay-unsupported",
+            "relay rejected service discovery: AGENT_SESSION_RELAY_URL must select a relay supporting source_service_id/source_service_generation at GET /api/coordination/peers/v1 and service-origin envelopes at POST /api/coordination/relay/v1; deploy that support and register the source machine/service_id/service_generation there; local mailbox-services admission does not configure the relay",
+            "configure_relay_service_route",
+        ),
+        RouteFailure::RelayForbidden => (
+            "mailbox-service-relay-forbidden",
+            "relay refused service discovery: verify the source machine/service_id/service_generation admission at the relay selected by AGENT_SESSION_RELAY_URL and authorize its recipients there; local mailbox-services admission does not configure the relay",
+            "configure_relay_service_admission",
+        ),
+    };
+    CliError::unavailable(
+        code,
+        message,
+        Some(json!({"retryable":false, "next_action":next_action, "recovery":{"kind":"operator"}})),
+    )
+}
+
+/// Classify only service discovery setup refusals, without trusting peer content.
+pub(super) fn discovery_refusal(status: reqwest::StatusCode) -> Option<CliError> {
+    let failure = match status {
+        reqwest::StatusCode::BAD_REQUEST => RouteFailure::RelayUnsupported,
+        reqwest::StatusCode::FORBIDDEN => RouteFailure::RelayForbidden,
+        _ => return None,
+    };
+    Some(route_error(failure))
+}
+
 /// Add recovery fields without exposing transport, paths, credentials or bodies.
 pub(crate) fn recovery(error: CliError) -> CliError {
     let data = error.into_inner();
+    let route_failure = match data.code.as_str() {
+        "mailbox-service-route-missing" => Some(RouteFailure::DaemonFederation),
+        "mailbox-service-relay-unsupported" => Some(RouteFailure::RelayUnsupported),
+        "mailbox-service-relay-forbidden" => Some(RouteFailure::RelayForbidden),
+        _ => None,
+    };
+    if let Some(failure) = route_failure {
+        return route_error(failure);
+    }
     // Preserve known contract codes and exits, never an IO/peer-supplied message or details.
     let (code, message) = match data.code.as_str() {
         "mailbox-service-unauthorized" => (

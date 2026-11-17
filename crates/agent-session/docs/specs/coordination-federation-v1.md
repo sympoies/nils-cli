@@ -455,6 +455,21 @@ operator recovery. Inspect discovery and correct the address before a new
 submission. Failed discovery and unavailable transport remain retryable with
 `retry_same_submission` and `same_idempotency_key` recovery.
 
+Service route setup refusals instead return HTTP 503 / CLI 69 with
+`retryable: false` and operator recovery. `mailbox-service-route-missing` names
+the owning daemon's required `AGENT_SESSION_RELAY_URL`,
+`AGENT_SESSION_RELAY_TOKEN` and `AGENT_SESSION_RELAY_INGRESS_TOKEN`, with
+`next_action: configure_daemon_federation`. A service discovery HTTP 400 becomes
+`mailbox-service-relay-unsupported` with
+`next_action: configure_relay_service_route`; HTTP 403 becomes
+`mailbox-service-relay-forbidden` with
+`next_action: configure_relay_service_admission`. These fixed errors identify
+the configured relay and required service-origin protocol/admission without
+copying its response body or claiming which admission rule refused a 403.
+
+Other discovery failures keep the retry behavior above. See the
+[operator setup actions](../runbooks/serve-daemon.md#remote-service-activation-prerequisite).
+
 ## Message categories and recipient forwarding
 
 Categories are sender-declared routing metadata: `uncategorized`, `progress`,

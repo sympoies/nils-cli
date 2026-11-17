@@ -778,6 +778,25 @@ existing outbox/delivery evidence. Recipient movement or replacement never
 retargets a committed envelope; resolve a new recipient and use a new operation
 only after the operator has reconciled the old delivery state.
 
+Service route setup errors name the boundary that needs configuration:
+
+| Code | Operator action |
+| --- | --- |
+| `mailbox-service-route-missing` | Set all three `AGENT_SESSION_RELAY_URL`, `AGENT_SESSION_RELAY_TOKEN` and `AGENT_SESSION_RELAY_INGRESS_TOKEN` in the owning daemon's environment, using the deployment's dedicated transport credentials, then restart that daemon. Setting them only on the submitting job does not configure the daemon. |
+| `mailbox-service-relay-unsupported` | The hub returned HTTP 400 for service discovery. Point `AGENT_SESSION_RELAY_URL` at a relay implementing `GET /api/coordination/peers/v1` with `source_service_id` / `source_service_generation` and `POST /api/coordination/relay/v1` with service-origin envelopes; deploy that support and register the source machine/service ID/generation at that relay. A relay supporting managed-session messaging alone is insufficient. |
+| `mailbox-service-relay-forbidden` | The hub returned HTTP 403 for service discovery. Verify the source machine/service ID/generation registration and authorized recipients at the configured relay. This refusal does not establish which admission rule denied the request. |
+
+These errors use exit 69, `retryable=false` and operator recovery. Their fixed
+messages contain setting and protocol names, never configuration values or hub
+diagnostics. The daemon HTTP response and CLI retain the same typed error.
+Local mailbox-services admission on either host grants no hub service authority;
+there is no daemon-local setting that upgrades a hub lacking this protocol.
+Loopback-only listening is supported: federation uses outbound HTTP from the
+source daemon. Managed-session remote messaging and local service submission
+keep their existing behavior. Connection failures and hub unavailability retain
+the existing retry behavior; changing configuration never retargets a committed
+submission.
+
 ## Admit a Console-start service
 
 Console-start admission is a separate, opt-in authority from mailbox service submission. It lets a
