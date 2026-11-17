@@ -47,14 +47,28 @@ pub fn trusted_root(root: &Path) -> Option<PathBuf> {
     is_owner_controlled_executable(&candidate).then_some(candidate)
 }
 
-/// A regular executable file owned by the caller that no other user can write.
+/// A regular executable owned by the caller, in a caller- or root-owned
+/// resolved directory; neither the file nor that directory is writable by others.
 pub fn is_owner_controlled_executable(path: &Path) -> bool {
-    fs::metadata(path).is_ok_and(|metadata| {
+    let Ok(resolved) = fs::canonicalize(path) else {
+        return false;
+    };
+    let caller = unsafe { libc::geteuid() };
+    fs::metadata(&resolved).is_ok_and(|metadata| {
         metadata.is_file()
-            && metadata.uid() == unsafe { libc::geteuid() }
+            && metadata.uid() == caller
             && metadata.permissions().mode() & 0o022 == 0
             && metadata.permissions().mode() & 0o111 != 0
+    }) && resolved.parent().is_some_and(|parent| {
+        fs::metadata(parent).is_ok_and(|metadata| {
+            metadata.is_dir()
+                && directory_is_trusted(metadata.uid(), metadata.permissions().mode(), caller)
+        })
     })
+}
+
+fn directory_is_trusted(owner: u32, mode: u32, caller: u32) -> bool {
+    (owner == caller || owner == 0) && mode & 0o022 == 0
 }
 
 /// First regular executable file named [`NAME`] in a `PATH`-style list.
@@ -72,6 +86,19 @@ pub fn locate_on_path(path: Option<&OsStr>) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn directory_policy_accepts_only_caller_or_root_without_shared_write() {
+        for (owner, mode, accepted) in [
+            (1000, 0o755, true),
+            (0, 0o755, true),
+            (1001, 0o755, false),
+            (1000, 0o775, false),
+            (0, 0o757, false),
+        ] {
+            assert_eq!(directory_is_trusted(owner, mode, 1000), accepted);
+        }
+    }
 
     #[test]
     fn name_validation_rejects_empty_and_path_like_names() {

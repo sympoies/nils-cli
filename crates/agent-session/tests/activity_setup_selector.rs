@@ -193,6 +193,21 @@ fn activity_setup_ignores_a_group_or_world_writable_sibling_hook() {
 }
 
 #[test]
+fn activity_setup_falls_back_from_a_writable_sibling_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let installed = temp.path().join("installed");
+    fs::create_dir(&installed).unwrap();
+    executable(
+        &installed.join("agent-hook"),
+        "#!/bin/sh\nprintf sibling > \"$MARKER\"\nexit 69\n",
+    );
+    let session = installed.join(nils_common::session_binary::NAME);
+    fs::copy(env!("CARGO_BIN_EXE_agent-session"), &session).unwrap();
+    fs::set_permissions(&installed, fs::Permissions::from_mode(0o775)).unwrap();
+    assert_eq!(run_setup(&session, temp.path(), None), "root");
+}
+
+#[test]
 fn activity_setup_treats_an_empty_pin_as_unset_next_to_a_sibling_hook() {
     let temp = tempfile::tempdir().unwrap();
     let installed = temp.path().join("installed");
