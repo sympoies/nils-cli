@@ -84,7 +84,9 @@ Codex-specific contract source:
 - `account select` is read-only on profile secrets. On failure,
   `error.details.candidates` still carries the per-profile capacity summary. An
   agent-session account broker should treat `no-account-with-capacity` as
-  "no failover target" rather than as a transport error.
+  "no failover target" and emit the broker protocol's reserved exit 10. Other
+  failures must use a different non-zero exit; see the
+  [broker delegation contract](../specs/codex-cli-account-select-json-contract-v1.md#delegation-from-an-agent-session-account-broker).
 
 ## Consumer checklist
 

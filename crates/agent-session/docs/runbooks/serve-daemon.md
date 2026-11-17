@@ -419,6 +419,14 @@ fail-closed.
     `CLAUDE_CONFIG_DIR` and returns only the directory path; no token crosses
     it. Bound sessions resume only while it stays configured.
 
+  Both protocols reserve exit **10** for a confirmed no-account result. All
+  other non-zero exits, including signal termination, are broker faults; a
+  successful selection with a null or missing account is invalid-response.
+  Update configured brokers first, then agent-session. New brokers work with
+  the old client because it treats all non-zero exits as rejection; the new
+  client treats old untyped no-account exits as broker-unavailable without a
+  fallback. Verify typed no-account and ordinary faults after deployment.
+
   `GET /sessions` advertises each configured broker as
   `capabilities.codex_account_switch` / `capabilities.claude_account_switch`.
 - `AGENT_SESSION_LAUNCH_PROFILES`: JSON array of server-owned launch profiles.

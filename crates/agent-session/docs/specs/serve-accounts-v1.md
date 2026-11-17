@@ -124,7 +124,9 @@ process group is killed. Broker stderr is never projected.
 
 Both brokers fail closed. Invalid configuration is
 `<provider>-account-broker-invalid-config`; a broker that cannot start is
-`-unavailable`; a non-zero exit is `-rejected`; a timeout is `-timeout`; and
+`-unavailable`; exit **10** is the sole typed "no selectable account" result
+(`-rejected`); every other non-zero exit, including termination by a signal,
+is `-unavailable`; a timeout is `-timeout`; and
 malformed or oversized output, a wrong `schema_version` (or, for v2, a wrong
 `provider`), and a listed account with an unsafe or duplicate nickname or
 oversized or multi-line public metadata are all
@@ -155,6 +157,23 @@ For Codex `account switch`, the valid serve-recorded broker command takes preced
 caller's broker variable is set, so repair membership is checked against the configured serve roster.
 Other commands and Claude retain the caller-first adoption policy. Re-selecting the account already
 bound to the current runtime still cancels a queued switch without requiring roster membership.
+
+Exit 10 requires no JSON response: the exit status alone carries the typed
+no-account result, and stdout and stderr are not interpreted for that result.
+It means the broker completed its account lookup and has no account to offer
+for the request. Brokers must not use it for crashes, transient failures,
+unsupported verbs, or failed credential operations. Exit 0 requires a valid
+success envelope; `select` must include a non-null valid `account`. A null or
+missing account is `-invalid-response`, never a second no-account form. `list`
+may still successfully return an empty `accounts` array.
+
+Roll out **brokers first, then agent-session**. Update every configured broker
+so only a confirmed no-account outcome exits 10, then deploy the matching
+client. A new broker paired with the old client is behavior-compatible because
+that client already treats all non-zero exits as rejection. A new client paired
+with an old broker reports an untyped no-account exit as broker-unavailable;
+there is no fallback interpretation. Verify both typed no-account and ordinary
+failure outcomes after the rollout.
 
 The per-provider differences are the protocol and what the broker returns.
 

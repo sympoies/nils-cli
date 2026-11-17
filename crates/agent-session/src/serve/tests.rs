@@ -6660,7 +6660,7 @@ fn default_codex_launch_resolves_and_records_the_current_account() {
         resolve_initial_codex_account(AgentKind::Codex, Some("account-b".to_string()))
             .unwrap_err()
             .code(),
-        "codex-account-broker-rejected"
+        "codex-account-broker-unavailable"
     );
     let _unset = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
     let unsupported =
@@ -14849,7 +14849,7 @@ async fn account_cli_claude_switch_queues_busy_refuses_and_restarts_idle() {
     assert_eq!(refused.code(), "claude-account-switch-refused");
     assert_eq!(
         refused.details().unwrap()["cause"],
-        "claude-account-broker-rejected"
+        "claude-account-broker-unavailable"
     );
     let calls = fs::read_to_string(&log).unwrap();
     assert!(

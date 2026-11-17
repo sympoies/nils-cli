@@ -151,7 +151,7 @@ exec {root}/claude-broker "$@"
             "{failure}: {body}"
         );
         let cause = match failure {
-            "materialize" => "claude-account-broker-rejected",
+            "materialize" => "claude-account-broker-unavailable",
             "unavailable_list" => "claude-account-broker-unavailable",
             "unsafe_directory" => "claude-account-dir-unsafe",
             "missing_publication" => "claude-account-credentials-unverified",

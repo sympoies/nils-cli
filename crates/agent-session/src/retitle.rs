@@ -715,11 +715,11 @@ fn provider_readiness(config: &RetitleConfig) -> RetitleReadiness {
             let summary = if let Some(account) = config.account.as_deref() {
                 let accounts = match crate::codex_account::list_accounts() {
                     Ok(accounts) => accounts,
-                    Err(_) => {
-                        return RetitleReadiness::unavailable(
-                            "account_broker_unavailable",
-                            "configure_account_broker",
-                        );
+                    Err(error) => {
+                        // Inventory can return typed no-account, too. Honor
+                        // that result for configured accounts; ordinary faults
+                        // cannot establish that an account is absent.
+                        return account_readiness::selection_failure(&error);
                     }
                 };
                 let Some(summary) = accounts.into_iter().find(|item| item.account == account)
