@@ -131,7 +131,9 @@ malformed or oversized output, a wrong `schema_version` (or, for v2, a wrong
 `provider`), and a listed account with an unsafe or duplicate nickname or
 oversized or multi-line public metadata are all
 `<provider>-account-broker-invalid-response`, a broker fault rather than a
-client error. Account nicknames follow one rule for both providers and for the
+client error.
+
+Account nicknames follow one rule for both providers and for the
 provider CLIs: `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`, so a nickname can never read
 as an option (`--format`) or a dot path segment. Credential values and account
 directory paths stay in daemon memory or durable session state only and are
