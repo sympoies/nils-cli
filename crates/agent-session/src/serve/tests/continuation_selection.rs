@@ -96,6 +96,11 @@ async fn selection_tick(script_body: &str, expected_reason: Option<&str>, select
             }
         );
         assert_eq!(view.attempts, 0);
+        assert!(
+            !serde_json::to_string(&view)
+                .unwrap()
+                .contains("BROKER_PRIVATE_CANARY")
+        );
         let durable = fs::read_to_string(
             crate::session_dir(&st.context, &record.id).join("auto-resume.json"),
         )
@@ -129,6 +134,18 @@ async fn selection_tick(script_body: &str, expected_reason: Option<&str>, select
         .await;
         let view = auto_resume::view_for_record(&st.context, &record);
         assert_eq!(view.failure_reason.as_deref(), Some("no_account_available"));
+        assert_eq!(view.state, "scheduled");
+        assert_eq!(view.attempts, 0);
+        assert!(
+            !serde_json::to_string(&view)
+                .unwrap()
+                .contains("BROKER_PRIVATE_CANARY")
+        );
+        let durable = fs::read_to_string(
+            crate::session_dir(&st.context, &record.id).join("auto-resume.json"),
+        )
+        .unwrap();
+        assert!(!durable.contains("BROKER_PRIVATE_CANARY"));
         assert_eq!(
             view.scheduled_at
                 .unwrap()

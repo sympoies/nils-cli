@@ -16,6 +16,9 @@
 
 - Test-first regression reproduced no_account_available for malformed broker
   output while exit-10 no-account and successful selection guards passed.
+- Fresh baseline red and focused green cover repeated faults, recovery to
+  no-account, unchanged scheduling/retry counters, and per-tick public/durable
+  state privacy; the focused run emitted no warnings or broker output.
 
 ### Links
 

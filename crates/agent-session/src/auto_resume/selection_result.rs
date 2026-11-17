@@ -29,7 +29,7 @@ pub(crate) fn record(
         previous,
         "no_account_available" | "usage_unavailable" | "exhausted_reset_unavailable"
     );
-    if !(selection_reason || error.is_some() && discovery_reason) {
+    if !selection_reason && (error.is_none() || !discovery_reason) {
         return Ok(());
     }
     let reason = error.map_or("no_account_available", CliError::code);
