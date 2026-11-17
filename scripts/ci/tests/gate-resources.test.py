@@ -119,6 +119,52 @@ class GateUnits(unittest.TestCase):
                     self.assertFalse(resources.reap_stale_slice(owner))
                     stop.assert_not_called()
 
+    def test_stale_reaper_requires_each_safety_guard(self):
+        unit = 'nilsgate' + 'b' * 32 + '.slice'
+        foreign = 'foreign.slice'
+        cases = ('missing_pid', 'bad_pid', 'zero_pid', 'negative_pid', 'permission',
+                 'unloaded', 'inactive', 'job', 'foreign', 'basename', 'relative',
+                 'traversal', 'populated', 'missing_file', 'unreadable_file')
+        for case in cases:
+            with self.subTest(case=case):
+                selected = foreign if case == 'foreign' else unit
+                owner = {'pid': 12345, 'slice': selected}
+                if case == 'missing_pid':
+                    del owner['pid']
+                elif case == 'bad_pid':
+                    owner['pid'] = '12345'
+                elif case == 'zero_pid':
+                    owner['pid'] = 0
+                elif case == 'negative_pid':
+                    owner['pid'] = -1
+                group = f'/fixture/{selected}'
+                if case == 'basename':
+                    group = '/fixture/other.slice'
+                elif case == 'relative':
+                    group = f'fixture/{unit}'
+                elif case == 'traversal':
+                    group = f'/fixture/../{unit}'
+                load = 'not-found' if case == 'unloaded' else 'loaded'
+                active = 'inactive' if case == 'inactive' else 'active'
+                job = '42' if case == 'job' else ''
+                output = f'LoadState={load}\nActiveState={active}\nControlGroup={group}\nJob={job}\n'
+                def read(path, *args, **kwargs):
+                    if case == 'missing_file':
+                        raise FileNotFoundError()
+                    if case == 'unreadable_file':
+                        raise PermissionError()
+                    return {'cgroup.procs': '', 'cgroup.stat': 'nr_descendants 0\n',
+                            'cgroup.events': 'populated 1\n' if case == 'populated' else 'populated 0\n'}[path.name]
+                error = PermissionError if case == 'permission' else ProcessLookupError
+                with patch.object(resources.os, 'kill', side_effect=error) as probe, \
+                     patch.object(resources.subprocess, 'check_output', return_value=output), \
+                     patch.object(resources.subprocess, 'run') as stop, \
+                     patch.object(Path, 'read_text', read):
+                    self.assertFalse(resources.reap_stale_slice(owner))
+                    stop.assert_not_called()
+                    if case in ('missing_pid', 'bad_pid', 'zero_pid', 'negative_pid', 'foreign'):
+                        probe.assert_not_called()
+
     def test_timeout_retains_original_ticket_and_fifo_position(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
