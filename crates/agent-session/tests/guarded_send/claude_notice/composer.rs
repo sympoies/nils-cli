@@ -164,10 +164,15 @@ fn module_trace(thread: std::thread::JoinHandle<std::process::Output>) -> Value 
 
 #[test]
 fn native_draft_and_cursor_refuse_before_authorization() {
-    crate::cases::for_each_case(&["draft-before", "cursor-before"], |&mode| {
+    let cases: &[(&str, &[&str])] = &[
+        ("draft-before", &[]),
+        ("cursor-before", &[]),
+        ("cursor-before", &["--queue"]),
+    ];
+    crate::cases::for_each_case(cases, |&(mode, flags)| {
         let fixture = super::super::Fixture::new("claude");
         let module = module_peer(&fixture, mode);
-        let output = send_notice(&fixture, "synthetic\n");
+        let output = send_notice_with_flags(&fixture, "synthetic\n", "claude-native-once", flags);
         let trace = module_trace(module);
         let refusal = fixture.refused(&output, "notice-native-unavailable");
         assert_eq!(
