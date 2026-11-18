@@ -184,11 +184,9 @@ fn runtime_facts_match_claude_environment_in_existing_tmux_server() {
     }
     impl Drop for Server {
         fn drop(&mut self) {
-            let _ = Command::new(&self.tmux)
-                .arg("-S")
-                .arg(&self.socket)
-                .arg("kill-server")
-                .output();
+            let mut command = Command::new(&self.tmux);
+            command.arg("-S").arg(&self.socket).arg("kill-server");
+            let _ = crate::runtime_environment::output(command, Duration::from_secs(5));
         }
     }
     let (socket_dir, socket) = nils_test_support::short_socket_path("tmux.sock");
@@ -201,7 +199,11 @@ fn runtime_facts_match_claude_environment_in_existing_tmux_server() {
         Command::new(&tmux)
             .args(["-f", "/dev/null", "-S"])
             .arg(&server.socket)
-            .args(["new-session", "-d", "-s", "seed", "sleep", "10"])
+            .args(["new-session", "-d", "-s", "seed"])
+            .arg(&tmux)
+            .arg("-S")
+            .arg(&server.socket)
+            .args(["wait-for", "seed-hold"])
             .env(CLAUDE_KEYS[0], "65536")
             .env(CLAUDE_KEYS[1], "http://127.0.0.1:9/old-endpoint-canary")
             .env(CLAUDE_KEYS[2], "synthetic-old-api-canary")
@@ -251,6 +253,8 @@ fn runtime_facts_match_claude_environment_in_existing_tmux_server() {
         fs::write(&gate, "").unwrap();
         fs::write(&broker_gate, "").unwrap();
         let output = tmp.path().join(format!("capacity-{case}"));
+        let stage = tmp.path().join(format!("stage-{case}"));
+        let ready = format!("facts-ready-{case}");
         let mut command = Command::new(&tmux);
         command
             .arg("-S")
@@ -269,20 +273,32 @@ fn runtime_facts_match_claude_environment_in_existing_tmux_server() {
             .args([
                 "sh",
                 "-c",
-                "printf '%s:%s:%s:%s' \"$CLAUDE_CODE_MAX_CONTEXT_TOKENS\" \"$ANTHROPIC_BASE_URL\" \"$ANTHROPIC_API_KEY\" \"$ANTHROPIC_AUTH_TOKEN\" > \"$1\"; exec sleep 10",
+                "printf 'child-start %s\\n' \"$(date +%s.%N)\" >> \"$5\"; printf '%s:%s:%s:%s' \"$CLAUDE_CODE_MAX_CONTEXT_TOKENS\" \"$ANTHROPIC_BASE_URL\" \"$ANTHROPIC_API_KEY\" \"$ANTHROPIC_AUTH_TOKEN\" > \"$1\" && printf 'write-done %s\\n' \"$(date +%s.%N)\" >> \"$5\" && printf 'signal-start %s\\n' \"$(date +%s.%N)\" >> \"$5\" && \"$2\" -S \"$3\" wait-for -S \"$4\" && printf 'signal-done %s\\n' \"$(date +%s.%N)\" >> \"$5\"; exec sleep 10",
                 "fixture"
             ])
-            .arg(&output);
+            .arg(&output)
+            .arg(&tmux)
+            .arg(&server.socket)
+            .arg(&ready)
+            .arg(&stage);
         assert!(
-            crate::runtime_environment::output(command, Duration::from_secs(5))
+            crate::runtime_environment::output(command, Duration::from_secs(30))
                 .unwrap()
                 .status
                 .success()
         );
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !output.exists() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        let mut wait = Command::new("sh");
+        wait.args(["-c", "printf 'wait-start %s\\n' \"$(date +%s.%N)\" >> \"$4\"; \"$1\" -S \"$2\" wait-for \"$3\"; status=$?; printf 'wait-done %s status=%s\\n' \"$(date +%s.%N)\" \"$status\" >> \"$4\"; exit \"$status\"", "fixture"])
+            .arg(&tmux).arg(&server.socket).arg(&ready).arg(&stage);
+        let started = Instant::now();
+        let result = crate::runtime_environment::output(wait, Duration::from_secs(30));
+        assert!(
+            result.as_ref().is_ok_and(|output| output.status.success()),
+            "case={case} elapsed={:?} stages={:?} output_exists={} wait={result:?}",
+            started.elapsed(),
+            fs::read_to_string(&stage),
+            output.exists()
+        );
         let observed = fs::read_to_string(output).unwrap();
         assert_eq!(
             observed,
