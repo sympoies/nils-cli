@@ -119,6 +119,7 @@ fn claude_permission_outside_fence_refuses_composer_and_unreadable_dialog() {
         "historical dialog\nDo you want to proceed?\n❯ 1. Yes\n  3. No\nEsc to cancel\n────────────────────────────\n❯ draft\n────────────────────────────",
         "Do you want to proceed?\n❯ 1. Yes\n─── unexpected rule ───\n3. No\nEsc to cancel\n─── session title ───",
         "Do you want to proceed?\n❯ 1. Yes\n3. No\nEsc to cancel\n❯ draft\n─── session title ───",
+        "Do you want to proceed?\n❯ 1. Yes\n3. No\nEsc to cancel\n────────────────────────────",
     ] {
         let f = pending("2.1.318");
         pane(&f, screen);
