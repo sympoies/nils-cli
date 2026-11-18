@@ -1,6 +1,8 @@
 //! Shared staged paste delivery and request-bound Claude composer evidence.
 use super::*;
 
+mod paste;
+
 /// Deliver one staged prompt file into the session pane and submit it. The
 /// caller owns the file so that both session startup and the post-start
 /// structured prompt route share exactly one hardened delivery, and it owns the
@@ -50,8 +52,7 @@ fn paste_prompt_file_observing(
                 cli::permission::input_admission(context, record, tmux_bin, Some(text), &[])
             })
             .transpose()?;
-        load_and_paste_buffer(tmux_bin, &buffer_name, &target, prompt_file)
-            .map_err(prompt_delivery_failure)?;
+        paste::load_and_paste_buffer(tmux_bin, &buffer_name, &target, prompt_file, record)?;
     }
 
     // The initial prompt is submitted; `send` deliberately leaves this to
