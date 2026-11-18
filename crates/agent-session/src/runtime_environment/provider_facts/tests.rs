@@ -1,11 +1,7 @@
 use super::*;
 use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::assert_eq;
-use std::{
-    fs,
-    process::Command,
-    time::{Duration, Instant},
-};
+use std::{fs, process::Command, time::Duration};
 
 fn record(agent: &str, args: &[&str]) -> SessionRecord {
     serde_json::from_value(json!({
@@ -201,7 +197,11 @@ fn runtime_facts_match_claude_environment_in_existing_tmux_server() {
         Command::new(&tmux)
             .args(["-f", "/dev/null", "-S"])
             .arg(&server.socket)
-            .args(["new-session", "-d", "-s", "seed", "sleep", "10"])
+            .args(["new-session", "-d", "-s", "seed"])
+            .arg(&tmux)
+            .arg("-S")
+            .arg(&server.socket)
+            .args(["wait-for", "seed-hold"])
             .env(CLAUDE_KEYS[0], "65536")
             .env(CLAUDE_KEYS[1], "http://127.0.0.1:9/old-endpoint-canary")
             .env(CLAUDE_KEYS[2], "synthetic-old-api-canary")
@@ -251,6 +251,7 @@ fn runtime_facts_match_claude_environment_in_existing_tmux_server() {
         fs::write(&gate, "").unwrap();
         fs::write(&broker_gate, "").unwrap();
         let output = tmp.path().join(format!("capacity-{case}"));
+        let ready = format!("facts-ready-{case}");
         let mut command = Command::new(&tmux);
         command
             .arg("-S")
@@ -269,20 +270,29 @@ fn runtime_facts_match_claude_environment_in_existing_tmux_server() {
             .args([
                 "sh",
                 "-c",
-                "printf '%s:%s:%s:%s' \"$CLAUDE_CODE_MAX_CONTEXT_TOKENS\" \"$ANTHROPIC_BASE_URL\" \"$ANTHROPIC_API_KEY\" \"$ANTHROPIC_AUTH_TOKEN\" > \"$1\"; exec sleep 10",
+                "printf '%s:%s:%s:%s' \"$CLAUDE_CODE_MAX_CONTEXT_TOKENS\" \"$ANTHROPIC_BASE_URL\" \"$ANTHROPIC_API_KEY\" \"$ANTHROPIC_AUTH_TOKEN\" > \"$1\" && \"$2\" -S \"$3\" wait-for -S \"$4\"; exec sleep 10",
                 "fixture"
             ])
-            .arg(&output);
+            .arg(&output)
+            .arg(&tmux)
+            .arg(&server.socket)
+            .arg(&ready);
         assert!(
-            crate::runtime_environment::output(command, Duration::from_secs(5))
+            crate::runtime_environment::output(command, Duration::from_secs(30))
                 .unwrap()
                 .status
                 .success()
         );
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !output.exists() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        let mut wait = Command::new(&tmux);
+        wait.arg("-S")
+            .arg(&server.socket)
+            .args(["wait-for", &ready]);
+        assert!(
+            crate::runtime_environment::output(wait, Duration::from_secs(30))
+                .unwrap()
+                .status
+                .success()
+        );
         let observed = fs::read_to_string(output).unwrap();
         assert_eq!(
             observed,
