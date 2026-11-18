@@ -10,6 +10,9 @@ use std::io::{self, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
+use std::time::Duration;
+
+const LOCK_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Active file name inside the audit directory.
 pub(super) const ACTIVE_NAME: &str = "identity-audit.jsonl";
@@ -39,13 +42,26 @@ fn open_private(path: &Path, append: bool) -> io::Result<File> {
 /// Exclusive advisory lock held for the rotate-and-append critical section.
 struct Lock(#[allow(dead_code)] File);
 impl Lock {
-    fn acquire(dir: &Path) -> io::Result<Self> {
+    fn acquire(dir: &Path, timeout: Duration) -> io::Result<Self> {
         let file = open_private(&dir.join(LOCK_NAME), false)?;
-        // SAFETY: the descriptor is owned by `file` and stays open for the call.
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
-            return Err(io::Error::last_os_error());
+        let deadline = super::probe::now() + timeout;
+        loop {
+            // SAFETY: the descriptor remains open while the lock is acquired.
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                return Ok(Self(file));
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::WouldBlock
+                && error.kind() != io::ErrorKind::Interrupted
+            {
+                return Err(error);
+            }
+            let remaining = deadline.saturating_duration_since(super::probe::now());
+            if remaining.is_zero() {
+                return Err(io::Error::from(io::ErrorKind::TimedOut));
+            }
+            std::thread::sleep(remaining.min(Duration::from_millis(10)));
         }
-        Ok(Self(file))
     }
 }
 
@@ -66,7 +82,16 @@ fn rotate(dir: &Path, kept: usize) -> io::Result<()> {
 
 /// Append one complete record, rotating first when it would push the active file past the limit.
 pub(super) fn append(dir: &Path, record: &[u8], limits: Limits) -> io::Result<()> {
-    let _lock = Lock::acquire(dir)?;
+    append_with_timeout(dir, record, limits, LOCK_TIMEOUT)
+}
+
+fn append_with_timeout(
+    dir: &Path,
+    record: &[u8],
+    limits: Limits,
+    timeout: Duration,
+) -> io::Result<()> {
+    let _lock = Lock::acquire(dir, timeout)?;
     let active = dir.join(ACTIVE_NAME);
     let mut file = open_private(&active, true)?;
     let metadata = file.metadata()?;
@@ -104,6 +129,55 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn contended_lock_returns_within_a_short_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        use std::io::BufRead;
+        use std::process::{Command, Stdio};
+        let mut child = Command::new("python3")
+            .args(["-c", "import fcntl, select, sys; f = open(sys.argv[1], 'w'); fcntl.flock(f, fcntl.LOCK_EX); print('locked', flush=True); select.select([sys.stdin], [], [], 10)"])
+            .arg(dir.path().join(LOCK_NAME))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped()).spawn().unwrap();
+        let mut ready = String::new();
+        std::io::BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut ready)
+            .unwrap();
+        assert_eq!(ready.trim(), "locked");
+        let start = super::super::probe::now();
+        let result = append_with_timeout(dir.path(), b"{}\n", SMALL, Duration::ZERO)
+            .map_err(super::super::audit_error);
+        let required_code = super::super::unasserted::finish_audit(
+            super::super::unasserted::Mode::Deny,
+            result,
+            &mut Vec::new(),
+        )
+        .unwrap_err()
+        .code;
+        let optional = append_with_timeout(dir.path(), b"{}\n", SMALL, Duration::ZERO)
+            .map_err(super::super::audit_error);
+        let mut warning = Vec::new();
+        super::super::unasserted::finish_audit(
+            super::super::unasserted::Mode::Warn,
+            optional,
+            &mut warning,
+        )
+        .unwrap();
+        let elapsed = start.elapsed();
+        drop(child.stdin.take());
+        child.wait().unwrap();
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "lock wait took {elapsed:?}"
+        );
+        assert_eq!(required_code, "identity_audit_lock_timeout");
+        assert_eq!(
+            String::from_utf8(warning).unwrap(),
+            "warning: forge identity: identity_audit_lock_timeout\n"
+        );
+        assert!(!dir.path().join(ACTIVE_NAME).exists());
     }
 
     #[test]

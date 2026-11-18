@@ -419,8 +419,15 @@ fn append_audit(record: &impl Serialize) -> Result<()> {
     let mut bytes =
         serde_json::to_vec(record).map_err(|_| Error::new("identity_audit_unavailable"))?;
     bytes.push(b'\n');
-    audit_log::append(&dir, &bytes, audit_log::LIMITS)
-        .map_err(|_| Error::new("identity_audit_unavailable"))
+    audit_log::append(&dir, &bytes, audit_log::LIMITS).map_err(audit_error)
+}
+
+fn audit_error(error: io::Error) -> Error {
+    Error::new(if error.kind() == io::ErrorKind::TimedOut {
+        "identity_audit_lock_timeout"
+    } else {
+        "identity_audit_unavailable"
+    })
 }
 /// Record a refusal whose repository or policy could not be resolved. No caller text is retained.
 pub fn audit_refusal(code: &'static str) -> Result<()> {

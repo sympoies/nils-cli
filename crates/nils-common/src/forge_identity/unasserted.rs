@@ -137,13 +137,11 @@ pub(super) fn gate(mode: Mode) -> Result<()> {
         "caller": {"argv0": argv0, "parent": parent},
     });
     if mode == Mode::Deny {
-        if audit {
-            append_audit(&record)?;
-        }
-        return Err(Error::with_detail(
-            "identity_unasserted_noninteractive",
-            FIX_TEXT.into(),
-        ));
+        return finish_audit(
+            mode,
+            if audit { append_audit(&record) } else { Ok(()) },
+            &mut std::io::stderr(),
+        );
     }
     // A closed stderr pipe must not fail (or panic) the run.
     let _ = writeln!(
@@ -152,7 +150,21 @@ pub(super) fn gate(mode: Mode) -> Result<()> {
     );
     // A warning must not fail the run; an unwritable audit trail only loses the record.
     if audit {
-        let _ = append_audit(&record);
+        finish_audit(mode, append_audit(&record), &mut std::io::stderr())?;
+    }
+    Ok(())
+}
+
+pub(super) fn finish_audit(mode: Mode, result: Result<()>, stderr: &mut impl Write) -> Result<()> {
+    if mode == Mode::Deny {
+        result?;
+        return Err(Error::with_detail(
+            "identity_unasserted_noninteractive",
+            FIX_TEXT.into(),
+        ));
+    }
+    if let Err(error) = result {
+        let _ = writeln!(stderr, "warning: forge identity: {}", error.code);
     }
     Ok(())
 }
