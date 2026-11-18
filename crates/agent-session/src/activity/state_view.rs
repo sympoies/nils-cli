@@ -19,6 +19,24 @@ pub(crate) fn controller_state_for_record(
     read_state(context, record, false)
 }
 
+/// Queued admission requires activity bound to the exact provider conversation.
+pub(crate) fn bound_claude_state(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Option<TurnState> {
+    let runtime = record.runtime.as_ref()?;
+    let expected = provider_session_for_runtime(record, &runtime.launch_id).ok()??;
+    let dir = session_dir(context, &record.id);
+    let document = read_document(&dir.join(ACTIVITY_FILE)).ok()?;
+    if record.agent != "claude"
+        || !activity_matches_runtime(&document, record)
+        || document.provider_session_id.as_deref() != Some(expected.as_str())
+    {
+        return None;
+    }
+    controller_state_for_record(context, record)
+}
+
 fn read_state(context: &CliContext, record: &SessionRecord, quiet: bool) -> Option<TurnState> {
     let dir = session_dir(context, &record.id);
     if let Some(runtime) = record.runtime.as_ref() {

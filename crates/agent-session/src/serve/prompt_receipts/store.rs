@@ -18,8 +18,39 @@ const PROMPT_BINDING_SCAN_BUDGET: std::time::Duration = std::time::Duration::fro
 
 #[derive(Serialize, Deserialize)]
 struct ClaimRecord {
-    fingerprint: String,
+    #[serde(flatten)]
+    payload: Payload,
     receipt: Receipt,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct Payload {
+    pub(super) fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    boundary: Option<String>,
+}
+
+impl Payload {
+    pub(super) fn new(text: &str, require_idle: bool, boundary: Option<&str>) -> Self {
+        let fingerprint = match boundary {
+            Some(token) => digest(&("idle_boundary", text, require_idle, token)),
+            None => digest(&(text, require_idle)),
+        };
+        Self {
+            fingerprint,
+            boundary: boundary.map(str::to_owned),
+        }
+    }
+
+    pub(super) fn matches(&self, text: &str, require_idle: bool) -> bool {
+        self == &Self::new(text, require_idle, self.boundary.as_deref())
+    }
+
+    pub(super) fn delivery_kind(&self) -> Option<super::DeliveryKind> {
+        self.boundary
+            .as_ref()
+            .map(|_| super::DeliveryKind::IdleBoundary)
+    }
 }
 
 pub(super) struct Claim {
@@ -32,8 +63,9 @@ pub(super) enum ClaimResult {
     Existing(ResultRecord),
 }
 
-pub(super) fn fingerprint(text: &str, require_idle: bool) -> String {
-    digest(&(text, require_idle))
+#[cfg(test)]
+pub(super) fn fingerprint(text: &str, require_idle: bool) -> Payload {
+    Payload::new(text, require_idle, None)
 }
 
 pub(super) fn history_bindings(
@@ -186,45 +218,44 @@ fn sync_parent(path: &Path) -> io::Result<()> {
 pub(super) fn claim(
     context: &CliContext,
     receipt: Receipt,
-    fingerprint: &str,
+    payload: &Payload,
 ) -> Result<ClaimResult, CliError> {
     let path = path(context, &receipt);
-    let mut file = match OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(&path)
-    {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            // A partial claim is conservatively unknown. It cannot be reused,
-            // even if the original writer failed before reaching dispatch.
-            if let Ok(bytes) = read(&path)
-                && let Ok(claim) = serde_json::from_slice::<ClaimRecord>(&bytes)
-                && claim.fingerprint != fingerprint
-            {
-                return Err(CliError::data(
-                    "request-id-conflict",
-                    "request_id was already used with another payload",
-                    None,
-                ));
-            }
-            return Ok(ClaimResult::Existing(
-                lookup(context, &receipt)?.unwrap_or_else(|| ResultRecord::unknown(receipt)),
+    let existing = || {
+        // A partial claim from an interrupted writer remains unknown.
+        if claim_payload(context, &receipt).is_some_and(|claimed| claimed != *payload) {
+            return Err(CliError::data(
+                "request-id-conflict",
+                "request_id was already used with another payload",
+                None,
             ));
         }
-        Err(error) => return Err(persist_error(error)),
+        Ok(ClaimResult::Existing(
+            lookup(context, &receipt)?.unwrap_or_else(|| ResultRecord::unknown(receipt.clone())),
+        ))
     };
+    match fs::symlink_metadata(&path) {
+        Ok(_) => return existing(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(persist_error(error)),
+    }
+
     let record = ClaimRecord {
-        fingerprint: fingerprint.to_string(),
+        payload: payload.clone(),
         receipt: receipt.clone(),
     };
     let bytes = serde_json::to_vec(&record).map_err(persist_error)?;
-    file.write_all(&bytes)
-        .and_then(|()| file.sync_all())
-        .and_then(|()| sync_parent(&path))
+    let mut staged = tempfile::NamedTempFile::new_in(path.parent().expect("session directory"))
         .map_err(persist_error)?;
+    staged
+        .write_all(&bytes)
+        .and_then(|()| staged.as_file().sync_all())
+        .map_err(persist_error)?;
+    match staged.persist_noclobber(&path) {
+        Ok(_) => sync_parent(&path).map_err(persist_error)?,
+        Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => return existing(),
+        Err(error) => return Err(persist_error(error)),
+    }
     Ok(ClaimResult::New(Claim { receipt, path }))
 }
 
@@ -277,14 +308,8 @@ pub(super) fn confirmation_is_current(context: &CliContext, result: &ResultRecor
     let Some(proof) = result.native_confirmation.as_ref() else {
         return false;
     };
-    let claim = read(&path(context, &result.receipt))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<ClaimRecord>(&bytes).ok());
-    let Some(claim) = claim else { return false };
-    claim.fingerprint == proof.fingerprint
-        && claim.receipt.request_id == result.receipt.request_id
-        && claim.receipt.session_id == result.receipt.session_id
-        && claim.receipt.session_incarnation == result.receipt.session_incarnation
+    claim_payload(context, &result.receipt)
+        .is_some_and(|claim| claim.fingerprint == proof.fingerprint)
         && lookup(context, &result.receipt)
             .ok()
             .flatten()
@@ -311,15 +336,15 @@ pub(super) fn publish_confirmed(
     .map(Some)
 }
 
-/// The payload fingerprint recorded by the durable claim for this receipt.
-pub(super) fn claim_fingerprint(context: &CliContext, receipt: &Receipt) -> Option<String> {
+/// The exact payload identity recorded by the durable claim for this receipt.
+pub(super) fn claim_payload(context: &CliContext, receipt: &Receipt) -> Option<Payload> {
     let claim = read(&path(context, receipt))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<ClaimRecord>(&bytes).ok())?;
     (claim.receipt.request_id == receipt.request_id
         && claim.receipt.session_id == receipt.session_id
         && claim.receipt.session_incarnation == receipt.session_incarnation)
-        .then_some(claim.fingerprint)
+        .then_some(claim.payload)
 }
 
 /// Resolve an unknown result whose acknowledgement was lost, after its own
@@ -349,6 +374,8 @@ fn publish(
     let mut confirmed = result.clone();
     confirmed.receipt.outcome = super::Outcome::Submitted;
     confirmed.receipt.code = None;
+    confirmed.receipt.delivery_kind =
+        claim_payload(context, &result.receipt).and_then(|claim| claim.delivery_kind());
     confirmed.receipt.confirmation_diagnostic = None;
     confirmed.status = 200;
     confirmed.queued = false;

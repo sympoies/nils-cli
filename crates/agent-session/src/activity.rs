@@ -66,7 +66,7 @@ mod provider;
 #[path = "activity/state_view.rs"]
 mod state_view;
 pub use state_view::state_for_view;
-pub(crate) use state_view::{controller_state_for_record, settle_starting};
+pub(crate) use state_view::{bound_claude_state, controller_state_for_record, settle_starting};
 pub(crate) mod shadow;
 mod stream_shadow_observation;
 

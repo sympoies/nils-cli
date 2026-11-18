@@ -4,7 +4,19 @@ use pretty_assertions::assert_eq;
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+#[path = "idle_boundary.rs"]
+mod idle_boundary;
+
+#[derive(Default)]
+struct QueueFixture {
+    confirm_idle_boundary_input: AtomicBool,
+    closed_idle_boundary_turn: AtomicBool,
+    hold_idle_boundary_read: AtomicBool,
+    entered_idle_boundary_read: AtomicBool,
+}
+
 struct Provider {
+    queue: Arc<QueueFixture>,
     busy: Arc<AtomicBool>,
     visible: Arc<AtomicBool>,
     mutations: Arc<AtomicUsize>,
@@ -30,6 +42,8 @@ impl Provider {
         let (working, shown, writes) = (busy.clone(), visible.clone(), mutations.clone());
         let (acks, history) = (acknowledge.clone(), history_kind.clone());
         let sent_id = client_id.clone();
+        let queue = Arc::new(QueueFixture::default());
+        let queue_observation = queue.clone();
         let thread = std::thread::spawn(move || {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -46,6 +60,7 @@ impl Provider {
                             (working.clone(), shown.clone(), writes.clone());
                         let (acks, history) = (acks.clone(), history.clone());
                         let sent_id = sent_id.clone();
+                        let queue = queue_observation.clone();
                         tokio::spawn(async move {
                             let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
                             while let Some(Ok(ClientMessage::Text(text))) = socket.next().await {
@@ -64,11 +79,31 @@ impl Provider {
                                         if !acks.load(Ordering::SeqCst) { break; }
                                         json!({"turn":{"id":"accepted-turn"}})
                                     }
-                                    "thread/read" => json!({"thread":{
-                                        "id":"receipt-thread",
-                                        "status":{"type":if working.load(Ordering::SeqCst) {"active"} else {"idle"}},
-                                        "turns":if shown.load(Ordering::SeqCst) { turns(history.load(Ordering::SeqCst), sent_id.lock().unwrap().as_deref()) } else {json!([])}
-                                    }}),
+                                    "thread/read" => {
+                                        if queue.hold_idle_boundary_read.load(Ordering::SeqCst) {
+                                            queue.entered_idle_boundary_read.store(true, Ordering::SeqCst);
+                                            while queue.hold_idle_boundary_read.load(Ordering::SeqCst) {
+                                                tokio::time::sleep(Duration::from_millis(20)).await;
+                                            }
+                                        }
+                                        let confirm = queue.confirm_idle_boundary_input.load(Ordering::SeqCst)
+                                            && writes.load(Ordering::SeqCst) > 0;
+                                        let mut observed = if shown.load(Ordering::SeqCst) || confirm {
+                                            turns(history.load(Ordering::SeqCst), sent_id.lock().unwrap().as_deref())
+                                        } else {
+                                            json!([])
+                                        };
+                                        if queue.closed_idle_boundary_turn.load(Ordering::SeqCst) {
+                                            observed.as_array_mut().unwrap().insert(0, json!({
+                                                "id":"private-prior-turn","status":"completed","items":[]
+                                            }));
+                                        }
+                                        json!({"thread":{
+                                            "id":"receipt-thread",
+                                            "status":{"type":if working.load(Ordering::SeqCst) {"active"} else {"idle"}},
+                                            "turns":observed
+                                        }})
+                                    },
                                     method => panic!("unexpected native RPC: {method}"),
                                 };
                                 if socket.send(ClientMessage::Text(json!({"id":id,"result":result}).to_string().into())).await.is_err() {
@@ -80,6 +115,7 @@ impl Provider {
                 });
         });
         Self {
+            queue,
             busy,
             visible,
             mutations,

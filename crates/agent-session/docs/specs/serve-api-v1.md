@@ -58,7 +58,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `GET /sessions/{id}/messages/{message_id}/wait/v1` | Bearer + capability | [Coordination HTTP coverage](coordination-interface-v1.md#http-coverage) |
 | `GET /sessions/{id}/buffer` | Open | [Observation](serve-observation-v1.md) |
 | `GET /sessions/{id}/drafts`, `GET /sessions/{id}/drafts/{draft_id}` and `POST /sessions/{id}/drafts/{draft_id}/discard` | Bearer | [Saved stale drafts](stale-drafts-v1.md) |
-| `POST /sessions/{id}/{send,prompt,prompt/v2,resume}` | Bearer | [Prompt submission](serve-prompt-v1.md) |
+| `POST /sessions/{id}/{send,prompt,prompt/v2,resume}` | Bearer | [Prompt submission](serve-prompt-v1.md) and [idle-ready boundary](serve-prompt-v1.md#idle-ready-boundary) |
 | `GET /sessions/{id}/prompt/v2/receipts/{request_id}` | Bearer | [Prompt submission](serve-prompt-v1.md) |
 | `POST /sessions/{id}/archive` | Bearer | [History and archive](serve-history-v1.md) |
 | `GET /sessions/{id}/maintenance` and `POST /sessions/{id}/maintenance/actions` | Bearer | [Session maintenance v1](session-maintenance-v1.md#authentication-and-endpoints), successor [v2](session-maintenance-v2.md#negotiation) |

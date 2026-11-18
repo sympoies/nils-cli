@@ -303,6 +303,13 @@ For durable client outboxes, persist a client-generated `request_id` before
 POST and add `require_idle: true` when delivery must wait for an idle provider
 and empty composer. Reconcile the exact attempt through authenticated
 `GET /sessions/SESSION_ID/prompt/v2/receipts/REQUEST_ID?expected_session_incarnation=INCARNATION`.
+
+Queue consumers use the per-session reply-delivery capability and
+`idle_ready_boundary` from the daemon list, then forward the exact token as
+`expected_idle_ready_boundary` on the keyed guarded POST. Check the receipt
+outcome and recover an uncertain attempt with that same request ID.
+See the [idle-ready boundary contract](../specs/serve-prompt-v1.md#idle-ready-boundary).
+
 Successful POSTs include `data.receipt`; errors include
 `error.details.receipt` when a claim was created. Lookup returns
 `data.receipt` for submitted, refused and unknown outcomes. Verify the session,

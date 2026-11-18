@@ -63,6 +63,31 @@ recorded in `sympoies/nils-cli#1409`.
   would make a stopped session fail resume, the daemon sets `resumable: false` plus one bounded
   `resume_blocked_reason` code. Old records and daemons omit the additive fields.
 
+  A running session with a supported guarded route and a verifiable controller,
+  provider conversation, and applied account advertises
+  `agent-session.reply-delivery.idle-boundary.v1` in its `capabilities` array.
+  Native Codex uses the launch-bound proxy and applied Codex account binding.
+  Claude uses a launch-bound pane, provider conversation and applied Claude
+  account binding. A capable session may omit `idle_ready_boundary` while
+  busy, blocked, consumed or unobservable.
+
+  When available, `idle_ready_boundary` contains `generation` (a decimal
+  string that increases within the incarnation) and `token` (an opaque
+  string). Use that token with the observed `session_incarnation` in the
+  [guarded prompt request](serve-prompt-v1.md#idle-ready-boundary). The stored
+  boundary follows positive provider idle and empty-composer admission.
+  Consumption, an intervening turn, changed conversation or applied account,
+  and lost runtime control invalidate the old token. The turn watermark
+  and underlying provider identifiers stay private.
+
+  The list reads the stored boundary. An on-demand background batch probes
+  up to four eligible sessions, with a shared one-second observation budget
+  and at most one batch in flight per daemon. List rendering does not await
+  these provider reads. Slow or unobservable sessions may omit readiness
+  until a later list. Repeating positive observations with the same evidence
+  reuses the available token. The dispatch path rechecks the live admission
+  and watermark, so a cached list does not grant an input by itself.
+
   `data.capabilities.last_prompt` advertises the list `last_prompt` preview: the most recent user prompt
   for a running Codex/Claude session, resolved from the exact provider transcript so it reflects prompts
   submitted through any input path (web console, SSH/Termius, or raw `tmux attach`). Codex Goal creation

@@ -3,6 +3,7 @@
 //! The list `last_prompt` projection and the History START/LATEST rows come from the
 //! same functions the daemon uses, so the CLI read cannot drift from the Console data.
 //! The CLI read is local and read-only: it needs state access, not the daemon or its token.
+use super::prompt_receipts::reply_delivery;
 use super::*;
 use nils_common::cli_contract::{Envelope, OutputFormat};
 
@@ -17,10 +18,59 @@ const PREVIEW_POLL: Duration = Duration::from_millis(50);
 /// catch-up from an authoritative empty or unavailable projection. The latest
 /// caught-up value remains process-local and is returned in the response only;
 /// it is never persisted.
+#[derive(Serialize)]
+pub(super) struct ListEntry {
+    #[serde(flatten)]
+    session: SessionView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    idle_ready_boundary: Option<super::prompt_receipts::idle_boundary::Boundary>,
+}
+
+#[derive(Default)]
+struct Readiness {
+    candidates: Vec<(String, String)>,
+    boundaries: HashMap<String, super::prompt_receipts::idle_boundary::Boundary>,
+}
+
+pub(super) async fn enrich_for_list(
+    state: &ServeState,
+    mut sessions: Vec<SessionView>,
+) -> Vec<ListEntry> {
+    let mut readiness = Readiness::default();
+    enrich(
+        &state.context,
+        &state.provider_prompt_discovery,
+        &mut sessions,
+        Some(&mut readiness),
+    )
+    .await;
+    state.reply_observer.schedule(
+        state.context.clone(),
+        state.tmux_bin.clone(),
+        readiness.candidates,
+    );
+    sessions
+        .into_iter()
+        .map(|session| ListEntry {
+            idle_ready_boundary: readiness.boundaries.remove(&session.id),
+            session,
+        })
+        .collect()
+}
+
 pub(super) async fn enrich_last_prompts(
     context: &CliContext,
     registry: &ProviderPromptDiscoveryRegistry,
     sessions: &mut [SessionView],
+) {
+    enrich(context, registry, sessions, None).await;
+}
+
+async fn enrich(
+    context: &CliContext,
+    registry: &ProviderPromptDiscoveryRegistry,
+    sessions: &mut [SessionView],
+    mut readiness: Option<&mut Readiness>,
 ) {
     for session in sessions.iter_mut() {
         if session.status == "stopped" || !matches!(session.agent.as_str(), "codex" | "claude") {
@@ -28,11 +78,37 @@ pub(super) async fn enrich_last_prompts(
         }
         let owned = context.clone();
         let id = session.id.clone();
-        let Ok(Ok(record)) =
-            tokio::task::spawn_blocking(move || load_session_record(&owned, &id)).await
+        let observe = readiness.is_some() && session.status == "running";
+        let view_incarnation = session.session_incarnation.clone();
+        let Ok(Ok((record, projection))) = tokio::task::spawn_blocking(move || {
+            let record = load_session_record(&owned, &id)?;
+            let projection = if observe
+                && record.runtime.as_ref().is_some_and(|runtime| {
+                    view_incarnation.as_deref() == Some(runtime.launch_id.as_str())
+                }) {
+                reply_delivery::projection(&owned, &record)
+            } else {
+                None
+            };
+            Ok::<_, CliError>((record, projection))
+        })
+        .await
         else {
             continue;
         };
+        if let Some((readiness, boundary)) = readiness.as_deref_mut().zip(projection) {
+            session.capabilities.push(reply_delivery::CAPABILITY);
+            readiness.candidates.push((
+                session.id.clone(),
+                session
+                    .session_incarnation
+                    .clone()
+                    .expect("observed list runtime"),
+            ));
+            if let Some(boundary) = boundary {
+                readiness.boundaries.insert(session.id.clone(), boundary);
+            }
+        }
         if let Some(projection) = registry
             .last_prompt_projection(&record, Some(&context.state_dir))
             .await

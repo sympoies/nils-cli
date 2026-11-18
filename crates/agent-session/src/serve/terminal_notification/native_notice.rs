@@ -71,6 +71,7 @@ pub(super) async fn dispatch(
             tmux,
         );
         args.guards = crate::send_guard::GuardArgs {
+            expected_idle_ready_boundary: None,
             notice_envelope: sending.is_notice(),
             require_idle: true,
             require_empty_composer: true,
