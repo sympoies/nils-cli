@@ -3,8 +3,8 @@
 //! External Claude Code 2.1.296 statically rejects a hooks module whose engine handle `$`
 //! is used other than as `$.noun.event(...)` at a call site. Its loader reports, for example,
 //! "$ itself is assigned (bound, passed, spread, returned or read); $ is always spelled
-//! $.noun.event(...) at the call site". The module is not otherwise executed by any test, so
-//! this is the only guard that it still loads.
+//! $.noun.event(...) at the call site". The synthetic execution tests model behavior
+//! separately from the provider's static loader.
 use std::path::Path;
 use std::process::Command;
 
@@ -241,6 +241,21 @@ fn embedded_module_loads_in_the_installed_claude_code() {
         output.status.success(),
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn native_notice_receiver_resumes_after_claude_session_cycle() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let output = nils_test_support::node::command()
+        .arg(root.join("tests/fixtures/claude-notice-session-cycle.mjs"))
+        .arg(root.join("src/send/claude_notice/register.js"))
+        .output()
+        .expect("execute synthetic Claude module");
+    assert!(
+        output.status.success(),
+        "{}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

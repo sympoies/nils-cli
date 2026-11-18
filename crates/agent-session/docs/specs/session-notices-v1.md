@@ -164,6 +164,12 @@ a redundant screen-empty verdict is not required. Authorization must match the
 current offer, operation, nonce, module and runtime/provider binding. Readiness
 alone never authorizes text.
 
+When the mounted module receives a provider session end, it cancels that
+receiver. A later interactive terminal session start in the same managed
+runtime can publish fresh readiness for the live binding. Offer deduplication
+survives the receiver transition. A retired receiver cannot use a pending
+authorization to submit into its replacement.
+
 The module reports its first read using the existing bound `box_empty` and
 `cursor` authorization fields, including negative observations. The bridge
 validates the operation, identity and nonce before interpreting those facts;
