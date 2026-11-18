@@ -705,6 +705,23 @@ or treated as proof of finality. These rules are covered with structured fixture
 including continued work and parallel/reentrant Stop hooks; no new live probe
 is claimed.
 
+A synchronous Claude `PostToolUse` hook can return `continue: false` to end
+the turn without a `Stop` callback. The stopping hook returns its decision to
+Claude. The parallel lifecycle hook receives tool input and
+results, so it records ordinary tool progress. The turn stays open until
+matching completion evidence arrives. A structured idle observation alone
+can project `unknown` with `claude_turn_outcome_unknown` while preserving the
+open turn. A native `Notification(idle_prompt)` can settle the matching turn
+if Claude emits it. Its delivery depends on provider conditions and has no
+bounded deadline. See the
+[Claude Code hooks reference](https://code.claude.com/docs/en/hooks#posttooluse).
+
+Consumers that depend on the normal completion path can return
+`hookSpecificOutput.additionalContext` from a synchronous `PostToolUse`
+hook to ask Claude to finish with a final response, allowing the provider
+to emit its usual completion signals. Use the resulting lifecycle state
+from `agent-session` as the completion signal.
+
 The coordination notification controller applies a narrower input-safety rule:
 an exact-runtime `Stop` may authorize only the fixed body-free mailbox prompt
 after a short debounce with no later accepted provider hook, no pending attention,
