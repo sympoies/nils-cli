@@ -488,9 +488,7 @@ mod tests {
             let fixture = Fixture::new();
             let record = fixture.record("foreign-preclaim", json!({}));
             let old_name = Path::new("/tmp").join(format!("ark-{}", unsafe { libc::geteuid() }));
-            assert_ne!(fs::symlink_metadata(&old_name).unwrap().uid(), unsafe {
-                libc::geteuid()
-            });
+            assert!(fs::symlink_metadata(&old_name).unwrap().uid() != unsafe { libc::geteuid() });
             let link = prepare_launch(&fixture.state_dir(), &record)
                 .unwrap()
                 .unwrap();
@@ -542,11 +540,7 @@ exec setpriv --reuid="$1" --regid="$2" --clear-groups env TMPDIR=/tmp NILS_TEST_
             .arg(std::env::current_exe().unwrap())
             .output()
             .unwrap();
-        assert!(
-            output.status.success(),
-            "isolated cross-UID test failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        assert!(output.status.success(), "isolated cross-UID test failed");
     }
 
     #[test]
