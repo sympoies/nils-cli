@@ -475,6 +475,8 @@ async fn resumed_thread_idle_response_settles_startup() {
         "active",
         "missing",
         "error",
+        "foreign",
+        "revision",
         "timeout",
         "interleaved",
         "contended",
@@ -528,21 +530,31 @@ async fn resumed_thread_idle_response_settles_startup() {
         } else {
             None
         };
+        let activity_path = crate::session_dir(&context, &record.id).join("activity.json");
         let server = tokio::spawn(async move {
             let mut pending = pending;
             let (stream, _) = listener.accept().await.unwrap();
             let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
-            for attempt in
-                0..if scenario == "missing" || scenario == "error" || scenario == "blocked_settle" {
-                    3
-                } else if scenario == "timeout" || scenario == "pending" {
-                    2
-                } else {
-                    1
-                }
-            {
+            for attempt in 0..if matches!(
+                scenario,
+                "missing" | "error" | "blocked_settle" | "foreign" | "revision"
+            ) {
+                3
+            } else if scenario == "timeout" || scenario == "pending" {
+                2
+            } else {
+                1
+            } {
                 let request = receive_json(&mut socket).await;
                 assert_eq!(request["method"], "thread/read");
+                assert_eq!(request["params"]["threadId"], "resumed-thread");
+                if scenario == "revision" {
+                    let mut document: Value =
+                        serde_json::from_slice(&fs::read(&activity_path).unwrap()).unwrap();
+                    document["state"]["revision"] =
+                        json!(document["state"]["revision"].as_u64().unwrap() + 1);
+                    fs::write(&activity_path, serde_json::to_vec(&document).unwrap()).unwrap();
+                }
                 if scenario == "pending" && attempt == 1 {
                     drop(pending.take());
                 }
@@ -581,7 +593,7 @@ async fn resumed_thread_idle_response_settles_startup() {
                 respond(
                     &mut socket,
                     &request,
-                    json!({"thread":{"id":"resumed-thread","status":status}}),
+                    json!({"thread":{"id": if scenario == "foreign" { "other-thread" } else { "resumed-thread" }, "status":status}}),
                 )
                 .await;
             }
@@ -741,4 +753,177 @@ async fn resumed_control_subscribes_before_snapshot_and_projects_later_start() {
     drop(handle);
     control.abort();
     let _ = control.await;
+}
+
+#[tokio::test]
+async fn resumed_state_drives_guarded_compaction_and_restart_admission() {
+    for status in ["idle", "active", "missing"] {
+        for operation in ["compact", "restart"] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let (_socket_dir, socket_path) =
+                nils_test_support::short_socket_path("resume-guard.sock");
+            let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+            let context = CliContext {
+                state_dir: tmp.path().join("state"),
+                host: None,
+            };
+            let mut record = record_with_runtime("resume-guard", &socket_path);
+            record.runtime.as_mut().unwrap().started_at = "2000-01-01T00:00:00Z".into();
+            record.provider_resume = Some(ProviderResume {
+                provider: "codex".into(),
+                session_id: "resumed-thread".into(),
+                captured_at: "2030-01-01T00:00:00Z".into(),
+                capture_method: "test".into(),
+                resume_args: vec![],
+                extra: BTreeMap::new(),
+            });
+            fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+            crate::write_session_record(&context, &record).unwrap();
+            crate::activity::activate_runtime(&context, &record).unwrap();
+            bind_thread(&record, "resumed-thread").unwrap();
+            let _capability = begin_proxy_capability(&context, &record).unwrap();
+            let writes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let observed = writes.clone();
+            let server = tokio::spawn(async move {
+                loop {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    let observed = observed.clone();
+                    tokio::spawn(async move {
+                        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                        while let Some(Ok(message)) = socket.next().await {
+                            let Ok(text) = message.to_text() else {
+                                continue;
+                            };
+                            let Ok(request) = serde_json::from_str::<Value>(text) else {
+                                continue;
+                            };
+                            let Some(id) = request.get("id") else {
+                                continue;
+                            };
+                            let result = match request["method"].as_str().unwrap() {
+                                "initialize" => json!({}),
+                                "thread/resume" => json!({"thread":{"id":"resumed-thread"}}),
+                                "thread/loaded/list" => {
+                                    json!({"data":["resumed-thread"],"nextCursor":null})
+                                }
+                                "thread/read" => json!({"thread":{"id":"resumed-thread","status":
+                                    if status == "missing" { json!(null) } else { json!({"type":status}) }}}),
+                                "thread/compact/start" => {
+                                    assert_eq!(request["params"]["threadId"], "resumed-thread");
+                                    observed.fetch_add(1, Ordering::SeqCst);
+                                    json!({})
+                                }
+                                other => panic!("unexpected synthetic RPC: {other}"),
+                            };
+                            if send_json(&mut socket, json!({"id":id,"result":result}))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    });
+                }
+            });
+            let tmux = tmp.path().join("tmux");
+            let input = tmp.path().join("input");
+            fs::write(
+                &tmux,
+                format!(
+                    r#"#!/bin/sh
+case "$1" in
+has-session) exit 0 ;;
+show-environment)
+  case "$4" in
+  AGENT_SESSION_ID) echo 'AGENT_SESSION_ID=resume-guard' ;;
+  AGENT_SESSION_STATE_DIR) printf 'AGENT_SESSION_STATE_DIR=%s\n' {state} ;;
+  AGENT_SESSION_RUNTIME_ID) echo 'AGENT_SESSION_RUNTIME_ID=runtime-resume-guard' ;;
+  esac ;;
+capture-pane) printf '› \n\n  status\n'; case "$*" in *display-message*) printf '2 1\n';; esac ;;
+display-message) printf '2 1\n' ;;
+load-buffer) cat "$4" >> {input} ;;
+esac
+"#,
+                    state = shell_words::quote(&context.state_dir.to_string_lossy()),
+                    input = shell_words::quote(&input.to_string_lossy())
+                ),
+            )
+            .unwrap();
+            fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+            let stream = connect_socket(&socket_path).await.unwrap();
+            let (mut socket, _) = tokio_tungstenite::client_async("ws://localhost", stream)
+                .await
+                .unwrap();
+            send_json(
+                &mut socket,
+                resume_thread_request(1, "resumed-thread", &record.cwd),
+            )
+            .await
+            .unwrap();
+            receive_response_with_timeout(&mut socket, 1, None, None, Duration::from_secs(2))
+                .await
+                .unwrap();
+            let mut reducer = FailureReducer::new("resumed-thread");
+            idle_probe::recover_resumed(&mut socket, &mut 1, &context, &record, &mut reducer, None)
+                .await;
+            assert_eq!(
+                crate::activity::state_for_view(&context, &record)
+                    .unwrap()
+                    .phase,
+                if status == "idle" {
+                    crate::activity::TurnPhase::Waiting
+                } else {
+                    crate::activity::TurnPhase::Unknown
+                }
+            );
+            let task_context = context.clone();
+            let task_record = record.clone();
+            let task_tmux = tmux.clone();
+            let outcome = tokio::task::spawn_blocking(move || {
+                if operation == "compact" {
+                    let args = crate::cli::SendArgs {
+                        id: task_record.id.clone(),
+                        text: Some("/compact".into()),
+                        text_stdin: false,
+                        keys: vec![crate::cli::SpecialKey::Enter],
+                        allow_blocked: false,
+                        guards: crate::send_guard::GuardArgs {
+                            require_idle: true,
+                            require_empty_composer: true,
+                            ..Default::default()
+                        },
+                        tmux_bin: Some(task_tmux),
+                        format: crate::OutputFormat::Json,
+                    };
+                    crate::send::send_to_session(&task_context, args).map(|_| true)
+                } else {
+                    crate::restart::test_request_provider_exit(
+                        &task_context,
+                        &task_record,
+                        &task_tmux,
+                    )
+                }
+            })
+            .await
+            .unwrap();
+            if status == "idle" {
+                assert!(outcome.unwrap(), "{operation}: {status}");
+            } else {
+                assert!(outcome.is_err(), "{operation}: {status}");
+            }
+            assert_eq!(
+                writes.load(Ordering::SeqCst),
+                usize::from(status == "idle" && operation == "compact")
+            );
+            if status == "idle" && operation == "restart" {
+                assert_eq!(fs::read_to_string(&input).unwrap(), "/quit");
+            } else {
+                assert!(
+                    !input.exists(),
+                    "unexpected pane mutation: {operation}, {status}"
+                );
+            }
+            server.abort();
+        }
+    }
 }
