@@ -23,7 +23,7 @@ const service = { id: 'reporter', generation: 'generation-1', token: randomUUID(
 const address = host => ({ machine: host.machine, session_id: host.session, session_incarnation: host.incarnation });
 const origin = () => ({ machine: source.machine, service_id: service.id, service_generation: service.generation });
 const checks = [];
-let edge, heartbeat, hold = false, dropOnce = false, discoveryDenied = false, oldRelay = false;
+let edge, heartbeat, hold = false, dropOnce = false, discoveryDenied = false, oldRelay = false, serviceDiscoveryRefusal = null;
 function admission(entries = [{ service_id: service.id, service_generation: service.generation, credential_file: service.credential }]) {
   privateWrite(service.admission, { schema_version: 'agent-session.mailbox-services.v1', services: entries });
 }
@@ -42,15 +42,16 @@ async function waitFor(fn, label, ms = 25000) {
   while (Date.now() < until) { const value = await fn(); if (value) return value; await delay(100); }
   throw new Error(`timed out: ${label}`);
 }
-async function start(host) {
+async function start(host, federation = true) {
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (key.startsWith('AGENT_SESSION_') || key.startsWith('AGENT_CONSOLE_')) delete env[key];
-  Object.assign(env, { AGENT_SESSION_MAILBOX_SERVICES_FILE: host === source ? service.admission : '', AGENT_SESSION_RELAY_URL: edge.url, AGENT_SESSION_RELAY_TOKEN: host.relay, AGENT_SESSION_RELAY_INGRESS_TOKEN: host.ingress });
+  env.AGENT_SESSION_MAILBOX_SERVICES_FILE = host === source ? service.admission : '';
+  if (federation) Object.assign(env, { AGENT_SESSION_RELAY_URL: edge.url, AGENT_SESSION_RELAY_TOKEN: host.relay, AGENT_SESSION_RELAY_INGRESS_TOKEN: host.ingress });
   const endpoint = join(host.root, 'coordination', 'daemon-endpoint.json');
   rmSync(endpoint, { force: true });
   host.child = spawn(binary, ['--state-dir', host.root, 'serve', '--bind', '127.0.0.1:0', '--machine', host.machine, '--token-stdin', '--tmux-bin', '/bin/false'], { env, stdio: ['pipe', 'ignore', 'pipe'] });
   host.child.stdin.end(host.operator);
-  host.stderr = ''; host.child.stderr.on('data', data => { if (host.stderr.length < 16384) host.stderr += data.toString(); });
+  host.stderr ??= ''; host.child.stderr.on('data', data => { if (host.stderr.length < 16384) host.stderr += data.toString(); });
   host.url = await waitFor(() => { if ((host.child.exitCode !== null || host.child.signalCode !== null)) throw new Error('fixture daemon stopped: ' + host.stderr); if (existsSync(endpoint)) return JSON.parse(readFileSync(endpoint, 'utf8')).url; }, 'endpoint');
   await waitFor(async () => { try { return (await fetch(host.url + '/healthz')).ok; } catch { return false; } }, 'health');
 }
@@ -72,11 +73,24 @@ async function submit(body, expected = 200, token = service.token, headers = {})
 }
 const registry = host => JSON.parse(readFileSync(join(host.root, 'coordination', 'registry.json'), 'utf8'));
 const journal = () => JSON.parse(readFileSync(join(source.root, 'coordination', 'federation-journal.json'), 'utf8'));
-const outboxCount = () => existsSync(join(source.root, 'coordination', 'federation-journal.json')) ? journal().remote_outbox.length : 0;
+function assertNoRemoteOperation(key) {
+  if (!existsSync(join(source.root, 'coordination', 'federation-journal.json'))) return;
+  const state = journal();
+  const matches = item => item.idempotency_key === key;
+  assert(!state.remote_outbox.some(matches), 'refused operation must not enter remote outbox');
+  assert(!state.retained.some(matches), 'refused operation must not enter retained journal');
+}
 async function serviceCli(key, extra = [], expected = 0, recipient = source.session) {
   const bodyFile = join(root, 'cli-body'); privateWrite(bodyFile, 'PRIVATE-SERVICE-BODY-CANARY');
-  const env = { ...process.env }; for (const key of Object.keys(env)) if (key.startsWith('AGENT_SESSION_')) delete env[key];
   const args = ['--state-dir', source.root, 'message', 'service-send', '--service', service.id, '--service-generation', service.generation, '--credential-file', service.credential, '--to', recipient, '--body-file', bodyFile, '--idempotency-key', key, '--format', 'json', ...extra];
+  return runCli(args, expected);
+}
+async function managedSend(key) {
+  const bodyFile = join(root, 'managed-body'); privateWrite(bodyFile, 'PRIVATE-SERVICE-BODY-CANARY');
+  return runCli(['--state-dir', source.root, 'message', 'send', '--from', source.session, '--capability-file', source.capabilityFile, '--to-machine', target.machine, '--to', target.session, '--body-file', bodyFile, '--idempotency-key', key, '--format', 'json']);
+}
+async function runCli(args, expected = 0) {
+  const env = { ...process.env }; for (const key of Object.keys(env)) if (key.startsWith('AGENT_SESSION_')) delete env[key];
   const result = await new Promise((resolve, reject) => { const child = spawn(binary, args, { env, stdio: ['ignore', 'pipe', 'pipe'] }); let stdout = '', stderr = ''; child.stdout.on('data', data => stdout += data); child.stderr.on('data', data => stderr += data); child.on('error', reject); child.on('exit', code => resolve({ code, stdout, stderr })); });
   assert.equal(result.code, expected, 'unattended CLI exit');
   assert(!result.stdout.includes('PRIVATE-SERVICE-BODY-CANARY')); assert(!result.stderr.includes(service.token));
@@ -90,15 +104,16 @@ try {
     const url = new URL(req.url, 'http://localhost');
     if (url.pathname === '/api/coordination/peers/v1') {
       if (discoveryDenied) { res.writeHead(503); res.end(JSON.stringify({ error: { code: 'remote-messaging-unavailable' } })); return; }
+      if (serviceDiscoveryRefusal && url.searchParams.has('source_service_id')) { res.writeHead(serviceDiscoveryRefusal); res.end(JSON.stringify({ error: { code: serviceDiscoveryRefusal === 400 ? 'invalid-request' : 'origin-forbidden', message: 'PRIVATE-RELAY-DIAGNOSTIC-CANARY', details: { token: service.token } } })); return; }
       if (url.searchParams.has('source_service_id')) { assert.equal(url.searchParams.get('source_service_id'), service.id); assert.equal(url.searchParams.get('source_service_generation'), service.generation); } else { assert.equal(url.searchParams.get('source_session_id'), source.session); assert.equal(url.searchParams.get('source_incarnation'), source.incarnation); }
       res.end(JSON.stringify({ schema_version: 'agent-session.remote-peers.v1', peers: hosts.map(h => ({ ...address(h), messaging_supported: true })) })); return;
     }
     assert.equal(url.pathname, '/api/coordination/relay/v1');
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     const envelope = JSON.parse(Buffer.concat(chunks));
-    const sessionForward = JSON.stringify(envelope.from) === JSON.stringify(address(source)) && envelope.forwarding;
-    if (oldRelay || (!sessionForward && JSON.stringify(envelope.from) !== JSON.stringify(origin()))) { res.writeHead(403); res.end(JSON.stringify({ error: { code: 'origin-forbidden' } })); return; }
-    assert.equal(envelope.schema_version, sessionForward ? 'agent-session.remote-message.v2' : (envelope.category ? 'agent-session.remote-service-message.v2' : 'agent-session.remote-service-message.v1')); assert.deepEqual(envelope.from, sessionForward ? address(source) : origin());
+    const sessionOrigin = JSON.stringify(envelope.from) === JSON.stringify(address(source));
+    if (oldRelay || (!sessionOrigin && JSON.stringify(envelope.from) !== JSON.stringify(origin()))) { res.writeHead(403); res.end(JSON.stringify({ error: { code: 'origin-forbidden' } })); return; }
+    assert.equal(envelope.schema_version, sessionOrigin ? (envelope.forwarding ? 'agent-session.remote-message.v2' : 'agent-session.remote-message.v1') : (envelope.category ? 'agent-session.remote-service-message.v2' : 'agent-session.remote-service-message.v1')); assert.deepEqual(envelope.from, sessionOrigin ? address(source) : origin());
     if (hold) { res.writeHead(503); res.end(JSON.stringify({ error: { code: 'remote-messaging-unavailable' } })); return; }
     const response = await fetch(target.url + '/coordination/messages/receive/v1', { method: 'POST', headers: { Authorization: `Bearer ${target.operator}`, 'X-Agent-Session-Relay-Token': target.ingress, 'Content-Type': 'application/json' }, body: JSON.stringify(envelope) });
     const text = await response.text();
@@ -106,7 +121,7 @@ try {
     res.writeHead(response.status, { 'Content-Type': 'application/json' }); res.end(text);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); edge = { server, url: `http://127.0.0.1:${server.address().port}` };
-  await Promise.all(hosts.map(start));
+  await Promise.all(hosts.map(host => start(host)));
   heartbeat = setInterval(() => hosts.forEach(host => writeHeartbeat(join(host.root, 'sessions', host.session, 'coordination', 'heartbeat'), `${host.incarnation}:${now()}\n`)), 1000); heartbeat.unref();
   await submit(payload('unknown', { service_id: 'unknown' }), 401);
   await submit(payload('wrong-token'), 401, 'wrong-token');
@@ -137,6 +152,31 @@ try {
   for (const expires_in of ['0s', '8d']) await submit(payload('expiry-' + expires_in, { expires_in }), 400);
   await submit(payload('control-body', { body: 'private\u0000body' }), 422); await submit(payload('maximum-bounds', { body: 'x'.repeat(16384), expires_in: '7d' })); checks.push('body-and-expiry-bounds');
   await serviceCli('unattended-cli'); admission([]); await serviceCli('cli-denied', [], 65); admission(); checks.push('cli-without-session-environment');
+  for (const [status, code, action] of [
+    [400, 'mailbox-service-relay-unsupported', 'configure_relay_service_route'],
+    [403, 'mailbox-service-relay-forbidden', 'configure_relay_service_admission'],
+  ]) {
+    serviceDiscoveryRefusal = status;
+    const key = `service-route-${status}`;
+    const http = await submit(payload(key, { to_machine: target.machine, to_session: target.session }), 503);
+    const cli = await serviceCli(key, ['--to-machine', target.machine], 69, target.session);
+    assert.equal(http.error.code, code); assert.deepEqual(cli.error, http.error);
+    assert.equal(cli.error.details.retryable, false); assert.equal(cli.error.details.next_action, action);
+    assert.equal(cli.error.details.recovery.kind, 'operator');
+    assert.match(cli.error.message, /AGENT_SESSION_RELAY_URL/);
+    assert.match(cli.error.message, /service_id.*service_generation/);
+    assert(!JSON.stringify(cli).includes('PRIVATE-RELAY-DIAGNOSTIC-CANARY'));
+    assertNoRemoteOperation(key);
+    await serviceCli(`local-with-service-route-${status}`);
+    const managed = await managedSend(`managed-with-service-route-${status}`);
+    await waitFor(() => registry(target).messages.some(m => m.message_id === managed.message_id), 'managed remote send with service route absent');
+    const stored = registry(target).messages.find(m => m.message_id === managed.message_id);
+    assert.equal(stored.body, 'PRIVATE-SERVICE-BODY-CANARY'); assert(stored.sender_session_id.startsWith('remote:'));
+  }
+  serviceDiscoveryRefusal = null;
+  const cliRemote = await serviceCli('cli-remote-route-restored', ['--to-machine', target.machine], 0, target.session);
+  await waitFor(() => registry(target).messages.some(m => m.message_id === cliRemote.message_id), 'remote service CLI after relay admission');
+  checks.push('typed-service-relay-route-errors-preserve-managed-remote-and-local-service');
   admission([]); await submit(payload('revoked'), 401); await submit(payload('local-send'), 401); admission();
   chmodSync(service.credential, 0o644); await submit(payload('unsafe-credential'), 401); chmodSync(service.credential, 0o600);
   const saved = service.credential; service.credential = join(root, 'symlink-credential'); symlinkSync(saved, service.credential); admission(); await submit(payload('symlink'), 401); service.credential = saved; admission();
@@ -146,7 +186,6 @@ try {
   await submit(payload('stale-local', { expected_recipient_incarnation: source.incarnation }), 409);
   await submit(payload('unready-local'), 503);
   assert.equal(registry(source).messages.filter(m => m.message_id === local.message_id).length, 1); privateWrite(sessionPath, original); checks.push('local-stale-recipient-and-stable-replay');
-  const outboxBeforeRefusals = outboxCount();
   for (const [key, selectors] of [
     ['absent-remote-session', { to_machine: target.machine, to_session: 'wrong-recipient' }],
     ['absent-remote-machine', { to_machine: 'wrong-host', to_session: target.session }],
@@ -158,12 +197,13 @@ try {
     assert.equal(rejected.error.details.recovery.kind, 'operator');
     assert.match(rejected.error.message, /exact --to session ID and --to-machine/);
     assert.match(rejected.error.message, /message peers/);
+    assertNoRemoteOperation(key);
   }
   const cliAbsent = await serviceCli('cli-absent-remote', ['--to-machine', target.machine], 65, 'wrong-recipient');
   assert.equal(cliAbsent.error.code, 'remote-recipient-not-discovered');
   assert.equal(cliAbsent.error.details.retryable, false);
   assert.match(cliAbsent.error.message, /message peers/);
-  assert.equal(outboxCount(), outboxBeforeRefusals);
+  assertNoRemoteOperation('cli-absent-remote');
   checks.push('absent-remote-address-nonretryable-through-service-http-and-cli');
   discoveryDenied = true;
   const unavailable = await submit(payload('discovery-failure', { to_machine: target.machine, to_session: target.session }), 503);
@@ -234,6 +274,16 @@ try {
   assert.equal(fenced.reason, 'session-incarnation-conflict');
   assert(journal().remote_outbox.some(i => i.envelope.message_id === moved.message_id && i.envelope.body === movedBody.body)); assert(!registry(target).messages.some(m => m.message_id === moved.message_id));
   assert.equal((await submit(movedBody)).recipient.session_incarnation, target.incarnation); checks.push('remote-no-retarget-or-queue-loss');
+  await stop(source); await start(source, false);
+  await serviceCli('local-without-federation');
+  const noRoute = await serviceCli('remote-without-federation', ['--to-machine', target.machine], 69, target.session);
+  assert.equal(noRoute.error.code, 'mailbox-service-route-missing');
+  assert.equal(noRoute.error.details.retryable, false);
+  assert.equal(noRoute.error.details.next_action, 'configure_daemon_federation');
+  assert.equal(noRoute.error.details.recovery.kind, 'operator');
+  for (const setting of ['AGENT_SESSION_RELAY_URL', 'AGENT_SESSION_RELAY_TOKEN', 'AGENT_SESSION_RELAY_INGRESS_TOKEN']) assert(noRoute.error.message.includes(setting));
+  assert.match(noRoute.error.message, /daemon.*environment.*restart/);
+  checks.push('typed-missing-daemon-federation-preserves-local-service');
   for (const host of hosts) { assert(!host.stderr.includes(service.token)); assert(!host.stderr.includes('PRIVATE-SERVICE-BODY-CANARY')); }
   console.log(JSON.stringify({ schema_version: 'agent-session.service-mailbox-acceptance.v1', status: 'passed', checks }));
 } finally {

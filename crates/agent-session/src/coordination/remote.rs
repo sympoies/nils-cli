@@ -713,6 +713,11 @@ fn peers_from(config: &Config, origin: &Origin) -> Result<Value, CliError> {
         .bearer_auth(&config.token)
         .send()
         .map_err(|_| unavailable())?;
+    if matches!(origin, Origin::Service(_))
+        && let Some(error) = super::service::discovery_refusal(response.status())
+    {
+        return Err(error);
+    }
     let value = response_json(response, Responder::Relay)?;
     if value["schema_version"] != "agent-session.remote-peers.v1" || !value["peers"].is_array() {
         return Err(unavailable());
