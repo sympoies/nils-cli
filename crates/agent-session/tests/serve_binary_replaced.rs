@@ -3,6 +3,9 @@
 //! drain, and exit with the documented restart code so its supervisor starts
 //! the new binary, without touching the tmux sessions it already launched.
 
+#[path = "common/serve_fixture.rs"]
+mod serve_fixture;
+
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -117,25 +120,23 @@ impl Serve {
         let (tmux, tmux_log) = fake_tmux(root);
         let addr = unused_loopback_addr();
         let stderr_path = root.join("serve.stderr");
-        let mut command = Command::new(&install.binary);
-        command
-            .arg("serve")
-            .arg("--bind")
-            .arg(addr.to_string())
-            .arg("--state-dir")
-            .arg(root.join("state"))
-            .env("HOME", &home)
-            .env_remove("XDG_STATE_HOME")
-            .env("AGENT_SESSION_TMUX_BIN", &tmux)
-            .env_remove(OPT_OUT_ENV)
-            .env_remove(TMUX_SCOPE_ENV)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::from(
-                fs::File::create(&stderr_path).expect("serve stderr"),
-            ));
-        nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
-        command.envs(env.iter().copied());
+        let mut command = serve_fixture::command(
+            root,
+            &install.binary,
+            &root.join("state"),
+            &tmux,
+            |command| {
+                command
+                    .arg("--bind")
+                    .arg(addr.to_string())
+                    .envs(env.iter().copied())
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::from(
+                        fs::File::create(&stderr_path).expect("serve stderr"),
+                    ));
+            },
+        );
         let child = spawn_retrying_text_busy(&mut command);
         let mut serve = Self {
             child,
