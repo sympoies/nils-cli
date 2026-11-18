@@ -268,3 +268,20 @@ fn mounted_backing_retains_short_path_until_unmounted() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn unknown_runtime_retains_backing_and_short_path() {
+    let fixture = Fixture::new();
+    let record = fixture.persist("unknown");
+    let link = prepare_launch(&fixture.state_dir(), &record)
+        .unwrap()
+        .unwrap();
+    let tmux = fixture.dir.path().join("tmux-unknown");
+    fs::write(&tmux, "#!/bin/sh\nexit 2\n").unwrap();
+    fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+    let report = sweep(&fixture.context(), &tmux, Duration::ZERO, None).unwrap();
+    assert_eq!(report.removed, 0);
+    assert_eq!(report.retained.get("unknown"), Some(&1));
+    assert!(fixture.tmp_dir("unknown").is_dir());
+    assert!(link.is_symlink());
+}
