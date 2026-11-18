@@ -62,6 +62,13 @@ fn admitted(f: &Fixture) {
     .unwrap();
     assert_eq!(receipt["reason"], "permission-provider-version-unsupported");
     assert_eq!(receipt["runtime_id"], "runtime-one");
+    assert_eq!(receipt.as_object().unwrap().len(), 5);
+    assert_eq!(
+        receipt["schema_version"],
+        "agent-session.permission-terminal-admission.v1"
+    );
+    assert_eq!(receipt["key"], "enter");
+    assert!(receipt["checked_at"].is_string());
 }
 
 #[test]
@@ -72,6 +79,13 @@ fn claude_permission_below_fence_admits_guarded_dialog_key() {
 #[test]
 fn claude_permission_above_fence_admits_guarded_dialog_key() {
     admitted(&pending("2.1.318"));
+}
+
+#[test]
+fn claude_permission_titled_pane_admits_guarded_dialog_key() {
+    let f = pending("2.1.325");
+    pane(&f, &format!("{DIALOG}─── session title ─────────\n"));
+    admitted(&f);
 }
 
 #[test]
@@ -103,6 +117,8 @@ fn claude_permission_outside_fence_refuses_composer_and_unreadable_dialog() {
         "",
         "Do you want to proceed?\n❯ composer draft\n",
         "historical dialog\nDo you want to proceed?\n❯ 1. Yes\n  3. No\nEsc to cancel\n────────────────────────────\n❯ draft\n────────────────────────────",
+        "Do you want to proceed?\n❯ 1. Yes\n─── unexpected rule ───\n3. No\nEsc to cancel\n─── session title ───",
+        "Do you want to proceed?\n❯ 1. Yes\n3. No\nEsc to cancel\n❯ draft\n─── session title ───",
     ] {
         let f = pending("2.1.318");
         pane(&f, screen);
