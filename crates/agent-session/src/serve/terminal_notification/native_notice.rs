@@ -1,6 +1,8 @@
 //! Terminal/native notices reuse guarded send without a second prompt route.
 use super::*;
 
+const NOT_READY: &str = "mailbox-notice-not-ready";
+
 /// Called by guarded send while it holds the recipient record lock, after
 /// identity/idle/composer admission and before releasing any notice text.
 pub(crate) fn begin_mailbox_notice(
@@ -9,14 +11,14 @@ pub(crate) fn begin_mailbox_notice(
     tmux: &Path,
     candidate: &crate::coordination::NotificationCandidate,
 ) -> Result<(), CliError> {
-    let refused = || {
+    let refused = |reason: Option<&'static str>| {
         CliError::unavailable(
-            "mailbox-notice-not-ready",
+            NOT_READY,
             "mailbox notice eligibility changed",
-            None,
+            reason.map(|reason| json!({"reason":reason})),
         )
     };
-    let agent = AgentKind::from_name(&record.agent).ok_or_else(refused)?;
+    let agent = AgentKind::from_name(&record.agent).ok_or_else(|| refused(None))?;
     let text_wake = candidate.is_text_wake()
         && crate::send::claude_notice::attach::mailbox_text_reason(context, record).is_some();
     if (!candidate.is_notice() && !text_wake)
@@ -27,21 +29,41 @@ pub(crate) fn begin_mailbox_notice(
             .map(|runtime| runtime.launch_id.as_str())
             != Some(candidate.target_incarnation.as_str())
         || record.coordination_mode == cli::CoordinationMode::Off
-        || !terminal_notification_waiting(context, record, agent)
-        || tmux_session_attached(tmux, &record.tmux_session) != Ok(false)
-        || (agent == AgentKind::Claude
-            && !text_wake
-            && crate::send::claude_notice::runtime::readiness(context, record).is_none())
     {
-        return Err(refused());
+        return Err(refused(None));
+    }
+    if !terminal_notification_waiting(context, record, agent) {
+        return Err(refused(Some("notice-idle-unsettled")));
+    }
+    match tmux_session_attached(tmux, &record.tmux_session) {
+        Ok(false) => {}
+        Ok(true) => return Err(refused(Some("notice-recipient-attached"))),
+        Err(()) => return Err(refused(Some("notice-attachment-unobservable"))),
+    }
+    if agent == AgentKind::Claude && !text_wake {
+        crate::send::claude_notice::runtime::require_readiness(context, record)?;
     }
     let mut guard = crate::coordination::lock_session_quiescence(
         context,
         &candidate.target_session_id,
         &candidate.target_incarnation,
-    )?;
+    )
+    .map_err(|error| {
+        if agent == AgentKind::Claude && !text_wake {
+            refused(Some("notice-coordination-unobservable"))
+        } else {
+            error
+        }
+    })?;
+    if let Some(condition) = guard.notification_block(false) {
+        return Err(CliError::unavailable(
+            crate::coordination::NOTIFICATION_NOT_QUIESCENT_CODE,
+            "the recipient is not quiescent for a notification",
+            Some(json!({"condition":condition})),
+        ));
+    }
     if !guard.begin_idle_notification_attempt(candidate)? {
-        return Err(refused());
+        return Err(refused(None));
     }
     Ok(())
 }
@@ -51,6 +73,7 @@ pub(super) async fn dispatch(
     record: SessionRecord,
     candidate: crate::coordination::NotificationCandidate,
 ) {
+    let claude_native = record.agent == AgentKind::Claude.as_str() && candidate.is_notice();
     let text_reason = candidate
         .is_text_wake()
         .then(|| crate::send::claude_notice::attach::mailbox_text_reason(&state.context, &record))
@@ -160,21 +183,11 @@ pub(super) async fn dispatch(
                 })
                 .await;
             } else {
-                let detail = if let Ok(Err(error)) = &result
-                    && let Some(reason) = codex_app_server::guarded::IdleReason::from_error(error)
-                {
-                    reason.notification_detail()
-                } else if matches!(&result, Ok(Err(error))
-                    if error.code() == "notice-native-unavailable"
-                        && error.details().and_then(|details| details["reason"].as_str())
-                            == Some("authorization-timeout"))
-                {
-                    "authorization-timeout".to_owned()
-                } else {
-                    "notice-attempt-not-admitted".to_owned()
+                let refusal = match &result {
+                    Ok(Err(error)) => preclaim_refusal(error, claude_native),
+                    _ => provider_not_ready("notice-attempt-not-admitted"),
                 };
-                super::mailbox_dispatch::defer_provider_not_ready(&state, &candidate, &detail)
-                    .await;
+                super::mailbox_dispatch::defer_refused(&state, &candidate, refusal).await;
             }
         }
     }
@@ -185,4 +198,64 @@ pub(super) async fn dispatch(
         })
         .await;
     }
+}
+
+fn provider_not_ready(detail: &str) -> super::mailbox_dispatch::Refusal {
+    super::mailbox_dispatch::Refusal::ProviderNotReady(detail.to_owned())
+}
+
+pub(super) fn module_readiness_detail(error: &CliError) -> Option<&'static str> {
+    if error.code() != "notice-native-unavailable" {
+        return None;
+    }
+    match error.details()?.get("reason")?.as_str()? {
+        "module-readiness-unavailable" => Some("notice-runtime-unavailable"),
+        "module-binding-mismatch" | "readiness-changed" | "authorization-binding" => {
+            Some("notice-module-binding-mismatch")
+        }
+        _ => None,
+    }
+}
+
+fn preclaim_refusal(error: &CliError, claude_native: bool) -> super::mailbox_dispatch::Refusal {
+    use super::mailbox_dispatch::{Refusal, not_quiescent_condition};
+
+    if let Some(reason) = codex_app_server::guarded::IdleReason::from_error(error) {
+        return Refusal::ProviderNotReady(reason.notification_detail());
+    }
+    if !claude_native {
+        return provider_not_ready("notice-attempt-not-admitted");
+    }
+    if let Some(condition) = not_quiescent_condition(error) {
+        return Refusal::NotQuiescent(condition.to_owned());
+    }
+    if let Some(detail) = module_readiness_detail(error) {
+        return provider_not_ready(detail);
+    }
+    let reason = error
+        .details()
+        .and_then(|details| details["reason"].as_str());
+    provider_not_ready(match error.code() {
+        NOT_READY => match reason {
+            Some("notice-idle-unsettled") => "notice-idle-unsettled",
+            Some("notice-recipient-attached") => "notice-recipient-attached",
+            Some("notice-attachment-unobservable") => "notice-attachment-unobservable",
+            Some("notice-coordination-unobservable") => "notice-coordination-unobservable",
+            _ => "notice-attempt-not-admitted",
+        },
+        "notice-native-baseline-unavailable" => "notice-baseline-missing",
+        code @ ("send-identity-mismatch"
+        | "send-identity-unobservable"
+        | "send-session-not-idle"
+        | "send-idle-unobservable"
+        | "send-provider-event-pending"
+        | "send-completion-evidence-missing"
+        | "send-guard-observation-timeout") => code,
+        "notice-native-unavailable" => match reason {
+            Some("baseline-unprovable") => "notice-baseline-unprovable",
+            Some("authorization-timeout") => "authorization-timeout",
+            _ => "notice-attempt-not-admitted",
+        },
+        _ => "notice-attempt-not-admitted",
+    })
 }
