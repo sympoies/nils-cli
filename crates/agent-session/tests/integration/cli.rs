@@ -2,6 +2,8 @@
 mod generated_id;
 #[path = "cli/prior_boot_runtime.rs"]
 mod prior_boot_runtime;
+#[path = "cli/serve_command.rs"]
+mod serve_command;
 #[path = "cli/startup_contract.rs"]
 mod startup_contract;
 
@@ -23,6 +25,7 @@ use std::time::{Duration, Instant};
 use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
 use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
+use serve_command::{assert_direct_serve_roots, isolated_serve_command};
 use sha2::{Digest, Sha256};
 
 pub(super) fn run(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
@@ -740,31 +743,6 @@ pub(super) fn tmux_calls(log: &Path) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// A development `serve` confined to a disposable state root and HOME, with the
-/// managed-pane overrides stripped so an inherited `AGENT_SESSION_STATE_DIR`
-/// cannot point it at a live daemon's root (sympoies/nils-cli#1856).
-fn isolated_serve_command(root: &Path, state_dir: &Path, addr: std::net::SocketAddr) -> Command {
-    let home = root.join("home");
-    fs::create_dir_all(&home).expect("serve home");
-    let (tmux, tmux_log) = fake_tmux(root);
-    // Sibling daemons can share a state root in the parent fixture.
-    super::serve_fixture::command(
-        root.parent().expect("shared serve fixture root"),
-        nils_test_support::bin::resolve("agent-session"),
-        state_dir,
-        &tmux,
-        |command| {
-            command
-                .args(["--bind", &addr.to_string()])
-                .env("HOME", home)
-                .env("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log)
-                .env("AGENT_SESSION_FAKE_TMUX_LIST_WINDOWS", "")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null());
-        },
-    )
-}
-
 /// Kills its serve on drop, so a failed wait or assertion cannot orphan a
 /// daemon that keeps working against the state it was started on.
 struct ServeGuard {
@@ -856,7 +834,7 @@ fn serve_rejects_a_second_daemon_on_the_same_state_root() {
         fs::create_dir_all(&root).expect("serve root");
         let addr = unused_loopback_addr();
         ServeGuard::spawn(
-            isolated_serve_command(&root, state_dir, addr),
+            isolated_serve_command(tmp.path(), &root, state_dir, addr),
             addr,
             root.join("serve.stderr"),
         )
@@ -947,7 +925,9 @@ exit 1
         paths.extend(std::env::split_paths(&current_path));
     }
     let path = std::env::join_paths(paths).expect("join PATH");
-    let mut command = isolated_serve_command(tmp.path(), &tmp.path().join("state"), addr);
+    let root = tmp.path();
+    let mut command = isolated_serve_command(root, root, &root.join("state"), addr);
+    assert_direct_serve_roots(root, &command);
     command
         .env("AGENT_SESSION_USAGE_TIMEOUT_MS", "45000")
         .env_remove("CLAUDE_PROMPT_SEGMENT_CLAUDE_TIMEOUT_SECONDS")
@@ -1018,7 +998,9 @@ JSON
         paths.extend(std::env::split_paths(&current_path));
     }
     let path = std::env::join_paths(paths).expect("join PATH");
-    let mut command = isolated_serve_command(tmp.path(), &tmp.path().join("state"), addr);
+    let root = tmp.path();
+    let mut command = isolated_serve_command(root, root, &root.join("state"), addr);
+    assert_direct_serve_roots(root, &command);
     command
         .env("AGENT_SESSION_USAGE_TIMEOUT_MS", "45000")
         .env("CLAUDE_PROMPT_SEGMENT_CLAUDE_TIMEOUT_SECONDS", "9")
