@@ -11,11 +11,14 @@ use serde_json::{Value, json};
 
 use super::mailbox;
 use super::{
-    CliError, authenticate_from_file, clean_expired, coordination_root, lock_registry, now_epoch,
+    CliError, authenticate_from_file, clean_expired, coordination_root, now_epoch,
     revalidate_capability_file,
 };
 use crate::CliContext;
 use crate::cli::MessageWaitArgs;
+
+mod registry;
+pub(super) use registry::lock_for_wait;
 
 const CANCELLATION_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 const CURSOR_SCHEMA: &str = "agent-session.message-wait-any-unread.cursor.v1";
@@ -81,7 +84,7 @@ pub(super) fn wait_with_cancellation(
             ));
         }
 
-        let mut locked = lock_registry(context)?;
+        let mut locked = lock_for_wait(context, started, timeout, cancelled, timeout_error)?;
         let registry_changed = clean_expired(&mut locked.registry, now_epoch());
         revalidate_capability_file(
             context,
@@ -252,6 +255,41 @@ mod tests {
 
     use super::{WaitCursor, encode_cursor, notification_error, parse_cursor, timeout_error};
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn registry_event_filter_ignores_reads_locks_and_unrelated_writes() {
+        use notify::event::{CreateKind, DataChange, RenameMode};
+        use notify::{Event, EventKind};
+        let registry = std::path::Path::new("/fixture/coordination/registry.json");
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Modify(super::ModifyKind::Data(DataChange::Any)),
+            EventKind::Modify(super::ModifyKind::Name(RenameMode::To)),
+            EventKind::Access(super::AccessKind::Close(super::AccessMode::Write)),
+        ] {
+            assert!(super::changes_registry(
+                &Event::new(kind).add_path(registry.into()),
+                registry
+            ));
+            assert!(!super::changes_registry(
+                &Event::new(kind).add_path("/fixture/coordination/registry.lock".into()),
+                registry
+            ));
+        }
+        for kind in [
+            EventKind::Access(super::AccessKind::Read),
+            EventKind::Access(super::AccessKind::Open(super::AccessMode::Read)),
+            EventKind::Access(super::AccessKind::Close(super::AccessMode::Read)),
+            EventKind::Modify(super::ModifyKind::Metadata(
+                notify::event::MetadataKind::Any,
+            )),
+        ] {
+            assert!(!super::changes_registry(
+                &Event::new(kind).add_path(registry.into()),
+                registry
+            ));
+        }
+    }
 
     #[test]
     fn cursor_round_trips_recipient_binding_and_seen_ids() {

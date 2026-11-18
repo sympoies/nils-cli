@@ -1170,8 +1170,13 @@ fn lock_registry_within(
     timeout: Duration,
 ) -> Result<LockedRegistry, CliError> {
     let root = coordination_root(context)?;
-    let lock = lock_private_store_within(context, REGISTRY_LOCK, timeout)
-        .map_err(|error| lock_holder::annotate_timeout(&root, error))?;
+    #[cfg(test)]
+    let timeout = mailbox_wait_contention_tests::before_lock(timeout);
+    let lock = lock_private_store_within(context, REGISTRY_LOCK, timeout).map_err(|error| {
+        #[cfg(test)]
+        mailbox_wait_contention_tests::lock_failed(&error);
+        lock_holder::annotate_timeout(&root, error)
+    })?;
     let holder = lock_holder::PublishedHolder::publish(&root, class);
     let path = root.join(REGISTRY_FILE);
     let mut registry = match read_private_file(&path, MAX_REGISTRY_BYTES) {
@@ -2979,3 +2984,6 @@ mod contention_tests;
 
 #[cfg(test)]
 mod lock_holder_tests;
+
+#[cfg(test)]
+mod mailbox_wait_contention_tests;
