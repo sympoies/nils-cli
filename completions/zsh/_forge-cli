@@ -1030,7 +1030,7 @@ esac
 (review-dismiss)
 _arguments "${_arguments_options[@]}" : \
 '--review-id=[Numeric provider review id (\`database_id\` in \`pr reviews\`)]:ID:_default' \
-'--expected-head=[Exact current provider head SHA; the review must be on this head]:SHA:_default' \
+'--expected-head=[Exact current provider head SHA]:SHA:_default' \
 '--reason-file=[Non-empty dismissal reason file (\`-\` reads stdin)]:PATH:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
@@ -1039,6 +1039,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
 '--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
 '--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--stale-head[Allow a review on an ancestor of the current head]' \
 '--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \

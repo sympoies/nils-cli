@@ -8158,7 +8158,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__pr__review__dismiss)
-            opts="-h --review-id --expected-head --reason-file --format --remote --provider --host --repo --store-root --dry-run --help"
+            opts="-h --review-id --expected-head --stale-head --reason-file --format --remote --provider --host --repo --store-root --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

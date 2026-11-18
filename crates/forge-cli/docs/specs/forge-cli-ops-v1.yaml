@@ -1211,6 +1211,7 @@ operations:
       - { name: --review-id, type: u64, required: true }
       - { name: --expected-head, type: string, required: true }
       - { name: --reason-file, type: path, required: true, notes: "non-empty; `-` reads stdin" }
+      - { name: --stale-head, type: bool, required: false, notes: "allow a provider-confirmed ancestor review commit" }
     dry_run:
       offline: false
       notes: "runs every read-side guard, then prints the dismissal plan without mutating"
@@ -1231,6 +1232,7 @@ operations:
       github:
         - { program: gh, argv: [pr, view, "{id}", --json, "number,url,...,headRefOid"] }
         - { program: gh, argv: [api, "--hostname <host when host != github.com>", "repos/{owner}/{repo}/pulls/{id}/reviews/{review_id}"] }
+        - { program: gh, argv: [api, "--hostname <host when host != github.com>", "repos/{owner}/{repo}/compare/{review_commit}...{head}"] }
         - { program: gh, argv: [api, graphql, "<designated-review ledger and native review reads shared with pr review-handoff check>"] }
         - { program: gh, argv: [api, "--hostname <host when host != github.com>", user, --jq, .login] }
         - { program: gh, argv: [api, "--hostname <host when host != github.com>", --method, PUT, "repos/{owner}/{repo}/pulls/{id}/reviews/{review_id}/dismissals", -f, "message=<reason, head, actor>", -f, event=DISMISS] }
@@ -1245,11 +1247,12 @@ operations:
         review_url: string
         author: string
         head_sha: string
+        review_commit_sha: string
         state: enum<DISMISSED>
         reason: string
         actor: string
         dismissed_at: string # when forge-cli observed the provider confirmation
-    notes: "Automated means a provider App (Bot) account whose login is listed in the user-global [[review_convergence.bots]]; repository config never grants dismissal authority and a login spelling alone never qualifies. The PR head and review commit must equal --expected-head, the review must be CHANGES_REQUESTED and submitted before the designated PASS admitted at that head by the review-handoff check gate, the designated reviewer's own review is refused, and a valid AGENT_SESSION_ID must show the actor is neither the designated reviewer session nor the designated review account. Reason, head and actor are recorded in the provider dismissal message; no review-loop ledger record is appended."
+    notes: "Automated means a provider App (Bot) account whose login is listed in the user-global [[review_convergence.bots]]; repository config never grants dismissal authority and a login spelling alone never qualifies. The PR head must equal --expected-head; the review commit must equal it or, with --stale-head, be a provider-confirmed ancestor. The review must be CHANGES_REQUESTED and submitted before the designated PASS admitted at that head by the review-handoff check gate, the designated reviewer's own review is refused, and a valid AGENT_SESSION_ID must show the actor is neither the designated reviewer session nor the designated review account. Reason, head and actor are recorded in the provider dismissal message; no review-loop ledger record is appended."
 
   - id: pr.review-loop.inspect
     schema_version: cli.forge-cli.pr.review-loop.inspect.v1
