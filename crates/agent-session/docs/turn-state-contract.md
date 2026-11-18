@@ -472,8 +472,11 @@ A managed Codex runtime still in `starting` after 30 seconds without verified
 primary-thread idle evidence projects `unknown` with inferred confidence and
 `diagnostic.reason: codex_startup_idle_unverified`. This read-only condition is
 also retained by board and activity-stream projections. It preserves the
-startup timestamp, revision and durable history; a later provider idle
-observation may still settle startup. Age never proves readiness.
+startup timestamp, revision and durable history. For a resumed thread, the
+subscribed control connection checks the bound provider thread for explicit idle
+status and settles only an unchanged startup. A later turn-start observation
+updates the phase to working. Unavailable or busy provider state never proves
+readiness, and age alone never settles startup.
 
 Optional `shadow_observation` is ordinarily diagnostics-only. It contains
 `observer_version`, a bounded `rule_id`, daemon `observed_at`, one of

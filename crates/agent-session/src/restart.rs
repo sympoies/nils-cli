@@ -711,6 +711,22 @@ fn request_provider_exit(
     Ok((true, fence))
 }
 
+#[cfg(test)]
+pub(crate) fn test_request_provider_exit(
+    context: &CliContext,
+    record: &SessionRecord,
+    tmux: &Path,
+) -> Result<bool, CliError> {
+    let launch = record
+        .runtime
+        .as_ref()
+        .expect("fixture runtime")
+        .launch_id
+        .as_str();
+    request_provider_exit(context, record, AgentKind::Codex, launch, tmux, false)
+        .map(|(sent, _fence)| sent)
+}
+
 /// Bounded wait for the stopped incarnation's lease. Retiring it normally
 /// releases it at once; a heartbeat that cannot be proven stale is waited out
 /// instead of refusing the relaunch as a live prior incarnation.
