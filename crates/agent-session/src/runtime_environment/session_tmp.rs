@@ -611,12 +611,41 @@ exec setpriv --reuid="$1" --regid="$2" --clear-groups env TMPDIR=/tmp NILS_TEST_
         fs::write(first_dir.join("private"), "first").unwrap();
         assert!(!second_dir.join("private").exists());
 
+        struct RestoreLink(PathBuf, PathBuf);
+        impl Drop for RestoreLink {
+            fn drop(&mut self) {
+                let _ = fs::remove_file(&self.0);
+                let _ = symlink(&self.1, &self.0);
+            }
+        }
+        struct RestoreMode(PathBuf);
+        impl Drop for RestoreMode {
+            fn drop(&mut self) {
+                let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o700));
+            }
+        }
+        let restore_link = RestoreLink(second_dir.clone(), fixture.tmp_dir("sess-second"));
         fs::remove_file(&second_dir).unwrap();
         fs::write(&second_dir, "foreign").unwrap();
         assert!(ensure_short_path(&fixture.tmp_dir("sess-second")).is_err());
         assert_eq!(fs::read_to_string(&second_dir).unwrap(), "foreign");
         fs::remove_file(&second_dir).unwrap();
-        symlink(fixture.tmp_dir("sess-second"), &second_dir).unwrap();
+        let wrong_target = fixture.dir.path().join("wrong-target");
+        symlink(&wrong_target, &second_dir).unwrap();
+        assert!(ensure_short_path(&fixture.tmp_dir("sess-second")).is_err());
+        assert_eq!(fs::read_link(&second_dir).unwrap(), wrong_target);
+        drop(restore_link);
+
+        let root = first_dir.parent().unwrap();
+        let restore_mode = RestoreMode(root.to_path_buf());
+        fs::set_permissions(root, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(ensure_short_path(&fixture.tmp_dir("sess-first")).is_err());
+        assert_eq!(
+            fs::metadata(root).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        drop(restore_mode);
+        assert!(first_dir.join("private").is_file());
     }
 
     #[test]
