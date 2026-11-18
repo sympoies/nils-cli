@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use base64::Engine as _;
 use notify::event::{AccessKind, AccessMode, ModifyKind};
@@ -10,15 +10,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::mailbox;
-use super::{
-    CliError, authenticate_from_file, clean_expired, coordination_root, now_epoch,
-    revalidate_capability_file,
-};
+use super::{CliError, clean_expired, coordination_root, now_epoch, revalidate_capability_file};
 use crate::CliContext;
 use crate::cli::MessageWaitArgs;
 
 mod registry;
-pub(super) use registry::lock_for_wait;
+pub(super) use registry::WaitBudget;
 
 const CANCELLATION_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 const CURSOR_SCHEMA: &str = "agent-session.message-wait-any-unread.cursor.v1";
@@ -40,9 +37,10 @@ pub(super) fn wait_with_cancellation(
     cancelled: Option<&AtomicBool>,
 ) -> Result<Value, CliError> {
     let capability_file = super::mailbox::resolve_capability_file(args.capability_file.as_deref())?;
-    let (record, recipient_incarnation) =
-        authenticate_from_file(context, &args.session, Some(&capability_file))?;
     let timeout = mailbox::parse_wait(&args.timeout)?;
+    let wait = WaitBudget::new(timeout, cancelled, timeout_error);
+    let (record, recipient_incarnation) =
+        wait.authenticate(context, &args.session, &capability_file)?;
     let cursor = args.newer_than.as_deref().map(parse_cursor).transpose()?;
     if cursor.as_ref().is_some_and(|cursor| {
         cursor.schema_version != CURSOR_SCHEMA
@@ -74,17 +72,8 @@ pub(super) fn wait_with_cancellation(
         .watch(&root, RecursiveMode::NonRecursive)
         .map_err(|_| notification_error())?;
 
-    let started = Instant::now();
     loop {
-        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
-            return Err(CliError::runtime(
-                "wait-cancelled",
-                "message wait was cancelled",
-                None,
-            ));
-        }
-
-        let mut locked = lock_for_wait(context, started, timeout, cancelled, timeout_error)?;
+        let mut locked = wait.lock_registry(context)?;
         let registry_changed = clean_expired(&mut locked.registry, now_epoch());
         revalidate_capability_file(
             context,
@@ -153,7 +142,7 @@ pub(super) fn wait_with_cancellation(
         }
         drop(locked);
 
-        let remaining = timeout.saturating_sub(started.elapsed());
+        let remaining = wait.remaining();
         if remaining.is_zero() {
             return Err(timeout_error());
         }
