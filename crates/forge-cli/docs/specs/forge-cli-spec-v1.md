@@ -660,7 +660,9 @@ backend implementations cannot diverge.
    `[body].summary_heading` and `[body].test_plan_heading`. Defaults are
    `## Summary` and `## Test plan`. Names match exactly, including the `##`
    prefix and following space; no synonyms are inferred. Order is not enforced; presence and
-   non-emptiness are. The same resolved headings apply to `pr create`, body
+   non-emptiness are. Resolved headings must be distinct, single-line non-empty
+   H2 headings; invalid values cause `invalid_config_value` (exit `DATA`) with
+   the relevant configuration keys. The same resolved headings apply to `pr create`, body
    replacement in `pr edit`, `pr deliver --dry-run` preflight, and the actual
    provider body when `pr deliver` adopts an existing PR.
 3. **Title length.** ≤ 70 characters, no trailing whitespace, no
