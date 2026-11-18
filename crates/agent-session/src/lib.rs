@@ -83,7 +83,7 @@ use session_views::{list_sessions_for_serve, visit_session_views};
 mod usage;
 
 #[cfg(test)]
-use std::cell::Cell;
+mod libtest_runner;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
@@ -142,10 +142,10 @@ const STARTUP_PROJECTION_VERSION: &str = "agent-session.startup.v1";
 
 #[cfg(test)]
 thread_local! {
-    static SESSION_RECORD_WRITE_DELAY_ONCE: Cell<Option<Duration>> = const { Cell::new(None) };
-    static SESSION_RECORD_WRITE_FAILURE_COUNTDOWN: Cell<Option<usize>> = const { Cell::new(None) };
-    static SESSION_DOCUMENT_WRITE_COUNT: Cell<usize> = const { Cell::new(0) };
-    static SESSION_RESUME_WRITE_COUNT: Cell<usize> = const { Cell::new(0) };
+    static SESSION_RECORD_WRITE_DELAY_ONCE: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+    static SESSION_RECORD_WRITE_FAILURE_COUNTDOWN: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static SESSION_DOCUMENT_WRITE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static SESSION_RESUME_WRITE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -168,8 +168,8 @@ pub(crate) fn reset_session_record_write_counts() {
 #[cfg(test)]
 pub(crate) fn session_record_write_counts() -> (usize, usize) {
     (
-        SESSION_DOCUMENT_WRITE_COUNT.with(Cell::get),
-        SESSION_RESUME_WRITE_COUNT.with(Cell::get),
+        SESSION_DOCUMENT_WRITE_COUNT.with(std::cell::Cell::get),
+        SESSION_RESUME_WRITE_COUNT.with(std::cell::Cell::get),
     )
 }
 const STARTUP_EXTRA_KEY: &str = "startup";

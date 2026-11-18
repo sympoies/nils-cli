@@ -89,8 +89,8 @@ permissions before emitting completed publication/store receipts. It never
 reads a real account, contacts a provider or edits incident/registry authority.
 Its fixed timestamps and identities are fixture data, not live evidence.
 
-Run from the repository root with Rust **1.100.0**, Python 3, `setsid` and a
-systemd user manager. Use one build directory for all commands:
+Run from the repository root with Rust **1.100.0**, `cargo-nextest`, Python 3,
+`setsid` and a systemd user manager. Use one build directory for all commands:
 
 ```bash
 source scripts/dev-env.sh
@@ -98,11 +98,11 @@ export CARGO_BUILD_JOBS=4
 systemd-run --user --scope -p MemoryMax=6G -p MemorySwapMax=0 \
   cargo +1.100.0 build --locked -p nils-agent-session --bin agent-session
 systemd-run --user --scope -p MemoryMax=6G -p MemorySwapMax=0 \
-  cargo +1.100.0 test --locked -p nils-agent-session --lib \
-  auth_recovery_tests -- --nocapture
+  cargo +1.100.0 nextest run --locked -p nils-agent-session --lib \
+  auth_recovery_tests --no-capture
 systemd-run --user --scope -p MemoryMax=6G -p MemorySwapMax=0 \
-  cargo +1.100.0 test --locked --workspace --lib \
-  synthetic_publication_ -- --nocapture
+  cargo +1.100.0 nextest run --locked --workspace --lib \
+  synthetic_publication_ --no-capture
 bash scripts/ci/nils-cli-checks-entrypoint.sh --local-fast
 ```
 

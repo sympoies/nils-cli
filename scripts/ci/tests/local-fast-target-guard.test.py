@@ -39,7 +39,8 @@ def write(path, content, mtime):
         handle.write(content)
     os.chmod(path, 0o755)
     os.utime(path, ns=(mtime, mtime))
-if args[:1] not in (["build"], ["test"]):
+nextest_run = args[:2] == ["nextest", "run"]
+if args[:1] != ["build"] and not nextest_run:
     raise SystemExit(0)
 # Cargo resolver 2 unifies features across the -p set, so the same package built
 # in a bigger set links a different executable. A build whose identity already
@@ -57,7 +58,7 @@ for package in packages:
         if not os.path.exists(path) or os.stat(path).st_mtime_ns != identity:
             write(path, content, identity)
 # The test run itself: another lane rebuilds the shared binary mid-run.
-if "--no-run" not in args and args[:1] == ["test"]:
+if "--no-run" not in args and nextest_run:
     if os.environ.get("LOCAL_FAST_TEST_REPLACE") == "1":
         write(os.path.join(debug, "agent-session"), "built-from-another-worktree", 2_000_000_000)
     raise SystemExit(int(os.environ.get("LOCAL_FAST_TEST_EXIT", "0")))
@@ -79,6 +80,7 @@ class LocalFastTargetGuardTest(unittest.TestCase):
         cargo = bin_dir / 'cargo'
         cargo.write_text(FAKE_CARGO.format(python=sys.executable))
         cargo.chmod(0o755)
+        (bin_dir / 'cargo-nextest').symlink_to(cargo)
         # Audit scripts are out of scope here; only Cargo work is observed.
         fake_bash = bin_dir / 'bash'
         fake_bash.write_text('#!/bin/sh\nexit 0\n')
@@ -90,6 +92,7 @@ class LocalFastTargetGuardTest(unittest.TestCase):
             '#!/bin/sh\n'
             'case "${1-}" in\n'
             f'  -|*/target_guard.py) exec {sys.executable!s} "$@" ;;\n'
+            '  */gate-reports.py) shift; exec "$@" ;;\n'
             'esac\n'
             'exit 0\n'
         )
@@ -104,7 +107,7 @@ class LocalFastTargetGuardTest(unittest.TestCase):
             'LOCAL_FAST_TEST_REAL_CARGO': self.real_cargo,
             'LOCAL_FAST_TEST_CARGO_LOG': str(self.log),
             'NILS_CLI_GATE_ACTIVE': '1',
-            'NILS_CLI_TEST_RUNNER': 'cargo',
+            'NILS_CLI_TEST_RUNNER': 'nextest',
         })
 
     def run_local_fast(self, changed=('crates/agent-session/src/lib.rs',), **extra_env):
@@ -126,7 +129,7 @@ class LocalFastTargetGuardTest(unittest.TestCase):
         self.assertIn('shared target replaced', result.stdout)
         self.assertIn('debug/agent-session', result.stdout)
         commands = [json.loads(line) for line in self.log.read_text().splitlines()]
-        self.assertIn(['test', '-p', 'nils-agent-session'], commands)
+        self.assertIn(['nextest', 'run', '--profile', 'ci', '-p', 'nils-agent-session'], commands)
 
     def test_failing_tests_against_a_replaced_binary_report_the_replacement(self):
         # The #2697 symptom: a product test fails because its binary was replaced.
@@ -139,7 +142,7 @@ class LocalFastTargetGuardTest(unittest.TestCase):
     def test_failing_tests_on_an_intact_target_are_a_product_failure(self):
         result = self.run_local_fast(LOCAL_FAST_TEST_EXIT='101')
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn('cargo test -p nils-agent-session', result.stdout)
+        self.assertIn('cargo nextest run --profile ci -p nils-agent-session', result.stdout)
         self.assertNotIn('shared target replaced', result.stdout)
 
     def test_multi_package_selection_is_not_a_replacement(self):
@@ -150,8 +153,8 @@ class LocalFastTargetGuardTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertNotIn('shared target replaced', result.stdout)
         commands = [json.loads(line) for line in self.log.read_text().splitlines()]
-        self.assertIn(['test', '-p', 'nils-agent-session'], commands)
-        self.assertIn(['test', '-p', 'nils-devlog'], commands)
+        self.assertIn(['nextest', 'run', '--profile', 'ci', '-p', 'nils-agent-session'], commands)
+        self.assertIn(['nextest', 'run', '--profile', 'ci', '-p', 'nils-devlog'], commands)
 
 
 if __name__ == '__main__':
