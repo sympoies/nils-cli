@@ -201,40 +201,96 @@ def slice_quiescent(unit):
         return True
 
 
+def active_cgroup(unit, *, require_id=False):
+    output = subprocess.check_output([SYSTEMCTL, '--user', 'show', unit,
+        '--property=Id', '--property=LoadState', '--property=ActiveState',
+        '--property=ControlGroup', '--property=Job'], text=True, timeout=2)
+    properties = dict(line.split('=', 1) for line in output.splitlines() if '=' in line)
+    group = properties.get('ControlGroup', '')
+    if (properties.get('LoadState') != 'loaded' or properties.get('ActiveState') != 'active'
+            or properties.get('Job') not in ('', '0') or not group.startswith('/')
+            or '..' in group.split('/') or group.split('/')[-1] != unit
+            or (require_id and properties.get('Id') != unit)):
+        return None
+    return group
+
+
+def empty_cgroup_descendant_count(group):
+    path = CGROUP_ROOT / group.lstrip('/')
+    try:
+        if (path / 'cgroup.procs').read_text().strip():
+            return None
+        counts = [line for line in (path / 'cgroup.stat').read_text().splitlines()
+                  if line.startswith('nr_descendants ')]
+        if len(counts) != 1 or not re.fullmatch(r'nr_descendants (0|[1-9][0-9]*)', counts[0]):
+            return None
+        # cgroup.events reports population recursively, including PID-less slices.
+        if 'populated 0' in (path / 'cgroup.events').read_text().splitlines():
+            return int(counts[0].split()[1])
+    except (OSError, UnicodeError):
+        pass
+    return None
+
+
+def cgroup_descendants(group):
+    def fail_walk(error):
+        raise error
+
+    path = CGROUP_ROOT / group.lstrip('/')
+    try:
+        return ['/' + (Path(parent) / name).relative_to(CGROUP_ROOT).as_posix()
+                for parent, dirs, _ in os.walk(path, topdown=False, onerror=fail_walk)
+                for name in sorted(dirs)]
+    except OSError:
+        return []
+
+
+def holder_gone(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        pass
+    return False
+
+
 def reap_stale_slice(owner):
     unit = owner.get('slice')
     pid = owner.get('pid')
     if not isinstance(unit, str) or not re.fullmatch(r'nilsgate[0-9a-f]{32}\.slice', unit):
         return False
-    if type(pid) is not int or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return False
-    except ProcessLookupError:
-        pass
-    except OSError:
+    if type(pid) is not int or pid <= 0 or not holder_gone(pid):
         return False
 
-    def empty_active_group():
-        output = subprocess.check_output([SYSTEMCTL, '--user', 'show', unit,
-            '--property=LoadState', '--property=ActiveState', '--property=ControlGroup',
-            '--property=Job'], text=True, timeout=2)
-        properties = dict(line.split('=', 1) for line in output.splitlines() if '=' in line)
-        group = properties.get('ControlGroup', '')
-        if (properties.get('LoadState') != 'loaded' or properties.get('ActiveState') != 'active'
-                or properties.get('Job') not in ('', '0') or not group.startswith('/')
-                or '..' in group.split('/') or group.split('/')[-1] != unit):
-            return False
-        path = CGROUP_ROOT / group.lstrip('/')
-        try:
-            return (not (path / 'cgroup.procs').read_text().strip()
-                    and 'nr_descendants 0' in (path / 'cgroup.stat').read_text().splitlines()
-                    and 'populated 0' in (path / 'cgroup.events').read_text().splitlines())
-        except (OSError, UnicodeError):
-            return False
+    group = active_cgroup(unit)
+    if group is None:
+        return False
+    count = empty_cgroup_descendant_count(group)
+    if count is None:
+        return False
 
-    if not empty_active_group() or not empty_active_group():
+    def same_abandoned_slice():
+        return holder_gone(pid) and active_cgroup(unit) == group
+
+    def matches_descendant(child, child_group):
+        return (re.fullmatch(r'[A-Za-z0-9_:.@\\][A-Za-z0-9_:.@\\-]*\.(scope|service|slice)', child)
+                and active_cgroup(child, require_id=True) == child_group)
+
+    if count:
+        descendants = [(path.rsplit('/', 1)[1], path) for path in cgroup_descendants(group)]
+        if len(descendants) != count or not all(
+                matches_descendant(child, path) for child, path in descendants):
+            return False
+        for child, path in descendants:
+            if (not same_abandoned_slice() or not matches_descendant(child, path)
+                    or empty_cgroup_descendant_count(path) != 0
+                    or empty_cgroup_descendant_count(group) != count):
+                return False
+            subprocess.run([SYSTEMCTL, '--user', 'stop', child], check=True, timeout=30)
+            count -= 1
+
+    if not same_abandoned_slice() or empty_cgroup_descendant_count(group) != 0:
         return False
     subprocess.run([SYSTEMCTL, '--user', 'stop', unit], check=True, timeout=30)
     return slice_quiescent(unit)

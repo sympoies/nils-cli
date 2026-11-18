@@ -335,9 +335,15 @@ calls, share a priority/FIFO semaphore under
 shared across worktrees and repositories using this entrypoint for the same
 user on a host. Kernel `flock` ownership and recorded unit quiescence govern admission:
 crashed holders and waiters do not require deleting lock files. A crashed
-supervisor slot remains unavailable while its scope/services are draining. Waiting callers print a "still queued" notice with the holder
-PID, UTC start time, and priority every five seconds. Diagnostics also list live
-queued tickets in admission order with their age in seconds and priority.
+supervisor slot remains unavailable while its scope or services are draining.
+
+If the recorded holder is gone and the slice subtree is empty, admission checks
+the descendant cgroups against their systemd units and stops them from the
+leaves before stopping the slice. Before each stop, it rechecks emptiness and
+the target's cgroup path. Waiting callers print a "still queued" notice with
+the holder PID, UTC start time, and priority every five seconds. Diagnostics
+also list live queued tickets in admission order with their age in seconds and
+priority.
 
 Admission keeps the same ticket and queue position until admitted, cancelled, or
 `NILS_CLI_GATE_TIMEOUT_SECONDS` expires. Cancellation or timeout removes the
