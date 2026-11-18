@@ -747,22 +747,22 @@ fn isolated_serve_command(root: &Path, state_dir: &Path, addr: std::net::SocketA
     let home = root.join("home");
     fs::create_dir_all(&home).expect("serve home");
     let (tmux, tmux_log) = fake_tmux(root);
-    let mut command = Command::new(nils_test_support::bin::resolve("agent-session"));
-    command
-        .arg("serve")
-        .arg("--bind")
-        .arg(addr.to_string())
-        .arg("--state-dir")
-        .arg(state_dir)
-        .env("HOME", &home)
-        .env_remove("XDG_STATE_HOME")
-        .env("AGENT_SESSION_TMUX_BIN", tmux)
-        .env("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log)
-        .env("AGENT_SESSION_FAKE_TMUX_LIST_WINDOWS", "")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null());
-    nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
-    command
+    // Sibling daemons can share a state root in the parent fixture.
+    super::serve_fixture::command(
+        root.parent().expect("shared serve fixture root"),
+        nils_test_support::bin::resolve("agent-session"),
+        state_dir,
+        &tmux,
+        |command| {
+            command
+                .args(["--bind", &addr.to_string()])
+                .env("HOME", home)
+                .env("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log)
+                .env("AGENT_SESSION_FAKE_TMUX_LIST_WINDOWS", "")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null());
+        },
+    )
 }
 
 /// Kills its serve on drop, so a failed wait or assertion cannot orphan a
