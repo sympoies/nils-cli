@@ -110,6 +110,8 @@ pub enum Command {
     Drafts(drafts::Args),
     /// Capture the recent pane tail plus live status as a dashboard glance.
     Glance(GlanceArgs),
+    /// Mark currently running sessions for recovery after a planned reboot.
+    PrepareShutdown(crate::runtime_environment::boot_recovery::PrepareShutdownArgs),
     /// Recreate a missing tmux runtime from exact provider resume metadata.
     Resume(ResumeArgs),
     /// Relaunch a running session in place on the installed provider binary.

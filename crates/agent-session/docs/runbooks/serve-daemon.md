@@ -40,6 +40,56 @@ predecessor, then exits `69` with `serve-state-root-owned` and the holder's pid
 and bind address. Give a development or test serve its own `--state-dir` or
 `AGENT_SESSION_STATE_DIR`; separate roots run side by side.
 
+## Recovery after a host reboot
+
+Before a planned reboot, run `agent-session prepare-shutdown`. It marks each
+verified running session with the current boot ID. A stop or close clears the
+mark. After acquiring the state root and binding its listener on a later boot,
+`serve` recovers marked sessions using the same exact provider resume checks as
+`agent-session resume`. Unmarked and expired sessions are skipped.
+
+A mark is applied once, on the first daemon start after a different boot, within
+the age bound. This does not prove whether another boot occurred while the
+daemon was not running. The default maximum age is 24 hours; set
+`AGENT_SESSION_SHUTDOWN_INTENT_MAX_AGE_SECONDS` to a positive number of seconds
+to change it.
+
+Inspect the command's per-session results before rebooting. Recovery runs in
+the long-lived serve process. Configure `AGENT_SESSION_TMUX_SCOPE=1` when
+runtimes must survive a serve service restart. When a prior-boot heartbeat is
+still fresh, recovery waits up to 32 seconds for the existing resume guard.
+
+Quiesce session creation and run the command immediately before reboot; a
+session created afterward is not marked. Re-running the command clears a
+previous mark if that session can no longer be verified as running.
+
+`prepare-shutdown --format json` returns an envelope whose `data.records`
+contains `{ "id": "...", "state": "marked" }` for each marked session, or
+`{ "id": "...", "state": "skipped", "reason": "..." }`. Skip reasons are
+`stopped`, `prior-boot`, `boot-identity-unverified`, and
+`runtime-identity-unverified`. Review every skipped row before reboot. If any
+record cannot be processed, the command exits nonzero with
+`shutdown-mark-incomplete`; `error.details.records` contains the marked,
+skipped, and failed rows, with an error code on each failed row. Resolve every
+failure before reboot.
+
+Set `AGENT_SESSION_BOOT_RECOVERY=0` in the serve environment to disable recovery
+on that host. Set `AGENT_SESSION_BOOT_RECOVERY_EXCLUDE` to comma-separated exact
+session IDs to opt out individual sessions. Restart serve to apply either
+setting. Quota auto-resume is independent of boot recovery.
+
+`list --format json` and the board show the latest recovery receipt: `resumed`,
+`skipped` with its reason, or `failed` with a typed error code. The shapes are
+`{"state":"resumed"}`, `{"state":"skipped","reason":"..."}`, and
+`{"state":"failed","error":{"code":"..."}}`. Skip reasons are
+`no-shutdown-intent`, `shutdown-intent-unverified`,
+`shutdown-intent-expired`, `host-opt-out`, `session-opt-out`, and
+`resume-metadata-missing`.
+
+Failure codes come from the existing resume path. `recovery-interrupted` means
+the one-shot mark was consumed before recovery completed. Inspect the session
+and use manual `resume` where appropriate.
+
 ## Authentication boundaries
 
 | Endpoint class | Authentication and exposure |

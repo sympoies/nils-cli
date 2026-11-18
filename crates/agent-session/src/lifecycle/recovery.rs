@@ -178,6 +178,17 @@ pub(crate) fn board_projection(value: Option<&Value>, id: &str) -> Option<Value>
 
 pub(crate) fn list_line(view: &crate::SessionView) -> String {
     let mut text = format!("{}  {}  {}  {}", view.id, view.agent, view.status, view.cwd);
+    if let Some(receipt) = &view.boot_recovery
+        && let Some(state) = receipt["state"].as_str()
+    {
+        text.push_str(&format!("\n  boot recovery: {state}"));
+        if let Some(reason) = receipt["reason"]
+            .as_str()
+            .or_else(|| receipt["error"]["code"].as_str())
+        {
+            text.push_str(&format!(" ({reason})"));
+        }
+    }
     if let Some(exit) = &view.runtime_exit {
         text.push_str(&format!("\n  {}", exit.message));
         if let Some(resume) = &exit.recovery {
