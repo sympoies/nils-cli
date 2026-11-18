@@ -110,6 +110,11 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
   `scheduled_at` is present only while the daemon has a next scheduled wake, either for a provider reset,
   an unknown-reset continuation probe, or bounded provider-capacity backoff. `failure_reason` is present
   only when the latest transition records a safe operational reason.
+  Codex continuation failover also projects the typed account-selection error code
+  in `failure_reason` when broker discovery fails. It retains the ordinary no-account
+  reset schedule and retry budget. Repeated faults update this existing attention
+  field without emitting a warning on every poll; confirmed no-account keeps
+  `no_account_available`, and successful selection queues the account normally.
 - The daemon owns scheduling. It waits for the latest reset among all exhausted windows, adds bounded
   deterministic jitter, re-collects usage at wake, checks that the session activity revision is still
   eligible, and durably claims the submission before sending one product-owned continuation notice

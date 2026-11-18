@@ -4,6 +4,8 @@ use super::*;
 use pretty_assertions::assert_eq;
 #[path = "continuation_claude.rs"]
 mod claude;
+#[path = "continuation_selection.rs"]
+mod selection;
 
 #[tokio::test]
 async fn codex_capacity_scheduler_submits_the_fixed_prompt_without_usage_lookup() {
