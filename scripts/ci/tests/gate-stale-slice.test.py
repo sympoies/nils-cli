@@ -109,6 +109,33 @@ class StaleSlice(unittest.TestCase):
         self.assertFalse(resources.reap_stale_slice(self.owner))
         self.assertEqual(self.stopped, [])
 
+    def test_restartable_service_is_refused(self):
+        service = 'restartable-fixture.service'
+        service_group = f'{self.group}/{service}'
+        self.groups[service] = service_group
+        del self.groups[SCOPE]
+        service_path = self.cgroups / service_group.lstrip('/')
+        (self.cgroups / self.child_group.lstrip('/')).rename(service_path)
+        events = self.cgroups / self.group.lstrip('/') / 'cgroup.events'
+        original_read = Path.read_text
+        reads = 0
+
+        def read(path, *args, **kwargs):
+            nonlocal reads
+            snapshot = original_read(path, *args, **kwargs)
+            if path == events:
+                reads += 1
+                if reads == 2:
+                    # Simulate an automatic restart after the last empty snapshot.
+                    (service_path / 'cgroup.procs').write_text('42\n')
+                    (service_path / 'cgroup.events').write_text('populated 1\n')
+                    events.write_text('populated 1\n')
+            return snapshot
+
+        with patch.object(Path, 'read_text', read):
+            self.assertFalse(resources.reap_stale_slice(self.owner))
+        self.assertEqual(self.stopped, [])
+
     def test_subtree_population_is_rechecked_before_stopping_descendant(self):
         reads = 0
 

@@ -274,7 +274,7 @@ def reap_stale_slice(owner):
         return holder_gone(pid) and active_cgroup(unit) == group
 
     def matches_descendant(child, child_group):
-        return (re.fullmatch(r'[A-Za-z0-9_:.@\\][A-Za-z0-9_:.@\\-]*\.(scope|service|slice)', child)
+        return (re.fullmatch(r'[A-Za-z0-9_:.@\\][A-Za-z0-9_:.@\\-]*\.(scope|slice)', child)
                 and active_cgroup(child, require_id=True) == child_group)
 
     if count:
