@@ -134,6 +134,20 @@ roots are used. Default-root links must stay in their approved
 location or the corresponding Homebrew package. Provider configuration does
 not need to be rewritten when the selected runtime changes.
 
+Directory and file selection rules:
+
+- On all paths, the directory containing the resolved executable must be owned
+  by the caller or root and must not be group- or world-writable.
+- A rejected directory follows the same fallback and diagnostic as a rejected
+  executable. Ordered roots continue; an explicitly configured companion exits
+  127; activity setup falls back from an unusable automatic sibling to the roots.
+- A symlink in a writable bin directory that resolves into an accepted release
+  directory passes. The symlink's original directory and higher ancestors are
+  not checked.
+- Rust preflight also requires a caller-owned file without group/world write
+  bits. The generated shell selector requires a regular executable file and
+  applies the directory rule after resolution.
+
 Alternating Computer Use/agent-session wrapper growth is drift: preview does
 not authorize mutation, and an exact reviewed plan digest is required to
 normalize it to one Computer Use wrapper plus one owned notifier. This

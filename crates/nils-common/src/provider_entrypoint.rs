@@ -20,8 +20,23 @@ pub fn selector(hook: bool) -> String {
   done
   printf '%s' "$target"
 }}
+directory_policy() {{
+  [ "$#" -eq 2 ] || return 1
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  case "$2" in ''|*[!0-7]*) return 1 ;; esac
+  {{ [ "$1" = "$caller_uid" ] || [ "$1" = 0 ]; }} && [ "$((0$2 & 022))" -eq 0 ]
+}}
+directory_controlled() {{
+  directory=${{1%/*}}
+  [ -d "$directory" ] || return 1
+  # GNU stat on Linux; BSD stat on macOS. Both report numeric UID and octal mode.
+  metadata=$(/usr/bin/stat -c '%u %a' "$directory" 2>/dev/null) || metadata=$(/usr/bin/stat -f '%u %Lp' "$directory" 2>/dev/null) || return 1
+  directory_ifs=$IFS; IFS=' '; set -- $metadata; IFS=$directory_ifs
+  directory_policy "$@"
+}}
+caller_uid=$(/usr/bin/id -u) || {{ exit 127; }}
 configured=${{AGENT_SESSION_BIN:-}}
-case "$configured" in /*/{NAME}) if [ -f "$configured" ] && [ -x "$configured" ]; then selected=${{configured%/*}}/{executable}; session_real=$(resolve "$configured") && selected_real=$(resolve "$selected") && [ "${{session_real%/*}}" = "${{selected_real%/*}}" ] && [ -f "$selected" ] && [ -x "$selected" ] && exec "$selected" "$@"; exit 127; fi ;; esac
+case "$configured" in /*/{NAME}) if [ -f "$configured" ] && [ -x "$configured" ]; then selected=${{configured%/*}}/{executable}; session_real=$(resolve "$configured") && selected_real=$(resolve "$selected") && [ "${{session_real%/*}}" = "${{selected_real%/*}}" ] && [ -f "$selected_real" ] && [ -x "$selected_real" ] && directory_controlled "$selected_real" && exec "$selected_real" "$@"; exit 127; fi ;; esac
 configured_roots=${{AGENT_RUNTIME_TRUSTED_CLI_ROOT:-}}
 roots=${{configured_roots:-/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:${{HOME:-/nonexistent}}/.local/nils-cli/bin}}
 trusted_default() {{
@@ -38,7 +53,7 @@ trusted_default() {{
 set -f
 old_ifs=$IFS; IFS=:
 for root in $roots; do
-  case "$root" in /*) selected=$root/{executable}; if [ -f "$selected" ] && [ -x "$selected" ] && {{ [ -n "$configured_roots" ] || trusted_default "$selected" "$root"; }}; then IFS=$old_ifs; exec "$selected" "$@"; fi ;; esac
+  case "$root" in /*) selected=$root/{executable}; if selected_real=$(resolve "$selected") && [ -f "$selected_real" ] && [ -x "$selected_real" ] && directory_controlled "$selected_real" && {{ [ -n "$configured_roots" ] || trusted_default "$selected" "$root"; }}; then IFS=$old_ifs; exec "$selected_real" "$@"; fi ;; esac
 done
 exit 127"#
     )
@@ -66,9 +81,30 @@ pub fn command(hook: bool, args: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{argv, selector};
+    use pretty_assertions::assert_eq;
     use std::fs;
     use std::os::unix::fs::{PermissionsExt, symlink};
     use std::process::Command;
+
+    #[test]
+    fn directory_policy_matches_caller_root_and_foreign_owner_rules() {
+        let program = selector(true);
+        let functions = program.split("caller_uid=").next().unwrap();
+        let script = format!("{functions}\ncaller_uid=1000\ndirectory_policy \"$1\" \"$2\"");
+        for (owner, mode, accepted) in [
+            ("1000", "755", true),
+            ("0", "755", true),
+            ("1001", "755", false),
+            ("1000", "775", false),
+            ("0", "757", false),
+        ] {
+            let status = Command::new("/bin/sh")
+                .args(["-c", &script, "fixture", owner, mode])
+                .status()
+                .unwrap();
+            assert_eq!(status.success(), accepted, "owner={owner} mode={mode}");
+        }
+    }
 
     #[test]
     fn default_root_rejects_a_link_outside_the_approved_directory() {
