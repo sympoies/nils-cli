@@ -73,6 +73,51 @@ fn integrity_fixture(body: &str, confirmation: &str, author: &str) -> StubEnv {
 const DECLARATIONS: &str = "## Test changes\n\n- tests/test_sample.py | assertion-change | Broader assertion retains the supported result contract.\n- allow tests/test_sample.py | new-skip | Intentional quarantine with an independently validated replacement.\n";
 
 #[test]
+fn malformed_paragraph_is_rejected_by_preview() {
+    let body = "## Test changes\ntests/test_sample.py | assertion-change | Broader assertion retains the supported result contract.\n";
+    let stub = integrity_fixture(body, "", "contributor");
+    let preview = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "review-handoff",
+            "test-changes",
+            "7",
+            "--expected-head",
+            HEAD,
+        ],
+    );
+    assert_refusal(&preview, 65, "test_changes_undeclared");
+    assert!(
+        preview.stdout.contains("- path | kind | reason"),
+        "{}",
+        preview.stdout
+    );
+}
+
+#[test]
+fn malformed_paragraph_is_rejected_before_missing_ledger() {
+    let body = "## Test changes\ntests/test_sample.py | assertion-change | Broader assertion retains the supported result contract.\n";
+    let empty = fixture(HEAD, &[], vec![]);
+    let view = empty.tempdir.path().join("view.json");
+    fs::write(&view, json!({"number":7,"url":"https://github.com/acme/widgets/pull/7","state":"OPEN", "isDraft":false,"title":"example","headRefName":"feat/example","headRefOid":HEAD, "headRepository":{"name":"widgets"},"baseRefName":"main","mergeable":"MERGEABLE", "mergedAt":"","mergeCommit":null,"labels":[],"body":body,"closingIssuesReferences":[]}).to_string()).unwrap();
+    let empty = empty.env("TEST_PR_VIEW", view.to_string_lossy());
+    let out = check(&empty, HEAD);
+    assert_refusal(&out, 65, "test_changes_undeclared");
+    assert!(
+        out.stdout.contains("- path | kind | reason"),
+        "{}",
+        out.stdout
+    );
+}
+
+#[test]
 fn handoff_rejects_undeclared_test_changes_with_actionable_files() {
     let stub = integrity_fixture("", "", "contributor");
     let out = check(&stub, HEAD);

@@ -1145,6 +1145,10 @@ pub fn run(
         .head_sha
         .as_deref()
         .ok_or_else(|| fail("review_assignment_invalid", "provider head is missing"))?;
+    if let PrReviewHandoffCommand::Check(a) = &args.command {
+        require_head(head, &a.expected_head)?;
+        test_integrity::validate_declarations(view.body.as_deref().unwrap_or_default())?;
+    }
     let state = pr_review::read_review_loop_state_view(&runner, &ctx, &repository, id)?;
     let mut chain = state.chain;
     let mut status = match latest(&chain) {
