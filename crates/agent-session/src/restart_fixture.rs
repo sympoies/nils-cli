@@ -1,6 +1,9 @@
 use super::*;
 use std::os::unix::ffi::OsStrExt;
 
+#[path = "../tests/support/short_roots.rs"]
+pub(super) mod short_roots;
+
 /// Own every pane launched by this fixture, including across failed restarts.
 /// Cloning the executable path does not transfer teardown ownership.
 pub(super) struct FakeTmux {
@@ -92,6 +95,15 @@ impl Drop for FakeTmux {
                         libc::kill(-group, libc::SIGKILL);
                     }
                 }
+            }
+        }
+        if let Err(err) =
+            short_roots::remove_owned_short_roots(&self.root, &self.root.join("state/agent-home"))
+        {
+            if std::thread::panicking() {
+                eprintln!("fixture short-root cleanup failed: {err}");
+            } else {
+                panic!("fixture short-root cleanup failed: {err}");
             }
         }
     }

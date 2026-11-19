@@ -2,6 +2,9 @@
 use super::*;
 use pretty_assertions::{assert_eq, assert_ne};
 
+#[path = "../../support/short_roots.rs"]
+mod short_roots;
+
 fn normalize_held_launch(arguments: &[String]) -> Vec<String> {
     let index = arguments
         .iter()
@@ -17,6 +20,8 @@ fn normalize_held_launch(arguments: &[String]) -> Vec<String> {
 
 pub(super) fn start_creates_session_state_without_printing_prompt() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
+    let _short_roots =
+        short_roots::ShortRootsGuard::new(tmp.path().to_path_buf(), tmp.path().join("agent-home"));
     let state_dir = tmp.path().join("state");
     let cwd = tmp.path().join("repo with spaces");
     fs::create_dir_all(&cwd).expect("repo dir");
@@ -278,6 +283,8 @@ pub(super) fn start_creates_session_state_without_printing_prompt() {
 
 pub(super) fn start_captures_stable_codex_session_meta_before_full_timeout() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
+    let _short_roots =
+        short_roots::ShortRootsGuard::new(tmp.path().to_path_buf(), tmp.path().join("agent-home"));
     let state_dir = tmp.path().join("state");
     let codex_home = tmp.path().join("codex-home");
     let cwd = tmp.path().join("repo");
@@ -348,6 +355,8 @@ pub(super) fn start_captures_stable_codex_session_meta_before_full_timeout() {
 
 pub(super) fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
+    let _short_roots =
+        short_roots::ShortRootsGuard::new(tmp.path().to_path_buf(), tmp.path().join("agent-home"));
     let state_dir = tmp.path().join("state");
     let cwd = tmp.path().join("repo");
     fs::create_dir_all(&cwd).expect("repo dir");
