@@ -50,6 +50,9 @@ fn deliver(
     CliContext,
     Result<crate::prompt_delivery::ClaudePromptDelivery, CliError>,
 ) {
+    // The observation spool refuses a state root behind a symlink, as the macOS
+    // temporary directory is, so the fixture roots state at its physical path.
+    let dir = &fs::canonicalize(dir).unwrap();
     let launch = seed_claude_prompt_session(dir, ID);
     let state = state(dir, Some(TOKEN), tmux.to_owned());
     let mut record = load_session_record(&state.context, ID).unwrap();
