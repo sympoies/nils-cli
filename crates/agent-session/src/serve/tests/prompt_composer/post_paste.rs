@@ -171,16 +171,22 @@ fn foreign_composer_content_is_never_submitted_and_the_failure_is_diagnosable() 
 }
 
 #[test]
-fn an_unrecorded_observation_is_reported_and_the_refusal_is_unchanged() {
+fn an_unrecorded_observation_is_reported_and_a_recorded_one_is_silent() {
     let tmp = tempfile::tempdir().unwrap();
     fs::write(tmp.path().join("shot.png"), b"synthetic").unwrap();
-    let (tmux, journal) = pasted_pane_tmux(tmp.path(), "[Image #1] something else", "true");
+    let (tmux, _) = pasted_pane_tmux(tmp.path(), "[Image #1] something else", "true");
     let (mut context, delivered) = deliver(tmp.path(), &tmux, "shot.png\ndescribe the image");
     let Err(error) = delivered else {
         panic!("a foreign composer must be refused");
     };
     let record = load_session_record(&context, ID).unwrap();
-    assert_eq!(enters(&journal), 0);
+    let report = |context: &CliContext| {
+        let mut written = Vec::new();
+        crate::prompt_delivery::post_paste::report(context, &record, &error, &mut written);
+        String::from_utf8(written).unwrap()
+    };
+
+    assert_eq!(report(&context), "");
 
     // The spool refuses a state root behind a symlink, as the macOS temporary
     // directory is.
@@ -189,10 +195,9 @@ fn an_unrecorded_observation_is_reported_and_the_refusal_is_unchanged() {
     context.state_dir = link;
 
     assert_eq!(
-        crate::prompt_delivery::post_paste::try_record(&context, &record, &error),
-        Err("warning: prompt-pasted-not-submitted observation not recorded: Untrusted".to_string())
+        report(&context),
+        "warning: prompt-pasted-not-submitted observation not recorded: Untrusted\n"
     );
-    assert_eq!(enters(&journal), 0);
 }
 
 fn two_image_fixture(dir: &Path) {

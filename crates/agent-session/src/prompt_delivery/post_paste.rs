@@ -9,13 +9,23 @@ use crate::{CliContext, CliError, SessionRecord};
 /// A recording failure never changes the refusal, but it is reported on stderr
 /// so a missing observation cannot go unnoticed.
 pub(super) fn record_failure(context: &CliContext, record: &SessionRecord, error: &CliError) {
+    report(context, record, error, &mut std::io::stderr());
+}
+
+/// Write the bounded note to `out` when the observation cannot be recorded.
+pub(crate) fn report(
+    context: &CliContext,
+    record: &SessionRecord,
+    error: &CliError,
+    out: &mut impl std::io::Write,
+) {
     if let Err(note) = try_record(context, record, error) {
-        eprintln!("{note}");
+        let _ = writeln!(out, "{note}");
     }
 }
 
 /// Append the observation, returning a bounded, content-free note on failure.
-pub(crate) fn try_record(
+fn try_record(
     context: &CliContext,
     record: &SessionRecord,
     error: &CliError,

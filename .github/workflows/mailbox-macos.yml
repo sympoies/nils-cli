@@ -6,6 +6,7 @@ on:
       - '.github/workflows/mailbox-macos.yml'
       - 'crates/agent-session/src/coordination/**'
       - 'crates/agent-session/tests/integration/mailbox_any_unread.rs'
+      - 'crates/agent-session/src/prompt_delivery.rs'
       - 'crates/agent-session/src/prompt_delivery/**'
       - 'crates/agent-session/src/serve/tests/prompt_composer/**'
       - 'crates/nils-common/src/observation.rs'
