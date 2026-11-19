@@ -120,11 +120,11 @@ fn fixture_cleanup_leaves_a_short_root_pointing_outside_its_home() {
     fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
     let _root_guard = RootGuard(root.clone());
     symlink(&outside, root.join("t")).unwrap();
-    fixture::short_roots::remove_owned_short_roots(fixture.path(), &home).unwrap();
+    super::super::short_roots::remove_owned_short_roots(fixture.path(), &home).unwrap();
     assert!(root.join("t").is_symlink());
     assert!(outside.is_dir());
     fs::rename(&home, fixture.path().join("home-original")).unwrap();
     symlink(&outside, &home).unwrap();
-    assert!(fixture::short_roots::remove_owned_short_roots(fixture.path(), &home).is_err());
+    assert!(super::super::short_roots::remove_owned_short_roots(fixture.path(), &home).is_err());
     assert!(root.join("t").is_symlink());
 }

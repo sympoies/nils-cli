@@ -1,8 +1,6 @@
 //! Restart admission against a native idle thread, without a model turn.
 use super::*;
 
-#[path = "../../tests/support/short_roots.rs"]
-mod short_roots;
 use futures_util::{SinkExt, StreamExt};
 use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::assert_eq;
