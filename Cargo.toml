@@ -73,7 +73,7 @@ indexmap = { version = "2", features = ["serde"] }
 # `jiff` (not `chrono` / `time`). Existing chrono/time crates are grandfathered.
 # Already present in-tree transitively via the jaq stack, so this adds no build
 # cost. See docs/runbooks/new-cli-crate-development-standard.md.
-jiff = "0.2"
+jiff = "1.0"
 pretty_assertions = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
