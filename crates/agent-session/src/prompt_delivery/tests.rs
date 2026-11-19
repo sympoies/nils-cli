@@ -25,7 +25,7 @@ fn image_rewrite_requires_a_single_existing_image_path() {
 fn image_rewrite_requires_an_exact_observed_composer_label() {
     let pane = |input: &str| format!("────────────────────\n❯ {input}\n────────────────────\n");
     assert_eq!(
-        composer_image_label(&pane("[Image #2]")),
+        composer_image_label(&pane("[Image #2]"), ""),
         Some("[Image #2]".into())
     );
     for input in [
@@ -36,13 +36,58 @@ fn image_rewrite_requires_an_exact_observed_composer_label() {
         "[Image #2] explain",
         "[Image #2] [Image #3]",
     ] {
-        assert_eq!(composer_image_label(&pane(input)), None, "{input}");
+        assert_eq!(composer_image_label(&pane(input), ""), None, "{input}");
     }
-    assert_eq!(composer_image_label("unrecognized pane"), None);
+    assert_eq!(composer_image_label("unrecognized pane", ""), None);
     assert_eq!(
-        composer_image_label(&pane("\u{1b}[2m[Image #2]\u{1b}[22m")),
+        composer_image_label(&pane("\u{1b}[2m[Image #2]\u{1b}[22m"), ""),
         None
     );
+}
+
+#[test]
+fn image_label_may_be_followed_only_by_the_prompts_remaining_text() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    fs::write(tmp.path().join("test image.PNG"), b"fixture").unwrap();
+    let cwd = tmp.path().to_str().unwrap();
+    for (prompt, rest) in [
+        ("\"test image.PNG\"\n> explain", "> explain"),
+        ("'test image.PNG' explain", "explain"),
+        ("test image.PNG\n\nexplain\nmore", "explain\nmore"),
+        ("test image.PNG", ""),
+    ] {
+        assert_eq!(
+            image_prompt_rest(prompt, cwd).as_deref(),
+            Some(rest),
+            "{prompt:?}"
+        );
+    }
+    for prompt in [
+        "explain \"test image.PNG\"",
+        "missing.png\nexplain",
+        "explain",
+    ] {
+        assert_eq!(image_prompt_rest(prompt, cwd), None, "{prompt:?}");
+    }
+    let pane = |input: &str| format!("────────────────────\n❯ {input}\n────────────────────\n");
+    for shown in ["[Image #2] explain it", "[Image #2]explain  it"] {
+        assert_eq!(
+            composer_image_label(&pane(shown), "explain it"),
+            Some(shown.into()),
+            "{shown}"
+        );
+    }
+    for shown in [
+        "[Image #2] explain",
+        "[Image #2]",
+        "[Image #2] explain it [Image #3]",
+    ] {
+        assert_eq!(
+            composer_image_label(&pane(shown), "explain it"),
+            None,
+            "{shown}"
+        );
+    }
 }
 
 mod startup;
