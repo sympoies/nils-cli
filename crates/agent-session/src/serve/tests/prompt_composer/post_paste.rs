@@ -107,6 +107,11 @@ fn image_path_followed_by_text_is_submitted_from_its_rendered_composer() {
             "\"shot.png\" describe the image",
             "[Image #1] describe the image",
         ),
+        // The shape observed live: the label abuts the quoted rest.
+        (
+            "\"shot.png\"\n> Describe the image.",
+            "[Image #1]> Describe the image.",
+        ),
         ("shot.png", "[Image #1]"),
     ] {
         let tmp = tempfile::tempdir().unwrap();
