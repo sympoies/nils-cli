@@ -1,7 +1,6 @@
 use super::*;
 
-#[path = "../tests/support/short_roots.rs"]
-pub(super) mod short_roots;
+use super::super::short_roots;
 
 /// Own every pane launched by this fixture, including across failed restarts.
 /// Cloning the executable path does not transfer teardown ownership.
