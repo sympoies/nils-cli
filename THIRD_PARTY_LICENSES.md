@@ -3,8 +3,8 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `e8f83168052498c4905e7518e1135208d751a4b08d0c270f6d3fe0a191d717b8`
-- Third-party crates (`source != null`): 487
+- Cargo.lock SHA256: `3f5b2a462d4c0f7d305b6eebc819ad26c79131a43ae15f6acc2a26181870cfb7`
+- Third-party crates (`source != null`): 486
 - Workspace crates (`source == null`, excluded below): 42
 
 ## Notes
@@ -17,7 +17,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 
 | License Expression | Crate Count |
 | --- | ---: |
-| MIT OR Apache-2.0 | 233 |
+| MIT OR Apache-2.0 | 232 |
 | MIT | 100 |
 | Apache-2.0 OR MIT | 41 |
 | Zlib OR Apache-2.0 OR MIT | 21 |
@@ -240,7 +240,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | jsonschema | 0.49.9 | MIT | crates.io |
 | jsonschema-regex | 0.49.9 | MIT | crates.io |
 | jsonschema-value | 0.49.9 | MIT | crates.io |
-| jsonwebtoken | 11.1.0 | MIT | crates.io |
+| jsonwebtoken | 12.0.0 | MIT | crates.io |
 | kqueue | 1.2.0 | MIT | crates.io |
 | kqueue-sys | 1.1.2 | MIT | crates.io |
 | kurbo | 0.13.1 | Apache-2.0 OR MIT | crates.io |
@@ -308,7 +308,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | parking | 2.2.1 | Apache-2.0 OR MIT | crates.io |
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 | crates.io |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 | crates.io |
-| pem | 3.0.6 | MIT | crates.io |
+| pem | 4.0.0 | MIT | crates.io |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 | crates.io |
 | pico-args | 0.5.0 | MIT | crates.io |
 | pin-project-lite | 0.2.17 | Apache-2.0 OR MIT | crates.io |
@@ -337,7 +337,6 @@ This file documents third-party Rust crate licenses used by this workspace.
 | rand | 0.9.4 | MIT OR Apache-2.0 | crates.io |
 | rand_chacha | 0.9.0 | MIT OR Apache-2.0 | crates.io |
 | rand_core | 0.10.1 | MIT OR Apache-2.0 | crates.io |
-| rand_core | 0.6.4 | MIT OR Apache-2.0 | crates.io |
 | rand_core | 0.9.5 | MIT OR Apache-2.0 | crates.io |
 | rand_pcg | 0.10.2 | MIT OR Apache-2.0 | crates.io |
 | read-fonts | 0.41.0 | MIT OR Apache-2.0 | crates.io |
@@ -392,7 +391,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | shell-words | 1.1.1 | MIT/Apache-2.0 | crates.io |
 | shlex | 2.0.1 | MIT OR Apache-2.0 | crates.io |
 | signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 | crates.io |
-| signature | 2.2.0 | Apache-2.0 OR MIT | crates.io |
+| signature | 3.0.0 | Apache-2.0 OR MIT | crates.io |
 | simd-adler32 | 0.3.9 | MIT | crates.io |
 | simd_cesu8 | 1.1.1 | Apache-2.0 OR MIT | crates.io |
 | simdutf8 | 0.1.5 | MIT OR Apache-2.0 | crates.io |

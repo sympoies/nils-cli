@@ -3,8 +3,8 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `e8f83168052498c4905e7518e1135208d751a4b08d0c270f6d3fe0a191d717b8`
-- Third-party crates (`source != null`): 487
+- Cargo.lock SHA256: `3f5b2a462d4c0f7d305b6eebc819ad26c79131a43ae15f6acc2a26181870cfb7`
+- Third-party crates (`source != null`): 486
 
 ## Notice Extraction Policy
 
@@ -1612,7 +1612,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - Notice files: No explicit NOTICE file discovered.
 - License file reference: none declared
 
-### jsonwebtoken 11.1.0
+### jsonwebtoken 12.0.0
 
 - License: `MIT`
 - Source: `crates.io`
@@ -2174,7 +2174,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### pem 3.0.6
+### pem 4.0.0
 
 - License: `MIT`
 - Source: `crates.io`
@@ -2420,15 +2420,6 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-MIT`
 
 ### rand_core 0.10.1
-
-- License: `MIT OR Apache-2.0`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file references:
-  - `LICENSE-APACHE`
-  - `LICENSE-MIT`
-
-### rand_core 0.6.4
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -2918,7 +2909,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### signature 2.2.0
+### signature 3.0.0
 
 - License: `Apache-2.0 OR MIT`
 - Source: `crates.io`
