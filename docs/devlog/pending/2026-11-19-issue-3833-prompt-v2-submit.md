@@ -6,9 +6,9 @@
 - Structured Claude prompts hold the exclusive hook-ingress fence from before
   the paste through the Enter, so a hook writer that appears after the paste
   waits instead of refusing the Enter and leaving the text in the composer.
-- A composer showing an image label followed by the prompt's remaining text is
-  accepted for a prompt that starts with an existing image path; other composer
-  content is still refused.
+- A composer showing one consecutive image label per leading existing image
+  path, followed by the prompt's remaining text, is accepted; other composer
+  content and mismatched label counts are still refused.
 - A prompt pasted but not submitted is recorded as a content-free observation
   that agent-session diagnose shows.
 

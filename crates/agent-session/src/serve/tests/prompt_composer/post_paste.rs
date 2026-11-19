@@ -166,3 +166,59 @@ fn foreign_composer_content_is_never_submitted_and_the_failure_is_diagnosable() 
         );
     }
 }
+
+fn two_image_fixture(dir: &Path) {
+    for name in ["shot.png", "other.png"] {
+        fs::write(dir.join(name), b"synthetic").unwrap();
+    }
+}
+
+#[test]
+fn several_leading_image_paths_are_submitted_from_their_rendered_labels() {
+    for (prompt, composer) in [
+        (
+            "'shot.png'\n'other.png'\n> Describe the images.",
+            "[Image #1][Image #2]> Describe the images.",
+        ),
+        (
+            "\"shot.png\"\n'other.png'\ndescribe the images",
+            "[Image #3] [Image #4] describe the images",
+        ),
+        ("'shot.png'\n'other.png'", "[Image #1][Image #2]"),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        two_image_fixture(tmp.path());
+        let (tmux, journal) = pasted_pane_tmux(tmp.path(), composer, "true");
+
+        let (_, delivered) = deliver(tmp.path(), &tmux, prompt);
+
+        let delivered = delivered.unwrap_or_else(|e| panic!("{prompt:?}: {}", e.code()));
+        assert_eq!(delivered.acknowledgement_text, composer, "{prompt:?}");
+        assert_eq!(enters(&journal), 1, "{prompt:?}");
+    }
+}
+
+#[test]
+fn mismatched_image_label_counts_are_never_submitted() {
+    for (prompt, composer) in [
+        ("'shot.png'\n'other.png'\ndescribe", "[Image #1] describe"),
+        (
+            "'shot.png'\n'other.png'\ndescribe",
+            "[Image #1][Image #3] describe",
+        ),
+        (
+            "'shot.png'\n'other.png'\ndescribe",
+            "[Image #1][Image #2][Image #3] describe",
+        ),
+        ("'shot.png'\ndescribe", "[Image #1][Image #2] describe"),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        two_image_fixture(tmp.path());
+        let (tmux, journal) = pasted_pane_tmux(tmp.path(), composer, "true");
+
+        let (_, delivered) = deliver(tmp.path(), &tmux, prompt);
+
+        assert!(delivered.is_err(), "{prompt:?} / {composer:?}");
+        assert_eq!(enters(&journal), 0, "{prompt:?} / {composer:?}");
+    }
+}
