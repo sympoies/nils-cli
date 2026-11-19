@@ -318,6 +318,6 @@ fn composer_image_label(pane: &str, count: usize, rest: &str) -> Option<String> 
         .then_some(input)
 }
 
-mod post_paste;
+pub(crate) mod post_paste;
 #[cfg(test)]
 mod tests;
