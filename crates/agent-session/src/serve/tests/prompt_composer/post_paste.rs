@@ -167,6 +167,34 @@ fn foreign_composer_content_is_never_submitted_and_the_failure_is_diagnosable() 
     }
 }
 
+#[test]
+fn an_unrecorded_observation_is_reported_and_the_refusal_is_unchanged() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("shot.png"), b"synthetic").unwrap();
+    let (tmux, journal) = pasted_pane_tmux(tmp.path(), "[Image #1] something else", "true");
+    let (mut context, delivered) = deliver(tmp.path(), &tmux, "shot.png\ndescribe the image");
+    let Err(error) = delivered else {
+        panic!("a foreign composer must be refused");
+    };
+    let record = load_session_record(&context, ID).unwrap();
+    assert_eq!(enters(&journal), 0);
+
+    // The spool refuses a state root behind a symlink, as the macOS temporary
+    // directory is.
+    let link = tmp.path().join("state-link");
+    std::os::unix::fs::symlink(&context.state_dir, &link).unwrap();
+    context.state_dir = link;
+
+    assert_eq!(
+        crate::prompt_delivery::post_paste::try_record(&context, &record, &error),
+        Err(
+            "warning: prompt-pasted-not-submitted observation not recorded: Untrusted"
+                .to_string()
+        )
+    );
+    assert_eq!(enters(&journal), 0);
+}
+
 fn two_image_fixture(dir: &Path) {
     for name in ["shot.png", "other.png"] {
         fs::write(dir.join(name), b"synthetic").unwrap();
