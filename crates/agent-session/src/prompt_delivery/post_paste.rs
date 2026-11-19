@@ -47,5 +47,8 @@ fn event(record: &SessionRecord, error: &CliError) -> Result<Event, FieldError> 
         crate::command_identity::executable()
     ))?;
     // A refusal code that is not a bounded slug only loses its disposition.
-    Ok(event.clone().with_disposition(error.code()).unwrap_or(event))
+    Ok(event
+        .clone()
+        .with_disposition(error.code())
+        .unwrap_or(event))
 }

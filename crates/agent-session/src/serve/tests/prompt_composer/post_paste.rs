@@ -190,10 +190,7 @@ fn an_unrecorded_observation_is_reported_and_the_refusal_is_unchanged() {
 
     assert_eq!(
         crate::prompt_delivery::post_paste::try_record(&context, &record, &error),
-        Err(
-            "warning: prompt-pasted-not-submitted observation not recorded: Untrusted"
-                .to_string()
-        )
+        Err("warning: prompt-pasted-not-submitted observation not recorded: Untrusted".to_string())
     );
     assert_eq!(enters(&journal), 0);
 }
