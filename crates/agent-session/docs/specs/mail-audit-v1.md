@@ -144,7 +144,31 @@ For `recipient-coordination-not-quiescent` it names the blocking condition:
 For `provider-not-ready` it names the branch that deferred:
 
 - `notice-writers-disabled`: the notice writer gate is disabled.
-- `notice-runtime-unavailable`: the Claude notice runtime is not ready.
+- `notice-runtime-unavailable`: the Claude module readiness observation is
+  unavailable.
+- `notice-module-binding-mismatch`: the Claude module could not prove the
+  current managed launch and provider session binding. `rebind` repairs a
+  conversation binding with a verified clear receipt. The notice module is
+  mounted by managed launch or resume.
+- `notice-baseline-missing` or `notice-baseline-unprovable`: the bound Claude
+  transcript is missing or could not be pinned safely. The wake stays queued
+  while the provider establishes a readable transcript.
+- `notice-recipient-attached`: a tmux client is attached to the Claude
+  recipient. Detach the client and leave Claude at an idle prompt for the next
+  retry.
+- `notice-attachment-unobservable`: the tmux attachment probe failed.
+- `notice-coordination-unobservable`: the recipient's coordination state
+  could not be read at the attempt fence. When a known broker or operation
+  condition blocks admission, the reason is
+  `recipient-coordination-not-quiescent` with that condition as the detail.
+- `send-identity-mismatch` or `send-identity-unobservable`: the Claude
+  runtime identity check failed.
+- `notice-idle-unsettled`, `send-idle-unobservable`,
+  `send-session-not-idle`, `send-provider-event-pending`,
+  `send-completion-evidence-missing`, or `send-guard-observation-timeout`:
+  the Claude idle proof or its bounded observation was insufficient. Let any
+  pending work or hook ingestion finish and check activity status if the
+  refusal persists.
 - `notice-not-prepared`: the wake notice could not be prepared for another
   reason.
 - `prompt-control-unavailable`: no structured prompt control for the Codex
@@ -161,6 +185,11 @@ For `provider-not-ready` it names the branch that deferred:
   are discarded. It never includes a raw provider error or status value.
 - `authorization-timeout`: the Claude native receiver did not authorize the
   notice before the deadline.
+
+These Claude refusals occur before the mailbox generation is claimed. With
+an authoritative broker, the recipient can read pending mail with
+`agent-session message inbox --session SESSION_ID --format json` while
+delivery is deferred.
 
 ## Classification and joining
 

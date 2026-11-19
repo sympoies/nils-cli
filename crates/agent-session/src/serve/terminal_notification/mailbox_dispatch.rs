@@ -62,7 +62,8 @@ pub(in crate::serve) async fn dispatch_coordination_notification(
     if let Err(error) = candidate.prepare_notice(&state.context, &record) {
         let detail = match error.code() {
             "notice-writers-disabled" => "notice-writers-disabled",
-            "notice-native-unavailable" => "notice-runtime-unavailable",
+            "notice-native-unavailable" => super::native_notice::module_readiness_detail(&error)
+                .unwrap_or("notice-runtime-unavailable"),
             _ => "notice-not-prepared",
         };
         defer_provider_not_ready(&state, &candidate, detail).await;
@@ -156,11 +157,7 @@ pub(super) fn refusal(response: &Response) -> Refusal {
     if let Some(reason) = error.and_then(codex_app_server::guarded::IdleReason::from_error) {
         return Refusal::ProviderNotReady(reason.notification_detail());
     }
-    if let Some(condition) = error
-        .filter(|error| error.code() == crate::coordination::NOTIFICATION_NOT_QUIESCENT_CODE)
-        .and_then(|error| error.details())
-        .and_then(|details| details["condition"].as_str())
-    {
+    if let Some(condition) = error.and_then(not_quiescent_condition) {
         return Refusal::NotQuiescent(condition.to_owned());
     }
     Refusal::ProviderNotReady(match error.map(CliError::code) {
@@ -168,6 +165,13 @@ pub(super) fn refusal(response: &Response) -> Refusal {
         Some(code) => format!("prompt-submission-refused:{code}"),
         None => "prompt-submission-refused".to_owned(),
     })
+}
+
+pub(super) fn not_quiescent_condition(error: &CliError) -> Option<&str> {
+    if error.code() != crate::coordination::NOTIFICATION_NOT_QUIESCENT_CODE {
+        return None;
+    }
+    error.details()?.get("condition")?.as_str()
 }
 
 /// Defers a wake whose structured prompt submission was refused, under the

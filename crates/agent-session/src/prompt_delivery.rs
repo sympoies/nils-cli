@@ -1,8 +1,6 @@
 //! Shared staged paste delivery and request-bound Claude composer evidence.
 use super::*;
 
-mod paste;
-
 /// Deliver one staged prompt file into the session pane and submit it. The
 /// caller owns the file so that both session startup and the post-start
 /// structured prompt route share exactly one hardened delivery, and it owns the
@@ -24,12 +22,15 @@ pub(crate) fn paste_prompt_file(
     )
 }
 
+/// Observes the pane before Enter and returns the composer the provider rendered.
+type ComposerRendering<'a> = dyn FnMut(&str) -> Option<String> + 'a;
+
 fn paste_prompt_file_observing(
     tmux_bin: &Path,
     record: &SessionRecord,
     prompt_file: &Path,
     pane_ready_deadline: Duration,
-    before_enter: Option<&mut dyn FnMut(&str)>,
+    before_enter: Option<&mut ComposerRendering<'_>>,
     response_context: Option<(&CliContext, &str)>,
 ) -> Result<PromptDeliveryObservation, CliError> {
     let buffer_name = format!("{}-prompt", record.id);
@@ -46,14 +47,21 @@ fn paste_prompt_file_observing(
     // queued while the visible pane stays unchanged; no pane digest can prove
     // non-delivery or authorize replaying the prompt bytes.
     let before = capture_pane_digest(tmux_bin, &target);
-    {
-        let _permission_admission = response_context
-            .map(|(context, text)| {
-                cli::permission::input_admission(context, record, tmux_bin, Some(text), &[])
-            })
-            .transpose()?;
-        paste::load_and_paste_buffer(tmux_bin, &buffer_name, &target, prompt_file, record)?;
-    }
+    // One admission spans the paste and its Enter. A hook writer that appears
+    // after the paste waits on this fence instead of refusing the Enter and
+    // leaving the text in the composer. The fence is retained only when the
+    // admission is for a Claude pane; provider events resume when it drops.
+    let _ingress_hold = response_context
+        .map(|(context, text)| {
+            let fence =
+                cli::permission::input_admission(context, record, tmux_bin, Some(text), &[])?;
+            Ok::<_, CliError>(
+                fence.map(|fence| activity::pending::hold(context, &record.id, fence)),
+            )
+        })
+        .transpose()?
+        .flatten();
+    paste::load_and_paste_buffer(tmux_bin, &buffer_name, &target, prompt_file, record)?;
 
     // The initial prompt is submitted; `send` deliberately leaves this to
     // an explicit `--key enter`. Tmux confirms that it wrote the paste bytes,
@@ -70,61 +78,62 @@ fn paste_prompt_file_observing(
         },
         proof: "tmux-pane-digest-before-submit",
     };
-    let mut represented_text = response_context.map(|(_, text)| text.to_owned());
-    if let Some(observe) = before_enter
-        && let Some(pane) = capture_visible_pane(tmux_bin, &target)
-    {
-        observe(&pane);
-        if let Some(label) = composer_image_label(&pane) {
-            represented_text = Some(label);
+    let submitted = (|| {
+        let mut represented_text = response_context.map(|(_, text)| text.to_owned());
+        if let Some(observe) = before_enter
+            && let Some(pane) = capture_visible_pane(tmux_bin, &target)
+            && let Some(rendered) = observe(&pane)
+        {
+            represented_text = Some(rendered);
         }
+        if let Some((context, text)) = response_context
+            && record.agent == "claude"
+        {
+            send_guard::placeholder::submit_after_empty(
+                context,
+                record,
+                represented_text.as_deref().unwrap_or(text),
+                tmux_bin,
+                Instant::now() + send::guarded_hold_budget(record, false),
+                || {
+                    send_guard::response::watch(
+                        context,
+                        record,
+                        tmux_bin,
+                        send_guard::response::Operation::Submit,
+                        || {
+                            let _permission_admission = cli::permission::input_admission(
+                                context,
+                                record,
+                                tmux_bin,
+                                Some(text),
+                                &[SpecialKey::Enter],
+                            )?;
+                            send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
+                        },
+                    )
+                },
+            )?;
+            return Ok(());
+        }
+        let mut enter = ProcessCommand::new(tmux_bin);
+        enter.arg("send-keys").arg("-t").arg(&target).arg("Enter");
+        if let Some((context, _)) = response_context {
+            send_guard::response::watch(
+                context,
+                record,
+                tmux_bin,
+                send_guard::response::Operation::Submit,
+                || run_status(enter, "tmux send-keys"),
+            )
+        } else {
+            run_status(enter, "tmux send-keys")
+        }
+    })();
+    if let (Err(error), Some((context, _))) = (&submitted, response_context) {
+        post_paste::record_failure(context, record, error);
     }
-    if let Some((context, text)) = response_context
-        && record.agent == "claude"
-    {
-        send_guard::placeholder::submit_after_empty(
-            context,
-            record,
-            represented_text.as_deref().unwrap_or(text),
-            tmux_bin,
-            Instant::now() + send::guarded_hold_budget(record, false),
-            || {
-                send_guard::response::watch(
-                    context,
-                    record,
-                    tmux_bin,
-                    send_guard::response::Operation::Submit,
-                    || {
-                        let _permission_admission = cli::permission::input_admission(
-                            context,
-                            record,
-                            tmux_bin,
-                            Some(text),
-                            &[SpecialKey::Enter],
-                        )?;
-                        send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
-                    },
-                )
-            },
-        )?;
-        return Ok(PromptDeliveryObservation {
-            schema_version: "agent-session.prompt-delivery-observation.v1",
-            composer,
-        });
-    }
-    let mut enter = ProcessCommand::new(tmux_bin);
-    enter.arg("send-keys").arg("-t").arg(&target).arg("Enter");
-    if let Some((context, _)) = response_context {
-        send_guard::response::watch(
-            context,
-            record,
-            tmux_bin,
-            send_guard::response::Operation::Submit,
-            || run_status(enter, "tmux send-keys"),
-        )?;
-    } else {
-        run_status(enter, "tmux send-keys")?;
-    }
+    submitted?;
     Ok(PromptDeliveryObservation {
         schema_version: "agent-session.prompt-delivery-observation.v1",
         composer,
@@ -192,18 +201,21 @@ pub(crate) fn deliver_claude_structured_prompt_locked(
     let staged = session_dir(context, &record.id).join(format!("structured-prompt-{nonce}"));
     write_private_file(&staged, text.as_bytes())?;
     let mut acknowledgement_text = text.to_string();
-    let image_path = image_path_prompt(text, &record.cwd);
+    let image_prompt = image_prompt(text, &record.cwd);
     let mut observe = |pane: &str| {
-        if let Some(label) = composer_image_label(pane) {
-            acknowledgement_text = label;
-        }
+        let (count, rest) = image_prompt.as_ref()?;
+        let rendered = composer_image_label(pane, *count, rest)?;
+        acknowledgement_text = rendered.clone();
+        Some(rendered)
     };
     let delivered = paste_prompt_file_observing(
         tmux_bin,
         &record,
         &staged,
         CLAUDE_STRUCTURED_PROMPT_PANE_READY_DEADLINE,
-        image_path.then_some(&mut observe as &mut dyn FnMut(&str)),
+        image_prompt
+            .is_some()
+            .then_some(&mut observe as &mut ComposerRendering<'_>),
         Some((context, text)),
     );
     let _ = fs::remove_file(&staged);
@@ -252,15 +264,60 @@ fn image_path_prompt(text: &str, cwd: &str) -> bool {
         && path.is_file()
 }
 
-fn composer_image_label(pane: &str) -> Option<String> {
-    let input = send_submit::exact_composer_input("claude", pane)?;
-    let number = input.strip_prefix("[Image #")?.strip_suffix(']')?;
-    (!number.is_empty()
-        && number.len() <= 10
-        && number.bytes().all(|b| b.is_ascii_digit())
-        && number.parse::<u32>().ok().is_some_and(|n| n > 0))
-    .then_some(input)
+/// The leading image paths of a prompt and the text after them. Claude replaces
+/// each path with one image label and keeps the rest of the text. Further paths
+/// must be quoted existing images, as the first one may be unquoted only on a
+/// line of its own.
+fn image_prompt(text: &str, cwd: &str) -> Option<(usize, String)> {
+    let mut rest = text.trim_start();
+    let mut count = 0;
+    loop {
+        let (path, after) = match rest.chars().next() {
+            Some(quote @ ('"' | '\'')) => match rest[1..].find(quote) {
+                Some(end) => rest.split_at(end + 2),
+                None => break,
+            },
+            Some(_) if count == 0 => rest.split_once('\n').unwrap_or((rest, "")),
+            _ => break,
+        };
+        if !image_path_prompt(path, cwd) {
+            break;
+        }
+        count += 1;
+        rest = after.trim_start();
+    }
+    (count > 0).then(|| (count, rest.trim().to_owned()))
 }
 
+/// The observed composer, when it is exactly `count` consecutive image labels
+/// followed by the prompt's remaining text. Whitespace between them is the
+/// renderer's choice.
+fn composer_image_label(pane: &str, count: usize, rest: &str) -> Option<String> {
+    let input = send_submit::exact_composer_input("claude", pane)?;
+    let mut shown = input.as_str();
+    let mut previous: Option<u32> = None;
+    for _ in 0..count {
+        let (number, after) = shown
+            .trim_start()
+            .strip_prefix("[Image #")?
+            .split_once(']')?;
+        let number = (number.len() <= 10 && number.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| number.parse::<u32>().ok())
+            .flatten()
+            .filter(|n| *n > 0)?;
+        if previous.is_some_and(|last| last.checked_add(1) != Some(number)) {
+            return None;
+        }
+        previous = Some(number);
+        shown = after;
+    }
+    shown
+        .split_whitespace()
+        .eq(rest.split_whitespace())
+        .then_some(input)
+}
+
+mod paste;
+mod post_paste;
 #[cfg(test)]
 mod tests;

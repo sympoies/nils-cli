@@ -327,6 +327,30 @@ fn any_unread_wait_accepts_arrival_in_one_waiter_process() {
 }
 
 #[test]
+fn any_unread_wait_observes_arrival_through_symlinked_state_path() {
+    let tmp = fixture();
+    let alias_parent = tempfile::TempDir::new().expect("alias directory");
+    let alias = alias_parent.path().join("state-root");
+    std::os::unix::fs::symlink(tmp.path(), &alias).expect("state root symlink");
+    let mut child = spawn_waiter(&alias);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(child.0.try_wait().unwrap().is_none());
+    let id = send(tmp.path(), "symlinked-state-arrival");
+    use std::io::Read;
+    let mut stdout = String::new();
+    child
+        .0
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut stdout)
+        .unwrap();
+    assert!(child.0.wait().unwrap().success(), "{stdout}");
+    let result: Value = serde_json::from_str(&stdout).expect("JSON output");
+    assert_eq!(result["data"]["messages"][0]["message_id"], id);
+}
+
+#[test]
 fn any_unread_wait_requires_the_exact_recipient_capability() {
     let tmp = fixture();
     send(tmp.path(), "capability-fence-0001");

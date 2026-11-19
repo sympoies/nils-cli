@@ -162,23 +162,20 @@ fn serve_sweeps_expired_dead_without_a_session_launch() {
     let home = temp.path().join("home");
     let state = temp.path().join("state");
     let tmux = mixed_root(&home, &state);
-    let mut command = super::hermetic_provider_command(temp.path());
-    command
-        .args([
-            "--state-dir",
-            state.to_str().unwrap(),
-            "serve",
-            "--bind",
-            "127.0.0.1:0",
-            "--machine",
-            "fixture",
-            "--tmux-bin",
-            tmux.to_str().unwrap(),
-        ])
-        .env("AGENT_HOME", &home)
-        .env("AGENT_SESSION_TMP_GRACE_SECS", "3600")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    let mut command = super::serve_fixture::command(
+        temp.path(),
+        nils_test_support::bin::resolve("agent-session"),
+        &state,
+        &tmux,
+        |command| {
+            command
+                .args(["--bind", "127.0.0.1:0", "--machine", "fixture"])
+                .env("AGENT_HOME", &home)
+                .env("AGENT_SESSION_TMP_GRACE_SECS", "3600")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+        },
+    );
     let mut child = command.spawn().unwrap();
     let started = Instant::now();
     while home.join("tmp/dead-canary").exists() && started.elapsed() < Duration::from_secs(5) {

@@ -24,6 +24,9 @@ use serde_json::Value;
 
 use crate::CliError;
 
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) mod publication_fixture;
+
 pub(crate) const BROKER_OUTPUT_LIMIT: u64 = 1024 * 1024;
 /// Default deadline for one broker call.
 pub(crate) const BROKER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -472,6 +475,10 @@ pub(crate) fn run(
     args: &[&str],
     timeout: Duration,
 ) -> Result<Value, BrokerProcessError> {
+    #[cfg(all(test, target_os = "linux"))]
+    if let Some(value) = publication_fixture::response(argv, args) {
+        return Ok(value);
+    }
     let mut child = Command::new(&argv[0])
         .args(&argv[1..])
         .args(args)

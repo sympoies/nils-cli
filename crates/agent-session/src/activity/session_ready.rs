@@ -9,11 +9,33 @@ pub(crate) fn settle_starting(
     record: &SessionRecord,
     expected_revision: Option<u64>,
 ) -> Result<bool, CliError> {
+    settle_starting_inner(context, record, expected_revision, false)
+}
+
+/// Resume recovery must not wait indefinitely behind an activity writer.
+pub(crate) fn settle_resumed_starting(
+    context: &CliContext,
+    record: &SessionRecord,
+    expected_revision: u64,
+) -> Result<bool, CliError> {
+    settle_starting_inner(context, record, Some(expected_revision), true)
+}
+
+fn settle_starting_inner(
+    context: &CliContext,
+    record: &SessionRecord,
+    expected_revision: Option<u64>,
+    bounded: bool,
+) -> Result<bool, CliError> {
     let Some(runtime) = record.runtime.as_ref() else {
         return Ok(false);
     };
     let dir = session_dir(context, &record.id);
-    let _lock = acquire_lock(&dir)?;
+    let _lock = if bounded {
+        acquire_lock_with_timeout(&dir, std::time::Duration::from_millis(250))?
+    } else {
+        acquire_lock(&dir)?
+    };
     if !matches!(
         runtime_unhealthy_marker(&dir, &runtime.launch_id, runtime.generation),
         RuntimeUnhealthyStatus::Absent
