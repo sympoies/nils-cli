@@ -699,7 +699,13 @@ exec setpriv --reuid="$1" --regid="$2" --clear-groups env TMPDIR=/tmp NILS_TEST_
     #[test]
     fn relaunch_reclaims_an_expired_dir_and_keeps_one_inside_the_grace_period() {
         let fixture = Fixture::new();
-        let record = fixture.record("sess-relaunch", json!({}));
+        let record = fixture.persist("sess-relaunch");
+        let tmux = fixture.tmux(false);
+        let _tmux = EnvGuard::set(
+            &fixture._lock,
+            "AGENT_SESSION_TMUX_BIN",
+            tmux.to_str().unwrap(),
+        );
         let dir = prepare_launch(&fixture.state_dir(), &record)
             .unwrap()
             .unwrap();
@@ -712,10 +718,22 @@ exec setpriv --reuid="$1" --regid="$2" --clear-groups env TMPDIR=/tmp NILS_TEST_
 
         mark_stopped(&fixture.state_dir(), "sess-relaunch");
         let _grace = EnvGuard::set(&fixture._lock, GRACE_ENV, "0");
+        // Keep the opportunistic sweep from reclaiming this candidate so the
+        // assertion exercises launch reclamation itself.
+        let _record_lock =
+            acquire_session_record_lock(&fixture.context(), "sess-relaunch").unwrap();
+        let old_root = dir.parent().unwrap().to_path_buf();
         let replacement = prepare_launch(&fixture.state_dir(), &record)
             .unwrap()
             .unwrap();
-        assert!(!dir.exists());
+        assert_eq!(
+            fs::symlink_metadata(&dir).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+        assert_eq!(
+            fs::symlink_metadata(&old_root).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
         assert!(!replacement.join("scratch.txt").exists());
         assert!(replacement.join(OWNER_FILE).is_file());
     }
