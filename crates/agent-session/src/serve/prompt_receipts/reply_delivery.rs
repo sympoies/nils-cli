@@ -64,7 +64,7 @@ pub(in crate::serve) fn projection(
     record: &SessionRecord,
 ) -> Option<Option<Boundary>> {
     let incarnation = &record.runtime.as_ref()?.launch_id;
-    let binding = identity(context, record)?;
+    let binding = identity(context, record)?.binding;
     Some(
         super::idle_boundary::projected(context, &record.id, incarnation, &binding)
             .ok()
@@ -72,12 +72,22 @@ pub(in crate::serve) fn projection(
     )
 }
 
-fn identity(context: &CliContext, record: &SessionRecord) -> Option<String> {
+struct VerifiedIdentity {
+    binding: String,
+    conversation: String,
+}
+
+fn identity(context: &CliContext, record: &SessionRecord) -> Option<VerifiedIdentity> {
     use crate::codex_account::BindingSnapshot;
     let runtime = record
         .runtime
         .as_ref()
         .filter(|runtime| !runtime.launch_id.is_empty())?;
+    let provider = record
+        .provider_resume
+        .as_ref()
+        .filter(|provider| provider.provider == record.agent && !provider.session_id.is_empty())?;
+    let conversation = super::store::digest(&(&provider.provider, &provider.session_id));
     if codex_app_server::runtime_is_supported(record) {
         if !matches!(
             crate::codex_account::binding_snapshot(record),
@@ -87,28 +97,30 @@ fn identity(context: &CliContext, record: &SessionRecord) -> Option<String> {
         }
         let control = guarded::reply_control_token(context, record)?;
         let identity = super::native_identity(record)?;
-        return Some(super::store::digest(&("codex", identity, control)));
+        return Some(VerifiedIdentity {
+            binding: super::store::digest(&("codex", identity, control)),
+            conversation,
+        });
     }
     if !crate::claude_structured_prompt_supported(record) {
         return None;
     }
-    let provider = record
-        .provider_resume
-        .as_ref()
-        .filter(|provider| provider.provider == "claude" && !provider.session_id.is_empty())?;
     let account = crate::claude_account::applied_identity(record)?;
-    Some(super::store::digest(&(
-        "claude",
-        &record.id,
-        &record.created_at,
-        &runtime.launch_id,
-        runtime.generation,
-        &runtime.kind,
-        &runtime.tmux_session,
-        &record.tmux_session,
-        &provider.session_id,
-        account,
-    )))
+    Some(VerifiedIdentity {
+        binding: super::store::digest(&(
+            "claude",
+            &record.id,
+            &record.created_at,
+            &runtime.launch_id,
+            runtime.generation,
+            &runtime.kind,
+            &runtime.tmux_session,
+            &record.tmux_session,
+            &provider.session_id,
+            account,
+        )),
+        conversation,
+    })
 }
 
 fn observe(context: &CliContext, tmux: &Path, id: &str, expected: &str, deadline: Instant) {
@@ -150,7 +162,6 @@ fn probe(
     {
         return Err(stale_identity());
     }
-    let binding = identity(context, record).ok_or_else(stale_identity)?;
     crate::restart::ensure_not_fenced(context, record)?;
     crate::auth_incident::recovery::ensure_input_allowed(context, record)?;
     let args = GuardArgs {
@@ -170,22 +181,23 @@ fn probe(
     if codex_app_server::runtime_is_supported(record) {
         let _account = codex_app_server::acquire_account_mutation_gate(context, &record.id)?;
         crate::codex_account::ensure_proxy_input_allowed(record)?;
+        let identity = identity(context, record).ok_or_else(stale_identity)?;
         admission.check_preserving_draft("admission")?;
         let mut client = guarded::Client::connect(record, deadline).map_err(native_error)?;
-        return native_observation(binding, &mut client);
+        return native_observation(identity, &mut client);
     }
     admission.check_preserving_draft("admission")?;
     crate::cli::permission::refuse_terminal(context, record, Some("prompt"), &[SpecialKey::Enter])?;
     terminal_observation(
         context,
         record,
-        binding,
+        identity(context, record).ok_or_else(stale_identity)?,
         admission.stopped_idle.borrow().is_some(),
     )
 }
 
 fn native_observation(
-    binding: String,
+    identity: VerifiedIdentity,
     client: &mut guarded::Client,
 ) -> Result<IdleObservation, CliError> {
     let (position, turn) = client
@@ -193,7 +205,8 @@ fn native_observation(
         .map_err(native_error)?
         .ok_or_else(unobservable)?;
     Ok(IdleObservation {
-        binding,
+        binding: identity.binding,
+        conversation: identity.conversation,
         position,
         turn: super::store::digest(&turn),
     })
@@ -202,7 +215,7 @@ fn native_observation(
 fn terminal_observation(
     context: &CliContext,
     record: &SessionRecord,
-    binding: String,
+    identity: VerifiedIdentity,
     admitted_stop: bool,
 ) -> Result<IdleObservation, CliError> {
     let state = activity::bound_claude_state(context, record).ok_or_else(unobservable)?;
@@ -234,7 +247,8 @@ fn terminal_observation(
         _ => return Err(unobservable()),
     };
     Ok(IdleObservation {
-        binding,
+        binding: identity.binding,
+        conversation: identity.conversation,
         position,
         turn: super::store::digest(&turn),
     })
@@ -276,7 +290,11 @@ pub(crate) fn checked<T>(
 
 pub(crate) enum AdmittedInput<'a> {
     Native(&'a mut guarded::Client),
-    Terminal { stopped: bool },
+    Terminal {
+        tmux: &'a Path,
+        text: &'a str,
+        stopped: bool,
+    },
 }
 
 pub(crate) fn consume(
@@ -285,16 +303,28 @@ pub(crate) fn consume(
     args: &GuardArgs,
     lock: &SessionRecordLock,
     input: AdmittedInput<'_>,
-) -> Result<(), CliError> {
+) -> Result<Option<std::fs::File>, CliError> {
+    // Terminal permission admission acquires the exclusive ingress probe.
+    // Return it to the paste caller so the probe spans consumption and input.
+    let ingress = match &input {
+        AdmittedInput::Terminal { tmux, text, .. } => checked(
+            context,
+            record,
+            args,
+            lock,
+            crate::cli::permission::input_admission(context, record, tmux, Some(text), &[]),
+        )?,
+        AdmittedInput::Native(_) => None,
+    };
     let Some(token) = args.expected_idle_ready_boundary.as_deref() else {
-        return Ok(());
+        return Ok(ingress);
     };
     let store = request_store(context, record, args, lock)?;
     let observed = identity(context, record)
         .ok_or_else(stale_identity)
-        .and_then(|binding| match input {
+        .and_then(|identity| match input {
             AdmittedInput::Native(client) => {
-                let observation = native_observation(binding, client)?;
+                let observation = native_observation(identity, client)?;
                 if activity::pending::event_pending(context, &record.id).map_err(admission_error)? {
                     return Err(refused(
                         "send-provider-event-pending",
@@ -303,12 +333,12 @@ pub(crate) fn consume(
                 }
                 Ok(observation)
             }
-            AdmittedInput::Terminal { stopped } => {
-                terminal_observation(context, record, binding, stopped)
+            AdmittedInput::Terminal { stopped, .. } => {
+                terminal_observation(context, record, identity, stopped)
             }
         });
     match observed {
-        Ok(observation) => store.consume(token, &observation),
+        Ok(observation) => store.consume(token, &observation).map(|()| ingress),
         Err(error) => {
             store.invalidate()?;
             Err(error)

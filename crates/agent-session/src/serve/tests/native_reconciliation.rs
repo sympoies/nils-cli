@@ -11,6 +11,8 @@ mod idle_boundary;
 struct QueueFixture {
     confirm_idle_boundary_input: AtomicBool,
     closed_idle_boundary_turn: AtomicBool,
+    replaced_idle_boundary_thread: AtomicBool,
+    watermark_reads: AtomicUsize,
     hold_idle_boundary_read: AtomicBool,
     entered_idle_boundary_read: AtomicBool,
 }
@@ -66,13 +68,19 @@ impl Provider {
                             while let Some(Ok(ClientMessage::Text(text))) = socket.next().await {
                                 let request: Value = serde_json::from_str(&text).unwrap();
                                 let Some(id) = request.get("id") else { continue };
+                                let replaced = queue.replaced_idle_boundary_thread.load(Ordering::SeqCst);
+                                let (thread_id, prior_writes) = if replaced {
+                                    ("replacement-thread", 1)
+                                } else {
+                                    ("receipt-thread", 0)
+                                };
                                 let result = match request["method"].as_str().unwrap() {
                                     "initialize" => json!({}),
-                                    "thread/loaded/list" => json!({"data":["receipt-thread"],"nextCursor":null}),
+                                    "thread/loaded/list" => json!({"data":[thread_id],"nextCursor":null}),
                                     "turn/start" => {
-                                        assert_eq!(request["params"]["threadId"], "receipt-thread");
+                                        assert_eq!(request["params"]["threadId"], thread_id);
                                         assert_eq!(request["params"]["input"][0]["text"], "inspect the workspace");
-                                        assert_eq!(writes.fetch_add(1, Ordering::SeqCst), 0);
+                                        assert_eq!(writes.fetch_add(1, Ordering::SeqCst), prior_writes);
                                         *sent_id.lock().unwrap() = request["params"]["clientUserMessageId"]
                                             .as_str()
                                             .map(str::to_owned);
@@ -80,6 +88,9 @@ impl Provider {
                                         json!({"turn":{"id":"accepted-turn"}})
                                     }
                                     "thread/read" => {
+                                        if request["params"]["includeTurns"] == true {
+                                            queue.watermark_reads.fetch_add(1, Ordering::SeqCst);
+                                        }
                                         if queue.hold_idle_boundary_read.load(Ordering::SeqCst) {
                                             queue.entered_idle_boundary_read.store(true, Ordering::SeqCst);
                                             while queue.hold_idle_boundary_read.load(Ordering::SeqCst) {
@@ -87,19 +98,19 @@ impl Provider {
                                             }
                                         }
                                         let confirm = queue.confirm_idle_boundary_input.load(Ordering::SeqCst)
-                                            && writes.load(Ordering::SeqCst) > 0;
+                                            && writes.load(Ordering::SeqCst) > prior_writes;
                                         let mut observed = if shown.load(Ordering::SeqCst) || confirm {
                                             turns(history.load(Ordering::SeqCst), sent_id.lock().unwrap().as_deref())
                                         } else {
                                             json!([])
                                         };
-                                        if queue.closed_idle_boundary_turn.load(Ordering::SeqCst) {
+                                        if !replaced && queue.closed_idle_boundary_turn.load(Ordering::SeqCst) {
                                             observed.as_array_mut().unwrap().insert(0, json!({
                                                 "id":"private-prior-turn","status":"completed","items":[]
                                             }));
                                         }
                                         json!({"thread":{
-                                            "id":"receipt-thread",
+                                            "id":thread_id,
                                             "status":{"type":if working.load(Ordering::SeqCst) {"active"} else {"idle"}},
                                             "turns":observed
                                         }})

@@ -77,8 +77,10 @@ recorded in `sympoies/nils-cli#1409`.
   [guarded prompt request](serve-prompt-v1.md#idle-ready-boundary). The stored
   boundary follows positive provider idle and empty-composer admission.
   Consumption, an intervening turn, changed conversation or applied account,
-  and lost runtime control invalidate the old token. The turn watermark
-  and underlying provider identifiers stay private.
+  and lost runtime control invalidate the old token. A verified conversation
+  replacement begins a new provider watermark comparison within the same
+  incarnation. Account and control changes within a conversation retain its
+  spent watermark. The watermark and provider identifiers stay private.
 
   The list reads the stored boundary. An on-demand background batch probes
   up to four eligible sessions, with a shared one-second observation budget

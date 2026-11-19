@@ -685,23 +685,17 @@ fn guarded(
                     crate::serve::begin_mailbox_notice(context, &record, tmux_bin, candidate)?;
                 }
                 prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
-                let permission = reply_delivery::checked(
-                    context,
-                    &record,
-                    &args.guards,
-                    lock,
-                    cli::permission::input_admission(context, &record, tmux_bin, Some(text), &[]),
-                )?;
                 reply_delivery::consume(
                     context,
                     &record,
                     &args.guards,
                     lock,
                     reply_delivery::AdmittedInput::Terminal {
+                        tmux: tmux_bin,
+                        text,
                         stopped: admission.stopped_idle.borrow().is_some(),
                     },
-                )?;
-                Ok(permission)
+                )
             },
         );
         let _ = fs::remove_file(temp);

@@ -277,12 +277,10 @@ async fn idle_boundary_rejects_invalid_combinations_before_creating_a_claim() {
     assert_eq!(provider.mutations.load(Ordering::SeqCst), 0);
 }
 
-#[tokio::test]
-async fn idle_boundary_claude_checks_the_real_composer_before_paste() {
-    const CLAUDE: &str = "claude-boundary-fixture";
+const CLAUDE: &str = "claude-boundary-fixture";
+
+fn claude_fixture(root: &Path) -> (Arc<ServeState>, String, SessionRecord) {
     const CONVERSATION: &str = "fixture-provider-conversation";
-    let temp = tempfile::TempDir::new().unwrap();
-    let root = temp.path();
     let launch = seed_claude_prompt_session(root, CLAUDE);
     let tmux = guard_tmux(root, CLAUDE);
     let state = state_for_list(root, tmux, &[CLAUDE]);
@@ -321,22 +319,37 @@ async fn idle_boundary_claude_checks_the_real_composer_before_paste() {
         )
         .unwrap();
     }
+    (state, launch, record)
+}
+
+async fn observe_claude(
+    state: &Arc<ServeState>,
+    record: &SessionRecord,
+) -> prompt_receipts::idle_boundary::Boundary {
+    let context = &state.context;
     let app = router(state.clone());
     let _ = list(&app).await;
     // Wait for this one batch to publish without starting another observer.
     let deadline = Instant::now() + Duration::from_secs(5);
-    let available = loop {
-        if let Some(Some(boundary)) = prompt_receipts::reply_delivery::projection(context, &record)
-        {
-            break boundary;
+    loop {
+        if let Some(Some(boundary)) = prompt_receipts::reply_delivery::projection(context, record) {
+            return boundary;
         }
         assert!(
             Instant::now() < deadline,
             "Claude readiness did not become available"
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
-    };
+    }
+}
 
+#[tokio::test]
+async fn idle_boundary_claude_checks_the_real_composer_before_paste() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    let (state, launch, record) = claude_fixture(root);
+    let available = observe_claude(&state, &record).await;
+    let app = router(state);
     let uri = format!("/sessions/{CLAUDE}/prompt/v2");
     fs::write(root.join("composer"), "owner draft").unwrap();
     let request_with_draft = request(&launch, "draft-refused", &json!(available.token));
@@ -398,5 +411,173 @@ async fn idle_boundary_receipt_recovers_lost_acknowledgement_on_the_original_key
     assert_eq!(recovered["outcome"], "submitted");
     assert_eq!(recovered["delivery_kind"], "idle_boundary");
     assert_eq!(submit(&app, body).await.1["data"]["receipt"], recovered);
+    assert_eq!(provider.mutations.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn idle_boundary_repair_refuses_late_terminal_ingress_before_paste() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    let (state, launch, record) = claude_fixture(root);
+    let available = observe_claude(&state, &record).await;
+
+    let ctx = &state.context;
+    let lock = crate::acquire_session_record_lock(ctx, CLAUDE).unwrap();
+    let ingress =
+        fs::File::open(crate::session_dir(ctx, CLAUDE).join(".activity-ingress.lock")).unwrap();
+    // Model the writer's advertised shared intent while it waits for the record lock.
+    // SAFETY: ingress is an open test fixture descriptor and remains held until refusal.
+    assert_eq!(
+        unsafe { libc::flock(ingress.as_raw_fd(), libc::LOCK_SH) },
+        0
+    );
+    assert!(activity::pending::event_pending(ctx, CLAUDE).unwrap());
+    let guards = crate::send_guard::GuardArgs {
+        expect_runtime: Some(launch),
+        expected_idle_ready_boundary: Some(available.token),
+        require_idle: true,
+        require_empty_composer: true,
+        ..Default::default()
+    };
+    let prompt = root.join("fixture-prompt");
+    fs::write(&prompt, "inspect the workspace").unwrap();
+    let result = crate::send::load_and_paste_guarded(
+        &state.tmux_bin,
+        "fixture-buffer",
+        &format!("{}:0.0", record.tmux_session),
+        &prompt,
+        crate::PANE_INPUT_COMMAND_TIMEOUT,
+        crate::PasteMode::Bracketed,
+        || {
+            prompt_receipts::reply_delivery::consume(
+                ctx,
+                &record,
+                &guards,
+                &lock,
+                prompt_receipts::reply_delivery::AdmittedInput::Terminal {
+                    tmux: &state.tmux_bin,
+                    text: "inspect the workspace",
+                    stopped: false,
+                },
+            )
+        },
+    );
+    assert_eq!(result.unwrap_err().code(), "send-provider-event-pending");
+    assert!(matches!(
+        prompt_receipts::reply_delivery::projection(ctx, &record),
+        Some(None)
+    ));
+    assert!(!root.join("enter-count").exists());
+    assert!(
+        !fs::read_to_string(root.join("transport-calls"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .any(|call| call[0] == "paste-buffer" || call[0] == "send-keys")
+    );
+}
+
+#[tokio::test]
+async fn idle_boundary_repair_admits_a_replaced_native_conversation() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (state, launch, _lease, provider) = queue_fixture(temp.path());
+    provider.busy.store(false, Ordering::SeqCst);
+    provider
+        .queue
+        .closed_idle_boundary_turn
+        .store(true, Ordering::SeqCst);
+    provider
+        .queue
+        .confirm_idle_boundary_input
+        .store(true, Ordering::SeqCst);
+    let app = router(state.clone());
+    let before = boundary(&app).await;
+    let (status, response) = submit(&app, request(&launch, "before-new", &before["token"])).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(provider.mutations.load(Ordering::SeqCst), 1);
+
+    {
+        let _lock = crate::acquire_session_record_lock(&state.context, ID).unwrap();
+        let mut record = load_session_record(&state.context, ID).unwrap();
+        record.provider_resume.as_mut().unwrap().session_id = "replacement-thread".into();
+        codex_app_server::replace_thread_binding(&record, "replacement-thread").unwrap();
+        crate::write_session_record(&state.context, &record).unwrap();
+        provider
+            .queue
+            .replaced_idle_boundary_thread
+            .store(true, Ordering::SeqCst);
+    }
+    let stale = submit(&app, request(&launch, "stale-old-thread", &before["token"])).await;
+    assert_refused(&stale, "stale-idle-ready-boundary");
+    let after = boundary(&app).await;
+    assert_ne!(after["token"], before["token"]);
+    let generation = |value: &Value| {
+        value["generation"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+    };
+    assert!(generation(&after) > generation(&before));
+    let (status, response) = submit(&app, request(&launch, "after-new", &after["token"])).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(provider.mutations.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn idle_boundary_repair_keeps_a_spent_watermark_after_account_rebind() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (state, launch, _lease, provider) = queue_fixture(temp.path());
+    provider.busy.store(false, Ordering::SeqCst);
+    provider
+        .queue
+        .closed_idle_boundary_turn
+        .store(true, Ordering::SeqCst);
+    provider
+        .queue
+        .confirm_idle_boundary_input
+        .store(true, Ordering::SeqCst);
+    let app = router(state.clone());
+    let before = boundary(&app).await;
+    let (status, response) =
+        submit(&app, request(&launch, "before-rebind", &before["token"])).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+
+    {
+        let _lock = crate::acquire_session_record_lock(&state.context, ID).unwrap();
+        let mut record = load_session_record(&state.context, ID).unwrap();
+        let binding = record.extra.get_mut("codex_account_binding").unwrap();
+        binding["selected_account"] = json!("fixture-next-account");
+        binding["revision"] = json!(2);
+        crate::write_session_record(&state.context, &record).unwrap();
+        // The provider exposes the same watermark as the spent grant until the
+        // accepted turn is independently visible in the provider history.
+        provider
+            .queue
+            .confirm_idle_boundary_input
+            .store(false, Ordering::SeqCst);
+    }
+    let stale = submit(&app, request(&launch, "stale-account", &before["token"])).await;
+    assert_refused(&stale, "stale-idle-ready-boundary");
+
+    let initial_reads = provider.queue.watermark_reads.load(Ordering::SeqCst);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let sessions = list(&app).await;
+        let view = sessions.iter().find(|session| session["id"] == ID).unwrap();
+        assert!(view.get("idle_ready_boundary").is_none(), "{view}");
+        // Only one observation batch runs at a time. A second watermark read
+        // proves that at least one unchanged watermark was processed.
+        if provider.queue.watermark_reads.load(Ordering::SeqCst) >= initial_reads + 2 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "no fresh watermark observation");
+        tokio::time::sleep(Duration::from_millis(40)).await;
+    }
+    provider
+        .queue
+        .confirm_idle_boundary_input
+        .store(true, Ordering::SeqCst);
+    assert_ne!(boundary(&app).await["token"], before["token"]);
     assert_eq!(provider.mutations.load(Ordering::SeqCst), 1);
 }

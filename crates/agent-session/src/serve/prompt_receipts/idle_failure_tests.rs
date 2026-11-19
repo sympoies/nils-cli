@@ -129,6 +129,7 @@ fn independent_keyed_attempts_share_one_runtime_boundary() {
 fn idle_observation(binding: &str, position: u64, turn: &str) -> idle_boundary::IdleObservation {
     idle_boundary::IdleObservation {
         binding: store::digest(&binding),
+        conversation: store::digest(&"fixture-conversation"),
         position,
         turn: store::digest(&turn),
     }

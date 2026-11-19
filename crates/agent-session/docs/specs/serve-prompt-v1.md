@@ -426,8 +426,9 @@ account mutation gate. A spent or superseded boundary returns HTTP 409
 available boundary requires current provider idle, no pending ingress or
 attention, authorized runtime and account control, and a verified empty
 composer. The daemon compares the provider watermark under the same lock and
-syncs consumption before the first paste or native dispatch. A positive busy
-or draft observation gives `busy`. Incarnation mismatch uses
+syncs consumption before the first paste or native dispatch. Terminal input
+holds the ingress fence from consumption through paste. A positive busy or
+draft observation gives `busy`. Incarnation mismatch uses
 `session-incarnation-conflict`. Any post-input ambiguity retains the original
 key and returns `unknown`.
 

@@ -89,7 +89,7 @@ pub(super) fn deliver(
         .as_ref()
         .map(|notice| notice.client_id())
         .or(args.guards.client_message_id.as_deref());
-    reply_delivery::consume(
+    let _ = reply_delivery::consume(
         context,
         &record,
         &args.guards,
