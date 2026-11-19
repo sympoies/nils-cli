@@ -3,7 +3,7 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `e8f83168052498c4905e7518e1135208d751a4b08d0c270f6d3fe0a191d717b8`
+- Cargo.lock SHA256: `699bbe8663230f0590c9f2aae75dbaeade72e8cf32a857380ab046a1cd03f152`
 - Third-party crates (`source != null`): 487
 
 ## Notice Extraction Policy
@@ -937,7 +937,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### font-types 0.12.3
+### font-types 0.12.7
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -1129,7 +1129,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - Notice files: No explicit NOTICE file discovered.
 - License file reference: none declared
 
-### harfrust 0.12.0
+### harfrust 0.15.0
 
 - License: `MIT`
 - Source: `crates.io`
@@ -2455,7 +2455,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### read-fonts 0.41.0
+### read-fonts 0.46.0
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -2543,7 +2543,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### resvg 0.49.0
+### resvg 0.50.0
 
 - License: `Apache-2.0 OR MIT`
 - Source: `crates.io`
@@ -2978,7 +2978,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `COPYING`
 
-### skrifa 0.44.0
+### skrifa 0.49.0
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -3070,7 +3070,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### svgtypes 0.16.1
+### svgtypes 0.16.2
 
 - License: `Apache-2.0 OR MIT`
 - Source: `crates.io`
@@ -3525,7 +3525,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### usvg 0.49.0
+### usvg 0.50.0
 
 - License: `Apache-2.0 OR MIT`
 - Source: `crates.io`
