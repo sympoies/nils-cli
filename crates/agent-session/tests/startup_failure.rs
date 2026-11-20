@@ -18,6 +18,14 @@ struct Fixture {
 
 impl Fixture {
     fn new(body: &str) -> Self {
+        let tmux_bin = nils_common::process::find_in_path("tmux")
+            .expect("tmux is required for startup failure tests")
+            .canonicalize()
+            .expect("resolve parent tmux executable");
+        Self::with_tmux(body, &tmux_bin)
+    }
+
+    fn with_tmux(body: &str, tmux_bin: &Path) -> Self {
         // The serve fixture also uses this directory as the app-server runtime root.
         let dir = tempfile::Builder::new()
             .permissions(fs::Permissions::from_mode(0o700))
@@ -30,7 +38,8 @@ impl Fixture {
         executable(
             &tmux,
             &format!(
-                "#!/bin/sh\nexec tmux -S {} \"$@\"\n",
+                "#!/bin/sh\nexec {} -S {} \"$@\"\n",
+                shell_words::quote(tmux_bin.to_str().expect("UTF-8 tmux executable path")),
                 shell_words::quote(&dir.path().join("tmux.sock").to_string_lossy())
             ),
         );
@@ -195,6 +204,35 @@ impl Drop for Daemon {
 }
 
 #[test]
+fn startup_fixture_uses_parent_tmux_with_isolated_path() {
+    let parent_bin = tempfile::tempdir().unwrap();
+    let bin_dir = parent_bin.path().join("parent's bin");
+    fs::create_dir(&bin_dir).unwrap();
+    let tmux_bin = bin_dir.join("tmux");
+    executable(
+        &tmux_bin,
+        r#"#!/bin/sh
+[ "$PATH" = /usr/bin:/bin ] && [ "$1" = -S ] && [ "$3" = -V ] || exit 1
+printf 'fixture tmux\n'
+"#,
+    );
+    let fixture = Fixture::with_tmux("exit 0", &tmux_bin);
+    let output = Command::new(&fixture.tmux)
+        .env_clear()
+        .env("PATH", serve_fixture::SYSTEM_PATH)
+        .arg("-V")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "fixture tmux\n");
+}
+
+#[test]
 fn http_create_reports_app_server_exit_and_retains_reconcilable_session() {
     assert_http_startup_exit(23);
 }
@@ -222,9 +260,10 @@ exit {exit_code}
     let tmux_script = fs::read_to_string(&fixture.tmux).unwrap();
     executable(
         &fixture.tmux,
-        &tmux_script.replace(
-            "exec tmux",
-            "case \"$1\" in has-session) [ -e \"$0.probed\" ] || { : > \"$0.probed\"; sleep 0.5; };; esac\nexec tmux",
+        &tmux_script.replacen(
+            "#!/bin/sh\n",
+            "#!/bin/sh\ncase \"$1\" in has-session) [ -e \"$0.probed\" ] || { : > \"$0.probed\"; sleep 0.5; };; esac\n",
+            1,
         ),
     );
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
