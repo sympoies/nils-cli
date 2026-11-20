@@ -36,7 +36,8 @@ Environment:
   NILS_CLI_LOCAL_FAST_BASE
     Default base ref when --base is not supplied.
   NILS_CLI_TEST_RUNNER
-    auto, nextest, cargo, or cargo-test. Default: auto.
+    auto, nextest, cargo, or cargo-test. Default: auto. Workspace and
+    agent-session lanes require nextest.
 USAGE
 }
 
@@ -499,6 +500,15 @@ run_docs_checks() {
 
 select_test_runner() {
   local requested="${NILS_CLI_TEST_RUNNER:-auto}"
+  if [[ "$mode" == workspace || " ${packages[*]} " == *" nils-agent-session "* ]]; then
+    case "$requested" in
+      auto) requested=nextest ;;
+      cargo|cargo-test)
+        echo "error: workspace and agent-session test lanes require nextest" >&2
+        return 2
+        ;;
+    esac
+  fi
   case "$requested" in
     ""|auto)
       if command -v cargo-nextest >/dev/null 2>&1; then
@@ -652,24 +662,18 @@ run cargo fmt --all -- --check
 
 if [[ "$mode" == "workspace" ]]; then
   run cargo clippy --all-targets --all-features -- -D warnings
-  if [[ "$test_runner" == "nextest" ]]; then
-    # Build first so nothing compiles inside the probe's private TMPDIR, then run
-    # the suite through the probe: it is the only detector for temp-directory
-    # leaks whose cleanup *did* run (a late background write that re-creates the
-    # tree, or a lock placed beside the fixture instead of inside it).
-    run_test cargo nextest run --profile ci --workspace --no-run
-    target_guard_snapshot
-    # git-cli-test-worker.<euid> is a deliberate per-user cache of private worker
-    # binaries: a fixed name, contents keyed by source digest, reused across runs
-    # so concurrent readers see a stable inode. Bounded, so it is not a leak.
-    guarded_test bash scripts/ci/tempdir-leak-probe.sh --allow 'git-cli-test-worker.*' \
-      -- --profile ci --workspace
-    guarded_test cargo test --workspace --doc
-  else
-    run cargo test --workspace --no-run
-    target_guard_snapshot
-    guarded_test cargo test --workspace
-  fi
+  # Build first so nothing compiles inside the probe's private TMPDIR, then run
+  # the suite through the probe: it is the only detector for temp-directory
+  # leaks whose cleanup *did* run (a late background write that re-creates the
+  # tree, or a lock placed beside the fixture instead of inside it).
+  run_test cargo nextest run --profile ci --workspace --no-run
+  target_guard_snapshot
+  # git-cli-test-worker.<euid> is a deliberate per-user cache of private worker
+  # binaries: a fixed name, contents keyed by source digest, reused across runs
+  # so concurrent readers see a stable inode. Bounded, so it is not a leak.
+  guarded_test bash scripts/ci/tempdir-leak-probe.sh --allow 'git-cli-test-worker.*' \
+    -- --profile ci --workspace
+  guarded_test cargo test --workspace --doc
   target_guard_verify
   # Re-run the representative tests under a poisoned environment (every home and
   # config variable pointing at a sentinel directory) and fail if any sentinel
