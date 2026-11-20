@@ -301,6 +301,8 @@ try {
   checks.push('typed-missing-daemon-federation-preserves-local-service');
   await replyCases.exerciseAdmissionChanges(local.message_id, revision, localReply);
   checks.push('generation-isolation-retirement-replay-and-fail-closed-admission');
+  await replyCases.exerciseHyphenatedQuotaRecovery();
+  checks.push('quota-recovery-with-hyphenated-service-selectors');
   for (const host of hosts) { assert(!host.stderr.includes(service.token)); assert(!host.stderr.includes('PRIVATE-SERVICE-BODY-CANARY')); }
   console.log(JSON.stringify({ schema_version: 'agent-session.service-mailbox-acceptance.v1', status: 'passed', checks }));
 } finally {

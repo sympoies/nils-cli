@@ -155,7 +155,7 @@ pub(super) fn quota_recovery(error: CliError, recipient: &service::Origin) -> Cl
     };
     let name = crate::executable();
     let scope = format!(
-        "--service {} --service-generation {} --credential-file <credential-file>",
+        "--service={} --service-generation={} --credential-file <credential-file>",
         recipient.service_id, recipient.service_generation
     );
     let guidance = format!(

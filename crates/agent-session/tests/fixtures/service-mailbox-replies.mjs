@@ -160,7 +160,7 @@ export function serviceReplyCases({
     await exerciseQuotaRecovery(replacement, freshParent, freshReply);
   }
 
-  async function exerciseQuotaRecovery(principal, parent, firstReply) {
+  async function fullInboxRefusal(parent, firstReply) {
     const stored = registry(source);
     const seed = stored.messages.find(message => message.message_id === firstReply.message_id);
     const limit = 256;
@@ -179,8 +179,13 @@ export function serviceReplyCases({
     assert.equal(error.details.quota, 'recipient-messages');
     assert.equal(error.details.count, limit);
     assert.equal(error.details.limit, limit);
+    return error;
+  }
+
+  async function exerciseQuotaRecovery(principal, parent, firstReply) {
+    const error = await fullInboxRefusal(parent, firstReply);
     const { recovery } = error.details;
-    const scope = `--service ${principal.id} --service-generation ${principal.generation} --credential-file <credential-file>`;
+    const scope = `--service=${principal.id} --service-generation=${principal.generation} --credential-file <credential-file>`;
     assert(recovery.inbox_unread.includes(`message service-inbox ${scope} --state unread`), 'unread quota recovery must use the admitted service credential');
     assert(recovery.inbox_read.includes(`message service-inbox ${scope} --state read`));
     assert(recovery.show.includes(`message service-show ${scope} --message <message-id>`));
@@ -190,5 +195,29 @@ export function serviceReplyCases({
     assert(!JSON.stringify(error).includes(principal.credential));
   }
 
-  return { postReply, assertReplyRefused, exerciseLocalPolling, exerciseAdmissionChanges };
+  async function exerciseHyphenatedQuotaRecovery() {
+    const principal = {
+      id: '-reporter', generation: '-generation-2',
+      token: randomUUID() + randomUUID(), credential: join(root, 'hyphenated-service-credential'),
+    };
+    privateWrite(principal.credential, principal.token);
+    admission([serviceEntry(principal)]);
+    const parent = await submit(payload('hyphenated-quota-parent', {
+      service_id: principal.id, service_generation: principal.generation,
+    }), 200, principal.token);
+    const firstReply = (await postReply(source, parent.message_id, parent.revision, 'hyphenated-quota-reply')).data.coordination;
+    const { details: { recovery } } = await fullInboxRefusal(parent, firstReply);
+    const values = {
+      '<credential-file>': principal.credential,
+      '<message-id>': firstReply.message_id,
+      '<returned-revision>': String(firstReply.revision),
+      '<unique-key>': 'hyphenated-quota-ack',
+    };
+    const args = recovery.ack.split(' ').slice(1).map(arg => values[arg] ?? arg);
+    const acknowledged = await runCli(['--state-dir', source.root, ...args]);
+    assert.equal(acknowledged.message_id, firstReply.message_id);
+    assert.equal(acknowledged.state, 'acknowledged');
+  }
+
+  return { postReply, assertReplyRefused, exerciseLocalPolling, exerciseAdmissionChanges, exerciseHyphenatedQuotaRecovery };
 }
