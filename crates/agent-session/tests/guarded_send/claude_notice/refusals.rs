@@ -138,7 +138,10 @@ fn composer_refusal_waits_for_a_request_sent_after_connecting() {
         .unwrap();
         let mut response = Vec::new();
         let _ = stream.read_to_end(&mut response);
-        assert!(!response.starts_with(b"HTTP/1.1 200"), "refused request received notice text");
+        assert!(
+            !response.starts_with(b"HTTP/1.1 200"),
+            "refused request received notice text"
+        );
     });
     let output = send_notice(&fixture, "synthetic\n");
     thread.join().unwrap();
