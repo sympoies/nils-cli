@@ -1,5 +1,20 @@
 # forge-cli Spec v1
 
+## Reading map
+
+- [Identity policy](#optional-identity-policy) and [bootstrap recovery](#bootstrap-recovery)
+- [Purpose](#purpose), [scope](#scope), and [provider parity](#provider-parity-model)
+- [Command naming and topology](#naming-and-topology) and the [atomic operation contracts](#atomic-op-surface)
+- [PR delivery macro](#macro-pr-deliver) and [lock-down policy](#lock-down-policy)
+- Output contracts: [activity](#activity-output-contract), [search](#search-output-contract),
+  [inbox](#inbox-output-contract), and [conformance](#cli-output-contract-conformance)
+- [Exit codes](#exit-code-map), [configuration](#configuration), and [rate limits](#graphql-rate-limit-gate)
+- [Timeline comments](#editing-timeline-comments) and [provider detection](#provider-detection)
+- [Migration plan](#migration-plan-agent-runtime-kit-skills--forge-cli),
+  [testing strategy](#testing-strategy), and [open questions](#open-questions--v2-candidates)
+- Read metadata: [automation](#automation-read-metadata) and
+  [repository inventory and security](#repository-inventory-and-security-reads)
+
 ## Optional identity policy
 
 `identity explain` and `identity doctor` expose the versioned shared
