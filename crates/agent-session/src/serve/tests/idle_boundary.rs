@@ -391,6 +391,43 @@ async fn idle_boundary_claude_checks_the_real_composer_before_paste() {
 }
 
 #[tokio::test]
+async fn idle_boundary_distinguishes_literal_paths_from_owner_commands() {
+    for literal in ["/workspace/file", "/ns/cmd explain this"] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        let (state, launch, record) = claude_fixture(root);
+        let available = observe_claude(&state, &record).await;
+        let app = router(state);
+        let uri = format!("/sessions/{CLAUDE}/prompt/v2");
+        let token = json!(available.token);
+
+        let mut command = request(&launch, "command", &token);
+        command["text"] = json!("/status");
+        let refusal = call(app.clone(), post_json(&uri, Some(TOKEN), command)).await;
+        let refused = assert_refused(&refusal, "idle-boundary-command-unsupported");
+        assert!(!root.join("buffer").exists());
+        assert!(!root.join("enter-count").exists());
+
+        let mut prompt = request(&launch, "literal", &token);
+        prompt["text"] = json!(literal);
+        let (status, response) = call(app.clone(), post_json(&uri, Some(TOKEN), prompt)).await;
+        assert_eq!(status, StatusCode::OK, "{literal}: {response}");
+        let submitted = &response["data"]["receipt"];
+        assert_eq!(submitted["outcome"], "submitted");
+        assert_eq!(submitted["delivery_kind"], "idle_boundary");
+        assert_eq!(fs::read_to_string(root.join("submitted")).unwrap(), literal);
+        assert_eq!(fs::read_to_string(root.join("enter-count")).unwrap(), "1");
+
+        for (key, expected) in [("command", &refused), ("literal", submitted)] {
+            let lookup = format!("{uri}/receipts/{key}?expected_session_incarnation={launch}");
+            let (status, response) = call(app.clone(), bearer_get(&lookup)).await;
+            assert_eq!(status, StatusCode::OK, "{response}");
+            assert_eq!(&response["data"]["receipt"], expected);
+        }
+    }
+}
+
+#[tokio::test]
 async fn idle_boundary_receipt_recovers_lost_acknowledgement_on_the_original_key() {
     let temp = tempfile::TempDir::new().unwrap();
     let (state, launch, _lease, provider) = queue_fixture(temp.path());

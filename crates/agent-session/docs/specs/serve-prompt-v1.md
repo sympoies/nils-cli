@@ -417,8 +417,9 @@ Send the token as the `expected_idle_ready_boundary` string on
 UUIDv4 syntax and are opaque to consumers. An invalid token, including null, or
 a boundary supplied without the required guard and key returns HTTP 400
 `invalid-idle-ready-boundary` before a claim is created. Boundary attempts
-accept literal prompt text. A slash command receives HTTP 409
-`idle-boundary-command-unsupported`.
+accept literal prompt text. Absolute paths and namespaced slash tokens are
+literal text under the existing owner-command classifier. A recognized owner
+command receives HTTP 409 `idle-boundary-command-unsupported`.
 
 A new key enters the existing session-record lock and, for native Codex, the
 account mutation gate. A spent or superseded boundary returns HTTP 409

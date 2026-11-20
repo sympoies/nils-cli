@@ -367,14 +367,14 @@ async fn dispatch_observing(
     // Only this bearer-authenticated conversation entry creates owner origin.
     // Force terminal guards even when the client normally sends busy replies.
     let expected_idle_ready_boundary = body.boundary().map(str::to_owned);
-    if expected_idle_ready_boundary.is_some() && body.text.trim_start().starts_with('/') {
+    let owner_command = owner_commands::parse(&body.text);
+    if expected_idle_ready_boundary.is_some() && owner_command.is_some() {
         return status_json(
             StatusCode::CONFLICT,
             "idle-boundary-command-unsupported",
             "an idle-ready boundary admits literal prompt text only",
         );
     }
-    let owner_command = owner_commands::parse(&body.text);
     if let Some(command) = &owner_command {
         body.text = command.text().to_owned();
         body.require_idle = true;
