@@ -23,7 +23,7 @@ struct Control {
     acquisitions: usize,
     failures: usize,
     events: mpsc::Sender<Event>,
-    start: mpsc::Receiver<()>,
+    start_polling: Option<mpsc::Receiver<()>>,
     after_failure: Option<mpsc::Receiver<()>>,
     lock_budget: Option<Duration>,
 }
@@ -54,12 +54,11 @@ pub(super) fn before_lock(timeout: Duration) -> Duration {
         control.acquisitions += 1;
         // Authentication is acquisition 1. Park only the first polling read,
         // after authentication and (for any-unread) watcher installation.
-        if control.acquisitions == 2 {
+        if control.acquisitions == 2
+            && let Some(start) = &control.start_polling
+        {
             control.events.send(Event::Polling(control.id)).unwrap();
-            control
-                .start
-                .recv_timeout(WATCHDOG)
-                .expect("release first poll");
+            start.recv_timeout(WATCHDOG).expect("release first poll");
         }
         if control.acquisitions > 1 {
             timeout.min(control.lock_budget.unwrap_or(timeout))
@@ -72,7 +71,9 @@ pub(super) fn before_lock(timeout: Duration) -> Duration {
 pub(super) fn lock_failed(error: &CliError) {
     CONTROL.with_borrow_mut(|slot| {
         let Some(control) = slot else { return };
-        if control.acquisitions < 2 || error.code() != "coordination-lock-timeout" {
+        if (control.start_polling.is_some() && control.acquisitions < 2)
+            || error.code() != "coordination-lock-timeout"
+        {
             return;
         }
         control.failures += 1;
@@ -185,7 +186,7 @@ fn mailbox_write_storm_all_twenty_waiters_observe_arrival() {
             acquisitions: 0,
             failures: 0,
             events: events.clone(),
-            start: started,
+            start_polling: Some(started),
             after_failure: Some(resumed),
             lock_budget: Some(Duration::ZERO),
         };
@@ -265,7 +266,7 @@ fn exhausted_deadline(any_unread: bool) {
             acquisitions: 0,
             failures: 0,
             events,
-            start: started,
+            start_polling: Some(started),
             after_failure: None,
             lock_budget: None,
         });
@@ -323,7 +324,7 @@ fn mailbox_contention_cancellation_is_not_retried_as_contention() {
                 acquisitions: 0,
                 failures: 0,
                 events,
-                start: started,
+                start_polling: Some(started),
                 after_failure: Some(resumed),
                 lock_budget: Some(Duration::ZERO),
             });
@@ -366,7 +367,7 @@ fn mailbox_polling_preserves_non_contention_errors_without_retry() {
                     acquisitions: 0,
                     failures: 0,
                     events,
-                    start: started,
+                    start_polling: Some(started),
                     after_failure: None,
                     lock_budget: None,
                 });
@@ -432,4 +433,116 @@ fn mailbox_polling_preserves_non_contention_errors_without_retry() {
             }
         }
     }
+}
+
+#[test]
+fn mailbox_authentication_recovers_from_registry_contention() {
+    let fixture = Fixture::new();
+    let (events, checkpoints) = mpsc::channel();
+    thread::scope(|scope| {
+        let mut holder = lock_registry(&fixture.context).unwrap();
+        let mut resumes = Vec::new();
+        let waiters = [(0, false), (1, true)].map(|(id, any_unread)| {
+            let (resume, resumed) = mpsc::channel();
+            resumes.push(resume);
+            let control = Control {
+                id,
+                acquisitions: 0,
+                failures: 0,
+                events: events.clone(),
+                start_polling: None,
+                after_failure: Some(resumed),
+                lock_budget: None,
+            };
+            let context = &fixture.context;
+            let args = fixture.args(any_unread, "60s");
+            scope.spawn(move || {
+                let _scope = Scope::install(control);
+                mailbox::wait_with_cancellation(context, args, None)
+            })
+        });
+
+        let mut contended = std::collections::BTreeSet::new();
+        for _ in &waiters {
+            let Event::Contended(id) = receive(&checkpoints) else {
+                panic!("authentication must contend before polling");
+            };
+            assert!(contended.insert(id));
+        }
+        holder.registry.messages[0].state = "unread".into();
+        holder.registry.messages[0].revision = 2;
+        holder.save().unwrap();
+        drop(holder);
+        for resume in resumes {
+            resume.send(()).unwrap();
+        }
+
+        let [revision, unread] = waiters.map(|waiter| {
+            waiter
+                .join()
+                .unwrap()
+                .map_err(|error| error.code().to_owned())
+        });
+        let failures: Vec<_> = [&revision, &unread]
+            .into_iter()
+            .filter_map(|result| result.as_ref().err())
+            .collect();
+        assert!(
+            failures.is_empty(),
+            "revision and any-unread authentication must recover: {failures:?}"
+        );
+        assert_eq!(revision.unwrap()["revision"], 2);
+        let unread = unread.unwrap();
+        assert_eq!(unread["status"], "arrived");
+        assert_eq!(unread["messages"][0]["message_id"], "storm-arrival");
+        assert!(!unread.to_string().contains(BODY));
+    });
+}
+
+fn authentication_deadline(any_unread: bool) {
+    let fixture = Fixture::new();
+    let (events, checkpoints) = mpsc::channel();
+    let (result, completed) = mpsc::channel();
+    thread::scope(|scope| {
+        let holder = lock_private_store(&fixture.context, REGISTRY_LOCK).unwrap();
+        let context = &fixture.context;
+        let args = fixture.args(any_unread, "1s");
+        scope.spawn(move || {
+            let _scope = Scope::install(Control {
+                id: 0,
+                acquisitions: 0,
+                failures: 0,
+                events,
+                start_polling: None,
+                after_failure: None,
+                lock_budget: None,
+            });
+            let outcome = mailbox::wait_with_cancellation(context, args, None);
+            let failures = CONTROL.with_borrow(|slot| slot.as_ref().unwrap().failures);
+            result.send((outcome, failures)).unwrap();
+        });
+        assert!(matches!(receive(&checkpoints), Event::Contended(0)));
+        let (outcome, attempts) = completed.recv_timeout(WATCHDOG).expect("wait deadline");
+        drop(holder);
+        let error = outcome.unwrap_err().into_inner();
+        assert_eq!(error.code, "wait-timeout");
+        assert_eq!(error.exit_code, if any_unread { 69 } else { 1 });
+        assert!(
+            attempts > 1,
+            "authentication must retry within the original budget"
+        );
+        if any_unread {
+            assert_eq!(error.details.unwrap()["recovery"]["kind"], "same_cursor");
+        }
+    });
+}
+
+#[test]
+fn mailbox_authentication_revision_preserves_original_deadline() {
+    authentication_deadline(false);
+}
+
+#[test]
+fn mailbox_authentication_any_unread_preserves_original_deadline() {
+    authentication_deadline(true);
 }

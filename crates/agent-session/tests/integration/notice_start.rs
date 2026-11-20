@@ -37,29 +37,25 @@ fn console_target_notice_start_writes_launch_receipt() {
         .unwrap()
         .local_addr()
         .unwrap();
-    let mut command = super::hermetic_provider_command(root);
-    command
-        .args([
-            "serve",
-            "--bind",
-            &addr.to_string(),
-            "--state-dir",
-            state.to_str().unwrap(),
-            "--token",
-            "synthetic-token",
-            "--tmux-bin",
-            tmux.to_str().unwrap(),
-        ])
-        .env("AGENT_HOME", root.join("agent-home"))
-        .env("CLAUDE_CONFIG_DIR", root.join("provider-config"))
-        .env("AGENT_SESSION_CLAUDE_BIN", &agent)
-        .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
-        .env("AGENT_SESSION_NOTICE_WRITERS", "1")
-        .env_remove("AGENT_SESSION_LAUNCH_PROFILES")
-        .env_remove("AGENT_SESSION_CLAUDE_ACCOUNT_BROKER")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    let mut command = super::serve_fixture::command(
+        root,
+        nils_test_support::bin::resolve("agent-session"),
+        &state,
+        &tmux,
+        |command| {
+            command
+                .args(["--bind", &addr.to_string(), "--token", "synthetic-token"])
+                .env("HOME", root)
+                .env("CODEX_HOME", root.join("codex-config"))
+                .env("CLAUDE_CONFIG_DIR", root.join("provider-config"))
+                .env("AGENT_SESSION_CLAUDE_BIN", &agent)
+                .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
+                .env("AGENT_SESSION_NOTICE_WRITERS", "1")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+        },
+    );
     let _server = Server(command.spawn().unwrap());
     let deadline = Instant::now() + Duration::from_secs(15);
     while TcpStream::connect(addr).is_err() {
@@ -247,21 +243,24 @@ sys.exit(result.returncode)
         .unwrap()
         .local_addr()
         .unwrap();
-    let mut command = super::hermetic_provider_command(root);
-    command
-        .args([
-            "serve",
-            "--bind",
-            &addr.to_string(),
-            "--state-dir",
-            state.to_str().unwrap(),
-            "--token",
-            "synthetic-token",
-        ])
-        .env("CLAUDE_CONFIG_DIR", &config)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    let (tmux, log) = super::cli::fake_tmux(root);
+    let mut command = super::serve_fixture::command(
+        root,
+        nils_test_support::bin::resolve("agent-session"),
+        &state,
+        &tmux,
+        |command| {
+            command
+                .args(["--bind", &addr.to_string(), "--token", "synthetic-token"])
+                .env("HOME", root)
+                .env("CODEX_HOME", root.join("codex-config"))
+                .env("CLAUDE_CONFIG_DIR", &config)
+                .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+        },
+    );
     let _server = Server(command.spawn().unwrap());
     let deadline = Instant::now() + Duration::from_secs(15);
     while TcpStream::connect(addr).is_err() {
@@ -565,23 +564,23 @@ sys.exit(result.returncode)
         .unwrap()
         .local_addr()
         .unwrap();
-    let mut command = super::hermetic_provider_command(root);
-    command
-        .args([
-            "serve",
-            "--bind",
-            &addr.to_string(),
-            "--state-dir",
-            state.to_str().unwrap(),
-            "--token",
-            "synthetic-token",
-            "--tmux-bin",
-            tmux.to_str().unwrap(),
-        ])
-        .env("CLAUDE_CONFIG_DIR", &config)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    let mut command = super::serve_fixture::command(
+        root,
+        nils_test_support::bin::resolve("agent-session"),
+        &state,
+        &tmux,
+        |command| {
+            command
+                .args(["--bind", &addr.to_string(), "--token", "synthetic-token"])
+                .env("HOME", root)
+                .env("CODEX_HOME", root.join("codex-config"))
+                .env("CLAUDE_CONFIG_DIR", &config)
+                .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+        },
+    );
     let _server = Server(command.spawn().unwrap());
     let deadline = Instant::now() + Duration::from_secs(15);
     while TcpStream::connect(addr).is_err() {

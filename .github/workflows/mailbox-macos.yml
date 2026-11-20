@@ -1,0 +1,35 @@
+name: macOS mailbox wait
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mailbox-macos.yml'
+      - 'crates/agent-session/src/coordination/**'
+      - 'crates/agent-session/tests/integration/mailbox_any_unread.rs'
+      - 'crates/agent-session/src/prompt_delivery.rs'
+      - 'crates/agent-session/src/prompt_delivery/**'
+      - 'crates/agent-session/src/serve/tests/prompt_composer/**'
+      - 'crates/nils-common/src/observation.rs'
+
+permissions:
+  contents: read
+
+jobs:
+  mailbox_any_unread:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-test
+          key: llvm-cov
+          save-if: false
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Test mailbox arrivals
+        run: cargo nextest run --locked -p nils-agent-session --test integration -E 'test(mailbox_any_unread::)'
+      - name: Test post-paste prompt observation
+        run: cargo nextest run --locked -p nils-agent-session --lib -E 'test(serve::tests::prompt_composer::post_paste::)'

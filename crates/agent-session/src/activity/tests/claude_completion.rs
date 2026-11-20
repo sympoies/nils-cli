@@ -92,6 +92,48 @@ fn claude_stop_qualifiers_and_failure_remain_structured() {
 }
 
 #[test]
+fn claude_post_tool_hook_stop_requires_provider_completion() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+    activate_runtime(&context, &created.record).expect("activate runtime");
+    let runtime = &created.record.runtime.as_ref().unwrap().launch_id;
+    let ingest_callback = |mut raw: Value| {
+        raw["session_id"] = json!("session-1");
+        raw["prompt_id"] = json!("prompt-1");
+        let event = normalize_provider_hook(AgentKind::Claude, None, runtime, &raw)
+            .unwrap()
+            .expect("recognized Claude callback");
+        ingest_event(&context, &created.record.id, event).expect("ingest callback");
+    };
+
+    ingest_callback(json!({"hook_event_name": "UserPromptSubmit"}));
+    ingest_callback(json!({"hook_event_name": "PreToolUse", "tool_name": "Bash"}));
+    // Model a parallel hook returning `{"continue": false}` to Claude after
+    // the tool succeeds. The lifecycle hook only receives Claude's input,
+    // and no Stop callback follows.
+    ingest_callback(json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_use_id": "call-1",
+        "tool_response": {"stdout": "done", "stderr": "", "interrupted": false}
+    }));
+    let open = state_for_view(&context, &created.record).expect("open turn");
+    assert_eq!(open.phase, TurnPhase::Working);
+    assert!(open.current_turn.is_some());
+    assert!(open.last_turn.is_none());
+
+    // A real idle_prompt callback can complete the same prompt without Stop.
+    ingest_callback(json!({
+        "hook_event_name": "Notification",
+        "notification_type": "idle_prompt"
+    }));
+    let completed = state_for_view(&context, &created.record).expect("completed turn");
+    assert_eq!(completed.phase, TurnPhase::Waiting);
+    assert!(completed.current_turn.is_none());
+    assert_eq!(completed.last_turn.unwrap().outcome, "completed");
+}
+
+#[test]
 fn claude_stop_continuation_cancels_completion_candidate() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let clock = TestClock::freeze();

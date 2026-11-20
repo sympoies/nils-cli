@@ -151,6 +151,10 @@ async fn mailbox_notice_uncertain_claude_capability_does_not_fall_back() {
     assert_eq!(receipt["last_reason_detail"], "notice-runtime-unavailable");
 }
 
+mod native_admission {
+    include!("mailbox_notice_admission.rs");
+}
+
 mod configuration_fallback {
     include!("mailbox_notice_fallback.rs");
 }
@@ -176,24 +180,8 @@ async fn mailbox_notice_supported_terminal_preserves_operator_draft_before_claim
     assert_eq!(notification_fixture(fixture.temp.path())["state"], "queued");
 }
 
-#[tokio::test]
-async fn wrapped_claude_draft_wake_defers_with_native_composer_reason() {
+fn bind_native_receiver(fixture: &WakeFixture) -> (tempfile::TempDir, PathBuf, PathBuf, Value, String) {
     use crate::send::claude_notice::{Launch, runtime, sha256};
-    let lock = GlobalStateLock::new();
-    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
-    let fixture = WakeFixture::new(AgentKind::Claude).await;
-    bind_transcript(&fixture);
-    let activity_path = fixture.temp.path().join("sessions/beta/activity.json");
-    let mut activity: Value = serde_json::from_slice(&fs::read(&activity_path).unwrap()).unwrap();
-    activity["state"]["phase"] = json!("waiting");
-    activity["state"]["current_turn"] = Value::Null;
-    fs::write(activity_path, serde_json::to_vec(&activity).unwrap()).unwrap();
-    fs::write(fixture.temp.path().join("composer"), "previous draft").unwrap();
-    assert_eq!(fixture.check_draft().unwrap_err().code(), "composer-not-empty");
-    let observation = fixture.temp.path().join("sessions/beta/drafts/observation.json");
-    assert!(observation.exists());
-    let draft = "generic stale draft alpha beta gamma delta\n  epsilon z";
-    fs::write(fixture.temp.path().join("composer"), draft).unwrap();
     let record = load_session_record(&fixture.state.context, "beta").unwrap();
     let dir = runtime::module_dir(&fixture.state.context.state_dir, &record).unwrap();
     fs::create_dir_all(dir.join("hooks")).unwrap();
@@ -220,6 +208,27 @@ async fn wrapped_claude_draft_wake_defers_with_native_composer_reason() {
     }
     crate::write_private_file(&dir.join("hooks/register.js"), runtime::MODULE.as_bytes()).unwrap();
     assert!(runtime::readiness(&fixture.state.context, &record).is_some());
+    (socket_root, dir, socket, binding, nonce)
+}
+
+#[tokio::test]
+async fn wrapped_claude_draft_wake_defers_with_native_composer_reason() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let fixture = WakeFixture::new(AgentKind::Claude).await;
+    bind_transcript(&fixture);
+    let activity_path = fixture.temp.path().join("sessions/beta/activity.json");
+    let mut activity: Value = serde_json::from_slice(&fs::read(&activity_path).unwrap()).unwrap();
+    activity["state"]["phase"] = json!("waiting");
+    activity["state"]["current_turn"] = Value::Null;
+    fs::write(activity_path, serde_json::to_vec(&activity).unwrap()).unwrap();
+    fs::write(fixture.temp.path().join("composer"), "previous draft").unwrap();
+    assert_eq!(fixture.check_draft().unwrap_err().code(), "composer-not-empty");
+    let observation = fixture.temp.path().join("sessions/beta/drafts/observation.json");
+    assert!(observation.exists());
+    let draft = "generic stale draft alpha beta gamma delta\n  epsilon z";
+    fs::write(fixture.temp.path().join("composer"), draft).unwrap();
+    let (_socket_root, dir, socket, binding, nonce) = bind_native_receiver(&fixture);
     let receiver = std::thread::spawn(move || {
         use std::io::{Read, Write};
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -256,7 +265,6 @@ async fn wrapped_claude_draft_wake_defers_with_native_composer_reason() {
 }
 
 async fn queued_claude_wake_remains_retryable_after_clear(stale: bool) {
-    use crate::send::claude_notice::{Launch, runtime, sha256};
     let lock = GlobalStateLock::new();
     let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
     let fixture = WakeFixture::new(AgentKind::Claude).await;
@@ -273,31 +281,7 @@ async fn queued_claude_wake_remains_retryable_after_clear(stale: bool) {
     let draft = "generic one row draft";
     fs::write(fixture.temp.path().join("composer"), draft).unwrap();
     let record = load_session_record(&fixture.state.context, "beta").unwrap();
-    let dir = runtime::module_dir(&fixture.state.context.state_dir, &record).unwrap();
-    fs::create_dir_all(dir.join("hooks")).unwrap();
-    for path in [&dir, &dir.join("hooks")] {
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
-    }
-    let socket_root = tempfile::tempdir_in("/tmp").unwrap();
-    fs::set_permissions(socket_root.path(), fs::Permissions::from_mode(0o700)).unwrap();
-    let socket_parent = socket_root.path().join("agent-session");
-    fs::create_dir(&socket_parent).unwrap();
-    fs::set_permissions(&socket_parent, fs::Permissions::from_mode(0o700)).unwrap();
-    let namespace = sha256(format!("{}\0beta\0{}", fixture.state.context.state_dir.display(), fixture.candidate.target_incarnation).as_bytes());
-    let socket = socket_parent.join(format!("cn-{}.sock", &namespace[..16]));
-    let launch = Launch::from_record(&record).unwrap();
-    let module = sha256(runtime::MODULE.as_bytes());
-    let nonce = "a".repeat(64);
-    let binding = json!({"launch":launch,"provider":"claude","provider_session_id":"provider-beta","provider_version":"2.1.296","module_sha256":module});
-    for (name, value) in [
-        ("bootstrap.json", json!({"schema_version":"agent-session.claude-notice-runtime.v1","launch":launch,"module_sha256":module,"provider_version":"2.1.296","socket_path":socket,"nonce":nonce})),
-        ("ready.json", json!({"schema_version":"agent-session.claude-notice-ready.v1","binding":binding,"nonce":nonce,"terminal":true,"timer_started":true})),
-        ("offer.json", json!({"schema_version":"agent-session.claude-notice-offer.v1","state":"idle"})),
-    ] {
-        crate::write_private_file(&dir.join(name), value.to_string().as_bytes()).unwrap();
-    }
-    crate::write_private_file(&dir.join("hooks/register.js"), runtime::MODULE.as_bytes()).unwrap();
-    assert!(runtime::readiness(&fixture.state.context, &record).is_some());
+    let (_socket_root, dir, socket, binding, nonce) = bind_native_receiver(&fixture);
     if stale {
         crate::send_guard::drafts::observe_at(&fixture.state.context, &record, Some(draft), 1, 0).unwrap();
     }

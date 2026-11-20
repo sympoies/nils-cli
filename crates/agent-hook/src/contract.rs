@@ -890,6 +890,10 @@ pub const RUNTIME_HANDLERS: &[(&str, &str)] = &[
         "block-project-memory-write.py",
     ),
     (
+        "block-sensitive-file-reads",
+        "block-sensitive-file-reads.py",
+    ),
+    (
         "block-unsafe-default-delivery",
         "block-unsafe-default-delivery.py",
     ),

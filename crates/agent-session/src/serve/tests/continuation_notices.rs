@@ -290,6 +290,35 @@ async fn capacity_notice_native_receiver_admits_only_its_interrupted_non_idle_tu
         let st = state(tmp.path(), Some(TOKEN), codex_tmux(tmp.path(), id));
         let record = bind_codex(&st.context, id, tmp.path());
         activity::activate_runtime(&st.context, &record).unwrap();
+        let failure = activity::ingest_codex_app_server_failure_with_kind(
+            &st.context,
+            id,
+            &launch,
+            "thread-capacity",
+            "turn-capacity",
+            codex_app_server::StructuredFailureKind::ProviderCapacity,
+        )
+        .unwrap();
+        let predecessor = failure
+            .turn_state
+            .last_turn
+            .unwrap()
+            .provider_turn_id
+            .unwrap();
+        let revision = activity::state_for_view(&st.context, &record)
+            .unwrap()
+            .revision;
+        auto_resume::set_enabled(&st.context, id, true, "2020-01-01T00:00:00Z").unwrap();
+        auto_resume::arm_provider_capacity(
+            &st.context,
+            id,
+            &launch,
+            &crate::codex_account::binding_snapshot(&record),
+            predecessor,
+            revision,
+            "2020-01-01T00:00:01Z",
+        )
+        .unwrap();
         let listener =
             tokio::net::UnixListener::bind(tmp.path().join(format!("{id}.sock"))).unwrap();
         let path = transcript(tmp.path());
@@ -305,6 +334,9 @@ async fn capacity_notice_native_receiver_admits_only_its_interrupted_non_idle_tu
                 let result = match request["method"].as_str().unwrap() {
                     "initialize" | "thread/resume" => json!({}),
                     "thread/loaded/list" => json!({"data":["thread-capacity"],"nextCursor":null}),
+                    "thread/read" => {
+                        json!({"thread":{"id":"thread-capacity","status":{"type":"active"}}})
+                    }
                     "account/rateLimits/read" => {
                         for notification in [
                             json!({"method":"turn/started","params":{"threadId":"thread-capacity","turn":{"id":if related {"turn-capacity"} else {"unrelated-turn"},"status":"inProgress"}}}),
@@ -362,35 +394,6 @@ async fn capacity_notice_native_receiver_admits_only_its_interrupted_non_idle_tu
                 handle,
             },
         );
-        let failure = activity::ingest_codex_app_server_failure_with_kind(
-            &st.context,
-            id,
-            &launch,
-            "thread-capacity",
-            "turn-capacity",
-            codex_app_server::StructuredFailureKind::ProviderCapacity,
-        )
-        .unwrap();
-        let predecessor = failure
-            .turn_state
-            .last_turn
-            .unwrap()
-            .provider_turn_id
-            .unwrap();
-        let revision = activity::state_for_view(&st.context, &record)
-            .unwrap()
-            .revision;
-        auto_resume::set_enabled(&st.context, id, true, "2020-01-01T00:00:00Z").unwrap();
-        auto_resume::arm_provider_capacity(
-            &st.context,
-            id,
-            &launch,
-            &crate::codex_account::binding_snapshot(&record),
-            predecessor,
-            revision,
-            "2020-01-01T00:00:01Z",
-        )
-        .unwrap();
         let target = || CodexAutoResumeTarget {
             id: id.into(),
             launch_id: launch.clone(),
@@ -577,6 +580,9 @@ async fn capacity_notice_refuses_a_draft_appearing_during_control_handoff() {
             let result = match request["method"].as_str().unwrap() {
                 "initialize" | "thread/resume" => json!({}),
                 "thread/loaded/list" => json!({"data":["thread-capacity"],"nextCursor":null}),
+                "thread/read" => {
+                    json!({"thread":{"id":"thread-capacity","status":{"type":"active"}}})
+                }
                 "account/rateLimits/read" => {
                     rate_reads += 1;
                     if rate_reads == 1 {
