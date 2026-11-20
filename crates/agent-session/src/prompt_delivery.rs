@@ -61,8 +61,7 @@ fn paste_prompt_file_observing(
         })
         .transpose()?
         .flatten();
-    load_and_paste_buffer(tmux_bin, &buffer_name, &target, prompt_file)
-        .map_err(prompt_delivery_failure)?;
+    paste::load_and_paste_buffer(tmux_bin, &buffer_name, &target, prompt_file, record)?;
 
     // The initial prompt is submitted; `send` deliberately leaves this to
     // an explicit `--key enter`. Tmux confirms that it wrote the paste bytes,
@@ -318,6 +317,7 @@ fn composer_image_label(pane: &str, count: usize, rest: &str) -> Option<String> 
         .then_some(input)
 }
 
+mod paste;
 pub(crate) mod post_paste;
 #[cfg(test)]
 mod tests;
