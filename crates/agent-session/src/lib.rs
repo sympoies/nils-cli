@@ -3774,51 +3774,6 @@ fn capture_pane_digest(tmux_bin: &Path, target: &str) -> Option<u64> {
     Some(hasher.finish())
 }
 
-/// Load `file` into a named tmux buffer and paste it into `target`, deleting the
-/// buffer after paste (`-d`) or on failure. The staged error distinguishes a
-/// proven pre-delivery load failure from a paste result that may have landed.
-enum PromptPasteFailure {
-    BeforeDelivery(CliError),
-    OutcomeUnknown(CliError),
-}
-
-fn prompt_delivery_failure(failure: PromptPasteFailure) -> CliError {
-    match failure {
-        PromptPasteFailure::BeforeDelivery(error) | PromptPasteFailure::OutcomeUnknown(error) => {
-            error
-        }
-    }
-}
-
-fn load_and_paste_buffer(
-    tmux_bin: &Path,
-    buffer_name: &str,
-    target: &str,
-    file: &Path,
-) -> Result<(), PromptPasteFailure> {
-    let mut load = ProcessCommand::new(tmux_bin);
-    load.arg("load-buffer").arg("-b").arg(buffer_name).arg(file);
-    run_status(load, "tmux load-buffer").map_err(PromptPasteFailure::BeforeDelivery)?;
-
-    let mut paste = ProcessCommand::new(tmux_bin);
-    // `-p` wraps the paste in bracketed-paste markers when the provider asked
-    // for them, so its line breaks stay inside one prompt instead of each
-    // reaching the TUI as Enter.
-    paste
-        .arg("paste-buffer")
-        .arg("-p")
-        .arg("-b")
-        .arg(buffer_name)
-        .arg("-d")
-        .arg("-t")
-        .arg(target);
-    if let Err(err) = run_status(paste, "tmux paste-buffer") {
-        delete_tmux_buffer(tmux_bin, buffer_name);
-        return Err(PromptPasteFailure::OutcomeUnknown(err));
-    }
-    Ok(())
-}
-
 fn delete_tmux_buffer(tmux_bin: &Path, buffer_name: &str) {
     let mut command = ProcessCommand::new(tmux_bin);
     command.arg("delete-buffer").arg("-b").arg(buffer_name);
