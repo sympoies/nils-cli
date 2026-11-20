@@ -72,7 +72,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.100.0
+        uses: dtolnay/rust-toolchain@1.120.0
         with:
           components: rustfmt, clippy
 
@@ -226,7 +226,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.100.0
+        uses: dtolnay/rust-toolchain@1.120.0
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -291,7 +291,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.100.0
+        uses: dtolnay/rust-toolchain@1.120.0
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -364,7 +364,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.100.0
+        uses: dtolnay/rust-toolchain@1.120.0
         with:
           components: llvm-tools-preview
 

@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@1.100.0
+      - uses: dtolnay/rust-toolchain@1.120.0
       - name: Build the fragment writer
         run: |
           source scripts/dev-env.sh
@@ -55,7 +55,7 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@1.100.0
+      - uses: dtolnay/rust-toolchain@1.120.0
       - name: Build the fragment writer
         run: |
           source scripts/dev-env.sh
