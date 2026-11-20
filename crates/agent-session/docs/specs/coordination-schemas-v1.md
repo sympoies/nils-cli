@@ -289,7 +289,7 @@ success results contain a `body` field, marked as message data with classificati
 The `message wait --any-unread` form returns metadata only and never reads or
 acknowledges message bodies.
 
-A reply to a service projects its recipient as
+A reply to a service uses a `recipient` field of
 `{kind: "service", machine, service_id, service_generation}` with no session
 ID or incarnation fields. It retains its authenticated session sender
 and `reply_to` link. Service inbox rows contain metadata only. See the

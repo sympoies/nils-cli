@@ -153,16 +153,41 @@ only by the registry-level check route.
 Both CLI service reply forms submit to the owning daemon with the caller's
 session capability. The revision-checked HTTP reply operation
 `POST /sessions/{id}/messages/{message_id}/reply/v1` uses the same locked
-checks. Here `{id}` identifies the parent recipient session. Service inbox
-list, show and ack use direct loopback HTTP with the admitted service bearer
-and exact service ID and generation. The
-[credential-scoped inbox rules](coordination-mailbox-v1.md#credential-scoped-inbox)
-apply independently of the server operator bearer.
+checks. Here `{id}` identifies the parent recipient session.
 
 Successful HTTP sends and replies to sessions carry the same content-free
 `notification` state/generation/reason projection as CLI and set
 `controller_available: true`. The response schedules work only; it does not
 promise immediate delivery or mark a message read.
+
+### Service inbox HTTP routes
+
+All three routes require the `service_id` and `service_generation` query
+parameters and the matching service token in `Authorization: Bearer`. The
+daemon supplies the machine. Only direct loopback transport is accepted.
+Session capabilities, operator bearers, federation tokens and forwarded
+requests do not authorize these routes. The daemon rechecks admission and
+the credential under the mailbox lock.
+
+| Method and path | Additional input | Successful result |
+| --- | --- | --- |
+| `GET /coordination/services/messages/v1` | Optional query parameters `state=unread`, `cursor`, and `limit`. | Inbox object with `schema_version: "agent-session.message-inbox.v1"`, `messages` (metadata rows), and `next_cursor` (opaque string or `null`). |
+| `GET /coordination/services/messages/{message_id}/v1` | Message UUID in the path. | One message row with `body` containing `classification: "peer_message"` and `text`. The row reflects the revision after any unread-to-read transition. |
+| `POST /coordination/services/messages/{message_id}/ack/v1` | Message UUID in the path and a JSON body with required `if_revision` (unsigned integer) and `idempotency_key` (string). | Acknowledged message metadata, including its updated revision. |
+
+Success uses HTTP 200 and the serve envelope with the result in
+`data.coordination` and the owning machine in `data.machine`. Rows use the
+[service recipient message schema](coordination-schemas-v1.md#message).
+Follow the [mailbox limits](coordination-mailbox-v1.md#mailbox-limits-and-state-machine)
+for page size and the
+[credential-scoped inbox rules](coordination-mailbox-v1.md#credential-scoped-inbox)
+for message lookup, cursors and receipts. List and ack omit the body.
+
+The ack receipt binds the exact address, message UUID, and request revision.
+After current credential and admission checks, an identical replay returns
+the stored result. An admitted request with a stale revision fails with
+`message-revision-conflict`. Reusing a key for a changed request within the
+same principal's ack scope fails with `idempotency-key-reused`.
 
 ## Public list and glance additions
 

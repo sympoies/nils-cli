@@ -697,16 +697,25 @@ Operator activation is a separate deployment decision:
    by that user, mode `0600`, with one link and at most 32 KiB. Replace the example path with the
    credential's absolute path. The service ID and generation are non-secret
    selectors of 1–128 ASCII letters, digits, hyphens, underscores, or dots.
-   IDs must be unique; at most 32 services are admitted.
+   At most 32 services are active, with one active generation per ID. The
+   local reply contract uses the following document, including `retired`
+   even when the array is empty. Convert the document in the same deployment
+   that installs the daemon supporting local service replies.
 
    ```json
    {
-     "schema_version": "agent-session.mailbox-services.v1",
+     "schema_version": "agent-session.mailbox-services.v2",
      "services": [
        {
          "service_id": "reporter",
-         "service_generation": "generation-1",
+         "service_generation": "generation-2",
          "credential_file": "/absolute/private/reporter.credential"
+       }
+     ],
+     "retired": [
+       {
+         "service_id": "reporter",
+         "service_generation": "generation-1"
        }
      ]
    }
@@ -721,7 +730,7 @@ Operator activation is a separate deployment decision:
 
    ```bash
    agent-session --state-dir "$DAEMON_STATE_DIR" message service-send \
-     --service reporter --service-generation generation-1 \
+     --service reporter --service-generation generation-2 \
      --credential-file "$SERVICE_CREDENTIAL_FILE" \
      --to "$RECIPIENT_SESSION_ID" \
      --body-file "$REPORT_BODY_FILE" \
@@ -741,9 +750,10 @@ Unknown, removed, stale-generation, unsafe-file, and incorrect-token callers
 are denied with `mailbox-service-unauthorized` and no path, token, or body.
 
 Revoke admission by atomically replacing the document without the active
-entry or removing its credential file. Under the local reply contract,
-explicit retirement records the service ID and generation without a
-credential. Preserve that marker when rewriting the document. For rollover,
+entry or removing its credential file. For explicit retirement, remove the
+active entry and append its exact service ID and generation to `retired` in
+the same rewrite. Preserve the credential-free marker in subsequent rewrites
+even when the same ID has a fresh active generation. For rollover,
 provision a fresh distinct credential and a generation that has never been
 used for that ID, then update the service job. The new generation has an
 empty inbox and a separate idempotency namespace. Old mail expires under

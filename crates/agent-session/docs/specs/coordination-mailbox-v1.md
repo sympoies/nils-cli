@@ -261,12 +261,22 @@ new generation starts with an empty inbox. Pending mail stays bound to its
 old address until normal expiry and compaction. A reply to an old parent
 never moves to the replacement generation.
 
-Removing an active entry revokes admission. Explicit retirement records the
-service ID and generation without a credential in the daemon-owned admission
-document. Retain the marker across admission-document rewrites, including
-updates to other entries or admission of a fresh generation. Retirement closes
-reads and new deliveries for that generation. A retired or superseded
-generation can never be reused.
+Removing an active entry revokes admission. For explicit retirement, atomically
+remove the active entry and add the exact service ID and generation to the
+daemon-owned admission document's `retired` array. The marker closes reads and
+new deliveries for that generation. Preserve existing markers on every
+rewrite, including when admitting a fresh generation for the same service ID.
+A retired or superseded generation can never be reused.
+
+The local reply contract uses `agent-session.mailbox-services.v2` with required
+`services` and `retired` arrays. Each `services` entry contains `service_id`,
+`service_generation` and `credential_file`. An ID has at most one active entry.
+Each `retired` entry contains only `service_id` and `service_generation`, and
+those pairs are unique. The exact same pair in both arrays invalidates the
+document. A marker for an older generation can coexist with a different active
+generation of the same ID. The
+[admission example](../runbooks/serve-daemon.md#admit-a-local-mailbox-service)
+shows both entries.
 
 ### Service recipient refusals
 
@@ -303,8 +313,8 @@ PR 2 will use synthetic services, isolated registries and a fixture relay.
 | #3797 acceptance | PR 2 verification |
 | --- | --- |
 | Agree on the written contract before implementation | Review this spec in PR 1. Bind the PR 2 fixtures to the agreed behaviors below. |
-| A session reply to a local service-origin message reaches that service's inbox | Exercise both CLI reply forms and the daemon reply route. Assert the exact address, parent link, bounded metadata listing, show/read and revision-checked ack. Replay and assert one delivery. Use a second service's credential to verify list isolation, reject a foreign cursor on list, and reject the other service's message ID on show and ack. Assert that service delivery schedules no notification. |
-| Refuse unadmitted or retired recipients with a typed error | Remove a known service's admission and then explicitly retire it. Assert both refusal codes and check that a rewrite preserves the retirement refusal, even after admitting a fresh generation. Roll over an active service and verify the generation conflict, stale credential refusal, empty replacement inbox and delivery to a replacement-generation parent. Replay a committed request across rollover and verify the original receipt with no extra delivery. Cover unknown identity in a resolver fixture, unreadable and invalid admission in the daemon fixture, and remote origin refusal using the fixture relay. Assert refusals preserve the parent, create no mail or success receipt and queue no outbox work. |
+| A session reply to a local service-origin message reaches that service's inbox | Exercise both CLI reply forms and the daemon reply route. Exercise the three service inbox HTTP routes. Assert the exact address, parent link, bounded metadata listing, show/read and revision-checked ack. Replay and assert one delivery. Use a second service's credential to verify list isolation, reject a foreign cursor on list, and reject the other service's message ID on show and ack. Assert that service delivery schedules no notification. |
+| Refuse unadmitted or retired recipients with a typed error | Remove a known service's admission and then explicitly retire it. Assert both refusal codes and check that a rewrite preserves the retirement refusal, even after admitting a fresh generation. Roll over an active service and verify the generation conflict, stale credential refusal, empty replacement inbox and delivery to a replacement-generation parent. Replay a committed request across rollover and verify the original receipt with no extra delivery. Cover unknown identity in a resolver fixture, unreadable and invalid admission (including an active and retired entry for the same generation) in the daemon fixture, and remote origin refusal using the fixture relay. Assert refusals preserve the parent, create no mail or success receipt and queue no outbox work. |
 | Preserve session-to-session replies | Retain local and federated session reply fixtures for explicit `--to --reply-to`, parent binding, revision checks, idempotency and the session recipient projection. |
 
 ## Notification ownership
