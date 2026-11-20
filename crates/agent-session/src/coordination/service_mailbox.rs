@@ -142,6 +142,44 @@ pub(super) fn metadata(message: &mailbox::StoredMessage, recipient: &service::Or
     projected
 }
 
+pub(super) fn quota_recovery(error: CliError, recipient: &service::Origin) -> CliError {
+    if error.code() != "quota-exceeded" {
+        return error;
+    }
+    let Some(details) = error.details().filter(|details| {
+        details["quota"]
+            .as_str()
+            .is_some_and(mailbox::recipient_quota)
+    }) else {
+        return error;
+    };
+    let name = crate::executable();
+    let scope = format!(
+        "--service {} --service-generation {} --credential-file <credential-file>",
+        recipient.service_id, recipient.service_generation
+    );
+    let guidance = format!(
+        "The recipient service must read pending messages with {name} message service-show, then acknowledge handled messages with {name} message service-ack using the returned revision and an idempotency key"
+    );
+    let message = format!(
+        "coordination mailbox quota exceeded; {guidance} ({} {}/{})",
+        details["quota"].as_str().expect("recipient quota name"),
+        details["count"],
+        details["limit"]
+    );
+    let mut details = details.clone();
+    details["recovery"] = json!({
+        "actor": "recipient",
+        "action": "read_and_ack",
+        "inbox_unread": format!("{name} message service-inbox {scope} --state unread --limit 100 --format json"),
+        "inbox_read": format!("{name} message service-inbox {scope} --state read --limit 100 --format json"),
+        "show": format!("{name} message service-show {scope} --message <message-id> --format json"),
+        "ack": format!("{name} message service-ack {scope} --message <message-id> --if-revision <returned-revision> --idempotency-key <unique-key> --format json"),
+        "guidance": guidance,
+    });
+    CliError::data("quota-exceeded", message, Some(details))
+}
+
 pub(super) fn daemon_payload(result: Result<Value, CliError>) -> Result<Value, CliError> {
     let mut value = result.map_err(|error| {
         if error.code() == "mailbox-service-unavailable" {

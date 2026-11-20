@@ -241,7 +241,8 @@ pub(super) fn commit(
         Some(&parent.message_id),
         now,
         now_millis,
-    )?;
+    )
+    .map_err(|error| service_mailbox::quota_recovery(error, &destination))?;
 
     let operation = request.operation();
     let message = mailbox::StoredMessage {

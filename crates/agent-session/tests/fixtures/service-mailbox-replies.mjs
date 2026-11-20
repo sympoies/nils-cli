@@ -157,6 +157,37 @@ export function serviceReplyCases({
     assert.equal(freshReply.recipient.service_generation, replacement.generation);
     assert.equal((await poll(replacement)).data.coordination.messages[0].message_id, freshReply.message_id);
     assert.equal((await poll(service)).error.code, 'mailbox-service-unauthorized');
+    await exerciseQuotaRecovery(replacement, freshParent, freshReply);
+  }
+
+  async function exerciseQuotaRecovery(principal, parent, firstReply) {
+    const stored = registry(source);
+    const seed = stored.messages.find(message => message.message_id === firstReply.message_id);
+    const limit = 256;
+    // Seed older, still-live mail so pair rate limits do not mask the quota.
+    for (let i = 1; i < limit; i++) {
+      stored.messages.push({
+        ...seed, message_id: randomUUID(),
+        created_at_epoch: seed.created_at_epoch - 61,
+        created_at_epoch_millis: seed.created_at_epoch_millis - 61_000,
+      });
+    }
+    privateWrite(join(source.root, 'coordination', 'registry.json'), stored);
+
+    const { error } = await postReply(source, parent.message_id, parent.revision, 'service-quota-reply');
+    assert.equal(error.code, 'quota-exceeded');
+    assert.equal(error.details.quota, 'recipient-messages');
+    assert.equal(error.details.count, limit);
+    assert.equal(error.details.limit, limit);
+    const { recovery } = error.details;
+    const scope = `--service ${principal.id} --service-generation ${principal.generation} --credential-file <credential-file>`;
+    assert(recovery.inbox_unread.includes(`message service-inbox ${scope} --state unread`), 'unread quota recovery must use the admitted service credential');
+    assert(recovery.inbox_read.includes(`message service-inbox ${scope} --state read`));
+    assert(recovery.show.includes(`message service-show ${scope} --message <message-id>`));
+    assert(recovery.ack.includes(`message service-ack ${scope} --message <message-id> --if-revision <returned-revision> --idempotency-key <unique-key>`));
+    assert.match(error.message, /message service-show.*message service-ack/);
+    assert(!JSON.stringify(error).includes(principal.token));
+    assert(!JSON.stringify(error).includes(principal.credential));
   }
 
   return { postReply, assertReplyRefused, exerciseLocalPolling, exerciseAdmissionChanges };
