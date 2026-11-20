@@ -371,6 +371,10 @@ pending attention entries, including approvals behind other attention and unknow
 overflow, and retains the ingress fence only during immediate pane writes, never
 while waiting for a provider acknowledgement.
 
+A structured Claude prompt admits once before its paste and keeps that fence
+through its Enter, so a hook writer arriving after the paste waits instead of
+refusing the Enter; pending ingress before the paste refuses with nothing pasted.
+
 Setup writes a **600-second** timeout for Claude `PermissionRequest`; the
 internal wait expires at **540 seconds**, and its dispatcher bound is **550
 seconds**. Expiry returns no permission decision. Setup reports a stale timeout

@@ -1680,6 +1680,7 @@ pub(crate) struct StructuredFailure {
 pub(crate) struct FailureReducer {
     thread_id: String,
     active_turn_id: Option<String>,
+    project_resumed_starts: bool,
     pending_turns: BTreeMap<String, Option<StructuredFailureKind>>,
     pending_order: VecDeque<String>,
     completed_turns: BTreeSet<String>,
@@ -1691,6 +1692,7 @@ impl FailureReducer {
         Self {
             thread_id: thread_id.into(),
             active_turn_id: None,
+            project_resumed_starts: false,
             pending_turns: BTreeMap::new(),
             pending_order: VecDeque::new(),
             completed_turns: BTreeSet::new(),
@@ -1889,16 +1891,6 @@ pub(crate) fn loaded_threads_request(id: u64) -> Value {
     json!({ "id": id, "method": "thread/loaded/list", "params": {} })
 }
 
-/// Rejoin the bound thread for live control without hydrating its unbounded
-/// turn history into a single WebSocket response.
-pub(crate) fn resume_thread_request(id: u64, thread_id: &str, cwd: &str) -> Value {
-    json!({
-        "id": id,
-        "method": "thread/resume",
-        "params": { "threadId": thread_id, "cwd": cwd, "excludeTurns": true }
-    })
-}
-
 pub(crate) fn rate_limits_request(id: u64) -> Value {
     json!({ "id": id, "method": "account/rateLimits/read" })
 }
@@ -1961,19 +1953,6 @@ pub(crate) fn steering_request(
             "threadId": thread_id,
             "expectedTurnId": expected_turn_id,
             "input": [{ "type": "text", "text": message, "text_elements": [] }]
-        }
-    })
-}
-
-pub(crate) fn latest_turn_request(id: u64, thread_id: &str) -> Value {
-    json!({
-        "id": id,
-        "method": "thread/turns/list",
-        "params": {
-            "threadId": thread_id,
-            "limit": 1,
-            "sortDirection": "desc",
-            "itemsView": "notLoaded"
         }
     })
 }
@@ -2583,7 +2562,7 @@ pub(crate) async fn run_control(
     };
     let reconnecting = thread_attached_path(&record).is_some_and(Path::is_file);
     bind_thread_and_persist_resume(&context, &record, &thread_id).await?;
-    if reconnecting {
+    let subscribed = if reconnecting || record.provider_resume.is_some() {
         request_id = request_id.saturating_add(1);
         send_json(
             &mut websocket,
@@ -2606,17 +2585,33 @@ pub(crate) async fn run_control(
         )
         .await
         {
-            Ok(_) => {}
-            Err(err) if err.ends_with("(no_rollout)") => {}
+            Ok(_) => true,
+            Err(err) if err.ends_with("(no_rollout)") => false,
             Err(err) => return Err(format!("thread/resume failed: {err}")),
         }
-    }
+    } else {
+        false
+    };
     let mut reducer = FailureReducer::new(thread_id.clone());
-
-    // A daemon may reconnect after an earned/manual provider reset moved the
-    // account ahead of the reset epoch captured in durable state. Re-read the
-    // exact bound account once so that an existing scheduled claim becomes due
-    // without waiting for a notification that happened while disconnected.
+    if subscribed && record.provider_resume.is_some() {
+        idle_probe::recover_resumed(
+            &mut websocket,
+            &mut request_id,
+            &context,
+            &record,
+            &mut reducer,
+            external_auth_account.as_deref().map(|account| {
+                (
+                    &context,
+                    &record,
+                    account,
+                    external_auth_connection_id.as_str(),
+                )
+            }),
+        )
+        .await;
+    }
+    // Re-read account usage after a reconnect to wake an existing scheduled claim.
     if control_account_ready(&context, &record, external_auth_account.as_deref())
         .await
         .is_ok()
@@ -2985,7 +2980,9 @@ pub(crate) fn replace_thread_binding(
     write_private_file(path, projected_thread_binding(thread_id).as_bytes())
 }
 
-pub(crate) use idle_probe::{probe_idle_conversation, verify_startup_quiescent};
+pub(crate) use idle_probe::{
+    latest_turn_request, probe_idle_conversation, resume_thread_request, verify_startup_quiescent,
+};
 
 async fn bind_thread_and_persist_resume(
     context: &CliContext,

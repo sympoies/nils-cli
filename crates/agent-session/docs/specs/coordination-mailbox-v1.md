@@ -418,9 +418,10 @@ controller-owned private-buffer paste plus a separate Enter. Claude uses its aut
 notice receiver. Both require exact-incarnation, authoritative-idle, detached, live-runtime,
 authoritative-broker, and no-operation checks.
 
-A wake the idle structured route
-defers because the recipient is not quiescent is recorded as `recipient-coordination-not-quiescent` with
-the blocking condition as its detail, never as `provider-not-ready`. The short `queued -> attempting` CAS is a
+A wake deferred by the idle structured route or the Claude native route for a
+known quiescence condition is recorded as `recipient-coordination-not-quiescent`
+with that condition as its detail. See [mail audit](mail-audit-v1.md#projection-schema)
+for Claude's other preclaim refusals. The short `queued -> attempting` CAS is a
 per-session submission fence: claim and
 operation admission returns `coordination-notification-submission-in-progress` with typed retry guidance
 until the submission boundary completes.

@@ -148,10 +148,8 @@ impl NotificationCandidate {
                 None,
             ));
         }
-        if record.agent == "claude"
-            && crate::send::claude_notice::runtime::readiness(context, record).is_none()
-        {
-            return Err(crate::send::claude_notice::runtime::unavailable());
+        if record.agent == "claude" {
+            crate::send::claude_notice::runtime::require_readiness(context, record)?;
         }
         let locked = super::super::lock_registry_observational(context)?;
         self.prompt = Some(

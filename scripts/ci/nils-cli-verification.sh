@@ -228,6 +228,7 @@ run python3 scripts/ci/toolchain-pin-audit.py
 run python3 scripts/ci/tests/test-shell-portability-audit.test.py
 run python3 scripts/ci/tests/toolchain-pin-audit.test.py
 run python3 scripts/ci/tests/gate-resources.test.py
+run python3 scripts/ci/tests/gate-stale-slice.test.py
 run python3 scripts/ci/tests/gate-effective-limits.test.py
 run bash scripts/ci/tests/ci-build-guard.test.sh
 run python3 scripts/ci/tests/gate-reports.test.py

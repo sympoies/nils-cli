@@ -32,6 +32,8 @@ mod remote_peer_exclusions;
 pub(crate) mod retirement;
 pub(crate) mod server;
 pub(crate) mod service;
+#[cfg(test)]
+mod test_clock;
 
 pub(crate) use broker::run_broker;
 pub(crate) use notification::NotificationCandidate;
@@ -1792,6 +1794,10 @@ fn digest_eq(left: &str, right: &str) -> bool {
 }
 
 pub fn now_epoch() -> i64 {
+    #[cfg(test)]
+    if let Some(epoch) = test_clock::epoch() {
+        return epoch;
+    }
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

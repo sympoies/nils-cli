@@ -74,3 +74,101 @@ pub(super) async fn settle_startup(
     .map_err(|error: CliError| format!("Codex startup observation failed: {}", error.code()))?;
     Ok(())
 }
+
+/// Recover resumed startup from an exact-thread snapshot on the subscribed control stream.
+pub(super) async fn recover_resumed<S>(
+    websocket: &mut S,
+    request_id: &mut u64,
+    context: &CliContext,
+    record: &SessionRecord,
+    reducer: &mut FailureReducer,
+    external_auth: Option<(&CliContext, &SessionRecord, &str, &str)>,
+) where
+    S: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
+        + futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error>
+        + Unpin,
+{
+    for _ in 0..3 {
+        let Some(state) = crate::activity::controller_state_for_record(context, record) else {
+            return;
+        };
+        if state.phase != crate::activity::TurnPhase::Starting || reducer.active_turn_id.is_some() {
+            return;
+        }
+        reducer.project_resumed_starts = true;
+        *request_id = request_id.saturating_add(1);
+        let request = json!({"id": *request_id, "method":"thread/read", "params": {
+            "threadId": reducer.thread_id, "includeTurns": false
+        }});
+        if !matches!(
+            tokio::time::timeout(Duration::from_secs(2), send_json(websocket, request)).await,
+            Ok(Ok(()))
+        ) {
+            return;
+        }
+        let result = receive_response_with_timeout(
+            websocket,
+            *request_id,
+            Some((context, record, reducer)),
+            external_auth,
+            Duration::from_secs(2),
+        )
+        .await;
+        if let Ok(result) = result {
+            if result.pointer("/thread/id").and_then(Value::as_str)
+                == Some(reducer.thread_id.as_str())
+                && result
+                    .pointer("/thread/status/type")
+                    .and_then(Value::as_str)
+                    == Some("idle")
+                && reducer.active_turn_id.is_none()
+            {
+                let context = context.clone();
+                let record = record.clone();
+                let revision = state.revision;
+                if matches!(
+                    tokio::task::spawn_blocking(move || {
+                        crate::activity::state_view::settle_resumed_starting(
+                            &context, &record, revision,
+                        )
+                    })
+                    .await,
+                    Ok(Ok(true))
+                ) {
+                    return;
+                }
+            }
+            if result
+                .pointer("/thread/status/type")
+                .and_then(Value::as_str)
+                == Some("active")
+            {
+                return;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+pub(crate) fn latest_turn_request(id: u64, thread_id: &str) -> Value {
+    json!({
+        "id": id,
+        "method": "thread/turns/list",
+        "params": {
+            "threadId": thread_id,
+            "limit": 1,
+            "sortDirection": "desc",
+            "itemsView": "notLoaded"
+        }
+    })
+}
+
+/// Rejoin the bound thread for live control without hydrating its unbounded
+/// turn history into a single WebSocket response.
+pub(crate) fn resume_thread_request(id: u64, thread_id: &str, cwd: &str) -> Value {
+    json!({
+        "id": id,
+        "method": "thread/resume",
+        "params": { "threadId": thread_id, "cwd": cwd, "excludeTurns": true }
+    })
+}

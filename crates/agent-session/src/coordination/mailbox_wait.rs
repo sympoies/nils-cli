@@ -53,7 +53,9 @@ pub(super) fn wait_with_cancellation(
     // Watch the containing directory because registry writes replace the file
     // atomically. Install the watcher before the first registry read so an
     // arrival between setup and that read is either observed or returned.
-    let root = coordination_root(context)?;
+    let root = coordination_root(context)?
+        .canonicalize()
+        .map_err(|_| notification_error())?;
     let (events_tx, events_rx) = mpsc::channel();
     let registry_path = root.join(super::REGISTRY_FILE);
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
