@@ -44,7 +44,9 @@ or integrating a specific subsystem.
   consumer schema fixture; runtime implementation follows separately.
 - [Session runtime v1](specs/session-runtime-v1.md): hybrid direction
   (structured sources by default, real terminal takeover kept), the
-  single-writer rule and per-provider signal map; design only.
+  single-writer rule and per-provider signal map; the broader runtime is a
+  design, while the Claude permission answer subsection describes an
+  implemented path.
 - [Mailbox read events v1](specs/mailbox-read-events-v1.md): display-only
   conversation events for mailbox reads and acknowledgements, identity,
   transcript-offset ordering and authorization.
