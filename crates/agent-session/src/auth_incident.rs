@@ -669,7 +669,7 @@ fn send(
         context,
         crate::cli::MessageSendArgs {
             from_session: record.id.clone(),
-            to_session: owner.session_id.clone(),
+            to_session: Some(owner.session_id.clone()),
             to_machine: (owner.machine != local_machine).then(|| owner.machine.clone()),
             body_file,
             capability_file: Some(capability),

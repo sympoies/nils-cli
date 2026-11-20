@@ -118,7 +118,7 @@ fn delegation_scope_and_use_audit_work_for_supported_harnesses() {
                 &fixture.context,
                 crate::cli::MessageSendArgs {
                     from_session: "caller".into(),
-                    to_session: recipient.into(),
+                    to_session: Some(recipient.into()),
                     to_machine: None,
                     body_file: body.clone(),
                     reply_to: None,
@@ -480,7 +480,7 @@ fn local_receipt_rechecks_expiry_after_preflight_before_commit() {
             &context,
             crate::cli::MessageSendArgs {
                 from_session: "caller".into(),
-                to_session: "a-recipient".into(),
+                to_session: Some("a-recipient".into()),
                 to_machine: None,
                 body_file: body,
                 reply_to: None,

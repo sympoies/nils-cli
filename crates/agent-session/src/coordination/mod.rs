@@ -32,6 +32,8 @@ mod remote_peer_exclusions;
 pub(crate) mod retirement;
 pub(crate) mod server;
 pub(crate) mod service;
+pub(crate) mod service_mailbox;
+pub(crate) mod service_reply;
 #[cfg(test)]
 mod test_clock;
 
@@ -298,6 +300,21 @@ pub(crate) fn run_message(context: &CliContext, args: cli::MessageArgs) -> i32 {
             "message-service-send",
             args.format,
             service::cli_send(context, args).map_err(service::recovery),
+        ),
+        MessageCommand::ServiceInbox(args) => (
+            "message-service-inbox",
+            args.credential.format,
+            service_mailbox::cli_inbox(context, args),
+        ),
+        MessageCommand::ServiceShow(args) => (
+            "message-service-show",
+            args.credential.format,
+            service_mailbox::cli_show(context, args),
+        ),
+        MessageCommand::ServiceAck(args) => (
+            "message-service-ack",
+            args.credential.format,
+            service_mailbox::cli_ack(context, args),
         ),
         MessageCommand::Send(args) => ("message-send", args.format, mailbox::send(context, args)),
         MessageCommand::Forward(args) => (

@@ -480,7 +480,8 @@ fn service_start_credentials_are_never_shared_with_other_authorities() {
     private_file(
         &mailbox,
         &serde_json::to_vec(&json!({
-            "schema_version": "agent-session.mailbox-services.v1",
+            "schema_version": "agent-session.mailbox-services.v2",
+            "retired": [],
             "services": [{
                 "service_id": "reporter",
                 "service_generation": GENERATION,

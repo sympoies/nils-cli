@@ -209,9 +209,7 @@ registry-locked transaction that replaces the broker:
 
 ## Service recipients
 
-This contract specifies the local service reply behavior for
-[#3797](https://github.com/sympoies/nils-cli/issues/3797). Implementation and
-synthetic acceptance tests follow in PR 2.
+This contract covers local service reply delivery and the service inbox.
 
 ### Address and reply resolution
 
@@ -308,11 +306,11 @@ are terminal for that address. Service credentials stay with the owning daemon.
 
 ### Implementation test plan
 
-PR 2 will use synthetic services, isolated registries and a fixture relay.
+The acceptance suite uses synthetic services, isolated registries and a fixture relay.
 
-| #3797 acceptance | PR 2 verification |
+| #3797 acceptance | Verification |
 | --- | --- |
-| Agree on the written contract before implementation | Review this spec in PR 1. Bind the PR 2 fixtures to the agreed behaviors below. |
+| Agree on the written contract before implementation | The implementation follows the reviewed contract and covers the behaviors below. |
 | A session reply to a local service-origin message reaches that service's inbox | Exercise both CLI reply forms and the daemon reply route. Exercise the three service inbox HTTP routes. Assert the exact address, parent link, bounded metadata listing, show/read and revision-checked ack. Replay and assert one delivery. Use a second service's credential to verify list isolation, reject a foreign cursor on list, and reject the other service's message ID on show and ack. Assert that service delivery schedules no notification. |
 | Refuse unadmitted or retired recipients with a typed error | Remove a known service's admission and then explicitly retire it. Assert both refusal codes and check that a rewrite preserves the retirement refusal, even after admitting a fresh generation. Roll over an active service and verify the generation conflict, stale credential refusal, empty replacement inbox and delivery to a replacement-generation parent. Replay a committed request across rollover and verify the original receipt with no extra delivery. Cover unknown identity in a resolver fixture, unreadable and invalid admission (including an active and retired entry for the same generation) in the daemon fixture, and remote origin refusal using the fixture relay. Assert refusals preserve the parent, create no mail or success receipt and queue no outbox work. |
 | Preserve session-to-session replies | Retain local and federated session reply fixtures for explicit `--to --reply-to`, parent binding, revision checks, idempotency and the session recipient projection. |

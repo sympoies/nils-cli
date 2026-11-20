@@ -166,7 +166,10 @@ struct MessageBody {
     text: String,
 }
 
-pub(crate) fn send(context: &CliContext, args: MessageSendArgs) -> Result<Value, CliError> {
+pub(crate) fn send(context: &CliContext, mut args: MessageSendArgs) -> Result<Value, CliError> {
+    let Some(recipient) = args.to_session.take() else {
+        return super::service_reply::cli_send(context, args);
+    };
     // A machine that names this host is the local mailbox, never the federation outbox.
     let local_machine = crate::board::machine_identity(None, context);
     if args
@@ -174,12 +177,16 @@ pub(crate) fn send(context: &CliContext, args: MessageSendArgs) -> Result<Value,
         .as_deref()
         .is_some_and(|machine| machine != local_machine)
     {
-        return super::remote::cli_send(context, args);
+        return super::remote::cli_send(context, args, &recipient);
     }
-    send_impl(context, args)
+    send_impl(context, args, &recipient)
 }
 
-fn send_impl(context: &CliContext, args: MessageSendArgs) -> Result<Value, CliError> {
+fn send_impl(
+    context: &CliContext,
+    args: MessageSendArgs,
+    recipient: &str,
+) -> Result<Value, CliError> {
     let capability_file = resolve_capability_file(args.capability_file.as_deref())?;
     let machine = crate::board::machine_identity(None, context);
     let (record, sender_incarnation) = super::delegation::authenticate_file(
@@ -188,7 +195,7 @@ fn send_impl(context: &CliContext, args: MessageSendArgs) -> Result<Value, CliEr
         Some(&capability_file),
         super::delegation::Use::LocalMessageSend {
             machine: &machine,
-            recipient: &args.to_session,
+            recipient,
         },
         true,
     )?;
@@ -197,7 +204,7 @@ fn send_impl(context: &CliContext, args: MessageSendArgs) -> Result<Value, CliEr
         context,
         &record.id,
         &sender_incarnation,
-        &args.to_session,
+        recipient,
         body,
         args.reply_to,
         args.expires_in.as_deref(),
@@ -360,26 +367,13 @@ pub(crate) fn inbox(context: &CliContext, mut args: MessageInboxArgs) -> Result<
         authenticate_from_file(context, &session, Some(&capability_file))?;
     args.categories.sort_unstable();
     args.categories.dedup();
-    let limit = args.limit.unwrap_or(DEFAULT_PAGE);
-    if limit == 0 || limit > MAX_PAGE {
-        return Err(CliError::usage(
-            "cursor-invalid",
-            "inbox limit must be between 1 and 100",
-            None,
-        ));
-    }
-    if args.state.as_deref().is_some_and(|state| {
-        !matches!(
-            state,
-            "unread" | "read" | "acknowledged" | "quarantined" | "expired"
-        )
-    }) {
-        return Err(CliError::usage(
-            "cursor-invalid",
-            "inbox state filter is invalid",
-            None,
-        ));
-    }
+    let filters = InboxFilters {
+        state: args.state.as_deref(),
+        cursor: args.cursor.as_deref(),
+        limit: args.limit,
+        categories: &args.categories,
+    };
+    let limit = filters.validate()?;
     let now = now_epoch();
     let mut locked = lock_registry(context)?;
     clean_expired(&mut locked.registry, now);
@@ -390,19 +384,83 @@ pub(crate) fn inbox(context: &CliContext, mut args: MessageInboxArgs) -> Result<
         &recipient_incarnation,
         &capability_file,
     )?;
-    let mut messages: Vec<_> = locked
-        .registry
+    let (page, next_cursor) = inbox_page(
+        &mut locked.registry,
+        &record.id,
+        &recipient_incarnation,
+        &filters,
+        limit,
+        now,
+    )?;
+    let relations = super::mailbox_sender_relation::SenderRelations::new(context, &record);
+    let rows: Vec<_> = page
+        .into_iter()
+        .map(|message| RelatedMetadata {
+            metadata: metadata(message),
+            relation: relations.inbox_view(message),
+        })
+        .collect();
+    let warning = quota_warning(&locked.registry, &record.id, now);
+    locked.save()?;
+    Ok(json!({
+        "schema_version": "agent-session.message-inbox.v1",
+        "guidance": super::mailbox_sender_relation::inbox_guidance(),
+        "messages": rows,
+        "next_cursor": next_cursor,
+        "mailbox_quota_warning": warning,
+    }))
+}
+
+pub(super) struct InboxFilters<'a> {
+    pub state: Option<&'a str>,
+    pub cursor: Option<&'a str>,
+    pub limit: Option<usize>,
+    pub categories: &'a [MessageCategory],
+}
+
+impl InboxFilters<'_> {
+    pub(super) fn validate(&self) -> Result<usize, CliError> {
+        let limit = self.limit.unwrap_or(DEFAULT_PAGE);
+        if limit == 0 || limit > MAX_PAGE {
+            return Err(CliError::usage(
+                "cursor-invalid",
+                "inbox limit must be between 1 and 100",
+                None,
+            ));
+        }
+        if self.state.is_some_and(|state| {
+            !matches!(
+                state,
+                "unread" | "read" | "acknowledged" | "quarantined" | "expired"
+            )
+        }) {
+            return Err(CliError::usage(
+                "cursor-invalid",
+                "inbox state filter is invalid",
+                None,
+            ));
+        }
+        Ok(limit)
+    }
+}
+
+pub(super) fn inbox_page<'a>(
+    registry: &'a mut Registry,
+    recipient: &str,
+    incarnation: &str,
+    filters: &InboxFilters<'_>,
+    limit: usize,
+    now: i64,
+) -> Result<(Vec<&'a StoredMessage>, Option<String>), CliError> {
+    let mut messages: Vec<_> = registry
         .messages
         .iter()
         .filter(|message| {
-            message.recipient_session_id == record.id
-                && message.recipient_incarnation == recipient_incarnation
-                && args
-                    .state
-                    .as_deref()
-                    .is_none_or(|state| message.state == state)
-                && (args.categories.is_empty()
-                    || args
+            message.recipient_session_id == recipient
+                && message.recipient_incarnation == incarnation
+                && filters.state.is_none_or(|state| message.state == state)
+                && (filters.categories.is_empty()
+                    || filters
                         .categories
                         .contains(&message.category.unwrap_or_default()))
         })
@@ -410,16 +468,16 @@ pub(crate) fn inbox(context: &CliContext, mut args: MessageInboxArgs) -> Result<
     messages.sort_by(|left, right| {
         (left.created_at_epoch, &left.message_id).cmp(&(right.created_at_epoch, &right.message_id))
     });
-    let start = match args.cursor.as_deref() {
+    let start = match filters.cursor {
         Some(cursor) => {
-            let cursor =
-                locked.registry.cursors.get(cursor).ok_or_else(|| {
-                    CliError::data("cursor-invalid", "inbox cursor is invalid", None)
-                })?;
-            if cursor.recipient_session_id != record.id
-                || cursor.recipient_incarnation != recipient_incarnation
-                || cursor.state != args.state
-                || cursor.categories != args.categories
+            let cursor = registry
+                .cursors
+                .get(cursor)
+                .ok_or_else(|| CliError::data("cursor-invalid", "inbox cursor is invalid", None))?;
+            if cursor.recipient_session_id != recipient
+                || cursor.recipient_incarnation != incarnation
+                || cursor.state.as_deref() != filters.state
+                || cursor.categories != filters.categories
                 || cursor.expires_at_epoch <= now
             {
                 return Err(CliError::data(
@@ -443,16 +501,15 @@ pub(crate) fn inbox(context: &CliContext, mut args: MessageInboxArgs) -> Result<
     let next_cursor = if start.saturating_add(page.len()) < total {
         let last = page.last().expect("a remaining page has a predecessor");
         let desired = InboxCursor {
-            recipient_session_id: record.id.clone(),
-            recipient_incarnation: recipient_incarnation.clone(),
-            state: args.state.clone(),
-            categories: args.categories.clone(),
+            recipient_session_id: recipient.to_owned(),
+            recipient_incarnation: incarnation.to_owned(),
+            state: filters.state.map(str::to_owned),
+            categories: filters.categories.to_vec(),
             after_created_at_epoch: last.created_at_epoch,
             after_message_id: last.message_id.clone(),
             expires_at_epoch: now.saturating_add(CURSOR_TTL_SECS),
         };
-        let existing = locked
-            .registry
+        let existing = registry
             .cursors
             .iter()
             .find(|(_, cursor)| {
@@ -465,28 +522,26 @@ pub(crate) fn inbox(context: &CliContext, mut args: MessageInboxArgs) -> Result<
             })
             .map(|(key, _)| key.clone());
         let opaque = if let Some(existing) = existing {
-            locked
-                .registry
+            registry
                 .cursors
                 .get_mut(&existing)
                 .expect("existing cursor remains present")
                 .expires_at_epoch = desired.expires_at_epoch;
             existing
         } else {
-            let principal_cursors = locked
-                .registry
+            let principal_cursors = registry
                 .cursors
                 .values()
                 .filter(|cursor| {
-                    cursor.recipient_session_id == record.id
-                        && cursor.recipient_incarnation == recipient_incarnation
+                    cursor.recipient_session_id == recipient
+                        && cursor.recipient_incarnation == incarnation
                 })
                 .count();
-            if locked.registry.cursors.len() >= MAX_CURSORS {
+            if registry.cursors.len() >= MAX_CURSORS {
                 return Err(super::quota_exceeded(
                     "coordination cursor quota exceeded",
                     "cursors",
-                    locked.registry.cursors.len(),
+                    registry.cursors.len(),
                     MAX_CURSORS,
                 ));
             }
@@ -499,30 +554,14 @@ pub(crate) fn inbox(context: &CliContext, mut args: MessageInboxArgs) -> Result<
                 ));
             }
             let opaque = uuid::Uuid::new_v4().simple().to_string();
-            locked.registry.cursors.insert(opaque.clone(), desired);
+            registry.cursors.insert(opaque.clone(), desired);
             opaque
         };
         Some(opaque)
     } else {
         None
     };
-    let relations = super::mailbox_sender_relation::SenderRelations::new(context, &record);
-    let rows: Vec<_> = page
-        .into_iter()
-        .map(|message| RelatedMetadata {
-            metadata: metadata(message),
-            relation: relations.inbox_view(message),
-        })
-        .collect();
-    let warning = quota_warning(&locked.registry, &record.id, now);
-    locked.save()?;
-    Ok(json!({
-        "schema_version": "agent-session.message-inbox.v1",
-        "guidance": super::mailbox_sender_relation::inbox_guidance(),
-        "messages": rows,
-        "next_cursor": next_cursor,
-        "mailbox_quota_warning": warning,
-    }))
+    Ok((page, next_cursor))
 }
 
 pub(crate) fn show(context: &CliContext, args: MessageShowArgs) -> Result<Value, CliError> {
@@ -628,6 +667,14 @@ pub(crate) fn ack(context: &CliContext, args: MessageAckArgs) -> Result<Value, C
 }
 
 pub(crate) fn reply(context: &CliContext, args: MessageReplyArgs) -> Result<Value, CliError> {
+    reply_with_service(context, args, None)
+}
+
+pub(super) fn reply_with_service(
+    context: &CliContext,
+    args: MessageReplyArgs,
+    daemon: Option<super::service_reply::Daemon<'_>>,
+) -> Result<Value, CliError> {
     let capability_file = resolve_capability_file(args.capability_file.as_deref())?;
     let (record, sender_incarnation) =
         authenticate_from_file(context, &args.session, Some(&capability_file))?;
@@ -644,7 +691,8 @@ pub(crate) fn reply(context: &CliContext, args: MessageReplyArgs) -> Result<Valu
     let sender =
         crate::load_session_record(context, &record.id).map_err(|_| super::unauthorized())?;
     let mut locked = lock_registry(context)?;
-    let registry_changed = clean_expired(&mut locked.registry, now_epoch());
+    let now = now_epoch();
+    let registry_changed = clean_expired(&mut locked.registry, now);
     revalidate_capability_file(
         context,
         &locked.registry,
@@ -660,6 +708,11 @@ pub(crate) fn reply(context: &CliContext, args: MessageReplyArgs) -> Result<Valu
         "message-reply",
         &digest,
     )? {
+        if daemon.is_none() && super::service_reply::is_service_result(&replay) {
+            drop(locked);
+            drop(_sender_lock);
+            return super::service_reply::cli_reply(context, args, body);
+        }
         if registry_changed {
             locked.save()?;
         }
@@ -675,6 +728,24 @@ pub(crate) fn reply(context: &CliContext, args: MessageReplyArgs) -> Result<Valu
                 && message.recipient_incarnation == sender_incarnation
         })
         .cloned();
+    if let Some(parent) = original.as_ref()
+        && super::service::is_service_principal(&parent.sender_session_id)
+    {
+        if let Some(daemon) = daemon {
+            return super::service_reply::commit(
+                locked,
+                daemon,
+                (&record.id, &sender_incarnation),
+                parent,
+                super::service_reply::Request::checked(args, body),
+                digest,
+                now,
+            );
+        }
+        drop(locked);
+        drop(_sender_lock);
+        return super::service_reply::cli_reply(context, args, body);
+    }
     if original
         .as_ref()
         .is_none_or(|message| super::remote::is_remote_sender(&message.sender_session_id))
@@ -694,13 +765,6 @@ pub(crate) fn reply(context: &CliContext, args: MessageReplyArgs) -> Result<Valu
     drop(locked);
     drop(_sender_lock);
     let original = original.ok_or_else(message_not_found)?;
-    if super::service::is_service_sender(&original.sender_session_id) {
-        return Err(CliError::data(
-            "mailbox-service-reply-unsupported",
-            "service origins have no session reply mailbox",
-            None,
-        ));
-    }
     if super::remote::is_remote_sender(&original.sender_session_id) {
         return super::remote::cli_reply(context, &args, &original, body);
     }
@@ -735,7 +799,7 @@ pub(crate) fn reply(context: &CliContext, args: MessageReplyArgs) -> Result<Valu
     )
 }
 
-fn reply_request_digest(
+pub(super) fn reply_request_digest(
     sender_session_id: &str,
     message_id: &str,
     body: &str,
@@ -1299,7 +1363,7 @@ pub(crate) fn resolve_capability_file(path: Option<&Path>) -> Result<PathBuf, Cl
 }
 
 fn body_classification(message: &StoredMessage) -> &'static str {
-    if super::service::is_service_sender(&message.sender_session_id)
+    if super::service::is_service_principal(&message.sender_session_id)
         || message
             .forwarding
             .as_ref()
@@ -1363,7 +1427,7 @@ pub(super) fn message_projection(message: &StoredMessage) -> Value {
     serde_json::to_value(metadata(message)).expect("message metadata")
 }
 
-fn find_recipient_message_mut<'a>(
+pub(super) fn find_recipient_message_mut<'a>(
     registry: &'a mut Registry,
     session_id: &str,
     incarnation: &str,
@@ -1481,7 +1545,7 @@ fn body_invalid() -> CliError {
     )
 }
 
-fn message_not_found() -> CliError {
+pub(super) fn message_not_found() -> CliError {
     CliError::data(
         "message-not-found",
         "coordination message was not found",
@@ -1489,7 +1553,7 @@ fn message_not_found() -> CliError {
     )
 }
 
-fn message_expired() -> CliError {
+pub(super) fn message_expired() -> CliError {
     CliError::data("message-expired", "coordination message has expired", None)
 }
 
@@ -1502,7 +1566,7 @@ pub(super) fn now_epoch_millis() -> i64 {
         .unwrap_or(i64::MAX)
 }
 
-fn message_revision_conflict() -> CliError {
+pub(super) fn message_revision_conflict() -> CliError {
     CliError::data(
         "message-revision-conflict",
         "message revision fence did not match",

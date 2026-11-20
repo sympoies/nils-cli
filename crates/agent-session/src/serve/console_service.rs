@@ -1,6 +1,9 @@
 //! Loopback routes for explicitly admitted local services.
 use super::*;
 
+#[path = "service_mailbox.rs"]
+mod mailbox;
+
 /// Admission documents of the services this daemon accepts; each is disabled when omitted.
 #[derive(Default)]
 pub(super) struct ServiceFiles {
@@ -28,6 +31,7 @@ impl ServiceFiles {
 
 pub(super) fn routes() -> Router<Arc<ServeState>> {
     Router::new()
+        .merge(mailbox::routes())
         .route(
             crate::coordination::service::ROUTE,
             post(service_mailbox_handler),
@@ -36,6 +40,37 @@ pub(super) fn routes() -> Router<Arc<ServeState>> {
             crate::coordination::console_start::service::ROUTE,
             post(service_console_start_handler),
         )
+}
+
+// The public session reply route also resolves local service-origin parents.
+pub(super) fn reply(
+    state: &ServeState,
+    id: &str,
+    message: &str,
+    token: &str,
+    body: coordination_server::ReplyBody,
+) -> Result<Value, CliError> {
+    coordination_server::reply(
+        &state.context,
+        id,
+        message,
+        token,
+        body,
+        mailbox_daemon(state),
+    )
+}
+
+pub(super) fn wake_after_reply(state: &ServeState, value: &Value) {
+    if !crate::coordination::service_reply::is_service_result(value) {
+        state.coordination_notification_wake.notify_one();
+    }
+}
+
+fn mailbox_daemon(state: &ServeState) -> crate::coordination::service_reply::Daemon<'_> {
+    crate::coordination::service_reply::Daemon {
+        machine: &state.machine,
+        admission: state.service_files.mailbox.as_deref(),
+    }
 }
 
 /// Bounds concurrent Console starts by admitted services, apart from mailbox submission.

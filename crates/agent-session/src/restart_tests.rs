@@ -336,7 +336,7 @@ fn queued_notification(
         context,
         crate::cli::MessageSendArgs {
             from_session: ID.to_string(),
-            to_session: ID.to_string(),
+            to_session: Some(ID.to_string()),
             to_machine: None,
             body_file: body,
             capability_file: Some(PathBuf::from(capability)),

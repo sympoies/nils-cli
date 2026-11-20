@@ -57,8 +57,6 @@ agent-session message reminder --session ID [--capability-file FILE]
 The `send --reply-to` form without an explicit destination requires a
 service-origin parent. It and `message reply` follow the
 [service recipient contract](coordination-mailbox-v1.md#service-recipients).
-These service reply forms and the polling commands specify the local
-implementation in #3797.
 
 JSON uses the existing `cli.agent-session.<command>.v1` success/error envelope
 convention. For `message wait --any-unread`, exit `0` means unread metadata

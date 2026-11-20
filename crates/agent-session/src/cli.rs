@@ -5,6 +5,12 @@ pub(crate) mod drafts;
 pub(crate) mod operator_rules;
 pub(crate) mod permission;
 pub(crate) mod send_key;
+mod service_mailbox;
+
+pub use service_mailbox::{
+    MessageServiceAckArgs, MessageServiceInboxArgs, MessageServiceShowArgs,
+    ServiceMailboxCredential,
+};
 
 use std::path::PathBuf;
 
@@ -901,6 +907,12 @@ pub enum MessageCommand {
     Forward(MessageForwardArgs),
     /// Submit a body-file through the owning daemon as an explicitly admitted local service.
     ServiceSend(MessageServiceSendArgs),
+    /// Poll metadata for the exact admitted mailbox service.
+    ServiceInbox(MessageServiceInboxArgs),
+    /// Read one reply as the admitted mailbox service.
+    ServiceShow(MessageServiceShowArgs),
+    /// Acknowledge one reply as the admitted mailbox service.
+    ServiceAck(MessageServiceAckArgs),
     /// List bounded private mailbox metadata for the authenticated recipient.
     Inbox(MessageInboxArgs),
     /// Read one private message body as its authenticated recipient.
@@ -1039,10 +1051,11 @@ pub struct MessageSendArgs {
     /// Authenticated managed session id sending the message.
     #[arg(long = "from")]
     pub from_session: String,
-    #[arg(long = "to")]
-    pub to_session: String,
+    /// Session destination. Omit for a reply to an authenticated service origin.
+    #[arg(long = "to", required_unless_present = "reply_to")]
+    pub to_session: Option<String>,
     /// Remote machine; omitted keeps local mailbox behavior.
-    #[arg(long)]
+    #[arg(long, requires = "to_session")]
     pub to_machine: Option<String>,
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub body_file: PathBuf,

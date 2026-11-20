@@ -1,9 +1,28 @@
 //! CLI mailbox requests to the local federation daemon.
 use super::*;
 
+/// Bounded federation HTTP client: 15-second timeout, redirects refused.
+pub(crate) fn client() -> Result<reqwest::blocking::Client, CliError> {
+    client_builder().build().map_err(|_| unavailable())
+}
+
+pub(in crate::coordination) fn daemon_client() -> Result<reqwest::blocking::Client, CliError> {
+    client_builder()
+        .no_proxy()
+        .build()
+        .map_err(|_| unavailable())
+}
+
+fn client_builder() -> reqwest::blocking::ClientBuilder {
+    reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+}
+
 pub(crate) fn cli_send(
     context: &CliContext,
     args: crate::cli::MessageSendArgs,
+    recipient: &str,
 ) -> Result<Value, CliError> {
     super::super::mailbox::parse_reply_by(args.reply_by.as_deref())?;
     let body = super::super::mailbox::read_body(&args.body_file)?;
@@ -13,7 +32,7 @@ pub(crate) fn cli_send(
         args.capability_file.as_deref(),
         &format!("/sessions/{}/messages/remote/v1", args.from_session),
         Some(with_category(
-            json!({"to_machine":args.to_machine,"to_session":args.to_session,"body":body,"idempotency_key":args.idempotency_key,"reply_to":args.reply_to,"expires_in":args.expires_in,"reply_by":args.reply_by,"reply_revision":null}),
+            json!({"to_machine":args.to_machine,"to_session":recipient,"body":body,"idempotency_key":args.idempotency_key,"reply_to":args.reply_to,"expires_in":args.expires_in,"reply_by":args.reply_by,"reply_revision":null}),
             args.category,
         )),
     )
@@ -60,17 +79,38 @@ pub(super) fn local_request(
     } else {
         body.as_ref().map(|_| "retry-same-idempotency-key")
     };
-    request_daemon(context, session, capability, path, body).map_err(|error| match next_action {
-        Some(action) => crate::contention::mailbox_error(error, action),
-        None => error,
+    request_daemon(context, session, capability, path, body, client).map_err(|error| {
+        match next_action {
+            Some(action) => crate::contention::mailbox_error(error, action),
+            None => error,
+        }
     })
 }
+pub(in crate::coordination) fn local_service_reply(
+    context: &CliContext,
+    session: &str,
+    capability: Option<&Path>,
+    path: &str,
+    body: Value,
+) -> Result<Value, CliError> {
+    request_daemon(
+        context,
+        session,
+        capability,
+        path,
+        Some(body),
+        daemon_client,
+    )
+    .map_err(|error| crate::contention::mailbox_error(error, "retry-same-idempotency-key"))
+}
+
 fn request_daemon(
     context: &CliContext,
     session: &str,
     capability: Option<&Path>,
     path: &str,
     body: Option<Value>,
+    build_client: fn() -> Result<reqwest::blocking::Client, CliError>,
 ) -> Result<Value, CliError> {
     let capability = super::super::mailbox::resolve_capability_file(capability)?;
     super::super::delegation::authenticate_remote_request(
@@ -86,7 +126,7 @@ fn request_daemon(
     )
     .map_err(|_| super::super::unauthorized())?;
     let url = daemon_url(context)?;
-    let client = client()?;
+    let client = build_client()?;
     let request = match body {
         Some(body) => client
             .post(format!("{}{path}", url.as_str().trim_end_matches('/')))

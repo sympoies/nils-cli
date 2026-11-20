@@ -236,7 +236,7 @@ fn sender(message: &Inbox, machine: &str) -> Value {
         .map(|address| json!(address))
         .unwrap_or(Value::Null);
     }
-    if super::service::is_service_sender(&message.sender_session_id) {
+    if super::service::is_service_principal(&message.sender_session_id) {
         return super::service::sender_origin_metadata(&message.sender_session_id,&message.sender_incarnation)
             .map(|origin| json!({"kind":"service","machine":origin.machine,"service_id":origin.service_id,"service_generation":origin.service_generation})).unwrap_or(Value::Null);
     }
@@ -445,6 +445,7 @@ fn snapshot_at(
         let mut candidates: Vec<_> = registry
             .messages
             .iter()
+            .filter(|m| !super::service::is_service_principal(&m.recipient_session_id))
             .map(|m| {
                 let from = sender(m, machine);
                 let to = remote::Address {
