@@ -63,6 +63,10 @@ return `mailbox-body-invalid`, while bodies over 16 KiB return
 `mailbox-body-too-large`. Service submission preserves these codes with
 `retryable: false` recovery metadata.
 
+The same body, expiry, recipient, registry, send rate and page limits apply to
+[service recipients](#service-recipients). Each exact service address has its
+own recipient quota.
+
 ### Quota rejection evidence and alerts
 
 Read messages continue to count toward the unchanged 256-message / 4 MiB
@@ -203,11 +207,121 @@ registry-locked transaction that replaces the broker:
   further transfer stays with its predecessor. A carry schedules the usual
   body-free reminder for the new incarnation.
 
+## Service recipients
+
+This contract specifies the local service reply behavior for
+[#3797](https://github.com/sympoies/nils-cli/issues/3797). Implementation and
+synthetic acceptance tests follow in PR 2.
+
+### Address and reply resolution
+
+A service recipient is `{kind: "service", machine, service_id, service_generation}`.
+The owning daemon supplies its canonical machine identity for local operations.
+Persistence and authorization compare all fields of the address.
+
+`message reply --message UUID --if-revision REV` and
+`message send --reply-to UUID` resolve a service destination solely from the
+parent's authenticated stored origin in the caller's current session
+incarnation. Omit `--to` and `--to-machine` for the service form of `send`.
+Service delivery requires a service-origin parent. Session parents and
+`message send --to SESSION [--to-machine MACHINE] [--reply-to UUID]`
+retain the session recipient representation and existing parent binding rules.
+
+The owning daemon authenticates the caller's session capability. Under the
+registry lock it rechecks parent ownership, exact origin, expiry, reply depth,
+parent revision for `message reply`, and destination admission.
+Acceptance commits the reply, the parent's `reply_sent_at_epoch` marker and
+the idempotency receipt together. A retained receipt binds the original request
+and exact destination.
+An authenticated replay of the identical committed request returns that receipt
+even after rollover, with no new delivery. A refused reply leaves the parent
+unchanged and creates no reply or success receipt.
+
+### Credential-scoped inbox
+
+A service polls its own inbox through the owning daemon. Each
+`message service-inbox`, `service-show`, and `service-ack` operation uses
+`--service ID --service-generation GENERATION --credential-file FILE` and
+direct loopback service authentication. Each admitted principal has a distinct
+credential. The daemon revalidates the credential and admission under the
+mailbox lock for every operation. Message lookups, cursors and ack receipts
+are scoped to the exact service address.
+
+`service-inbox` returns a bounded metadata page. `service-show` returns
+one body and advances unread mail to read. `service-ack` uses revision
+compare-and-swap and an idempotency key. Acknowledgement releases capacity.
+Session capabilities, operator bearers and federation credentials grant no
+service inbox access. Service recipients have no wait, notification, wake or
+resume path.
+
+### Generation changes and retirement
+
+Rollover provisions a fresh generation and a fresh distinct credential. The
+new generation starts with an empty inbox. Pending mail stays bound to its
+old address until normal expiry and compaction. A reply to an old parent
+never moves to the replacement generation.
+
+Removing an active entry revokes admission. For explicit retirement, atomically
+remove the active entry and add the exact service ID and generation to the
+daemon-owned admission document's `retired` array. The marker closes reads and
+new deliveries for that generation. Preserve existing markers on every
+rewrite, including when admitting a fresh generation for the same service ID.
+A retired or superseded generation can never be reused.
+
+The local reply contract uses `agent-session.mailbox-services.v2` with required
+`services` and `retired` arrays. Each `services` entry contains `service_id`,
+`service_generation` and `credential_file`. An ID has at most one active entry.
+Each `retired` entry contains only `service_id` and `service_generation`, and
+those pairs are unique. The exact same pair in both arrays invalidates the
+document. A marker for an older generation can coexist with a different active
+generation of the same ID. The
+[admission example](../runbooks/serve-daemon.md#admit-a-local-mailbox-service)
+shows both entries.
+
+### Service recipient refusals
+
+After authenticating the session and binding the parent, the daemon returns a
+fixed, content-free code with `retryable: false` for each recipient refusal.
+
+| Code | Meaning |
+| --- | --- |
+| `mailbox-service-recipient-unknown` | The ID has no trusted identity evidence. A verified local service-origin parent supplies that evidence. |
+| `mailbox-service-recipient-unadmitted` | A known ID has no current admission, for example after removal of its entry. |
+| `mailbox-service-recipient-retired` | The requested identity is explicitly retired. |
+| `mailbox-service-recipient-generation-conflict` | The ID has an active entry with a different generation and the requested generation has no retirement marker. |
+
+An unreadable or invalid admission document fails closed with
+`mailbox-service-unavailable`. The daemon cannot infer recipient status
+from a failed read and makes no change to the parent. Service-side credential
+failures retain `mailbox-service-unauthorized`.
+
+### Local delivery and relay boundary
+
+The local slice persists same-machine replies in the local registry. A remote
+service-origin parent returns `mailbox-service-reply-route-unsupported` with
+`retryable: false`. This refusal neither queues a reply nor changes the parent.
+The later relay must preserve the authenticated session sender, exact service
+destination and parent link across retries. It verifies destination machine
+and admission, and destination ingress rechecks the generation before
+persistence. Receipts bind the same address. Generation and admission refusals
+are terminal for that address. Service credentials stay with the owning daemon.
+
+### Implementation test plan
+
+PR 2 will use synthetic services, isolated registries and a fixture relay.
+
+| #3797 acceptance | PR 2 verification |
+| --- | --- |
+| Agree on the written contract before implementation | Review this spec in PR 1. Bind the PR 2 fixtures to the agreed behaviors below. |
+| A session reply to a local service-origin message reaches that service's inbox | Exercise both CLI reply forms and the daemon reply route. Exercise the three service inbox HTTP routes. Assert the exact address, parent link, bounded metadata listing, show/read and revision-checked ack. Replay and assert one delivery. Use a second service's credential to verify list isolation, reject a foreign cursor on list, and reject the other service's message ID on show and ack. Assert that service delivery schedules no notification. |
+| Refuse unadmitted or retired recipients with a typed error | Remove a known service's admission and then explicitly retire it. Assert both refusal codes and check that a rewrite preserves the retirement refusal, even after admitting a fresh generation. Roll over an active service and verify the generation conflict, stale credential refusal, empty replacement inbox and delivery to a replacement-generation parent. Replay a committed request across rollover and verify the original receipt with no extra delivery. Cover unknown identity in a resolver fixture, unreadable and invalid admission (including an active and retired entry for the same generation) in the daemon fixture, and remote origin refusal using the fixture relay. Assert refusals preserve the parent, create no mail or success receipt and queue no outbox work. |
+| Preserve session-to-session replies | Retain local and federated session reply fixtures for explicit `--to --reply-to`, parent binding, revision checks, idempotency and the session recipient projection. |
+
 ## Notification ownership
 
-Every successful authenticated send or reply persists the unread message. Unless
-the destination policy suppresses that admission, it advances a notification
-generation keyed by the exact
+Every successful authenticated send or reply persists the unread message.
+A send or reply to a session also advances a notification generation unless
+the destination policy suppresses that admission. The generation uses the exact
 `(recipient_session_id, recipient_incarnation)`. Message creation owns no
 provider side effect. The long-lived serve controller drains queued generations
 on startup, after HTTP registry writes, and while observing activity/registry
@@ -257,7 +371,10 @@ reads a selected message body.
 
 ### Local authority refusals
 
-Inbox, show and `broker identity` use the same recipient authority checks.
+Service reply admission and service inbox access follow the
+[service recipient refusals](#service-recipient-refusals).
+
+Session inbox, show and `broker identity` use the same recipient authority checks.
 An earlier successful inbox read does not grant authority to a later show:
 the broker or runtime may have changed between commands. A refusal never marks
 the selected unread message read or acknowledges it.
