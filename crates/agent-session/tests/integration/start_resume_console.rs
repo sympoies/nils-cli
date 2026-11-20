@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
-    process::{Child, Command, Stdio},
+    process::{Child, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -395,37 +395,38 @@ fn target_http_resume_creates_new_identity_and_preserves_account_context_and_pro
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     drop(listener);
-    let child = Command::new(nils_test_support::bin::resolve("agent-session"))
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .env("HOME", f.tmp.path())
-        .env("AGENT_HOME", f.tmp.path().join("agent-home"))
-        .env("CLAUDE_CONFIG_DIR", f.tmp.path().join("unrelated-default"))
-        .env(
-            "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER",
-            json!([f.broker]).to_string(),
-        )
-        .env("AGENT_SESSION_CLAUDE_BIN", f.tmp.path().join("provider"))
-        .env("AGENT_SESSION_FAKE_TMUX_LOG", f.tmp.path().join("tmux.log"))
-        .env("AGENT_SESSION_FAKE_TMUX_ABSENT_BEFORE_LAUNCH", "1")
-        .arg("--state-dir")
-        .arg(&f.state)
-        .args([
-            "serve",
-            "--bind",
-            &address.to_string(),
-            "--machine",
-            "target",
-            "--token",
-            TOKEN,
-            "--tmux-bin",
-        ])
-        .arg(&f.tmux)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let root = f.tmp.path();
+    let child = crate::serve_fixture::command(
+        root,
+        nils_test_support::bin::resolve("agent-session"),
+        &f.state,
+        &f.tmux,
+        |command| {
+            command
+                .args([
+                    "--bind",
+                    &address.to_string(),
+                    "--machine",
+                    "target",
+                    "--token",
+                    TOKEN,
+                ])
+                .env("HOME", root)
+                .env("CLAUDE_CONFIG_DIR", root.join("unrelated-default"))
+                .env(
+                    "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER",
+                    json!([f.broker]).to_string(),
+                )
+                .env("AGENT_SESSION_CLAUDE_BIN", root.join("provider"))
+                .env("AGENT_SESSION_FAKE_TMUX_LOG", root.join("tmux.log"))
+                .env("AGENT_SESSION_FAKE_TMUX_ABSENT_BEFORE_LAUNCH", "1")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+        },
+    )
+    .spawn()
+    .unwrap();
     let mut daemon = Daemon(child);
     let deadline = Instant::now() + Duration::from_secs(15);
     while TcpStream::connect(address).is_err() {

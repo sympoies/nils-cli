@@ -7,6 +7,9 @@ use std::process::{Command, Output, Stdio};
 use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::Value;
 
+#[path = "common/serve_fixture.rs"]
+mod serve_fixture;
+
 struct Fixture {
     dir: tempfile::TempDir,
     tmux: PathBuf,
@@ -15,7 +18,11 @@ struct Fixture {
 
 impl Fixture {
     fn new(body: &str) -> Self {
-        let dir = tempfile::tempdir_in("/tmp").unwrap();
+        // The serve fixture also uses this directory as the app-server runtime root.
+        let dir = tempfile::Builder::new()
+            .permissions(fs::Permissions::from_mode(0o700))
+            .tempdir_in("/tmp")
+            .unwrap();
         for name in ["repo", "home"] {
             fs::create_dir(dir.path().join(name)).unwrap();
         }
@@ -223,19 +230,27 @@ exit {exit_code}
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     drop(listener);
+    let root = fixture.dir.path();
     let mut daemon = Daemon(
-        fixture
-            .command()
-            .args(["serve", "--bind", &address.to_string()])
-            .env("AGENT_SESSION_TMUX_BIN", &fixture.tmux)
-            .env("AGENT_SESSION_CODEX_BIN", &fixture.provider)
-            .env("AGENT_SESSION_CODEX_RUNTIME", "app-server")
-            .env("AGENT_SESSION_TOKEN", "fixture-token")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap(),
+        serve_fixture::command(
+            root,
+            nils_test_support::bin::resolve("agent-session"),
+            &root.join("state"),
+            &fixture.tmux,
+            |command| {
+                command
+                    .args(["--bind", &address.to_string()])
+                    .env("CODEX_HOME", root.join("home"))
+                    .env("AGENT_SESSION_CODEX_BIN", &fixture.provider)
+                    .env("AGENT_SESSION_CODEX_RUNTIME", "app-server")
+                    .env("AGENT_SESSION_TOKEN", "fixture-token")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+            },
+        )
+        .spawn()
+        .unwrap(),
     );
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     while std::net::TcpStream::connect(address).is_err() {
