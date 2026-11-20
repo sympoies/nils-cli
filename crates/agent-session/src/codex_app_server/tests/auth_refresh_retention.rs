@@ -272,9 +272,19 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
     assert_eq!(sink.messages.len(), 2);
 }
 
-#[tokio::test]
-async fn external_auth_refresh_retention_never_blocks_the_runtime_on_connection_drop() {
+#[test]
+fn external_auth_refresh_retention_never_blocks_the_runtime_on_connection_drop() {
     let tmp = tempfile::TempDir::new().unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async { exercise_connection_drop(&tmp) });
+    // Runtime shutdown drains blocking retirement before fixture cleanup.
+    drop(runtime);
+}
+
+fn exercise_connection_drop(tmp: &tempfile::TempDir) {
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,

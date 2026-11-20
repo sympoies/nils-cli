@@ -30,6 +30,78 @@ fn non_idle_native_notice_refuses_at_admission_without_claim_or_text() {
 }
 
 #[test]
+fn queued_native_notice_waits_until_the_operator_clears_the_draft() {
+    let fixture = super::super::Fixture::new("claude");
+    let root = fixture.root();
+    let activity = root.join("state/sessions/guarded/activity.json");
+    let idle = root.join("waiting-activity");
+    let idle_bytes = fs::read(&activity).unwrap();
+    fs::write(&idle, &idle_bytes).unwrap();
+    let mut working: Value = serde_json::from_slice(&idle_bytes).unwrap();
+    working["state"]["phase"] = json!("working");
+    fs::write(&activity, working.to_string()).unwrap();
+
+    let peer = Peer::start(&fixture, "queued-draft");
+    let body = "synthetic queued notice\n";
+    let key = "queued-native-once";
+    let output = std::thread::scope(|scope| {
+        let sender = scope.spawn(|| send_notice_with_flags(&fixture, body, key, &["--queue"]));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        // A second liveness probe means the sender retried its busy admission.
+        while !sender.is_finished() && Instant::now() < deadline {
+            let calls = fs::read_to_string(root.join("calls")).unwrap();
+            if calls
+                .lines()
+                .filter(|line| line.starts_with("[\"has-session\","))
+                .count()
+                >= 2
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let observed_busy_retry = Instant::now() < deadline && !sender.is_finished();
+        fs::write(root.join("composer"), "native human draft").unwrap();
+        fs::write(root.join("cursor"), "6").unwrap();
+        fs::rename(&idle, &activity).unwrap();
+        let output = sender.join().unwrap();
+        assert!(
+            observed_busy_retry,
+            "sender did not wait for the busy runtime"
+        );
+        output
+    });
+
+    assert_eq!(
+        output.code,
+        0,
+        "{} {}",
+        output.stdout_text(),
+        output.stderr_text()
+    );
+    assert_eq!(
+        output.stdout_json()["data"]["native"]["transport"],
+        "claude_mod"
+    );
+    assert_eq!(
+        output.stdout_json()["data"]["submission"]["enter_presses"],
+        0
+    );
+    let expected = format!("<!-- agent-notice:v1 kind=mailbox source=synthetic -->\n\n{body}");
+    assert_eq!(*peer.text.lock().unwrap(), [expected]);
+    assert!(peer.consumed_before_text.load(Ordering::SeqCst));
+    fixture.refused(
+        &send_notice_with_flags(&fixture, body, key, &["--queue"]),
+        "send-idempotency-key-used",
+    );
+    let transcript = root.join("provider-config/projects/synthetic/provider-one.jsonl");
+    assert_eq!(fs::read_to_string(transcript).unwrap().lines().count(), 2);
+    assert_eq!(fs::read_to_string(root.join("composer")).unwrap(), "");
+    assert_eq!(fs::read_to_string(root.join("cursor")).unwrap(), "0");
+    fixture.no_delivery();
+}
+
+#[test]
 fn authenticated_empty_notice_ignores_unfamiliar_screen_at_authorization() {
     for before_offer in [false, true] {
         let fixture = super::super::Fixture::new("claude");
@@ -92,10 +164,15 @@ fn module_trace(thread: std::thread::JoinHandle<std::process::Output>) -> Value 
 
 #[test]
 fn native_draft_and_cursor_refuse_before_authorization() {
-    crate::cases::for_each_case(&["draft-before", "cursor-before"], |&mode| {
+    let cases: &[(&str, &[&str])] = &[
+        ("draft-before", &[]),
+        ("cursor-before", &[]),
+        ("cursor-before", &["--queue"]),
+    ];
+    crate::cases::for_each_case(cases, |&(mode, flags)| {
         let fixture = super::super::Fixture::new("claude");
         let module = module_peer(&fixture, mode);
-        let output = send_notice(&fixture, "synthetic\n");
+        let output = send_notice_with_flags(&fixture, "synthetic\n", "claude-native-once", flags);
         let trace = module_trace(module);
         let refusal = fixture.refused(&output, "notice-native-unavailable");
         assert_eq!(
