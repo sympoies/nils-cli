@@ -635,6 +635,8 @@ pub(crate) fn provision_with_previous(
 pub(crate) fn activate_ready(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {
     let incarnation = incarnation(record)?;
     let _runtime = crate::coordination_runtime_evidence(context, record)?;
+    #[cfg(all(test, target_os = "linux"))]
+    crate::restart::test_control::publish_heartbeat(context, record, &incarnation);
     let started = Instant::now();
     while !heartbeat_fresh(context, &record.id, &incarnation, 0) {
         if dsh_provider_lease_conflict_path(context, record).is_file() {

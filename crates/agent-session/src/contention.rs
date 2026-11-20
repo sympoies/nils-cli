@@ -1,5 +1,13 @@
 //! Bounded waits for transient lifecycle contention.
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+#[cfg(test)]
+#[path = "contention_test_clock.rs"]
+pub(crate) mod test_clock;
+#[cfg(not(test))]
+pub(crate) use std::{thread::sleep, time::Instant};
+#[cfg(test)]
+pub(crate) use test_clock::{Instant, sleep};
 
 use crate::{CliError, FailedLaunchCleanup};
 use serde_json::{Map, Value, json};
@@ -31,7 +39,7 @@ pub(crate) fn retry<T>(
         if remaining.is_zero() {
             return Err(recovery(error, "retry-request", "not_admitted"));
         }
-        std::thread::sleep(backoff.min(remaining));
+        sleep(backoff.min(remaining));
         backoff = backoff.saturating_mul(2).min(Duration::from_millis(100));
     }
 }

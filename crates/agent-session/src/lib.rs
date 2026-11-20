@@ -7898,59 +7898,22 @@ pub(crate) mod tmux_probe_fixture {
     }
 
     pub(super) fn read(path: &Path) -> Option<Result<TmuxRuntimeProbe, SessionTerminationFailure>> {
-        PROBES.lock().unwrap().get(path).map(|probe| match probe {
+        let probe = PROBES.lock().unwrap().get(path).map(|probe| match probe {
             Probe::Stopped => Ok(TmuxRuntimeProbe::Stopped),
             Probe::Running(identity) => Ok(TmuxRuntimeProbe::Running(identity.clone())),
             #[cfg(target_os = "linux")]
             Probe::IdentityUnavailable => {
                 Err(SessionTerminationFailure::RuntimeIdentityUnavailable)
             }
-        })
-    }
-
-    /// The outcome the `has-session` status probe reports for the pinned
-    /// path: the verification loops observe the modeled session state
-    /// instead of racing a script launch against the bounded probe budget
-    /// (sympoies/nils-cli#2131).
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub(crate) enum Status {
-        Running,
-        Stopped,
-    }
-
-    static STATUS_PROBES: LazyLock<Mutex<std::collections::HashMap<PathBuf, Status>>> =
-        LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
-
-    pub(crate) struct StatusGuard(PathBuf);
-
-    pub(crate) fn install_status(path: &Path, status: Status) -> StatusGuard {
-        assert!(
-            STATUS_PROBES
-                .lock()
-                .unwrap()
-                .insert(path.to_path_buf(), status)
-                .is_none()
-        );
-        StatusGuard(path.to_path_buf())
-    }
-
-    impl Drop for StatusGuard {
-        fn drop(&mut self) {
-            STATUS_PROBES.lock().unwrap().remove(&self.0);
+        });
+        #[cfg(target_os = "linux")]
+        if probe.is_none() && stopped_running_marker(path) {
+            return Some(Ok(TmuxRuntimeProbe::Stopped));
         }
+        probe
     }
 
-    pub(super) fn read_status(path: &Path) -> Option<String> {
-        STATUS_PROBES
-            .lock()
-            .unwrap()
-            .get(path)
-            .map(|status| match status {
-                Status::Running => "running".to_string(),
-                Status::Stopped => "stopped".to_string(),
-            })
-    }
-
+    include!("tests/tmux_probe_status.rs");
     include!("tests/tmux_probe_identity.rs");
 }
 
