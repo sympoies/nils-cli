@@ -213,10 +213,7 @@ jobs:
 
   test_containment:
     runs-on: ubuntu-24.04
-    # These steps run `cargo test`, so no nextest `slow-timeout` covers them and
-    # this limit is their only guard against a hang. The slowest of 176
-    # successful full-lane runs on 2026-09-28..30 took 8 minutes (7 with a cold
-    # cache).
+    # Keep a job-level deadline for the build and the containment test.
     timeout-minutes: 25
     permissions:
       contents: read
@@ -246,6 +243,11 @@ jobs:
       - name: Install zsh + xvfb + ripgrep + tmux + bubblewrap
         run: bash scripts/ci/apt-install-retry.sh zsh xvfb xauth ripgrep tmux bubblewrap
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       # Keep identical to the copy in the test job.
       - name: Provision systemd user scopes
         run: |
@@ -265,9 +267,8 @@ jobs:
         env:
           AGENT_SESSION_TEST_REQUIRE_CGROUP: "1"
         run: |
-          setsid --wait cargo test -p nils-agent-session --lib \
-            tests::delete_kills_a_detached_descendant_inside_a_pinned_tmux_control_group \
-            -- --exact --nocapture
+          setsid --wait cargo nextest run -p nils-agent-session --lib --no-tests fail --no-capture \
+            -E 'test(=tests::delete_kills_a_detached_descendant_inside_a_pinned_tmux_control_group)'
 
   # Re-run representative tests under a poisoned environment and fail if any
   # sentinel changes. It runs beside `test` so its 10-12 minutes do not share

@@ -8,6 +8,48 @@ pub(super) async fn ingest(
     reducer: &mut FailureReducer,
     value: &Value,
 ) -> Result<(), String> {
+    if reducer.project_resumed_starts
+        && value.get("method").and_then(Value::as_str) == Some("turn/started")
+        && value.pointer("/params/threadId").and_then(Value::as_str)
+            == Some(reducer.thread_id.as_str())
+    {
+        let Some(turn_id) = value
+            .pointer("/params/turn/id")
+            .and_then(Value::as_str)
+            .filter(|id| protocol_id_is_valid(id))
+        else {
+            // A malformed start must prevent an in-flight snapshot from settling.
+            reducer.active_turn_id = Some(String::new());
+            fail_closed_projection(context, record).await;
+            return Err("Codex turn start identity is invalid".to_string());
+        };
+        // Fence a timed-out snapshot before the blocking activity writer starts.
+        reducer.note_started(turn_id);
+        let worker_context = context.clone();
+        let id = record.id.clone();
+        let runtime_id = record
+            .runtime
+            .as_ref()
+            .ok_or("Codex runtime identity is missing")?
+            .launch_id
+            .clone();
+        let thread_id = reducer.thread_id.clone();
+        let turn_id = turn_id.to_string();
+        let result = tokio::task::spawn_blocking(move || {
+            crate::activity::ingest_codex_app_server_start(
+                &worker_context,
+                &id,
+                &runtime_id,
+                &thread_id,
+                &turn_id,
+            )
+        })
+        .await;
+        if !matches!(result, Ok(Ok(_))) {
+            fail_closed_projection(context, record).await;
+            return Err("Codex start ingestion failed".to_string());
+        }
+    }
     spawn_completion(context, record, reducer, value)?;
     let Some(failure) = reducer.ingest(value) else {
         return Ok(());
@@ -255,5 +297,56 @@ mod tests {
         drop(lock);
         task.await.unwrap();
         assert_eq!(status()["phase"], "waiting");
+    }
+}
+
+#[cfg(test)]
+mod resume_start_tests {
+    use super::super::tests::record_with_runtime;
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[tokio::test]
+    async fn live_start_after_terminal_evidence_projects_working() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let mut record = record_with_runtime("resume-terminal", &tmp.path().join("socket"));
+        record.provider_resume = Some(ProviderResume {
+            provider: "codex".into(),
+            session_id: "thread-a".into(),
+            captured_at: "2030-01-01T00:00:00Z".into(),
+            capture_method: "test".into(),
+            resume_args: vec![],
+            extra: BTreeMap::new(),
+        });
+        std::fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        crate::activity::activate_runtime(&context, &record).unwrap();
+        crate::activity::ingest_codex_app_server_failure_with_kind(
+            &context,
+            &record.id,
+            &record.runtime.as_ref().unwrap().launch_id,
+            "thread-a",
+            "turn-a",
+            StructuredFailureKind::ProviderCapacity,
+        )
+        .unwrap();
+        let mut reducer = FailureReducer::new("thread-a");
+        reducer.project_resumed_starts = true;
+        ingest(
+            &context,
+            &record,
+            &mut reducer,
+            &json!({"method":"turn/started",
+            "params":{"threadId":"thread-a","turn":{"id":"turn-a"}}}),
+        )
+        .await
+        .unwrap();
+        let state = crate::activity::controller_state_for_record(&context, &record).unwrap();
+        assert_eq!(state.phase, crate::activity::TurnPhase::Working);
+        assert_eq!(state.last_turn.unwrap().outcome, "failed");
     }
 }

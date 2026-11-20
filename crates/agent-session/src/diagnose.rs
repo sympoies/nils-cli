@@ -49,7 +49,7 @@ impl Health {
 }
 
 #[derive(Serialize)]
-struct Bundle {
+pub(crate) struct Bundle {
     schema_version: &'static str,
     binary_version: String,
     health: Health,
@@ -108,7 +108,7 @@ pub(crate) fn run_diagnose(context: &CliContext, args: DiagnoseArgs) -> i32 {
 /// Command name used in the response envelope schema version.
 pub(crate) const DIAGNOSE_COMMAND: &str = "diagnose";
 
-fn build(context: &CliContext, args: &DiagnoseArgs) -> Result<Bundle, CliError> {
+pub(crate) fn build(context: &CliContext, args: &DiagnoseArgs) -> Result<Bundle, CliError> {
     let events = observation::read_recent(&context.state_dir, 0).map_err(|_| {
         CliError::data(
             "observation-spool-unreadable",

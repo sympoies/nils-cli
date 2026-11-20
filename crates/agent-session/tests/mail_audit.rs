@@ -155,6 +155,31 @@ fn audit_reports_which_provider_not_ready_branch_deferred_the_wake() {
         ),
         (
             "provider-not-ready",
+            "notice-module-binding-mismatch",
+            json!("notice-module-binding-mismatch"),
+        ),
+        (
+            "provider-not-ready",
+            "notice-baseline-unprovable",
+            json!("notice-baseline-unprovable"),
+        ),
+        (
+            "provider-not-ready",
+            "notice-recipient-attached",
+            json!("notice-recipient-attached"),
+        ),
+        (
+            "provider-not-ready",
+            "send-completion-evidence-missing",
+            json!("send-completion-evidence-missing"),
+        ),
+        (
+            "recipient-coordination-not-quiescent",
+            "broker-not-authoritative",
+            json!("broker-not-authoritative"),
+        ),
+        (
+            "provider-not-ready",
             "prompt-submission-refused:coordination-notification-superseded",
             json!("prompt-submission-refused:coordination-notification-superseded"),
         ),

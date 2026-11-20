@@ -42,6 +42,7 @@ def main():
             '    out.write(json.dumps(args) + "\\n")\n'
         )
         cargo.chmod(0o755)
+        (bin_dir / 'cargo-nextest').symlink_to(cargo)
 
         # The orchestration test stubs audit subprocesses and records Cargo
         # commands; metadata remains real so package/sibling discovery is real.
@@ -51,9 +52,10 @@ def main():
         fake_python = bin_dir / 'python3'
         fake_python.write_text(
             '#!/bin/sh\n'
-            'if [ "${1-}" = "-" ]; then\n'
-            f'  exec {sys.executable!s} "$@"\n'
-            'fi\n'
+            'case "${1-}" in\n'
+            f'  -) exec {sys.executable!s} "$@" ;;\n'
+            '  */gate-reports.py) shift; exec "$@" ;;\n'
+            'esac\n'
             'exit 0\n'
         )
         fake_python.chmod(0o755)
@@ -69,7 +71,7 @@ def main():
             'LOCAL_FAST_TEST_REAL_CARGO': real_cargo,
             'LOCAL_FAST_TEST_CARGO_LOG': str(log),
             'NILS_CLI_GATE_ACTIVE': '1',
-            'NILS_CLI_TEST_RUNNER': 'cargo',
+            'NILS_CLI_TEST_RUNNER': 'nextest',
         })
         result = subprocess.run(
             [real_bash, str(LOCAL_FAST),
@@ -84,7 +86,7 @@ def main():
         commands = [json.loads(line) for line in log.read_text().splitlines()]
         build = ['build', '-p', 'nils-agent-session', '-p',
                  'nils-agent-hook', '--bins']
-        test = ['test', '-p', 'nils-agent-session']
+        test = ['nextest', 'run', '--profile', 'ci', '-p', 'nils-agent-session']
         if build not in commands:
             raise AssertionError(
                 f'discovered-helper build was not executed: {commands!r}')

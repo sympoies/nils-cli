@@ -76,6 +76,15 @@ fn visible_dialog(pane: &str) -> bool {
         return false;
     };
     let dialog = &rows[start + 1..];
+    // Claude Code 2.1.325 can draw the terminal title rule below the dialog.
+    let dialog = if dialog
+        .last()
+        .is_some_and(|r| r.starts_with('─') && r.chars().any(|c| c != '─' && !c.is_whitespace()))
+    {
+        &dialog[..dialog.len() - 1]
+    } else {
+        dialog
+    };
     // A historical permission frame above a composer is not a live dialog.
     let choices: Vec<_> = dialog
         .iter()

@@ -33,9 +33,9 @@ export RUSTUP_HOME="$work/cargo-home"
 export CARGO_TARGET_DIR="$work/target"
 
 # The fake answers `nextest --version` and `build` quietly; only the test run
-# (`cargo test ...` or `cargo nextest run ...`) executes the case body.
+# executes the case body.
 write_fake_cargo() {
-  printf '#!/bin/sh\n[ "$1" = test ] || [ "$2" = run ] || exit 0\n%s\n' "$1" >"$fake_bin/cargo"
+  printf '#!/bin/sh\n[ "$1" = nextest ] && [ "$2" = run ] || exit 0\n%s\n' "$1" >"$fake_bin/cargo"
   chmod +x "$fake_bin/cargo"
   if [[ "$(command -v cargo)" != "$fake_bin/cargo" ]]; then
     echo "FAIL: fake cargo is not the only cargo on PATH" >&2

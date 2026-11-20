@@ -1,0 +1,11 @@
+# forge-cli repository policy; read from the provider base branch.
+#
+# `supervisors` lists the digests of the sessions allowed to take over a review
+# handoff whose coordinator has retired (`forge-cli pr review-handoff recover
+# --reason coordinator-retired`). The digest is the session digest forge-cli
+# computes for that session. Update the entry whenever the delivery steward
+# session is replaced, until a role-based policy replaces this per-session
+# allow-list (#3853).
+[review_handoff]
+supervisors = ["sha256:9a82d237d134657b8fea97eb37e9f8fd42f3000767623f4e1890fe9f6d9d9e4a"]
+stale_after = "2h"

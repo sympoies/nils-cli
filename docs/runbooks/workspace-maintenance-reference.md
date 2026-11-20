@@ -64,7 +64,7 @@ CI/full parity checks also require:
 - `python3`
 - `zsh`
 - `rg`
-- `cargo-nextest` when `NILS_CLI_TEST_RUNNER=nextest`
+- `cargo-nextest` for workspace checks and package checks that include `nils-agent-session`
 
 Coverage checks also require:
 
@@ -335,9 +335,15 @@ calls, share a priority/FIFO semaphore under
 shared across worktrees and repositories using this entrypoint for the same
 user on a host. Kernel `flock` ownership and recorded unit quiescence govern admission:
 crashed holders and waiters do not require deleting lock files. A crashed
-supervisor slot remains unavailable while its scope/services are draining. Waiting callers print a "still queued" notice with the holder
-PID, UTC start time, and priority every five seconds. Diagnostics also list live
-queued tickets in admission order with their age in seconds and priority.
+supervisor slot remains unavailable while its scope or services are draining.
+
+If the recorded holder is gone and the slice subtree is empty, admission checks
+the descendant cgroups against their systemd units and stops them from the
+leaves before stopping the slice. Before each stop, it rechecks emptiness and
+the target's cgroup path. Waiting callers print a "still queued" notice with
+the holder PID, UTC start time, and priority every five seconds. Diagnostics
+also list live queued tickets in admission order with their age in seconds and
+priority.
 
 Admission keeps the same ticket and queue position until admitted, cancelled, or
 `NILS_CLI_GATE_TIMEOUT_SECONDS` expires. Cancellation or timeout removes the
@@ -511,9 +517,9 @@ For most local implementation loops:
 bash scripts/ci/nils-cli-checks-entrypoint.sh --local-fast
 ```
 
-Set `NILS_CLI_TEST_RUNNER=nextest` to require `cargo-nextest`; otherwise the
-local fast gate auto-selects `cargo nextest` when available and falls back to
-`cargo test`.
+Workspace checks and package checks that include `nils-agent-session` require
+`cargo-nextest`. For other package checks, the local fast gate auto-selects
+`cargo nextest` when available and falls back to `cargo test`.
 
 The local fast gate is conservative. Changes to `nils-common`, `nils-term`,
 `nils-test-support`, root manifests, CI scripts, completions, `.agents/`,
@@ -559,7 +565,7 @@ NILS_CLI_TEST_RUNNER=nextest bash scripts/ci/nils-cli-checks-entrypoint.sh
 
 Notes:
 
-- `nextest` mode runs `cargo nextest run --profile ci --workspace`.
+- The default `nextest` mode runs `cargo nextest run --profile ci --workspace`.
 - Gate nextest runs (including coverage and the leak probe) write JUnit to
   `NILS_CLI_REPORT_DIR/nextest/ci/junit.xml` and recorded history under
   `NILS_CLI_REPORT_DIR/history`. Set `NILS_CLI_REPORT_DIR` to an owner artifact
@@ -762,8 +768,8 @@ module imports. Real macOS release validation remains required.
 - `zsh -f tests/zsh/completion.test.zsh`
 - `cargo fmt --all -- --check`
 - `cargo clippy --all-targets --all-features -- -D warnings`
-- `cargo test --workspace` (or `cargo nextest run --profile ci --workspace`
-  plus `cargo test --workspace --doc` when `NILS_CLI_TEST_RUNNER=nextest`)
+- `cargo nextest run --profile ci --workspace`
+- `cargo test --workspace --doc`
 
 ### File-size ratchet
 
