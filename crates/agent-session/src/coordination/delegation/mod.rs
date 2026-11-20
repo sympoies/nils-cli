@@ -6,7 +6,7 @@ pub(crate) use transport::authenticate_remote_request;
 mod tests;
 pub(crate) use cli::{Args, format, name, run};
 
-use super::{Registry, digest_bytes, digest_eq, now_epoch};
+use super::{LockedRegistry, Registry, digest_bytes, digest_eq, now_epoch};
 use crate::{CliContext, CliError, SessionRecord};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -322,7 +322,20 @@ pub(crate) fn authenticate_token(
             None => super::authenticate_any_token(context, token),
         };
     }
-    let mut locked = super::lock_registry(context)?;
+    authenticate_delegation_with_lock(context, session, token, usage, audit, || {
+        super::lock_registry(context)
+    })
+}
+
+pub(super) fn authenticate_delegation_with_lock(
+    context: &CliContext,
+    session: Option<&str>,
+    token: &str,
+    usage: Use<'_>,
+    audit: bool,
+    acquire: impl FnOnce() -> Result<LockedRegistry, CliError>,
+) -> Result<(SessionRecord, String), CliError> {
+    let mut locked = acquire()?;
     let delegation = record(&locked.registry, token)?;
     let result = verify(context, &locked.registry, delegation, session, usage);
     if audit || result.is_err() {

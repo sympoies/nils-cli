@@ -33,7 +33,7 @@ if command == 'has-session':
         sys.stderr.write("status probe failed\n")
         sys.exit(1)
     sys.exit(0)
-if command == 'display-message': print('0'); sys.exit(0)
+if command == 'display-message': print(int((root / 'attached-client').exists())); sys.exit(0)
 if command == 'show-environment':
     identities = json.loads((root / 'identities.json').read_text())
     print('\n'.join(f'{key}={identities[key]}' for key in args if key in identities))

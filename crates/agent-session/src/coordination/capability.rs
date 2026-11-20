@@ -1,5 +1,7 @@
 //! Ordinary runtime-token authentication, separate from scoped worker admission.
-use super::{delegation, incarnation, lock_registry, unauthorized, verify_capability_token};
+use super::{
+    LockedRegistry, delegation, incarnation, lock_registry, unauthorized, verify_capability_token,
+};
 use crate::{CliContext, CliError, SessionRecord, load_session_record};
 
 /// Local refusal diagnostics contain fixed codes only, never authority selectors.
@@ -48,13 +50,23 @@ pub(crate) fn authenticate_token(
     session_id: &str,
     token: &str,
 ) -> Result<(SessionRecord, String), CliError> {
+    authenticate_token_with_lock(context, session_id, token, || lock_registry(context))
+}
+
+pub(super) fn authenticate_token_with_lock(
+    context: &CliContext,
+    session_id: &str,
+    token: &str,
+    acquire: impl FnOnce() -> Result<LockedRegistry, CliError>,
+) -> Result<(SessionRecord, String), CliError> {
     if delegation::is_delegation(token) {
-        return delegation::authenticate_token(
+        return delegation::authenticate_delegation_with_lock(
             context,
             Some(session_id),
             token,
             delegation::Use::CapabilityOnly,
             true,
+            acquire,
         );
     }
     if token.len() < 32 || token.len() > 256 || !token.is_ascii() {
@@ -62,7 +74,7 @@ pub(crate) fn authenticate_token(
     }
     let record = load_session_record(context, session_id).map_err(|_| unauthorized())?;
     let incarnation = incarnation(&record)?;
-    let locked = lock_registry(context)?;
+    let locked = acquire()?;
     verify_capability_token(context, &locked.registry, &record, &incarnation, token)?;
     Ok((record, incarnation))
 }

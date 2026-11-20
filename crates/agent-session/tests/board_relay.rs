@@ -6,13 +6,16 @@
 //! sessions"): `agent-session start --via-console` through the daemon's
 //! `POST /sessions/{id}/console-start/v1`.
 
+#[path = "common/serve_fixture.rs"]
+mod serve_fixture;
+
 use std::collections::VecDeque;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -355,36 +358,31 @@ impl Fixture {
         let endpoint = self.state_dir.join("coordination/daemon-endpoint.json");
         let _ = fs::remove_file(&endpoint);
         let stderr_path = self.root.join("serve.stderr");
-        let mut command = Command::new(nils_test_support::bin::resolve("agent-session"));
-        command
-            .arg("serve")
-            .arg("--bind")
-            .arg("127.0.0.1:0")
-            .arg("--state-dir")
-            .arg(&self.state_dir)
-            .arg("--machine")
-            .arg(MACHINE)
-            .args(args)
-            .env("HOME", &self.home)
-            .env("AGENT_SESSION_RULES_FILE", self.root.join("rules.json"))
-            .env("AGENT_SESSION_TOKEN", OPERATOR)
-            .env("AGENT_SESSION_TMUX_BIN", self.fake_tmux())
-            .env_remove("XDG_STATE_HOME")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::from(
-                fs::File::create(&stderr_path).expect("serve stderr"),
-            ));
-        nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
-        for key in ISOLATED_ENV {
-            command.env_remove(key);
-        }
-        if let Some(aggregator) = relay {
-            command
-                .env("AGENT_SESSION_RELAY_URL", &aggregator.url)
-                .env("AGENT_SESSION_RELAY_TOKEN", RELAY_TOKEN)
-                .env("AGENT_SESSION_RELAY_INGRESS_TOKEN", INGRESS_TOKEN);
-        }
+        let mut command = serve_fixture::command(
+            &self.root,
+            nils_test_support::bin::resolve("agent-session"),
+            &self.state_dir,
+            &self.fake_tmux(),
+            |command| {
+                command
+                    .args(["--bind", "127.0.0.1:0", "--machine", MACHINE])
+                    .args(args)
+                    .env("HOME", &self.home)
+                    .env("AGENT_SESSION_RULES_FILE", self.root.join("rules.json"))
+                    .env("AGENT_SESSION_TOKEN", OPERATOR)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::from(
+                        fs::File::create(&stderr_path).expect("serve stderr"),
+                    ));
+                if let Some(aggregator) = relay {
+                    command
+                        .env("AGENT_SESSION_RELAY_URL", &aggregator.url)
+                        .env("AGENT_SESSION_RELAY_TOKEN", RELAY_TOKEN)
+                        .env("AGENT_SESSION_RELAY_INGRESS_TOKEN", INGRESS_TOKEN);
+                }
+            },
+        );
         let mut child = command.spawn().expect("spawn serve");
         let deadline = Instant::now() + Duration::from_secs(15);
         let addr = loop {

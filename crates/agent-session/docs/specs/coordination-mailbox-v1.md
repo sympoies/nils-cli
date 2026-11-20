@@ -25,21 +25,22 @@ without busy looping. HTTP cancellation releases its bounded wait worker rather
 than leaving a detached 60-second task. Cleanup never evicts live unread mail
 to admit new data; quota exhaustion returns a typed error.
 
-After authentication, revision and any-unread waits retry only transient
-`coordination-lock-timeout` failures during polling. Every acquisition is capped
-by the remaining original monotonic wait budget and a 100 ms slice. Contended
-attempts sleep with exponential backoff from 10 ms up to 100 ms, capped by the
-remaining budget; retries never restart the deadline. Cancellation is checked
-between attempts. Authentication, unsafe or corrupt stores, unavailable storage,
-notification failures and other errors retain their distinct contracts.
+Revision and any-unread `message wait` commands start one monotonic budget
+before capability authentication and use it through polling. During
+authentication and polling, they retry only `coordination-lock-timeout`.
+Every acquisition is capped by the remaining budget and a 100 ms slice.
+Contended attempts sleep with exponential backoff from 10 ms up to 100 ms,
+also capped by the remaining budget. Cancellation is checked between
+attempts. Authorization refusals retain their reason codes, and unsafe or
+corrupt stores, unavailable storage, notification failures, and other errors
+are returned directly.
 
-Exhaustion returns the existing `wait-timeout`: revision waits use exit 1;
-any-unread waits use exit 69 with `same_cursor` recovery. The initial
-authentication acquisition precedes this wait budget and retains its ordinary
-registry-lock timeout. An uncontended idle any-unread wait blocks on filesystem
-notifications; retries add no idle wakeups. Registry reads, lock activity and
-unrelated writes remain excluded from its event filter. A contended poll retries
-acquisition directly, without requiring another registry notification.
+Exhaustion returns the existing `wait-timeout` in either phase. Revision waits
+use exit 1. Any-unread waits use exit 69 with `same_cursor` recovery. An
+uncontended idle any-unread wait blocks on filesystem notifications. Registry
+reads, lock activity, and unrelated writes remain excluded from its event
+filter. A contended poll retries acquisition directly, without requiring
+another registry notification.
 
 Full registry maintenance prunes expired replay receipts and compacts the oldest acknowledged,
 expired, or deleted mail until both terminal-history limits hold. This may
@@ -417,9 +418,10 @@ controller-owned private-buffer paste plus a separate Enter. Claude uses its aut
 notice receiver. Both require exact-incarnation, authoritative-idle, detached, live-runtime,
 authoritative-broker, and no-operation checks.
 
-A wake the idle structured route
-defers because the recipient is not quiescent is recorded as `recipient-coordination-not-quiescent` with
-the blocking condition as its detail, never as `provider-not-ready`. The short `queued -> attempting` CAS is a
+A wake deferred by the idle structured route or the Claude native route for a
+known quiescence condition is recorded as `recipient-coordination-not-quiescent`
+with that condition as its detail. See [mail audit](mail-audit-v1.md#projection-schema)
+for Claude's other preclaim refusals. The short `queued -> attempting` CAS is a
 per-session submission fence: claim and
 operation admission returns `coordination-notification-submission-in-progress` with typed retry guidance
 until the submission boundary completes.
