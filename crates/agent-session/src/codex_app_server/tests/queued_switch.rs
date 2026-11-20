@@ -748,11 +748,16 @@ async fn resumed_control_subscribes_before_snapshot_and_projects_later_start() {
     })
     .await
     .unwrap();
+    // Close the command channel while the socket is still open so control
+    // can finish the blocking activity write before the fixture is dropped.
+    drop(handle);
+    tokio::time::timeout(Duration::from_secs(3), control)
+        .await
+        .expect("control should stop when its command channel closes")
+        .expect("control task panicked")
+        .expect("control shutdown failed");
     done_tx.send(()).unwrap();
     server.await.unwrap();
-    drop(handle);
-    control.abort();
-    let _ = control.await;
 }
 
 #[tokio::test]
