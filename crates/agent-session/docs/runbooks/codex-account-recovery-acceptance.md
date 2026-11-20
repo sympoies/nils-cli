@@ -110,5 +110,5 @@ credentials. Do not publish credential material or environment-specific values.
 For headless regression coverage of startup admission without model RPCs:
 
 ```bash
-cargo test -p nils-agent-session --lib restart::codex_account_tests
+cargo nextest run -p nils-agent-session --lib restart::codex_account_tests
 ```

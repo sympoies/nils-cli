@@ -22,11 +22,14 @@
 //! Provider CLIs are stubbed on `PATH`. Every fixture is synthetic; the stubs
 //! seed `SECRET-MARKER` strings that must never reach a response.
 
+#[path = "common/serve_fixture.rs"]
+mod serve_fixture;
+
 use std::fs;
 use std::net::SocketAddr;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -37,14 +40,6 @@ const TOKEN: &str = "usage-operator-token";
 const MACHINE: &str = "usage-host";
 const RESET_KEY: &str = "0b5f4c1e-8d2a-4c7b-9e3f-2a1b0c9d8e7f";
 const OTHER_KEY: &str = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
-
-const USAGE_ENV: [&str; 5] = [
-    "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
-    "AGENT_SESSION_CODEX_RESET_ACCOUNTS",
-    "AGENT_SESSION_CLAUDE_RESET_ACCOUNTS",
-    "AGENT_SESSION_USAGE_V1_REFRESH_SECONDS",
-    "AGENT_SESSION_MACHINE",
-];
 
 fn fixture(name: &str) -> Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -188,31 +183,25 @@ impl Serve {
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o755)).expect("tmux mode");
         let endpoint = state_dir.join("coordination/daemon-endpoint.json");
         let stderr_path = root.join("serve.stderr");
-        let path = format!(
-            "{}:{}",
-            stubs.dir.display(),
-            std::env::var("PATH").unwrap_or_default()
+        let path = format!("{}:{}", stubs.dir.display(), serve_fixture::SYSTEM_PATH);
+        let mut command = serve_fixture::command(
+            root,
+            nils_test_support::bin::resolve("agent-session"),
+            &state_dir,
+            &tmux,
+            |command| {
+                command
+                    .args(["--bind", "127.0.0.1:0", "--machine", MACHINE])
+                    .env("PATH", path)
+                    .env("AGENT_SESSION_TOKEN", TOKEN)
+                    .envs(env.iter().copied())
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::from(
+                        fs::File::create(&stderr_path).expect("serve stderr"),
+                    ));
+            },
         );
-        let mut command = Command::new(nils_test_support::bin::resolve("agent-session"));
-        command
-            .args(["serve", "--bind", "127.0.0.1:0", "--machine", MACHINE])
-            .arg("--state-dir")
-            .arg(&state_dir)
-            .env("HOME", &home)
-            .env("PATH", path)
-            .env("AGENT_SESSION_TOKEN", TOKEN)
-            .env("AGENT_SESSION_TMUX_BIN", &tmux)
-            .env_remove("XDG_STATE_HOME")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::from(
-                fs::File::create(&stderr_path).expect("serve stderr"),
-            ));
-        nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
-        for key in USAGE_ENV {
-            command.env_remove(key);
-        }
-        command.envs(env.iter().copied());
         let mut child = command.spawn().expect("spawn serve");
         let deadline = Instant::now() + Duration::from_secs(15);
         let addr = loop {

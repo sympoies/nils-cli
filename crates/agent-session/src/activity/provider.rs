@@ -354,3 +354,42 @@ pub(crate) fn ingest_codex_app_server_completion(
         EventAdmission::CodexProtocol,
     )
 }
+
+/// Project a resumed Codex thread's live turn start into the activity fence.
+pub(crate) fn ingest_codex_app_server_start(
+    context: &CliContext,
+    id: &str,
+    runtime_id: &str,
+    thread_id: &str,
+    turn_id: &str,
+) -> Result<ActivityResult, CliError> {
+    let provider_session_id =
+        projected_provider_identifier(runtime_id, AgentKind::Codex, "session", thread_id)?;
+    let provider_turn_id =
+        projected_provider_identifier(runtime_id, AgentKind::Codex, "turn", turn_id)?;
+    ingest_event_retry_with_admission(
+        context,
+        id,
+        TurnEvent {
+            schema_version: TURN_EVENT_VERSION.to_string(),
+            event_id: format!("codex-app-server-started:{provider_turn_id}"),
+            runtime_id: runtime_id.to_string(),
+            provider: AgentKind::Codex.as_str().to_string(),
+            provider_session_id: Some(provider_session_id),
+            provider_turn_id: Some(provider_turn_id),
+            kind: TurnEventKind::TurnStarted,
+            failure_reason: None,
+            attention_id: None,
+            attention_kind: None,
+            attention_correlation_ambiguous: false,
+            attention_correlation_exact: false,
+            tool_call: None,
+            completion_candidate: false,
+            completion_candidate_reason: None,
+            confidence: Confidence::Authoritative,
+            source_kind: SourceKind::ProviderHook,
+            provider_time: None,
+        },
+        EventAdmission::CodexProtocol,
+    )
+}

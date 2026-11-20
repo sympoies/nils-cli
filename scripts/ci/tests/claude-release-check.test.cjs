@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const test = require("node:test");
+const { spawnSync } = require("node:child_process");
 const { discover, verifyIntegrity, isolatedEnvironment, candidateChanges, checkCandidate,
   runReleaseCheck, collectReleaseCheck, planReleaseCheck, range } = require("../../../.github/scripts/claude-release-check.cjs");
 const REPOSITORY = path.resolve(__dirname, "../../..");
@@ -83,7 +84,7 @@ function fixture({ newest = "2.1.318", passing = true } = {}) {
       check: { passed: passing, commands: [
         { command: "npm install --prefix $SANDBOX/install --ignore-scripts --omit=optional --offline --no-audit --no-fund --no-package-lock $SANDBOX/0.tgz $SANDBOX/1.tgz", exit: passing ? 0 : 1, signal: null },
         { command: "$SANDBOX/bin/claude --version", exit: 0, signal: null },
-        { command: "$CONTRACT_TEST_BINARY send::claude_notice::module_contract:: --nocapture (call-shape scan and claude plugin validate)", exit: 0, signal: null },
+        { command: "$NEXTEST nextest run --archive-file $CONTRACT_ARCHIVE --workspace-remap $WORKSPACE --no-tests fail --run-ignored all --color never --no-capture --show-progress none --status-level pass send::claude_notice::module_contract::", exit: 0, signal: null },
       ], packages: [PACKAGE, PLATFORM].map(name => ({ name, version: newest, ...metadata(newest, name).dist, verified: true })) } },
     patch: ["2.1.316", "2.1.99"].includes(newest) || !passing ? {} : candidateChanges(ROOT, newest),
     fetchJSON: async url => metadata(newest, url.includes("linux-x64") ? PLATFORM : PACKAGE),
@@ -306,7 +307,7 @@ test("foreign or edited failure issue refuses update rather than replacing human
 });
 
 test("isolated candidate verifies both archives, exact banner and non-skipped existing contract test", async () => {
-  for (const variant of ["pass", "integrity", "version", "skip", "exit"]) {
+  for (const variant of ["pass", "integrity", "version", "skip", "missing-case", "exit"]) {
     const calls = [];
     const release = metadata();
     const fetchJSON = async () => metadata(release.version, PLATFORM);
@@ -317,11 +318,19 @@ test("isolated candidate verifies both archives, exact banner and non-skipped ex
         const target = path.join(options.cwd, "install/node_modules", PLATFORM, "claude");
         fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, "synthetic executable");
       }
+      if (args.includes("--version")) return { status: 0,
+        stdout: `${variant === "version" ? "2.1.317" : release.version} (Claude Code)\n` };
+      const cases = ["dollar_check_rejects_every_form_the_loader_rejects",
+        "embedded_module_loads_in_the_installed_claude_code",
+        variant === "missing-case" ? "unrelated_case" : "embedded_module_uses_the_engine_handle_only_as_a_call_site"];
       return { status: variant === "exit" ? 1 : 0,
-        stdout: args.includes("--version") ? `${variant === "version" ? "2.1.317" : release.version} (Claude Code)\n`
-          : variant === "skip" ? "skipped: no Claude Code installed" : `checking the module against Claude Code ${release.version}\ntest result: ok. 3 passed; 0 failed; 0 ignored;`, stderr: "" };
+        stderr: [
+          variant === "skip" ? "skipped: no Claude Code installed" : `checking the module against Claude Code ${release.version}`,
+          ...cases.map(name => `        PASS [   0.004s] nils-agent-session send::claude_notice::module_contract::${name}`),
+        ].join("\n") };
     };
-    const result = await checkCandidate({ release, contractBinary: "/synthetic/contract-tests", root: ROOT, fetchJSON, fetchBytes, execute });
+    const result = await checkCandidate({ release, contractArchive: "/synthetic/contract.tar.zst",
+      contractNextest: "/synthetic/cargo-nextest", root: ROOT, fetchJSON, fetchBytes, execute });
     assert.equal(result.passed, variant === "pass", variant);
     if (variant === "integrity") assert.equal(calls.length, 0);
     for (const call of calls) {
@@ -332,9 +341,42 @@ test("isolated candidate verifies both archives, exact banner and non-skipped ex
     if (variant === "pass") {
       assert.equal(result.packages.length, 2);
       assert.ok(calls.find(x => x.command === "npm").args.includes("--ignore-scripts"));
-      assert.ok(calls.find(x => x.command === "/synthetic/contract-tests").args.includes("send::claude_notice::module_contract::"));
+      assert.equal(calls[2].command, "/synthetic/cargo-nextest");
+      assert.deepEqual(calls[2].args.slice(0, 6), ["nextest", "run", "--archive-file", "/synthetic/contract.tar.zst", "--workspace-remap", ROOT]);
+      assert.equal(calls[2].args.at(-1), "send::claude_notice::module_contract::");
     }
   }
+});
+
+
+test("isolated collector runs the guarded library contract against a synthetic candidate", {
+  skip: !process.env.CLAUDE_CONTRACT_ARCHIVE,
+}, async () => {
+  const release = metadata(range(REPOSITORY).max);
+  const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-release-contract-"));
+  temporary.push(artifactDir);
+  const result = await checkCandidate({
+    release, artifactDir, root: REPOSITORY, contractArchive: process.env.CLAUDE_CONTRACT_ARCHIVE,
+    contractNextest: process.env.CLAUDE_CONTRACT_NEXTEST,
+    fetchJSON: async () => metadata(release.version, PLATFORM),
+    fetchBytes: async url => Buffer.from(url.includes("claude-code-linux-x64/-") ? PLATFORM : PACKAGE),
+    execute(command, args, options) {
+      if (command !== "npm") return spawnSync(command, args, options);
+      const target = path.join(options.cwd, "install/node_modules", PLATFORM, "claude");
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, `#!/bin/sh
+if [ "$1" = --version ]; then
+  printf '%s\\n' '${release.version} (Claude Code)'
+else
+  [ "$1" = plugin ] && [ "$2" = validate ] && [ -s "$3/hooks/register.js" ]
+fi
+`, { mode: 0o700 });
+      return { status: 0 };
+    },
+  });
+  const contractLog = result.commands.length === 3
+    ? fs.readFileSync(path.join(artifactDir, "command-3.log"), "utf8") : result.failure;
+  assert.equal(result.passed, true, `Command exits: ${result.commands.map(row => row.exit).join(", ")}\n${contractLog}`);
 });
 
 test("the immediate next release remains the accepted maximum in its candidate patch", () => {
@@ -373,19 +415,21 @@ test("current repository owners can prepare their next maximum without changing 
   assert.equal(fs.readFileSync(path.join(REPOSITORY, VERSION), "utf8"), original);
 });
 
-test("workflow selects the real agent_session library executable from Cargo artifact messages", () => {
+test("workflow archives the real agent-session library target and verifies it before exporting the paths", () => {
   const vm = require("node:vm");
   const workflow = fs.readFileSync(path.join(REPOSITORY, ".github/workflows/claude-release-check.yml"), "utf8");
-  const compile = workflow.slice(workflow.indexOf("- name: Compile existing module contract tests"));
+  const compile = workflow.split("- name: Build and verify the module contract test archive")[1]
+    .split("- name: Collect isolated contract evidence")[0];
   const script = compile.match(/node <<'JS'\n([\s\S]*?)\n          JS/)[1].split("\n").map(line => line.slice(10)).join("\n");
-  const writes = [];
+  const archive = "/synthetic/contract.tar.zst";
+  const calls = [];
   vm.runInNewContext(script, {
-    require: (name) => name === "node:fs" ? { writeFileSync: () => {}, appendFileSync: (file, text) => writes.push([file, text]) }
-      : { spawnSync: () => ({ status: 0, stdout: `${JSON.stringify({ reason: "compiler-artifact", profile: { test: true },
-        target: { name: "agent_session" }, executable: "/synthetic/agent_session-tests" })}\n`, stderr: "" }) },
-    process: { env: { GITHUB_ENV: "/synthetic/environment" }, exit: (code) => { throw new Error(`exit ${code}`); } },
+    require: name => name === "node:fs" ? { writeFileSync: () => {} }
+      : { spawnSync: (command, args) => { calls.push([command, ...args]); return { status: 0 }; } },
+    process: { env: { CLAUDE_CONTRACT_ARCHIVE: archive }, exit: code => { throw new Error(`exit ${code}`); } },
   });
-  assert.deepEqual(writes, [["/synthetic/environment", "CLAUDE_CONTRACT_TEST_BINARY=/synthetic/agent_session-tests\n"]]);
+  assert.deepEqual(calls, [["cargo", "nextest", "archive", "--locked", "-p", "nils-agent-session", "--lib", "--archive-file", archive]]);
+  assert.match(compile, /node --test-name-pattern='isolated collector runs the guarded library contract'[^\n]*\n +printf/);
 });
 
 test("untrusted candidate execution has a read-only job and a separate fresh provider-write runner", () => {
@@ -397,7 +441,7 @@ test("untrusted candidate execution has a read-only job and a separate fresh pro
   assert.match(publish, /needs: check/);
   assert.match(publish, /download-artifact@v8/);
   assert.match(publish, /pull-requests: write/);
-  assert.doesNotMatch(publish, /checkCandidate|collectReleaseCheck|spawnSync|cargo test|npm install/);
+  assert.doesNotMatch(publish, /checkCandidate|collectReleaseCheck|spawnSync|cargo nextest|npm install/);
 });
 
 

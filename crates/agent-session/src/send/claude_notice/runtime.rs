@@ -240,26 +240,36 @@ pub(crate) fn readiness(
     context: &CliContext,
     record: &SessionRecord,
 ) -> Option<(Bootstrap, Ready)> {
+    require_readiness(context, record).ok()
+}
+
+pub(crate) fn require_readiness(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Result<(Bootstrap, Ready), CliError> {
+    let unavailable = || refused("module-readiness-unavailable");
+    let read = |path: &Path, cap| private_read(path, cap).map_err(|_| unavailable());
     if record.agent != "claude" {
-        return None;
+        return Err(unavailable());
     }
-    let dir = module_dir(&context.state_dir, record).ok()?;
+    let dir = module_dir(&context.state_dir, record).map_err(|_| unavailable())?;
     if !existing_private_dir(&dir) {
-        return None;
+        return Err(unavailable());
     }
-    let bootstrap: Bootstrap =
-        serde_json::from_slice(&private_read(&dir.join("bootstrap.json"), 4096).ok()?).ok()?;
+    let bootstrap: Bootstrap = serde_json::from_slice(&read(&dir.join("bootstrap.json"), 4096)?)
+        .map_err(|_| unavailable())?;
     let ready: Ready =
-        serde_json::from_slice(&private_read(&dir.join("ready.json"), 4096).ok()?).ok()?;
-    let provider = record.provider_resume.as_ref()?;
-    let launch = Launch::from_record(record).ok()?;
+        serde_json::from_slice(&read(&dir.join("ready.json"), 4096)?).map_err(|_| unavailable())?;
+    let binding_mismatch = || refused("module-binding-mismatch");
+    let provider = record
+        .provider_resume
+        .as_ref()
+        .ok_or_else(binding_mismatch)?;
+    let launch = Launch::from_record(record).map_err(|_| unavailable())?;
+    let socket_name = socket_name(&context.state_dir, record).map_err(|_| unavailable())?;
     if bootstrap.schema_version != BOOT_SCHEMA
-        || bootstrap.launch != launch
-        || bootstrap.module_sha256 != sha256(MODULE.as_bytes())
         || !bootstrap.socket_path.is_absolute()
         || bootstrap.socket_path.as_os_str().as_encoded_bytes().len() > 96
-        || bootstrap.socket_path.file_name()?.to_str()?
-            != socket_name(&context.state_dir, record).ok()?
         || !bootstrap
             .socket_path
             .parent()
@@ -269,25 +279,36 @@ pub(crate) fn readiness(
             .parent()
             .and_then(Path::parent)
             .is_some_and(existing_private_dir)
-        || sha256(&private_read(&dir.join("hooks/register.js"), MODULE.len()).ok()?)
-            != bootstrap.module_sha256
         || bootstrap.nonce.len() != 64
         || !bootstrap.nonce.bytes().all(|b| b.is_ascii_hexdigit())
         || ready.schema_version != READY_SCHEMA
         || !ready.terminal
         || !ready.timer_started
+        || !version::supported(&bootstrap.provider_version)
+    {
+        return Err(unavailable());
+    }
+    if bootstrap.launch != launch
+        || bootstrap.module_sha256 != sha256(MODULE.as_bytes())
+        || bootstrap
+            .socket_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            != Some(socket_name.as_str())
         || ready.nonce != bootstrap.nonce
         || ready.binding.launch != launch
         || ready.binding.provider != "claude"
         || provider.provider != "claude"
         || ready.binding.provider_session_id != provider.session_id
         || ready.binding.provider_version.as_deref() != Some(bootstrap.provider_version.as_str())
-        || !version::supported(&bootstrap.provider_version)
         || ready.binding.module_sha256.as_deref() != Some(bootstrap.module_sha256.as_str())
     {
-        return None;
+        return Err(binding_mismatch());
     }
-    Some((bootstrap, ready))
+    if sha256(&read(&dir.join("hooks/register.js"), MODULE.len())?) != bootstrap.module_sha256 {
+        return Err(binding_mismatch());
+    }
+    Ok((bootstrap, ready))
 }
 
 #[cfg(test)]

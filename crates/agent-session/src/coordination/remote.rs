@@ -3571,6 +3571,8 @@ mod tests {
     }
     #[test]
     fn remote_recipient_accepts_new_mail_after_acknowledging_full_mailbox() {
+        // Keep the synthetic heartbeat and message timestamps fixed through all acknowledgements.
+        let _clock = super::super::test_clock::freeze();
         let (_temp, context) = fixture();
         receive(&context, "destination", envelope()).unwrap();
         let mut locked = lock_registry(&context).unwrap();
@@ -3588,7 +3590,6 @@ mod tests {
         }
         locked.save().unwrap();
         drop(locked);
-        refresh_recipient_heartbeat(&context);
         assert_eq!(
             receive(&context, "destination", envelope())
                 .unwrap_err()
@@ -3602,9 +3603,7 @@ mod tests {
             .iter()
             .map(|m| (m.message_id.clone(), m.revision))
             .collect();
-        // This synthetic broker needs an explicit beat for each authenticated operation.
         for (id, revision) in ids {
-            refresh_recipient_heartbeat(&context);
             super::super::mailbox::ack(
                 &context,
                 crate::cli::MessageAckArgs {
@@ -3622,7 +3621,6 @@ mod tests {
             )
             .unwrap();
         }
-        refresh_recipient_heartbeat(&context);
         assert_eq!(
             receive(&context, "destination", envelope()).unwrap()["state"],
             "delivered"

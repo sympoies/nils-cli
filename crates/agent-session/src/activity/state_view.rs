@@ -5,7 +5,7 @@ mod completion_uncertainty;
 mod runtime_stopped;
 #[path = "session_ready.rs"]
 mod session_ready;
-pub(crate) use session_ready::settle_starting;
+pub(crate) use session_ready::{settle_resumed_starting, settle_starting};
 
 pub fn state_for_view(context: &CliContext, record: &SessionRecord) -> Option<TurnState> {
     read_state(context, record, true)

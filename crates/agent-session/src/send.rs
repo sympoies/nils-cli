@@ -238,7 +238,8 @@ fn send_observing(
             &args,
             text.as_deref(),
             owner_command.is_some(),
-        )
+            notification.is_some(),
+        )?
         .is_some()
         {
             claude_notice::check_admission(&admission, "admission")?;
@@ -609,7 +610,8 @@ fn guarded(
         &args,
         text.as_deref(),
         attempt.terminal_command,
-    ) {
+        attempt.notification.is_some(),
+    )? {
         let deadline = admission.deadline;
         return claude_notice::deliver(
             context,

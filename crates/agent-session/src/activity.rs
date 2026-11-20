@@ -64,13 +64,13 @@ use event_validation::validate_event;
 pub(crate) mod pending;
 mod provider;
 #[path = "activity/state_view.rs"]
-mod state_view;
+pub(crate) mod state_view;
 pub use state_view::state_for_view;
 pub(crate) use state_view::{bound_claude_state, controller_state_for_record, settle_starting};
 pub(crate) mod shadow;
 mod stream_shadow_observation;
 
-pub(crate) use provider::ingest_codex_app_server_completion;
+pub(crate) use provider::{ingest_codex_app_server_completion, ingest_codex_app_server_start};
 use provider::{
     normalize_provider_hook, normalize_provider_notification, provider_notification_metadata,
 };
