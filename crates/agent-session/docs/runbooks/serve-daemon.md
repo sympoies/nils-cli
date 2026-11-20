@@ -670,13 +670,16 @@ host/tmux restarts require a new explicit Open.
 
 ## Admit a local mailbox service
 
-Service submission is a separate, opt-in authority. It grants only submission
-of bounded private messages to current managed recipients through this daemon;
-it grants no session creation, prompt, shell, mailbox read, or session capability.
+Mailbox service admission is opt-in. It grants submission of bounded private
+messages to current managed recipients through this daemon. The
+[service recipient contract](../specs/coordination-mailbox-v1.md#service-recipients)
+also specifies polling the exact service generation's own inbox for the local
+implementation in #3797. The credential grants no session creation, prompt,
+shell, session mailbox access or session capability.
 Use a dedicated credential, never an operator bearer, federation token, or a
 borrowed session capability. `serve --mailbox-services-file FILE` (fallback:
 `AGENT_SESSION_MAILBOX_SERVICES_FILE`) references the admission document.
-Omission disables service submission. This setting is separate from
+Omission disables mailbox service admission. This setting is separate from
 `serve --config` and from the submitting job's CLI arguments.
 
 Operator activation is a separate deployment decision:
@@ -737,15 +740,20 @@ validated at authorization and again before persistence, including retries.
 Unknown, removed, stale-generation, unsafe-file, and incorrect-token callers
 are denied with `mailbox-service-unauthorized` and no path, token, or body.
 
-For revocation, atomically replace the admission document without that entry,
-or remove its credential file. For rotation, provision a new credential and
-replace the entry with a new generation; then update the service job. Use the
-same guarded operator configuration process that owns these private files.
-Files are re-read without restarting the daemon. Revocation prevents subsequent
-admission and replay; it does not delete messages or cancel already committed
-outbox entries. Submissions concurrent with revocation linearize at their final
-authorization check. A new generation has a separate idempotency namespace;
-rotation is not permission to replay an old operation under a new identity.
+Revoke admission by atomically replacing the document without the active
+entry or removing its credential file. Under the local reply contract,
+explicit retirement records the service ID and generation without a
+credential. Preserve that marker when rewriting the document. For rollover,
+provision a fresh distinct credential and a generation that has never been
+used for that ID, then update the service job. The new generation has an
+empty inbox and a separate idempotency namespace. Old mail expires under
+its original address.
+
+Use the guarded operator configuration process that owns these private files.
+The daemon re-reads them without restart. Submissions concurrent with
+revocation linearize at their final authorization check. Revocation blocks
+subsequent service operations and service submission replays without deleting
+messages or cancelling committed outbox entries.
 
 Retry the identical submission with the same key after an uncertain response.
 A retained key binds request content, destination and service generation;
@@ -759,8 +767,13 @@ daemon drain wakes at expiry to compact their bodies. Local source receipts use
 the existing 24-hour receipt lifetime; remote identity retention extends through
 expiry plus 24 hours. Queue/quota exhaustion rejects rather than evicting live
 messages. Service bodies are returned only by the existing authenticated
-recipient show/wait operations as `service_message`; services have no
-reply mailbox. Content cannot authorize additional work.
+session recipient show/wait operations as `service_message`. Content cannot
+authorize additional work.
+
+Under the local reply contract, services poll with `message service-inbox`,
+read a reply with `message service-show`, and free capacity with
+`message service-ack`. Use the same `--service`, `--service-generation` and
+`--credential-file` selectors for each operation.
 
 ### Remote service activation prerequisite
 
