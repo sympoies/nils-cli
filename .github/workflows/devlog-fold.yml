@@ -64,8 +64,6 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-    env:
-      FOLD_DIR: ${{ runner.temp }}/devlog-fold
     steps:
       - name: Checkout current main for fold preparation
         uses: actions/checkout@v7
@@ -79,6 +77,7 @@ jobs:
           source scripts/dev-env.sh
           cargo build --locked -p nils-devlog
           echo "$PWD/target/debug" >> "$GITHUB_PATH"
+          echo "FOLD_DIR=$RUNNER_TEMP/devlog-fold" >> "$GITHUB_ENV"
 
       - name: Verify release publication and locate its fold receipt
         if: github.ref_type == 'tag'
