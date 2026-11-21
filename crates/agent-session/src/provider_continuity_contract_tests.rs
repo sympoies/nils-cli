@@ -31,15 +31,16 @@ fn provider_continuity_retains_sixteen_chained_links_and_clamps_clock() {
         assert_eq!(proof.links.len(), 16);
         assert_eq!(proof.links[0].from_incarnation, "runtime-4");
         assert_eq!(proof.links[15].to_incarnation, "runtime-20");
-        proof.links.last_mut().unwrap().at_epoch = i64::MAX;
+        proof.links.last_mut().unwrap().at_epoch = 9_007_199_254_740_991;
         current
             .extra
             .insert(KEY.into(), serde_json::to_value(proof).unwrap());
+        assert!(projection(&current, "running").is_some());
         let mut next = current.clone();
         next.runtime.as_mut().unwrap().launch_id = "runtime-21".into();
         append(&current, &mut next, Kind::Restart);
         let proof = retained(&next).unwrap();
-        assert_eq!(proof.links.last().unwrap().at_epoch, i64::MAX);
+        assert_eq!(proof.links.last().unwrap().at_epoch, 9_007_199_254_740_991);
         let wire = serde_json::to_value(proof).unwrap();
         let keys = |value: &Value| {
             let mut keys: Vec<_> = value.as_object().unwrap().keys().cloned().collect();
@@ -86,6 +87,7 @@ fn provider_continuity_omits_invalid_proofs_without_breaking_the_snapshot() {
         ("/links/1/to_conversation", json!("wrong-current")),
         ("/links/1/at_epoch", json!(0)),
         ("/links/0/at_epoch", json!(-1)),
+        ("/links/1/at_epoch", json!(9_007_199_254_740_992_i64)),
     ] {
         let mut invalid = valid.clone();
         *invalid.pointer_mut(pointer).unwrap() = value;

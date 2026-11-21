@@ -64,8 +64,9 @@ relaunch that restores the previous record also restores its prior chain.
 `clear` changes the provider conversation; `restart` and `resume` preserve it
 while replacing the runtime incarnation. Links persist in the session record,
 oldest first, retaining at most the last 16. Each link's `from_*` equals the
-previous link's `to_*`; `at_epoch` is a nonnegative integer and never
-decreases, including when the clock moves backward. The last link matches
+previous link's `to_*`. The `at_epoch` value is an integer from 0 through
+9007199254740991 (JavaScript's `Number.MAX_SAFE_INTEGER`) and never decreases,
+including when the clock moves backward. The last link matches
 `session_incarnation` and `provider_resume.session_id`. Identifiers are
 nonblank, control-free strings of at most 256 bytes. The provider matches the
 session and its resume metadata. The field contains only identifiers already
