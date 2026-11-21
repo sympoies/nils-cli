@@ -34,6 +34,8 @@ pub(crate) const BROKER_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const MAX_LABEL_BYTES: usize = 64;
 /// Longest public plan name a broker may return.
 pub(crate) const MAX_PLAN_BYTES: usize = 128;
+/// The sole typed no-account outcome for both broker protocols.
+const BROKER_NO_ACCOUNT_EXIT: i32 = 10;
 const MAX_BROKER_ARGV: usize = 16;
 const MAX_BROKER_ARG_BYTES: usize = 4096;
 
@@ -151,8 +153,11 @@ impl BrokerClient {
                 self.error("unavailable", "error output was unavailable".to_string())
             }
             BrokerProcessError::WaitFailed => self.error("failed", "failed".to_string()),
-            BrokerProcessError::Rejected => {
-                self.error("rejected", "rejected the request".to_string())
+            BrokerProcessError::NoAccount => {
+                self.error("rejected", "has no selectable account".to_string())
+            }
+            BrokerProcessError::UnsuccessfulExit => {
+                self.error("unavailable", "exited unsuccessfully".to_string())
             }
             BrokerProcessError::OutputTooLarge => self.error(
                 "invalid-response",
@@ -297,7 +302,8 @@ pub(crate) enum BrokerProcessError {
     StdoutUnavailable,
     StderrUnavailable,
     WaitFailed,
-    Rejected,
+    NoAccount,
+    UnsuccessfulExit,
     OutputTooLarge,
     MalformedJson,
     Timeout,
@@ -542,7 +548,11 @@ pub(crate) fn run(
         {
             if !status.success() {
                 terminate(&mut child);
-                return Err(BrokerProcessError::Rejected);
+                return Err(if status.code() == Some(BROKER_NO_ACCOUNT_EXIT) {
+                    BrokerProcessError::NoAccount
+                } else {
+                    BrokerProcessError::UnsuccessfulExit
+                });
             }
             if stdout.len() as u64 > BROKER_OUTPUT_LIMIT {
                 return Err(BrokerProcessError::OutputTooLarge);
@@ -652,6 +662,7 @@ case "$1" in
   malformed) printf '{' ;;
   oversized) dd if=/dev/zero bs=1048577 count=1 2>/dev/null | tr '\000' x ;;
   rejected) printf '%s\n' 'private broker failure' >&2; exit 7 ;;
+  no_account) printf '%s\n' 'not JSON'; printf '%s\n' 'private broker failure' >&2; exit 10 ;;
   *) exit 2 ;;
 esac
 "#,
@@ -661,7 +672,8 @@ esac
             for (mode, suffix) in [
                 ("malformed", "invalid-response"),
                 ("oversized", "invalid-response"),
-                ("rejected", "rejected"),
+                ("rejected", "unavailable"),
+                ("no_account", "rejected"),
             ] {
                 let _broker = configure(&lock, client, &[&broker, mode]);
                 let error = client.call("list", &[], BROKER_TIMEOUT).unwrap_err();
@@ -747,11 +759,11 @@ esac
             {
                 // Darwin's execvp fallback runs unrecognized executable text
                 // through a shell; this fixture then exits nonzero, so the
-                // broker rejects it after startup instead of reporting ENOEXEC.
-                assert_eq!(error.code(), code(client, "rejected"));
+                // broker fails after startup instead of reporting ENOEXEC.
+                assert_eq!(error.code(), code(client, "unavailable"));
                 assert_eq!(
                     error.message(),
-                    format!("{} account broker rejected the request", client.display)
+                    format!("{} account broker exited unsuccessfully", client.display)
                 );
             }
             #[cfg(not(target_os = "macos"))]
@@ -1007,3 +1019,7 @@ printf '%s\n' '{}'
         }
     }
 }
+
+#[cfg(test)]
+#[path = "account_broker/no_account_tests.rs"]
+mod no_account_tests;

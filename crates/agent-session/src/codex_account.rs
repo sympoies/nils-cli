@@ -224,7 +224,7 @@ struct BrokerResolveResponse {
 #[derive(Deserialize)]
 struct BrokerSelectResponse {
     schema_version: String,
-    account: Option<String>,
+    account: String,
     #[serde(default)]
     plan: Option<String>,
 }
@@ -1836,8 +1836,7 @@ pub(crate) fn select_account_with_timeout(
     if !matches!(strategy, "default_with_capacity" | "current_default") {
         return Err(unsupported_strategy_error());
     }
-    let selected = broker_select(&["--strategy", strategy], BROKER_TIMEOUT.min(timeout))?;
-    selected.ok_or_else(|| BROKER.invalid_response(INVALID_SELECTION))
+    broker_select(&["--strategy", strategy], BROKER_TIMEOUT.min(timeout))
 }
 
 pub(crate) fn select_next_account(
@@ -1852,33 +1851,28 @@ pub(crate) fn select_next_account(
     }
     match broker_select(&args, BROKER_TIMEOUT) {
         Err(error) if error.code() == "codex-account-broker-rejected" => Ok(None),
-        result => result,
+        result => result.map(Some),
     }
 }
 
 const INVALID_SELECTION: &str = "an invalid account selection";
 
-/// Runs `select` and validates the selected account, if any.
-fn broker_select(
-    args: &[&str],
-    timeout: Duration,
-) -> Result<Option<CodexAccountSummary>, CliError> {
+/// Runs `select` and requires a valid selected account on success.
+fn broker_select(args: &[&str], timeout: Duration) -> Result<CodexAccountSummary, CliError> {
     let value = BROKER.call("select", args, timeout)?;
     let response: BrokerSelectResponse = BROKER.decode(
         value,
         INVALID_SELECTION,
         |response: &BrokerSelectResponse| (response.schema_version.as_str(), None),
     )?;
-    let Some(account) = response.account else {
-        return Ok(None);
-    };
+    let account = response.account;
     BROKER.ensure_broker_nickname(&account, INVALID_SELECTION)?;
     BROKER.ensure_public_string(&response.plan, MAX_PLAN_BYTES)?;
-    Ok(Some(CodexAccountSummary {
+    Ok(CodexAccountSummary {
         account,
         label: None,
         plan: response.plan.filter(|value| !value.trim().is_empty()),
-    }))
+    })
 }
 
 fn decode_binding(record: &SessionRecord) -> DecodedBinding {

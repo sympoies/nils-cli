@@ -6,11 +6,9 @@ const BROKER_UNAVAILABLE_ACTION: &str = "configure_account_broker";
 
 /// Classify a broker failure for readiness and request-time account handling.
 ///
-/// The broker protocol has no typed "no account" signal: a non-zero exit is
-/// `-rejected` whether the broker declined to select or crashed, so that code
-/// stays `account_missing`. A broker that could not start, timed out, or
-/// returned an unusable response says nothing about the roster, so it is a
-/// broker fault and must not be reported as a missing account.
+/// Only the reserved no-account exit 10 produces `-rejected` and reports
+/// `account_missing`. Other exits, start failures, timeouts and unusable
+/// responses are broker faults, which say nothing about the account roster.
 pub(super) fn selection_failure(error: &CliError) -> RetitleReadiness {
     if error.code() == "codex-account-broker-rejected" {
         RetitleReadiness::unavailable("account_missing", "select_account")
@@ -93,7 +91,7 @@ mod tests {
     fn automatic_selection_failures_are_classified_by_cause() {
         let lock = nils_test_support::GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let rejecting = write_broker(tmp.path(), "rejecting", "exit 3");
+        let rejecting = write_broker(tmp.path(), "rejecting", "exit 10");
         let crashing = write_broker(tmp.path(), "crashing", "exit 1");
         let malformed = write_broker(tmp.path(), "malformed", "printf '%s\\n' 'not json'");
         let _config = nils_test_support::EnvGuard::set(
@@ -104,14 +102,80 @@ mod tests {
 
         for (name, argv, expected) in [
             (
-                "broker exits non-zero (rejection and crash are indistinguishable)",
+                "typed no-account",
                 json!([rejecting]),
                 ("unavailable", "account_missing", "select_account"),
             ),
             (
                 "broker crashes",
                 json!([crashing]),
-                ("unavailable", "account_missing", "select_account"),
+                (
+                    "unavailable",
+                    "account_broker_unavailable",
+                    "configure_account_broker",
+                ),
+            ),
+            (
+                "exit-2",
+                json!([write_broker(tmp.path(), "exit-2", "exit 2")]),
+                (
+                    "unavailable",
+                    "account_broker_unavailable",
+                    "configure_account_broker",
+                ),
+            ),
+            (
+                "exit-3",
+                json!([write_broker(tmp.path(), "exit-3", "exit 3")]),
+                (
+                    "unavailable",
+                    "account_broker_unavailable",
+                    "configure_account_broker",
+                ),
+            ),
+            (
+                "exit-7",
+                json!([write_broker(tmp.path(), "exit-7", "exit 7")]),
+                (
+                    "unavailable",
+                    "account_broker_unavailable",
+                    "configure_account_broker",
+                ),
+            ),
+            (
+                "signal",
+                json!([write_broker(tmp.path(), "signal", "kill -TERM \"$$\"")]),
+                (
+                    "unavailable",
+                    "account_broker_unavailable",
+                    "configure_account_broker",
+                ),
+            ),
+            (
+                "null-account",
+                json!([write_broker(
+                    tmp.path(),
+                    "null-account",
+                    "printf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":null}' "
+                )]),
+                (
+                    "unavailable",
+                    "account_broker_unavailable",
+                    "configure_account_broker",
+                ),
+            ),
+            (
+                "missing-account",
+                json!([write_broker(
+                    tmp.path(),
+                    "missing-account",
+                    "printf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\"}' "
+                )]),
+                (
+                    "unavailable",
+                    "account_broker_unavailable",
+                    "configure_account_broker",
+                ),
             ),
             (
                 "malformed broker response",
@@ -134,7 +198,14 @@ mod tests {
         ] {
             let _broker = nils_test_support::EnvGuard::set(&lock, BROKER_ENV, &argv.to_string());
             let readiness = RetitleService::from_environment().readiness();
-            assert_eq!(reasons(&readiness), expected, "{name}");
+            assert_eq!(reasons(&readiness), expected, "{name}: automatic");
+            let fixed = json!({
+                "provider": "codex_subscription", "account": "acct1",
+                "codex_bin": tmp.path().join("rejecting"), "model": "gpt-5.6-luna",
+            });
+            let _config = nils_test_support::EnvGuard::set(&lock, CONFIG_ENV, &fixed.to_string());
+            let readiness = RetitleService::from_environment().readiness();
+            assert_eq!(reasons(&readiness), expected, "{name}: configured");
         }
     }
 
@@ -142,11 +213,54 @@ mod tests {
     fn request_time_broker_failures_are_classified_by_cause() {
         let lock = nils_test_support::GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let rejecting = write_broker(tmp.path(), "rejecting", "exit 3");
+        let rejecting = write_broker(tmp.path(), "rejecting", "exit 10");
         let malformed = write_broker(tmp.path(), "malformed", "printf '%s\\n' 'not json'");
 
         for (broker, expected_code, expected_action) in [
             (rejecting, "retitle-account-missing", "select_account"),
+            (
+                write_broker(tmp.path(), "exit-1", "exit 1"),
+                "retitle-provider-unavailable",
+                "configure_account_broker",
+            ),
+            (
+                write_broker(tmp.path(), "exit-2", "exit 2"),
+                "retitle-provider-unavailable",
+                "configure_account_broker",
+            ),
+            (
+                write_broker(tmp.path(), "exit-3", "exit 3"),
+                "retitle-provider-unavailable",
+                "configure_account_broker",
+            ),
+            (
+                write_broker(tmp.path(), "exit-7", "exit 7"),
+                "retitle-provider-unavailable",
+                "configure_account_broker",
+            ),
+            (
+                write_broker(tmp.path(), "signal", "kill -TERM \"$$\""),
+                "retitle-provider-unavailable",
+                "configure_account_broker",
+            ),
+            (
+                write_broker(
+                    tmp.path(),
+                    "null-account",
+                    "printf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":null}' ",
+                ),
+                "retitle-provider-unavailable",
+                "configure_account_broker",
+            ),
+            (
+                write_broker(
+                    tmp.path(),
+                    "missing-account",
+                    "printf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\"}' ",
+                ),
+                "retitle-provider-unavailable",
+                "configure_account_broker",
+            ),
             (
                 malformed,
                 "retitle-provider-unavailable",

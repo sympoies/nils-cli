@@ -103,7 +103,7 @@ fn failed_broker_requests_replay_the_same_recovery_details_after_restart() {
 
         // Replay must use the durable terminal attempt, even when the broker's
         // current result differs and the serving process has been replaced.
-        write_executable(&fixture.broker_bin, "#!/bin/sh\nexit 3\n");
+        write_executable(&fixture.broker_bin, "#!/bin/sh\nexit 10\n");
         let restarted = ServeProcess::spawn(&fixture, Some(&config), false, true);
         let replay = restarted.post(&path, &request);
         assert_eq!(replay.status, first.status, "{name}: {}", replay.body);

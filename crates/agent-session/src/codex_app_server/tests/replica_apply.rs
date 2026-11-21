@@ -121,7 +121,7 @@ async fn replica_apply_distinguishes_broker_rejection_without_exposing_its_outpu
     let broker = tmp.path().join("broker");
     fs::write(
         &broker,
-        "#!/bin/sh\nprintf '%s\\n' 'private-fixture-error fixture-token' >&2\nexit 9\n",
+        "#!/bin/sh\nprintf '%s\\n' 'private-fixture-error fixture-token' >&2\nexit 10\n",
     )
     .unwrap();
     fs::set_permissions(&broker, fs::Permissions::from_mode(0o700)).unwrap();

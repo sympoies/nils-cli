@@ -653,7 +653,7 @@ async fn claude_idle_switch_reports_blockers_and_reissue_applies_immediately() {
     assert_eq!(blocked["next"]["revision"], revision);
     assert_eq!(
         blocked["next"]["blocking_reason"],
-        "claude-account-broker-rejected"
+        "claude-account-broker-unavailable"
     );
     let calls = fs::read_to_string(tmp.path().join("tmux.log")).unwrap();
     assert!(!calls.contains("new-session") && !calls.contains("kill-session"));
@@ -820,7 +820,7 @@ async fn claude_idle_switch_backs_off_persistent_preflight_refusal() {
     assert_eq!(view["next"]["state"], "queued");
     assert_eq!(
         view["next"]["blocking_reason"],
-        "claude-account-broker-rejected"
+        "claude-account-broker-unavailable"
     );
 }
 
@@ -883,7 +883,7 @@ async fn claude_idle_switch_retry_window_bounds_broker_and_stop_attempts() {
         assert_eq!(
             view["next"]["blocking_reason"],
             if account == "gamma" {
-                "claude-account-broker-rejected"
+                "claude-account-broker-unavailable"
             } else {
                 "session-termination-failed"
             }

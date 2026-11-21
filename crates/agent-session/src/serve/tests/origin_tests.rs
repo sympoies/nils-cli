@@ -106,7 +106,7 @@ async fn claude_account_switch_queues_while_busy_and_restarts_only_at_idle() {
     assert_eq!(body["error"]["code"], "claude-account-switch-refused");
     assert_eq!(
         body["error"]["details"]["cause"],
-        "claude-account-broker-rejected"
+        "claude-account-broker-unavailable"
     );
     let calls = fs::read_to_string(&log).unwrap();
     assert!(

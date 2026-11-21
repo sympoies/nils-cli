@@ -196,7 +196,10 @@ speaks the `agent-session.codex-auth-broker.v1` argv protocol. The broker
 receives `select --strategy <current_default|default_with_capacity|next_with_capacity>
 [--after NICK] [--exclude NICK]... --format json` and must print
 `{"schema_version":"agent-session.codex-auth-broker.v1","account":"NICK"}`,
-optionally with `plan`, or exit non-zero. A broker can delegate the policy to
+optionally with `plan`, on exit 0. Exit **10** is the sole typed no-account
+result and requires no JSON. Every other non-zero exit, including signal
+termination, is a broker fault. A null or missing `account` in a success
+envelope is invalid-response. A broker can delegate the policy to
 this command instead of computing capacity itself:
 
 1. Pass the strategy, `--after`, and every `--exclude` through unchanged. The
@@ -209,9 +212,15 @@ this command instead of computing capacity itself:
 4. On exit `0` with `ok=true`, answer `result.selected` as `account`. Resolve
    `plan` from the broker's own credential lookup, because this command never
    reads credentials into its output.
-5. Map any other outcome to the broker's own failure. For
-   `next_with_capacity`, `no-account-with-capacity` is the expected "no
-   failover target" result.
+5. Map a confirmed no-account result, such as `no-account-with-capacity` for
+   `next_with_capacity`, to broker exit 10. Map all other failures to a
+   different non-zero exit. Do not forward the delegated command's exit status
+   blindly: its failure envelope determines whether no account was confirmed.
+
+Deploy updated brokers first, then agent-session. The old client already treats
+exit 10 as rejection; the new client distinguishes it from faults. An old
+broker's untyped no-account exit becomes broker-unavailable with the new client,
+without a fallback. Coordinate the broker update before deploying the client.
 
 Selection and a usage reporter that runs `diag rate-limits` or
 `prompt-segment` read and write the same cache. Within

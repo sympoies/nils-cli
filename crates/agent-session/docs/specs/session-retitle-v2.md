@@ -50,10 +50,11 @@ Stable readiness reasons are `ready`, `provider_not_configured`,
 `migrate_provider`.
 
 For a `codex_subscription` provider, `account_missing` means the configured
-account is absent from the broker roster, or the broker exited non-zero for
-automatic selection. The broker protocol has no typed no-account signal, so a
-rejection and a crash are indistinguishable and both report `account_missing`.
-A broker that cannot be started, times out, or returns an unusable response is
+account is absent from the broker roster, or the broker returned its typed
+no-account result (reserved exit 10) for the account lookup. Other non-zero
+exits and signal termination are broker faults. A broker that cannot be
+started, times out, or returns an unusable response (including a null or missing
+account in a successful selection envelope) is
 `account_broker_unavailable`, for explicit and automatic selection alike.
 
 ## Mutation request and response
@@ -301,8 +302,9 @@ Mutation errors use stable codes and content-free details with `retryable`,
 | `retitle-worker-failed` | `retry` | `retry_request` |
 | `title-revision-overflow` | `none` | `none` |
 
-At request time, account-broker rejection reports `retitle-account-missing`.
-Broker start failure or an unusable response reports `retitle-provider-unavailable`
+At request time, only the typed account-broker no-account result (exit 10)
+reports `retitle-account-missing`. Other non-zero exits, signal termination,
+broker start failure or an unusable response report `retitle-provider-unavailable`
 with `failure_class: account_broker_unavailable` and `configure_account_broker`
 as its action and recovery strategy. Broker timeouts retain
 `retitle-provider-timeout` and its existing retry contract. Repeating an identical
