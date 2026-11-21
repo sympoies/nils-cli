@@ -808,6 +808,10 @@ fn status_before(tmux: &Path, record: &SessionRecord, deadline: Instant) -> Stri
     )
 }
 
+#[cfg(test)]
+#[path = "../tests/support/short_roots.rs"]
+mod short_roots;
+
 #[cfg(all(test, target_os = "linux"))]
 #[path = "restart_tests.rs"]
 mod tests;
