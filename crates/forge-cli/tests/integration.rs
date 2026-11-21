@@ -18,6 +18,7 @@ mod integration {
     mod hook_redeliver;
     mod inbox;
     mod issue_atoms;
+    mod issue_events;
     mod issue_tracker;
     mod kind_parity;
     mod label_hold_compatibility;

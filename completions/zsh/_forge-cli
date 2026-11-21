@@ -1485,6 +1485,21 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ':id -- Numeric issue id:_default' \
 && ret=0
 ;;
+(events)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Numeric GitHub issue number:_default' \
+&& ret=0
+;;
 (list)
 _arguments "${_arguments_options[@]}" : \
 '--state=[Filter by state (default\: open)]:STATE:(open closed all)' \
@@ -1736,6 +1751,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (view)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(events)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -4217,6 +4236,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(events)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (list)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -5117,6 +5140,7 @@ _forge-cli__subcmd__help__subcmd__issue_commands() {
     local commands; commands=(
 'create:Open a new issue' \
 'view:Fetch a single issue' \
+'events:Read GitHub issue closure and reopen events' \
 'list:List issues filtered by state / labels / author / assignee' \
 'edit:Mutate an issue' \
 'comment:Append a comment to an issue' \
@@ -5151,6 +5175,11 @@ _forge-cli__subcmd__help__subcmd__issue__subcmd__create_commands() {
 _forge-cli__subcmd__help__subcmd__issue__subcmd__edit_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help issue edit commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__issue__subcmd__events_commands] )) ||
+_forge-cli__subcmd__help__subcmd__issue__subcmd__events_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help issue events commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__issue__subcmd__list_commands] )) ||
 _forge-cli__subcmd__help__subcmd__issue__subcmd__list_commands() {
@@ -5891,6 +5920,7 @@ _forge-cli__subcmd__issue_commands() {
     local commands; commands=(
 'create:Open a new issue' \
 'view:Fetch a single issue' \
+'events:Read GitHub issue closure and reopen events' \
 'list:List issues filtered by state / labels / author / assignee' \
 'edit:Mutate an issue' \
 'comment:Append a comment to an issue' \
@@ -5927,11 +5957,17 @@ _forge-cli__subcmd__issue__subcmd__edit_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli issue edit commands' commands "$@"
 }
+(( $+functions[_forge-cli__subcmd__issue__subcmd__events_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__events_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli issue events commands' commands "$@"
+}
 (( $+functions[_forge-cli__subcmd__issue__subcmd__help_commands] )) ||
 _forge-cli__subcmd__issue__subcmd__help_commands() {
     local commands; commands=(
 'create:Open a new issue' \
 'view:Fetch a single issue' \
+'events:Read GitHub issue closure and reopen events' \
 'list:List issues filtered by state / labels / author / assignee' \
 'edit:Mutate an issue' \
 'comment:Append a comment to an issue' \
@@ -5967,6 +6003,11 @@ _forge-cli__subcmd__issue__subcmd__help__subcmd__create_commands() {
 _forge-cli__subcmd__issue__subcmd__help__subcmd__edit_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli issue help edit commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__issue__subcmd__help__subcmd__events_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__help__subcmd__events_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli issue help events commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__issue__subcmd__help__subcmd__help_commands] )) ||
 _forge-cli__subcmd__issue__subcmd__help__subcmd__help_commands() {
