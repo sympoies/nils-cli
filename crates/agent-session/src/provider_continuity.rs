@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 const SCHEMA: &str = "agent-session.provider-continuity.v1";
 const KEY: &str = "provider_continuity";
 const MAX_LINKS: usize = 16;
+// Number.MAX_SAFE_INTEGER in the JavaScript relay.
+const MAX_SAFE_EPOCH: i64 = (1 << 53) - 1;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -56,7 +58,7 @@ fn valid_link(link: &Link) -> bool {
     ]
     .into_iter()
     .all(|id| valid_id(id))
-        && link.at_epoch >= 0
+        && (0..=MAX_SAFE_EPOCH).contains(&link.at_epoch)
         && match link.kind {
             Kind::Clear => link.from_conversation != link.to_conversation,
             Kind::Restart | Kind::Resume => link.from_conversation == link.to_conversation,
