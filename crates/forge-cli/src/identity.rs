@@ -214,6 +214,14 @@ pub fn scope(cli: &Cli, global: &GlobalFlags) -> Result<Scope, ForgeError> {
             git_remote_url,
         )?;
         if ctx.provider != Provider::GitHub {
+            if matches!(
+                &cli.command,
+                Some(Command::Issue(crate::cli::IssueArgs {
+                    command: Some(crate::cli::IssueCommand::Events(_)),
+                }))
+            ) {
+                return Err(crate::ops::issue_events::unsupported(ctx.provider));
+            }
             return Err(error(identity::Error::new("identity_provider_unsupported")));
         }
         Target::new(

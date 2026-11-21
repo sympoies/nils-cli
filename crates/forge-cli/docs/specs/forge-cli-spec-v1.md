@@ -174,6 +174,7 @@ Parity matrix (v1):
 | `pr wait-checks <id>`                                                   | poll exact-head REST checks against configured base-branch requirements                                                                      | poll structured MR pipeline/jobs snapshot                              | emulated; same envelope                                                                                                  |
 | `issue create`                                                          | `gh issue create …`                                                                                                                          | `glab issue create …`                                                  | exact                                                                                                                    |
 | `issue view <id>`                                                       | `gh issue view <id> --json …`                                                                                                                | `glab issue view <id> -F json`                                         | exact                                                                                                                    |
+| `issue events <id>`                                                     | `gh api graphql` query for issue timeline items                                                                                             | unsupported                                                           | GitHub only                                                                                                              |
 | `issue edit <id>`                                                       | `gh issue edit <id> …`                                                                                                                       | `glab issue update <id> …`                                             | exact                                                                                                                    |
 | `issue comment <id>`                                                    | `gh issue comment <id> --body …`                                                                                                             | `glab issue note <id> --message …`                                     | exact                                                                                                                    |
 | `issue comment-edit <comment-id>`                                       | GitHub issue-comment REST edit                                                                                                               | GitLab issue note REST edit                                            | edited body                                                                                                              |
@@ -1622,6 +1623,59 @@ and `glab mr create …` invocations are removed.
   `forge-cli pr checks ID --repo owner/repo --format json`.
   Checks are a separate snapshot; consumers should use `head_sha` from PR view
   when they need to bind later decisions to a particular head.
+
+### GitHub issue events
+
+`forge-cli issue events <id> --format json` reads a GitHub issue's
+[closure and reopen history](https://docs.github.com/en/graphql/reference/issues#closedevent).
+It uses the issue number and repository selected by the usual Git remote or
+`--repo owner/name` and provider options. GitLab and local return
+`provider_unsupported` (exit 64).
+
+The `cli.forge-cli.issue.events.v1` success envelope contains:
+
+```json
+{
+  "schema_version": "cli.forge-cli.issue.events.v1",
+  "ok": true,
+  "data": {
+    "provider": "github",
+    "repo": "acme/widget",
+    "number": 42,
+    "events": [
+      {
+        "event": "closed",
+        "actor": "maintainer",
+        "created_at": "2030-01-01T00:00:00Z",
+        "commit": null,
+        "pull_request": {"number": 7, "url": "https://github.com/acme/widget/pull/7"}
+      },
+      {
+        "event": "reopened",
+        "actor": null,
+        "created_at": "2030-01-02T00:00:00Z",
+        "commit": null,
+        "pull_request": null
+      }
+    ]
+  }
+}
+```
+
+`events` preserves GitHub timeline order and is empty when no events match.
+Each event has a kind (`closed` or `reopened`) and the GitHub timestamp.
+`actor` is the login when supplied. `commit` is an object with `oid` and `url`
+when the provider supplies a commit as the closer. `pull_request` is an
+object with `number` and `url` when the provider supplies a pull request as
+the closer. Absent actors and references are `null`.
+
+The query filters to closed and reopened events at GitHub and follows the
+timeline cursor for up to 100 pages of 100 matching events each. A missing or
+repeated next-page cursor, invalid response page, or continuation after the
+page budget returns `issue_events_incomplete` (exit 65). Provider call failures
+use the standard backend errors. Each failure returns a single error with
+no partial event list. `--dry-run` returns the first query plan without
+fetching timeline pages.
 
 ## Repository inventory and security reads
 

@@ -130,32 +130,6 @@ pub enum PrCommand {
     Deliver(PrDeliverArgs),
 }
 
-/// `issue` subtree.
-#[derive(Subcommand, Debug)]
-pub enum IssueCommand {
-    /// Open a new issue.
-    Create(IssueCreateArgs),
-    /// Fetch a single issue.
-    View(IssueViewArgs),
-    /// List issues filtered by state / labels / author / assignee.
-    List(IssueListArgs),
-    /// Mutate an issue.
-    Edit(IssueEditArgs),
-    /// Append a comment to an issue.
-    Comment(IssueCommentArgs),
-    /// Edit an existing issue comment.
-    CommentEdit(TimelineCommentEditArgs),
-    /// Close an issue.
-    Close(IssueCloseArgs),
-    /// Reopen a closed issue.
-    Reopen {
-        /// Numeric id.
-        id: u64,
-    },
-    /// Check and maintain a program tracker issue's phase table.
-    Tracker(IssueTrackerArgs),
-}
-
 /// Edit a comment on the specified issue or PR.
 #[derive(Args, Debug, Clone)]
 pub struct TimelineCommentEditArgs {

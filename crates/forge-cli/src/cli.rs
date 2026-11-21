@@ -36,6 +36,9 @@ pub use checks::PrChecksArgs;
 mod comment;
 pub use comment::*;
 
+mod issue;
+pub use issue::{IssueCommand, IssueEventsArgs};
+
 mod review_loop;
 pub use review_loop::{PrReviewCommand, PrReviewEditArgs, PrReviewLoopObserveArgs};
 
@@ -2104,45 +2107,8 @@ pub(crate) fn dispatch_parsed(cli: Cli) -> i32 {
             command: Some(PrCommand::Deliver(args)),
         })) => crate::macros::pr_deliver::run(&global, args, format),
         Some(Command::Issue(IssueArgs {
-            command: Some(IssueCommand::Create(args)),
-        })) => ops::issue_create::run(&global, args, format),
-        Some(Command::Issue(IssueArgs {
-            command: Some(IssueCommand::View(args)),
-        })) => ops::issue_view::run(&global, args, format),
-        Some(Command::Issue(IssueArgs {
-            command: Some(IssueCommand::List(args)),
-        })) => ops::issue_list::run(&global, args, format),
-        Some(Command::Issue(IssueArgs {
-            command: Some(IssueCommand::Edit(args)),
-        })) => ops::issue_edit::run(&global, args, format),
-        Some(Command::Issue(IssueArgs {
-            command: Some(IssueCommand::Comment(args)),
-        })) => ops::issue_comment::run(&global, args, format),
-        Some(Command::Issue(IssueArgs {
-            command: Some(IssueCommand::CommentEdit(args)),
-        })) => ops::comment_edit::run(&global, args, format, false),
-        Some(Command::Issue(IssueArgs {
-            command: Some(IssueCommand::Close(args)),
-        })) => ops::issue_close::run(&global, args.id, args.reason, format),
-        Some(Command::Issue(IssueArgs {
-            command: Some(IssueCommand::Reopen { id }),
-        })) => ops::issue_reopen::run(&global, id, format),
-        Some(Command::Issue(IssueArgs {
-            command: Some(IssueCommand::Tracker(args)),
-        })) => match args.command {
-            IssueTrackerCommand::Lint(lint_args) => {
-                ops::issue_tracker_lint::run(&global, lint_args, format)
-            }
-            IssueTrackerCommand::Graph(graph_args) => {
-                ops::issue_tracker_graph::run(&global, graph_args, format)
-            }
-            IssueTrackerCommand::Tick(tick_args) => {
-                ops::issue_tracker_tick::run(&global, tick_args, format)
-            }
-            IssueTrackerCommand::Show(show_args) => {
-                ops::issue_tracker_show::run(&global, show_args, format)
-            }
-        },
+            command: Some(command),
+        })) => issue::run(&global, command, format),
         Some(Command::Activity(ActivityArgs {
             command: Some(command),
         })) => ops::activity::run(&global, command, format),

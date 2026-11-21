@@ -260,6 +260,12 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
             command: Some(command),
         })) => match command {
             IssueCommand::View(_) => ("issue.view", read, network, vec!["provider"]),
+            IssueCommand::Events(_) => (
+                "issue.events",
+                read,
+                network,
+                vec!["git_remote", "provider", "identity_policy"],
+            ),
             IssueCommand::List(_) => ("issue.list", read, network, vec!["provider"]),
             // `lint` and a `graph` without `--write` only read. A `--body-file`
             // draft never reaches a provider, and `graph --write` on a draft

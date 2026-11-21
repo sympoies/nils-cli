@@ -11,6 +11,7 @@ pub mod issue_closeout;
 pub mod issue_comment;
 pub mod issue_create;
 pub mod issue_edit;
+pub mod issue_events;
 pub mod issue_list;
 pub mod issue_reopen;
 pub mod issue_tracker;
