@@ -90,7 +90,7 @@ pub(super) async fn attempt(context: &CliContext, result: ResultRecord) -> Resul
 fn confirm_by_client_id(context: &CliContext, original: ResultRecord) -> ResultRecord {
     let confirmed = || -> Option<ResultRecord> {
         let receipt = &original.receipt;
-        let claimed = store::claim_fingerprint(context, receipt)?;
+        let claimed = store::claim_payload(context, receipt)?;
         let deadline = Instant::now() + crate::send_submit::HOLD_BUDGET;
         let lock = crate::acquire_session_record_lock_timed(
             context,
@@ -118,7 +118,7 @@ fn confirm_by_client_id(context: &CliContext, original: ResultRecord) -> ResultR
         let turn_id = client.find_client_input(&client_id, |text| {
             [true, false]
                 .into_iter()
-                .any(|require_idle| store::fingerprint(text, require_idle) == claimed)
+                .any(|require_idle| claimed.matches(text, require_idle))
         })?;
         let _lock = crate::acquire_session_record_lock_timed(
             context,
@@ -146,6 +146,7 @@ fn confirm(context: &CliContext, original: ResultRecord) -> ResultRecord {
     let confirmed = || -> Option<ResultRecord> {
         let proof = original.native_confirmation.as_ref()?;
         // A private proof must still belong to this exact durable claim/result.
+        let claimed = store::claim_payload(context, &original.receipt)?;
         if !store::confirmation_is_current(context, &original) {
             return None;
         }
@@ -165,9 +166,7 @@ fn confirm(context: &CliContext, original: ResultRecord) -> ResultRecord {
         let mut client = codex_app_server::guarded::Client::connect(&record, deadline).ok()?;
         // Provider ingress may need the record lock to hydrate the accepted input.
         drop(lock);
-        if !client.confirms_input(&proof.turn_id, |text| {
-            store::fingerprint(text, true) == proof.fingerprint
-        }) {
+        if !client.confirms_input(&proof.turn_id, |text| claimed.matches(text, true)) {
             return None;
         }
         let _lock = crate::acquire_session_record_lock_timed(

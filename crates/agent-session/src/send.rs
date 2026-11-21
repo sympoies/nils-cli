@@ -3,6 +3,8 @@ pub(crate) mod claude_notice;
 pub(crate) mod codex_notice;
 pub(crate) mod daemon_notice;
 pub(crate) mod input;
+use crate::serve::prompt_receipts::reply_delivery;
+
 mod native;
 #[cfg(test)]
 pub(crate) mod test_budget;
@@ -149,26 +151,54 @@ fn send_observing(
     let guard_started = codex_app_server::guarded::trace::budget_start();
     let mut manual_input = ManualInputSection::new(record_lock);
     let mut record = load_session_record(context, &observed.id)?;
-    ensure_same_session_identity(&observed, &record)?;
-    cli::permission::refuse_terminal(context, &record, text.as_deref(), &args.keys)?;
+    let lock = manual_input
+        .record_lock
+        .as_ref()
+        .expect("input holds record lock");
+    reply_delivery::check(context, &record, &args.guards, lock)?;
+    let preflight = |guards: &send_guard::GuardArgs, result| {
+        reply_delivery::checked(context, &record, guards, lock, result)
+    };
+    preflight(
+        &args.guards,
+        ensure_same_session_identity(&observed, &record),
+    )?;
+    preflight(
+        &args.guards,
+        cli::permission::refuse_terminal(context, &record, text.as_deref(), &args.keys),
+    )?;
     if !(record.agent == "claude"
         && owner_command.as_ref().is_some_and(|command| {
             command.is_login(text.as_deref()) && args.keys == [SpecialKey::Enter]
         }))
     {
-        crate::auth_incident::recovery::guard_input(context, &record, text.as_deref(), &args.keys)?;
+        preflight(
+            &args.guards,
+            crate::auth_incident::recovery::guard_input(
+                context,
+                &record,
+                text.as_deref(),
+                &args.keys,
+            ),
+        )?;
     }
     if let Some(command) = &owner_command {
         command.check(&record)?;
     }
     if live_status(&tmux_bin, &record.tmux_session) != "running" {
-        return Err(CliError::runtime(
-            "session-not-running",
-            format!("session is not running: {}", record.id),
-            Some(json!({ "id": record.id })),
-        ));
+        preflight(
+            &args.guards,
+            Err(CliError::runtime(
+                "session-not-running",
+                format!("session is not running: {}", record.id),
+                Some(json!({ "id": record.id })),
+            )),
+        )?;
     }
-    crate::restart::ensure_not_fenced(context, &record)?;
+    preflight(
+        &args.guards,
+        crate::restart::ensure_not_fenced(context, &record),
+    )?;
     let claude_empty_admission = record.agent == "claude"
         && carries_literal_text(text.as_deref())
         && args.keys == [SpecialKey::Enter]
@@ -216,7 +246,7 @@ fn send_observing(
         } else if notification.is_some_and(|candidate| candidate.is_text_wake()) {
             admission.check_preserving_draft("admission")?;
         } else {
-            admission.check(None, "admission")?;
+            preflight(&args.guards, admission.check(None, "admission"))?;
         }
     }
     // Only input that types characters is gated. Special keys — including the
@@ -236,11 +266,17 @@ fn send_observing(
     // the applied binding under the same lock as the pane write, while leaving
     // control-only keys and the existing next-intent submission fence intact.
     if record.agent == "codex" && (carries_literal_text(text.as_deref()) || has_printable_key) {
-        codex_account::ensure_terminal_input_allowed(&record)?;
+        preflight(
+            &args.guards,
+            codex_account::ensure_terminal_input_allowed(&record),
+        )?;
     }
     let submits = codex_app_server::input_contains_submission(text.as_deref(), &args.keys);
     if submits {
-        codex_app_server::ensure_manual_input_capability(context, &record)?;
+        preflight(
+            &args.guards,
+            codex_app_server::ensure_manual_input_capability(context, &record),
+        )?;
         if !args.guards.enabled() {
             codex_account::authorize_terminal_input_locked(context, &mut record)?;
         }
@@ -589,7 +625,11 @@ fn guarded(
             capability,
         );
     }
-    check_empty()?;
+    let lock = manual_input
+        .record_lock
+        .as_ref()
+        .expect("input holds record lock");
+    reply_delivery::checked(context, &record, &args.guards, lock, check_empty())?;
     if !attempt.terminal_command
         && codex_app_server::runtime_is_supported(&record)
         && args.guards.require_idle
@@ -630,14 +670,34 @@ fn guarded(
             PANE_INPUT_COMMAND_TIMEOUT,
             PasteMode::Bracketed,
             || {
-                check_empty()?;
+                let lock = manual_input
+                    .record_lock
+                    .as_ref()
+                    .expect("input holds record lock");
+                reply_delivery::checked(context, &record, &args.guards, lock, check_empty())?;
                 admission.claim_key()?;
-                admission.check(None, "claimed")?;
+                reply_delivery::checked(
+                    context,
+                    &record,
+                    &args.guards,
+                    lock,
+                    admission.check(None, "claimed"),
+                )?;
                 if let Some(candidate) = text_wake {
                     crate::serve::begin_mailbox_notice(context, &record, tmux_bin, candidate)?;
                 }
                 prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
-                cli::permission::input_admission(context, &record, tmux_bin, Some(text), &[])
+                reply_delivery::consume(
+                    context,
+                    &record,
+                    &args.guards,
+                    lock,
+                    reply_delivery::AdmittedInput::Terminal {
+                        tmux: tmux_bin,
+                        text,
+                        stopped: admission.stopped_idle.borrow().is_some(),
+                    },
+                )
             },
         );
         let _ = fs::remove_file(temp);

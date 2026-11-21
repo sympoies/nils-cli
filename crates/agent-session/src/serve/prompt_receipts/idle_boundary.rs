@@ -17,6 +17,8 @@ const MAX_RECORD_BYTES: u64 = 4096;
 pub(crate) struct IdleObservation {
     /// Digest of the verified runtime, control, conversation and applied account.
     pub(crate) binding: String,
+    /// Provider conversation whose observations share a watermark ordering.
+    pub(crate) conversation: String,
     /// Provider-specific position that advances across completed turns.
     pub(crate) position: u64,
     /// Private digest of the provider's turn watermark.
@@ -82,7 +84,9 @@ impl<'a> Store<'a> {
         observation: IdleObservation,
     ) -> Result<Option<Boundary>, CliError> {
         let current = self.read()?;
-        if let Some(current) = &current {
+        if let Some(current) = &current
+            && current.observation.conversation == observation.conversation
+        {
             let prior = &current.observation;
             let unchanged_turn =
                 observation.position == prior.position && observation.turn == prior.turn;

@@ -228,6 +228,7 @@ struct ServeState {
     tmux_bin: PathBuf,
     attach_brokers: AttachBrokerRegistry,
     provider_prompt_discovery: Arc<ProviderPromptDiscoveryRegistry>,
+    reply_observer: Arc<prompt_receipts::reply_delivery::ListObserver>,
     activity_broker: Arc<ActivityBroker>,
     codex_controls: Arc<StdMutex<HashMap<String, CodexControlEntry>>>,
     account_switches: AccountSwitchRegistry,
@@ -1131,6 +1132,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             tmux_bin,
             attach_brokers: AttachBrokerRegistry::default(),
             provider_prompt_discovery: Arc::new(ProviderPromptDiscoveryRegistry::default()),
+            reply_observer: Default::default(),
             activity_broker,
             codex_controls: Arc::new(StdMutex::new(HashMap::new())),
             account_switches: AccountSwitchRegistry::default(),
@@ -5120,13 +5122,8 @@ async fn list_handler(State(state): State<Arc<ServeState>>) -> Response {
     })
     .await
     {
-        Ok(Ok((mut sessions, agent_profiles))) => {
-            session_previews::enrich_last_prompts(
-                &state.context,
-                &state.provider_prompt_discovery,
-                &mut sessions,
-            )
-            .await;
+        Ok(Ok((sessions, agent_profiles))) => {
+            let sessions = session_previews::enrich_for_list(&state, sessions).await;
             envelope_ok(json!({
                 "machine": state.machine,
                 "observed_at": activity_observed_at(),

@@ -4,13 +4,12 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 mod client_message;
-// The projection and input adapters are wired together in the next change.
-#[cfg(test)]
-mod idle_boundary;
+pub(in crate::serve) mod idle_boundary;
 #[cfg(test)]
 mod idle_failure_tests;
 pub(crate) mod owner_commands;
 mod reconcile;
+pub(crate) mod reply_delivery;
 mod store;
 mod terminal;
 
@@ -28,6 +27,22 @@ pub(super) struct SubmitBody {
     request_id: Option<String>,
     #[serde(default)]
     require_idle: bool,
+    #[serde(default, deserialize_with = "present_boundary")]
+    expected_idle_ready_boundary: Option<Value>,
+}
+
+fn present_boundary<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(deserializer).map(Some)
+}
+
+impl SubmitBody {
+    fn boundary(&self) -> Option<&str> {
+        self.expected_idle_ready_boundary
+            .as_ref()
+            .and_then(Value::as_str)
+    }
 }
 
 #[derive(Deserialize)]
@@ -52,6 +67,12 @@ enum ConfirmationDiagnostic {
     NativeInputUnconfirmed,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DeliveryKind {
+    IdleBoundary,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct Receipt {
     request_id: String,
@@ -59,6 +80,8 @@ struct Receipt {
     session_incarnation: String,
     outcome: Outcome,
     code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    delivery_kind: Option<DeliveryKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     composer_cleanup: Option<terminal::ComposerCleanup>,
     /// Which composer observation step failed, when a guard refusal says so.
@@ -78,6 +101,7 @@ impl Receipt {
             session_incarnation: incarnation,
             outcome: Outcome::Unknown,
             code: Some("structured-prompt-outcome-unknown".into()),
+            delivery_kind: None,
             composer_cleanup: None,
             observation: None,
             native_idle_reason: None,
@@ -173,7 +197,7 @@ pub(super) async fn submit(
         return status_json(
             StatusCode::BAD_REQUEST,
             "invalid-json-body",
-            "request body must contain text, expected_session_incarnation and optional request_id and require_idle",
+            "request body must contain text, expected_session_incarnation and optional request_id, require_idle and expected_idle_ready_boundary",
         );
     };
     if !valid_incarnation(&body.expected_session_incarnation) {
@@ -194,18 +218,30 @@ pub(super) async fn submit(
             "request_id must contain 1 to 128 ASCII letters, digits, dots, hyphens or underscores",
         );
     }
+    if body.expected_idle_ready_boundary.is_some()
+        && (!body.require_idle
+            || body.request_id.is_none()
+            || !body.boundary().is_some_and(reply_delivery::valid_token))
+    {
+        return status_json(
+            StatusCode::BAD_REQUEST,
+            "invalid-idle-ready-boundary",
+            "expected_idle_ready_boundary must be a valid token with request_id and require_idle set",
+        );
+    }
     let Some(request_id) = body.request_id.clone() else {
         return dispatch(state, id, body).await;
     };
     let context = state.context.clone();
     let incarnation = body.expected_session_incarnation.clone();
-    let fingerprint = store::fingerprint(&body.text, body.require_idle);
+    let payload = store::Payload::new(&body.text, body.require_idle, body.boundary());
+    let delivery_kind = payload.delivery_kind();
     let claimed = tokio::task::spawn_blocking(move || {
         // Resolve aliases before deriving the key. Do not fence against the current
         // runtime here: replay/lookup must work after runtime replacement.
         let record = load_session_record(&context, &id)?;
         let receipt = Receipt::unknown(record.id, incarnation, request_id);
-        store::claim(&context, receipt, &fingerprint)
+        store::claim(&context, receipt, &payload)
     })
     .await;
     let claim = match claimed {
@@ -238,6 +274,9 @@ pub(super) async fn submit(
     )
     .await;
     let mut result = classify(response, receipt).await;
+    if result.receipt.outcome == Outcome::Submitted {
+        result.receipt.delivery_kind = delivery_kind;
+    }
     if result.receipt.outcome == Outcome::Unknown {
         result.native_confirmation = proof.lock().ok().and_then(|mut proof| proof.take());
         if result.native_confirmation.is_some() {
@@ -258,6 +297,7 @@ pub(super) async fn submit(
         _ => ResultRecord::unknown(Receipt {
             outcome: Outcome::Unknown,
             code: Some("structured-prompt-outcome-unknown".into()),
+            delivery_kind: None,
             confirmation_diagnostic: Some(ConfirmationDiagnostic::AcceptanceUnobservable),
             ..result.receipt
         })
@@ -326,7 +366,15 @@ async fn dispatch_observing(
 ) -> Response {
     // Only this bearer-authenticated conversation entry creates owner origin.
     // Force terminal guards even when the client normally sends busy replies.
+    let expected_idle_ready_boundary = body.boundary().map(str::to_owned);
     let owner_command = owner_commands::parse(&body.text);
+    if expected_idle_ready_boundary.is_some() && owner_command.is_some() {
+        return status_json(
+            StatusCode::CONFLICT,
+            "idle-boundary-command-unsupported",
+            "an idle-ready boundary admits literal prompt text only",
+        );
+    }
     if let Some(command) = &owner_command {
         body.text = command.text().to_owned();
         body.require_idle = true;
@@ -383,7 +431,8 @@ async fn dispatch_observing(
             "this session does not provide structured prompt submission",
         );
     }
-    let fingerprint = store::fingerprint(&body.text, true);
+    let fingerprint =
+        store::Payload::new(&body.text, true, expected_idle_ready_boundary.as_deref()).fingerprint;
     let history_session_id = record
         .provider_resume
         .as_ref()
@@ -415,6 +464,7 @@ async fn dispatch_observing(
         require_idle: true,
         require_empty_composer: true,
         client_message_id,
+        expected_idle_ready_boundary,
         ..Default::default()
     };
     let context = state.context.clone();
@@ -563,6 +613,7 @@ async fn classify(response: Response, mut receipt: Receipt) -> ResultRecord {
         || matches!(
             code,
             "busy"
+                | "idle-boundary-command-unsupported"
                 | "empty-prompt"
                 | "prompt-too-large"
                 | "unsafe-prompt-control"
