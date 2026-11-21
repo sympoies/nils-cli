@@ -1248,6 +1248,8 @@ pub struct SessionView {
     tmux_session: String,
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    boot_recovery: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     runtime_exit: Option<lifecycle::recovery::RuntimeExit>,
     resumable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -6060,6 +6062,7 @@ fn session_view_from_parts(
         tmux_session: record.tmux_session.clone(),
         provider_continuity: provider_continuity::projection(record, &status),
         runtime_exit: lifecycle::recovery::projection(context, record, &status),
+        boot_recovery: runtime_environment::boot_recovery::projection(record),
         status,
         resumable,
         resume_blocked_reason,
@@ -6772,6 +6775,7 @@ where
         .map_err(|error| contention::close_error(error, close_reason))?;
 
     let registry_fence = SessionRegistryFence::from_record(&record);
+    runtime_environment::boot_recovery::mark_stopped(context, &mut record)?;
     gracefully_shutdown_profiled_tmux_session(context, &mut record, tmux_bin, verify_timeout)
         .map_err(|reason| {
             session_termination_error(&record, reason, SessionTerminationOperation::Delete)
@@ -6988,7 +6992,7 @@ pub fn stop_session_runtime_locked_unjournaled(
     tmux_bin: &Path,
 ) -> Result<(), CliError> {
     ensure_session_lifecycle_mutation_allowed(context, record)?;
-
+    runtime_environment::boot_recovery::mark_stopped(context, record)?;
     terminate_tmux_session_with_timeouts(
         context,
         record,
@@ -8175,14 +8179,7 @@ fn persist_launched_tmux_identity(
     record: &mut SessionRecord,
     identity: &TmuxRuntimeIdentity,
 ) -> Result<(), CliError> {
-    persist_tmux_runtime_identity(record, identity).map_err(|_| {
-        CliError::runtime(
-            "tmux-runtime-identity-persist-failed",
-            "failed to retain the launched tmux runtime identity",
-            Some(json!({ "id": record.id })),
-        )
-    })?;
-    write_session_record(context, record)
+    runtime_environment::boot_recovery::persist_launch(context, record, identity)
 }
 
 fn persisted_tmux_runtime_identity(

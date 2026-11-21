@@ -9,6 +9,7 @@ pub(super) async fn bind_listener_and_start_delete_tombstone_cleanup(
     tmux_bin: &Path,
 ) -> io::Result<tokio::net::TcpListener> {
     let listener = tokio::net::TcpListener::bind(bind).await?;
+    start_boot_recovery(context.clone(), tmux_bin.to_path_buf()).await;
     let cleanup_context = context.clone();
     std::thread::spawn(move || {
         let _ = cleanup_session_delete_tombstones(
@@ -18,6 +19,51 @@ pub(super) async fn bind_listener_and_start_delete_tombstone_cleanup(
     });
     tokio::spawn(tmp_maintenance(context.clone(), tmux_bin.to_path_buf()));
     Ok(listener)
+}
+
+async fn start_boot_recovery(context: CliContext, tmux: PathBuf) {
+    let run = |context: CliContext, tmux: PathBuf, ids: Option<Vec<String>>| async move {
+        tokio::task::spawn_blocking(move || {
+            crate::runtime_environment::boot_recovery::recover(&context, &tmux, ids)
+        })
+        .await
+    };
+    let mut pending = match run(context.clone(), tmux.clone(), None).await {
+        Ok(Ok(pending)) => pending,
+        Ok(Err(error)) => {
+            eprintln!("warning: boot recovery failed: {}", error.code());
+            return;
+        }
+        Err(_) => {
+            eprintln!("warning: boot recovery worker failed");
+            return;
+        }
+    };
+    if pending.is_empty() {
+        return;
+    }
+    eprintln!("warning: boot recovery incomplete; retrying locked sessions");
+    tokio::spawn(async move {
+        let mut delay = 5;
+        loop {
+            tokio::time::sleep(Duration::from_secs(delay)).await;
+            pending = match run(context.clone(), tmux.clone(), Some(pending)).await {
+                Ok(Ok(pending)) => pending,
+                Ok(Err(error)) => {
+                    eprintln!("warning: boot recovery failed: {}", error.code());
+                    break;
+                }
+                Err(_) => {
+                    eprintln!("warning: boot recovery worker failed");
+                    break;
+                }
+            };
+            if pending.is_empty() {
+                break;
+            }
+            delay = (delay * 2).min(60);
+        }
+    });
 }
 
 async fn tmp_maintenance(context: CliContext, tmux_bin: PathBuf) {

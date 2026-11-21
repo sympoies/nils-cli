@@ -1,5 +1,6 @@
 use super::*;
 
+pub(crate) mod boot_recovery;
 mod claude_environment;
 pub(crate) mod provider_facts;
 pub(crate) use claude_environment::output;
