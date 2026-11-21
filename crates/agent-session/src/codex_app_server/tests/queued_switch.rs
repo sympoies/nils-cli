@@ -12,6 +12,19 @@ async fn automatic_failover_applies_after_structured_failure_without_live_idle_p
     after_usage_limit(true).await;
 }
 
+async fn shutdown_control(
+    handle: ControlHandle,
+    control: tokio::task::JoinHandle<Result<(), String>>,
+) {
+    // Keep the peer open while the control task finishes its activity writes.
+    drop(handle);
+    tokio::time::timeout(Duration::from_secs(3), control)
+        .await
+        .expect("control should stop when its command channel closes")
+        .expect("control task panicked")
+        .expect("control shutdown failed");
+}
+
 async fn after_usage_limit(automatic: bool) {
     let lock = GlobalStateLock::new();
     let tmp = tempfile::TempDir::new().unwrap();
@@ -113,6 +126,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
     .unwrap();
     bind_thread(&record, "thread-manual-switch").unwrap();
 
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
@@ -154,6 +168,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             json!({ "type": "chatgptAuthTokens" }),
         )
         .await;
+        let _ = done_rx.await;
     });
 
     let (handle, commands, ready) = starting_control_channel();
@@ -164,7 +179,6 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         ready,
     ));
     handle.apply_next().await.unwrap();
-    server.await.unwrap();
     assert!(
         ensure_turn_start_account_ready(&context, &record).await,
         "the next prompt must become admissible after the queued switch binds"
@@ -179,8 +193,9 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         "the next prompt must pass admission after binding"
     );
     drop(authorization);
-    control.abort();
-    let _ = control.await;
+    shutdown_control(handle, control).await;
+    done_tx.send(()).unwrap();
+    server.await.unwrap();
 
     let persisted = crate::load_session_record(&context, &record.id).unwrap();
     let view = crate::codex_account::view_for_record(&persisted);
@@ -468,8 +483,8 @@ async fn terminal_usage_switch_rejects_in_flight_turn() {
     );
 }
 
-#[tokio::test]
-async fn resumed_thread_idle_response_settles_startup() {
+#[test]
+fn resumed_thread_idle_response_settles_startup() {
     for scenario in [
         "idle",
         "active",
@@ -485,7 +500,17 @@ async fn resumed_thread_idle_response_settles_startup() {
         "malformed",
         "later",
     ] {
-        let tmp = tempfile::TempDir::new().unwrap();
+        assert_resumed_thread_idle_response(scenario);
+    }
+}
+
+fn assert_resumed_thread_idle_response(scenario: &'static str) {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
         let (_socket_dir, socket_path) = nils_test_support::short_socket_path("resume-state.sock");
         let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
         let context = CliContext {
@@ -645,7 +670,10 @@ async fn resumed_thread_idle_response_settles_startup() {
             }
         }
         server.await.unwrap();
-    }
+    });
+    // A timed-out snapshot can leave a blocking activity writer running.
+    // Runtime shutdown joins it before the state directory is removed.
+    drop(runtime);
 }
 
 #[tokio::test]
@@ -748,14 +776,7 @@ async fn resumed_control_subscribes_before_snapshot_and_projects_later_start() {
     })
     .await
     .unwrap();
-    // Close the command channel while the socket is still open so control
-    // can finish the blocking activity write before the fixture is dropped.
-    drop(handle);
-    tokio::time::timeout(Duration::from_secs(3), control)
-        .await
-        .expect("control should stop when its command channel closes")
-        .expect("control task panicked")
-        .expect("control shutdown failed");
+    shutdown_control(handle, control).await;
     done_tx.send(()).unwrap();
     server.await.unwrap();
 }
