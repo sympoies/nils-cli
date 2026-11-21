@@ -1328,9 +1328,12 @@ requires the usual testable record unless it qualifies as additive coverage.
 Eligible source paths are under the root `test/`, `tests/`, and `__tests__/`
 directories or the Cargo workspace layout `crates/<crate>/tests/`. New files
 must contain recognized test cases. Existing files may gain standalone
-single-line assertions or complete Rust `#[test]` functions within a single
-insertion. Fixture directories, non-test paths, removed lines, file mode
-changes, and test-change detector findings require evidence.
+single-line assertions or self-contained test bodies. The gate recognizes
+Rust `#[test]` functions, Go test functions, Java `@Test` methods, and
+JavaScript and TypeScript `test` / `it` block callbacks in existing files.
+Python tests can be appended as complete top-level definitions with new
+names. Fixture directories, non-test paths, removed lines, file mode changes,
+and test-change detector findings require evidence.
 
 A new assertion in `tests/calculation.rs` for an already-correct result
 qualifies. Adding a guard around an existing assertion requires evidence,

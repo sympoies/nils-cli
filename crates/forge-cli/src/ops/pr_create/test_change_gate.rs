@@ -64,13 +64,21 @@ pub(crate) fn policy(
     let head_oid = comparison_git(workdir, &["rev-parse", "--verify", &head_ref])?;
     let comparison = format!("{}...{}", fetched.trim(), head_oid.trim());
     let paths = comparison_diff(workdir, &comparison, &["--name-only", "-z"])?;
-    let test_sources_only = paths.trim_end_matches('\0').split('\0').all(|path| {
+    let changed_paths = paths.split_terminator('\0');
+    let test_sources_only = changed_paths.clone().all(|path| {
         dedicated_test_path(path)
             && diff::source(path)
             && !path
                 .split('/')
                 .any(|part| matches!(part, "fixture" | "fixtures" | "__fixtures__"))
     });
+    // Python permits redefining a test name. Compare appended definitions with
+    // the whole old file to distinguish a new test from a replacement.
+    let context = if changed_paths.clone().any(|path| path.ends_with(".py")) {
+        "--unified=2147483647"
+    } else {
+        "--unified=3"
+    };
     // An empty comparison stays unselected unless test was explicitly selected.
     // Bind its head too, so a stale tracking ref cannot admit a different PR diff.
     if (paths.is_empty() && !policy.required_for(kind))
@@ -78,7 +86,7 @@ pub(crate) fn policy(
             && diff::additive_coverage(&comparison_diff(
                 workdir,
                 &comparison,
-                &["--patch", "--unified=3"],
+                &["--patch", context],
             )?)?)
     {
         effective

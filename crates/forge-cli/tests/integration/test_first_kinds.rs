@@ -277,6 +277,28 @@ const ADDITIVE_TEST: &str = "#[test]\nfn example() {\n    let delay = 1;\n    as
 const NEW_TEST_WITH_SETUP: &str =
     "#[test]\nfn added() {\n    let value = crate_value();\n    assert_eq!(value, 1);\n}\n";
 
+const PYTHON_TEST_BASE: &str = "def existing_api():\n    return 1\n\n\ndef test_earlier():\n    assert existing_api() > 0\n\n\ndef test_existing():\n    assert existing_api() != 0\n";
+const PYTHON_TEST_ADDITION: &str =
+    "\n\ndef test_added():\n    value = existing_api()\n    assert value == 1\n";
+
+const BRACED_TESTS: &[(&str, &str, &str)] = &[
+    (
+        "tests/coverage_test.go",
+        "package sample\n\nimport \"testing\"\n\nfunc TestExisting(t *testing.T) {\n    if existingAPI() == 0 { t.Fatal(\"zero\") }\n}\n",
+        "\nfunc TestAdded(t *testing.T) {\n    value := existingAPI()\n    if value != 1 { t.Fatal(value) }\n}\n",
+    ),
+    (
+        "tests/coverage.test.js",
+        "test('existing', () => {\n    expect(existingApi()).toBeGreaterThan(0);\n});\n",
+        "\ntest('added', () => {\n    const value = existingApi();\n    expect(value).toBe(1);\n});\n",
+    ),
+    (
+        "tests/CoverageTest.java",
+        "class CoverageTest {\n    @Test\n    void existing() {\n        assertTrue(existingApi() > 0);\n    }\n}\n",
+        "\n    @Test\n    void added() {\n        int value = existingApi();\n        assertEquals(1, value);\n    }\n",
+    ),
+];
+
 #[test]
 fn test_kind_distinguishes_additive_coverage_from_repairs_and_production() {
     let existing = EXISTING_TEST;
@@ -325,6 +347,17 @@ fn test_kind_distinguishes_additive_coverage_from_repairs_and_production() {
             ),
             true,
         ),
+        (
+            "bug",
+            "src/lib.rs",
+            format!(
+                "pub fn crate_value() -> u8 {{ 1 }}\n#[cfg(test)]\nmod tests {{\n{NEW_TEST_WITH_SETUP}\n}}\n"
+            ),
+            true,
+        ),
+        ("bug", "tests/moved.rs", new_test.to_owned(), true),
+        ("bug", "benches/sample.rs", new_test.to_owned(), true),
+        ("bug", "examples/sample.rs", new_test.to_owned(), true),
         ("bug", "src/test_support.rs", new_test.to_owned(), true),
         (
             "test",
@@ -384,6 +417,38 @@ fn test_kind_requires_evidence_for_nested_production_paths() {
     );
 }
 
+#[test]
+fn test_kind_admits_complete_appended_python_test() {
+    let additive = format!("{PYTHON_TEST_BASE}{PYTHON_TEST_ADDITION}");
+    check_test_kind_comparison("bug", "tests/example.py", &additive, false);
+
+    let changed_existing = PYTHON_TEST_BASE.replace(
+        "    assert existing_api() != 0",
+        "    import time\n    time.sleep(0)\n    assert existing_api() != 0",
+    );
+    let mixed = format!("{changed_existing}{PYTHON_TEST_ADDITION}");
+    check_test_kind_comparison("bug", "tests/example.py", &mixed, true);
+    let duplicate = PYTHON_TEST_ADDITION.replace("test_added", "test_earlier");
+    check_test_kind_comparison(
+        "bug",
+        "tests/example.py",
+        &format!("{PYTHON_TEST_BASE}{duplicate}"),
+        true,
+    );
+}
+
+#[test]
+fn test_kind_admits_complete_braced_tests_with_setup() {
+    for (path, baseline, added) in BRACED_TESTS {
+        let source = if path.ends_with(".java") {
+            format!("{}{added}}}\n", baseline.strip_suffix("}\n").unwrap())
+        } else {
+            format!("{baseline}{added}")
+        };
+        check_test_kind_comparison("test", path, &source, false);
+    }
+}
+
 fn check_test_kind_comparison(kinds: &str, path: &str, change: &str, required: bool) {
     let temp = TempDir::new().unwrap();
     let repo = init_subject_repo(
@@ -400,6 +465,12 @@ fn check_test_kind_comparison(kinds: &str, path: &str, change: &str, required: b
         "pub fn crate_value() -> u8 { 1 }\n",
     )
     .unwrap();
+    if path == "tests/example.py" {
+        fs::write(repo.join(path), PYTHON_TEST_BASE).unwrap();
+    }
+    if let Some((_, baseline, _)) = BRACED_TESTS.iter().find(|(file, _, _)| *file == path) {
+        fs::write(repo.join(path), baseline).unwrap();
+    }
     if path == "src/domain/tests/runtime.rs" {
         fs::create_dir_all(repo.join("src/domain/tests")).unwrap();
         fs::write(
@@ -423,6 +494,9 @@ fn check_test_kind_comparison(kinds: &str, path: &str, change: &str, required: b
     fs::write(repo.join("tests/example.rs"), ADDITIVE_TEST).unwrap();
     let changed_file = repo.join(path);
     fs::create_dir_all(changed_file.parent().unwrap()).unwrap();
+    if path == "tests/moved.rs" {
+        git(&repo, &["mv", "src/lib.rs", path]);
+    }
     fs::write(changed_file, change).unwrap();
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-qm", "test change"]);
