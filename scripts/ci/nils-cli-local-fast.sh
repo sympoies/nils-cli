@@ -427,6 +427,7 @@ if [[ -z "$mode" ]]; then
   exit 1
 fi
 
+# Bash 3.2 treats expansion of an empty array as unbound under set -u.
 print_plan() {
   echo "LOCAL_FAST_MODE=$mode"
   echo "LOCAL_FAST_BASE=$base"
@@ -434,28 +435,28 @@ print_plan() {
   echo "LOCAL_FAST_DOCS_HYGIENE=$docs_hygiene"
   echo "LOCAL_FAST_THIRD_PARTY_ARTIFACTS=$third_party_artifacts"
   echo "LOCAL_FAST_CHANGED_COUNT=$changed_count"
-  for path in "${changed_files[@]}"; do
+  for path in ${changed_files[@]+"${changed_files[@]}"}; do
     echo "LOCAL_FAST_CHANGED=$path"
   done
-  for package in "${packages[@]}"; do
+  for package in ${packages[@]+"${packages[@]}"}; do
     echo "LOCAL_FAST_PACKAGE=$package"
   done
-  for reason in "${package_reasons[@]}"; do
+  for reason in ${package_reasons[@]+"${package_reasons[@]}"}; do
     echo "LOCAL_FAST_PACKAGE_REASON=$reason"
   done
-  for package in "${package_doctests[@]}"; do
+  for package in ${package_doctests[@]+"${package_doctests[@]}"}; do
     echo "LOCAL_FAST_PACKAGE_DOCTEST=$package"
   done
-  for package in "${siblings[@]}"; do
+  for package in ${siblings[@]+"${siblings[@]}"}; do
     echo "LOCAL_FAST_SIBLING_PACKAGE=$package"
   done
-  for reason in "${sibling_reasons[@]}"; do
+  for reason in ${sibling_reasons[@]+"${sibling_reasons[@]}"}; do
     echo "LOCAL_FAST_SIBLING_REASON=$reason"
   done
-  for reason in "${reasons[@]}"; do
+  for reason in ${reasons[@]+"${reasons[@]}"}; do
     echo "LOCAL_FAST_REASON=$reason"
   done
-  for shell_file in "${shell_files[@]}"; do
+  for shell_file in ${shell_files[@]+"${shell_files[@]}"}; do
     echo "LOCAL_FAST_SHELL=$shell_file"
   done
 }
@@ -464,7 +465,7 @@ print_plan() {
 # admitted worker. Planning uses no temporary directory or EXIT trap.
 if [[ "$plan_only" -eq 0 && "${NILS_CLI_GATE_ACTIVE:-0}" != "1" &&
       ( "$mode" == "packages" || "$mode" == "workspace" ) ]]; then
-  NILS_CLI_LOCAL_FAST_PLAN="$plan" exec python3 "$repo_root/scripts/ci/gate-resources.py" -- "${BASH:-bash}" "$repo_root/scripts/ci/nils-cli-local-fast.sh" "${original_args[@]}"
+  NILS_CLI_LOCAL_FAST_PLAN="$plan" exec python3 "$repo_root/scripts/ci/gate-resources.py" -- "${BASH:-bash}" "$repo_root/scripts/ci/nils-cli-local-fast.sh" ${original_args[@]+"${original_args[@]}"}
 fi
 
 print_plan
@@ -537,7 +538,7 @@ select_test_runner() {
 package_has_doctest() {
   local package="$1"
   local candidate
-  for candidate in "${package_doctests[@]}"; do
+  for candidate in ${package_doctests[@]+"${package_doctests[@]}"}; do
     if [[ "$candidate" == "$package" ]]; then
       return 0
     fi
@@ -581,7 +582,7 @@ elif [[ "$docs_hygiene" -eq 1 ]]; then
   run bash scripts/ci/own-compat-audit.sh
 fi
 
-for shell_file in "${shell_files[@]}"; do
+for shell_file in ${shell_files[@]+"${shell_files[@]}"}; do
   run bash -n "$shell_file"
 done
 
@@ -683,7 +684,7 @@ if [[ "$mode" == "workspace" ]]; then
   exit 0
 fi
 
-for package in "${packages[@]}"; do
+for package in ${packages[@]+"${packages[@]}"}; do
   run cargo clippy -p "$package" --all-targets --all-features -- -D warnings
 done
 
@@ -692,16 +693,16 @@ done
 # target/<profile>, which a package-scoped test run does not build, so an
 # absent or earlier-release artifact would otherwise be what they run.
 declare -a package_args=()
-for package in "${packages[@]}" "${siblings[@]}"; do
+for package in ${packages[@]+"${packages[@]}"} ${siblings[@]+"${siblings[@]}"}; do
   package_args+=(-p "$package")
 done
-run cargo build "${package_args[@]}" --bins
+run cargo build ${package_args[@]+"${package_args[@]}"} --bins
 
 # Cargo resolver 2 unifies features across the -p set, so a solo build can relink
 # an executable the combined build made. Build each package's test executables
 # solo and snapshot them right after, so the guard covers what that package runs
 # without charging it for another package's build.
-for package in "${packages[@]}"; do
+for package in ${packages[@]+"${packages[@]}"}; do
   if [[ "$test_runner" == "nextest" ]]; then
     run_test cargo nextest run --profile ci -p "$package" --no-run
   else
