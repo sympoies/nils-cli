@@ -6,6 +6,8 @@
 - The managed Codex prompt dispatcher passes the exact conversation ID
   privately to the session helper after activity admission. The helper checks
   the runtime and projected identity before writing resume metadata.
+- The dispatcher checks the helper acknowledgment. A timeout or write failure
+  surfaces a fixed warning while the admitted turn can continue.
 
 ### Why / context
 
@@ -17,6 +19,9 @@
 
 - A synthetic managed start, completed turn, zero-status exit, and exact-thread
   relaunch fixture reproduced session-not-resumable before the fix.
+- Review fixtures reproduced a missing capture warning after a helper timeout
+  and a zero-exit helper write failure. Both cases exercised stopped resume
+  admission after normal exit.
 
 ### Links
 

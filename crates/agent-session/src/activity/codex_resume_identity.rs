@@ -1,6 +1,17 @@
 //! Exact Codex prompt-hook identity for the managed resume record.
 use super::*;
 
+pub(super) fn complete_file_hook(
+    context: &CliContext,
+    agent: AgentKind,
+    event_override: Option<&str>,
+) {
+    clear_hook_diagnostic(context, agent);
+    if agent == AgentKind::Codex && event_override == Some("CodexResumeIdentity") {
+        let _ = writeln!(io::stdout().lock(), "codex-resume-identity-accepted");
+    }
+}
+
 pub(super) fn provider_resume_from_user_prompt_hook(
     context: &CliContext,
     id: &str,
@@ -24,6 +35,13 @@ pub(super) fn provider_resume_from_user_prompt_hook(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
+        if dispatched {
+            return Err(CliError::data(
+                "provider-hook-session-invalid",
+                "Codex resume receipt is missing the exact session identity",
+                None,
+            ));
+        }
         return Ok(());
     };
     let projected = dispatched

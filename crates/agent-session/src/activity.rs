@@ -3172,7 +3172,7 @@ pub(crate) fn ingest_provider_hook_input(
     {
         return Ok(true);
     }
-    if agent == AgentKind::Codex && raw_event_name == Some("CodexResumeIdentity") {
+    if agent == AgentKind::Codex && event_override == Some("CodexResumeIdentity") {
         provider_resume_from_user_prompt_hook(
             context,
             id,
@@ -3214,7 +3214,7 @@ pub(crate) fn ingest_provider_hook_fail_open(
     event_override: Option<&str>,
 ) {
     match ingest_provider_hook(context, agent, event_override) {
-        Ok(true) => clear_hook_diagnostic(context, agent),
+        Ok(true) => codex_resume_identity::complete_file_hook(context, agent, event_override),
         Ok(false) => {}
         Err(err) => record_hook_diagnostic(context, agent, err.code()),
     }

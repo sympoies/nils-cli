@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::adapter::hook_deadline;
 use crate::contract::{
     effective_mode_for_product, matcher_expression_matches, runtime_handler_filename,
 };
@@ -23,6 +22,8 @@ use crate::model::{
     LoadedPolicy, NormalizedDecision, NormalizedRequest, OperationEffectClass, Product, RuleMode,
     ShadowObservation, TimeoutPosture,
 };
+
+mod private_activity;
 
 pub(crate) const MAX_AGGREGATE_CONTEXT: usize = 16 * 1024;
 pub(crate) const MAX_REASONS: usize = 64;
@@ -821,6 +822,9 @@ fn evaluate_capability(
         Capability::SessionActivity { reason_code } => {
             match run_session_activity(request, raw, execution_budget) {
                 Ok(()) => simple(DecisionAction::Allow, reason_code),
+                Err(error) if error.code == private_activity::CODEX_CAPTURE_FAILED => {
+                    simple(DecisionAction::Warn, &error.code)
+                }
                 Err(error) => {
                     match terminal_activity_failure_decision(capability, request.event.as_str()) {
                         Some((action, code)) => simple(action, code),
@@ -1631,19 +1635,7 @@ fn run_session_activity(
             ));
         }
     }
-    if let Some(metadata) = crate::adapter::project_private_activity_hook(request, raw, &runtime_id)
-        && let Ok(helper) = resolve_activity_helper()
-    {
-        let mut command = Command::new(helper);
-        command
-            .args(["activity", "hook", "--agent", request.product.as_str()])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        // Private receipt or display metadata, outside enforcement's budget.
-        let _ = run_bounded(command, &metadata, hook_deadline(&metadata), 0, false);
-    }
-    Ok(())
+    private_activity::deliver(request, raw, &runtime_id)
 }
 
 /// The helper's typed error code from its `--format json` envelope, restricted

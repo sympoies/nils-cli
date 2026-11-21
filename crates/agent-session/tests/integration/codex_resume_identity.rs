@@ -30,6 +30,22 @@ capability = { id = "agent-session.activity.v1", reason_code = "activity-recorde
 
 #[test]
 fn codex_dispatch_preserves_identity_through_normal_exit_and_resume() {
+    exercise_codex_resume(None);
+}
+
+#[test]
+fn codex_dispatch_reports_resume_capture_timeout_after_activity_admission() {
+    exercise_codex_resume(Some("sleep 10"));
+}
+
+#[test]
+fn codex_dispatch_reports_resume_write_failure_despite_fail_open_helper_exit() {
+    exercise_codex_resume(Some(
+        r#"mkdir "$AGENT_SESSION_STATE_DIR/sessions/$AGENT_SESSION_ID/resume.json""#,
+    ));
+}
+
+fn exercise_codex_resume(capture_fault: Option<&str>) {
     let Some(agent_hook) = nils_test_support::bin::sibling_or_skip("agent-hook", "nils-agent-hook")
     else {
         return;
@@ -145,12 +161,33 @@ test "$line" = /exit
         .unwrap();
     }
 
-    let helper = nils_test_support::bin::resolve("agent-session");
+    let real_helper = nils_test_support::bin::resolve("agent-session");
+    let helper = if let Some(fault) = capture_fault {
+        let wrapper = root.join("faulted-activity-helper");
+        write_executable(
+            &wrapper,
+            &format!(
+                r#"#!/bin/sh
+set -eu
+if [ "$1" = activity ] && [ "$2" = hook ]; then
+    : > "$AGENT_SESSION_STATE_DIR/receipt-attempt"
+    {fault}
+fi
+exec "$FIXTURE_REAL_HELPER" "$@"
+"#,
+            ),
+        );
+        wrapper
+    } else {
+        real_helper.clone()
+    };
     let hook_options = options.clone().with_envs(&[
         ("AGENT_SESSION_BIN", helper.to_str().unwrap()),
+        ("FIXTURE_REAL_HELPER", real_helper.to_str().unwrap()),
         ("AGENT_SESSION_ID", id),
         ("AGENT_SESSION_RUNTIME_ID", incarnation),
     ]);
+    let mut prompt_decision = Value::Null;
     for (name, fields) in [
         (
             "UserPromptSubmit",
@@ -187,11 +224,14 @@ test "$line" = /exit
             hook.stdout_text(),
             hook.stderr_text()
         );
-        assert_eq!(
-            data(&hook.stdout_json())["reasons"][0]["code"],
-            "activity-recorded"
-        );
+        let decision = data(&hook.stdout_json()).clone();
+        if name == "UserPromptSubmit" && capture_fault.is_some() {
+            prompt_decision = decision;
+        } else {
+            assert_eq!(decision["reasons"][0]["code"], "activity-recorded");
+        }
         assert!(!hook.stdout_text().contains(THREAD));
+        assert!(!hook.stderr_text().contains(THREAD));
     }
     let completion = json!({
         "type": "agent-turn-complete", "thread-id": THREAD, "turn-id": TURN,
@@ -267,6 +307,33 @@ test "$line" = /exit
     );
 
     let relaunched = resume();
+    if capture_fault.is_some() {
+        assert!(state.join("receipt-attempt").is_file());
+        assert_eq!(stopped["resumable"], false);
+        assert!(stopped["provider_resume"].is_null());
+        assert_eq!(relaunched.code, 65, "{}", relaunched.stdout_text());
+        assert_eq!(
+            relaunched.stdout_json()["error"]["code"],
+            "session-not-resumable"
+        );
+        assert_eq!(
+            prompt_decision["reasons"][0]["code"],
+            "codex-resume-identity-capture-failed",
+        );
+        assert_eq!(prompt_decision["action"], "warn");
+        let diagnosis = run(&["diagnose", "--format", "json"]);
+        assert_eq!(diagnosis.code, 0, "{}", diagnosis.stdout_text());
+        let diagnostic = diagnosis.stdout_json();
+        assert!(
+            data(&diagnostic)["observation"]["summary"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["code"] == "codex-resume-identity-capture-failed")
+        );
+        assert!(!diagnosis.stdout_text().contains(THREAD));
+        return;
+    }
     assert_eq!(
         relaunched.code,
         0,

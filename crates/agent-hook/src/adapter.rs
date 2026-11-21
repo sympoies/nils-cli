@@ -31,11 +31,7 @@ pub(crate) fn project_private_activity_hook(
             return None;
         }
         let session = optional_provider_id(fields, "session_id").ok()??;
-        return serde_json::to_vec(&json!({
-            "hook_event_name": "CodexResumeIdentity",
-            "session_id": session,
-        }))
-        .ok();
+        return serde_json::to_vec(&json!({ "session_id": session })).ok();
     }
     if request.product != Product::Claude {
         return None;
@@ -90,13 +86,12 @@ pub(crate) fn project_private_activity_hook(
     serde_json::to_vec(&metadata).ok()
 }
 
-/// Codex identity retention and Claude readiness get the receipt deadline.
-/// Best-effort display settings keep the shorter deadline.
+/// Display settings stay best-effort, but a forwarded SessionStart readiness
+/// is the resumed runtime's only idle signal and gets the receipt deadline.
 pub(crate) fn hook_deadline(metadata: &[u8]) -> std::time::Duration {
-    let receipt = serde_json::from_slice::<Value>(metadata).is_ok_and(|value| {
-        value.get("source").is_some() || value["hook_event_name"] == "CodexResumeIdentity"
-    });
-    std::time::Duration::from_millis(if receipt { 2000 } else { 250 })
+    let ready =
+        serde_json::from_slice::<Value>(metadata).is_ok_and(|value| value.get("source").is_some());
+    std::time::Duration::from_millis(if ready { 2000 } else { 250 })
 }
 
 /// Private clear identity receipt. It is sent only to the managed lifecycle

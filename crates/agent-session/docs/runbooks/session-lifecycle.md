@@ -457,7 +457,10 @@ implicitly.
   prompt activity. The activity journal uses runtime-scoped digests. A
   completed turn by itself can establish idle activity even when no exact ID
   was retained. A confirmed stopped session without exact identity returns
-  `session-not-resumable`.
+  `session-not-resumable`. When the dispatcher cannot confirm capture, it
+  reports `codex-resume-identity-capture-failed` and allows the admitted turn to
+  continue. The warning is available in the local `agent-session diagnose`
+  observation summary.
 - Tmux probe timeouts and server-shutdown uncertainty are retried for up to two
   seconds while holding the session record lock. A confirmed running runtime is
   a no-op; confirmed absence proceeds through the stopped-runtime checks below.
