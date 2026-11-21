@@ -99,9 +99,8 @@ use account_drain::{apply_pending_codex_accounts, repair_blocked_codex_accounts}
 mod claude_completion;
 #[path = "serve_claude_prompt_ack.rs"]
 mod claude_prompt_ack;
-#[path = "serve/console_service.rs"]
+mod companion;
 mod console_service;
-#[path = "serve/create.rs"]
 mod create;
 #[path = "serve_create_body.rs"]
 mod create_body;
@@ -1224,6 +1223,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
 fn router(state: Arc<ServeState>) -> Router {
     Router::new()
         .route(crate::coordination::audit::ROUTE, get(mail_audit_handler))
+        .merge(companion::routes())
         .merge(console_service::routes())
         .route(
             "/coordination/messages/receive/v1",

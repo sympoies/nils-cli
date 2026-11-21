@@ -1187,6 +1187,19 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(send-companion)
+_arguments "${_arguments_options[@]}" : \
+'--body-file=[UTF-8 message file, at most 4,096 bytes]:PATH:_files' \
+'--color=[Optional RGB color in #RRGGBB form]:COLOR:_default' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'--urgent[Mark the message urgent]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
 (forward)
 _arguments "${_arguments_options[@]}" : \
 '--session=[Authenticated recipient forwarding its own received message]:SESSION:_default' \
@@ -1861,6 +1874,7 @@ _agent-session__subcmd__message_commands() {
 'peers:Discover authorized remote mailbox recipients through the local daemon' \
 'delivery:Inspect the delivery state of a local or federated message' \
 'send:Send one bounded private message and schedule an eventual fixed notification' \
+'send-companion:Submit one message to the companion inbox through the daemon' \
 'forward:Forward one received message without reading or acknowledging its source' \
 'service-send:Submit a body-file through the owning daemon as an explicitly admitted local service' \
 'inbox:List bounded private mailbox metadata for the authenticated recipient' \
@@ -1916,6 +1930,11 @@ _agent-session__subcmd__message__subcmd__reply_commands() {
 _agent-session__subcmd__message__subcmd__send_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session message send commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__message__subcmd__send-companion_commands] )) ||
+_agent-session__subcmd__message__subcmd__send-companion_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session message send-companion commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__message__subcmd__service-send_commands] )) ||
 _agent-session__subcmd__message__subcmd__service-send_commands() {

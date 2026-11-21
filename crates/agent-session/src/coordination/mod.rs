@@ -4,6 +4,7 @@ pub(crate) mod auth_effects;
 pub(crate) mod broker;
 mod broker_proof;
 mod capability;
+pub(crate) mod companion;
 pub(crate) use capability::authenticate_token;
 pub mod claims;
 pub(crate) mod console_start;
@@ -300,6 +301,7 @@ pub(crate) fn run_message(context: &CliContext, args: cli::MessageArgs) -> i32 {
             args.format,
             service::cli_send(context, args).map_err(service::recovery),
         ),
+        MessageCommand::SendCompanion(args) => return companion::run(context, args),
         MessageCommand::Send(args) => ("message-send", args.format, mailbox::send(context, args)),
         MessageCommand::Forward(args) => (
             "message-forward",

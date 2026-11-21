@@ -100,6 +100,40 @@ Transport/store failures retain their existing codes and fail closed.
 Readiness does not acquire a baseline claim or authorize mutations; callers
 retain their own baseline work-context and admission checks.
 
+### Companion inbox submission
+
+```text
+agent-session message send-companion --body-file PATH [--color '#RRGGBB'] [--urgent] [--format text|json]
+```
+
+The command reads a UTF-8 regular file and preserves its contents, including any
+trailing newline. The body must contain non-whitespace text and fit within 4,096
+UTF-8 bytes. An optional color uses six hexadecimal RGB digits after `#`.
+`--urgent` sets the urgent flag. Omitted metadata is left to the relay's defaults.
+
+The command connects to the existing private daemon endpoint and presents the
+runtime-projected session capability. The daemon's direct-loopback
+`POST /coordination/companion/messages/v1` route accepts JSON with `body`, optional
+`color` and optional `urgent`. It checks the current session and incarnation
+through the capability, applies the same input limits, and rejects unknown
+fields. The daemon supplies the authenticated source identity to its configured
+relay. The relay's authenticated machine and source grant determine admission,
+owner and destination.
+
+| Exit | Result or failure code | Meaning |
+| --- | --- | --- |
+| 0 | Receipt | Text prints the message ID alone. JSON returns `data.id` in `cli.agent-session.message-send-companion.v1`. The decimal string is an opaque identifier. |
+| 64 | `companion-input-invalid` | The file, body or metadata is invalid. |
+| 65 | `companion-source-forbidden` | The capability, source grant or source incarnation was refused. |
+| 65 | `companion-body-too-large` | The submission exceeds a body or request limit. |
+| 65 | `companion-inbox-full` | The destination inbox is at capacity. |
+| 69 | `companion-relay-unavailable` | A required local endpoint or relay is unavailable, or the relay conclusively refused the request due to credential or source availability. |
+| 1 | `companion-submit-ambiguous` | The result could not be confirmed. Check the companion inbox before submitting again. |
+
+Each invocation attempts at most one local POST and at most one relay POST.
+The operation has no automatic retry or delivery queue. Diagnostics contain
+fixed text and exclude the body, body-file path and credentials.
+
 ## HTTP coverage
 
 The loopback server exposes the raw work-context, broker, and mailbox library

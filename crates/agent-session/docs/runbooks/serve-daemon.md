@@ -102,6 +102,7 @@ and use manual `resume` where appropriate.
 | Public coordination and broker reads | Bearer token. |
 | Session board reads (`GET /board/v1`, `GET /board/closed/v1`) | Bearer token, and only when started with `--board` or `AGENT_SESSION_BOARD=1`; otherwise `board-disabled` (HTTP 404). Returns home-relative working directories and the machine identity. |
 | Session board relay (`GET /sessions/{id}/board/v1`) | The current session capability as `Authorization: Bearer`, and only with the board enabled. Forwards the query to the federation aggregator with the relay token; `board-relay-disabled` (HTTP 409) without federation. |
+| Companion inbox submission (`POST /coordination/companion/messages/v1`) | The current session capability as `Authorization: Bearer`, from a direct loopback peer. |
 | Session-owner coordination and mailbox mutations | Bearer token plus `X-Agent-Session-Capability`. |
 | `POST /activity/hook/v1` provider hook ingress | `X-Agent-Session-Capability` only, from a direct loopback peer. |
 
@@ -671,6 +672,23 @@ its `source` (`file` or `environment`), never the file location or a value.
 The normative endpoint surface is in [Serve API v1](../specs/serve-api-v1.md).
 Wire-level activity, coordination, turn-state, and maintenance contracts are
 indexed in the crate [documentation map](../README.md).
+
+## Companion inbox producer
+
+`agent-session message send-companion --body-file PATH` uses the same
+daemon-private federation configuration as cross-host mailbox delivery.
+`POST /coordination/companion/messages/v1` takes the current session capability
+as `Authorization: Bearer` over direct loopback. The daemon validates the
+capability against the current session incarnation and sends
+`POST /api/coordination/prompter/v1/messages` with the outbound relay bearer.
+The relay derives the source machine from that bearer and resolves the owner
+and destination through the source grant.
+
+Check the companion inbox before submitting again after
+`companion-submit-ambiguous`. The daemon performs a single relay attempt and
+returns a receipt only when it receives a valid HTTP 201 response with
+`data.id`. See [Companion inbox submission](../specs/coordination-interface-v1.md#companion-inbox-submission)
+for input limits and exit codes.
 
 ## Cross-host mailbox configuration
 
