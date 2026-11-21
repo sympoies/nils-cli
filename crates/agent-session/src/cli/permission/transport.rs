@@ -266,17 +266,7 @@ pub(super) fn wait(context: &CliContext, args: Wait) -> Result<(), CliError> {
         check(context, &args.id, &pending, || Ok(()))?;
         match listener.accept() {
             Ok((mut stream, _)) => {
-                stream
-                    .set_read_timeout(Some(IO_BOUND))
-                    .map_err(|_| refusal("permission-hook-unavailable"))?;
-                stream
-                    .set_write_timeout(Some(IO_BOUND))
-                    .map_err(|_| refusal("permission-hook-unavailable"))?;
-                let mut bytes = Vec::new();
-                if (&mut stream).take(4097).read_to_end(&mut bytes).is_err() || bytes.len() > 4096 {
-                    continue;
-                }
-                let Ok(request) = serde_json::from_slice::<AnswerRequest>(&bytes) else {
+                let Some(request) = read_answer(&mut stream)? else {
                     continue;
                 };
                 if request.request_id != pending.request_id || request.call_id != pending.call_id {
@@ -299,6 +289,25 @@ pub(super) fn wait(context: &CliContext, args: Wait) -> Result<(), CliError> {
             Err(_) => return Err(refusal("permission-hook-unavailable")),
         }
     }
+}
+
+fn read_answer(stream: &mut UnixStream) -> Result<Option<AnswerRequest>, CliError> {
+    // macOS inherits O_NONBLOCK from the listener. Restore blocking I/O so
+    // the stream timeouts apply even when the full request has yet to arrive.
+    stream
+        .set_nonblocking(false)
+        .map_err(|_| refusal("permission-hook-unavailable"))?;
+    stream
+        .set_read_timeout(Some(IO_BOUND))
+        .map_err(|_| refusal("permission-hook-unavailable"))?;
+    stream
+        .set_write_timeout(Some(IO_BOUND))
+        .map_err(|_| refusal("permission-hook-unavailable"))?;
+    let mut bytes = Vec::new();
+    if stream.take(4097).read_to_end(&mut bytes).is_err() || bytes.len() > 4096 {
+        return Ok(None);
+    }
+    Ok(serde_json::from_slice(&bytes).ok())
 }
 
 // The received answer crosses the final identity/expiry fence before any output

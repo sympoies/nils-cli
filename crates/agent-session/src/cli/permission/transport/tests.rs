@@ -113,6 +113,59 @@ fn assert_no_ack(mut caller: UnixStream) {
 }
 
 #[test]
+fn accepted_nonblocking_stream_delivers_delayed_answer() {
+    let (_temp, context, pending) = session();
+    let socket_dir = tempfile::tempdir_in("/tmp").unwrap();
+    let socket = socket_dir.path().join("s");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut caller = UnixStream::connect(socket).unwrap();
+    let (mut receiver, _) = listener.accept().unwrap();
+    // Model a macOS accept on every platform, even when the kernel clears
+    // the listener's nonblocking flag on the accepted socket.
+    receiver.set_nonblocking(true).unwrap();
+    caller.set_read_timeout(Some(IO_BOUND)).unwrap();
+    let body = json!({
+        "request_id": pending.request_id,
+        "call_id": pending.call_id,
+        "decision": "allow",
+    });
+    let client = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(50));
+        serde_json::to_writer(&mut caller, &body).unwrap();
+        caller.shutdown(std::net::Shutdown::Write).unwrap();
+        serde_json::from_reader::<_, Value>(caller).unwrap()
+    });
+
+    let request = read_answer(&mut receiver)
+        .unwrap()
+        .expect("accepted stream dropped the delayed answer");
+    assert_eq!(request.request_id, pending.request_id);
+    assert_eq!(request.call_id, pending.call_id);
+    let mut output = Vec::new();
+    deliver(
+        &context,
+        "guarded",
+        &pending,
+        &request,
+        Instant::now() + WAIT_BOUND,
+        &mut receiver,
+        &mut output,
+    )
+    .unwrap();
+    drop(receiver);
+
+    assert_eq!(
+        client.join().unwrap(),
+        json!({"outcome": "delivered_to_hook"})
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output).unwrap(),
+        json!({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}})
+    );
+}
+
+#[test]
 fn accepted_permission_answer_completed_after_expiry_emits_nothing() {
     let (_temp, context, pending) = session();
     let (mut receiver, caller, request, deadline) = received_answer(&pending, true);
