@@ -1,8 +1,17 @@
 name: Devlog fold
 
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      release_id:
+        description: "GitHub release ID returned by the successful publication job"
+        required: true
+        type: string
+    secrets:
+      BOT_APP_ID:
+        required: true
+      BOT_APP_PRIVATE_KEY:
+        required: true
   workflow_dispatch:
     inputs:
       dry_run:
@@ -12,13 +21,14 @@ on:
   pull_request:
     paths:
       - ".github/workflows/devlog-fold.yml"
-      - ".github/scripts/devlog-fold-pr.cjs"
-      - "scripts/ci/tests/devlog-fold-pr.test.cjs"
+      - ".github/workflows/release.yml"
+      - ".github/scripts/devlog-fold-*.cjs"
+      - "scripts/ci/tests/devlog-fold-*.test.cjs"
       - "scripts/ci/fold-devlog.sh"
+      - "crates/devlog/**"
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   fixtures:
@@ -34,20 +44,28 @@ jobs:
           source scripts/dev-env.sh
           cargo build --locked -p nils-devlog
           echo "$PWD/target/debug" >> "$GITHUB_PATH"
-      - name: Test dry-run and publication with synthetic repositories and APIs
+      - name: Test preparation and admission with synthetic repositories and APIs
         run: |
           source scripts/dev-env.sh
-          node --test scripts/ci/tests/devlog-fold-pr.test.cjs
+          node --test scripts/ci/tests/devlog-fold-*.test.cjs
 
   fold:
     needs: fixtures
+    name: Fold publication and admission
     # PR fixtures must not replace a queued release in this publication lock.
     concurrency:
       group: devlog-fold${{ inputs.dry_run && '-dry-run' || '' }}
       cancel-in-progress: false
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    if: github.event_name != 'pull_request' && (github.ref_type == 'tag' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 150
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+    env:
+      FOLD_DIR: ${{ runner.temp }}/devlog-fold
     steps:
       - name: Checkout current main for fold preparation
         uses: actions/checkout@v7
@@ -61,19 +79,43 @@ jobs:
           source scripts/dev-env.sh
           cargo build --locked -p nils-devlog
           echo "$PWD/target/debug" >> "$GITHUB_PATH"
-      - name: Require bot app credentials
-        if: github.event_name == 'release' || !inputs.dry_run
+
+      - name: Verify release publication and locate its fold receipt
+        if: github.ref_type == 'tag'
+        id: publication
+        uses: actions/github-script@v9
         env:
-          BOT_APP_ID: ${{ secrets.BOT_APP_ID }}
-          BOT_APP_PRIVATE_KEY: ${{ secrets.BOT_APP_PRIVATE_KEY }}
-        run: |
-          source scripts/dev-env.sh
-          if [[ -z "$BOT_APP_ID" || -z "$BOT_APP_PRIVATE_KEY" ]]; then
-            echo "::error::BOT_APP_ID / BOT_APP_PRIVATE_KEY are required with Contents: write and Pull requests: write." >&2
-            exit 1
-          fi
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          RELEASE_ID: ${{ inputs.release_id }}
+        with:
+          script: |
+            const fs = require("node:fs");
+            const dir = process.env.FOLD_DIR;
+            fs.mkdirSync(dir);
+            const { checkoutGit } = require("./.github/scripts/devlog-fold-pr.cjs");
+            const { findReleasePreparation, readPublication, receiptName, tracker } = require("./.github/scripts/devlog-fold-release.cjs");
+            const note = tracker({ context, core, file: dir + "/result.json" });
+            await note("publication");
+            const release = await readPublication({ github, context, git: checkoutGit(process.cwd(), process.env),
+              workflowRef: process.env.WORKFLOW_REF, releaseId: process.env.RELEASE_ID });
+            fs.writeFileSync(dir + "/release.json", JSON.stringify(release));
+            await note("receipt", { release });
+            const artifact = await findReleasePreparation(github, context.repo, release);
+            core.setOutput("artifact", artifact?.id ?? "");
+            core.setOutput("preparation_run", artifact?.runId ?? release.runId);
+            core.setOutput("receipt_name", receiptName(release));
+
+      - name: Read immutable preparation receipt for this release
+        if: steps.publication.outputs.artifact != ''
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ steps.publication.outputs.artifact }}
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.publication.outputs.preparation_run }}
+          path: ${{ env.FOLD_DIR }}
+
       - name: Mint bot token
-        if: github.event_name == 'release' || !inputs.dry_run
+        if: '!inputs.dry_run'
         id: bot_token
         uses: actions/create-github-app-token@v3
         with:
@@ -81,20 +123,82 @@ jobs:
           private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
-      - name: Prepare the fold and open its reviewed PR
+
+      - name: Prepare and sign the release fold
+        if: github.ref_type == 'tag' && steps.publication.outputs.artifact == ''
         uses: actions/github-script@v9
         env:
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           BOT_TOKEN: ${{ steps.bot_token.outputs.token }}
         with:
-          github-token: ${{ github.token }}
+          script: |
+            const fs = require("node:fs");
+            const dir = process.env.FOLD_DIR;
+            const { prepareReleaseFold, tracker } = require("./.github/scripts/devlog-fold-release.cjs");
+            const note = tracker({ context, core, file: dir + "/result.json" });
+            const release = JSON.parse(fs.readFileSync(dir + "/release.json", "utf8"));
+            const { BOT_TOKEN, ...env } = process.env;
+            if (!BOT_TOKEN) throw new Error("Preparation requires the bot App");
+            const receipt = await prepareReleaseFold({ github, writer: getOctokit(BOT_TOKEN),
+              repo: context.repo, root: process.cwd(), env, release, note });
+            fs.writeFileSync(dir + "/preparation.json", JSON.stringify(receipt));
+            await note("prepared", receipt);
+
+      - name: Retain exact base and head before publication
+        if: github.ref_type == 'tag' && steps.publication.outputs.artifact == ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.publication.outputs.receipt_name }}
+          path: ${{ env.FOLD_DIR }}/preparation.json
+          if-no-files-found: error
+
+      - name: Reproduce, publish and admit the exact release fold
+        if: github.ref_type == 'tag'
+        uses: actions/github-script@v9
+        env:
+          BOT_TOKEN: ${{ steps.bot_token.outputs.token }}
+          BOT_APP_SLUG: ${{ steps.bot_token.outputs.app-slug }}
+          PREPARATION_RUN: ${{ steps.publication.outputs.preparation_run }}
+        with:
+          script: |
+            const fs = require("node:fs");
+            const dir = process.env.FOLD_DIR;
+            const { publishReleaseFold, tracker } = require("./.github/scripts/devlog-fold-release.cjs");
+            const { admitReleaseFold } = require("./.github/scripts/devlog-fold-admission.cjs");
+            const note = tracker({ context, core, file: dir + "/result.json" });
+            const release = JSON.parse(fs.readFileSync(dir + "/release.json", "utf8"));
+            const receipt = JSON.parse(fs.readFileSync(dir + "/preparation.json", "utf8"));
+            const { BOT_TOKEN, BOT_APP_SLUG: app, PREPARATION_RUN, ...env } = process.env;
+            if (!app || !BOT_TOKEN) throw new Error("Publication requires the bot App");
+            const options = { github, writer: getOctokit(BOT_TOKEN), repo: context.repo,
+              app, release, root: process.cwd(), env, receipt, note, preparationRunId: Number(PREPARATION_RUN) };
+            const candidate = await publishReleaseFold(options);
+            await admitReleaseFold({ ...options, candidate });
+
+      - name: Retain release fold result
+        if: always() && github.ref_type == 'tag'
+        uses: actions/upload-artifact@v7
+        with:
+          name: devlog-fold-result-${{ github.run_attempt }}
+          path: ${{ env.FOLD_DIR }}/result.json
+          if-no-files-found: ignore
+
+      - name: Prepare manual fold for steward review
+        if: github.ref == 'refs/heads/main'
+        uses: actions/github-script@v9
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          BOT_TOKEN: ${{ steps.bot_token.outputs.token }}
+        with:
           script: |
             const { runFoldPR } = require("./.github/scripts/devlog-fold-pr.cjs");
-            const dryRun = process.env.DRY_RUN === "true";
-            if (!dryRun && !process.env.BOT_TOKEN) throw new Error("Publication requires the bot App token");
-            const client = dryRun ? github : getOctokit(process.env.BOT_TOKEN);
-            const result = await runFoldPR({ github: client, context, dryRun });
+            const { BOT_TOKEN, DRY_RUN, ...env } = process.env;
+            const dryRun = DRY_RUN === "true";
+            if (!dryRun && !BOT_TOKEN) throw new Error("Publication requires the bot App token");
+            const client = dryRun ? github : getOctokit(BOT_TOKEN);
+            const result = await runFoldPR({ github: client, context, dryRun, env });
             core.info(JSON.stringify(result));
             await core.summary.addCodeBlock(JSON.stringify(result, null, 2), "json").write();
+
       - name: Retain the prepared diff in the run log
+        if: github.ref == 'refs/heads/main'
         run: git diff --cached --stat -- docs/devlog

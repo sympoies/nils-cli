@@ -169,12 +169,16 @@ _devlog() {
             return 0
             ;;
         devlog__fold)
-            opts="-h --format --dir --help"
+            opts="-h --before --format --dir --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --before)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0
