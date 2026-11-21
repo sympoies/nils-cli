@@ -90,7 +90,7 @@ cargo run -p nils-image-processing -- convert \
 
 - `0`: Success with no item errors.
 - `1`: Runtime failure or one-or-more items failed.
-- `2`: Usage/validation error.
+- `64`: Usage/validation error, including SVG input rejected during conversion.
 
 ## Dependencies
 
