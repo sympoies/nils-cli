@@ -121,7 +121,7 @@ fn test_first_kinds_create_and_deliver_dry_run_agree() {
                         "--title",
                         "Configure evidence",
                         "--body",
-                        "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+                        "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
                     ],
                     Some(&repo),
                 );
@@ -214,7 +214,7 @@ fn test_first_kinds_invalid_list_is_reported_by_create_and_deliver() {
                         "--title",
                         "Configure evidence",
                         "--body",
-                        "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+                        "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
                     ],
                     Some(&repo),
                 );
@@ -259,7 +259,7 @@ fn test_first_kinds_invalid_list_is_reported_by_create_and_deliver() {
                     "--title",
                     "Configure evidence",
                     "--body",
-                    "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+                    "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
                 ],
                 Some(&repo),
             );
@@ -270,101 +270,415 @@ fn test_first_kinds_invalid_list_is_reported_by_create_and_deliver() {
     }
 }
 
+const EXISTING_TEST: &str =
+    "#[test]\nfn example() {\n    let delay = 1;\n    assert_eq!(delay, 1);\n}\n";
+const ADDITIVE_TEST: &str = "#[test]\nfn example() {\n    let delay = 1;\n    assert_eq!(delay, 1);\n    assert!(delay > 0);\n}\n";
+
+const NEW_TEST_WITH_SETUP: &str =
+    "#[test]\nfn added() {\n    let value = crate_value();\n    assert_eq!(value, 1);\n}\n";
+
+const PYTHON_TEST_BASE: &str = "def existing_api():\n    return 1\n\n\ndef test_earlier():\n    assert existing_api() > 0\n\n\ndef test_existing():\n    assert existing_api() != 0\n";
+const PYTHON_TEST_ADDITION: &str =
+    "\n\ndef test_added():\n    value = existing_api()\n    assert value == 1\n";
+
+const BRACED_TESTS: &[(&str, &str, &str)] = &[
+    (
+        "tests/coverage_test.go",
+        "package sample\n\nimport \"testing\"\n\nfunc TestExisting(t *testing.T) {\n    if existingAPI() == 0 { t.Fatal(\"zero\") }\n}\n",
+        "\nfunc TestAdded(t *testing.T) {\n    value := existingAPI()\n    if value != 1 { t.Fatal(value) }\n}\n",
+    ),
+    (
+        "tests/coverage.test.js",
+        "test('existing', () => {\n    expect(existingApi()).toBeGreaterThan(0);\n});\n",
+        "\ntest('added', () => {\n    const value = existingApi();\n    expect(value).toBe(1);\n});\n",
+    ),
+    (
+        "tests/CoverageTest.java",
+        "class CoverageTest {\n    @Test\n    void existing() {\n        assertTrue(existingApi() > 0);\n    }\n}\n",
+        "\n    @Test\n    void added() {\n        int value = existingApi();\n        assertEquals(1, value);\n    }\n",
+    ),
+];
+
 #[test]
-fn test_kind_requires_evidence_when_existing_assertions_change() {
-    for (change, required) in [
-        ("#[test]\nfn example() { assert_eq!(1, 2); }\n", true),
+fn test_kind_distinguishes_additive_coverage_from_repairs_and_production() {
+    let existing = EXISTING_TEST;
+    let additive = ADDITIVE_TEST;
+    let new_test = NEW_TEST_WITH_SETUP;
+    for (kinds, path, change, required) in [
+        ("bug", "tests/example.rs", additive.to_owned(), false),
+        ("test", "tests/example.rs", additive.to_owned(), false),
+        ("test", "tests/new.rs", new_test.to_owned(), false),
         (
-            "#[test]\nfn example() { assert_eq!(1, 1); }\n#[test]\nfn added() { assert!(true); }\n",
+            "test",
+            "crates/math/tests/new.rs",
+            new_test.to_owned(),
             false,
         ),
+        (
+            "test",
+            "tests/example.rs",
+            format!("{existing}\n{NEW_TEST_WITH_SETUP}"),
+            false,
+        ),
+        (
+            "bug",
+            "src/lib.rs",
+            "pub fn crate_value() -> u8 { 2 }\n".to_owned(),
+            true,
+        ),
+        (
+            "test",
+            "src/lib.rs",
+            "pub fn crate_value() -> u8 { 2 }\n".to_owned(),
+            true,
+        ),
+        (
+            "bug",
+            "tests/example.rs",
+            existing.replace("delay = 1", "delay = 2"),
+            true,
+        ),
+        (
+            "bug",
+            "tests/example.rs",
+            existing.replace(
+                "    let delay",
+                "    std::thread::yield_now();\n    let delay",
+            ),
+            true,
+        ),
+        (
+            "bug",
+            "src/lib.rs",
+            format!(
+                "pub fn crate_value() -> u8 {{ 1 }}\n#[cfg(test)]\nmod tests {{\n{NEW_TEST_WITH_SETUP}\n}}\n"
+            ),
+            true,
+        ),
+        ("bug", "tests/moved.rs", new_test.to_owned(), true),
+        ("bug", "benches/sample.rs", new_test.to_owned(), true),
+        ("bug", "examples/sample.rs", new_test.to_owned(), true),
+        ("bug", "src/test_support.rs", new_test.to_owned(), true),
+        (
+            "test",
+            "tests/fixtures/input.json",
+            "{\"sample\": 2}\n".to_owned(),
+            true,
+        ),
+        (
+            "bug",
+            "tests/example.rs",
+            existing.replace("delay, 1", "delay, 2"),
+            true,
+        ),
+        (
+            "bug",
+            "tests/new.rs",
+            format!("#[ignore]\n{new_test}"),
+            true,
+        ),
     ] {
-        let temp = TempDir::new().unwrap();
-        let repo = init_subject_repo(
-            temp.path(),
-            "repo",
-            "https://github.com/example/project.git",
-        );
-        fs::create_dir(repo.join("tests")).unwrap();
+        check_test_kind_comparison(kinds, path, &change, required);
+    }
+}
+
+#[test]
+fn test_kind_requires_evidence_for_mixed_insertions() {
+    let timing_repair = EXISTING_TEST.replace(
+        "    let delay",
+        "    std::thread::yield_now();\n    let delay",
+    );
+    for change in [
+        format!("{timing_repair}\n{NEW_TEST_WITH_SETUP}"),
+        ADDITIVE_TEST.replace(
+            "    let delay",
+            "    std::thread::yield_now();\n    let delay",
+        ),
+        EXISTING_TEST.replace(
+            "    assert_eq!",
+            "    assert!(true); return;\n    assert_eq!",
+        ),
+        EXISTING_TEST.replace(
+            "    assert_eq!(delay, 1);",
+            "    if delay > 1 {\n    assert_eq!(delay, 1);\n    }\n    assert!(delay > 0);",
+        ),
+    ] {
+        check_test_kind_comparison("bug", "tests/example.rs", &change, true);
+    }
+}
+
+#[test]
+fn test_kind_requires_evidence_for_nested_production_paths() {
+    check_test_kind_comparison(
+        "bug",
+        "src/domain/tests/runtime.rs",
+        "pub fn original() -> u8 { 1 }\npub fn adjust(value: u8) -> u8 { assert!(value > 0); value }\n",
+        true,
+    );
+}
+
+#[test]
+fn test_kind_admits_complete_appended_python_test() {
+    let additive = format!("{PYTHON_TEST_BASE}{PYTHON_TEST_ADDITION}");
+    check_test_kind_comparison("bug", "tests/example.py", &additive, false);
+
+    let changed_existing = PYTHON_TEST_BASE.replace(
+        "    assert existing_api() != 0",
+        "    import time\n    time.sleep(0)\n    assert existing_api() != 0",
+    );
+    let mixed = format!("{changed_existing}{PYTHON_TEST_ADDITION}");
+    check_test_kind_comparison("bug", "tests/example.py", &mixed, true);
+    let duplicate = PYTHON_TEST_ADDITION.replace("test_added", "test_earlier");
+    check_test_kind_comparison(
+        "bug",
+        "tests/example.py",
+        &format!("{PYTHON_TEST_BASE}{duplicate}"),
+        true,
+    );
+}
+
+#[test]
+fn test_kind_admits_complete_braced_tests_with_setup() {
+    for (path, baseline, added) in BRACED_TESTS {
+        let source = if path.ends_with(".java") {
+            format!("{}{added}}}\n", baseline.strip_suffix("}\n").unwrap())
+        } else {
+            format!("{baseline}{added}")
+        };
+        check_test_kind_comparison("test", path, &source, false);
+    }
+}
+
+fn check_test_kind_comparison(kinds: &str, path: &str, change: &str, required: bool) {
+    let temp = TempDir::new().unwrap();
+    let repo = init_subject_repo(
+        temp.path(),
+        "repo",
+        "https://github.com/example/project.git",
+    );
+    fs::create_dir(repo.join("tests")).unwrap();
+    fs::create_dir(repo.join("src")).unwrap();
+    fs::create_dir(repo.join("tests/fixtures")).unwrap();
+    fs::write(repo.join("tests/example.rs"), EXISTING_TEST).unwrap();
+    fs::write(
+        repo.join("src/lib.rs"),
+        "pub fn crate_value() -> u8 { 1 }\n",
+    )
+    .unwrap();
+    if path == "tests/example.py" {
+        fs::write(repo.join(path), PYTHON_TEST_BASE).unwrap();
+    }
+    if let Some((_, baseline, _)) = BRACED_TESTS.iter().find(|(file, _, _)| *file == path) {
+        fs::write(repo.join(path), baseline).unwrap();
+    }
+    if path == "src/domain/tests/runtime.rs" {
+        fs::create_dir_all(repo.join("src/domain/tests")).unwrap();
         fs::write(
-            repo.join("tests/example.rs"),
-            "#[test]\nfn example() { assert_eq!(1, 1); }\n",
+            repo.join("src/lib.rs"),
+            "#[path = \"domain/tests/runtime.rs\"] pub mod runtime;\n",
         )
         .unwrap();
-        fs::write(
-            repo.join(".forge-cli.toml"),
-            "[test_first]\nrequire = true\n",
-        )
-        .unwrap();
-        fs::write(repo.join("notes with spaces.md"), "before\n").unwrap();
-        git(&repo, &["add", "."]);
-        git(&repo, &["commit", "-qm", "baseline"]);
-        install_local_remote(&repo, temp.path());
-        git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
-        git(&repo, &["checkout", "-qb", "test/example"]);
-        fs::write(repo.join("tests/example.rs"), change).unwrap();
-        fs::write(repo.join("notes with spaces.md"), "after\n").unwrap();
-        git(&repo, &["add", "."]);
-        git(&repo, &["commit", "-qm", "test change"]);
-        git(
-            &repo,
-            &["update-ref", "refs/remotes/origin/test/example", "HEAD"],
+        fs::write(repo.join(path), "pub fn original() -> u8 { 1 }\n").unwrap();
+    }
+    fs::write(repo.join("tests/fixtures/input.json"), "{\"sample\": 1}\n").unwrap();
+    fs::write(
+        repo.join(".forge-cli.toml"),
+        format!("[test_first]\nrequire = true\nrequire_kinds = [\"{kinds}\"]\n"),
+    )
+    .unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "baseline"]);
+    install_local_remote(&repo, temp.path());
+    git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    git(&repo, &["checkout", "-qb", "test/example"]);
+    fs::write(repo.join("tests/example.rs"), ADDITIVE_TEST).unwrap();
+    let changed_file = repo.join(path);
+    fs::create_dir_all(changed_file.parent().unwrap()).unwrap();
+    if path == "tests/moved.rs" {
+        git(&repo, &["mv", "src/lib.rs", path]);
+    }
+    fs::write(changed_file, change).unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "test change"]);
+    git(
+        &repo,
+        &["update-ref", "refs/remotes/origin/test/example", "HEAD"],
+    );
+    git(
+        &repo,
+        &["branch", "--set-upstream-to", "origin/test/example"],
+    );
+    if kinds == "test" && path == "tests/new.rs" {
+        check_live_test_only_create_and_adoption(&repo);
+    }
+    let workdir = if kinds == "bug" && path == "src/lib.rs" {
+        git(&repo, &["config", "diff.relative", "true"]);
+        repo.join("tests")
+    } else {
+        repo.clone()
+    };
+    let stub = StubEnv::new().gh_stub("#!/bin/sh\nexit 99\n");
+    for operation in ["create", "deliver"] {
+        let out = run_forge_cli_in(
+            &stub,
+            &[
+                "--provider",
+                "github",
+                "--host",
+                "github.com",
+                "--repo",
+                "example/project",
+                "--format",
+                "json",
+                "--dry-run",
+                "pr",
+                operation,
+                "--kind",
+                "test",
+                "--base",
+                "main",
+                "--title",
+                "Change test",
+                "--body",
+                "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
+            ],
+            Some(&workdir),
         );
-        git(
-            &repo,
-            &["branch", "--set-upstream-to", "origin/test/example"],
-        );
-        let stub = StubEnv::new().gh_stub("#!/bin/sh\nexit 99\n");
-        for operation in ["create", "deliver"] {
-            let out = run_forge_cli_in(
-                &stub,
-                &[
-                    "--provider",
-                    "github",
-                    "--host",
-                    "github.com",
-                    "--repo",
-                    "example/project",
-                    "--format",
-                    "json",
-                    "--dry-run",
-                    "pr",
-                    operation,
-                    "--kind",
-                    "test",
-                    "--base",
-                    "main",
-                    "--title",
-                    "Change test",
-                    "--body",
-                    "## Summary\nExample\n\n## Test plan\nUnit tests\n",
-                ],
-                Some(&repo),
+        if operation == "deliver" {
+            assert_eq!(out.code, 0, "{kinds} {path} {operation}: {out:?}");
+            let envelope = parse_envelope(&out.stdout);
+            let verdict = envelope["data"]["local_preflight"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["rule"] == "test_first");
+            assert_eq!(
+                verdict.is_some_and(|v| v["ok"] == false),
+                required,
+                "{kinds} {path} {operation}: {out:?}"
             );
-            if operation == "deliver" {
-                assert_eq!(out.code, 0, "{out:?}");
-                let envelope = parse_envelope(&out.stdout);
-                let verdict = envelope["data"]["local_preflight"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .find(|v| v["rule"] == "test_first");
+        } else {
+            assert_eq!(
+                out.code,
+                if required { 65 } else { 0 },
+                "{kinds} {path} {operation}: {out:?}"
+            );
+            if required {
                 assert_eq!(
-                    verdict.is_some_and(|v| v["ok"] == false),
-                    required,
-                    "{out:?}"
+                    parse_envelope(&out.stdout)["error"]["code"],
+                    "test_first_evidence_required"
                 );
-            } else {
-                assert_eq!(out.code, if required { 65 } else { 0 }, "{out:?}");
-                if required {
-                    assert_eq!(
-                        parse_envelope(&out.stdout)["error"]["code"],
-                        "test_first_evidence_required"
-                    );
-                }
             }
         }
     }
+}
+
+fn check_live_test_only_create_and_adoption(repo: &std::path::Path) {
+    let head = git(repo, &["rev-parse", "HEAD"]);
+    let head = head.trim();
+    let base = git(repo, &["rev-parse", "HEAD^"]);
+    let base = base.trim();
+    let valid_body =
+        "## Summary\nAdd coverage.\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests.";
+    let missing_declaration = "## Summary\nAdd coverage.\n\n## Test plan\nUnit tests.";
+    let view = serde_json::json!({
+        "number": 3,
+        "url": "https://github.com/example/project/pull/3",
+        "state": "OPEN",
+        "headRefName": "test/example",
+        "headRefOid": head,
+        "baseRefName": "main",
+        "title": "Add coverage",
+        "body": valid_body,
+        "isDraft": true,
+    });
+    let stub = StubEnv::new().gh_stub(
+        r#"#!/bin/sh
+case "$1 $2" in
+  "auth status") printf '%s\n' '  ✓ Logged in to github.com account reviewer (keyring)' >&2 ;;
+  "repo view") printf '%s\n' '{"name":"project","owner":{"login":"example"},"url":"https://github.com/example/project","defaultBranchRef":{"name":"main"},"mergeCommitAllowed":false,"squashMergeAllowed":true,"rebaseMergeAllowed":false}' ;;
+  "pr list") printf '[%s]\n' "$PR_VIEW" ;;
+  "pr create") printf '%s\n' 'https://github.com/example/project/pull/3' ;;
+  "pr view") printf '%s\n' "$PR_VIEW" ;;
+  *) exit 99 ;;
+esac
+"#,
+    );
+    let invoke = |operation, body, provider_view: &serde_json::Value, dry_run| {
+        let mut args = vec![
+            "--provider",
+            "github",
+            "--host",
+            "github.com",
+            "--repo",
+            "example/project",
+            "--format",
+            "json",
+            "pr",
+            operation,
+            "--kind",
+            "test",
+            "--base",
+            "main",
+            "--title",
+            "Add coverage",
+            "--body",
+            body,
+        ];
+        if dry_run {
+            args.push("--dry-run");
+        }
+        if operation == "deliver" {
+            args.push("--no-merge");
+        }
+        super::support::run_forge_cli_in_with_env(
+            &stub,
+            &args,
+            Some(repo),
+            &[("PR_VIEW", &provider_view.to_string())],
+        )
+    };
+
+    let created = invoke("create", valid_body, &view, false);
+    assert_eq!(created.code, 0, "{created:?}");
+    let created = parse_envelope(&created.stdout);
+    assert_eq!(created["data"]["draft"], true);
+    assert_eq!(created["data"]["head_sha"], head);
+
+    let missing = invoke("create", missing_declaration, &view, false);
+    assert_eq!(missing.code, 65, "{missing:?}");
+    assert_eq!(
+        parse_envelope(&missing.stdout)["error"]["code"],
+        "test_changes_undeclared"
+    );
+
+    let missing = invoke("deliver", missing_declaration, &view, true);
+    let preview = parse_envelope(&missing.stdout);
+    let verdict = preview["data"]["local_preflight"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["rule"] == "body_test_changes")
+        .unwrap();
+    assert_eq!(verdict["code"], "test_changes_undeclared");
+
+    let mut existing = view;
+    existing["body"] = missing_declaration.into();
+    let adopted = invoke("deliver", valid_body, &existing, false);
+    assert_eq!(adopted.code, 65, "{adopted:?}");
+    assert_eq!(
+        parse_envelope(&adopted.stdout)["error"]["code"],
+        "test_changes_undeclared"
+    );
+
+    existing["body"] = valid_body.into();
+    existing["headRefOid"] = base.into();
+    let adopted = invoke("deliver", valid_body, &existing, false);
+    assert_eq!(adopted.code, 65, "{adopted:?}");
+    assert_eq!(
+        parse_envelope(&adopted.stdout)["error"]["code"],
+        "test_first_evidence_provider_head_mismatch",
+    );
 }
 
 #[test]
@@ -440,7 +754,7 @@ fn test_kind_fetches_current_base_and_refuses_failed_fetch() {
         "--title",
         "Change test",
         "--body",
-        "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+        "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
     ];
     let out = run_forge_cli_in(&stub, &args, Some(&repo));
     assert_eq!(out.code, 65, "{out:?}");
@@ -571,7 +885,7 @@ fn test_kind_uses_target_base_instead_of_fork_base() {
                 "--title",
                 "Change test",
                 "--body",
-                "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+                "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
             ],
             Some(&repo),
         );
@@ -611,7 +925,7 @@ fn test_kind_uses_target_base_instead_of_fork_base() {
             "--title",
             "Change test",
             "--body",
-            "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+            "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
         ],
         Some(&repo),
     );

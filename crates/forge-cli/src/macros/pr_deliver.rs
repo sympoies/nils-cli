@@ -24,6 +24,7 @@
 use std::path::{Path, PathBuf};
 
 use nils_common::cli_contract::{Envelope, EnvelopeError, OutputFormat, schema_version_for};
+use nils_common::git::PrKind;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -36,7 +37,7 @@ use crate::config::{ForgeConfig, TestFirstPolicy};
 use crate::error::ForgeError;
 use crate::ops::label::{LabelTarget, validate_label_inputs};
 use crate::ops::pr_create::{
-    self, Environment, QualifiedHeadSubject, ResolvedHeadRef, VerifiedTestFirstSubject,
+    self, Environment, QualifiedHeadSubject, ResolvedHeadRef, VerifiedDeliverySubject,
     evidence_remote_url, evidence_repository_id, find_git_toplevel,
     qualified_head_subject_for_workdir, resolve_head_ref, test_first_gate,
     validate_provider_subject_head, validate_qualified_provider_subject,
@@ -297,7 +298,7 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
         // create path (a draft opened earlier must still carry evidence to
         // be delivered in an opted-in repo).
         let cfg = ForgeConfig::load_layered(workdir, find_git_toplevel(workdir).as_deref());
-        let test_first_policy = match crate::ops::pr_create::test_change_gate::policy(
+        let (test_first_policy, coverage_subject) = match pr_create::test_change_gate::policy(
             &cfg.resolve_test_first_policy(),
             ctx,
             args.kind.into_kind(),
@@ -340,7 +341,7 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
             expected_base: &expected_base,
         };
         let verified_subject = match validate_adopted(&view, args, &adopt_context) {
-            Ok(subject) => subject,
+            Ok(subject) => subject.or(coverage_subject),
             Err(err) => {
                 steps.push(Step {
                     step: "adopt",
@@ -817,7 +818,7 @@ fn validate_adopted(
     view: &PrViewPayload,
     args: &PrDeliverArgs,
     context: &AdoptValidationContext<'_>,
-) -> Result<Option<VerifiedTestFirstSubject>, ForgeError> {
+) -> Result<Option<VerifiedDeliverySubject>, ForgeError> {
     delivery_base_matches(context.expected_base, &view.base)?;
     validate_qualified_provider_subject(
         context.qualified_subject,
@@ -827,7 +828,9 @@ fn validate_adopted(
     )?;
     let prefix = branch_name(context.resolved_head.local_branch)?;
     branch_kind_matches(prefix, args.kind.into_kind())?;
-    body_sections(view.body.as_deref().unwrap_or(""), &context.headings)?;
+    let body = view.body.as_deref().unwrap_or("");
+    body_sections(body, &context.headings)?;
+    pr_create::test_change_gate::validate_body(args.kind.into_kind(), body)?;
     worktree_clean(context.workdir, git_status_porcelain)?;
     branch_pushed(
         context.workdir,
@@ -1002,6 +1005,12 @@ fn build_dry_run_payload(
     };
     let mut local_preflight =
         run_local_preflight(&inputs, workdir, git_status_porcelain, git_branch_state);
+    if inputs.kind == PrKind::Test {
+        local_preflight.push(RuleVerdict::from_result(
+            "body_test_changes",
+            pr_create::test_change_gate::validate_body(inputs.kind, &body),
+        ));
+    }
     if let Some(resolved) = resolved_head.filter(|resolved| resolved.github_user.is_some()) {
         local_preflight.push(RuleVerdict::from_result(
             "qualified_head_upstream",
@@ -1012,7 +1021,7 @@ fn build_dry_run_payload(
     // evidence for selected kinds (both create and adopt paths), so surface
     // the same verdict here instead of predicting a success the real deliver
     // would refuse.
-    let policy_result = crate::ops::pr_create::test_change_gate::policy(
+    let policy_result = pr_create::test_change_gate::policy(
         &cfg.resolve_test_first_policy(),
         ctx,
         args.kind.into_kind(),
@@ -1023,7 +1032,7 @@ fn build_dry_run_payload(
     );
     let policy_failed = policy_result.is_err();
     let test_first_policy = match policy_result {
-        Ok(policy) => policy,
+        Ok((policy, _)) => policy,
         Err(err) => {
             local_preflight.push(RuleVerdict::from_result("test_first", Err(err)));
             cfg.resolve_test_first_policy()

@@ -76,14 +76,14 @@ pub struct PrCreatePayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct VerifiedTestFirstSubject {
+pub(crate) struct VerifiedDeliverySubject {
     pub head: String,
     validation_summary: String,
 }
 
 pub(crate) struct PrCreateComputation {
     pub payload: PrCreatePayload,
-    pub verified_subject: Option<VerifiedTestFirstSubject>,
+    pub verified_subject: Option<VerifiedDeliverySubject>,
 }
 
 /// Production entrypoint. Pulls every external dependency from the real
@@ -485,7 +485,7 @@ pub(crate) fn test_first_gate(
     remote: &str,
     repository_id: Option<&str>,
     delivery_ref: &str,
-) -> Result<Option<VerifiedTestFirstSubject>, ForgeError> {
+) -> Result<Option<VerifiedDeliverySubject>, ForgeError> {
     if policy.require && policy.invalid_require_kinds {
         return Err(ForgeError::validation(
             schema_err(),
@@ -563,7 +563,7 @@ pub(crate) fn test_first_gate(
                                 None,
                             )
                         })?;
-                    Ok(Some(VerifiedTestFirstSubject {
+                    Ok(Some(VerifiedDeliverySubject {
                         head,
                         validation_summary: agent_workflow_primitives::test_first_evidence::final_resolution_summary(&result.record),
                     }))
@@ -623,7 +623,7 @@ pub(crate) fn test_first_gate(
 
 fn append_validation_summary(
     mut body: String,
-    subject: Option<&VerifiedTestFirstSubject>,
+    subject: Option<&VerifiedDeliverySubject>,
 ) -> Result<String, ForgeError> {
     if let Some(subject) = subject.filter(|subject| !subject.validation_summary.is_empty()) {
         body.push_str("\n\n");
@@ -635,7 +635,7 @@ fn append_validation_summary(
 }
 
 pub(crate) fn validate_provider_subject_head(
-    subject: Option<&VerifiedTestFirstSubject>,
+    subject: Option<&VerifiedDeliverySubject>,
     provider_head: Option<&str>,
 ) -> Result<(), ForgeError> {
     let Some(subject) = subject else {
@@ -704,6 +704,7 @@ pub fn run_with<R: BackendRunner>(
     no_local_path(&args.title, "title")?;
     no_agent_attribution(&args.title, "title")?;
     body_sections(&body, &env.headings)?;
+    test_change_gate::validate_body(kind, &body)?;
     no_local_path(&body, "body")?;
     no_agent_attribution(&body, "body")?;
     let label_target = match ctx.provider {
@@ -721,7 +722,7 @@ pub fn run_with<R: BackendRunner>(
         (env.head_state)(w, branch)
     })?;
     let qualified_subject = qualified_head_subject_for_env(&ctx, resolved_head, env)?;
-    let policy = test_change_gate::policy(
+    let (policy, coverage_subject) = test_change_gate::policy(
         &env.test_first_policy,
         &ctx,
         kind,
@@ -763,6 +764,7 @@ pub fn run_with<R: BackendRunner>(
         },
     )?;
 
+    let verified_subject = verified_subject.or(coverage_subject);
     let body = append_validation_summary(body, verified_subject.as_ref())?;
     let body = supersede::append_link(body, supersedes);
     let draft = !args.no_draft;
@@ -873,6 +875,7 @@ fn compute_with_subject_inner<R: BackendRunner>(
     no_local_path(&args.title, "title")?;
     no_agent_attribution(&args.title, "title")?;
     body_sections(&body, &env.headings)?;
+    test_change_gate::validate_body(kind, &body)?;
     no_local_path(&body, "body")?;
     no_agent_attribution(&body, "body")?;
     if prevalidated_ctx.is_none() {
@@ -892,7 +895,7 @@ fn compute_with_subject_inner<R: BackendRunner>(
         (env.head_state)(w, branch)
     })?;
     let qualified_subject = qualified_head_subject_for_env(&ctx, resolved_head, env)?;
-    let policy = test_change_gate::policy(
+    let (policy, coverage_subject) = test_change_gate::policy(
         &env.test_first_policy,
         &ctx,
         kind,
@@ -934,6 +937,7 @@ fn compute_with_subject_inner<R: BackendRunner>(
         },
     )?;
 
+    let verified_subject = verified_subject.or(coverage_subject);
     let body = append_validation_summary(body, verified_subject.as_ref())?;
     let body = supersede::append_link(body, supersedes);
     let draft = !args.no_draft;
@@ -2035,7 +2039,7 @@ mod tests {
 
     #[test]
     fn provider_head_must_match_the_verified_subject() {
-        let subject = VerifiedTestFirstSubject {
+        let subject = VerifiedDeliverySubject {
             head: "abc123".into(),
             validation_summary: String::new(),
         };

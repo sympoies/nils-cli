@@ -68,6 +68,21 @@ check. Full macOS tests and coverage remain nightly/release gates.
 The merge queue still invokes the planner for docs and release changes.
 See the [scope consumption contract](../specs/affected-scope-ci-consumption-v1.md).
 
+## Tests-only pull requests
+
+Use a `test/` branch and `forge-cli pr create --kind test` for additive
+coverage of already-correct behavior. For example, add an assertion for a
+previously untested return value in an existing dedicated test file, or add a
+new test case in a dedicated test file. Include
+`## Test changes` in the body and use `None.` when the detector reports no
+findings. Record the focused run and ordinary validation in `## Test plan`.
+
+Use a `fix/` branch and `--kind bug` when replacing a flaky fixed wait with
+synchronization or correcting an input fixture. Record the reproduction or
+a reasoned waiver before editing and bind the evidence to the delivered head.
+See the [test-first gate](../../crates/forge-cli/docs/specs/forge-cli-spec-v1.md#test_first--test-first-evidence-gate)
+for the diff rules and required evidence.
+
 ## Required checks and migration
 
 The maintainer manages the ruleset; workflow changes never edit it automatically.

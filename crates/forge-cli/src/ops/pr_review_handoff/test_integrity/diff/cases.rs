@@ -58,21 +58,38 @@ fn module_open(line: &str) -> Option<String> {
 
 /// Brace counts outside string/char literals and line comments.
 fn braces(line: &str) -> (i32, i32) {
-    let chars: Vec<char> = line.chars().collect();
-    let (mut opens, mut closes, mut index, mut string) = (0, 0, 0, false);
+    let (mut opens, mut closes) = (0, 0);
+    visit_braces(line, false, |_, brace| match brace {
+        '{' => opens += 1,
+        '}' => closes += 1,
+        _ => unreachable!("only braces are visited"),
+    });
+    (opens, closes)
+}
+
+pub(super) fn visit_braces(
+    line: &str,
+    script_quotes: bool,
+    mut visit: impl FnMut(usize, char),
+) -> bool {
+    let chars: Vec<_> = line.char_indices().collect();
+    let (mut index, mut quote) = (0, None);
     while index < chars.len() {
-        match chars[index] {
-            '\\' if string => index += 1,
-            '"' => string = !string,
-            '/' if !string && chars.get(index + 1) == Some(&'/') => break,
-            '\'' if !string && chars.get(index + 2) == Some(&'\'') => index += 2,
-            '{' if !string => opens += 1,
-            '}' if !string => closes += 1,
+        let (offset, ch) = chars[index];
+        match (ch, quote) {
+            ('\\', Some(_)) => index += 1,
+            (ch, Some(delimiter)) if ch == delimiter => quote = None,
+            (_, Some(_)) => {}
+            ('"', None) => quote = Some(ch),
+            ('\'' | '`', None) if script_quotes => quote = Some(ch),
+            ('/', None) if chars.get(index + 1).is_some_and(|&(_, c)| c == '/') => break,
+            ('\'', None) if chars.get(index + 2).is_some_and(|&(_, c)| c == '\'') => index += 2,
+            ('{' | '}', None) => visit(offset, ch),
             _ => {}
         }
         index += 1;
     }
-    (opens, closes)
+    quote.is_none()
 }
 
 /// A JavaScript case whose title has not been seen yet.
@@ -124,7 +141,7 @@ impl Pending {
 
 /// Length of the quoted title at the start of `text`; a backslash escapes the
 /// next character, so `\'` does not end a single-quoted title.
-fn quoted(text: &str) -> Option<usize> {
+pub(super) fn quoted(text: &str) -> Option<usize> {
     let mut chars = text.char_indices();
     let (_, quote) = chars
         .next()

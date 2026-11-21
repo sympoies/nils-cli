@@ -18,10 +18,10 @@ use crate::error::ForgeError;
 use crate::ops::pr_view;
 use crate::provider::ProviderContext;
 
-use super::VerifiedTestFirstSubject;
+use super::VerifiedDeliverySubject;
 
 /// Verified subject for the new head and the superseded PR number, if any.
-pub(super) type Outcome = (Option<VerifiedTestFirstSubject>, Option<u64>);
+pub(super) type Outcome = (Option<VerifiedDeliverySubject>, Option<u64>);
 
 /// Run the test-first gate. Without `--supersedes` this is `verify_record`
 /// against the branch being delivered. With it, `verify_record` runs against the
@@ -37,7 +37,7 @@ pub(super) fn gate<R: BackendRunner>(
     remote: &str,
     base: &str,
     branch: &str,
-    verify_record: impl FnOnce(&str) -> Result<Option<VerifiedTestFirstSubject>, ForgeError>,
+    verify_record: impl FnOnce(&str) -> Result<Option<VerifiedDeliverySubject>, ForgeError>,
 ) -> Result<Outcome, ForgeError> {
     let Some(old_pr) = supersedes else {
         return Ok((verify_record(branch)?, None));
@@ -66,7 +66,7 @@ pub(super) fn gate<R: BackendRunner>(
         &["rev-parse", "--verify", &format!("{branch}^{{commit}}")],
     )?;
     source_unchanged(workdir, remote, base, &old_head, &new_head)?;
-    let subject = subject.map(|subject| VerifiedTestFirstSubject {
+    let subject = subject.map(|subject| VerifiedDeliverySubject {
         head: new_head,
         ..subject
     });

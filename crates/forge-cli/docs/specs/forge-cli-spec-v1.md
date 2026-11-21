@@ -1323,12 +1323,36 @@ feature PRs without a record. The list accepts `feature`, `bug`, `docs`, `chore`
 no kinds. Setting the list alone does not enable the gate: `require` must still
 resolve `true`.
 
-When the bug gate is enabled, `pr create --kind test` also requires the bug
-record if the test-change detector reports any findings. At creation and delivery,
-the detector uses a freshly fetched target-repository base and fails with `test_changes_fetch_failed` if fetching fails. The
-provider-backed test-changes preview remains authoritative for review. Use `--kind bug` for a test-only bug fix, such as a flake fix; a
-reasoned waiver remains available. A plain test addition with no findings may
-use `--kind test` without a record.
+When either `bug` or `test` is selected, a non-empty `--kind test` diff
+requires the usual testable record unless it qualifies as additive coverage.
+Eligible source paths are under the root `test/`, `tests/`, and `__tests__/`
+directories or the Cargo workspace layout `crates/<crate>/tests/`. New files
+must contain recognized test cases. Existing files may gain standalone
+single-line assertions or self-contained test bodies. The gate recognizes
+Rust `#[test]` functions, Go test functions, Java `@Test` methods, and
+JavaScript and TypeScript `test` / `it` block callbacks in existing files.
+Python tests can be appended as complete top-level definitions with new
+names. Fixture directories, non-test paths, removed lines, file mode changes,
+and test-change detector findings require evidence.
+
+A new assertion in `tests/calculation.rs` for an already-correct result
+qualifies. Adding a guard around an existing assertion requires evidence,
+even if the same file also gains an assertion.
+Changing an existing wait in that test to fix a flake or correcting its input
+fixture requires bug-fix evidence even when the detector reports no findings.
+Use `--kind bug` for known test repairs, including repairs made by insertion,
+and record a meaningful failure or an explicit waiver when red is impractical.
+
+Create and deliver inspect the three-dot diff against a freshly fetched target
+base. A failed fetch returns `test_changes_fetch_failed`. A tests-only admission
+binds the inspected head through provider read-back and the deliver lifecycle.
+The provider-backed test-changes preview remains authoritative for review.
+
+Every `--kind test` body needs a non-empty `## Test changes` section. Use
+`None.` when there are no findings and list the added coverage in the ordinary
+`## Test plan`. Findings need the standard [declaration
+rows](test-change-admission-v1.md#author-declarations-and-intentional-change-allowlist).
+The usual validation and required CI checks still apply.
 
 The repository list replaces the global list in full, including an explicit
 empty list; an omitted list inherits the global setting. A non-array, non-string
