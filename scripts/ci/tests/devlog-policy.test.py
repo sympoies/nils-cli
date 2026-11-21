@@ -272,14 +272,14 @@ class DevlogPolicy(unittest.TestCase):
         self.git('switch', '-q', 'main')
         self.new('accepted')
         self.commit('Accepted fragment')
-        self.git('switch', '-q', '-c', 'chore/devlog-fold-2026-10-20')
+        branch = 'chore/devlog-fold-release-123'
+        self.git('switch', '-q', '-c', branch)
         self.run_cmd('devlog', 'fold')
         self.commit('chore(devlog): fold accepted fragments')
         fold = self.git('rev-parse', 'HEAD')
         self.git('switch', '-q', '-c', 'ci/pr', 'main')
         self.git('merge', '--no-ff', '-m', 'PR merge snapshot', fold)
-        self.env.update(GITHUB_EVENT_NAME='pull_request',
-                        GITHUB_HEAD_REF='chore/devlog-fold-2026-10-20')
+        self.env.update(GITHUB_EVENT_NAME='pull_request', GITHUB_HEAD_REF=branch)
         result = self.gate()
         self.assertEqual(result.returncode, 0, result.stdout)
         self.env['GITHUB_EVENT_NAME'] = 'merge_group'

@@ -2,8 +2,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
-const { SUBJECT, branchFor, checkoutGit, findDatePR, getRef, openFoldPR,
+const { SUBJECT, checkoutGit, findFoldPR, getRef, openFoldPR,
   prepareFold, requireMain, signFold } = require("./devlog-fold-pr.cjs");
 
 const oid = value => typeof value === "string" && /^[a-f0-9]{40}$/.test(value);
@@ -33,6 +32,7 @@ async function readPublication({ github, context, workflowRef, releaseId, git })
     runId: context.runId, repository: fullName };
 }
 
+const releaseBranch = release => `chore/devlog-fold-release-${release.id}`;
 const receiptName = release => `devlog-fold-preparation-${release.id}`;
 
 async function findReleasePreparation(github, repo, release) {
@@ -60,25 +60,29 @@ function foldMessage(release) {
 
 function validateReceipt(receipt, release) {
   if (!receipt || Object.keys(release).some(key => release[key] !== receipt.release?.[key]) ||
-      receipt.branch !== branchFor(release.publishedAt.slice(0, 10)) ||
+      receipt.branch !== releaseBranch(release) ||
       !oid(receipt.base) || !oid(receipt.tree) || !Array.isArray(receipt.removed) ||
       !(receipt.status === "empty" && !receipt.removed.length && receipt.head === null ||
         receipt.status === "prepared" && receipt.removed.length && oid(receipt.head)))
     throw new Error("Invalid trusted fold receipt");
 }
 
-async function prepareReleaseFold({ github, writer, repo, release, root, env, note }) {
-  const cutoff = release.publishedAt.slice(0, 10);
-  const branch = branchFor(cutoff);
-  const base = checkoutGit(root, env)("rev-parse", "HEAD");
-  await note("prepare", { branch, base });
-  const existing = await findDatePR(github, repo, branch);
+async function requireUnusedReleaseBranch(github, repo, branch, note, stage) {
+  const existing = await findFoldPR(github, repo, branch);
   if (existing) {
-    await note("prepare", { pr: existing.html_url });
-    throw new Error("Canonical date PR exists without this run's receipt; inspect the original run");
+    await note(stage, { pr: existing.html_url });
+    throw new Error("Canonical release PR conflicts with this preparation; inspect the original run");
   }
   if (await getRef(github, repo, `heads/${branch}`))
-    throw new Error("Canonical date ref already exists without this run's receipt");
+    throw new Error("Canonical release ref conflicts with this preparation");
+}
+
+async function prepareReleaseFold({ github, writer, repo, release, root, env, note }) {
+  const cutoff = release.publishedAt.slice(0, 10);
+  const branch = releaseBranch(release);
+  const base = checkoutGit(root, env)("rev-parse", "HEAD");
+  await note("prepare", { branch, base });
+  await requireUnusedReleaseBranch(github, repo, branch, note, "prepare");
   await requireMain(github, repo, base);
   const plan = prepareFold({ root, env, branch, cutoff });
   await requireMain(github, repo, base);
@@ -116,6 +120,18 @@ async function verifyHead(github, repo, receipt, app) {
     throw new Error("Head is not the exact verified App commit for this release and base");
 }
 
+function verifyPR(pr, receipt, app) {
+  if (!Number.isSafeInteger(pr?.number) || pr.number <= 0 || !pr.node_id ||
+      pr.user?.login !== `${app}[bot]` ||
+      pr.head?.repo?.full_name !== receipt.release.repository ||
+      pr.base?.repo?.full_name !== receipt.release.repository ||
+      pr.head.ref !== receipt.branch || pr.head.sha !== receipt.head ||
+      pr.base.ref !== "main" || pr.base.sha !== receipt.base ||
+      !(pr.state === "open" || (pr.state === "closed" && pr.merged_at)))
+    throw new Error("PR identity, recorded base or exact head changed");
+  return pr;
+}
+
 async function publishReleaseFold({ github, writer, repo, release, root, env, receipt, app, note,
   preparationRunId = release.runId }) {
   validateReceipt(receipt, { ...release, runId: preparationRunId });
@@ -125,19 +141,27 @@ async function publishReleaseFold({ github, writer, repo, release, root, env, re
   if (replay.base !== base || replay.tree !== tree ||
       JSON.stringify(replay.removed) !== JSON.stringify(removed))
     throw new Error("Complete fold tree differs from trusted replay of the recorded base");
-  if (receipt.status === "empty") return null;
+  if (receipt.status === "empty") {
+    await requireUnusedReleaseBranch(github, repo, branch, note, "reproduce");
+    return null;
+  }
   await verifyHead(github, repo, receipt, app);
   await note("publish");
-  const existing = await findDatePR(github, repo, branch);
-  if (existing) return existing;
+  const existing = await findFoldPR(github, repo, branch);
+  if (existing) {
+    await note("publish", { pr: existing.html_url });
+    return verifyPR(existing, receipt, app);
+  }
   await requireMain(github, repo, base);
   const branchHead = await getRef(github, repo, `heads/${branch}`);
   if (branchHead === null)
     await writer.rest.git.createRef({ ...repo, ref: `refs/heads/${branch}`, sha: head });
   else if (branchHead !== head)
-    throw new Error("Canonical date branch has moved from the trusted head");
+    throw new Error("Canonical release branch has moved from the trusted head");
   await requireMain(github, repo, base);
-  return openFoldPR(writer, repo, branch, release.publishedAt.slice(0, 10));
+  const created = await openFoldPR(writer, repo, branch, release.publishedAt.slice(0, 10));
+  await note("publish", { pr: created.html_url });
+  return verifyPR(created, receipt, app);
 }
 
 function tracker({ context, core, file }) {
