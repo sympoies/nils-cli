@@ -4,14 +4,60 @@ use pretty_assertions::assert_eq;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::process::Stdio;
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-struct Server(std::process::Child);
+struct Server {
+    child: Child,
+    _tmux_calls: FakeTmuxCalls,
+}
+
+impl Server {
+    fn spawn(root: &Path, state: &Path, tmux: &Path, configure: impl FnOnce(&mut Command)) -> Self {
+        let tmux_dir = tmux.parent().unwrap();
+        let calls_lock = tmux_dir.join("serve-calls.lock");
+        let tmux_calls = FakeTmuxCalls(fs::File::create_new(&calls_lock).unwrap());
+        let serve_tmux = tmux_dir.join("serve-tmux");
+        super::cli::write_executable(
+            &serve_tmux,
+            r#"#!/usr/bin/env python3
+import fcntl, os, sys
+with open(os.environ["FIXTURE_TMUX_CALLS"], "rb") as calls:
+    fcntl.flock(calls, fcntl.LOCK_SH)
+    if calls.read(1):
+        sys.exit(1)
+    # Keep the lock through exec and in the fake tmux logger subprocess.
+    os.set_inheritable(calls.fileno(), True)
+    os.environ["NILS_TEST_FAKE_TMUX_CALLS_FD"] = str(calls.fileno())
+    tmux = os.environ["FIXTURE_TMUX_INNER"]
+    os.execv(tmux, [tmux, *sys.argv[1:]])
+"#,
+        );
+        let mut command = super::serve_fixture::command(
+            root,
+            nils_test_support::bin::resolve("agent-session"),
+            state,
+            &serve_tmux,
+            |command| {
+                command
+                    .env("FIXTURE_TMUX_CALLS", &calls_lock)
+                    .env("FIXTURE_TMUX_INNER", tmux);
+                configure(command);
+            },
+        );
+        Self {
+            child: command.spawn().unwrap(),
+            _tmux_calls: tmux_calls,
+        }
+    }
+}
+
 impl Drop for Server {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        // Stop the server before the completion guard drains its tmux calls.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -48,26 +94,19 @@ fn console_target_notice_start_writes_launch_receipt() {
         .unwrap()
         .local_addr()
         .unwrap();
-    let mut command = super::serve_fixture::command(
-        root,
-        nils_test_support::bin::resolve("agent-session"),
-        &state,
-        &tmux,
-        |command| {
-            command
-                .args(["--bind", &addr.to_string(), "--token", "synthetic-token"])
-                .env("HOME", root)
-                .env("CODEX_HOME", root.join("codex-config"))
-                .env("CLAUDE_CONFIG_DIR", root.join("provider-config"))
-                .env("AGENT_SESSION_CLAUDE_BIN", &agent)
-                .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
-                .env("AGENT_SESSION_NOTICE_WRITERS", "1")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
-        },
-    );
-    let _server = Server(command.spawn().unwrap());
+    let _server = Server::spawn(root, &state, &tmux, |command| {
+        command
+            .args(["--bind", &addr.to_string(), "--token", "synthetic-token"])
+            .env("HOME", root)
+            .env("CODEX_HOME", root.join("codex-config"))
+            .env("CLAUDE_CONFIG_DIR", root.join("provider-config"))
+            .env("AGENT_SESSION_CLAUDE_BIN", &agent)
+            .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
+            .env("AGENT_SESSION_NOTICE_WRITERS", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+    });
     let deadline = Instant::now() + Duration::from_secs(15);
     while TcpStream::connect(addr).is_err() {
         assert!(Instant::now() < deadline);
@@ -256,44 +295,17 @@ sys.exit(result.returncode)
         .unwrap()
         .local_addr()
         .unwrap();
-    let calls_lock = tmux_dir.join("serve-calls.lock");
-    // Drop order is server, completion lock, then the fixture directory.
-    let _tmux_calls = FakeTmuxCalls(fs::File::create_new(&calls_lock).unwrap());
-    let serve_tmux = tmux_dir.join("serve-tmux");
-    super::cli::write_executable(
-        &serve_tmux,
-        r#"#!/usr/bin/env python3
-import fcntl, os, sys
-with open(os.environ["FIXTURE_TMUX_CALLS"], "rb") as calls:
-    fcntl.flock(calls, fcntl.LOCK_SH)
-    if calls.read(1):
-        sys.exit(1)
-    # Keep the lock through exec and in the fake tmux logger subprocess.
-    os.set_inheritable(calls.fileno(), True)
-    tmux = os.environ["FIXTURE_TMUX_INNER"]
-    os.execv(tmux, [tmux, *sys.argv[1:]])
-"#,
-    );
-    let mut command = super::serve_fixture::command(
-        root,
-        nils_test_support::bin::resolve("agent-session"),
-        &state,
-        &serve_tmux,
-        |command| {
-            command
-                .args(["--bind", &addr.to_string(), "--token", "synthetic-token"])
-                .env("HOME", root)
-                .env("CODEX_HOME", root.join("codex-config"))
-                .env("CLAUDE_CONFIG_DIR", &config)
-                .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
-                .env("FIXTURE_TMUX_CALLS", &calls_lock)
-                .env("FIXTURE_TMUX_INNER", &inner_tmux)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
-        },
-    );
-    let _server = Server(command.spawn().unwrap());
+    let _server = Server::spawn(root, &state, &inner_tmux, |command| {
+        command
+            .args(["--bind", &addr.to_string(), "--token", "synthetic-token"])
+            .env("HOME", root)
+            .env("CODEX_HOME", root.join("codex-config"))
+            .env("CLAUDE_CONFIG_DIR", &config)
+            .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+    });
     let deadline = Instant::now() + Duration::from_secs(15);
     while TcpStream::connect(addr).is_err() {
         assert!(Instant::now() < deadline);
@@ -596,24 +608,17 @@ sys.exit(result.returncode)
         .unwrap()
         .local_addr()
         .unwrap();
-    let mut command = super::serve_fixture::command(
-        root,
-        nils_test_support::bin::resolve("agent-session"),
-        &state,
-        &tmux,
-        |command| {
-            command
-                .args(["--bind", &addr.to_string(), "--token", "synthetic-token"])
-                .env("HOME", root)
-                .env("CODEX_HOME", root.join("codex-config"))
-                .env("CLAUDE_CONFIG_DIR", &config)
-                .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
-        },
-    );
-    let _server = Server(command.spawn().unwrap());
+    let _server = Server::spawn(root, &state, &inner_tmux, |command| {
+        command
+            .args(["--bind", &addr.to_string(), "--token", "synthetic-token"])
+            .env("HOME", root)
+            .env("CODEX_HOME", root.join("codex-config"))
+            .env("CLAUDE_CONFIG_DIR", &config)
+            .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+    });
     let deadline = Instant::now() + Duration::from_secs(15);
     while TcpStream::connect(addr).is_err() {
         assert!(Instant::now() < deadline);
