@@ -452,6 +452,12 @@ runtime checks below. A recovery offer is not proof that those checks will pass.
 provider resume metadata; it never resumes the latest provider conversation
 implicitly.
 
+- The managed Codex `UserPromptSubmit` dispatcher retains the exact conversation
+  ID in the session's resume metadata after the runtime admits the matching
+  prompt activity. The activity journal uses runtime-scoped digests. A
+  completed turn by itself can establish idle activity even when no exact ID
+  was retained. A confirmed stopped session without exact identity returns
+  `session-not-resumable`.
 - Tmux probe timeouts and server-shutdown uncertainty are retried for up to two
   seconds while holding the session record lock. A confirmed running runtime is
   a no-op; confirmed absence proceeds through the stopped-runtime checks below.

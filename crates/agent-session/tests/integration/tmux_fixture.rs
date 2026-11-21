@@ -686,13 +686,13 @@ fn real_tmux_socket_is_removed_after_normal_and_panic_cleanup() {
 }
 
 /// A private tmux server with a fixture-owned socket.
-pub(super) struct RealTmuxServer {
-    pub(super) wrapper: PathBuf,
+pub(crate) struct RealTmuxServer {
+    pub(crate) wrapper: PathBuf,
     _socket_dir: nils_test_support::tempdir::ScopedTempDir,
 }
 
 impl RealTmuxServer {
-    pub(super) fn start(dir: &Path) -> Option<Self> {
+    pub(crate) fn start(dir: &Path) -> Option<Self> {
         for tool in ["tmux", "python3"] {
             let present = Command::new("sh")
                 .arg("-c")

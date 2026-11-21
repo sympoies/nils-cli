@@ -15,12 +15,28 @@ use crate::model::{
 use crate::path_binding::{TargetBinding, resolve_target_bindings};
 use crate::strict_json;
 
-/// Only display settings and a projected primary identity leave this adapter.
-pub(crate) fn project_session_model_hook(
+/// Private metadata for the local session helper after activity admission.
+pub(crate) fn project_private_activity_hook(
     request: &NormalizedRequest,
     raw: &[u8],
     runtime_id: &str,
 ) -> Option<Vec<u8>> {
+    if request.product == Product::Codex {
+        if request.event != "UserPromptSubmit" {
+            return None;
+        }
+        let value = parse_provider_json(raw).ok()?;
+        let fields = value.as_object()?;
+        if fields.contains_key("agent_id") {
+            return None;
+        }
+        let session = optional_provider_id(fields, "session_id").ok()??;
+        return serde_json::to_vec(&json!({
+            "hook_event_name": "CodexResumeIdentity",
+            "session_id": session,
+        }))
+        .ok();
+    }
     if request.product != Product::Claude {
         return None;
     }
@@ -74,12 +90,13 @@ pub(crate) fn project_session_model_hook(
     serde_json::to_vec(&metadata).ok()
 }
 
-/// Display settings stay best-effort, but a forwarded SessionStart readiness
-/// is the resumed runtime's only idle signal and gets the receipt deadline.
+/// Codex identity retention and Claude readiness get the receipt deadline.
+/// Best-effort display settings keep the shorter deadline.
 pub(crate) fn hook_deadline(metadata: &[u8]) -> std::time::Duration {
-    let ready =
-        serde_json::from_slice::<Value>(metadata).is_ok_and(|value| value.get("source").is_some());
-    std::time::Duration::from_millis(if ready { 2000 } else { 250 })
+    let receipt = serde_json::from_slice::<Value>(metadata).is_ok_and(|value| {
+        value.get("source").is_some() || value["hook_event_name"] == "CodexResumeIdentity"
+    });
+    std::time::Duration::from_millis(if receipt { 2000 } else { 250 })
 }
 
 /// Private clear identity receipt. It is sent only to the managed lifecycle

@@ -17,6 +17,8 @@ mod cli;
 mod cli_launch_env;
 #[path = "integration/codex_notify.rs"]
 mod codex_notify;
+#[path = "integration/codex_resume_identity.rs"]
+mod codex_resume_identity;
 #[path = "integration/coordination.rs"]
 mod coordination;
 #[path = "integration/coordination_server.rs"]

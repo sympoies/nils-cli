@@ -1631,7 +1631,7 @@ fn run_session_activity(
             ));
         }
     }
-    if let Some(metadata) = crate::adapter::project_session_model_hook(request, raw, &runtime_id)
+    if let Some(metadata) = crate::adapter::project_private_activity_hook(request, raw, &runtime_id)
         && let Ok(helper) = resolve_activity_helper()
     {
         let mut command = Command::new(helper);
@@ -1640,7 +1640,7 @@ fn run_session_activity(
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        // Runs after mandatory activity, outside enforcement's child/output budget.
+        // Private receipt or display metadata, outside enforcement's budget.
         let _ = run_bounded(command, &metadata, hook_deadline(&metadata), 0, false);
     }
     Ok(())
