@@ -661,23 +661,23 @@ fn serve_recovers_a_recorded_running_session_from_a_prior_boot() {
         serde_json::to_vec(&host_record).unwrap(),
     )
     .unwrap();
-    let mut custom_age = host_record.clone();
-    custom_age["id"] = json!("boot-custom-expired");
-    custom_age["tmux_session"] = json!("hs-claude-custom-expired");
-    custom_age["runtime"]["tmux_session"] = custom_age["tmux_session"].clone();
-    custom_age["provider_resume"]["session_id"] = json!("conversation-custom-expired");
-    custom_age["provider_resume"]["resume_args"] =
-        json!(["--resume", "conversation-custom-expired"]);
-    custom_age["boot_recovery"]["marked_at_epoch"] =
-        json!(jiff::Timestamp::now().as_second() - 120);
-    let custom_dir = state.join("sessions/boot-custom-expired");
-    fs::create_dir_all(&custom_dir).unwrap();
+    let mut stale_mark = host_record.clone();
+    stale_mark["id"] = json!("boot-stale-mark");
+    stale_mark["tmux_session"] = json!("hs-claude-stale-mark");
+    stale_mark["runtime"]["tmux_session"] = stale_mark["tmux_session"].clone();
+    stale_mark["provider_resume"]["session_id"] = json!("conversation-stale-mark");
+    stale_mark["provider_resume"]["resume_args"] = json!(["--resume", "conversation-stale-mark"]);
+    stale_mark["boot_recovery"]["marked_at_epoch"] =
+        json!(jiff::Timestamp::now().as_second() - 86_400);
+    let stale_dir = state.join("sessions/boot-stale-mark");
+    fs::create_dir_all(&stale_dir).unwrap();
     fs::write(
-        custom_dir.join("session.json"),
-        serde_json::to_vec(&custom_age).unwrap(),
+        stale_dir.join("session.json"),
+        serde_json::to_vec(&stale_mark).unwrap(),
     )
     .unwrap();
-    command.env("AGENT_SESSION_SHUTDOWN_INTENT_MAX_AGE_SECONDS", "60");
+    // A caller-supplied lifetime must not extend a mark past 24 hours.
+    command.env("AGENT_SESSION_SHUTDOWN_INTENT_MAX_AGE_SECONDS", "172800");
     command.env("AGENT_SESSION_BOOT_RECOVERY", "0");
     let mut third = OwnedServe(command.spawn().unwrap());
     assert_fixture_environment(&third.0, tmp.path(), &tmux);
@@ -685,10 +685,10 @@ fn serve_recovers_a_recorded_running_session_from_a_prior_boot() {
     while Instant::now() < host_deadline {
         let current: Value =
             serde_json::from_slice(&fs::read(host_dir.join("session.json")).unwrap()).unwrap();
-        let custom: Value =
-            serde_json::from_slice(&fs::read(custom_dir.join("session.json")).unwrap()).unwrap();
+        let stale: Value =
+            serde_json::from_slice(&fs::read(stale_dir.join("session.json")).unwrap()).unwrap();
         if current["boot_recovery"]["receipt"]["reason"] == "host-opt-out"
-            && custom["boot_recovery"]["receipt"]["reason"] == "shutdown-intent-expired"
+            && stale["boot_recovery"]["receipt"]["reason"] == "shutdown-intent-expired"
         {
             break;
         }
@@ -704,10 +704,10 @@ fn serve_recovers_a_recorded_running_session_from_a_prior_boot() {
         "host-opt-out"
     );
     assert_eq!(skipped["runtime"]["generation"], 2);
-    let custom: Value =
-        serde_json::from_slice(&fs::read(custom_dir.join("session.json")).unwrap()).unwrap();
+    let stale: Value =
+        serde_json::from_slice(&fs::read(stale_dir.join("session.json")).unwrap()).unwrap();
     assert_eq!(
-        custom["boot_recovery"]["receipt"]["reason"],
+        stale["boot_recovery"]["receipt"]["reason"],
         "shutdown-intent-expired"
     );
     let control = run(

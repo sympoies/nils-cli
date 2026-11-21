@@ -3,6 +3,7 @@ use crate::{CliContext, CliError, SessionRecord, write_session_record};
 use serde_json::json;
 
 const KEY: &str = "boot_recovery";
+const SHUTDOWN_MARK_TTL_SECONDS: i64 = 24 * 60 * 60;
 
 pub(crate) fn persist_launch(
     context: &CliContext,
@@ -57,30 +58,8 @@ pub(crate) fn recover(
             None,
         )
     })?;
-    let max_age = match std::env::var("AGENT_SESSION_SHUTDOWN_INTENT_MAX_AGE_SECONDS") {
-        Ok(value) => value
-            .parse::<i64>()
-            .ok()
-            .filter(|age| *age > 0)
-            .ok_or_else(|| {
-                CliError::runtime(
-                    "shutdown-intent-max-age-invalid",
-                    "shutdown intent maximum age must be positive seconds",
-                    None,
-                )
-            })?,
-        Err(std::env::VarError::NotPresent) => 86_400,
-        Err(_) => {
-            return Err(CliError::runtime(
-                "shutdown-intent-max-age-invalid",
-                "shutdown intent maximum age must be positive seconds",
-                None,
-            ));
-        }
-    };
     let disabled = std::env::var("AGENT_SESSION_BOOT_RECOVERY").is_ok_and(|value| value == "0");
     let excluded = std::env::var("AGENT_SESSION_BOOT_RECOVERY_EXCLUDE").unwrap_or_default();
-    let now = jiff::Timestamp::now().as_second();
     let mut pending = Vec::new();
     for id in ids {
         let lock = match crate::acquire_session_record_lock_timed(
@@ -114,9 +93,9 @@ pub(crate) fn recover(
                 .get(KEY)
                 .and_then(|value| value.get("marked_at_epoch"))
                 .and_then(|value| value.as_i64())
-                .and_then(|at| now.checked_sub(at))
+                .and_then(|at| jiff::Timestamp::now().as_second().checked_sub(at))
                 .filter(|age| *age >= 0);
-            let expired = mark.is_some() && age.is_some_and(|age| age > max_age);
+            let expired = mark.is_some() && age.is_some_and(|age| age >= SHUTDOWN_MARK_TTL_SECONDS);
             if mark.as_deref() == Some(boot.as_str()) && age.is_some() && !expired {
                 return Ok(());
             }

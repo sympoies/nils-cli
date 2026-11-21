@@ -48,11 +48,9 @@ mark. After acquiring the state root and binding its listener on a later boot,
 `serve` recovers marked sessions using the same exact provider resume checks as
 `agent-session resume`. Unmarked and expired sessions are skipped.
 
-A mark is applied once, on the first daemon start after a different boot, within
-the age bound. This does not prove whether another boot occurred while the
-daemon was not running. The default maximum age is 24 hours; set
-`AGENT_SESSION_SHUTDOWN_INTENT_MAX_AGE_SECONDS` to a positive number of seconds
-to change it.
+Serve consumes the mark once, on the first observed boot with a different boot
+ID. The mark expires 24 hours after preparation. Boots during which serve
+never starts do not count as observations.
 
 Inspect the command's per-session results before rebooting. Recovery runs in
 the long-lived serve process. Configure `AGENT_SESSION_TMUX_SCOPE=1` when
