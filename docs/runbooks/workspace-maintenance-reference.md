@@ -605,6 +605,28 @@ the summary. The final gate
 requires every lane to succeed. Release builds cannot start before that gate
 passes on the exact tagged SHA.
 
+Full coverage selects `--workspace` with Cargo's default features to match
+the release build. This excludes the `nils-markdown` targets gated by
+`bin-cli` (`md-render` and `md_render_bin`) and `test-support` (`golden_smoke`).
+Scoped coverage selects packages with `-p … --all-features` to exercise their
+opt-in targets. It includes all three when it selects `nils-markdown` and
+excludes unselected workspace packages from the coverage report.
+
+Cargo unifies dependency features across the selected packages. Adding
+`nils-github-app-cli` to the Markdown-only all-features selection enabled
+`clap/env` in locked resolution for Linux x86_64 and macOS arm64 and kept the
+same eligible Markdown targets. Instrumented Linux discovery listed 34
+Markdown tests with defaults and 46 with all features, with the same 34
+library test identities in both. These measurements cover Markdown discovery
+on Linux and dependency resolution on both targets. Workspace-wide compiled
+inventory, macOS test execution, and LCOV percentages were outside the
+probe's scope. See the [measurement and reproduction commands](https://github.com/sympoies/nils-cli/issues/2676#issuecomment-7069961668).
+
+Compare coverage within its own inventory. The full gate applies the 85%
+workspace line floor. The scoped ratchet uses the same selection for the
+immutable base and candidate commits and compares their integer covered and
+total line counts by cross multiplication.
+
 PR and merge-group tests use affected-scope Linux checks with a full Linux
 fallback. Every merge group additionally runs affected-package
 `macos_clippy` on `macos-latest` with `--all-targets --all-features -- -D warnings`,
