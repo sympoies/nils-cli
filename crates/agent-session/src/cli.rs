@@ -897,6 +897,10 @@ pub enum MessageCommand {
     /// selected progress/report mail stays readable without a wake. Senders
     /// cannot set policy. Inbox/show expose notification_suppressed and created_at.
     Send(MessageSendArgs),
+    /// Submit one message to the companion inbox through the daemon.
+    ///
+    /// If the outcome is ambiguous, check the companion inbox before submitting again.
+    SendCompanion(MessageSendCompanionArgs),
     /// Forward one received message without reading or acknowledging its source.
     Forward(MessageForwardArgs),
     /// Submit a body-file through the owning daemon as an explicitly admitted local service.
@@ -916,6 +920,21 @@ pub enum MessageCommand {
     Wait(MessageWaitArgs),
     /// Claim the authenticated recipient's pending fixed mailbox reminder once.
     Reminder(MessageReminderArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct MessageSendCompanionArgs {
+    /// UTF-8 message file, at most 4,096 bytes.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub body_file: PathBuf,
+    /// Optional RGB color in #RRGGBB form.
+    #[arg(long, value_name = "COLOR")]
+    pub color: Option<String>,
+    /// Mark the message urgent.
+    #[arg(long)]
+    pub urgent: bool,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
 }
 
 #[derive(Debug, Args)]

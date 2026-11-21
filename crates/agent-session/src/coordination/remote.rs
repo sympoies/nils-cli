@@ -536,11 +536,13 @@ pub(crate) struct Submit {
 
 /// Bounded federation HTTP client: 15-second timeout, redirects refused.
 pub(crate) fn client() -> Result<reqwest::blocking::Client, CliError> {
+    client_builder().build().map_err(|_| unavailable())
+}
+
+pub(crate) fn client_builder() -> reqwest::blocking::ClientBuilder {
     reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| unavailable())
 }
 pub(super) fn recipient_not_discovered_message() -> String {
     format!(
