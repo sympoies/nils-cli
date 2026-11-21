@@ -63,6 +63,7 @@ out of scope for this governance inventory; flag it as a follow-up.
 | `build` | `Package` | `scripts/workspace-bins.sh` + inline packaging shell | keep | Packaging owns workspace binary discovery through script entrypoint. |
 | `build` | `Audit release tarball third-party artifacts` | `scripts/ci/release-tarball-third-party-audit.sh` | keep | Canonical release artifact audit. |
 | `release` | publish GitHub release | `softprops/action-gh-release@v2` | keep | Standard release publication action. |
+| `fold_release_devlog` | fold and admit the release devlog | `.github/workflows/devlog-fold.yml` | keep | After a successful release and if not cancelled, invokes the reusable workflow with the published release ID. |
 | `build` | `Cache cargo` | `Swatinem/rust-cache` restore-only (`save-if: false`) | keep | Restores `shared-key: release-<target>`, which `.github/workflows/release-cache.yml` saves on `main`. A tag run can restore default-branch caches, but not caches saved on another tag. |
 
 ### `.github/workflows/release-cache.yml`
