@@ -46,8 +46,9 @@ use std::io::{self, Read};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(test)]
+use std::{thread, time::Instant};
 
 use jiff::Timestamp;
 use nils_common::fs::SECRET_FILE_MODE;
@@ -629,7 +630,7 @@ fn lock_private_store_within(
     {
         return Err(store_untrusted());
     }
-    let started = Instant::now();
+    let started = crate::contention::Instant::now();
     let _wait = console_start::diagnostics::LockWait::new();
     loop {
         // SAFETY: flock is called with a valid, owned file descriptor.
@@ -648,7 +649,9 @@ fn lock_private_store_within(
                 None,
             ));
         }
-        thread::sleep(Duration::from_millis(10).min(timeout.saturating_sub(started.elapsed())));
+        crate::contention::sleep(
+            Duration::from_millis(10).min(timeout.saturating_sub(started.elapsed())),
+        );
     }
     Ok(lock)
 }
