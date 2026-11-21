@@ -13,7 +13,7 @@ const READ = `query FoldAdmission($owner: String!, $repo: String!, $number: Int!
       author { __typename login } baseRefName baseRefOid headRefName headRefOid
       labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
       mergeCommit { oid }
-      mergeQueueEntry { id state headCommit { oid } }
+      mergeQueueEntry { id state pullRequest { id headRefOid } }
       lastEnqueue: timelineItems(last: 1, itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT]) {
         nodes { ... on AddedToMergeQueueEvent { id actor { login } } }
       }
@@ -30,7 +30,7 @@ const READ = `query FoldAdmission($owner: String!, $repo: String!, $number: Int!
 
 const ENQUEUE = `mutation FoldEnqueue($id: ID!, $head: GitObjectID!) {
   enqueuePullRequest(input: {pullRequestId: $id, expectedHeadOid: $head}) {
-    mergeQueueEntry { id state headCommit { oid } }
+    mergeQueueEntry { id state pullRequest { id headRefOid } }
   }
 }`;
 
@@ -107,6 +107,11 @@ async function currentRequiredChecks({ github, repo, number, receipt }) {
   return run.html_url;
 }
 
+function matchesQueueEntry(entry, prId, head) {
+  // The queue's headCommit belongs to the merge group.
+  return entry?.id && entry.pullRequest?.id === prId && entry.pullRequest.headRefOid === head;
+}
+
 function readMerge({ git, receipt, pr }) {
   const merge = pr.mergeCommit?.oid;
   if (!oid(merge)) return null;
@@ -158,13 +163,13 @@ async function admitReleaseFold({ github, writer, repo, candidate, receipt, app,
       throw new Error("PR queue state changed before exact-head enqueue");
     const { enqueuePullRequest } = await writer.graphql(ENQUEUE, { id: pr.id, head: receipt.head });
     const entry = enqueuePullRequest?.mergeQueueEntry;
-    if (!entry?.id || entry.headCommit?.oid !== receipt.head)
+    if (!matchesQueueEntry(entry, pr.id, receipt.head))
       throw new Error("GitHub did not return an exact-head queue receipt");
     submitted = true;
     await note("queued", { queueId: entry.id, queueState: entry.state });
   } else if (pr.isInMergeQueue) {
     const entry = pr.mergeQueueEntry;
-    if (!entry?.id || entry.headCommit?.oid !== receipt.head ||
+    if (!matchesQueueEntry(entry, pr.id, receipt.head) ||
         pr.lastEnqueue.nodes[0]?.actor?.login !== app)
       throw new Error("Existing queue entry is not this App's exact head");
     await note("queued", { queueId: entry.id, queueState: entry.state });

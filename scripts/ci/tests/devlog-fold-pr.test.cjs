@@ -342,13 +342,14 @@ test("admission replays the full tree from the recorded base and rejects invalid
   assert.deepEqual(f.state.writes.map(([stage]) => stage), ["tree", "commit"]);
 });
 
-async function queueFixture() {
+async function queueFixture({ mergeGroupHead = { oid: "e".repeat(40) } } = {}) {
   const f = fixture();
   const { options, receipt, events } = await production(f);
   const candidate = await publishReleaseFold(options);
   const checkNames = ["test", "test_containment", "cargo-deny (advisories + bans)"];
   const state = { reads: 0, runs: 0, queued: false, merged: false, mutations: [] };
-  const merge = { id: "QUEUE", state: "QUEUED", headCommit: { oid: receipt.head } };
+  const entry = { id: "QUEUE", state: "QUEUED", headCommit: mergeGroupHead,
+    pullRequest: { id: "PR", headRefOid: receipt.head } };
   const attempts = { number: 1, base: { sha: receipt.base, ref: "main" },
     head: { sha: receipt.head, ref: receipt.branch } };
   const pr = { id: "PR", state: "OPEN", isDraft: false, isCrossRepository: false,
@@ -365,13 +366,13 @@ async function queueFixture() {
       state.mutations.push(vars);
       assert.deepEqual(vars, { id: "PR", head: receipt.head });
       state.queued = true;
-      return { enqueuePullRequest: { mergeQueueEntry: merge } };
+      return { enqueuePullRequest: { mergeQueueEntry: entry } };
     }
     state.reads++;
     const current = { ...pr };
     state.onRead?.(current);
     current.isInMergeQueue = state.queued && !state.merged;
-    if (state.mutations.length) current.lastEnqueue = { nodes: [{ id: "ENQUEUE", actor: { login: "fold-app" } }] };
+    if (state.queued) current.lastEnqueue = { nodes: [{ id: "ENQUEUE", actor: { login: "fold-app" } }] };
     if (state.evicted && state.mutations.length) {
       current.isInMergeQueue = false;
       current.queueHistory = { nodes: [{ __typename: "RemovedFromMergeQueueEvent", reason: "check_failed" }] };
@@ -379,7 +380,7 @@ async function queueFixture() {
     if (state.merged) {
       current.state = "MERGED";
       current.mergeCommit = { oid: mergedSha };
-    } else if (state.queued) current.mergeQueueEntry = merge;
+    } else if (state.queued) current.mergeQueueEntry = entry;
     return { repository: { main: { target: { oid: state.main ?? receipt.base } },
       mergeQueue: { configuration: { mergeMethod: "SQUASH" } },
       freezes: { totalCount: state.freeze ?? 0 }, pullRequest: current } };
@@ -410,21 +411,49 @@ async function queueFixture() {
       { type: "merge_queue", parameters: { merge_method: "SQUASH" } },
     ] : paginate(method, args);
   const run = () => admitReleaseFold({ ...options, candidate, pause: async () => { state.merged = !state.evicted; } });
-  return { state, run, receipt, events, mergedSha };
+  return { state, run, receipt, events, mergedSha, entry };
 }
 
+const mergeGroupHeads = [{ oid: "e".repeat(40) }, null];
+
 test("green CI enqueues the exact head and verifies merged SHA and path retirement on replay", async () => {
-  const f = await queueFixture();
-  await f.run();
-  assert.equal(f.state.runs, 2);
-  assert.equal(f.state.mutations.length, 1);
-  assert.ok(f.events.some(event => event.queueId === "QUEUE"));
-  assert.equal(f.events.at(-1).mergeSha, f.mergedSha);
-  assert.deepEqual(f.events.at(-1).capturedPaths, f.receipt.removed);
-  await f.run();
-  assert.equal(f.state.mutations.length, 1);
-  assert.equal(f.events.at(-1).mergeSha, f.mergedSha);
+  for (const mergeGroupHead of mergeGroupHeads) {
+    const f = await queueFixture({ mergeGroupHead });
+    await f.run();
+    assert.equal(f.state.runs, 2);
+    assert.equal(f.state.mutations.length, 1);
+    assert.ok(f.events.some(event => event.queueId === "QUEUE"));
+    assert.equal(f.events.at(-1).mergeSha, f.mergedSha);
+    assert.deepEqual(f.events.at(-1).capturedPaths, f.receipt.removed);
+    await f.run();
+    assert.equal(f.state.mutations.length, 1);
+    assert.equal(f.events.at(-1).mergeSha, f.mergedSha);
+  }
 });
+
+test("queued replay accepts the exact PR with or without a merge-group head", async () => {
+  for (const mergeGroupHead of mergeGroupHeads) {
+    const f = await queueFixture({ mergeGroupHead });
+    f.state.queued = true;
+    await f.run();
+    assert.deepEqual(f.state.mutations, []);
+    assert.ok(f.events.some(event => event.queueId === "QUEUE"));
+    assert.equal(f.events.at(-1).mergeSha, f.mergedSha);
+  }
+});
+
+for (const [field, wrong] of [["id", "OTHER_PR"], ["headRefOid", "f".repeat(40)]]) {
+  test(`a mismatched ${field} in a queue receipt is rejected`, async () => {
+    for (const replay of [false, true]) {
+      const f = await queueFixture();
+      f.state.queued = replay;
+      f.entry.pullRequest[field] = wrong;
+      await assert.rejects(f.run(), replay ? /App's exact head/ : /exact-head queue receipt/);
+      assert.equal(f.state.mutations.length, replay ? 0 : 1);
+      assert.ok(!f.events.some(event => event.queueId));
+    }
+  });
+}
 
 for (const variation of ["base advanced", "head moved", "late hold", "freeze", "failed required check"]) {
   test(`${variation} prevents unattended enqueue`, async () => {
