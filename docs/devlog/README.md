@@ -76,7 +76,8 @@ A rerun or governed recovery run for the same publication reuses that exact
 base and signed head or the recorded empty result. An
 empty fold creates no PR. A conflicting date branch or PR requires steward
 reconciliation. Publication uses one concurrency group. Dry runs use their
-own group.
+own group. Generated PRs leave `Test changes` empty and describe the fold
+validation under `Test plan`.
 
 See [Devlog fold review admission and recovery](../runbooks/delivery-and-releases.md#devlog-fold-review-admission-and-recovery)
 for queue checks, receipts and intervention. To prepare a backlog fold,

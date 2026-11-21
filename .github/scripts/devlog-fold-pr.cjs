@@ -86,9 +86,9 @@ The branch starts from current main. Later fragments remain pending.
 
 ## Test changes
 
-None. This generated maintenance PR moves devlog fragments and regenerates the index.
-
 ## Test plan
+
+The generated maintenance PR moves devlog fragments and regenerates the index.
 
 - \`devlog check --base HEAD\` passed before and after the fold.
 - Normal required checks and protected merge-queue checks must pass before merge.${cutoff ? "" : "\n- The steward owns designated review and queue delivery."}
