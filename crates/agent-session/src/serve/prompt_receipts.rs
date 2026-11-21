@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 mod client_message;
+// The projection and input adapters are wired together in the next change.
+#[cfg(test)]
+mod idle_boundary;
 #[cfg(test)]
 mod idle_failure_tests;
 pub(crate) mod owner_commands;
