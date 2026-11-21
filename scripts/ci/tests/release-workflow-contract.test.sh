@@ -134,6 +134,13 @@ assert_contains .github/workflows/release.yml 'sha256sum "${tarball}"' \
   "checksums are generated from each built target archive"
 assert_contains .github/workflows/release.yml 'files: dist/**/*.tar.gz*' \
   "release publication discovers built archives and checksum sidecars"
+workspace_bins="$(bash scripts/workspace-bins.sh)"
+release_bins="$(bash scripts/workspace-bins.sh --release-default)"
+if ! rg -qx 'cli-template' <<<"$workspace_bins" || rg -qx 'cli-template' <<<"$release_bins"; then
+  echo "FAIL: cli-template must be a workspace binary but absent from the default release inventory" >&2
+  exit 1
+fi
+echo "ok: cli-template remains a workspace binary and is omitted from the default release inventory"
 # Retain the Linux PR lane's existing outputs and protected reduced checker.
 # Full-validation contracts cover a different workflow and cannot replace these.
 assert_contains .github/workflows/ci.yml 'release_only: ${{ steps.finalize.outputs.release_only }}' \

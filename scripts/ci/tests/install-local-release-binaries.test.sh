@@ -62,7 +62,7 @@ set -euo pipefail
 
 if [[ "${1:-}" == "metadata" ]]; then
   cat <<'JSON'
-{"packages":[{"targets":[{"kind":["bin"],"crate_types":["bin"],"name":"alpha"},{"kind":["bin"],"crate_types":["bin"],"name":"beta","required-features":["beta-cli"]}]}]}
+{"packages":[{"targets":[{"kind":["bin"],"crate_types":["bin"],"name":"alpha"},{"kind":["bin"],"crate_types":["bin"],"name":"cli-template"},{"kind":["bin"],"crate_types":["bin"],"name":"beta","required-features":["beta-cli"]}]}]}
 JSON
   exit 0
 fi
@@ -145,13 +145,13 @@ assert_explicit_bins_build_exact_selection() {
   mkdir -p "$tmp/install"
   printf 'old\n' >"$tmp/install/plan-issue"
   local output
-  output="$(run_with_fake_tools "$tmp" --prefix "$tmp/install" --bin git-cli --bin semantic-commit)"
+  output="$(run_with_fake_tools "$tmp" --prefix "$tmp/install" --bin git-cli --bin cli-template)"
 
-  assert_contains "$FUNCNAME" "$output" "build --release --bin git-cli --bin semantic-commit"
+  assert_contains "$FUNCNAME" "$output" "build --release --bin git-cli --bin cli-template"
   assert_contains "$FUNCNAME" "$output" "install -m 0755 $tmp/repo/target/release/git-cli $tmp/install/"
-  assert_contains "$FUNCNAME" "$output" "install -m 0755 $tmp/repo/target/release/semantic-commit $tmp/install/"
+  assert_contains "$FUNCNAME" "$output" "install -m 0755 $tmp/repo/target/release/cli-template $tmp/install/"
   [[ -x "$tmp/install/git-cli" ]]
-  [[ -x "$tmp/install/semantic-commit" ]]
+  [[ -x "$tmp/install/cli-template" ]]
   [[ -f "$tmp/install/plan-issue" ]]
   rm -rf "$tmp"
   echo "ok"
@@ -213,6 +213,10 @@ assert_fresh_install_has_only_current_binaries() {
   local output
   output="$(run_with_fake_tools "$tmp" --prefix "$tmp/install")"
   [[ -x "$tmp/install/alpha" ]]
+  if [[ -e "$tmp/install/cli-template" ]]; then
+    echo "FAIL: $FUNCNAME installed cli-template by default"
+    exit 1
+  fi
   [[ ! -e "$tmp/install/main-agent" ]]
   [[ ! -e "$tmp/share/zsh/site-functions/_main-agent" ]]
   [[ ! -e "$tmp/etc/bash_completion.d/main-agent" ]]

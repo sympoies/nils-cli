@@ -18,7 +18,7 @@ Options:
   -h, --help      Show help
 
 Default binaries:
-  - All workspace binaries (auto-discovered via scripts/workspace-bins.sh)
+  - Release-default workspace binaries (scripts/workspace-bins.sh --release-default)
   - Use --bin NAME (repeatable) to install a subset
 
 Example:

@@ -9,11 +9,9 @@ Usage:
 Lists workspace bin target names from `cargo metadata`, sorted unique.
 
 Options:
-  --release-default  Exclude bins gated by `[[bin]] required-features`
-                     (i.e. bins not produced by `cargo build --workspace`
-                     without explicit --features). Use this for release
-                     packaging and the default local-release install,
-                     which build with default features only.
+  --release-default  List binaries for release packaging and default local
+                     installs. Excludes cli-template and bins gated by
+                     `[[bin]] required-features`.
   -h, --help         Show this help.
 USAGE
 }
@@ -57,6 +55,7 @@ printf '%s\n' "$metadata_json" \
           name = block
           sub(/^.*"name":"/, "", name)
           sub(/".*$/, "", name)
+          if (release_default == "1" && name == "cli-template") continue
           print name
         }
       }

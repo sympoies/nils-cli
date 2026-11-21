@@ -939,7 +939,7 @@ without its required review.
 
 ### 9.1 Local release install helper
 
-Build and install workspace binaries into `~/.local/nils-cli/bin` by default:
+Build and install the default release inventory into `~/.local/nils-cli/bin`:
 
 ```bash
 ./scripts/install-local-release-binaries.sh
@@ -976,7 +976,9 @@ than its single declared glibc baseline.
 
 Release tarballs include:
 
-- release-default workspace binaries from `scripts/workspace-bins.sh`
+- workspace binaries from `scripts/workspace-bins.sh --release-default`, which
+  excludes the development template (`cli-template`) and targets gated by
+  Cargo required features
 - `completions/zsh/` and `completions/bash/`
 - `README.md`, `LICENSE`, `THIRD_PARTY_LICENSES.md`, and `THIRD_PARTY_NOTICES.md`
 
