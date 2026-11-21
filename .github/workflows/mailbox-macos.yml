@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/mailbox-macos.yml'
       - 'crates/agent-session/src/coordination/**'
+      - 'crates/agent-session/src/cli/permission/transport.rs'
+      - 'crates/agent-session/src/cli/permission/transport/**'
       - 'crates/agent-session/tests/integration/mailbox_any_unread.rs'
       - 'crates/agent-session/src/prompt_delivery.rs'
       - 'crates/agent-session/src/prompt_delivery/**'
@@ -45,6 +47,8 @@ jobs:
         run: cargo nextest run --locked -p nils-agent-session --test integration -E 'test(mailbox_any_unread::)'
       - name: Test post-paste prompt observation
         run: cargo nextest run --locked -p nils-agent-session --lib -E 'test(serve::tests::prompt_composer::post_paste::)'
+      - name: Test permission relay transport
+        run: cargo nextest run --locked -p nils-agent-session --lib --no-tests fail -E 'test(cli::permission::transport::tests::)'
       # The coverage lane failed these timing-sensitive tests intermittently, so
       # repeat them on the instrumented build with no retries.
       - name: Repeat native notice authorization tests (instrumented)
