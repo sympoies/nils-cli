@@ -24,7 +24,9 @@ pub(super) fn published<R: BackendRunner>(
         Err(error)
             if matches!(
                 error.kind(),
-                "awaiting_designated_review" | "designated_final_approval_required"
+                "awaiting_designated_review"
+                    | "designated_final_approval_required"
+                    | "test_changes_undeclared"
             ) =>
         {
             Ok(None)

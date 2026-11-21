@@ -73,6 +73,25 @@ fn integrity_fixture(body: &str, confirmation: &str, author: &str) -> StubEnv {
 const DECLARATIONS: &str = "## Test changes\n\n- tests/test_sample.py | assertion-change | Broader assertion retains the supported result contract.\n- allow tests/test_sample.py | new-skip | Intentional quarantine with an independently validated replacement.\n";
 
 #[test]
+fn inspect_keeps_assigned_handoff_when_declarations_are_missing_or_malformed() {
+    for body in [
+        "",
+        "## Test changes\ntests/test_sample.py | assertion-change | Missing list marker.\n",
+    ] {
+        let stub = integrity_fixture(body, "", "contributor");
+        let out = inspect_handoff(&stub);
+        assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+        let data = parse_envelope(&out.stdout);
+        assert_eq!(data["data"]["status"], "awaiting-designated-review");
+        assert!(data["data"].get("approval").is_none());
+        assert_eq!(data["data"]["handoff"]["assigned_head"], HEAD);
+        let calls = fs::read_to_string(stub.tempdir.path().join("calls.log")).unwrap();
+        assert!(!calls.contains("--method POST"), "{calls}");
+        assert_refusal(&check(&stub, HEAD), 65, "test_changes_undeclared");
+    }
+}
+
+#[test]
 fn malformed_paragraph_is_rejected_by_preview() {
     let body = "## Test changes\ntests/test_sample.py | assertion-change | Broader assertion retains the supported result contract.\n";
     let stub = integrity_fixture(body, "", "contributor");
