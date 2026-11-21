@@ -1,5 +1,7 @@
 //! Qualified generic captures and separately labeled synthetic OSC-8 variants.
-use super::{direct_composer_input, exact_composer_input, known_multiline_input};
+use super::{
+    direct_composer_input, exact_composer_input, exact_composer_observation, known_multiline_input,
+};
 use pretty_assertions::assert_eq;
 
 fn claude(input: &str, rows: &str, footer: &str) -> String {
@@ -203,6 +205,12 @@ fn malformed_or_screen_mutating_escapes_remain_unobservable() {
         "\u{1b}]8;;bad\nurl\u{7}",
         "\u{1b}]52;;clipboard\u{7}",
         "\u{1b}[2J",
+        "\u{1b}[4:m",
+        "\u{1b}[4:6m",
+        "\u{1b}[4:3:2m",
+        "\u{1b}[2:3m",
+        "\u{1b}[38;5;4:3m",
+        "\u{1b}[38;2;1;4:3;3m",
         "\u{1b}]8;;url\u{1b}X",
         "\u{1b}]8;missing-delimiter\u{7}",
     ] {
@@ -368,6 +376,51 @@ fn codex_dim_styled_trailing_spaces_remain_nonempty() {
         direct_composer_input("codex", &pane).as_deref(),
         Some("Ask Codex to do anything   ")
     );
+}
+
+#[test]
+fn claude_extended_underline_transcript_preserves_exact_composer_input() {
+    let frame = |input: &str| {
+        format!(
+            "\u{1b}[4:3msynthetic transcript\u{1b}[0m\n\
+             ──────────\n❯\u{a0}{input}\n──────────\n  synthetic status\n"
+        )
+    };
+    assert_eq!(
+        exact_composer_observation("claude", &frame("")),
+        Ok(String::new())
+    );
+    assert_eq!(
+        exact_composer_observation("claude", &frame("synthetic draft")),
+        Ok("synthetic draft".to_owned())
+    );
+}
+
+#[test]
+fn extended_underline_preserves_dim_state() {
+    for style in 0..=5 {
+        for (input, expected) in [
+            (
+                format!("\u{1b}[4:{style}msynthetic draft"),
+                "synthetic draft",
+            ),
+            (format!("\u{1b}[2;4:{style}msynthetic suggestion"), ""),
+            (
+                format!("\u{1b}[2m\u{1b}[4:{style}msynthetic suggestion"),
+                "",
+            ),
+            (
+                format!("\u{1b}[2m\u{1b}[4:{style};22msynthetic draft"),
+                "synthetic draft",
+            ),
+        ] {
+            assert_eq!(
+                exact_composer_observation("claude", &claude(&input, "", "status")),
+                Ok(expected.to_owned()),
+                "{input:?}"
+            );
+        }
+    }
 }
 
 #[test]
