@@ -23,16 +23,16 @@ const QUERY: &str = r#"query($owner: String!, $name: String!, $number: Int!, $af
           __typename
           ... on ClosedEvent {
             actor { login }
-            createdAt
+            created_at: createdAt
             closer {
               __typename
               ... on Commit { oid url }
               ... on PullRequest { number url }
             }
           }
-          ... on ReopenedEvent { actor { login } createdAt }
+          ... on ReopenedEvent { actor { login } created_at: createdAt }
         }
-        pageInfo { hasNextPage endCursor }
+        page_info: pageInfo { has_next_page: hasNextPage end_cursor: endCursor }
       }
     }
   }
@@ -64,21 +64,18 @@ enum EventKind {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct GithubPage {
     nodes: Vec<GithubEvent>,
     page_info: PageInfo,
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct PageInfo {
     has_next_page: bool,
     end_cursor: Option<String>,
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct GithubEvent {
     #[serde(rename = "__typename")]
     event: EventKind,

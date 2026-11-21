@@ -15,7 +15,7 @@ esac
 case " $* " in
   *" after=page-two "*)
     cat <<'JSON'
-{"data":{"repository":{"issue":{"timelineItems":{"nodes":[{"__typename":"ClosedEvent","actor":{"login":"reviewer"},"createdAt":"2030-01-02T00:00:00Z","closer":{"__typename":"Commit","oid":"0123456789abcdef","url":"https://github.example.com/acme/widget/commit/0123456789abcdef"}},{"__typename":"ReopenedEvent","actor":null,"createdAt":"2030-01-03T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":"last"}}}}}}
+{"data":{"repository":{"issue":{"timelineItems":{"nodes":[{"__typename":"ClosedEvent","actor":{"login":"reviewer"},"created_at":"2030-01-02T00:00:00Z","closer":{"__typename":"Commit","oid":"0123456789abcdef","url":"https://github.example.com/acme/widget/commit/0123456789abcdef"}},{"__typename":"ReopenedEvent","actor":null,"created_at":"2030-01-03T00:00:00Z"}],"page_info":{"has_next_page":false,"end_cursor":"last"}}}}}}
 JSON
     ;;
   *" after="*) exit 97 ;;
@@ -25,13 +25,13 @@ JSON
     while [ "$i" -lt 100 ]; do
       [ "$i" -eq 0 ] || printf ','
       if [ "$((i % 2))" -eq 0 ]; then
-        printf '%s' '{"__typename":"ClosedEvent","actor":{"login":"maintainer"},"createdAt":"2030-01-01T00:00:00Z","closer":{"__typename":"PullRequest","number":7,"url":"https://github.example.com/acme/widget/pull/7"}}'
+        printf '%s' '{"__typename":"ClosedEvent","actor":{"login":"maintainer"},"created_at":"2030-01-01T00:00:00Z","closer":{"__typename":"PullRequest","number":7,"url":"https://github.example.com/acme/widget/pull/7"}}'
       else
-        printf '%s' '{"__typename":"ReopenedEvent","actor":{"login":"maintainer"},"createdAt":"2030-01-01T00:00:00Z"}'
+        printf '%s' '{"__typename":"ReopenedEvent","actor":{"login":"maintainer"},"created_at":"2030-01-01T00:00:00Z"}'
       fi
       i=$((i+1))
     done
-    printf '],"pageInfo":{"hasNextPage":true,"endCursor":"page-two"}}}}}}\n'
+    printf '],"page_info":{"has_next_page":true,"end_cursor":"page-two"}}}}}}\n'
     ;;
 esac
 "#;
@@ -163,7 +163,7 @@ for arg do
     case "$arg" in after=*) page=${arg#after=} ;; esac
 done
 printf '%s\n' "$page" >> requests
-printf '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[{"__typename":"ClosedEvent","actor":null,"createdAt":"2030-01-01T00:00:00Z","closer":null}],"pageInfo":{"hasNextPage":true,"endCursor":"%s"}}}}}}\n' "$((page + 1))"
+printf '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[{"__typename":"ClosedEvent","actor":null,"created_at":"2030-01-01T00:00:00Z","closer":null}],"page_info":{"has_next_page":true,"end_cursor":"%s"}}}}}}\n' "$((page + 1))"
 "#,
     );
     let out = run_github_issue_events(&stub);
@@ -180,7 +180,7 @@ printf '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[{"__typename":
 fn issue_events_refuses_a_repeated_cursor() {
     let stub = StubEnv::new().gh_stub(
         r#"#!/bin/sh
-printf '%s\n' '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"same"}}}}}}'
+printf '%s\n' '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[],"page_info":{"has_next_page":true,"end_cursor":"same"}}}}}}'
 "#,
     );
     let out = run_github_issue_events(&stub);
