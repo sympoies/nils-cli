@@ -27,6 +27,7 @@ pub(super) fn published<R: BackendRunner>(
                 "awaiting_designated_review"
                     | "designated_final_approval_required"
                     | "test_changes_undeclared"
+                    | "test_changes_unconfirmed"
             ) =>
         {
             Ok(None)
