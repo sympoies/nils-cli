@@ -10,8 +10,8 @@
 # Usage: scripts/ci/test-env-isolation-guard.sh [--list]
 #   --list   print the representative test selection and exit
 #
-# A run that cannot build also fails the guard; ordinary test failures are left to
-# the regular gate, and test output is never printed because it may echo fixture data.
+# Build and test failures also fail the guard. Test output is kept out of the
+# gate log because it may echo fixture data.
 #
 # Environment:
 #   ENV_GUARD_CARGO_ARGS  extra arguments for `cargo nextest run` (for example --offline)
@@ -167,15 +167,10 @@ for entry in "${SELECTION[@]}"; do
   entry_before="$(snapshot)"
   rc=0
   poisoned_env cargo "${args[@]}" >"$scratch/run-$package-$target.log" 2>&1 || rc=$?
-  # Test output can echo fixture data, so it is never printed here. A failing
-  # test (nextest exit 100) is the regular gate's concern and may be a load flake;
-  # this guard fails on a build or setup failure, where nothing was exercised.
-  # nextest exits 4 when a target has no tests, which proves nothing is wrong.
-  if [[ "$rc" -ne 0 && "$rc" -ne 100 && "$rc" -ne 4 ]]; then
-    printf 'env-guard: FAIL: cargo for %s exited %s (log kept with ENV_GUARD_KEEP=1)\n' "$package" "$rc" >&2
+  # Nextest exits 4 when the selection does not match any tests.
+  if [[ "$rc" -ne 0 && "$rc" -ne 4 ]]; then
+    printf 'env-guard: FAIL: cargo for %s (%s) exited %s (log kept with ENV_GUARD_KEEP=1)\n' "$package" "$target" "$rc" >&2
     status=1
-  elif [[ "$rc" -ne 0 ]]; then
-    printf 'env-guard: note: %s has failing tests; the regular gate reports them\n' "$package" >&2
   fi
   # Attribute a change to the selection entry that made it.
   entry_after="$(snapshot)"

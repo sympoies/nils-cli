@@ -107,6 +107,15 @@ the contract below describes implemented behavior.
   direct prompts retain their provider acknowledgement and image-label handling.
   Initial creation prompts retain their separate accepted-before-render contract.
 
+  The direct Claude route sends prompt text in a bracketed paste. An existing
+  PNG, JPEG, GIF, or WebP path can appear on its own line, with optional quotes.
+  When the prompt also contains other text, delivery preserves the LF between
+  rows so Claude can recognize the path separately. Claude owns recognition
+  and attachment. Missing paths and paths embedded in prose receive ordinary
+  text delivery. Text-only multiline prompts retain tmux's CR separators.
+  A prompt consisting solely of an existing image path can use Claude's
+  observed image label for acknowledgement.
+
   An explicit owner clear followed by another submission remains available.
   Stale-draft admission saves the exact observation durably before using the
   existing cleanup keys; it never submits the draft or sends Ctrl+C. Direct replies

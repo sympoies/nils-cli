@@ -108,4 +108,5 @@ fn image_labels_may_be_followed_only_by_the_prompts_remaining_text() {
     }
 }
 
+mod paste_bytes;
 mod startup;

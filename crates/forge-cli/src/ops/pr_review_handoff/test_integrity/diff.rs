@@ -234,7 +234,13 @@ fn case_key(line: &str, compact: &str, prefix: &str) -> String {
         }
         None => compact,
     };
-    let name = source.split(['{', ':']).next().unwrap_or(source);
+    // Python decorators can inject parameters without replacing the test.
+    // Compare Python declarations by name, as reported in deletion rows.
+    let name = if source.starts_with("deftest_") || source.starts_with("asyncdeftest_") {
+        source.split('(').next().unwrap_or(source)
+    } else {
+        source.split(['{', ':']).next().unwrap_or(source)
+    };
     format!("{prefix}{name}")
 }
 

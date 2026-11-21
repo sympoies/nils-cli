@@ -21,6 +21,9 @@ use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+#[path = "common/serve_fixture.rs"]
+mod serve_fixture;
+
 const TOKEN: &str = "activity-hook-ingress-operator-bearer";
 const MACHINE: &str = "activity-hook-ingress-machine";
 const ALPHA: &str = "hook-ingress-alpha";
@@ -489,28 +492,28 @@ impl ServeProcess {
         drop(listener);
         let stderr_path = fixture.root.join("serve.stderr");
         let stderr = File::create(&stderr_path).expect("serve stderr");
-        let mut command = Command::new(bin::resolve("agent-session"));
-        command
-            .current_dir(&fixture.root)
-            .args([
-                "serve",
-                "--bind",
-                &address.to_string(),
-                "--state-dir",
-                fixture.state_dir.to_str().expect("UTF-8 state dir"),
-                "--token",
-                TOKEN,
-                "--machine",
-                MACHINE,
-                "--tmux-bin",
-                fixture.tmux_bin.to_str().expect("UTF-8 tmux fixture"),
-            ])
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin")
-            .env("HOME", &fixture.home)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::from(stderr));
+        let mut command = serve_fixture::command(
+            &fixture.root,
+            bin::resolve("agent-session"),
+            &fixture.state_dir,
+            &fixture.tmux_bin,
+            |command| {
+                command
+                    .current_dir(&fixture.root)
+                    .args([
+                        "--bind",
+                        &address.to_string(),
+                        "--token",
+                        TOKEN,
+                        "--machine",
+                        MACHINE,
+                    ])
+                    .env("HOME", &fixture.home)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::from(stderr));
+            },
+        );
         let mut server = Self {
             child: command.spawn().expect("spawn agent-session serve"),
             stderr_path,

@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 import { writeHeartbeat } from './remote-mailbox-heartbeat.mjs';
+import { holdRegistryLock } from './remote-mailbox-registry-contention.mjs';
 
 const binary = process.argv[process.argv.indexOf('--agent-session-bin') + 1];
 assert(binary, 'requires exact binary');
@@ -147,6 +148,17 @@ try {
   assert.equal((await submit(payload('local-send'))).message_id, local.message_id);
   await submit(payload('local-send', { body: 'changed-body' }), 409); checks.push('dedup-and-key-conflict');
   await submit(payload('local-send', { to_machine: target.machine, to_session: target.session }), 409);
+  const contentionKey = 'service-lock-contention';
+  const release = await holdRegistryLock(source);
+  let transient;
+  try {
+    transient = (await serviceCli(contentionKey, [], 69)).error;
+  } finally {
+    await release();
+  }
+  const retried = await serviceCli(contentionKey);
+  assert.equal((await serviceCli(contentionKey)).message_id, retried.message_id);
+  assert.equal(registry(source).messages.filter(m => m.message_id === retried.message_id).length, 1);
   await submit(payload('empty-body', { body: '' }), 422);
   await submit(payload('oversize', { body: 'x'.repeat(16385) }), 422);
   for (const expires_in of ['0s', '8d']) await submit(payload('expiry-' + expires_in, { expires_in }), 400);
@@ -181,7 +193,17 @@ try {
   chmodSync(service.credential, 0o644); await submit(payload('unsafe-credential'), 401); chmodSync(service.credential, 0o600);
   const saved = service.credential; service.credential = join(root, 'symlink-credential'); symlinkSync(saved, service.credential); admission(); await submit(payload('symlink'), 401); service.credential = saved; admission();
   chmodSync(service.admission, 0o644); await submit(payload('unsafe-admission'), 401); chmodSync(service.admission, 0o600); checks.push('revocation-and-unsafe-files');
-  const sessionPath = join(source.root, 'sessions', source.session, 'session.json'); const original = JSON.parse(readFileSync(sessionPath, 'utf8')); const replacement = structuredClone(original); replacement.runtime.launch_id = randomUUID(); privateWrite(sessionPath, replacement);
+  const sessionPath = join(source.root, 'sessions', source.session, 'session.json');
+  const original = JSON.parse(readFileSync(sessionPath, 'utf8'));
+  const schemaCanary = 'PRIVATE-RECIPIENT-SCHEMA-CANARY';
+  let fallback;
+  try {
+    privateWrite(sessionPath, { ...original, schema_version: schemaCanary });
+    fallback = (await submit(payload('invalid-recipient-record'), 503)).error;
+  } finally {
+    privateWrite(sessionPath, original);
+  }
+  const replacement = structuredClone(original); replacement.runtime.launch_id = randomUUID(); privateWrite(sessionPath, replacement);
   assert.equal((await submit(payload('local-send'))).message_id, local.message_id);
   await submit(payload('stale-local', { expected_recipient_incarnation: source.incarnation }), 409);
   await submit(payload('unready-local'), 503);
@@ -285,6 +307,25 @@ try {
   assert.match(noRoute.error.message, /daemon.*environment.*restart/);
   checks.push('typed-missing-daemon-federation-preserves-local-service');
   for (const host of hosts) { assert(!host.stderr.includes(service.token)); assert(!host.stderr.includes('PRIVATE-SERVICE-BODY-CANARY')); }
+  const warnings = source.stderr.split('\n').filter(line => line.startsWith('warning: service-send '));
+  assert(!JSON.stringify(fallback).includes(schemaCanary), 'response must exclude recipient schema value');
+  for (const canary of [schemaCanary, 'PRIVATE-RELAY-DIAGNOSTIC-CANARY', service.id, service.generation,
+    source.session, target.session, source.root, service.credential, contentionKey, 'invalid-recipient-record', 'service-route-403']) {
+    assert(!warnings.some(line => line.includes(canary)), 'warning must exclude raw identifiers and error content');
+  }
+  const serviceRef = 'service_ref=sha256:' + hash(JSON.stringify([service.id, service.generation]));
+  const relayWarning = 'warning: service-send code=mailbox-service-relay-forbidden next_action=configure_relay_service_admission ' + serviceRef + ' cause=relay-discovery-forbidden';
+  const fallbackWarning = 'warning: service-send code=mailbox-service-unavailable next_action=inspect_submission_contract ' + serviceRef + ' cause=unsupported-session-version';
+  assert.deepEqual({
+    transient: { code: transient.code, details: transient.details },
+    fallback: { code: fallback.code, details: fallback.details },
+    warnings,
+  }, {
+    transient: { code: 'coordination-unavailable', details: { retryable: true, next_action: 'retry_same_submission', recovery: { kind: 'same_idempotency_key' } } },
+    fallback: { code: 'mailbox-service-unavailable', details: { retryable: false, next_action: 'inspect_submission_contract', recovery: { kind: 'operator' } } },
+    warnings: [relayWarning, relayWarning, fallbackWarning],
+  }, 'service-submit lock timeout and daemon diagnostic contract');
+  checks.push('service-contention-retry-and-content-free-daemon-warnings');
   console.log(JSON.stringify({ schema_version: 'agent-session.service-mailbox-acceptance.v1', status: 'passed', checks }));
 } finally {
   clearInterval(heartbeat); await Promise.all(hosts.map(stop)); if (edge) { edge.server.closeAllConnections(); await new Promise(resolve => edge.server.close(resolve)); } rmSync(root, { recursive: true, force: true });

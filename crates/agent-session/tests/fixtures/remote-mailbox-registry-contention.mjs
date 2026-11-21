@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const HOLDER = 'import fcntl,sys\nf=open(sys.argv[1],"a")\nfcntl.flock(f,fcntl.LOCK_EX)\nprint("locked",flush=True)\nsys.stdin.read()\n';
 
-async function holdRegistryLock(host) {
+export async function holdRegistryLock(host) {
   const child = spawn('python3', ['-c', HOLDER, join(host.root, 'coordination', 'registry.lock')], { stdio: ['pipe', 'pipe', 'inherit'] });
   await new Promise((resolve, reject) => {
     child.stdout.once('data', resolve);
