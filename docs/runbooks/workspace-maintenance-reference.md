@@ -1081,8 +1081,10 @@ local-fast, docs-only, full and CI change detection lanes. It requires a
 fetched `origin/main`; `NILS_CLI_DEVLOG_BASE` selects the immutable base in CI.
 CI builds the workspace devlog binary and exports the same writer setting.
 
-After each release, the maintainer runs `scripts/ci/fold-devlog.sh` in a
-managed worktree and delivers its diff as a dedicated maintenance PR. The gate
+After a successful release, the Release workflow calls the canonical fold
+and opens a dedicated maintenance PR when it finds eligible fragments.
+The steward can prepare a backlog fold with `scripts/ci/fold-devlog.sh`
+in a managed worktree. The gate
 admits only exact deterministic folding on canonical fold branches and commits
 (including queue squash commits). Release preparation keeps its version-only
 patch contract. Authoring, fold ownership, and correction rules
