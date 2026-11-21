@@ -4,6 +4,7 @@
 //! the environment it would merge with, then exits without serving.
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -11,18 +12,11 @@ use nils_test_support::tempdir::ScopedTempDir;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 
+#[path = "common/serve_fixture.rs"]
+mod serve_fixture;
+
 const SCHEMA: &str = "cli.agent-session.serve-config.v1";
 const EXIT_USAGE: i32 = 64;
-/// Every environment input the config file can also supply, plus the token so
-/// a check can never pick up an operator bearer from the test runner.
-const MANAGED_ENV: &[&str] = &[
-    "AGENT_SESSION_LAUNCH_PROFILES",
-    "AGENT_SESSION_RETITLE_CONFIG",
-    "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
-    "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER",
-    "AGENT_SESSION_TOKEN",
-    "AGENT_SESSION_STALE_DRAFT_SECONDS",
-];
 
 const VALID_TOML: &str = r#"
 schema_version = "agent-session.serve-config.v1"
@@ -70,6 +64,8 @@ impl Fixture {
             dir: ScopedTempDir::with_prefix("serve-config-"),
         };
         fs::create_dir_all(fixture.state_dir()).expect("state dir");
+        let tmux = fixture.write("tmux", "#!/bin/sh\nexit 1\n");
+        fs::set_permissions(tmux, fs::Permissions::from_mode(0o700)).expect("tmux fixture mode");
         fixture
     }
 
@@ -84,23 +80,20 @@ impl Fixture {
     }
 
     fn command(&self, args: &[&str], env: &[(&str, &str)]) -> Command {
-        let mut command = Command::new(nils_test_support::bin::resolve("agent-session"));
-        command
-            .arg("serve")
-            .args(args)
-            .env("AGENT_SESSION_STATE_DIR", self.state_dir())
-            .env(
-                "AGENT_SESSION_RULES_FILE",
-                self.dir.path().join("operator-rules.json"),
-            )
-            .stdin(Stdio::null());
-        for key in MANAGED_ENV {
-            command.env_remove(key);
-        }
-        for (key, value) in env {
-            command.env(key, value);
-        }
-        command
+        let root = self.dir.path();
+        serve_fixture::command(
+            root,
+            nils_test_support::bin::resolve("agent-session"),
+            &self.state_dir(),
+            &root.join("tmux"),
+            |command| {
+                command
+                    .args(args)
+                    .env("AGENT_SESSION_RULES_FILE", root.join("operator-rules.json"))
+                    .envs(env.iter().copied())
+                    .stdin(Stdio::null());
+            },
+        )
     }
 
     fn check(&self, config: &Path, env: &[(&str, &str)]) -> Output {

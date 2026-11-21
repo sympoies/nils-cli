@@ -37,9 +37,9 @@ fn record(context: &CliContext, id: &str) -> SessionRecord {
 
 // Model concurrent older readers: shared flocks still block registry writers,
 // even though current read-only snapshots no longer acquire the global lock.
-fn readers(context: &CliContext, duration: Duration) -> thread::JoinHandle<()> {
+fn hold_readers(context: &CliContext) -> Vec<File> {
     let root = coordination_root(context).unwrap();
-    let held: Vec<_> = (0..4)
+    (0..4)
         .map(|_| {
             let file = OpenOptions::new()
                 .read(true)
@@ -56,7 +56,11 @@ fn readers(context: &CliContext, duration: Duration) -> thread::JoinHandle<()> {
             );
             file
         })
-        .collect();
+        .collect()
+}
+
+fn readers(context: &CliContext, duration: Duration) -> thread::JoinHandle<()> {
+    let held = hold_readers(context);
     thread::spawn(move || {
         thread::sleep(duration);
         drop(held);
@@ -125,9 +129,16 @@ fn lifecycle_delete_and_archive_exhaustion_is_retryable_and_exact_retry_converge
             host: None,
         };
         let record = record(&context, "lifecycle-retry");
+        let tmux = fixture_tmux(&context);
+        let _probe =
+            crate::tmux_probe_fixture::install(&tmux, crate::tmux_probe_fixture::Probe::Stopped);
+        let _status = crate::tmux_probe_fixture::install_status(
+            &tmux,
+            crate::tmux_probe_fixture::Status::Stopped,
+        );
         let operation = || match reason {
             crate::board::CloseReason::Deleted => {
-                crate::delete_session(&context, &record.id, fixture_tmux(&context))
+                crate::delete_session(&context, &record.id, tmux.clone())
             }
             crate::board::CloseReason::Archived => crate::finish_session_delete(
                 &context,
@@ -137,11 +148,11 @@ fn lifecycle_delete_and_archive_exhaustion_is_retryable_and_exact_retry_converge
                 reason,
             ),
         };
-        let held = readers(&context, Duration::from_millis(6500));
-        let started = Instant::now();
+        let held = hold_readers(&context);
+        let clock = crate::contention::test_clock::Clock::start();
         let error = operation().unwrap_err();
-        let elapsed = started.elapsed();
-        held.join().unwrap();
+        assert_eq!(clock.elapsed(), Duration::from_secs(6));
+        drop(clock);
         assert_eq!(error.code(), "coordination-lock-timeout");
         assert_eq!(error.details().unwrap()["retryable"], true);
         assert_eq!(error.details().unwrap()["next_action"], action);
@@ -149,7 +160,6 @@ fn lifecycle_delete_and_archive_exhaustion_is_retryable_and_exact_retry_converge
             error.details().unwrap()["recovery"]["outcome"],
             "record_retained"
         );
-        assert!(elapsed >= Duration::from_secs(6) && elapsed < Duration::from_secs(7));
         assert_eq!(
             crate::load_session_record(&context, &record.id)
                 .unwrap()
@@ -167,6 +177,7 @@ fn lifecycle_delete_and_archive_exhaustion_is_retryable_and_exact_retry_converge
             error.into_inner().exit_code,
             nils_common::cli_contract::exit::RUNTIME
         );
+        drop(held);
         operation().unwrap();
         assert!(!crate::session_dir(&context, &record.id).exists());
     }

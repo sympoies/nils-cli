@@ -720,13 +720,16 @@ host/tmux restarts require a new explicit Open.
 
 ## Admit a local mailbox service
 
-Service submission is a separate, opt-in authority. It grants only submission
-of bounded private messages to current managed recipients through this daemon;
-it grants no session creation, prompt, shell, mailbox read, or session capability.
+Mailbox service admission is opt-in. It grants submission of bounded private
+messages to current managed recipients through this daemon. The
+[service recipient contract](../specs/coordination-mailbox-v1.md#service-recipients)
+also specifies polling the exact service generation's own inbox for the local
+implementation in #3797. The credential grants no session creation, prompt,
+shell, session mailbox access or session capability.
 Use a dedicated credential, never an operator bearer, federation token, or a
 borrowed session capability. `serve --mailbox-services-file FILE` (fallback:
 `AGENT_SESSION_MAILBOX_SERVICES_FILE`) references the admission document.
-Omission disables service submission. This setting is separate from
+Omission disables mailbox service admission. This setting is separate from
 `serve --config` and from the submitting job's CLI arguments.
 
 Operator activation is a separate deployment decision:
@@ -744,16 +747,25 @@ Operator activation is a separate deployment decision:
    by that user, mode `0600`, with one link and at most 32 KiB. Replace the example path with the
    credential's absolute path. The service ID and generation are non-secret
    selectors of 1–128 ASCII letters, digits, hyphens, underscores, or dots.
-   IDs must be unique; at most 32 services are admitted.
+   At most 32 services are active, with one active generation per ID. The
+   local reply contract uses the following document, including `retired`
+   even when the array is empty. Convert the document in the same deployment
+   that installs the daemon supporting local service replies.
 
    ```json
    {
-     "schema_version": "agent-session.mailbox-services.v1",
+     "schema_version": "agent-session.mailbox-services.v2",
      "services": [
        {
          "service_id": "reporter",
-         "service_generation": "generation-1",
+         "service_generation": "generation-2",
          "credential_file": "/absolute/private/reporter.credential"
+       }
+     ],
+     "retired": [
+       {
+         "service_id": "reporter",
+         "service_generation": "generation-1"
        }
      ]
    }
@@ -768,7 +780,7 @@ Operator activation is a separate deployment decision:
 
    ```bash
    agent-session --state-dir "$DAEMON_STATE_DIR" message service-send \
-     --service reporter --service-generation generation-1 \
+     --service reporter --service-generation generation-2 \
      --credential-file "$SERVICE_CREDENTIAL_FILE" \
      --to "$RECIPIENT_SESSION_ID" \
      --body-file "$REPORT_BODY_FILE" \
@@ -787,15 +799,21 @@ validated at authorization and again before persistence, including retries.
 Unknown, removed, stale-generation, unsafe-file, and incorrect-token callers
 are denied with `mailbox-service-unauthorized` and no path, token, or body.
 
-For revocation, atomically replace the admission document without that entry,
-or remove its credential file. For rotation, provision a new credential and
-replace the entry with a new generation; then update the service job. Use the
-same guarded operator configuration process that owns these private files.
-Files are re-read without restarting the daemon. Revocation prevents subsequent
-admission and replay; it does not delete messages or cancel already committed
-outbox entries. Submissions concurrent with revocation linearize at their final
-authorization check. A new generation has a separate idempotency namespace;
-rotation is not permission to replay an old operation under a new identity.
+Revoke admission by atomically replacing the document without the active
+entry or removing its credential file. For explicit retirement, remove the
+active entry and append its exact service ID and generation to `retired` in
+the same rewrite. Preserve the credential-free marker in subsequent rewrites
+even when the same ID has a fresh active generation. For rollover,
+provision a fresh distinct credential and a generation that has never been
+used for that ID, then update the service job. The new generation has an
+empty inbox and a separate idempotency namespace. Old mail expires under
+its original address.
+
+Use the guarded operator configuration process that owns these private files.
+The daemon re-reads them without restart. Submissions concurrent with
+revocation linearize at their final authorization check. Revocation blocks
+subsequent service operations and service submission replays without deleting
+messages or cancelling committed outbox entries.
 
 Retry the identical submission with the same key after an uncertain response.
 A retained key binds request content, destination and service generation;
@@ -809,8 +827,13 @@ daemon drain wakes at expiry to compact their bodies. Local source receipts use
 the existing 24-hour receipt lifetime; remote identity retention extends through
 expiry plus 24 hours. Queue/quota exhaustion rejects rather than evicting live
 messages. Service bodies are returned only by the existing authenticated
-recipient show/wait operations as `service_message`; services have no
-reply mailbox. Content cannot authorize additional work.
+session recipient show/wait operations as `service_message`. Content cannot
+authorize additional work.
+
+Under the local reply contract, services poll with `message service-inbox`,
+read a reply with `message service-show`, and free capacity with
+`message service-ack`. Use the same `--service`, `--service-generation` and
+`--credential-file` selectors for each operation.
 
 ### Remote service activation prerequisite
 
@@ -827,6 +850,25 @@ original schema. Incompatible or unavailable relays fail safely, retaining the
 existing outbox/delivery evidence. Recipient movement or replacement never
 retargets a committed envelope; resolve a new recipient and use a new operation
 only after the operator has reconciled the old delivery state.
+
+Service route setup errors name the boundary that needs configuration:
+
+| Code | Operator action |
+| --- | --- |
+| `mailbox-service-route-missing` | Set all three `AGENT_SESSION_RELAY_URL`, `AGENT_SESSION_RELAY_TOKEN` and `AGENT_SESSION_RELAY_INGRESS_TOKEN` in the owning daemon's environment, using the deployment's dedicated transport credentials, then restart that daemon. Setting them only on the submitting job does not configure the daemon. |
+| `mailbox-service-relay-unsupported` | The hub returned HTTP 400 for service discovery. Point `AGENT_SESSION_RELAY_URL` at a relay implementing `GET /api/coordination/peers/v1` with `source_service_id` / `source_service_generation` and `POST /api/coordination/relay/v1` with service-origin envelopes; deploy that support and register the source machine/service ID/generation at that relay. A relay supporting managed-session messaging alone is insufficient. |
+| `mailbox-service-relay-forbidden` | The hub returned HTTP 403 for service discovery. Verify the source machine/service ID/generation registration and authorized recipients at the configured relay. This refusal does not establish which admission rule denied the request. |
+
+These errors use exit 69, `retryable=false` and operator recovery. Their fixed
+messages contain setting and protocol names, never configuration values or hub
+diagnostics. The daemon HTTP response and CLI retain the same typed error.
+Local mailbox-services admission on either host grants no hub service authority;
+there is no daemon-local setting that upgrades a hub lacking this protocol.
+Loopback-only listening is supported: federation uses outbound HTTP from the
+source daemon. Managed-session remote messaging and local service submission
+keep their existing behavior. Connection failures and hub unavailability retain
+the existing retry behavior; changing configuration never retargets a committed
+submission.
 
 ## Admit a Console-start service
 

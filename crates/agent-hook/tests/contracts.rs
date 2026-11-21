@@ -69,21 +69,15 @@ fn matcher_expression_rejects_regex_constructs() {
     );
 }
 
-/// `runtime-kit.handler.v1` is an allowlist, not arbitrary execution: a handler
-/// ID is admitted only when the compiled map resolves it to one exact
-/// runtime-kit-owned basename. Both halves are asserted so widening the
-/// allowlist stays a deliberate edit rather than a hole.
-#[test]
-fn runtime_kit_handler_allowlist_admits_only_compiled_ids() {
-    const HANDLER_POLICY: &str = r#"schema_version = "agent-hook.policy.v1"
+const HANDLER_POLICY: &str = r#"schema_version = "agent-hook.policy.v1"
 bundle_id = "runtime-kit"
 version = "2026.09.02.1"
 
 [[rules]]
-id = "runtime.artifact-routing"
+id = "runtime.test-handler"
 products = ["codex", "claude"]
 events = ["PreToolUse"]
-matcher = "Bash|Write|Edit|NotebookEdit|MultiEdit|apply_patch"
+matcher = "Bash"
 priority = 100
 mode = "enforce"
 failure_posture = "closed"
@@ -92,6 +86,12 @@ override_class = "locked"
 capability = { id = "runtime-kit.handler.v1", handler_id = "HANDLER_ID" }
 "#;
 
+/// `runtime-kit.handler.v1` is an allowlist, not arbitrary execution: a handler
+/// ID is admitted only when the compiled map resolves it to one exact
+/// runtime-kit-owned basename. Both halves are asserted so widening the
+/// allowlist stays a deliberate edit rather than a hole.
+#[test]
+fn runtime_kit_handler_allowlist_admits_only_compiled_ids() {
     let admitted = HANDLER_POLICY.replace("HANDLER_ID", "block-agent-artifact-routing");
     let fixture = Fixture::new(&admitted);
     let output = fixture.run(&["validate", "--format", "json"], None);
@@ -100,12 +100,95 @@ capability = { id = "runtime-kit.handler.v1", handler_id = "HANDLER_ID" }
 
     let rejected = HANDLER_POLICY.replace("HANDLER_ID", "block-agent-artifact-routing-typo");
     let fixture = Fixture::new(&rejected);
-    let output = fixture.run(&["validate", "--format", "json"], None);
+    let output = fixture.run(
+        &["dispatch", "--product", "codex", "--format", "json"],
+        Some(
+            r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"fixture"}}"#,
+        ),
+    );
     assert_eq!(output.code, 65);
     assert_eq!(
         output.stdout_json()["error"]["code"],
         "handler-id-unsupported"
     );
+}
+
+#[test]
+fn sensitive_file_read_handler_dispatches_and_blocks_without_exposing_input() {
+    const ID: &str = "block-sensitive-file-reads";
+    const REQUEST_MARKER: &str = "fixture-only-request-marker";
+    let policy = HANDLER_POLICY.replace("HANDLER_ID", ID);
+
+    for product in ["codex", "claude"] {
+        let fixture = Fixture::new(&policy);
+        let hooks = fixture.home.join(format!(".{product}/hooks"));
+        fs::create_dir_all(&hooks).expect("trusted fixture hooks");
+        let handler = hooks.join(format!("{ID}.py"));
+        fs::write(
+            &handler,
+            r#"#!/usr/bin/env python3
+import json
+import os
+import sys
+
+request = json.load(sys.stdin)
+assert request["hook_event_name"] == "PreToolUse"
+assert request["tool_name"] == "Bash"
+assert os.environ["AGENT_RUNTIME_PRODUCT"] in ("codex", "claude")
+command = request["tool_input"]["command"]
+if command == "fixture-only-request-marker":
+    print(command, file=sys.stderr)
+    print(json.dumps({"decision": "block", "reason": "synthetic denial"}))
+else:
+    assert command == "fixture-allow"
+"#,
+        )
+        .expect("synthetic Python handler");
+        fs::set_permissions(&handler, fs::Permissions::from_mode(0o700)).expect("handler mode");
+
+        for (command, action, code) in [("fixture-allow", "allow", 0), (REQUEST_MARKER, "block", 1)]
+        {
+            let request = json!({
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "cwd": fixture.root,
+                "tool_input": {"command": command},
+            });
+            let output = fixture.run(
+                &[
+                    "dispatch",
+                    "--product",
+                    product,
+                    "--format",
+                    "json",
+                    "--trace",
+                ],
+                Some(&request.to_string()),
+            );
+            assert!(!output.stdout_text().contains(REQUEST_MARKER));
+            assert!(!output.stderr_text().contains(REQUEST_MARKER));
+            assert_eq!(output.code, code, "{product}: {}", output.stdout_text());
+            let decision = output.stdout_json();
+            assert_eq!(decision["data"]["action"], action);
+            assert_eq!(decision["data"]["reasons"][0]["code"], ID);
+        }
+
+        let trace = fs::read_to_string(fixture.state_home.join("agent-hook/trace.jsonl"))
+            .expect("dispatch trace");
+        assert!(trace.contains(r#""action":"block""#));
+        assert!(!trace.contains(REQUEST_MARKER));
+        let spool = nils_common::observation::spool_root(&fixture.session_state);
+        let logs = fs::read_dir(spool).expect("dispatch observation spool");
+        let mut recorded_block = false;
+        for path in logs.map(|entry| entry.expect("spool entry").path()) {
+            if path.extension() == Some(OsStr::new("jsonl")) {
+                let log = fs::read_to_string(path).expect("observation log");
+                assert!(!log.contains(REQUEST_MARKER));
+                recorded_block |= log.contains(r#""disposition":"block""#);
+            }
+        }
+        assert!(recorded_block, "the dispatch block was logged");
+    }
 }
 
 #[test]

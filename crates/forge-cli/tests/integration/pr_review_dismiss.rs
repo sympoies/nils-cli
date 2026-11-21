@@ -71,6 +71,7 @@ fn with_wrapper(stub: StubEnv) -> StubEnv {
     let script = format!(
         r#"#!/bin/sh
 case "$*" in
+  "api repos/acme/widgets/compare/{OLD}...{HEAD}") echo "$*" >> "{log}"; echo "{{\"status\":\"${{COMPARE_STATUS:-ahead}}\"}}"; exit 0 ;;
   "api user --jq .login") echo "$*" >> "{log}"; echo "${{ACTOR_LOGIN-delivery-actor}}"; exit 0 ;;
   "api --method PUT repos/acme/widgets/pulls/7/reviews/{BOT_REVIEW_ID}/dismissals "*)
     echo "$*" >> "{log}"
@@ -228,6 +229,106 @@ fn wrong_pr_head_or_review_head_is_refused() {
         "review_dismiss_head_mismatch",
     );
     assert_untouched(&stale);
+}
+
+#[test]
+fn stale_ancestor_requires_opt_in_and_records_both_commits() {
+    let stub = dismissal_fixture(
+        automated_review(OLD, "CHANGES_REQUESTED", "lint-app", "Bot"),
+        true,
+    );
+    assert_refusal(
+        &dismiss(&stub, HEAD, REASON),
+        65,
+        "review_dismiss_head_mismatch",
+    );
+    let reason = stub.tempdir.path().join("reason.md");
+    let dry = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "--dry-run",
+            "pr",
+            "review-dismiss",
+            "7",
+            "--review-id",
+            "5",
+            "--expected-head",
+            HEAD,
+            "--reason-file",
+            reason.to_str().unwrap(),
+            "--stale-head",
+        ],
+    );
+    assert_eq!(dry.code, 0, "{} {}", dry.stdout, dry.stderr);
+    let data = &parse_envelope(&dry.stdout)["data"];
+    assert_eq!(data["review_commit_sha"], OLD);
+    assert_eq!(data["head_sha"], HEAD);
+    assert_untouched(&stub);
+    let output = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "review-dismiss",
+            "7",
+            "--review-id",
+            "5",
+            "--expected-head",
+            HEAD,
+            "--reason-file",
+            reason.to_str().unwrap(),
+            "--stale-head",
+        ],
+    );
+    assert_eq!(output.code, 0, "{} {}", output.stdout, output.stderr);
+    let data = &parse_envelope(&output.stdout)["data"];
+    assert_eq!(data["review_commit_sha"], OLD);
+    assert_eq!(data["head_sha"], HEAD);
+}
+
+#[test]
+fn unrelated_review_is_refused_even_with_opt_in() {
+    let stub = dismissal_fixture(
+        automated_review(OLD, "CHANGES_REQUESTED", "lint-app", "Bot"),
+        true,
+    )
+    .env("COMPARE_STATUS", "diverged");
+    let reason = stub.tempdir.path().join("reason.md");
+    fs::write(&reason, REASON).unwrap();
+    let output = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "review-dismiss",
+            "7",
+            "--review-id",
+            "5",
+            "--expected-head",
+            HEAD,
+            "--reason-file",
+            reason.to_str().unwrap(),
+            "--stale-head",
+        ],
+    );
+    assert_refusal(&output, 65, "review_dismiss_head_mismatch");
+    assert_untouched(&stub);
 }
 
 #[test]

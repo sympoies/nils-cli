@@ -32,6 +32,8 @@ mod remote_peer_exclusions;
 pub(crate) mod retirement;
 pub(crate) mod server;
 pub(crate) mod service;
+#[cfg(test)]
+mod test_clock;
 
 pub(crate) use broker::run_broker;
 pub(crate) use notification::NotificationCandidate;
@@ -44,8 +46,9 @@ use std::io::{self, Read};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(test)]
+use std::{thread, time::Instant};
 
 use jiff::Timestamp;
 use nils_common::fs::SECRET_FILE_MODE;
@@ -627,7 +630,7 @@ fn lock_private_store_within(
     {
         return Err(store_untrusted());
     }
-    let started = Instant::now();
+    let started = crate::contention::Instant::now();
     let _wait = console_start::diagnostics::LockWait::new();
     loop {
         // SAFETY: flock is called with a valid, owned file descriptor.
@@ -646,7 +649,9 @@ fn lock_private_store_within(
                 None,
             ));
         }
-        thread::sleep(Duration::from_millis(10).min(timeout.saturating_sub(started.elapsed())));
+        crate::contention::sleep(
+            Duration::from_millis(10).min(timeout.saturating_sub(started.elapsed())),
+        );
     }
     Ok(lock)
 }
@@ -1170,8 +1175,13 @@ fn lock_registry_within(
     timeout: Duration,
 ) -> Result<LockedRegistry, CliError> {
     let root = coordination_root(context)?;
-    let lock = lock_private_store_within(context, REGISTRY_LOCK, timeout)
-        .map_err(|error| lock_holder::annotate_timeout(&root, error))?;
+    #[cfg(test)]
+    let timeout = mailbox_wait_contention_tests::before_lock(timeout);
+    let lock = lock_private_store_within(context, REGISTRY_LOCK, timeout).map_err(|error| {
+        #[cfg(test)]
+        mailbox_wait_contention_tests::lock_failed(&error);
+        lock_holder::annotate_timeout(&root, error)
+    })?;
     let holder = lock_holder::PublishedHolder::publish(&root, class);
     let path = root.join(REGISTRY_FILE);
     let mut registry = match read_private_file(&path, MAX_REGISTRY_BYTES) {
@@ -1787,6 +1797,10 @@ fn digest_eq(left: &str, right: &str) -> bool {
 }
 
 pub fn now_epoch() -> i64 {
+    #[cfg(test)]
+    if let Some(epoch) = test_clock::epoch() {
+        return epoch;
+    }
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -2979,3 +2993,6 @@ mod contention_tests;
 
 #[cfg(test)]
 mod lock_holder_tests;
+
+#[cfg(test)]
+mod mailbox_wait_contention_tests;

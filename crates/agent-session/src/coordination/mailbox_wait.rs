@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use base64::Engine as _;
 use notify::event::{AccessKind, AccessMode, ModifyKind};
@@ -10,12 +10,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::mailbox;
-use super::{
-    CliError, authenticate_from_file, clean_expired, coordination_root, lock_registry, now_epoch,
-    revalidate_capability_file,
-};
+use super::{CliError, clean_expired, coordination_root, now_epoch, revalidate_capability_file};
 use crate::CliContext;
 use crate::cli::MessageWaitArgs;
+
+mod registry;
+pub(super) use registry::WaitBudget;
 
 const CANCELLATION_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 const CURSOR_SCHEMA: &str = "agent-session.message-wait-any-unread.cursor.v1";
@@ -37,9 +37,10 @@ pub(super) fn wait_with_cancellation(
     cancelled: Option<&AtomicBool>,
 ) -> Result<Value, CliError> {
     let capability_file = super::mailbox::resolve_capability_file(args.capability_file.as_deref())?;
-    let (record, recipient_incarnation) =
-        authenticate_from_file(context, &args.session, Some(&capability_file))?;
     let timeout = mailbox::parse_wait(&args.timeout)?;
+    let wait = WaitBudget::new(timeout, cancelled, timeout_error);
+    let (record, recipient_incarnation) =
+        wait.authenticate(context, &args.session, &capability_file)?;
     let cursor = args.newer_than.as_deref().map(parse_cursor).transpose()?;
     if cursor.as_ref().is_some_and(|cursor| {
         cursor.schema_version != CURSOR_SCHEMA
@@ -52,7 +53,9 @@ pub(super) fn wait_with_cancellation(
     // Watch the containing directory because registry writes replace the file
     // atomically. Install the watcher before the first registry read so an
     // arrival between setup and that read is either observed or returned.
-    let root = coordination_root(context)?;
+    let root = coordination_root(context)?
+        .canonicalize()
+        .map_err(|_| notification_error())?;
     let (events_tx, events_rx) = mpsc::channel();
     let registry_path = root.join(super::REGISTRY_FILE);
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
@@ -71,17 +74,8 @@ pub(super) fn wait_with_cancellation(
         .watch(&root, RecursiveMode::NonRecursive)
         .map_err(|_| notification_error())?;
 
-    let started = Instant::now();
     loop {
-        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
-            return Err(CliError::runtime(
-                "wait-cancelled",
-                "message wait was cancelled",
-                None,
-            ));
-        }
-
-        let mut locked = lock_registry(context)?;
+        let mut locked = wait.lock_registry(context)?;
         let registry_changed = clean_expired(&mut locked.registry, now_epoch());
         revalidate_capability_file(
             context,
@@ -150,7 +144,7 @@ pub(super) fn wait_with_cancellation(
         }
         drop(locked);
 
-        let remaining = timeout.saturating_sub(started.elapsed());
+        let remaining = wait.remaining();
         if remaining.is_zero() {
             return Err(timeout_error());
         }
@@ -252,6 +246,41 @@ mod tests {
 
     use super::{WaitCursor, encode_cursor, notification_error, parse_cursor, timeout_error};
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn registry_event_filter_ignores_reads_locks_and_unrelated_writes() {
+        use notify::event::{CreateKind, DataChange, RenameMode};
+        use notify::{Event, EventKind};
+        let registry = std::path::Path::new("/fixture/coordination/registry.json");
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Modify(super::ModifyKind::Data(DataChange::Any)),
+            EventKind::Modify(super::ModifyKind::Name(RenameMode::To)),
+            EventKind::Access(super::AccessKind::Close(super::AccessMode::Write)),
+        ] {
+            assert!(super::changes_registry(
+                &Event::new(kind).add_path(registry.into()),
+                registry
+            ));
+            assert!(!super::changes_registry(
+                &Event::new(kind).add_path("/fixture/coordination/registry.lock".into()),
+                registry
+            ));
+        }
+        for kind in [
+            EventKind::Access(super::AccessKind::Read),
+            EventKind::Access(super::AccessKind::Open(super::AccessMode::Read)),
+            EventKind::Access(super::AccessKind::Close(super::AccessMode::Read)),
+            EventKind::Modify(super::ModifyKind::Metadata(
+                notify::event::MetadataKind::Any,
+            )),
+        ] {
+            assert!(!super::changes_registry(
+                &Event::new(kind).add_path(registry.into()),
+                registry
+            ));
+        }
+    }
 
     #[test]
     fn cursor_round_trips_recipient_binding_and_seen_ids() {

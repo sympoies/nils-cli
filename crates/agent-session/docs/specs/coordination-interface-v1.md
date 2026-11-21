@@ -41,6 +41,10 @@ agent-session broker reconcile --session ID --capability-file FILE --proof-file 
 agent-session readiness --format json
 
 agent-session message send --from ID --to ID --body-file FILE [--capability-file FILE] --idempotency-key KEY [--reply-to UUID] [--expires-in DURATION]
+agent-session message send --from ID --reply-to UUID --body-file FILE [--capability-file FILE] --idempotency-key KEY [--expires-in DURATION]
+agent-session message service-inbox --service ID --service-generation GENERATION --credential-file FILE [--state unread] [--cursor CURSOR] [--limit N]
+agent-session message service-show --service ID --service-generation GENERATION --credential-file FILE --message UUID
+agent-session message service-ack --service ID --service-generation GENERATION --credential-file FILE --message UUID --if-revision N --idempotency-key KEY
 agent-session message inbox [--session ID] [--capability-file FILE] [--state unread] [--cursor CURSOR] [--limit N]
 agent-session message show --session ID --message UUID [--capability-file FILE]
 agent-session message ack --session ID --message UUID --if-revision N [--capability-file FILE] --idempotency-key KEY
@@ -49,6 +53,12 @@ agent-session message wait --session ID --message UUID --if-revision N --timeout
 agent-session message wait --session ID --any-unread [--newer-than CURSOR] --timeout DURATION [--capability-file FILE]
 agent-session message reminder --session ID [--capability-file FILE]
 ```
+
+The `send --reply-to` form without an explicit destination requires a
+service-origin parent. It and `message reply` follow the
+[service recipient contract](coordination-mailbox-v1.md#service-recipients).
+These service reply forms and the polling commands specify the local
+implementation in #3797.
 
 JSON uses the existing `cli.agent-session.<command>.v1` success/error envelope
 convention. For `message wait --any-unread`, exit `0` means unread metadata
@@ -140,10 +150,44 @@ and `category`; it rejects a `to` redirect selector. `reply_by` uses the
 `self_selector` (default false) and `allow_incomplete`; candidates are accepted
 only by the registry-level check route.
 
-Successful HTTP send and reply envelopes carry the same content-free
+Both CLI service reply forms submit to the owning daemon with the caller's
+session capability. The revision-checked HTTP reply operation
+`POST /sessions/{id}/messages/{message_id}/reply/v1` uses the same locked
+checks. Here `{id}` identifies the parent recipient session.
+
+Successful HTTP sends and replies to sessions carry the same content-free
 `notification` state/generation/reason projection as CLI and set
 `controller_available: true`. The response schedules work only; it does not
 promise immediate delivery or mark a message read.
+
+### Service inbox HTTP routes
+
+All three routes require the `service_id` and `service_generation` query
+parameters and the matching service token in `Authorization: Bearer`. The
+daemon supplies the machine. Only direct loopback transport is accepted.
+Session capabilities, operator bearers, federation tokens and forwarded
+requests do not authorize these routes. The daemon rechecks admission and
+the credential under the mailbox lock.
+
+| Method and path | Additional input | Successful result |
+| --- | --- | --- |
+| `GET /coordination/services/messages/v1` | Optional query parameters `state=unread`, `cursor`, and `limit`. | Inbox object with `schema_version: "agent-session.message-inbox.v1"`, `messages` (metadata rows), and `next_cursor` (opaque string or `null`). |
+| `GET /coordination/services/messages/{message_id}/v1` | Message UUID in the path. | One message row with `body` containing `classification: "peer_message"` and `text`. The row reflects the revision after any unread-to-read transition. |
+| `POST /coordination/services/messages/{message_id}/ack/v1` | Message UUID in the path and a JSON body with required `if_revision` (unsigned integer) and `idempotency_key` (string). | Acknowledged message metadata, including its updated revision. |
+
+Success uses HTTP 200 and the serve envelope with the result in
+`data.coordination` and the owning machine in `data.machine`. Rows use the
+[service recipient message schema](coordination-schemas-v1.md#message).
+Follow the [mailbox limits](coordination-mailbox-v1.md#mailbox-limits-and-state-machine)
+for page size and the
+[credential-scoped inbox rules](coordination-mailbox-v1.md#credential-scoped-inbox)
+for message lookup, cursors and receipts. List and ack omit the body.
+
+The ack receipt binds the exact address, message UUID, and request revision.
+After current credential and admission checks, an identical replay returns
+the stored result. An admitted request with a stale revision fails with
+`message-revision-conflict`. Reusing a key for a changed request within the
+same principal's ack scope fails with `idempotency-key-reused`.
 
 ## Public list and glance additions
 
@@ -182,6 +226,14 @@ The v1 surface distinguishes at least:
 - `coordination-store-untrusted`, `coordination-store-corrupt`.
 - `session-not-managed`, `not-in-repository`, `repository-unavailable`,
   `invalid-acknowledgement-duration`.
+
+Service reply refusals are `mailbox-service-recipient-unknown`,
+`mailbox-service-recipient-unadmitted`, `mailbox-service-recipient-retired`,
+`mailbox-service-recipient-generation-conflict`, and
+`mailbox-service-reply-route-unsupported`. Service credential failures use
+`mailbox-service-unauthorized`. Unavailable admission uses
+`mailbox-service-unavailable`. See the
+[service refusal contract](coordination-mailbox-v1.md#service-recipient-refusals).
 
 Usage errors exit 64, data/contract errors use the workspace data exit code,
 and runtime/storage failures use the runtime exit code.

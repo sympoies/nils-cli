@@ -5113,8 +5113,7 @@ async fn list_handler(State(state): State<Arc<ServeState>>) -> Response {
                     }
                 };
                 let Some(err) = blocked else { continue };
-                session.resumable = false;
-                session.resume_blocked_reason = Some(err.code().to_string());
+                session.block_resume(err.code());
             }
             (sessions, agent_profiles)
         })

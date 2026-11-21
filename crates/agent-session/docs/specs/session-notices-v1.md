@@ -135,14 +135,16 @@ a candidate. Cursor observations must prove one atomic editing unit before
 Enter or single-unit cleanup. Extra input, multiple labels, a different count
 and a typed literal label remain refusals.
 
-`--queue` waits while the target
-reports busy and retries only a preclaim busy admission refusal. Other failures
-stop the request, including the unsupported Claude transport refusal once idle.
-The durable idempotency claim is made by the guarded send path when delivery
-proceeds. Queue mode requires `--idempotency-key` so a caller retry cannot submit
-the same queued notice again. Post-paste failures retain their claim and report
-whether input remains; unknown input must never be cleared without ownership
-proof.
+`--queue` keeps the sender waiting on retryable busy admission refusals and on
+the authenticated Claude native preclaim refusal
+`authorization-composer-not-empty`. It retries guarded admission using the
+same idempotency key. The notice leaves the draft and cursor untouched and can
+submit once the composer is empty and the target passes the idle check.
+Other failures stop the request, including an unsupported Claude transport
+once idle. Queue mode requires `--idempotency-key`, which the guarded send path
+claims when delivery proceeds so a caller retry cannot submit the notice again.
+Post-paste failures retain their claim and report whether input remains.
+Unknown input must never be cleared without ownership proof.
 
 Claude Code releases in the tested range below support a separate native module
 route on gate-enabled fresh launches, resumes and restarts (a restart relaunches
@@ -183,13 +185,17 @@ Ordinary Claude prompts and Codex composer policy retain their existing proof.
 
 ### Tested Claude Code range
 
+Native acceptance: PENDING for candidate `2.1.329`. Contract checks do not
+prove native delivery. Before this draft range change may merge, attach the
+exact-version native notice acceptance and complete reviewed merge gates.
+
 Contract checks do not prove native delivery. Before a range-extension change
 may merge, its PR must cite exact-version native notice acceptance and complete
 reviewed merge gates.
 
 The module depends on the provider's static module-loader rules and on native
 API semantics, so the supported releases are a reviewed range, not a runtime
-probe: `2.1.296` through `2.1.325` inclusive. The launch strictly parses
+probe: `2.1.296` through `2.1.329` inclusive. The launch strictly parses
 `<major>.<minor>.<patch> (Claude Code)` from `--version` and compares
 numerically. An unreadable or unparseable version is unsupported. The probed
 version is recorded in the module bootstrap; the module and readiness compare
@@ -322,9 +328,10 @@ attesting its own operation, not a provider signature or human authorship.
 The operation is durably consumed before releasing text to the module. A drop,
 mismatch, crash, timeout or missing confirmation retains consumption and returns
 `notice-native-unconfirmed`, never the safe unsupported-admission receipt.
-`notice-native-unavailable` also adds no fallback or retry permission. There is
-one original local budget; an already authorized provider call may execute or
-complete later. No remote cancellation or atomic composer guarantee is implied.
+`notice-native-unavailable` ends a one-shot send and never authorizes a fallback.
+Each attempt has one local budget. An already authorized provider call may
+execute or complete later. No remote cancellation or atomic composer guarantee
+is implied.
 The route never clears a new or unknown human draft.
 
 Pre-claim `notice-native-unavailable` errors carry a stable `error.details.reason`

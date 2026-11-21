@@ -197,12 +197,17 @@ pub(crate) fn run(context: &CliContext, mut args: NoticeArgs) -> i32 {
 }
 
 fn queue_retryable(error: &CliError) -> bool {
-    matches!(
-        error.code(),
-        "send-session-not-idle" | "send-completion-evidence-missing"
-    ) && error
-        .details()
-        .is_some_and(|details| details["stage"] == "admission" && details["safe_to_retry"] == true)
+    let Some(details) = error.details() else {
+        return false;
+    };
+    match error.code() {
+        "send-session-not-idle" | "send-completion-evidence-missing" => {
+            details["stage"] == "admission" && details["safe_to_retry"] == true
+        }
+        // The native bridge reports this only before consuming the key or releasing text.
+        "notice-native-unavailable" => details["reason"] == "authorization-composer-not-empty",
+        _ => false,
+    }
 }
 
 #[cfg(test)]

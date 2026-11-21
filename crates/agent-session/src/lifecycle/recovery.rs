@@ -31,6 +31,17 @@ struct Resume {
     path: String,
 }
 
+impl crate::SessionView {
+    /// Daemon checks can block resume after the lifecycle recovery projection.
+    pub(crate) fn block_resume(&mut self, reason: &str) {
+        self.resumable = false;
+        self.resume_blocked_reason = Some(reason.to_string());
+        if let Some(exit) = &mut self.runtime_exit {
+            exit.recovery = None;
+        }
+    }
+}
+
 impl RuntimeExit {
     fn with_message(mut self) -> Self {
         self.message = match self.reason {

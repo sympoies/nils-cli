@@ -179,3 +179,46 @@ fn stale_and_retired_rows_warn_even_when_every_finding_is_covered() {
         "{warnings:?}"
     );
 }
+
+#[test]
+fn python_decorator_changes_preserve_test_identity() {
+    let plain = "    def test_contract(self):\n        assert True";
+    let decorated = "    @mock.patch('example.call')\n    def test_contract(self, mocked_call):\n        assert True";
+    for (before, after) in [(plain, decorated), (decorated, plain)] {
+        let patch = patch("tests/test_api.py", before, after);
+        assert_eq!(kinds(&patch), Vec::<String>::new());
+        let metadata = subject(HEAD, BASE, "");
+        admit(metadata.clone(), metadata, &patch, "").unwrap();
+    }
+    let same_signature =
+        "    @mock.patch('example.call')\n    def test_contract(self):\n        assert True";
+    for (before, after) in [(plain, same_signature), (same_signature, plain)] {
+        assert_eq!(
+            deleted("tests/test_api.py", before, after),
+            Vec::<String>::new()
+        );
+    }
+    assert_eq!(
+        deleted(
+            "tests/test_api.py",
+            plain,
+            "    def test_renamed(self):\n        assert True"
+        ),
+        vec!["deleted-test:test_contract"]
+    );
+}
+
+#[test]
+fn rust_attributes_and_javascript_wrappers_keep_recognized_tests() {
+    let rust = "#[test]\nfn contract() {}";
+    let attributed = "#[allow(unused)]\n#[test]\nfn contract() {}";
+    let js = "test('contract', () => {});";
+    let wrapped = "describe('group', () => {\n  test('contract', () => {});\n});";
+    for (path, before, after) in [
+        ("src/lib.rs", rust, attributed),
+        ("tests/api.test.ts", js, wrapped),
+    ] {
+        assert_eq!(deleted(path, before, after), Vec::<String>::new());
+        assert_eq!(deleted(path, after, before), Vec::<String>::new());
+    }
+}

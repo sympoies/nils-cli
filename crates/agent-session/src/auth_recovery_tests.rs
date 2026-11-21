@@ -466,6 +466,7 @@ fn assert_quarantined_operator_restart(force: bool) {
     let tmp = tempfile::tempdir().unwrap();
     let context = context(tmp.path());
     let tmux = fake_tmux(tmp.path());
+    let _observations = tmux.synchronous_observations();
     let record = failed_runtime(&context, tmp.path(), &tmux, false);
     let old_launch = launch_id(&record).unwrap();
     let before = log(tmp.path());
@@ -487,12 +488,14 @@ fn assert_quarantined_operator_restart(force: bool) {
     }
     assert!(!log(tmp.path())[before.len()..].contains("paste-buffer"));
     assert!(!log(tmp.path())[before.len()..].contains("send-keys"));
+    let exited = tmux.observe_provider_exit(&context, &old_launch);
     let watcher = on_relaunched_prompt(&context, tmp.path(), &old_launch);
 
     let result = restart(&context, &restart_args(&tmux, force, 10));
     // Fail on the admission regression before waiting for a relaunch that
     // cannot happen. The fixture watcher is independently bounded.
     let receipt = serde_json::to_value(result.expect("restart quarantined runtime")).unwrap();
+    exited.join().unwrap();
     watcher.join().unwrap();
 
     let current = load_session_record(&context, ID).unwrap();
@@ -535,22 +538,17 @@ fn assert_replacement_quarantine(become_ready: bool) {
     let lock = GlobalStateLock::new();
     let tmp = tempfile::tempdir().unwrap();
     let _broker = broker(tmp.path(), &lock);
+    let _publication = crate::account_broker::publication_fixture::install(tmp.path());
     let context = context(tmp.path());
     let tmux = fake_tmux(tmp.path());
     let record = failed_runtime(&context, tmp.path(), &tmux, true);
     tick(&context, &record, &tmux, 100);
     publish(tmp.path(), 2);
     fs::write(tmp.path().join("exit-on-probe"), "").unwrap();
-    let watcher = on_relaunch(
+    let readiness = on_relaunch(
         &context,
         &launch_id(&record).unwrap(),
         move |context, launch| {
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while recovery_receipt(context)["state"] != "awaiting_ready"
-                && Instant::now() < deadline
-            {
-                thread::sleep(Duration::from_millis(10));
-            }
             let receipt = recovery_receipt(context);
             assert_eq!(receipt["state"], "awaiting_ready");
             assert_eq!(receipt["new_runtime_incarnation"], launch);
@@ -567,7 +565,11 @@ fn assert_replacement_quarantine(become_ready: bool) {
     );
 
     tick(&context, &record, &tmux, 115);
-    watcher.join().unwrap();
+    assert!(
+        readiness.join().is_ok(),
+        "replacement readiness was not reached: {}",
+        recovery_receipt(&context)["last_reason"]
+    );
 
     let replacement = load_session_record(&context, ID).unwrap();
     let receipt = recovery_receipt(&context);

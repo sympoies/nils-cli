@@ -73,7 +73,8 @@ pub(super) fn capability(
     args: &cli::SendArgs,
     text: Option<&str>,
     terminal_command: bool,
-) -> Option<(runtime::Bootstrap, runtime::Ready)> {
+    mailbox_notice: bool,
+) -> Result<Option<(runtime::Bootstrap, runtime::Ready)>, CliError> {
     if !terminal_command
         && args.guards.notice_envelope
         && record.agent == "claude"
@@ -82,9 +83,13 @@ pub(super) fn capability(
         && super::carries_literal_text(text)
         && args.keys == [crate::SpecialKey::Enter]
     {
-        runtime::readiness(context, record)
+        if mailbox_notice {
+            runtime::require_readiness(context, record).map(Some)
+        } else {
+            Ok(runtime::readiness(context, record))
+        }
     } else {
-        None
+        Ok(None)
     }
 }
 
@@ -179,8 +184,13 @@ pub(super) fn deliver(
         // A live, exact native request is necessary before consuming any key.
         admission.check_key()?;
         check("admission")?;
-        let (boot, now) = runtime::readiness(context, &record)
-            .ok_or_else(|| refusal::unavailable("readiness-unavailable"))?;
+        let (boot, now) = runtime::require_readiness(context, &record).map_err(|error| {
+            if attempt.notification.is_some() {
+                error
+            } else {
+                refusal::unavailable("readiness-unavailable")
+            }
+        })?;
         if boot.nonce != bootstrap.nonce || now.binding != ready.binding {
             return Err(refusal::unavailable("readiness-changed"));
         }
@@ -329,7 +339,7 @@ pub(super) fn deliver(
     match result {
         Ok(value) => Ok(value),
         Err(error) if error.code() == "send-idempotency-key-used" && token.is_none() => Err(error),
-        Err(_) if consumed.get() => {
+        Err(error) if consumed.get() => {
             if let Some(token) = &token {
                 let _ = store::finish(
                     context,
@@ -340,7 +350,13 @@ pub(super) fn deliver(
                     deadline,
                 );
             }
-            Err(unconfirmed(&record, stage))
+            // A mailbox notice has no independent send key. Before the generation
+            // claim and text release, preserve the actual queued refusal.
+            if attempt.notification.is_some() && matches!(stage, "admission" | "claimed") {
+                Err(error)
+            } else {
+                Err(unconfirmed(&record, stage))
+            }
         }
         Err(error) => Err(error),
     }

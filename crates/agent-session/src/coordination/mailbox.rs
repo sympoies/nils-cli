@@ -3,7 +3,7 @@ use std::io::Read;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -774,19 +774,12 @@ pub(crate) fn wait_with_cancellation(
         ));
     }
     let capability_file = resolve_capability_file(args.capability_file.as_deref())?;
-    let (record, recipient_incarnation) =
-        authenticate_from_file(context, &args.session, Some(&capability_file))?;
     let timeout = parse_wait(&args.timeout)?;
-    let started = Instant::now();
+    let wait = super::mailbox_wait::WaitBudget::new(timeout, cancelled, revision_wait_timeout);
+    let (record, recipient_incarnation) =
+        wait.authenticate(context, &args.session, &capability_file)?;
     loop {
-        if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
-            return Err(CliError::runtime(
-                "wait-cancelled",
-                "message wait was cancelled",
-                None,
-            ));
-        }
-        let mut locked = lock_registry(context)?;
+        let mut locked = wait.lock_registry(context)?;
         let registry_changed = clean_expired(&mut locked.registry, now_epoch());
         revalidate_capability_file(
             context,
@@ -837,15 +830,20 @@ pub(crate) fn wait_with_cancellation(
             locked.save()?;
         }
         drop(locked);
-        if started.elapsed() >= timeout {
-            return Err(CliError::runtime(
-                "wait-timeout",
-                "message wait reached its bounded timeout",
-                None,
-            ));
+        let remaining = wait.remaining();
+        if remaining.is_zero() {
+            return Err(revision_wait_timeout());
         }
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(50).min(remaining));
     }
+}
+
+fn revision_wait_timeout() -> CliError {
+    CliError::runtime(
+        "wait-timeout",
+        "message wait reached its bounded timeout",
+        None,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

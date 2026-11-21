@@ -1,0 +1,57 @@
+name: macOS mailbox wait
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mailbox-macos.yml'
+      - 'crates/agent-session/src/coordination/**'
+      - 'crates/agent-session/tests/integration/mailbox_any_unread.rs'
+      - 'crates/agent-session/src/prompt_delivery.rs'
+      - 'crates/agent-session/src/prompt_delivery/**'
+      - 'crates/agent-session/src/serve/tests/prompt_composer/**'
+      - 'crates/nils-common/src/observation.rs'
+      - 'crates/agent-session/src/send/claude_notice.rs'
+      - 'crates/agent-session/src/send/claude_notice/**'
+      - 'crates/agent-session/tests/guarded_send/claude_notice.rs'
+      - 'crates/agent-session/tests/guarded_send/claude_notice/**'
+      - 'crates/agent-session/tests/fixtures/claude-notice-composer.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  mailbox_any_unread:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          components: llvm-tools-preview
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-test
+          key: llvm-cov
+          save-if: false
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: |
+            cargo-llvm-cov
+            cargo-nextest
+      - name: Test mailbox arrivals
+        run: cargo nextest run --locked -p nils-agent-session --test integration -E 'test(mailbox_any_unread::)'
+      - name: Test post-paste prompt observation
+        run: cargo nextest run --locked -p nils-agent-session --lib -E 'test(serve::tests::prompt_composer::post_paste::)'
+      # The coverage lane failed these timing-sensitive tests intermittently, so
+      # repeat them on the instrumented build with no retries.
+      - name: Repeat native notice authorization tests (instrumented)
+        run: |
+          for i in $(seq 1 20); do
+            echo "iteration $i"
+            cargo llvm-cov nextest --no-report --locked --retries 0 \
+              -p nils-agent-session --test guarded_send \
+              -E 'test(claude_notice::composer::) | test(claude_notice::refusals::)'
+          done

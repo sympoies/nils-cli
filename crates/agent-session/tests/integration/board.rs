@@ -156,37 +156,25 @@ impl Serve {
         let endpoint = state_dir.join("coordination/daemon-endpoint.json");
         let _ = fs::remove_file(&endpoint);
         let stderr_path = root.join("serve.stderr");
-        let mut command = Command::new(nils_test_support::bin::resolve("agent-session"));
-        command
-            .arg("serve")
-            .arg("--bind")
-            .arg("127.0.0.1:0")
-            .arg("--state-dir")
-            .arg(state_dir)
-            .arg("--machine")
-            .arg(MACHINE)
-            .args(args)
-            .env("HOME", home)
-            .env("AGENT_SESSION_TOKEN", TOKEN)
-            .env("AGENT_SESSION_TMUX_BIN", fake_tmux(root))
-            .env_remove("XDG_STATE_HOME")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::from(
-                fs::File::create(&stderr_path).expect("serve stderr"),
-            ));
-        nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
-        for key in BOARD_ENV {
-            command.env_remove(key);
-        }
-        for key in [
-            "AGENT_SESSION_RELAY_URL",
-            "AGENT_SESSION_RELAY_TOKEN",
-            "AGENT_SESSION_RELAY_INGRESS_TOKEN",
-        ] {
-            command.env_remove(key);
-        }
-        command.envs(env.iter().copied());
+        let mut command = super::serve_fixture::command(
+            root,
+            nils_test_support::bin::resolve("agent-session"),
+            state_dir,
+            &fake_tmux(root),
+            |command| {
+                command
+                    .args(["--bind", "127.0.0.1:0", "--machine", MACHINE])
+                    .args(args)
+                    .env("HOME", home)
+                    .env("AGENT_SESSION_TOKEN", TOKEN)
+                    .envs(env.iter().copied())
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::from(
+                        fs::File::create(&stderr_path).expect("serve stderr"),
+                    ));
+            },
+        );
         let mut child = command.spawn().expect("spawn serve");
         let deadline = Instant::now() + Duration::from_secs(15);
         let addr = loop {
