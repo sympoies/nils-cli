@@ -68,6 +68,10 @@ __NILS_TEST_PANE_START_TIME__
 with open(temporary, "x", encoding="utf-8") as handle:
     handle.write(str(os.getpid()) + " " + start_time + "\n")
 os.replace(temporary, ready)
+# The pane has finished writing and only watches for fixture cleanup now.
+calls_fd = os.environ.get("NILS_TEST_FAKE_TMUX_CALLS_FD")
+if calls_fd is not None:
+    os.close(int(calls_fd))
 deadline = time.monotonic() + int(os.environ["NILS_TEST_PANE_LIFETIME_MS"]) / 1000
 parent = os.environ["NILS_TEST_PANE_PARENT"]
 while os.path.isdir(parent) and time.monotonic() < deadline:
