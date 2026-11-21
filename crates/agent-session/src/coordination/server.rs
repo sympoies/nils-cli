@@ -737,7 +737,7 @@ pub(crate) fn send(
             cli::MessageSendArgs {
                 to_machine: None,
                 from_session: sender.id.clone(),
-                to_session: id.to_string(),
+                to_session: Some(id.to_string()),
                 body_file,
                 capability_file: Some(server_capability.path.clone()),
                 idempotency_key: body.idempotency_key,
@@ -796,10 +796,11 @@ pub(crate) fn reply(
     message: &str,
     token: &str,
     body: ReplyBody,
+    daemon: super::service_reply::Daemon<'_>,
 ) -> Result<Value, CliError> {
     let server_capability = authorize(context, id, token)?;
     with_text(context, id, "reply", &body.body, |body_file| {
-        mailbox::reply(
+        mailbox::reply_with_service(
             context,
             cli::MessageReplyArgs {
                 session: id.to_string(),
@@ -811,8 +812,28 @@ pub(crate) fn reply(
                 idempotency_key: body.idempotency_key,
                 format: nils_common::cli_contract::OutputFormat::Json,
             },
+            Some(daemon),
         )
     })
+}
+
+pub(crate) fn service_reply(
+    context: &CliContext,
+    id: &str,
+    message: &str,
+    token: &str,
+    request: super::service_reply::Request,
+    daemon: super::service_reply::Daemon<'_>,
+) -> Result<Value, CliError> {
+    let server_capability = authorize(context, id, token)?;
+    super::service_reply::receive(
+        context,
+        daemon,
+        id,
+        message,
+        &server_capability.path,
+        request,
+    )
 }
 
 pub(crate) fn wait_with_cancellation(

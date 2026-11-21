@@ -2,9 +2,17 @@ pub(crate) mod auth_alert;
 pub mod broker_proof;
 pub(crate) mod dispatch;
 pub(crate) mod drafts;
+mod message_send;
 pub(crate) mod operator_rules;
 pub(crate) mod permission;
 pub(crate) mod send_key;
+mod service_mailbox;
+
+pub use message_send::MessageSendArgs;
+pub use service_mailbox::{
+    MessageServiceAckArgs, MessageServiceInboxArgs, MessageServiceShowArgs,
+    ServiceMailboxCredential,
+};
 
 use std::path::PathBuf;
 
@@ -907,6 +915,12 @@ pub enum MessageCommand {
     Forward(MessageForwardArgs),
     /// Submit a body-file through the owning daemon as an explicitly admitted local service.
     ServiceSend(MessageServiceSendArgs),
+    /// Poll metadata for the exact admitted mailbox service.
+    ServiceInbox(MessageServiceInboxArgs),
+    /// Read one reply as the admitted mailbox service.
+    ServiceShow(MessageServiceShowArgs),
+    /// Acknowledge one reply as the admitted mailbox service.
+    ServiceAck(MessageServiceAckArgs),
     /// List bounded private mailbox metadata for the authenticated recipient.
     Inbox(MessageInboxArgs),
     /// Read one private message body as its authenticated recipient.
@@ -1053,37 +1067,6 @@ pub struct MessageForwardArgs {
     pub idempotency_key: String,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
-}
-
-#[derive(Debug, Args)]
-pub struct MessageSendArgs {
-    /// Authenticated managed session id sending the message.
-    #[arg(long = "from")]
-    pub from_session: String,
-    #[arg(long = "to")]
-    pub to_session: String,
-    /// Remote machine; omitted keeps local mailbox behavior.
-    #[arg(long)]
-    pub to_machine: Option<String>,
-    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
-    pub body_file: PathBuf,
-    /// Private capability file; defaults to AGENT_SESSION_CAPABILITY_FILE.
-    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
-    pub capability_file: Option<PathBuf>,
-    #[arg(long)]
-    pub idempotency_key: String,
-    #[arg(long)]
-    pub reply_to: Option<String>,
-    /// Request a reply within 1 second to 7 days (for example 1h).
-    #[arg(long, value_name = "DURATION")]
-    pub reply_by: Option<String>,
-    #[arg(long, value_name = "DURATION")]
-    pub expires_in: Option<String>,
-    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
-    pub format: OutputFormat,
-    /// Sender-declared category; omitted means uncategorized.
-    #[arg(long, value_enum)]
-    pub category: Option<MessageCategory>,
 }
 
 #[derive(Debug, Args)]

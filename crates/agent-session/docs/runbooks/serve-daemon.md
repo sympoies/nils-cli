@@ -746,8 +746,7 @@ host/tmux restarts require a new explicit Open.
 Mailbox service admission is opt-in. It grants submission of bounded private
 messages to current managed recipients through this daemon. The
 [service recipient contract](../specs/coordination-mailbox-v1.md#service-recipients)
-also specifies polling the exact service generation's own inbox for the local
-implementation in #3797. The credential grants no session creation, prompt,
+also covers polling the exact service generation's own inbox. The credential grants no session creation, prompt,
 shell, session mailbox access or session capability.
 Use a dedicated credential, never an operator bearer, federation token, or a
 borrowed session capability. `serve --mailbox-services-file FILE` (fallback:
@@ -772,8 +771,13 @@ Operator activation is a separate deployment decision:
    selectors of 1–128 ASCII letters, digits, hyphens, underscores, or dots.
    At most 32 services are active, with one active generation per ID. The
    local reply contract uses the following document, including `retired`
-   even when the array is empty. Convert the document in the same deployment
-   that installs the daemon supporting local service replies.
+   even when the array is empty.
+
+   When upgrading an existing admission document, stage a private copy with
+   the current `schema_version`, the same active `services` entries, and an
+   empty `retired` array. Activate the converted document with the daemon
+   that supports local service replies in the same deployment. Preserve any
+   retirement markers in later rewrites.
 
    ```json
    {

@@ -534,16 +534,6 @@ pub(crate) struct Submit {
     pub forward: Option<super::forwarding::Request>,
 }
 
-/// Bounded federation HTTP client: 15-second timeout, redirects refused.
-pub(crate) fn client() -> Result<reqwest::blocking::Client, CliError> {
-    client_builder().build().map_err(|_| unavailable())
-}
-
-pub(crate) fn client_builder() -> reqwest::blocking::ClientBuilder {
-    reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-}
 pub(super) fn recipient_not_discovered_message() -> String {
     format!(
         "remote recipient is absent from authorized peer discovery; check the exact --to session ID and --to-machine using `{} message peers` (unavailable hosts may be omitted)",
@@ -1913,7 +1903,8 @@ pub(crate) fn cli_forward(
 #[path = "remote_cli.rs"]
 mod cli_requests;
 use cli_requests::local_request;
-pub(crate) use cli_requests::{cli_peers, cli_reply, cli_send};
+pub(crate) use cli_requests::{cli_peers, cli_reply, cli_send, client, client_builder};
+pub(super) use cli_requests::{daemon_client, local_service_reply};
 
 pub(crate) fn cli_delivery(
     context: &CliContext,

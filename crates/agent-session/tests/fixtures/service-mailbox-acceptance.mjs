@@ -2,12 +2,13 @@
 // Disposable private roots, fixture identities only; no provider/model invocation.
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync, symlinkSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
+import { serviceReplyCases } from './service-mailbox-replies.mjs';
 import { writeHeartbeat } from './remote-mailbox-heartbeat.mjs';
 import { holdRegistryLock } from './remote-mailbox-registry-contention.mjs';
 
@@ -25,8 +26,13 @@ const address = host => ({ machine: host.machine, session_id: host.session, sess
 const origin = () => ({ machine: source.machine, service_id: service.id, service_generation: service.generation });
 const checks = [];
 let edge, heartbeat, hold = false, dropOnce = false, discoveryDenied = false, oldRelay = false, serviceDiscoveryRefusal = null;
-function admission(entries = [{ service_id: service.id, service_generation: service.generation, credential_file: service.credential }]) {
-  privateWrite(service.admission, { schema_version: 'agent-session.mailbox-services.v1', services: entries });
+const serviceEntry = principal => ({
+  service_id: principal.id, service_generation: principal.generation, credential_file: principal.credential,
+});
+function admission(entries = [serviceEntry(service)], retired = []) {
+  const next = service.admission + '.next';
+  privateWrite(next, { schema_version: 'agent-session.mailbox-services.v2', services: entries, retired });
+  renameSync(next, service.admission);
 }
 function seed(host) {
   const sessionRoot = join(host.root, 'sessions', host.session);
@@ -97,6 +103,9 @@ async function runCli(args, expected = 0) {
   assert(!result.stdout.includes('PRIVATE-SERVICE-BODY-CANARY')); assert(!result.stderr.includes(service.token));
   const value = JSON.parse(result.stdout); return value.data ?? value;
 }
+const replyCases = serviceReplyCases({
+  root, source, service, origin, serviceEntry, admission, privateWrite, registry, runCli, payload, submit,
+});
 try {
   hosts.forEach(seed); privateWrite(service.credential, service.token); admission();
   const server = createServer(async (req, res) => {
@@ -141,8 +150,12 @@ try {
   const showResponse = await fetch(source.url + `/sessions/${source.session}/messages/${local.message_id}/v1`, { headers: { Authorization: `Bearer ${source.operator}`, 'X-Agent-Session-Capability': source.capability } });
   const show = await showResponse.json(); assert.equal(show.data.coordination.body.classification, 'service_message'); assert.equal(show.data.coordination.body.text, row.body);
   assert.equal(show.data.coordination.sender.machine, source.machine);
-  const replyResponse = await fetch(source.url + `/sessions/${source.session}/messages/${local.message_id}/reply/v1`, { method: 'POST', headers: { Authorization: `Bearer ${source.operator}`, 'X-Agent-Session-Capability': source.capability, 'Content-Type': 'application/json' }, body: JSON.stringify({ body: 'reply', idempotency_key: 'service-reply-unsupported', if_revision: show.data.coordination.revision }) });
-  const reply = await replyResponse.json(); assert.equal(reply.error.code, 'mailbox-service-reply-unsupported');
+  const revision = show.data.coordination.revision;
+  const reply = await replyCases.postReply(source, local.message_id, revision, 'local-service-reply');
+  assert.equal(reply.ok, true, `local service reply must succeed (received ${reply.error?.code ?? 'no error code'})`);
+  const localReply = reply.data.coordination;
+  await replyCases.exerciseLocalPolling(local.message_id, revision, localReply);
+  checks.push('local-reply-forms-and-isolated-service-polling');
   assert.equal(local.sender.service_generation, service.generation); assert(!JSON.stringify(local).includes(row.body)); checks.push('explicit-local-service-origin');
   await submit(payload('abbreviated-recipient', { to_session: 'alpha' }), 404);
   assert.equal((await submit(payload('local-send'))).message_id, local.message_id);
@@ -269,6 +282,8 @@ try {
   const remoteShowResponse = await fetch(target.url + `/sessions/${target.session}/messages/${remote.message_id}/v1`, { headers: { Authorization: `Bearer ${target.operator}`, 'X-Agent-Session-Capability': target.capability } });
   assert.equal(remoteShowResponse.status, 200);
   const remoteShow = await remoteShowResponse.json(); assert.equal(remoteShow.data.coordination.sender.machine, source.machine);
+  await replyCases.assertReplyRefused(target, remote.message_id, remoteShow.data.coordination.revision,
+    'remote-service-reply', 'mailbox-service-reply-route-unsupported');
   checks.push('existing-machine-identity-provenance-preserved');
   const taggedLocal = await serviceCli('tagged-local', ['--category', 'progress']);
   assert.equal(taggedLocal.category, 'progress');assert.equal(taggedLocal.sender.kind, 'service');
@@ -306,6 +321,10 @@ try {
   for (const setting of ['AGENT_SESSION_RELAY_URL', 'AGENT_SESSION_RELAY_TOKEN', 'AGENT_SESSION_RELAY_INGRESS_TOKEN']) assert(noRoute.error.message.includes(setting));
   assert.match(noRoute.error.message, /daemon.*environment.*restart/);
   checks.push('typed-missing-daemon-federation-preserves-local-service');
+  await replyCases.exerciseAdmissionChanges(local.message_id, revision, localReply);
+  checks.push('generation-isolation-retirement-replay-and-fail-closed-admission');
+  await replyCases.exerciseHyphenatedQuotaRecovery();
+  checks.push('quota-recovery-with-hyphenated-service-selectors');
   for (const host of hosts) { assert(!host.stderr.includes(service.token)); assert(!host.stderr.includes('PRIVATE-SERVICE-BODY-CANARY')); }
   const warnings = source.stderr.split('\n').filter(line => line.startsWith('warning: service-send '));
   assert(!JSON.stringify(fallback).includes(schemaCanary), 'response must exclude recipient schema value');

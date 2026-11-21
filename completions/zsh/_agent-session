@@ -1170,7 +1170,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 (send)
 _arguments "${_arguments_options[@]}" : \
 '--from=[Authenticated managed session id sending the message]:FROM_SESSION:_default' \
-'--to=[]:TO_SESSION:_default' \
+'--to=[Session destination. Omit for a reply to an authenticated service origin]:TO_SESSION:_default' \
 '--to-machine=[Remote machine; omitted keeps local mailbox behavior]:TO_MACHINE:_default' \
 '--body-file=[]:PATH:_files' \
 '--capability-file=[Private capability file; defaults to AGENT_SESSION_CAPABILITY_FILE]:PATH:_files' \
@@ -1232,6 +1232,52 @@ _arguments "${_arguments_options[@]}" : \
 '--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--category=[Sender-declared category; omitted means uncategorized]:CATEGORY:(uncategorized progress handoff blocker decision report)' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(service-inbox)
+_arguments "${_arguments_options[@]}" : \
+'--service=[Service ID explicitly admitted by the owning daemon]:SERVICE:_default' \
+'--service-generation=[Exact admitted service generation]:SERVICE_GENERATION:_default' \
+'--credential-file=[Private service credential reference]:PATH:_files' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state=[]:STATE:_default' \
+'--cursor=[]:CURSOR:_default' \
+'--limit=[]:LIMIT:_default' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(service-show)
+_arguments "${_arguments_options[@]}" : \
+'--service=[Service ID explicitly admitted by the owning daemon]:SERVICE:_default' \
+'--service-generation=[Exact admitted service generation]:SERVICE_GENERATION:_default' \
+'--credential-file=[Private service credential reference]:PATH:_files' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--message=[]:MESSAGE:_default' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(service-ack)
+_arguments "${_arguments_options[@]}" : \
+'--service=[Service ID explicitly admitted by the owning daemon]:SERVICE:_default' \
+'--service-generation=[Exact admitted service generation]:SERVICE_GENERATION:_default' \
+'--credential-file=[Private service credential reference]:PATH:_files' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--message=[]:MESSAGE:_default' \
+'--if-revision=[]:IF_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
 '--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
 '-h[Print help (see more with '\''--help'\'')]' \
@@ -1877,6 +1923,9 @@ _agent-session__subcmd__message_commands() {
 'send-companion:Submit one message to the companion inbox through the daemon' \
 'forward:Forward one received message without reading or acknowledging its source' \
 'service-send:Submit a body-file through the owning daemon as an explicitly admitted local service' \
+'service-inbox:Poll metadata for the exact admitted mailbox service' \
+'service-show:Read one reply as the admitted mailbox service' \
+'service-ack:Acknowledge one reply as the admitted mailbox service' \
 'inbox:List bounded private mailbox metadata for the authenticated recipient' \
 'show:Read one private message body as its authenticated recipient' \
 'ack:Acknowledge one private message using revision compare-and-swap' \
@@ -1936,10 +1985,25 @@ _agent-session__subcmd__message__subcmd__send-companion_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session message send-companion commands' commands "$@"
 }
+(( $+functions[_agent-session__subcmd__message__subcmd__service-ack_commands] )) ||
+_agent-session__subcmd__message__subcmd__service-ack_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session message service-ack commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__message__subcmd__service-inbox_commands] )) ||
+_agent-session__subcmd__message__subcmd__service-inbox_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session message service-inbox commands' commands "$@"
+}
 (( $+functions[_agent-session__subcmd__message__subcmd__service-send_commands] )) ||
 _agent-session__subcmd__message__subcmd__service-send_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session message service-send commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__message__subcmd__service-show_commands] )) ||
+_agent-session__subcmd__message__subcmd__service-show_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session message service-show commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__message__subcmd__show_commands] )) ||
 _agent-session__subcmd__message__subcmd__show_commands() {

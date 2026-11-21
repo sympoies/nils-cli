@@ -1,7 +1,6 @@
 //! Narrow, explicitly admitted service submission; never session authority.
-use std::collections::HashSet;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -11,7 +10,10 @@ use crate::{CliContext, CliError, cli};
 
 pub(crate) const ROUTE: &str = "/coordination/services/messages/v1";
 pub(crate) const WIRE_VERSION: &str = "agent-session.remote-service-message.v1";
-const ADMISSION_VERSION: &str = "agent-session.mailbox-services.v1";
+#[path = "service_admission.rs"]
+mod admission;
+pub(crate) use admission::{admitted_tokens, authenticate, authenticate_inbox};
+pub(super) use admission::{refusal, require_recipient};
 const SENDER_PREFIX: &str = "service:";
 const FALLBACK_CODE: &str = "mailbox-service-unavailable";
 const RELAY_FORBIDDEN_CODE: &str = "mailbox-service-relay-forbidden";
@@ -36,6 +38,23 @@ impl Origin {
             serde_json::to_string(&(&self.machine, &self.service_id)).expect("string tuple")
         )
     }
+    /// The full address is the mailbox key, including for quota and rate accounting.
+    pub(super) fn recipient_key(&self) -> String {
+        let address = (&self.machine, &self.service_id, &self.service_generation);
+        format!(
+            "{SENDER_PREFIX}{}",
+            serde_json::to_string(&address).expect("string tuple")
+        )
+    }
+
+    pub(super) fn recipient_projection(&self) -> Value {
+        json!({
+            "kind": "service",
+            "machine": self.machine,
+            "service_id": self.service_id,
+            "service_generation": self.service_generation,
+        })
+    }
 }
 pub(crate) fn sender_origin(message: &mailbox::StoredMessage) -> Option<Origin> {
     sender_origin_metadata(&message.sender_session_id, &message.sender_incarnation)
@@ -50,7 +69,7 @@ pub(super) fn sender_origin_metadata(sender_id: &str, generation: &str) -> Optio
     };
     (origin.valid() && origin.stored_id() == sender_id).then_some(origin)
 }
-pub(crate) fn is_service_sender(id: &str) -> bool {
+pub(crate) fn is_service_principal(id: &str) -> bool {
     id.starts_with(SENDER_PREFIX)
 }
 pub(crate) fn valid_selector(value: &str) -> bool {
@@ -60,20 +79,6 @@ pub(crate) fn valid_selector(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Admission {
-    schema_version: String,
-    services: Vec<Entry>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Entry {
-    service_id: String,
-    service_generation: String,
-    credential_file: PathBuf,
-}
-
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Submit {
@@ -89,18 +94,6 @@ pub(crate) struct Submit {
     pub category: Option<cli::MessageCategory>,
 }
 
-/// Credentials admitted for mailbox submission; an unreadable document admits none.
-pub(crate) fn admitted_tokens(admission_file: Option<&Path>) -> Vec<String> {
-    let admission = admission_file
-        .and_then(|file| read_private_file(file, 32 * 1024).ok())
-        .and_then(|bytes| serde_json::from_slice::<Admission>(&bytes).ok());
-    admission
-        .into_iter()
-        .flat_map(|admission| admission.services)
-        .filter_map(|entry| credential(&entry.credential_file).ok())
-        .collect()
-}
-
 pub(crate) fn unauthorized() -> CliError {
     CliError::data(
         "mailbox-service-unauthorized",
@@ -110,51 +103,7 @@ pub(crate) fn unauthorized() -> CliError {
         })),
     )
 }
-pub(crate) fn authenticate(
-    admission_file: Option<&Path>,
-    service_id: &str,
-    generation: &str,
-    token: &str,
-    forbidden_tokens: &[&str],
-) -> Result<(), CliError> {
-    if !valid_selector(service_id)
-        || !valid_selector(generation)
-        || !(32..=256).contains(&token.len())
-        || token.bytes().any(|b| !b.is_ascii_graphic())
-        || forbidden_tokens
-            .iter()
-            .any(|other| crate::serve::constant_time_eq(token, other))
-    {
-        return Err(unauthorized());
-    }
-    let file = admission_file.ok_or_else(unauthorized)?;
-    let admission: Admission =
-        serde_json::from_slice(&read_private_file(file, 32 * 1024).map_err(|_| unauthorized())?)
-            .map_err(|_| unauthorized())?;
-    let mut ids = HashSet::new();
-    if admission.schema_version != ADMISSION_VERSION
-        || admission.services.len() > 32
-        || admission.services.iter().any(|entry| {
-            !valid_selector(&entry.service_id)
-                || !valid_selector(&entry.service_generation)
-                || !entry.credential_file.is_absolute()
-                || !ids.insert(&entry.service_id)
-        })
-    {
-        return Err(unauthorized());
-    }
-    let entry = admission
-        .services
-        .iter()
-        .find(|entry| entry.service_id == service_id && entry.service_generation == generation)
-        .ok_or_else(unauthorized)?;
-    let expected = credential(&entry.credential_file)?;
-    if !crate::serve::constant_time_eq(token, &expected) {
-        return Err(unauthorized());
-    }
-    Ok(())
-}
-fn credential(path: &Path) -> Result<String, CliError> {
+pub(super) fn credential(path: &Path) -> Result<String, CliError> {
     let token = String::from_utf8(read_private_file(path, 257).map_err(|_| unauthorized())?)
         .map_err(|_| unauthorized())?;
     let token = token.trim().to_string();
@@ -436,6 +385,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::fs;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    use std::path::PathBuf;
 
     const TOKEN: &str = "fixture-service-credential-0123456789";
     fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
@@ -443,7 +393,7 @@ mod tests {
         let credential = temp.path().join("credential");
         let admission = temp.path().join("admission.json");
         fs::write(&credential, TOKEN).unwrap();
-        fs::write(&admission, serde_json::to_vec(&json!({"schema_version":ADMISSION_VERSION, "services":[{"service_id":"reporter", "service_generation":"generation-1", "credential_file":credential}]})).unwrap()).unwrap();
+        fs::write(&admission, serde_json::to_vec(&json!({"schema_version":"agent-session.mailbox-services.v2","retired":[],"services":[{"service_id":"reporter", "service_generation":"generation-1", "credential_file":credential}]})).unwrap()).unwrap();
         for path in [&credential, &admission] {
             fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
         }

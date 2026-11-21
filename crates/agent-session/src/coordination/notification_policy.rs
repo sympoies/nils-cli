@@ -116,7 +116,7 @@ pub(super) fn admit(
         message.category.unwrap_or_default(),
     )?;
     message.notification_suppressed =
-        suppressed && !super::service::is_service_sender(&message.sender_session_id);
+        suppressed && !super::service::is_service_principal(&message.sender_session_id);
     if message.notification_suppressed {
         return Ok(NotificationProjection {
             state: "suppressed".into(),

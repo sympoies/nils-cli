@@ -6189,14 +6189,14 @@ async fn coordination_reply_handler(
         Ok(token) => token,
         Err(response) => return response,
     };
-    let context = state.context.clone();
+    let owner = state.clone();
     match tokio::task::spawn_blocking(move || {
-        coordination_server::reply(&context, &id, &message_id, &token, body)
+        console_service::reply(&owner, &id, &message_id, &token, body)
     })
     .await
     {
         Ok(Ok(value)) => {
-            state.coordination_notification_wake.notify_one();
+            console_service::wake_after_reply(&state, &value);
             coordination_ok(&state, notification_controller_available(value))
         }
         Ok(Err(error)) => envelope_err(error),

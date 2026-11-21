@@ -20,10 +20,11 @@ pub(in crate::coordination) fn admit(
     interval: i64,
     now: i64,
 ) {
-    let urgent = matches!(
-        message.category,
-        Some(MessageCategory::Blocker | MessageCategory::Decision)
-    ) || crate::coordination::service::is_service_sender(&message.sender_session_id);
+    let urgent =
+        matches!(
+            message.category,
+            Some(MessageCategory::Blocker | MessageCategory::Decision)
+        ) || crate::coordination::service::is_service_principal(&message.sender_session_id);
     if interval == 0 {
         if let Some(receipt) = registry.notifications.get_mut(&receipt_key(
             &message.recipient_session_id,

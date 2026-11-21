@@ -48,7 +48,7 @@ fn local_notification_policy_stores_progress_without_a_generation() {
         &context,
         MessageSendArgs {
             from_session: "recipient".into(),
-            to_session: "recipient".into(),
+            to_session: Some("recipient".into()),
             to_machine: None,
             body_file: body,
             capability_file: Some(super::super::capability_path(
