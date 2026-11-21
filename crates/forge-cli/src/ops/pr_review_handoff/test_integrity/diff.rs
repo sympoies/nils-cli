@@ -31,11 +31,113 @@ pub(crate) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
 pub(crate) fn additive_coverage(patch: &str) -> Result<bool, ForgeError> {
     let mut all_additive = !patch.trim().is_empty();
     let findings = inspect(patch, |file| {
-        let (cases, assertions, _) = signals(&file.additions, false);
-        all_additive &=
-            !file.change_is_non_additive && (!cases.is_empty() || !assertions.is_empty());
+        all_additive &= !file.change_is_non_additive && file_adds_coverage(file);
     })?;
     Ok(all_additive && findings.is_empty())
+}
+
+fn file_adds_coverage(file: &File) -> bool {
+    let (cases, assertions, _) = signals(&file.additions, false);
+    if file.old == "/dev/null" {
+        return !cases.is_empty();
+    }
+    (!cases.is_empty() || !assertions.is_empty())
+        && file
+            .additions
+            .split(|line| line == cases::HUNK)
+            .all(|lines| coverage_insertion(lines, file.new.ends_with(".rs")))
+}
+
+fn coverage_insertion(added: &[String], rust: bool) -> bool {
+    let mut lines = added
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty());
+    while let Some(line) = lines.next() {
+        if standalone_assertion(line) {
+            continue;
+        }
+        let Some(signature) = line.strip_prefix("#[test]").filter(|_| rust) else {
+            return false;
+        };
+        let signature = signature.trim_start();
+        let signature = if signature.is_empty() {
+            lines.next().unwrap_or("")
+        } else {
+            signature
+        };
+        if !complete_rust_test(signature, &mut lines) {
+            return false;
+        }
+    }
+    true
+}
+
+fn complete_rust_test<'a>(signature: &'a str, lines: &mut impl Iterator<Item = &'a str>) -> bool {
+    let Some((name, body)) = signature
+        .strip_prefix("fn ")
+        .and_then(|signature| signature.split_once('{'))
+    else {
+        return false;
+    };
+    let Some(name) = name.trim_end().strip_suffix("()") else {
+        return false;
+    };
+    if name.is_empty() || !name.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
+        return false;
+    }
+
+    // The test must close inside its insertion, before the next old line.
+    let mut depth = 1;
+    for line in std::iter::once(body).chain(lines) {
+        if ["/*", "*/", "r#"]
+            .iter()
+            .any(|marker| line.contains(marker))
+        {
+            return false;
+        }
+        let mut end = None;
+        let complete_line = cases::visit_braces(line, |offset, brace| {
+            if end.is_none() {
+                depth += if brace == '{' { 1 } else { -1 };
+                if depth == 0 {
+                    end = Some(offset + 1);
+                }
+            }
+        });
+        if !complete_line {
+            return false;
+        }
+        if let Some(end) = end {
+            let rest = line[end..].trim_start();
+            return rest.is_empty() || rest.starts_with("//");
+        }
+    }
+    false
+}
+
+fn standalone_assertion(line: &str) -> bool {
+    let line = line.strip_suffix(';').unwrap_or(line);
+    if line.contains([';', '{', '}', '\\']) {
+        return false;
+    }
+    if let Some(condition) = line.strip_prefix("assert ") {
+        return !condition.trim().is_empty();
+    }
+    line.ends_with(')')
+        && line.split_once('(').is_some_and(|(name, _)| {
+            matches!(
+                name.trim_end(),
+                "assert"
+                    | "assert!"
+                    | "assert_eq!"
+                    | "assert_ne!"
+                    | "debug_assert!"
+                    | "debug_assert_eq!"
+                    | "debug_assert_ne!"
+                    | "expect"
+            )
+        })
 }
 
 fn inspect(patch: &str, mut inspect_file: impl FnMut(&File)) -> Result<Vec<Finding>, ForgeError> {
@@ -94,6 +196,13 @@ fn inspect(patch: &str, mut inspect_file: impl FnMut(&File)) -> Result<Vec<Findi
                     file.after.push(content.into());
                 }
                 " " if remaining.0 > 0 && remaining.1 > 0 => {
+                    if file
+                        .additions
+                        .last()
+                        .is_some_and(|line| line != cases::HUNK)
+                    {
+                        file.additions.push(cases::HUNK.into());
+                    }
                     remaining.0 -= 1;
                     remaining.1 -= 1;
                     file.before.push(content.into());
@@ -165,17 +274,10 @@ fn range(value: Option<&str>, prefix: char) -> Result<usize, ForgeError> {
     length.parse::<usize>().map_err(|_| incomplete())
 }
 
-pub(crate) fn in_test_directory(path: &str) -> bool {
-    path.rsplit_once('/').is_some_and(|(directory, _)| {
-        directory
-            .split('/')
-            .any(|part| matches!(part, "test" | "tests" | "__tests__"))
-    })
-}
-
 fn test_path(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
-    in_test_directory(path)
+    path.split('/')
+        .any(|p| matches!(p, "test" | "tests" | "__tests__"))
         || name.starts_with("test_")
         || name.ends_with("_test.go")
         || name.contains(".test.")

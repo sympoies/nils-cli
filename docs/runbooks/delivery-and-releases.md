@@ -72,7 +72,8 @@ See the [scope consumption contract](../specs/affected-scope-ci-consumption-v1.m
 
 Use a `test/` branch and `forge-cli pr create --kind test` for additive
 coverage of already-correct behavior. For example, add an assertion for a
-previously untested return value in a dedicated test file. Include
+previously untested return value in an existing dedicated test file, or add a
+new test case in a dedicated test file. Include
 `## Test changes` in the body and use `None.` when the detector reports no
 findings. Record the focused run and ordinary validation in `## Test plan`.
 

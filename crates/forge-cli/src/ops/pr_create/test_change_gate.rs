@@ -65,7 +65,7 @@ pub(crate) fn policy(
     let comparison = format!("{}...{}", fetched.trim(), head_oid.trim());
     let paths = comparison_diff(workdir, &comparison, &["--name-only", "-z"])?;
     let test_sources_only = paths.trim_end_matches('\0').split('\0').all(|path| {
-        diff::in_test_directory(path)
+        dedicated_test_path(path)
             && diff::source(path)
             && !path
                 .split('/')
@@ -96,6 +96,15 @@ pub(crate) fn policy(
         effective.require_kinds.push(kind);
     }
     Ok((effective, None))
+}
+
+fn dedicated_test_path(path: &str) -> bool {
+    let mut components = path.split('/');
+    match components.next() {
+        Some("test" | "tests" | "__tests__") => true,
+        Some("crates") => components.nth(1) == Some("tests"),
+        _ => false,
+    }
 }
 
 pub(crate) fn validate_body(kind: PrKind, body: &str) -> Result<(), ForgeError> {

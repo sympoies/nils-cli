@@ -270,15 +270,34 @@ fn test_first_kinds_invalid_list_is_reported_by_create_and_deliver() {
     }
 }
 
+const EXISTING_TEST: &str =
+    "#[test]\nfn example() {\n    let delay = 1;\n    assert_eq!(delay, 1);\n}\n";
+const ADDITIVE_TEST: &str = "#[test]\nfn example() {\n    let delay = 1;\n    assert_eq!(delay, 1);\n    assert!(delay > 0);\n}\n";
+
+const NEW_TEST_WITH_SETUP: &str =
+    "#[test]\nfn added() {\n    let value = crate_value();\n    assert_eq!(value, 1);\n}\n";
+
 #[test]
 fn test_kind_distinguishes_additive_coverage_from_repairs_and_production() {
-    let existing = "#[test]\nfn example() {\n    let delay = 1;\n    assert_eq!(delay, 1);\n}\n";
-    let additive = "#[test]\nfn example() {\n    let delay = 1;\n    assert_eq!(delay, 1);\n    assert!(delay > 0);\n}\n";
-    let new_test = "#[test]\nfn added() { assert_eq!(crate_value(), 1); }\n";
+    let existing = EXISTING_TEST;
+    let additive = ADDITIVE_TEST;
+    let new_test = NEW_TEST_WITH_SETUP;
     for (kinds, path, change, required) in [
         ("bug", "tests/example.rs", additive.to_owned(), false),
         ("test", "tests/example.rs", additive.to_owned(), false),
         ("test", "tests/new.rs", new_test.to_owned(), false),
+        (
+            "test",
+            "crates/math/tests/new.rs",
+            new_test.to_owned(),
+            false,
+        ),
+        (
+            "test",
+            "tests/example.rs",
+            format!("{existing}\n{NEW_TEST_WITH_SETUP}"),
+            false,
+        ),
         (
             "bug",
             "src/lib.rs",
@@ -326,105 +345,155 @@ fn test_kind_distinguishes_additive_coverage_from_repairs_and_production() {
             true,
         ),
     ] {
-        let temp = TempDir::new().unwrap();
-        let repo = init_subject_repo(
-            temp.path(),
-            "repo",
-            "https://github.com/example/project.git",
-        );
-        fs::create_dir(repo.join("tests")).unwrap();
-        fs::create_dir(repo.join("src")).unwrap();
-        fs::create_dir(repo.join("tests/fixtures")).unwrap();
-        fs::write(repo.join("tests/example.rs"), existing).unwrap();
+        check_test_kind_comparison(kinds, path, &change, required);
+    }
+}
+
+#[test]
+fn test_kind_requires_evidence_for_mixed_insertions() {
+    let timing_repair = EXISTING_TEST.replace(
+        "    let delay",
+        "    std::thread::yield_now();\n    let delay",
+    );
+    for change in [
+        format!("{timing_repair}\n{NEW_TEST_WITH_SETUP}"),
+        ADDITIVE_TEST.replace(
+            "    let delay",
+            "    std::thread::yield_now();\n    let delay",
+        ),
+        EXISTING_TEST.replace(
+            "    assert_eq!",
+            "    assert!(true); return;\n    assert_eq!",
+        ),
+        EXISTING_TEST.replace(
+            "    assert_eq!(delay, 1);",
+            "    if delay > 1 {\n    assert_eq!(delay, 1);\n    }\n    assert!(delay > 0);",
+        ),
+    ] {
+        check_test_kind_comparison("bug", "tests/example.rs", &change, true);
+    }
+}
+
+#[test]
+fn test_kind_requires_evidence_for_nested_production_paths() {
+    check_test_kind_comparison(
+        "bug",
+        "src/domain/tests/runtime.rs",
+        "pub fn original() -> u8 { 1 }\npub fn adjust(value: u8) -> u8 { assert!(value > 0); value }\n",
+        true,
+    );
+}
+
+fn check_test_kind_comparison(kinds: &str, path: &str, change: &str, required: bool) {
+    let temp = TempDir::new().unwrap();
+    let repo = init_subject_repo(
+        temp.path(),
+        "repo",
+        "https://github.com/example/project.git",
+    );
+    fs::create_dir(repo.join("tests")).unwrap();
+    fs::create_dir(repo.join("src")).unwrap();
+    fs::create_dir(repo.join("tests/fixtures")).unwrap();
+    fs::write(repo.join("tests/example.rs"), EXISTING_TEST).unwrap();
+    fs::write(
+        repo.join("src/lib.rs"),
+        "pub fn crate_value() -> u8 { 1 }\n",
+    )
+    .unwrap();
+    if path == "src/domain/tests/runtime.rs" {
+        fs::create_dir_all(repo.join("src/domain/tests")).unwrap();
         fs::write(
             repo.join("src/lib.rs"),
-            "pub fn crate_value() -> u8 { 1 }\n",
+            "#[path = \"domain/tests/runtime.rs\"] pub mod runtime;\n",
         )
         .unwrap();
-        fs::write(repo.join("tests/fixtures/input.json"), "{\"sample\": 1}\n").unwrap();
-        fs::write(
-            repo.join(".forge-cli.toml"),
-            format!("[test_first]\nrequire = true\nrequire_kinds = [\"{kinds}\"]\n"),
-        )
-        .unwrap();
-        git(&repo, &["add", "."]);
-        git(&repo, &["commit", "-qm", "baseline"]);
-        install_local_remote(&repo, temp.path());
-        git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
-        git(&repo, &["checkout", "-qb", "test/example"]);
-        fs::write(repo.join("tests/example.rs"), additive).unwrap();
-        fs::write(repo.join(path), change).unwrap();
-        git(&repo, &["add", "."]);
-        git(&repo, &["commit", "-qm", "test change"]);
-        git(
-            &repo,
-            &["update-ref", "refs/remotes/origin/test/example", "HEAD"],
+        fs::write(repo.join(path), "pub fn original() -> u8 { 1 }\n").unwrap();
+    }
+    fs::write(repo.join("tests/fixtures/input.json"), "{\"sample\": 1}\n").unwrap();
+    fs::write(
+        repo.join(".forge-cli.toml"),
+        format!("[test_first]\nrequire = true\nrequire_kinds = [\"{kinds}\"]\n"),
+    )
+    .unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "baseline"]);
+    install_local_remote(&repo, temp.path());
+    git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    git(&repo, &["checkout", "-qb", "test/example"]);
+    fs::write(repo.join("tests/example.rs"), ADDITIVE_TEST).unwrap();
+    let changed_file = repo.join(path);
+    fs::create_dir_all(changed_file.parent().unwrap()).unwrap();
+    fs::write(changed_file, change).unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "test change"]);
+    git(
+        &repo,
+        &["update-ref", "refs/remotes/origin/test/example", "HEAD"],
+    );
+    git(
+        &repo,
+        &["branch", "--set-upstream-to", "origin/test/example"],
+    );
+    if kinds == "test" && path == "tests/new.rs" {
+        check_live_test_only_create_and_adoption(&repo);
+    }
+    let workdir = if kinds == "bug" && path == "src/lib.rs" {
+        git(&repo, &["config", "diff.relative", "true"]);
+        repo.join("tests")
+    } else {
+        repo.clone()
+    };
+    let stub = StubEnv::new().gh_stub("#!/bin/sh\nexit 99\n");
+    for operation in ["create", "deliver"] {
+        let out = run_forge_cli_in(
+            &stub,
+            &[
+                "--provider",
+                "github",
+                "--host",
+                "github.com",
+                "--repo",
+                "example/project",
+                "--format",
+                "json",
+                "--dry-run",
+                "pr",
+                operation,
+                "--kind",
+                "test",
+                "--base",
+                "main",
+                "--title",
+                "Change test",
+                "--body",
+                "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
+            ],
+            Some(&workdir),
         );
-        git(
-            &repo,
-            &["branch", "--set-upstream-to", "origin/test/example"],
-        );
-        if kinds == "test" && path == "tests/new.rs" {
-            check_live_test_only_create_and_adoption(&repo);
-        }
-        let workdir = if kinds == "bug" && path == "src/lib.rs" {
-            git(&repo, &["config", "diff.relative", "true"]);
-            repo.join("tests")
-        } else {
-            repo.clone()
-        };
-        let stub = StubEnv::new().gh_stub("#!/bin/sh\nexit 99\n");
-        for operation in ["create", "deliver"] {
-            let out = run_forge_cli_in(
-                &stub,
-                &[
-                    "--provider",
-                    "github",
-                    "--host",
-                    "github.com",
-                    "--repo",
-                    "example/project",
-                    "--format",
-                    "json",
-                    "--dry-run",
-                    "pr",
-                    operation,
-                    "--kind",
-                    "test",
-                    "--base",
-                    "main",
-                    "--title",
-                    "Change test",
-                    "--body",
-                    "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
-                ],
-                Some(&workdir),
+        if operation == "deliver" {
+            assert_eq!(out.code, 0, "{kinds} {path} {operation}: {out:?}");
+            let envelope = parse_envelope(&out.stdout);
+            let verdict = envelope["data"]["local_preflight"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["rule"] == "test_first");
+            assert_eq!(
+                verdict.is_some_and(|v| v["ok"] == false),
+                required,
+                "{kinds} {path} {operation}: {out:?}"
             );
-            if operation == "deliver" {
-                assert_eq!(out.code, 0, "{kinds} {path} {operation}: {out:?}");
-                let envelope = parse_envelope(&out.stdout);
-                let verdict = envelope["data"]["local_preflight"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .find(|v| v["rule"] == "test_first");
+        } else {
+            assert_eq!(
+                out.code,
+                if required { 65 } else { 0 },
+                "{kinds} {path} {operation}: {out:?}"
+            );
+            if required {
                 assert_eq!(
-                    verdict.is_some_and(|v| v["ok"] == false),
-                    required,
-                    "{kinds} {path} {operation}: {out:?}"
+                    parse_envelope(&out.stdout)["error"]["code"],
+                    "test_first_evidence_required"
                 );
-            } else {
-                assert_eq!(
-                    out.code,
-                    if required { 65 } else { 0 },
-                    "{kinds} {path} {operation}: {out:?}"
-                );
-                if required {
-                    assert_eq!(
-                        parse_envelope(&out.stdout)["error"]["code"],
-                        "test_first_evidence_required"
-                    );
-                }
             }
         }
     }

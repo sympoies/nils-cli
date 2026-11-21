@@ -58,21 +58,31 @@ fn module_open(line: &str) -> Option<String> {
 
 /// Brace counts outside string/char literals and line comments.
 fn braces(line: &str) -> (i32, i32) {
-    let chars: Vec<char> = line.chars().collect();
-    let (mut opens, mut closes, mut index, mut string) = (0, 0, 0, false);
+    let (mut opens, mut closes) = (0, 0);
+    visit_braces(line, |_, brace| match brace {
+        '{' => opens += 1,
+        '}' => closes += 1,
+        _ => unreachable!("only braces are visited"),
+    });
+    (opens, closes)
+}
+
+pub(super) fn visit_braces(line: &str, mut visit: impl FnMut(usize, char)) -> bool {
+    let chars: Vec<_> = line.char_indices().collect();
+    let (mut index, mut string) = (0, false);
     while index < chars.len() {
-        match chars[index] {
+        let (offset, ch) = chars[index];
+        match ch {
             '\\' if string => index += 1,
             '"' => string = !string,
-            '/' if !string && chars.get(index + 1) == Some(&'/') => break,
-            '\'' if !string && chars.get(index + 2) == Some(&'\'') => index += 2,
-            '{' if !string => opens += 1,
-            '}' if !string => closes += 1,
+            '/' if !string && chars.get(index + 1).is_some_and(|&(_, c)| c == '/') => break,
+            '\'' if !string && chars.get(index + 2).is_some_and(|&(_, c)| c == '\'') => index += 2,
+            '{' | '}' if !string => visit(offset, ch),
             _ => {}
         }
         index += 1;
     }
-    (opens, closes)
+    !string
 }
 
 /// A JavaScript case whose title has not been seen yet.
