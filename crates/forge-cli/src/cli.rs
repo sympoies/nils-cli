@@ -1273,12 +1273,11 @@ pub struct PrDeliverArgs {
     /// Fail when selected labels are missing, not applicable, or conflict.
     #[arg(long = "strict-labels", action = ArgAction::SetTrue)]
     pub strict_labels: bool,
-    /// Directory holding a `test-first-evidence` record, forwarded to the
-    /// create step and verified by the test-first gate when
-    /// `[test_first].require` is true and `require_kinds` selects this kind
-    /// (default: feature/bug). Test-kind repairs and mixed changes are gated
-    /// when bug or test is selected. Required records must be complete v2
-    /// records bound to the current baseline and delivery subject.
+    /// Verified v2 test-first evidence for the current baseline and delivery
+    /// subject. The gate applies when `[test_first].require` is true and
+    /// `require_kinds` selects this kind (default: feature/bug). It also applies
+    /// to test-kind repairs and mixed changes when bug or test is selected.
+    /// The directory is forwarded to creation and checked on adoption.
     #[arg(long = "test-first-evidence", value_name = "DIR")]
     pub test_first_evidence: Option<String>,
     /// Cumulative CI-wait budget before declaring `checks_timeout` (default `30m`).
