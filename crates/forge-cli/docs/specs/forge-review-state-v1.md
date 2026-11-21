@@ -9,6 +9,13 @@ validation rules, and output schema versions.
 
 ## Operations
 
+Find the contract by task:
+
+- [Review transaction state and pending-review recovery](#review-transaction-state-and-pending-review-recovery)
+- [Designated review handoff](#pr-review-handoff-assign--inspect--check--surrender--recover)
+- [Review-loop inspection and repair](#pr-review-loop-inspect--observe--extend--validate)
+- [Pending-review delete compatibility surface](#pr-pending-review-delete-compatibility-surface)
+
 ### Review transaction state and pending-review recovery
 
 - Threaded native reviews use the provider-visible, append-only
@@ -78,6 +85,9 @@ validation rules, and output schema versions.
   environment-variable values, local paths, and private identity/profile names.
   The durable identity route contains only portable lens names and the semantic
   decision; environment-owned routing resolves the actor outside the receipt.
+
+#### Pending-review snapshots and recovery
+
 - `pr pending-review inspect <id> --review <PRR_...>` emits
   `cli.forge-cli.pr.pending-review.inspect.v1`. Its complete snapshot requires
   PR/head/review identity, author, commit, raw and semantic body,
@@ -285,6 +295,9 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   Forge-cli releases before this change fail closed when they read a ledger
   that contains the new record kind or a handoff `base_ref`. The fleet must
   run this release before the first live carry-over or assignment writes one.
+
+#### Surrender and recovery
+
 - `surrender <id> --expected-head <sha> --expected-state <digest>` is a
   reviewer-owned relinquishment at the current assignment generation. The
   exact retained ledger tip selects that generation, so surrender does not
@@ -339,6 +352,9 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   reasons and surrender retain their existing behavior. A later `assign` by the
   recorded coordinator starts a fresh generation and restores the designated gate.
   See the [publisher recovery runbook](../runbooks/unavailable-review-publisher.md).
+
+#### Coordinator takeover
+
 - Successor takeover uses `recover <id> --reason coordinator-retired
   [--coordinator-session <recorded-session-id>[@machine]] --base-sha <current-base>
   --expected-head <current-head> --expected-state <exact-tip>`. The selector
@@ -578,6 +594,9 @@ for deleted tests, assertion changes and new skips in the PR comparison.
   which is what stops a ledger comment from rendering blank. Do not adopt the
   combined form in a workflow without first checking that its outcome is
   single-shot.
+
+#### Findings and corrections
+
 - Observation-array rows may include `status` or `disposition` with `open`,
   `fixed`, `accepted`, `preference`, or `follow-up`. Terminal dispositions are
   durable and non-blocking. Every new-head observation must include each
@@ -643,6 +662,9 @@ for deleted tests, assertion changes and new skips in the PR comparison.
   its original assignment. Reusing that receipt after reassignment fails as
   `review_correction_invalid` before any provider write. Establish the new
   reviewer interval with an ordinary observation inventory instead.
+
+#### Repair budgets and extensions
+
 - The default budget is five repair rounds, two consecutive no-progress rounds,
   and zero automatic reopens for a previously fixed lifecycle fingerprint.
   Same-head/same-findings retries append nothing. Only a new reviewed head
@@ -813,6 +835,9 @@ for deleted tests, assertion changes and new skips in the PR comparison.
   `fixed`, then merge at that head. Doing every repair first and then trying to
   record the history is unrecoverable, because the pre-repair head is gone and
   the round count cannot be reconstructed.
+
+#### Output and offline validation
+
 - The three provider-backed commands emit their own
   `cli.forge-cli.pr.review-loop.*.v1` schema with `data.appended` and
   `data.outcome_posted`. Only `observe` can set `outcome_posted`, and never

@@ -142,7 +142,8 @@ devlog fold
 
 Fold moves entries dated strictly before today (in the system time zone) into
 `YYYY-MM.md` and deletes those fragments. Today's and future entries remain
-pending. Month entries sort by date descending, then slug ascending; existing
+pending. Use `--before YYYY-MM-DD` to supply a recorded exclusive cutoff when
+replaying a fold. Month entries sort by date descending, then slug ascending; existing
 entries without an identity comment use their date and exact title as identity
 and their title as the ordering tie-breaker. Prose before the first entry and
 entry bodies survive. Duplicate identities or incompatible content are refused

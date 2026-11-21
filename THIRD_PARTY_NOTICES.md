@@ -3,7 +3,7 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `699bbe8663230f0590c9f2aae75dbaeade72e8cf32a857380ab046a1cd03f152`
+- Cargo.lock SHA256: `48f78afdf874619e7d2bb85420e0afb905b283ab97ff3815599d38d4396f4067`
 - Third-party crates (`source != null`): 487
 
 ## Notice Extraction Policy
@@ -1122,7 +1122,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### graphql-tools 0.5.12
+### graphql-tools 0.5.13
 
 - License: `MIT`
 - Source: `crates.io`
@@ -2865,7 +2865,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### sha1 0.10.6
+### sha1 0.10.7
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -3709,7 +3709,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### webpki-roots 1.0.11
+### webpki-roots 1.0.12
 
 - License: `CDLA-Permissive-2.0`
 - Source: `crates.io`

@@ -466,6 +466,7 @@ fn assert_quarantined_operator_restart(force: bool) {
     let tmp = tempfile::tempdir().unwrap();
     let context = context(tmp.path());
     let tmux = fake_tmux(tmp.path());
+    let _observations = tmux.synchronous_observations();
     let record = failed_runtime(&context, tmp.path(), &tmux, false);
     let old_launch = launch_id(&record).unwrap();
     let before = log(tmp.path());
@@ -487,12 +488,14 @@ fn assert_quarantined_operator_restart(force: bool) {
     }
     assert!(!log(tmp.path())[before.len()..].contains("paste-buffer"));
     assert!(!log(tmp.path())[before.len()..].contains("send-keys"));
+    let exited = tmux.observe_provider_exit(&context, &old_launch);
     let watcher = on_relaunched_prompt(&context, tmp.path(), &old_launch);
 
     let result = restart(&context, &restart_args(&tmux, force, 10));
     // Fail on the admission regression before waiting for a relaunch that
     // cannot happen. The fixture watcher is independently bounded.
     let receipt = serde_json::to_value(result.expect("restart quarantined runtime")).unwrap();
+    exited.join().unwrap();
     watcher.join().unwrap();
 
     let current = load_session_record(&context, ID).unwrap();

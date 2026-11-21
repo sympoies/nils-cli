@@ -17,6 +17,6 @@ source "$repo_root/scripts/dev-env.sh"
 # Use the same cutoff on contributor machines and CI runners.
 export TZ=UTC
 devlog check --base HEAD
-devlog fold
+devlog fold "$@"
 devlog check --base HEAD
 printf '%s\n' 'Review the diff, commit as chore(devlog): fold accepted fragments, then deliver through the normal PR checks and review.'

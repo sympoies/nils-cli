@@ -88,7 +88,13 @@ jobs:
         if: steps.discover.outputs.newer == 'true'
         uses: dtolnay/rust-toolchain@1.100.0
 
-      - name: Compile existing module contract tests
+      - name: Install cargo-nextest
+        if: steps.discover.outputs.newer == 'true'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Build and verify the module contract test archive
         id: compile
         if: steps.discover.outputs.newer == 'true'
         continue-on-error: true
@@ -97,19 +103,22 @@ jobs:
         # Build only trusted checkout code. Candidate execution below gets a cleared environment.
         run: |
           source scripts/dev-env.sh
+          export CLAUDE_CONTRACT_ARCHIVE="$RUNNER_TEMP/claude-contract-tests.tar.zst"
+          CLAUDE_CONTRACT_NEXTEST="$(command -v cargo-nextest)"
+          export CLAUDE_CONTRACT_NEXTEST
           node <<'JS'
           const fs = require("node:fs");
           const { spawnSync } = require("node:child_process");
-          const args = ["test", "--locked", "-p", "nils-agent-session", "--lib", "--no-run", "--message-format=json"];
+          const args = ["nextest", "archive", "--locked", "-p", "nils-agent-session", "--lib",
+            "--archive-file", process.env.CLAUDE_CONTRACT_ARCHIVE];
           const output = spawnSync("cargo", args, { encoding: "utf8", timeout: 1800000, maxBuffer: 64 * 1024 * 1024 });
           fs.writeFileSync("claude-release-check/contract-build.json", JSON.stringify({ command: ["cargo", ...args].join(" "), exit: output.status, signal: output.signal }));
           fs.writeFileSync("claude-release-check/contract-build.log", `${output.stdout || ""}${output.stderr || ""}`);
           if (output.status !== 0) process.exit(1);
-          const records = output.stdout.split("\n").filter(Boolean).map(line => JSON.parse(line));
-          const binaries = records.filter(row => row.reason === "compiler-artifact" && row.profile.test && row.executable && row.target.name === "agent_session");
-          if (binaries.length !== 1) throw new Error("Expected one compiled module contract test binary");
-          fs.appendFileSync(process.env.GITHUB_ENV, `CLAUDE_CONTRACT_TEST_BINARY=${binaries[0].executable}\n`);
           JS
+          node --test-name-pattern='isolated collector runs the guarded library contract' scripts/ci/tests/claude-release-check.test.cjs
+          printf 'CLAUDE_CONTRACT_ARCHIVE=%s\nCLAUDE_CONTRACT_NEXTEST=%s\n' \
+            "$CLAUDE_CONTRACT_ARCHIVE" "$CLAUDE_CONTRACT_NEXTEST" >> "$GITHUB_ENV"
 
       - name: Collect isolated contract evidence and range-only patch
         if: always() && !cancelled() && steps.discover.outcome != 'skipped'

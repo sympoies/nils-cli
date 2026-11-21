@@ -2523,7 +2523,6 @@ fn state_with_session_collector(
         session_collector,
     )
 }
-
 fn state_with_dependencies(
     state_dir: &Path,
     token: Option<&str>,
@@ -2552,6 +2551,7 @@ fn state_with_dependencies(
         tmux_bin,
         attach_brokers: AttachBrokerRegistry::default(),
         provider_prompt_discovery: Arc::new(ProviderPromptDiscoveryRegistry::default()),
+        reply_observer: Default::default(),
         activity_broker,
         codex_controls: Arc::new(StdMutex::new(HashMap::new())),
         account_switches: AccountSwitchRegistry::default(),

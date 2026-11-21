@@ -107,6 +107,15 @@ the contract below describes implemented behavior.
   direct prompts retain their provider acknowledgement and image-label handling.
   Initial creation prompts retain their separate accepted-before-render contract.
 
+  The direct Claude route sends prompt text in a bracketed paste. An existing
+  PNG, JPEG, GIF, or WebP path can appear on its own line, with optional quotes.
+  When the prompt also contains other text, delivery preserves the LF between
+  rows so Claude can recognize the path separately. Claude owns recognition
+  and attachment. Missing paths and paths embedded in prose receive ordinary
+  text delivery. Text-only multiline prompts retain tmux's CR separators.
+  A prompt consisting solely of an existing image path can use Claude's
+  observed image label for acknowledgement.
+
   An explicit owner clear followed by another submission remains available.
   Stale-draft admission saves the exact observation durably before using the
   existing cleanup keys; it never submits the draft or sends Ctrl+C. Direct replies
@@ -114,8 +123,8 @@ the contract below describes implemented behavior.
   when the composer is observably empty. Initial creation prompts and internal
   coordination notifications retain their separately owned admission policy.
 
-  The v2 route additionally accepts optional `request_id` and `require_idle`
-  fields. Omitting both preserves the existing response and delivery behavior.
+  The v2 route accepts optional `request_id`, `require_idle` and
+  [`expected_idle_ready_boundary`](#idle-ready-boundary) fields.
   `request_id` contains 1–128 ASCII letters, digits, dots, underscores or
   hyphens; invalid IDs return `400 invalid-request-id`. `require_idle` is a
   boolean, default false. Malformed JSON/types or other unknown fields return
@@ -123,9 +132,9 @@ the contract below describes implemented behavior.
 
   A keyed attempt is scoped to the canonical session ID, exact expected
   incarnation and request ID. The daemon durably claims that key before
-  dispatch. Repeating the same text and idle flag returns or safely confirms the
-  recorded outcome without sending again; different text or idle flag returns
-  `409 request-id-conflict`, preserving the original receipt. An in-flight,
+  dispatch. Repeating the same text, idle flag and boundary field returns or
+  safely confirms the recorded outcome without sending again. Changing any of
+  those values returns `409 request-id-conflict`, preserving the original receipt. An in-flight,
   interrupted or incomplete claim returns `unknown`, never authorizing another
   dispatch. This is at-most-once dispatch, not a guarantee of delivery or turn
   completion.
@@ -144,8 +153,11 @@ the contract below describes implemented behavior.
 
   `outcome` is `submitted`, `command_dispatched`, `refused` or `unknown`.
   `code` is null for submitted/command-dispatched, the stable refusal code for
-  refused, or `structured-prompt-outcome-unknown` for unknown. Successful
-  submitted POSTs retain
+  refused, or `structured-prompt-outcome-unknown` for unknown. A confirmed
+  boundary-fenced prompt adds `delivery_kind: "idle_boundary"` to its submitted
+  receipt, including when confirmed by lookup.
+
+  Successful submitted POSTs retain
   `data.machine`, `data.submitted: true`, `data.session_incarnation` and the
   optional `data.queued: true`, adding `data.receipt`. Observed command UI uses
   the HTTP 200 command-dispatch envelope described below, with `submitted: false`
@@ -338,8 +350,11 @@ the contract below describes implemented behavior.
 
   Private receipt claims and results use hashed filenames within session
   storage, synced before dispatch and atomically published after completion.
-  They contain identifiers, a digest of text/idle policy and fixed outcome
-  metadata, never prompt text or provider output. No automatic expiry or
+  They contain identifiers, a digest of the payload and fixed outcome metadata.
+  For a boundary-fenced request the digest covers the operation, text, idle
+  policy and exact boundary token. Only private claim storage retains the token
+  for fingerprint verification during reconciliation. Prompt text and provider
+  output are excluded. No automatic expiry or
   pruning is performed: receipts survive daemon restart and runtime
   replacement for the session lifetime. Explicit session deletion removes
   them; archive also ends the managed session and deletes its receipts. Lookup
@@ -401,3 +416,45 @@ the contract below describes implemented behavior.
   two submissions within one incarnation. Clients MUST NOT automatically replay an arbitrary failed
   terminal send through this route because transport and busy failures can leave provider-delivery
   outcome unknown. Incarnation conflict and outcome-unknown handling retain the rules above.
+
+## Idle-ready boundary
+
+A queue client uses the session list's `idle_ready_boundary.token` and exact
+`session_incarnation` with a fresh `request_id` and `require_idle: true`.
+Send the token as the `expected_idle_ready_boundary` string on
+`POST /sessions/{id}/prompt/v2`. Tokens have canonical lowercase, hyphenated
+UUIDv4 syntax and are opaque to consumers. An invalid token, including null, or
+a boundary supplied without the required guard and key returns HTTP 400
+`invalid-idle-ready-boundary` before a claim is created. Boundary attempts
+accept literal prompt text. Absolute paths and namespaced slash tokens are
+literal text under the existing owner-command classifier. A recognized owner
+command receives HTTP 409 `idle-boundary-command-unsupported`.
+
+A new key enters the existing session-record lock and, for native Codex, the
+account mutation gate. A spent or superseded boundary returns HTTP 409
+`stale-idle-ready-boundary` even if the earlier attempt is now working. An
+available boundary requires current provider idle, no pending ingress or
+attention, authorized runtime and account control, and a verified empty
+composer. The daemon compares the provider watermark under the same lock and
+syncs consumption before the first paste or native dispatch. Terminal input
+holds the ingress fence from consumption through paste. A positive busy or
+draft observation gives `busy`. Incarnation mismatch uses
+`session-incarnation-conflict`. Any post-input ambiguity retains the original
+key and returns `unknown`.
+
+A terminal `refused` receipt from the admission path attests no pane paste
+and no provider dispatch. The same key and payload recover the original
+receipt or its existing read-only reconciliation through POST and receipt
+GET. Adding, removing or changing the token under that key conflicts.
+After a terminal refusal, a client may retry with a fresh request ID and a
+freshly observed boundary. After an uncertain result, use the original key
+and receipt lookup. The daemon never rearms the spent boundary until it
+proves a later idle period for the same incarnation.
+
+Edges forwarding keyed prompts must forward the token unchanged and preserve
+the existing session, incarnation, and request identifiers. They must carry
+`receipt.outcome`, the refusal `receipt.code`, and the confirmed
+`receipt.delivery_kind` on POST and receipt GET. Queue consumers must keep the
+boundary bound to the exact attempt and use the current observation's
+capability and token when scheduling another queued item. Plain
+`require_idle` requests continue to use guarded idle admission.

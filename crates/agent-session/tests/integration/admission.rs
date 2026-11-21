@@ -51,18 +51,23 @@ impl Fixture {
             }
         }
         command
-            .current_dir(self.dir.path())
-            .args(["--host", "example-host"])
             .arg("--state-dir")
             .arg(self.dir.path().join("state"))
-            .env("HOME", self.dir.path().join("home"))
             .env("AGENT_HOME", self.dir.path().join("agent-home"))
-            .env("CODEX_HOME", self.dir.path().join("home"))
             .env_remove("CLAUDE_CONFIG_DIR")
+            .env("AGENT_SESSION_TMUX_BIN", &self.tmux);
+        self.configure_runtime(&mut command);
+        command
+    }
+    fn configure_runtime(&self, command: &mut Command) {
+        command
+            .current_dir(self.dir.path())
+            .args(["--host", "example-host"])
+            .env("HOME", self.dir.path().join("home"))
+            .env("CODEX_HOME", self.dir.path().join("home"))
             .env("AGENT_SESSION_MACHINE", "example-host")
             .env("AGENT_SESSION_CODEX_BIN", &self.provider)
             .env("AGENT_SESSION_CLAUDE_BIN", &self.provider)
-            .env("AGENT_SESSION_TMUX_BIN", &self.tmux)
             .env("AGENT_SESSION_FAKE_TMUX_LOG", &self.log)
             // The fake provider never shows a composer, so start would
             // otherwise observe the full default capture window.
@@ -70,7 +75,6 @@ impl Fixture {
             .env("AGENT_SESSION_FAKE_TMUX_ABSENT_AFTER_KILL", "1")
             .env("AGENT_SESSION_FAKE_TMUX_ABSENT_BEFORE_LAUNCH", "1")
             .stdin(Stdio::null());
-        command
     }
     fn start(&self, id: &str) -> Command {
         self.start_for(id, "codex")
@@ -132,19 +136,22 @@ impl Fixture {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         drop(listener);
-        let child = self
-            .command()
-            .args([
-                "serve",
-                "--bind",
-                &addr.to_string(),
-                "--token",
-                "fixture-token",
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let root = self.dir.path();
+        let child = crate::serve_fixture::command(
+            root,
+            nils_test_support::bin::resolve("agent-session"),
+            &root.join("state"),
+            &self.tmux,
+            |command| {
+                self.configure_runtime(command);
+                command
+                    .args(["--bind", &addr.to_string(), "--token", "fixture-token"])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+            },
+        )
+        .spawn()
+        .unwrap();
         let mut daemon = Daemon(child);
         let deadline = Instant::now() + Duration::from_secs(15);
         while TcpStream::connect(addr).is_err() {

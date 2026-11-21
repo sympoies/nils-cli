@@ -63,29 +63,27 @@ refresh. Stage only your fragment; `new` leaves the month and index untouched.
 
 ### Folding accepted fragments
 
-The **Devlog fold** GitHub Actions workflow runs on `release: published` and
-opens one dedicated maintenance PR from current `main`, on
-`chore/devlog-fold-<UTC date>`. It invokes `scripts/ci/fold-devlog.sh` and uses
-the existing `BOT_APP_ID` / `BOT_APP_PRIVATE_KEY` App credentials (Contents:
-write and Pull requests: write) to create a verified signed API commit with
-subject `chore(devlog): fold accepted fragments`. Missing credentials or an
-unverified commit fail the run. The workflow never pushes to main or updates
-an existing branch. The steward delivers the PR through normal required
-checks, review and the merge queue.
+After a successful stable GitHub Release publication, the Release workflow
+calls **Fold release devlog** with the published release ID. The fold uses
+current `main` and the publication's UTC date as its exclusive cutoff. It
+uses `scripts/ci/fold-devlog.sh` to move earlier fragments and opens one
+maintenance PR on `chore/devlog-fold-<UTC date>` using the existing signed
+App. Entries from that UTC date or later remain pending.
 
-An empty fold opens no PR. An existing PR for that UTC date, including a
-closed or merged PR, is preserved and the run skips. Publication runs are
-serialized across release and manual events. Dry runs use a separate concurrency
-group, so inspection cannot replace a queued publication. If a date branch exists
-without a PR, the run stops for maintainer reconciliation; it does not overwrite
-that branch.
+The release run stores its preparation as the
+`devlog-fold-preparation-<release-id>` artifact before creating a ref or PR.
+A rerun or governed recovery run for the same publication reuses that exact
+base and signed head or the recorded empty result. An
+empty fold creates no PR. A conflicting date branch or PR requires steward
+reconciliation. Publication uses one concurrency group. Dry runs use their
+own group. Generated PRs leave `Test changes` empty and describe the fold
+validation under `Test plan`.
 
-For recovery, select **Actions › Devlog fold › Run workflow** on `main`.
-`dry_run` defaults to `true`: the existing script performs the fold locally,
-reports the changed paths and diff statistics, and makes no remote writes.
-Set `dry_run` to `false` to open the PR. Fixture tests run without bot secrets
-on workflow PRs and before release/manual preparation; live App signing and
-required checks are verified by the resulting provider run and PR.
+See [Devlog fold review admission and recovery](../runbooks/delivery-and-releases.md#devlog-fold-review-admission-and-recovery)
+for queue checks, receipts and intervention. To prepare a backlog fold,
+select **Actions › Devlog fold › Run workflow** on `main`. The default
+`dry_run: true` reports the paths and diff statistics without remote writes.
+Set `dry_run: false` to open a maintenance PR for designated review.
 
 A maintainer can also prepare the same dedicated PR locally from current
 `origin/main` in a managed worktree:
@@ -114,10 +112,9 @@ including when review crosses midnight. Arbitrary history edits and added or
 modified fragments in a fold are rejected. If a concurrent fold changes the
 base, prepare again from the new base before review.
 
-The dedicated PR keeps release preparation's existing version-only patch
-contract intact and uses normal protected-branch checks and review. Nobody
-pushes a fold directly to main, and no new scheduled writer or protection
-exception is needed. Pending entries remain searchable between releases.
+The dedicated PR uses normal protected-branch checks and the squash merge
+queue. Release preparation keeps its version-only patch contract. Pending
+entries remain searchable between releases.
 Structural or factual history repairs require a separately reviewed maintenance
 change to this policy; `devlog fix` is not an ordinary authoring step.
 
@@ -167,3 +164,5 @@ are optional: omit the whole section rather than leaving a placeholder in it.
 ## Pending
 
 <!-- devlog-pending-index -->
+
+- [2026-11-21-issue-3802-composer-underline](pending/2026-11-21-issue-3802-composer-underline.md)

@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `699bbe8663230f0590c9f2aae75dbaeade72e8cf32a857380ab046a1cd03f152`
+- Cargo.lock SHA256: `48f78afdf874619e7d2bb85420e0afb905b283ab97ff3815599d38d4396f4067`
 - Third-party crates (`source != null`): 487
 - Workspace crates (`source == null`, excluded below): 42
 
@@ -182,7 +182,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | getrandom | 0.4.3 | MIT OR Apache-2.0 | crates.io |
 | gif | 0.14.2 | MIT OR Apache-2.0 | crates.io |
 | git2 | 0.21.0 | MIT OR Apache-2.0 | crates.io |
-| graphql-tools | 0.5.12 | MIT | crates.io |
+| graphql-tools | 0.5.13 | MIT | crates.io |
 | harfrust | 0.15.0 | MIT | crates.io |
 | hashbrown | 0.12.3 | MIT OR Apache-2.0 | crates.io |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 | crates.io |
@@ -386,7 +386,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | serde_with | 3.24.0 | MIT OR Apache-2.0 | crates.io |
 | serde_with_macros | 3.24.0 | MIT OR Apache-2.0 | crates.io |
 | serde_yaml_ng | 0.10.0 | MIT | crates.io |
-| sha1 | 0.10.6 | MIT OR Apache-2.0 | crates.io |
+| sha1 | 0.10.7 | MIT OR Apache-2.0 | crates.io |
 | sha2 | 0.11.1 | MIT OR Apache-2.0 | crates.io |
 | sharded-slab | 0.1.7 | MIT | crates.io |
 | shell-words | 1.1.1 | MIT/Apache-2.0 | crates.io |
@@ -484,7 +484,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | web-sys | 0.3.102 | MIT OR Apache-2.0 | crates.io |
 | web-time | 1.1.0 | MIT OR Apache-2.0 | crates.io |
 | webpki-root-certs | 1.0.10 | CDLA-Permissive-2.0 | crates.io |
-| webpki-roots | 1.0.11 | CDLA-Permissive-2.0 | crates.io |
+| webpki-roots | 1.0.12 | CDLA-Permissive-2.0 | crates.io |
 | weezl | 0.1.12 | MIT OR Apache-2.0 | crates.io |
 | winapi-util | 0.1.11 | Unlicense OR MIT | crates.io |
 | windows-core | 0.62.2 | MIT OR Apache-2.0 | crates.io |

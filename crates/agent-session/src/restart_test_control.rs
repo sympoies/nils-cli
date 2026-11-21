@@ -58,6 +58,30 @@ impl Drop for Fixture {
 fn clock(context: &CliContext) -> Option<Arc<Clock>> {
     CLOCKS.lock().unwrap().get(&context.state_dir).cloned()
 }
+
+pub(super) const PANE_INPUT: &str = "pane-input";
+
+/// The fake pane has already committed its launch state by the time the
+/// provisioned broker is activated. Publish its exact heartbeat here.
+pub(crate) fn publish_heartbeat(
+    context: &CliContext,
+    record: &crate::SessionRecord,
+    incarnation: &str,
+) {
+    if let Some(root) = context.state_dir.parent()
+        && clock(context).is_some()
+        && root.join(PANE_INPUT).exists()
+    {
+        assert!(root.join("running").is_file());
+        assert!(crate::broker_gate_path(&context.state_dir, record).is_file());
+        crate::write_private_file(
+            &crate::coordination::heartbeat_path(&context.state_dir, &record.id),
+            format!("{incarnation}:{}\n", crate::coordination::now_epoch()).as_bytes(),
+        )
+        .unwrap();
+    }
+}
+
 pub(super) struct Scope(Option<Arc<Clock>>);
 pub(super) fn enter(context: &CliContext) -> Scope {
     Scope(CURRENT.replace(clock(context)))

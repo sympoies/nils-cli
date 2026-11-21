@@ -5,8 +5,10 @@ the structured session runtime spike. This document states the direction and
 the requirements later work follows, including
 [#3582](https://github.com/sympoies/nils-cli/issues/3582),
 [#3583](https://github.com/sympoies/nils-cli/issues/3583) and
-[#3584](https://github.com/sympoies/nils-cli/issues/3584). It precedes
-implementation: it does not claim that any released daemon behaves this way.
+[#3584](https://github.com/sympoies/nils-cli/issues/3584). The broader runtime
+direction remains a proposal and does not claim that a released daemon behaves
+this way. The [Claude permission answers](#claude-permission-answers-3687)
+section describes an implemented path with its own stated evidence and limits.
 The existing turn signals stay owned by
 [Turn state contract](../turn-state-contract.md), and terminal input and attach
 stay owned by [Serve terminal transport v1](serve-terminal-v1.md).
@@ -370,6 +372,10 @@ Terminal admission checks all
 pending attention entries, including approvals behind other attention and unknown
 overflow, and retains the ingress fence only during immediate pane writes, never
 while waiting for a provider acknowledgement.
+
+A structured Claude prompt admits once before its paste and keeps that fence
+through its Enter, so a hook writer arriving after the paste waits instead of
+refusing the Enter; pending ingress before the paste refuses with nothing pasted.
 
 Setup writes a **600-second** timeout for Claude `PermissionRequest`; the
 internal wait expires at **540 seconds**, and its dispatcher bound is **550

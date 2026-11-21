@@ -496,6 +496,21 @@ fn render_text(data: &Value, caller: Option<&Caller>, local_machine: &str) -> St
             age(progress, now),
             field(&record["title"], TITLE_WIDTH),
         ));
+        if let Some(state) = record["boot_recovery"]["state"].as_str() {
+            out.push_str(&format!(
+                "  recovery={}",
+                field(&Value::String(state.to_owned()), REPO_WIDTH)
+            ));
+            if let Some(reason) = record["boot_recovery"]["reason"]
+                .as_str()
+                .or_else(|| record["boot_recovery"]["error"]["code"].as_str())
+            {
+                out.push_str(&format!(
+                    "({})",
+                    field(&Value::String(reason.to_owned()), TITLE_WIDTH)
+                ));
+            }
+        }
         if is_caller(record, caller) {
             out.push_str("  (this session)");
         } else if let Some(target) = send_target(record, local_machine) {

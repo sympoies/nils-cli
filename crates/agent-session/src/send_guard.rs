@@ -49,6 +49,9 @@ pub struct GuardArgs {
     /// accepted input be found again by id without the acknowledged turn id.
     #[arg(skip)]
     pub client_message_id: Option<String>,
+    /// Internal token for one queued idle prompt.
+    #[arg(skip)]
+    pub expected_idle_ready_boundary: Option<String>,
     /// Require the active runtime launch id to match before delivery.
     #[arg(long, value_name = "INCARNATION")]
     pub expect_runtime: Option<String>,
@@ -109,7 +112,11 @@ impl Admission<'_> {
     }
 
     pub(crate) fn check(&self, pasted_text: Option<&str>, stage: &str) -> Result<(), CliError> {
-        self.check_with_draft_repair(pasted_text, stage, true)
+        self.check_with_draft_repair(
+            pasted_text,
+            stage,
+            self.args.expected_idle_ready_boundary.is_none(),
+        )
     }
 
     /// Scheduler notices observe an empty composer without stashing or clearing a draft.

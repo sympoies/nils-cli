@@ -22,6 +22,9 @@ pub(crate) fn run(context: &CliContext, command: Command) -> i32 {
         Command::Notice(args) => notice::run(context, args),
         Command::NoticeStore(args) => send::claude_notice::store::audit::run(context, args),
         Command::Glance(args) => run_glance(context, args),
+        Command::PrepareShutdown(args) => {
+            runtime_environment::boot_recovery::run_prepare(context, args)
+        }
         Command::Resume(args) => run_resume(context, args),
         Command::Restart(args) => restart::run(context, args),
         Command::Clear(args) => conversation::run(context, args, true),

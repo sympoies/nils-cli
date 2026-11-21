@@ -1,8 +1,12 @@
 //! Composer observations for delivery fixtures.
 use super::*;
 
+#[path = "prompt_composer/image_path_lines.rs"]
+mod image_path_lines;
 #[path = "prompt_composer/permission.rs"]
 mod permission;
+#[path = "prompt_composer/post_paste.rs"]
+mod post_paste;
 #[path = "prompt_composer/recording.rs"]
 pub(super) mod recording;
 #[path = "prompt_composer/unknown_approval.rs"]

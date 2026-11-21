@@ -40,6 +40,54 @@ predecessor, then exits `69` with `serve-state-root-owned` and the holder's pid
 and bind address. Give a development or test serve its own `--state-dir` or
 `AGENT_SESSION_STATE_DIR`; separate roots run side by side.
 
+## Recovery after a host reboot
+
+Before a planned reboot, run `agent-session prepare-shutdown`. It marks each
+verified running session with the current boot ID. A stop or close clears the
+mark. After acquiring the state root and binding its listener on a later boot,
+`serve` recovers marked sessions using the same exact provider resume checks as
+`agent-session resume`. Unmarked and expired sessions are skipped.
+
+Serve consumes the mark once, on the first observed boot with a different boot
+ID. The mark expires 24 hours after preparation. Boots during which serve
+never starts do not count as observations.
+
+Inspect the command's per-session results before rebooting. Recovery runs in
+the long-lived serve process. Configure `AGENT_SESSION_TMUX_SCOPE=1` when
+runtimes must survive a serve service restart. When a prior-boot heartbeat is
+still fresh, recovery waits up to 32 seconds for the existing resume guard.
+
+Quiesce session creation and run the command immediately before reboot; a
+session created afterward is not marked. Re-running the command clears a
+previous mark if that session can no longer be verified as running.
+
+`prepare-shutdown --format json` returns an envelope whose `data.records`
+contains `{ "id": "...", "state": "marked" }` for each marked session, or
+`{ "id": "...", "state": "skipped", "reason": "..." }`. Skip reasons are
+`stopped`, `prior-boot`, `boot-identity-unverified`, and
+`runtime-identity-unverified`. Review every skipped row before reboot. If any
+record cannot be processed, the command exits nonzero with
+`shutdown-mark-incomplete`; `error.details.records` contains the marked,
+skipped, and failed rows, with an error code on each failed row. Resolve every
+failure before reboot.
+
+Set `AGENT_SESSION_BOOT_RECOVERY=0` in the serve environment to disable recovery
+on that host. Set `AGENT_SESSION_BOOT_RECOVERY_EXCLUDE` to comma-separated exact
+session IDs to opt out individual sessions. Restart serve to apply either
+setting. Quota auto-resume is independent of boot recovery.
+
+`list --format json` and the board show the latest recovery receipt: `resumed`,
+`skipped` with its reason, or `failed` with a typed error code. The shapes are
+`{"state":"resumed"}`, `{"state":"skipped","reason":"..."}`, and
+`{"state":"failed","error":{"code":"..."}}`. Skip reasons are
+`no-shutdown-intent`, `shutdown-intent-unverified`,
+`shutdown-intent-expired`, `host-opt-out`, `session-opt-out`, and
+`resume-metadata-missing`.
+
+Failure codes come from the existing resume path. `recovery-interrupted` means
+the one-shot mark was consumed before recovery completed. Inspect the session
+and use manual `resume` where appropriate.
+
 ## Authentication boundaries
 
 | Endpoint class | Authentication and exposure |
@@ -303,6 +351,13 @@ For durable client outboxes, persist a client-generated `request_id` before
 POST and add `require_idle: true` when delivery must wait for an idle provider
 and empty composer. Reconcile the exact attempt through authenticated
 `GET /sessions/SESSION_ID/prompt/v2/receipts/REQUEST_ID?expected_session_incarnation=INCARNATION`.
+
+Queue consumers use the per-session reply-delivery capability and
+`idle_ready_boundary` from the daemon list, then forward the exact token as
+`expected_idle_ready_boundary` on the keyed guarded POST. Check the receipt
+outcome and recover an uncertain attempt with that same request ID.
+See the [idle-ready boundary contract](../specs/serve-prompt-v1.md#idle-ready-boundary).
+
 Successful POSTs include `data.receipt`; errors include
 `error.details.receipt` when a claim was created. Lookup returns
 `data.receipt` for submitted, refused and unknown outcomes. Verify the session,
@@ -670,13 +725,16 @@ host/tmux restarts require a new explicit Open.
 
 ## Admit a local mailbox service
 
-Service submission is a separate, opt-in authority. It grants only submission
-of bounded private messages to current managed recipients through this daemon;
-it grants no session creation, prompt, shell, mailbox read, or session capability.
+Mailbox service admission is opt-in. It grants submission of bounded private
+messages to current managed recipients through this daemon. The
+[service recipient contract](../specs/coordination-mailbox-v1.md#service-recipients)
+also specifies polling the exact service generation's own inbox for the local
+implementation in #3797. The credential grants no session creation, prompt,
+shell, session mailbox access or session capability.
 Use a dedicated credential, never an operator bearer, federation token, or a
 borrowed session capability. `serve --mailbox-services-file FILE` (fallback:
 `AGENT_SESSION_MAILBOX_SERVICES_FILE`) references the admission document.
-Omission disables service submission. This setting is separate from
+Omission disables mailbox service admission. This setting is separate from
 `serve --config` and from the submitting job's CLI arguments.
 
 Operator activation is a separate deployment decision:
@@ -694,16 +752,25 @@ Operator activation is a separate deployment decision:
    by that user, mode `0600`, with one link and at most 32 KiB. Replace the example path with the
    credential's absolute path. The service ID and generation are non-secret
    selectors of 1–128 ASCII letters, digits, hyphens, underscores, or dots.
-   IDs must be unique; at most 32 services are admitted.
+   At most 32 services are active, with one active generation per ID. The
+   local reply contract uses the following document, including `retired`
+   even when the array is empty. Convert the document in the same deployment
+   that installs the daemon supporting local service replies.
 
    ```json
    {
-     "schema_version": "agent-session.mailbox-services.v1",
+     "schema_version": "agent-session.mailbox-services.v2",
      "services": [
        {
          "service_id": "reporter",
-         "service_generation": "generation-1",
+         "service_generation": "generation-2",
          "credential_file": "/absolute/private/reporter.credential"
+       }
+     ],
+     "retired": [
+       {
+         "service_id": "reporter",
+         "service_generation": "generation-1"
        }
      ]
    }
@@ -718,7 +785,7 @@ Operator activation is a separate deployment decision:
 
    ```bash
    agent-session --state-dir "$DAEMON_STATE_DIR" message service-send \
-     --service reporter --service-generation generation-1 \
+     --service reporter --service-generation generation-2 \
      --credential-file "$SERVICE_CREDENTIAL_FILE" \
      --to "$RECIPIENT_SESSION_ID" \
      --body-file "$REPORT_BODY_FILE" \
@@ -737,15 +804,21 @@ validated at authorization and again before persistence, including retries.
 Unknown, removed, stale-generation, unsafe-file, and incorrect-token callers
 are denied with `mailbox-service-unauthorized` and no path, token, or body.
 
-For revocation, atomically replace the admission document without that entry,
-or remove its credential file. For rotation, provision a new credential and
-replace the entry with a new generation; then update the service job. Use the
-same guarded operator configuration process that owns these private files.
-Files are re-read without restarting the daemon. Revocation prevents subsequent
-admission and replay; it does not delete messages or cancel already committed
-outbox entries. Submissions concurrent with revocation linearize at their final
-authorization check. A new generation has a separate idempotency namespace;
-rotation is not permission to replay an old operation under a new identity.
+Revoke admission by atomically replacing the document without the active
+entry or removing its credential file. For explicit retirement, remove the
+active entry and append its exact service ID and generation to `retired` in
+the same rewrite. Preserve the credential-free marker in subsequent rewrites
+even when the same ID has a fresh active generation. For rollover,
+provision a fresh distinct credential and a generation that has never been
+used for that ID, then update the service job. The new generation has an
+empty inbox and a separate idempotency namespace. Old mail expires under
+its original address.
+
+Use the guarded operator configuration process that owns these private files.
+The daemon re-reads them without restart. Submissions concurrent with
+revocation linearize at their final authorization check. Revocation blocks
+subsequent service operations and service submission replays without deleting
+messages or cancelling committed outbox entries.
 
 Retry the identical submission with the same key after an uncertain response.
 A retained key binds request content, destination and service generation;
@@ -759,8 +832,13 @@ daemon drain wakes at expiry to compact their bodies. Local source receipts use
 the existing 24-hour receipt lifetime; remote identity retention extends through
 expiry plus 24 hours. Queue/quota exhaustion rejects rather than evicting live
 messages. Service bodies are returned only by the existing authenticated
-recipient show/wait operations as `service_message`; services have no
-reply mailbox. Content cannot authorize additional work.
+session recipient show/wait operations as `service_message`. Content cannot
+authorize additional work.
+
+Under the local reply contract, services poll with `message service-inbox`,
+read a reply with `message service-show`, and free capacity with
+`message service-ack`. Use the same `--service`, `--service-generation` and
+`--credential-file` selectors for each operation.
 
 ### Remote service activation prerequisite
 

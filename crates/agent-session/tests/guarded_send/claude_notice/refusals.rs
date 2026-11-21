@@ -102,6 +102,57 @@ fn preclaim_authorization_refusals_identify_the_failed_check() {
     }
 }
 
+/// A native module may connect before it has written its request. The refusal
+/// must come from the request facts, not from the bytes arriving late: macOS
+/// hands `accept` a socket that inherits the listener's nonblocking mode.
+#[test]
+fn composer_refusal_waits_for_a_request_sent_after_connecting() {
+    let fixture = super::super::Fixture::new("claude");
+    let (dir, boot) = bind_modeled_peer(&fixture);
+    let thread = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let offer = loop {
+            if let Ok(bytes) = fs::read(dir.join("offer.json"))
+                && let Ok(offer) = serde_json::from_slice::<Value>(&bytes)
+                && offer["op"].is_string()
+            {
+                break offer;
+            }
+            assert!(Instant::now() < deadline, "offer not published");
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        let body = json!({"schema_version":"agent-session.claude-notice-authorize.v1",
+            "op":offer["op"], "binding":offer["binding"], "nonce":boot["nonce"],
+            "terminal":true, "box_empty":false, "cursor":0})
+        .to_string();
+        let mut stream = UnixStream::connect(boot["socket_path"].as_str().unwrap()).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        write!(
+            stream,
+            "POST /authorize HTTP/1.1\r\nHost: notice.invalid\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        let mut response = Vec::new();
+        let _ = stream.read_to_end(&mut response);
+        assert!(
+            !response.starts_with(b"HTTP/1.1 200"),
+            "refused request received notice text"
+        );
+    });
+    let output = send_notice(&fixture, "synthetic\n");
+    thread.join().unwrap();
+    let result = fixture.refused(&output, "notice-native-unavailable");
+    assert_eq!(
+        result["error"]["details"]["reason"],
+        "authorization-composer-not-empty"
+    );
+    no_claim(&fixture);
+}
+
 #[test]
 fn preclaim_receive_timeout_and_protocol_failures_have_distinct_reasons() {
     for (case, reason) in [

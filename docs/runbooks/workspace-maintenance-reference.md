@@ -64,7 +64,7 @@ CI/full parity checks also require:
 - `python3`
 - `zsh`
 - `rg`
-- `cargo-nextest` when `NILS_CLI_TEST_RUNNER=nextest`
+- `cargo-nextest` for workspace checks and package checks that include `nils-agent-session`
 
 Coverage checks also require:
 
@@ -517,9 +517,9 @@ For most local implementation loops:
 bash scripts/ci/nils-cli-checks-entrypoint.sh --local-fast
 ```
 
-Set `NILS_CLI_TEST_RUNNER=nextest` to require `cargo-nextest`; otherwise the
-local fast gate auto-selects `cargo nextest` when available and falls back to
-`cargo test`.
+Workspace checks and package checks that include `nils-agent-session` require
+`cargo-nextest`. For other package checks, the local fast gate auto-selects
+`cargo nextest` when available and falls back to `cargo test`.
 
 The local fast gate is conservative. Changes to `nils-common`, `nils-term`,
 `nils-test-support`, root manifests, CI scripts, completions, `.agents/`,
@@ -565,7 +565,7 @@ NILS_CLI_TEST_RUNNER=nextest bash scripts/ci/nils-cli-checks-entrypoint.sh
 
 Notes:
 
-- `nextest` mode runs `cargo nextest run --profile ci --workspace`.
+- The default `nextest` mode runs `cargo nextest run --profile ci --workspace`.
 - Gate nextest runs (including coverage and the leak probe) write JUnit to
   `NILS_CLI_REPORT_DIR/nextest/ci/junit.xml` and recorded history under
   `NILS_CLI_REPORT_DIR/history`. Set `NILS_CLI_REPORT_DIR` to an owner artifact
@@ -768,8 +768,8 @@ module imports. Real macOS release validation remains required.
 - `zsh -f tests/zsh/completion.test.zsh`
 - `cargo fmt --all -- --check`
 - `cargo clippy --all-targets --all-features -- -D warnings`
-- `cargo test --workspace` (or `cargo nextest run --profile ci --workspace`
-  plus `cargo test --workspace --doc` when `NILS_CLI_TEST_RUNNER=nextest`)
+- `cargo nextest run --profile ci --workspace`
+- `cargo test --workspace --doc`
 
 ### File-size ratchet
 
@@ -1081,8 +1081,10 @@ local-fast, docs-only, full and CI change detection lanes. It requires a
 fetched `origin/main`; `NILS_CLI_DEVLOG_BASE` selects the immutable base in CI.
 CI builds the workspace devlog binary and exports the same writer setting.
 
-After each release, the maintainer runs `scripts/ci/fold-devlog.sh` in a
-managed worktree and delivers its diff as a dedicated maintenance PR. The gate
+After a successful release, the Release workflow calls the canonical fold
+and opens a dedicated maintenance PR when it finds eligible fragments.
+The steward can prepare a backlog fold with `scripts/ci/fold-devlog.sh`
+in a managed worktree. The gate
 admits only exact deterministic folding on canonical fold branches and commits
 (including queue squash commits). Release preparation keeps its version-only
 patch contract. Authoring, fold ownership, and correction rules

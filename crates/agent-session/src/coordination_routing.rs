@@ -16,6 +16,7 @@ pub(crate) fn command_name(command: &Command) -> Option<&'static str> {
         Command::AuthAlert(args) => Some(cli::auth_alert::name(args)),
         Command::Rules(_) => Some("rules"),
         Command::AutoResume(_) => Some("auto-resume"),
+        Command::PrepareShutdown(_) => Some("prepare-shutdown"),
         Command::Title(args) => Some(crate::session_title::name(args)),
         Command::Notice(_) => Some("notice"),
         Command::Previews(_) => Some("previews"),
@@ -87,6 +88,7 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             arg if arg.starts_with(b"--state-dir=") || arg.starts_with(b"--host=") => {}
             b"rules" => return Some("rules"),
             b"auto-resume" => return Some("auto-resume"),
+            b"prepare-shutdown" => return Some("prepare-shutdown"),
             b"notice" => return Some("notice"),
             b"notice-store" => return Some("notice-store.audit"),
             b"readiness" => return Some("readiness"),
@@ -161,6 +163,7 @@ pub(crate) fn command_format(command: &Command) -> OutputFormat {
         Command::Readiness(args) => args.format,
         Command::Delegation(args) => crate::coordination::delegation::format(args),
         Command::AutoResume(args) => args.format,
+        Command::PrepareShutdown(args) => args.format,
         Command::Title(args) => crate::session_title::target(args).format,
         Command::Start(args) => args.format,
         Command::Run(args) => args.format,

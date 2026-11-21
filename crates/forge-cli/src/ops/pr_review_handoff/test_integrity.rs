@@ -222,6 +222,9 @@ pub(super) fn ensure<R: BackendRunner>(
 
 pub(super) fn validate_declarations(body: &str) -> Result<(), ForgeError> {
     let declaration = declarations(body);
+    if declaration.trim() == "None." {
+        return Ok(());
+    }
     if declaration.lines().any(|line| {
         let line = line.trim();
         !line.is_empty() && declared_rows(line).is_empty()

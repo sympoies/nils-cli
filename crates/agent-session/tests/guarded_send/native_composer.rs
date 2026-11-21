@@ -32,8 +32,8 @@ const STYLED_STATUS: &str = concat!(
 );
 
 #[test]
-fn styled_nbsp_empty_composer_observes_the_exact_paste_and_preserves_drafts() {
-    for draft in ["", "\u{a0}", "owner draft"] {
+fn extended_underline_composer_observes_the_exact_paste_and_preserves_drafts() {
+    for draft in ["", "\u{a0}", "synthetic draft"] {
         let fixture = Fixture::new("claude");
         styled_claude(&fixture, STYLED_STATUS, STYLED_STATUS);
         fs::write(fixture.root().join("composer"), draft).unwrap();
@@ -43,12 +43,15 @@ fn styled_nbsp_empty_composer_observes_the_exact_paste_and_preserves_drafts() {
         fs::rename(&tmux, fixture.root().join("tmux-fast")).unwrap();
         fs::write(
             &tmux,
-            "#!/bin/sh\nroot=${0%/*}\nif [ \"$1\" = capture-pane ]; then\n    IFS= read -r composer < \"$root/composer\" || :\n    styled=false\n    for arg in \"$@\"; do [ \"$arg\" = -e ] && styled=true; done\n    if [ \"$styled\" = true ]; then\n        printf '\\033[38;5;244m────────────────────────────\\033[39m\\n❯ %-76s\\n────────────────────────────\\n  ' \"$composer\"\n        while IFS= read -r line || [ -n \"$line\" ]; do printf '%s\\n' \"$line\"; done < \"$root/styled-footer\"\n    else\n        printf '────────────────────────────\\n❯ %s\\n────────────────────────────\\n  status\\n' \"$composer\"\n    fi\n    for arg in \"$@\"; do\n        if [ \"$arg\" = display-message ]; then\n            cursor=${#composer}\n            if [ -e \"$root/cursor\" ]; then IFS= read -r cursor < \"$root/cursor\" || :; fi\n            printf '%s 1\\n' \"$((cursor + 2))\"\n        fi\n    done\n    exit 0\nfi\nexec \"$root/tmux-fast\" \"$@\"\n",
+            "#!/bin/sh\nroot=${0%/*}\nif [ \"$1\" = capture-pane ]; then\n    IFS= read -r composer < \"$root/composer\" || :\n    styled=false\n    for arg in \"$@\"; do [ \"$arg\" = -e ] && styled=true; done\n    if [ \"$styled\" = true ]; then\n        printf '\\033[4:3msynthetic transcript\\033[0m\\n\\033[38;5;244m────────────────────────────\\033[39m\\n❯ %-76s\\n────────────────────────────\\n  ' \"$composer\"\n        while IFS= read -r line || [ -n \"$line\" ]; do printf '%s\\n' \"$line\"; done < \"$root/styled-footer\"\n    else\n        printf 'synthetic transcript\\n────────────────────────────\\n❯ %s\\n────────────────────────────\\n  status\\n' \"$composer\"\n    fi\n    for arg in \"$@\"; do\n        if [ \"$arg\" = display-message ]; then\n            cursor=${#composer}\n            if [ -e \"$root/cursor\" ]; then IFS= read -r cursor < \"$root/cursor\" || :; fi\n            printf '%s 2\\n' \"$((cursor + 2))\"\n        fi\n    done\n    exit 0\nfi\nexec \"$root/tmux-fast\" \"$@\"\n",
         )
         .unwrap();
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o755)).unwrap();
-        let output = fixture.send_text(Some("read mailbox"), &["--require-empty-composer"]);
+        let output = fixture.send_text(
+            Some("read mailbox"),
+            &["--require-idle", "--require-empty-composer"],
+        );
         if draft.is_empty() {
             assert_eq!(output.code, 0, "{}", output.stdout_text());
             assert_eq!(
@@ -56,11 +59,27 @@ fn styled_nbsp_empty_composer_observes_the_exact_paste_and_preserves_drafts() {
                 "submitted"
             );
             assert_eq!(
+                output.stdout_json()["data"]["submission"]["enter_presses"],
+                1
+            );
+            assert_eq!(
+                fixture
+                    .calls()
+                    .iter()
+                    .filter(|call| call[0] == "paste-buffer")
+                    .count(),
+                1
+            );
+            assert_eq!(
                 fs::read_to_string(fixture.root().join("submissions")).unwrap(),
                 "\"read mailbox\"\n"
             );
         } else {
-            fixture.refused(&output, "send-composer-not-empty");
+            let receipt = fixture.refused(&output, "send-composer-not-empty");
+            let details = &receipt["error"]["details"];
+            assert_eq!(details["stage"], "admission");
+            assert_eq!(details["pasted"], false);
+            assert_eq!(details["submitted"], false);
             fixture.no_delivery();
             assert_eq!(
                 fs::read_to_string(fixture.root().join("composer")).unwrap(),
@@ -90,7 +109,7 @@ fn styled_composer_refusals_name_the_stage_and_observation_without_pane_text() {
         fs::write(
             fixture.root().join("styled-admission-capture"),
             format!(
-                "\u{1b}[38;5;244m────────────────────────────\u{1b}[39m\n❯\u{a0}{}\n────────────────────────────\n  {STYLED_STATUS}\n",
+                "\u{1b}[4:3msynthetic transcript\u{1b}[0m\n\u{1b}[38;5;244m────────────────────────────\u{1b}[39m\n❯\u{a0}{}\n────────────────────────────\n  {STYLED_STATUS}\n",
                 " ".repeat(76)
             ),
         )

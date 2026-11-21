@@ -13,12 +13,15 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 use nils_test_support::bin;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
+
+#[path = "common/serve_fixture.rs"]
+mod serve_fixture;
 
 #[path = "retitle_readiness_contract/broker_replay.rs"]
 mod broker_replay;
@@ -745,41 +748,41 @@ impl ServeProcess {
         let machine = format!("{MACHINE}-{}", uuid::Uuid::new_v4());
         let stderr_path = fixture.root.join("serve.stderr");
         let stderr = File::create(&stderr_path).expect("create serve stderr fixture");
-        let mut command = Command::new(bin::resolve("agent-session"));
-        command
-            .current_dir(&fixture.root)
-            .args([
-                "serve",
-                "--bind",
-                "127.0.0.1:0",
-                "--state-dir",
-                fixture.state_dir.to_str().expect("UTF-8 state dir"),
-                "--token",
-                TOKEN,
-                "--machine",
-                &machine,
-                "--tmux-bin",
-                fixture.tmux_bin.to_str().expect("UTF-8 tmux fixture"),
-            ])
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin")
-            .env("HOME", &fixture.home)
-            .env("CODEX_HOME", &fixture.codex_home)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::from(stderr));
-        if let Some(config) = config {
-            command.env("AGENT_SESSION_RETITLE_CONFIG", config);
-        }
-        if api_key {
-            command.env(API_KEY_ENV, API_KEY_CANARY);
-        }
-        if broker {
-            command.env(
-                "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
-                json!([fixture.broker_bin]).to_string(),
-            );
-        }
+        let mut command = serve_fixture::command(
+            &fixture.root,
+            bin::resolve("agent-session"),
+            &fixture.state_dir,
+            &fixture.tmux_bin,
+            |command| {
+                command
+                    .current_dir(&fixture.root)
+                    .args([
+                        "--bind",
+                        "127.0.0.1:0",
+                        "--token",
+                        TOKEN,
+                        "--machine",
+                        &machine,
+                    ])
+                    .env("HOME", &fixture.home)
+                    .env("CODEX_HOME", &fixture.codex_home)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::from(stderr));
+                if let Some(config) = config {
+                    command.env("AGENT_SESSION_RETITLE_CONFIG", config);
+                }
+                if api_key {
+                    command.env(API_KEY_ENV, API_KEY_CANARY);
+                }
+                if broker {
+                    command.env(
+                        "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+                        json!([fixture.broker_bin]).to_string(),
+                    );
+                }
+            },
+        );
         let mut server = Self {
             child: command.spawn().expect("spawn agent-session serve"),
             stderr_path,
