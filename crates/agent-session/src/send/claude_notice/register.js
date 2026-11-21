@@ -1,9 +1,9 @@
 // External native contract: the tested Claude Code range. No terminal input mutations.
 export function register(on) {
-  let started = false;
+  let active;
+  // Keep operation deduplication and serialization across receiver lifetimes.
   let inFlight = false;
   let lastOp;
-  let timer;
   const schema = (name) => `agent-session.claude-notice-${name}.v1`;
   const keys = (value, names) => value && typeof value === 'object'
     && !Array.isArray(value) && Object.keys(value).sort().join(',') === [...names].sort().join(',');
@@ -25,8 +25,9 @@ export function register(on) {
   };
   on('session.start', async ($, e, next) => {
     const result = await next(e);
-    if (started || !e.isInteractive || e.surface !== 'terminal') return result;
-    started = true;
+    if (active || !e.isInteractive || e.surface !== 'terminal') return result;
+    const receiver = {};
+    active = receiver;
     const root = $.plugin.root;
     const unavailable = () => $.fs.write(`${root}/ready.json`, JSON.stringify({
       schema_version: schema('ready'), state: 'unavailable',
@@ -45,7 +46,7 @@ export function register(on) {
         terminal: (await $.session.surfaces()).includes('terminal'),
       });
       const first = await observe();
-      const current = (value) => value.session === boot.launch.session_id
+      const current = (value) => active === receiver && value.session === boot.launch.session_id
         && value.incarnation === boot.launch.incarnation && value.provider === first.provider
         && value.version === boot.provider_version && value.terminal;
       if (!current(first) || !first.provider) throw new Error();
@@ -57,13 +58,14 @@ export function register(on) {
       };
       const run = async () => {
         const offer = JSON.parse(await $.fs.read(`${root}/offer.json`));
-        if (!keys(offer, ['schema_version', 'op', 'binding', 'socket_path', 'nonce'])
+        if (active !== receiver || !keys(offer, ['schema_version', 'op', 'binding', 'socket_path', 'nonce'])
             || offer.schema_version !== schema('offer') || offer.op === lastOp
             || !/^[a-f0-9-]{36}$/.test(offer.op) || !bindingEqual(offer.binding, binding)
             || offer.socket_path !== boot.socket_path || offer.nonce !== boot.nonce) return;
         lastOp = offer.op; // No retry of a lingering offer, even after unknown I/O.
         if (!current(await observe())) return;
         const before = await $.prompt.read();
+        if (active !== receiver) return;
         const authorization = await $.http.fetch('http://notice.invalid/authorize', {
           method: 'POST', socketPath: boot.socket_path,
           headers: { 'Content-Type': 'application/json' },
@@ -81,7 +83,7 @@ export function register(on) {
         const report = { schema_version: schema('result'), op: offer.op, binding,
           nonce: boot.nonce, outcome: 'unknown', after_empty: false };
         try {
-          if (current(await observe()) && await empty()) {
+          if (current(await observe()) && await empty() && active === receiver) {
             const returned = await $.prompt.submit({ text: authorized.text, asUser: true });
             report.after_empty = await empty();
             if (returned.drop !== undefined) report.outcome = 'dropped';
@@ -100,24 +102,30 @@ export function register(on) {
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(report),
         });
       };
-      timer = $.clock.every(250, () => {
-        if (inFlight) return;
+      receiver.timer = $.clock.every(250, () => {
+        if (active !== receiver || inFlight) return;
         inFlight = true;
         void run().catch(() => {}).finally(() => { inFlight = false; });
       });
       await $.fs.write(`${root}/ready.json`, JSON.stringify({ schema_version: schema('ready'), binding,
         nonce: boot.nonce, terminal: true, timer_started: true }));
     } catch {
-      if (timer) timer.cancel();
-      await unavailable();
+      if (active === receiver) {
+        if (receiver.timer) receiver.timer.cancel();
+        await unavailable();
+      }
     }
     return result;
   });
   on('session.end', async ($, e, next) => {
-    if (timer) timer.cancel();
-    if (started) await $.fs.write(`${$.plugin.root}/ready.json`, JSON.stringify({
-      schema_version: schema('ready'), state: 'unavailable',
-    }));
+    if (active) {
+      const receiver = active;
+      active = undefined;
+      if (receiver.timer) receiver.timer.cancel();
+      await $.fs.write(`${$.plugin.root}/ready.json`, JSON.stringify({
+        schema_version: schema('ready'), state: 'unavailable',
+      }));
+    }
     return next(e);
   });
 }
