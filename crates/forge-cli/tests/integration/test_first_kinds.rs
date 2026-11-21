@@ -121,7 +121,7 @@ fn test_first_kinds_create_and_deliver_dry_run_agree() {
                         "--title",
                         "Configure evidence",
                         "--body",
-                        "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+                        "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
                     ],
                     Some(&repo),
                 );
@@ -214,7 +214,7 @@ fn test_first_kinds_invalid_list_is_reported_by_create_and_deliver() {
                         "--title",
                         "Configure evidence",
                         "--body",
-                        "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+                        "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
                     ],
                     Some(&repo),
                 );
@@ -259,7 +259,7 @@ fn test_first_kinds_invalid_list_is_reported_by_create_and_deliver() {
                     "--title",
                     "Configure evidence",
                     "--body",
-                    "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+                    "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
                 ],
                 Some(&repo),
             );
@@ -271,12 +271,59 @@ fn test_first_kinds_invalid_list_is_reported_by_create_and_deliver() {
 }
 
 #[test]
-fn test_kind_requires_evidence_when_existing_assertions_change() {
-    for (change, required) in [
-        ("#[test]\nfn example() { assert_eq!(1, 2); }\n", true),
+fn test_kind_distinguishes_additive_coverage_from_repairs_and_production() {
+    let existing = "#[test]\nfn example() {\n    let delay = 1;\n    assert_eq!(delay, 1);\n}\n";
+    let additive = "#[test]\nfn example() {\n    let delay = 1;\n    assert_eq!(delay, 1);\n    assert!(delay > 0);\n}\n";
+    let new_test = "#[test]\nfn added() { assert_eq!(crate_value(), 1); }\n";
+    for (kinds, path, change, required) in [
+        ("bug", "tests/example.rs", additive.to_owned(), false),
+        ("test", "tests/example.rs", additive.to_owned(), false),
+        ("test", "tests/new.rs", new_test.to_owned(), false),
         (
-            "#[test]\nfn example() { assert_eq!(1, 1); }\n#[test]\nfn added() { assert!(true); }\n",
-            false,
+            "bug",
+            "src/lib.rs",
+            "pub fn crate_value() -> u8 { 2 }\n".to_owned(),
+            true,
+        ),
+        (
+            "test",
+            "src/lib.rs",
+            "pub fn crate_value() -> u8 { 2 }\n".to_owned(),
+            true,
+        ),
+        (
+            "bug",
+            "tests/example.rs",
+            existing.replace("delay = 1", "delay = 2"),
+            true,
+        ),
+        (
+            "bug",
+            "tests/example.rs",
+            existing.replace(
+                "    let delay",
+                "    std::thread::yield_now();\n    let delay",
+            ),
+            true,
+        ),
+        ("bug", "src/test_support.rs", new_test.to_owned(), true),
+        (
+            "test",
+            "tests/fixtures/input.json",
+            "{\"sample\": 2}\n".to_owned(),
+            true,
+        ),
+        (
+            "bug",
+            "tests/example.rs",
+            existing.replace("delay, 1", "delay, 2"),
+            true,
+        ),
+        (
+            "bug",
+            "tests/new.rs",
+            format!("#[ignore]\n{new_test}"),
+            true,
         ),
     ] {
         let temp = TempDir::new().unwrap();
@@ -286,24 +333,27 @@ fn test_kind_requires_evidence_when_existing_assertions_change() {
             "https://github.com/example/project.git",
         );
         fs::create_dir(repo.join("tests")).unwrap();
+        fs::create_dir(repo.join("src")).unwrap();
+        fs::create_dir(repo.join("tests/fixtures")).unwrap();
+        fs::write(repo.join("tests/example.rs"), existing).unwrap();
         fs::write(
-            repo.join("tests/example.rs"),
-            "#[test]\nfn example() { assert_eq!(1, 1); }\n",
+            repo.join("src/lib.rs"),
+            "pub fn crate_value() -> u8 { 1 }\n",
         )
         .unwrap();
+        fs::write(repo.join("tests/fixtures/input.json"), "{\"sample\": 1}\n").unwrap();
         fs::write(
             repo.join(".forge-cli.toml"),
-            "[test_first]\nrequire = true\n",
+            format!("[test_first]\nrequire = true\nrequire_kinds = [\"{kinds}\"]\n"),
         )
         .unwrap();
-        fs::write(repo.join("notes with spaces.md"), "before\n").unwrap();
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-qm", "baseline"]);
         install_local_remote(&repo, temp.path());
         git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
         git(&repo, &["checkout", "-qb", "test/example"]);
-        fs::write(repo.join("tests/example.rs"), change).unwrap();
-        fs::write(repo.join("notes with spaces.md"), "after\n").unwrap();
+        fs::write(repo.join("tests/example.rs"), additive).unwrap();
+        fs::write(repo.join(path), change).unwrap();
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-qm", "test change"]);
         git(
@@ -314,6 +364,15 @@ fn test_kind_requires_evidence_when_existing_assertions_change() {
             &repo,
             &["branch", "--set-upstream-to", "origin/test/example"],
         );
+        if kinds == "test" && path == "tests/new.rs" {
+            check_live_test_only_create_and_adoption(&repo);
+        }
+        let workdir = if kinds == "bug" && path == "src/lib.rs" {
+            git(&repo, &["config", "diff.relative", "true"]);
+            repo.join("tests")
+        } else {
+            repo.clone()
+        };
         let stub = StubEnv::new().gh_stub("#!/bin/sh\nexit 99\n");
         for operation in ["create", "deliver"] {
             let out = run_forge_cli_in(
@@ -337,12 +396,12 @@ fn test_kind_requires_evidence_when_existing_assertions_change() {
                     "--title",
                     "Change test",
                     "--body",
-                    "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+                    "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
                 ],
-                Some(&repo),
+                Some(&workdir),
             );
             if operation == "deliver" {
-                assert_eq!(out.code, 0, "{out:?}");
+                assert_eq!(out.code, 0, "{kinds} {path} {operation}: {out:?}");
                 let envelope = parse_envelope(&out.stdout);
                 let verdict = envelope["data"]["local_preflight"]
                     .as_array()
@@ -352,10 +411,14 @@ fn test_kind_requires_evidence_when_existing_assertions_change() {
                 assert_eq!(
                     verdict.is_some_and(|v| v["ok"] == false),
                     required,
-                    "{out:?}"
+                    "{kinds} {path} {operation}: {out:?}"
                 );
             } else {
-                assert_eq!(out.code, if required { 65 } else { 0 }, "{out:?}");
+                assert_eq!(
+                    out.code,
+                    if required { 65 } else { 0 },
+                    "{kinds} {path} {operation}: {out:?}"
+                );
                 if required {
                     assert_eq!(
                         parse_envelope(&out.stdout)["error"]["code"],
@@ -365,6 +428,114 @@ fn test_kind_requires_evidence_when_existing_assertions_change() {
             }
         }
     }
+}
+
+fn check_live_test_only_create_and_adoption(repo: &std::path::Path) {
+    let head = git(repo, &["rev-parse", "HEAD"]);
+    let head = head.trim();
+    let base = git(repo, &["rev-parse", "HEAD^"]);
+    let base = base.trim();
+    let valid_body =
+        "## Summary\nAdd coverage.\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests.";
+    let missing_declaration = "## Summary\nAdd coverage.\n\n## Test plan\nUnit tests.";
+    let view = serde_json::json!({
+        "number": 3,
+        "url": "https://github.com/example/project/pull/3",
+        "state": "OPEN",
+        "headRefName": "test/example",
+        "headRefOid": head,
+        "baseRefName": "main",
+        "title": "Add coverage",
+        "body": valid_body,
+        "isDraft": true,
+    });
+    let stub = StubEnv::new().gh_stub(
+        r#"#!/bin/sh
+case "$1 $2" in
+  "auth status") printf '%s\n' '  ✓ Logged in to github.com account reviewer (keyring)' >&2 ;;
+  "repo view") printf '%s\n' '{"name":"project","owner":{"login":"example"},"url":"https://github.com/example/project","defaultBranchRef":{"name":"main"},"mergeCommitAllowed":false,"squashMergeAllowed":true,"rebaseMergeAllowed":false}' ;;
+  "pr list") printf '[%s]\n' "$PR_VIEW" ;;
+  "pr create") printf '%s\n' 'https://github.com/example/project/pull/3' ;;
+  "pr view") printf '%s\n' "$PR_VIEW" ;;
+  *) exit 99 ;;
+esac
+"#,
+    );
+    let invoke = |operation, body, provider_view: &serde_json::Value, dry_run| {
+        let mut args = vec![
+            "--provider",
+            "github",
+            "--host",
+            "github.com",
+            "--repo",
+            "example/project",
+            "--format",
+            "json",
+            "pr",
+            operation,
+            "--kind",
+            "test",
+            "--base",
+            "main",
+            "--title",
+            "Add coverage",
+            "--body",
+            body,
+        ];
+        if dry_run {
+            args.push("--dry-run");
+        }
+        if operation == "deliver" {
+            args.push("--no-merge");
+        }
+        super::support::run_forge_cli_in_with_env(
+            &stub,
+            &args,
+            Some(repo),
+            &[("PR_VIEW", &provider_view.to_string())],
+        )
+    };
+
+    let created = invoke("create", valid_body, &view, false);
+    assert_eq!(created.code, 0, "{created:?}");
+    let created = parse_envelope(&created.stdout);
+    assert_eq!(created["data"]["draft"], true);
+    assert_eq!(created["data"]["head_sha"], head);
+
+    let missing = invoke("create", missing_declaration, &view, false);
+    assert_eq!(missing.code, 65, "{missing:?}");
+    assert_eq!(
+        parse_envelope(&missing.stdout)["error"]["code"],
+        "test_changes_undeclared"
+    );
+
+    let missing = invoke("deliver", missing_declaration, &view, true);
+    let preview = parse_envelope(&missing.stdout);
+    let verdict = preview["data"]["local_preflight"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["rule"] == "body_test_changes")
+        .unwrap();
+    assert_eq!(verdict["code"], "test_changes_undeclared");
+
+    let mut existing = view;
+    existing["body"] = missing_declaration.into();
+    let adopted = invoke("deliver", valid_body, &existing, false);
+    assert_eq!(adopted.code, 65, "{adopted:?}");
+    assert_eq!(
+        parse_envelope(&adopted.stdout)["error"]["code"],
+        "test_changes_undeclared"
+    );
+
+    existing["body"] = valid_body.into();
+    existing["headRefOid"] = base.into();
+    let adopted = invoke("deliver", valid_body, &existing, false);
+    assert_eq!(adopted.code, 65, "{adopted:?}");
+    assert_eq!(
+        parse_envelope(&adopted.stdout)["error"]["code"],
+        "test_first_evidence_provider_head_mismatch",
+    );
 }
 
 #[test]
@@ -440,7 +611,7 @@ fn test_kind_fetches_current_base_and_refuses_failed_fetch() {
         "--title",
         "Change test",
         "--body",
-        "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+        "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
     ];
     let out = run_forge_cli_in(&stub, &args, Some(&repo));
     assert_eq!(out.code, 65, "{out:?}");
@@ -571,7 +742,7 @@ fn test_kind_uses_target_base_instead_of_fork_base() {
                 "--title",
                 "Change test",
                 "--body",
-                "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+                "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
             ],
             Some(&repo),
         );
@@ -611,7 +782,7 @@ fn test_kind_uses_target_base_instead_of_fork_base() {
             "--title",
             "Change test",
             "--body",
-            "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+            "## Summary\nExample\n\n## Test changes\nNone.\n\n## Test plan\nUnit tests\n",
         ],
         Some(&repo),
     );

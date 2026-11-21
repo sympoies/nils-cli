@@ -40,7 +40,8 @@ pub struct PrCreateArgs {
     pub strict_labels: bool,
     /// Directory holding a `test-first-evidence` record. Verified by the
     /// test-first gate when `[test_first].require` is true and `require_kinds`
-    /// selects this kind (default: feature/bug). Requires a complete v2 record
+    /// selects this kind (default: feature/bug). Test-kind repairs and mixed
+    /// changes are gated when bug or test is selected. Requires a complete v2 record
     /// with a testable classification, pre-fix evidence, scoped final validation, a
     /// residual-gap declaration, and a bound baseline/delivery subject
     /// matching the current checkout.

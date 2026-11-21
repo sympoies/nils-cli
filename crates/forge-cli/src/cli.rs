@@ -1276,8 +1276,9 @@ pub struct PrDeliverArgs {
     /// Directory holding a `test-first-evidence` record, forwarded to the
     /// create step and verified by the test-first gate when
     /// `[test_first].require` is true and `require_kinds` selects this kind
-    /// (default: feature/bug). Requires a complete v2 record and a bound
-    /// baseline/delivery subject matching the current checkout.
+    /// (default: feature/bug). Test-kind repairs and mixed changes are gated
+    /// when bug or test is selected. Required records must be complete v2
+    /// records bound to the current baseline and delivery subject.
     #[arg(long = "test-first-evidence", value_name = "DIR")]
     pub test_first_evidence: Option<String>,
     /// Cumulative CI-wait budget before declaring `checks_timeout` (default `30m`).

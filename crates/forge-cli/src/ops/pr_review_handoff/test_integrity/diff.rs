@@ -18,11 +18,27 @@ struct File {
     old: String,
     new: String,
     deleted: bool,
+    change_is_non_additive: bool,
+    additions: Vec<String>,
     before: Vec<String>,
     after: Vec<String>,
 }
 
 pub(crate) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
+    inspect(patch, |_| {})
+}
+
+pub(crate) fn additive_coverage(patch: &str) -> Result<bool, ForgeError> {
+    let mut all_additive = !patch.trim().is_empty();
+    let findings = inspect(patch, |file| {
+        let (cases, assertions, _) = signals(&file.additions, false);
+        all_additive &=
+            !file.change_is_non_additive && (!cases.is_empty() || !assertions.is_empty());
+    })?;
+    Ok(all_additive && findings.is_empty())
+}
+
+fn inspect(patch: &str, mut inspect_file: impl FnMut(&File)) -> Result<Vec<Finding>, ForgeError> {
     if patch.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -44,7 +60,10 @@ pub(crate) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
             if line.contains('"') {
                 return Err(limit("path_bytes", "Git-quoted paths are unsupported"));
             }
-            finish(&file, &mut findings);
+            if count > 0 {
+                finish(&file, &mut findings);
+                inspect_file(&file);
+            }
             let names = line
                 .strip_prefix("diff --git a/")
                 .and_then(|s| s.split_once(" b/"))
@@ -66,10 +85,12 @@ pub(crate) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
             match prefix {
                 "-" if remaining.0 > 0 => {
                     remaining.0 -= 1;
+                    file.change_is_non_additive = true;
                     file.before.push(content.into());
                 }
                 "+" if remaining.1 > 0 => {
                     remaining.1 -= 1;
+                    file.additions.push(content.into());
                     file.after.push(content.into());
                 }
                 " " if remaining.0 > 0 && remaining.1 > 0 => {
@@ -87,7 +108,13 @@ pub(crate) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
             file.new = path_name(path, "b/")?;
         } else if line.starts_with("deleted file mode ") {
             file.deleted = true;
+            file.change_is_non_additive = true;
+        } else if let Some(mode) = line.strip_prefix("new file mode ") {
+            file.change_is_non_additive |= !matches!(mode, "100644" | "100755");
+        } else if line.starts_with("old mode ") {
+            file.change_is_non_additive = true;
         } else if line.starts_with("@@ ") {
+            file.additions.push(cases::HUNK.into());
             file.before.push(cases::HUNK.into());
             file.after.push(cases::HUNK.into());
             let mut parts = line.split_whitespace();
@@ -110,6 +137,7 @@ pub(crate) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
         return Err(incomplete());
     }
     finish(&file, &mut findings);
+    inspect_file(&file);
     Ok(findings.into_iter().collect())
 }
 
@@ -137,10 +165,17 @@ fn range(value: Option<&str>, prefix: char) -> Result<usize, ForgeError> {
     length.parse::<usize>().map_err(|_| incomplete())
 }
 
+pub(crate) fn in_test_directory(path: &str) -> bool {
+    path.rsplit_once('/').is_some_and(|(directory, _)| {
+        directory
+            .split('/')
+            .any(|part| matches!(part, "test" | "tests" | "__tests__"))
+    })
+}
+
 fn test_path(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
-    path.split('/')
-        .any(|p| matches!(p, "test" | "tests" | "__tests__"))
+    in_test_directory(path)
         || name.starts_with("test_")
         || name.ends_with("_test.go")
         || name.contains(".test.")
@@ -153,7 +188,7 @@ pub(crate) const SOURCE_EXTENSIONS: &[&str] = &[
     "bash", "zsh", "rb", "cs", "cpp", "cc", "c",
 ];
 
-pub(super) fn source(path: &str) -> bool {
+pub(crate) fn source(path: &str) -> bool {
     path.rsplit('.')
         .next()
         .is_some_and(|ext| SOURCE_EXTENSIONS.contains(&ext))

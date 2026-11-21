@@ -220,7 +220,7 @@ pub(super) fn ensure<R: BackendRunner>(
     Ok(())
 }
 
-pub(super) fn validate_declarations(body: &str) -> Result<(), ForgeError> {
+pub(crate) fn validate_declarations(body: &str) -> Result<(), ForgeError> {
     let declaration = declarations(body);
     if declaration.trim() == "None." {
         return Ok(());
@@ -293,7 +293,7 @@ fn warn(warnings: &[String]) {
     }
 }
 
-fn declarations(body: &str) -> String {
+pub(crate) fn declarations(body: &str) -> String {
     let mut active = false;
     let mut fence = None;
     let mut lines = Vec::new();
