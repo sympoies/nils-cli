@@ -105,6 +105,7 @@ records the keep/delete decision plus the active caller evidence.
 
 | Path | Decision | Active caller evidence |
 | --- | --- | --- |
+| `scripts/ci/apt-install-retry.sh` | keep | `.github/workflows/ci.yml` and `.github/workflows/full-validation.yml` install runner packages |
 | `scripts/ci/cargo-deny-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` supply-chain audit section + `.github/workflows/ci.yml` `cargo-deny` job |
 | `scripts/ci/cli-output-contract-lint.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` docs-only/full checks list + `nils-cli-verification.sh` docs-only and full passes |
 | `scripts/ci/completion-asset-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step |
@@ -117,17 +118,26 @@ records the keep/delete decision plus the active caller evidence.
 | `scripts/ci/detect-release-only.sh` | keep | exact-base policy loaded by `.github/workflows/ci.yml` + `scripts/ci/release-only-checks.sh` + `scripts/ci/tests/detect-release-only.test.sh` |
 | `scripts/ci/docs-hygiene-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` docs-only and full passes + `scripts/ci/tests/docs-hygiene-audit.test.sh` |
 | `scripts/ci/docs-placement-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` docs-only and full passes |
+| `scripts/ci/docs-prose-audit.sh` | keep | `nils-cli-verification.sh` docs-only and full passes + `nils-cli-local-fast.sh` and `nils-cli-scoped-checks.sh` |
+| `scripts/ci/file-size-audit.sh` | keep | `nils-cli-verification.sh`, `nils-cli-local-fast.sh` and `nils-cli-scoped-checks.sh` |
+| `scripts/ci/fold-devlog.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` post-release fold procedure |
 | `scripts/ci/forge-cli-fixture-lint.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step |
 | `scripts/ci/markdownlint-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` docs-only and full passes |
 | `scripts/ci/nils-cli-checks-entrypoint.sh` | keep | `.github/workflows/ci.yml` Linux `test` job and shared full-validation jobs + `docs/runbooks/workspace-maintenance-reference.md` local-fast and CI/full commands |
 | `scripts/ci/nils-cli-local-fast.sh` | keep | `scripts/ci/nils-cli-checks-entrypoint.sh --local-fast` delegates changed-scope planning/execution here |
+| `scripts/ci/nils-cli-scoped-checks.sh` | keep | `scripts/ci/nils-cli-merge-plan-checks.py` invokes the scoped package gate |
+| `scripts/ci/nils-cli-verification.sh` | keep | `scripts/ci/nils-cli-checks-entrypoint.sh` and `scripts/ci/nils-cli-local-fast.sh` delegate verification here |
 | `scripts/ci/own-compat-audit.sh` | keep | `scripts/ci/nils-cli-verification.sh` full pass + `scripts/ci/nils-cli-local-fast.sh` + `scripts/ci/nils-cli-scoped-checks.sh` + `scripts/ci/prepare-release-bump.sh` (`--release`) + `scripts/ci/tests/own-compat-audit.test.sh` |
 | `scripts/ci/publish-order-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step + `scripts/ci/tests/publish-order-audit.test.sh` |
 | `scripts/ci/release-tarball-third-party-audit.sh` | keep | `.github/workflows/release.yml` `build` job |
 | `scripts/ci/release-only-checks.sh` | keep | exact-base reduced PR lane in `.github/workflows/ci.yml` Linux `test` job + `scripts/ci/tests/release-workflow-contract.test.sh` |
 | `scripts/ci/prepare-release-bump.sh` | keep | `.github/workflows/prepare-private-release.yml` canonical release transform + `scripts/ci/tests/prepare-release-bump.test.sh` |
+| `scripts/ci/sccache-warmup.sh` | keep | `scripts/ci/nils-cli-local-fast.sh` warms the cache for local checks |
 | `scripts/ci/tempdir-leak-audit.sh` | keep | `scripts/ci/nils-cli-local-fast.sh` unconditional static leak gate + `docs/specs/test-temp-directory-policy.md` |
 | `scripts/ci/tempdir-leak-probe.sh` | keep | `scripts/ci/nils-cli-local-fast.sh` workspace-test isolation + `docs/specs/test-temp-directory-policy.md` |
+| `scripts/ci/tempdir-leak-wrapper.sh` | keep | `scripts/ci/tempdir-leak-probe.sh` runs the isolated command through this wrapper |
+| `scripts/ci/test-env-isolation-guard.sh` | keep | `.github/workflows/full-validation.yml` isolation guard + `scripts/ci/nils-cli-local-fast.sh` |
+| `scripts/ci/test-env.sh` | keep | sourced by `scripts/ci/nils-cli-checks-entrypoint.sh`, `nils-cli-local-fast.sh`, `nils-cli-scoped-checks.sh` and `nils-cli-verification.sh` |
 | `scripts/ci/test-stale-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step |
 | `scripts/ci/third-party-artifacts-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `nils-cli-verification.sh` step + dependabot bump skill |
 | `scripts/ci/verify-signed-commits.sh` | keep | `lefthook.yml` pre-push hook |

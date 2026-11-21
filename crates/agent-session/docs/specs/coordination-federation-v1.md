@@ -368,8 +368,8 @@ authority. Operator/federation tokens cannot authenticate this route. Existing
 managed-session send authentication and wire serialization are unchanged.
 An optional expected recipient incarnation rejects stale selectors; all
 submissions require a full session ID and bind the exact live ready recipient
-before commit; abbreviated IDs never select a service recipient. Receipts replay
-before fresh discovery, preserving the original destination across movement.
+before commit. Receipts replay before fresh discovery, preserving the original
+destination across movement.
 Local and remote keys cannot silently cross routing channels.
 
 Local mailbox responses retain `agent-session.message.v1`, with the sender
@@ -380,8 +380,14 @@ plus the canonical JSON tuple `[machine, service_id]`, with generation stored
 in the existing sender-generation field. This opaque principal is never loaded
 as a session or adopted as controller guidance. The existing mailbox lock,
 quota admission, notification scheduler and receipt store own local persistence;
-there is no separate service queue. Service replies are explicitly unsupported
-(`mailbox-service-reply-unsupported`).
+there is no separate service queue.
+
+The [service recipient contract](coordination-mailbox-v1.md#service-recipients)
+defines replies to an authenticated service origin on the same machine.
+The outbound service-origin transport below addresses sessions. Relaying a
+reply to a service requires a separate route that preserves the exact service
+destination and rechecks its admission at ingress. The local slice refuses
+remote service reply destinations without creating outbox entries.
 
 Remote submission uses the existing private federation journal and transport.
 Discovery at `GET /api/coordination/peers/v1` supplies `source_service_id` and
@@ -453,7 +459,10 @@ An absent remote address in a valid discovery snapshot returns
 guidance, `retryable: false`, `next_action: inspect_submission_contract`, and
 operator recovery. Inspect discovery and correct the address before a new
 submission. Failed discovery and unavailable transport remain retryable with
-`retry_same_submission` and `same_idempotency_key` recovery.
+`retry_same_submission` and `same_idempotency_key` recovery. A service submission
+that times out waiting for a coordination store lock returns
+`coordination-unavailable` (HTTP 503 / CLI 69) with the same retry action and
+recovery.
 
 Service route setup refusals instead return HTTP 503 / CLI 69 with
 `retryable: false` and operator recovery. `mailbox-service-route-missing` names
@@ -466,6 +475,15 @@ the owning daemon's required `AGENT_SESSION_RELAY_URL`,
 `next_action: configure_relay_service_admission`. These fixed errors identify
 the configured relay and required service-origin protocol/admission without
 copying its response body or claiming which admission rule refused a 403.
+
+For each `mailbox-service-relay-forbidden` or fallback
+`mailbox-service-unavailable` submission, the owning daemon emits a warning on
+stderr by default. It records the returned code, next action, a SHA-256
+fingerprint of the service ID and generation, and a fixed cause code.
+An unrecognized cause is labeled `unclassified`. Warnings omit request bodies,
+credentials, raw identifiers, paths, and error messages and details. The
+fallback remains nonretryable with `inspect_submission_contract` and operator
+recovery.
 
 Other discovery failures keep the retry behavior above. See the
 [operator setup actions](../runbooks/serve-daemon.md#remote-service-activation-prerequisite).

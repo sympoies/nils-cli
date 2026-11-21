@@ -200,6 +200,22 @@ Recipient notification policy is configured by the destination operator; see
 [the coordination contract](docs/specs/session-coordination-v1.md#recipient-notification-policy)
 for compatible defaults, suppression metadata, and digest reads.
 
+## Library tests
+
+Nextest is the supported runner for this crate's library tests. It gives each
+test its own process and environment. Several fixtures change process-wide
+configuration or start synthetic runtimes using workspace binaries.
+
+From the workspace root, build the helper binaries before running the suite:
+
+```bash
+cargo build --locked -p nils-agent-session -p nils-agent-hook --bins
+cargo nextest run --locked -p nils-agent-session --lib
+```
+
+Plain `cargo test -p nils-agent-session --lib` exits before running any tests.
+Install `cargo-nextest` for workspace checks that include this crate.
+
 ## Documentation map
 
 | Need | Document |

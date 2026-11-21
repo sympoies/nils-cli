@@ -362,25 +362,54 @@ impl Peer {
         let released = release.clone();
         let thread = std::thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(20);
-            let offer = loop {
+            let wait_for_offer = |previous_op: Option<&Value>| loop {
                 if stopped.load(Ordering::SeqCst) || Instant::now() >= deadline {
-                    return;
+                    return None;
                 }
                 if let Ok(bytes) = fs::read(dir.join("offer.json"))
                     && let Ok(offer) = serde_json::from_slice::<Value>(&bytes)
                     && offer["op"].is_string()
+                    && previous_op != Some(&offer["op"])
                 {
-                    break offer;
+                    break Some(offer);
                 }
                 std::thread::sleep(Duration::from_millis(2));
+            };
+            let Some(mut offer) = wait_for_offer(None) else {
+                return;
             };
             if mode == "unfamiliar-authorization" {
                 composer::unfamiliar_screen(&root);
             }
-            let request = json!({"schema_version":"agent-session.claude-notice-authorize.v1", "op":offer["op"],
-                "binding":offer["binding"], "nonce":boot["nonce"], "terminal":true,"box_empty":true,"cursor":0});
             let socket = Path::new(boot["socket_path"].as_str().unwrap());
-            let Some(authorized) = post(socket, "/authorize", &request) else {
+            let authorize = |offer: &Value, box_empty: bool, cursor: usize| {
+                let request = json!({"schema_version":"agent-session.claude-notice-authorize.v1", "op":offer["op"],
+                    "binding":offer["binding"], "nonce":boot["nonce"], "terminal":true,"box_empty":box_empty,"cursor":cursor});
+                post(socket, "/authorize", &request)
+            };
+            if mode == "queued-draft" {
+                let composer = root.join("composer");
+                let cursor_file = root.join("cursor");
+                let draft = fs::read_to_string(&composer).unwrap();
+                let cursor = fs::read_to_string(&cursor_file).unwrap();
+                assert!(!draft.is_empty());
+                assert!(authorize(&offer, false, cursor.parse().unwrap()).is_none());
+                let Some(retry) = wait_for_offer(Some(&offer["op"])) else {
+                    return;
+                };
+                assert_eq!(fs::read_to_string(&composer).unwrap(), draft);
+                assert_eq!(fs::read_to_string(&cursor_file).unwrap(), cursor);
+                assert!(
+                    !root
+                        .join("state/history/claude-notices/ledger.jsonl")
+                        .exists()
+                );
+                // Only the modeled operator clears the draft.
+                fs::write(&composer, "").unwrap();
+                fs::write(&cursor_file, "0").unwrap();
+                offer = retry;
+            }
+            let Some(authorized) = authorize(&offer, true, 0) else {
                 return;
             };
             let Some(value) = authorized["text"].as_str() else {
@@ -485,28 +514,42 @@ fn send_notice(fixture: &super::Fixture, body: &str) -> CmdOutput {
 }
 
 fn send_notice_key(fixture: &super::Fixture, body: &str, key: &str) -> CmdOutput {
+    send_notice_with_flags(fixture, body, key, &[])
+}
+
+fn send_notice_with_flags(
+    fixture: &super::Fixture,
+    body: &str,
+    key: &str,
+    flags: &[&str],
+) -> CmdOutput {
     let root = fixture.root();
-    fs::write(root.join("lf-body"), body).unwrap();
+    let notice_body = root.join("lf-body");
+    let state = root.join("state");
+    let tmux = root.join("tmux");
+    fs::write(&notice_body, body).unwrap();
+    let mut args = vec![
+        "--state-dir",
+        state.to_str().unwrap(),
+        "notice",
+        "guarded",
+        "--kind",
+        "mailbox",
+        "--source",
+        "synthetic",
+        "--body-file",
+        notice_body.to_str().unwrap(),
+        "--tmux-bin",
+        tmux.to_str().unwrap(),
+        "--idempotency-key",
+        key,
+        "--format",
+        "json",
+    ];
+    args.extend_from_slice(flags);
     run_resolved(
         "agent-session",
-        &[
-            "--state-dir",
-            root.join("state").to_str().unwrap(),
-            "notice",
-            "guarded",
-            "--kind",
-            "mailbox",
-            "--source",
-            "synthetic",
-            "--body-file",
-            root.join("lf-body").to_str().unwrap(),
-            "--tmux-bin",
-            root.join("tmux").to_str().unwrap(),
-            "--idempotency-key",
-            key,
-            "--format",
-            "json",
-        ],
+        &args,
         &CmdOptions::new()
             .with_cwd(root)
             .with_env_remove_prefix("AGENT_SESSION_")
@@ -776,13 +819,13 @@ fn attach_status(root: &Path) -> Option<Value> {
 fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
     let versions = [
         ("1", "2.1.296", true, "", ""),
-        ("1", "2.1.325", true, "", ""),
+        ("1", "2.1.329", true, "", ""),
         (
             "1",
-            "2.1.326",
+            "2.1.330",
             false,
             "provider-version-unsupported",
-            "2.1.326",
+            "2.1.330",
         ),
         (
             "1",
@@ -818,7 +861,7 @@ fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
                     "reason": reason,
                     "provider_version": (!observed.is_empty()).then_some(observed),
                     "supported_min": "2.1.296",
-                    "supported_max": "2.1.325",
+                    "supported_max": "2.1.329",
                 })),
                 "{case}"
             );
@@ -842,17 +885,17 @@ fn seed_attach_status(fixture: &super::Fixture, status: Option<Value>) {
 
 fn status(reason: &str, version: Option<&str>) -> Value {
     json!({"schema_version":"agent-session.claude-notice-attach.v1","state":"not-attached",
-        "reason":reason,"provider_version":version,"supported_min":"2.1.296","supported_max":"2.1.325"})
+        "reason":reason,"provider_version":version,"supported_min":"2.1.296","supported_max":"2.1.329"})
 }
 
 #[test]
 fn claude_notice_unattached_session_refuses_with_a_typed_reason() {
     for (seed, code, reason, version) in [
         (
-            Some(status("provider-version-unsupported", Some("2.1.326"))),
+            Some(status("provider-version-unsupported", Some("2.1.330"))),
             "notice-native-version-unsupported",
             "provider-version-unsupported",
-            json!("2.1.326"),
+            json!("2.1.330"),
         ),
         (
             Some(status("provider-version-unreadable", None)),
@@ -881,7 +924,7 @@ fn claude_notice_unattached_session_refuses_with_a_typed_reason() {
             json!({"id":"guarded","guard":"transport","stage":"admission","atomic":false,
                 "pasted":false,"submitted":false,
                 "native_module":{"attached":false,"reason":reason,"provider_version":version,
-                    "supported_min":"2.1.296","supported_max":"2.1.325"}}),
+                    "supported_min":"2.1.296","supported_max":"2.1.329"}}),
             "{reason}"
         );
         // Refused before any claim or input: the key stays unused.

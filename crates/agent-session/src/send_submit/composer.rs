@@ -370,46 +370,36 @@ fn styled_text(pane: &str) -> Option<(String, Vec<bool>)> {
                 if next == 'm' {
                     break;
                 }
-                if !(next.is_ascii_digit() || next == ';') || parameters.len() >= 64 {
+                if !(next.is_ascii_digit() || matches!(next, ';' | ':')) || parameters.len() >= 64 {
                     return None;
                 }
                 parameters.push(next);
             }
-            let values: Vec<u16> = if parameters.is_empty() {
-                vec![0]
-            } else {
-                parameters
-                    .split(';')
-                    .map(|value| {
-                        if value.is_empty() {
-                            Some(0)
-                        } else {
-                            value.parse().ok()
-                        }
-                    })
-                    .collect::<Option<_>>()?
-            };
-            let mut i = 0;
-            while i < values.len() {
-                match values[i] {
-                    0 => dim = false,
+            let mut values = parameters
+                .split(';')
+                .map(|value| if value.is_empty() { "0" } else { value });
+            while let Some(value) = values.next() {
+                // tmux 3.4 uses colon subparameters for underline styles.
+                // Consume the whole parameter without changing the dim state.
+                if matches!(value, "4:0" | "4:1" | "4:2" | "4:3" | "4:4" | "4:5") {
+                    continue;
+                }
+                match value.parse::<u16>().ok()? {
+                    0 | 22 => dim = false,
                     2 => dim = true,
-                    22 => dim = false,
                     38 | 48 | 58 => {
-                        let skip = match values.get(i + 1)? {
-                            5 => 2,
-                            2 => 4,
+                        let components = match values.next()?.parse::<u16>().ok()? {
+                            5 => 1,
+                            2 => 3,
                             _ => return None,
                         };
-                        if i + skip >= values.len() {
-                            return None;
+                        for _ in 0..components {
+                            values.next()?.parse::<u16>().ok()?;
                         }
-                        i += skip;
                     }
                     1..=107 => {}
                     _ => return None,
                 }
-                i += 1;
             }
         } else {
             if ch == '\r' {

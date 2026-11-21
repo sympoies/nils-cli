@@ -167,3 +167,5 @@ are optional: omit the whole section rather than leaving a placeholder in it.
 ## Pending
 
 <!-- devlog-pending-index -->
+
+- [2026-11-21-issue-3802-composer-underline](pending/2026-11-21-issue-3802-composer-underline.md)

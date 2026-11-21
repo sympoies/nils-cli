@@ -210,6 +210,10 @@ impl Listener {
                 Err(error) => return Err(error),
             }
         };
+        // macOS (BSD) `accept` returns a socket that inherits the nonblocking
+        // listener's O_NONBLOCK; reads would then fail at once with WouldBlock,
+        // reported as a timeout, when the request has not arrived yet.
+        stream.set_nonblocking(false)?;
         if !same_uid(&stream) {
             return Err(invalid());
         }

@@ -190,6 +190,7 @@ async fn service_mailbox_handler(
                 )
             },
         )
+        .map_err(|error| service::submission_recovery(error, &service_id, &generation))
     })
     .await
     {
@@ -198,7 +199,7 @@ async fn service_mailbox_handler(
             state.coordination_notification_wake.notify_one();
             Json(value).into_response()
         }
-        Ok(Err(error)) => envelope_err(service::recovery(error)),
+        Ok(Err(error)) => envelope_err(error),
         Err(_) => join_err(),
     }
 }

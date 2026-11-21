@@ -9,8 +9,7 @@ set -euo pipefail
 #   - a run that touches nothing passes, and sees none of the caller's variables;
 #   - a write under the poisoned HOME, AGENT_HOME, or XDG_STATE_HOME fails;
 #   - a run of the inherited auth-sync or remote-auth hook command fails;
-#   - a run that could not build fails the guard instead of passing vacuously, while
-#     plain test failures (nextest exit 100) are left to the regular gate.
+#   - a build or test failure fails the guard.
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 guard="$repo_root/scripts/ci/test-env-isolation-guard.sh"
@@ -33,9 +32,9 @@ export RUSTUP_HOME="$work/cargo-home"
 export CARGO_TARGET_DIR="$work/target"
 
 # The fake answers `nextest --version` and `build` quietly; only the test run
-# (`cargo test ...` or `cargo nextest run ...`) executes the case body.
+# executes the case body.
 write_fake_cargo() {
-  printf '#!/bin/sh\n[ "$1" = test ] || [ "$2" = run ] || exit 0\n%s\n' "$1" >"$fake_bin/cargo"
+  printf '#!/bin/sh\n[ "$1" = nextest ] && [ "$2" = run ] || exit 0\n%s\n' "$1" >"$fake_bin/cargo"
   chmod +x "$fake_bin/cargo"
   if [[ "$(command -v cargo)" != "$fake_bin/cargo" ]]; then
     echo "FAIL: fake cargo is not the only cargo on PATH" >&2
@@ -61,7 +60,7 @@ expect_pass() {
 expect_fail() {
   local name="$1" needle="$2"
   if run_guard; then
-    echo "FAIL: $name: guard accepted a leaking run" >&2
+    echo "FAIL: $name: guard accepted the run" >&2
     exit 1
   fi
   if ! grep -q -- "$needle" "$work/err"; then
@@ -98,8 +97,13 @@ expect_fail "inherited remote-auth command ran" "hook command ran"
 write_fake_cargo 'exit 101'
 expect_fail "a run that could not build fails the guard" "exited 101"
 
-write_fake_cargo 'exit 100'
-expect_pass "failing tests alone are left to the regular gate"
+export ENV_GUARD_SELECTION='nils-agent-session|lib|'
+write_fake_cargo 'printf "%s\n" "fixture test output"; exit 100'
+expect_fail "failed library tests fail the guard" 'nils-agent-session (lib) exited 100'
+if grep -q 'fixture test output' "$work/out" "$work/err"; then
+  echo "FAIL: guard exposed test output" >&2
+  exit 1
+fi
 
 # Cargo keeps CARGO_HOME so its toolchain/config is available, but the guard
 # points XDG_CACHE_HOME at a poison sentinel. Model the configured sccache

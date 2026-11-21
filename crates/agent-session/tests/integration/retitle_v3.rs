@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 use nils_test_support::bin;
@@ -44,31 +44,32 @@ impl ServeProcess {
             "timeout_ms": 1000
         })
         .to_string();
-        let child = Command::new(bin::resolve("agent-session"))
-            .current_dir(&fixture.root)
-            .args([
-                "serve",
-                "--bind",
-                &fixture.address.to_string(),
-                "--state-dir",
-                fixture.state_dir.to_str().expect("UTF-8 state dir"),
-                "--token",
-                TOKEN,
-                "--machine",
-                "retitle-v3-test-machine",
-                "--tmux-bin",
-                fixture.tmux_bin.to_str().expect("UTF-8 tmux fixture"),
-            ])
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin")
-            .env("HOME", &fixture.home)
-            .env("CODEX_HOME", &fixture.codex_home)
-            .env("AGENT_SESSION_RETITLE_CONFIG", config)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::from(stderr))
-            .spawn()
-            .expect("spawn agent-session serve");
+        let child = crate::serve_fixture::command(
+            &fixture.root,
+            bin::resolve("agent-session"),
+            &fixture.state_dir,
+            &fixture.tmux_bin,
+            |command| {
+                command
+                    .current_dir(&fixture.root)
+                    .args([
+                        "--bind",
+                        &fixture.address.to_string(),
+                        "--token",
+                        TOKEN,
+                        "--machine",
+                        "retitle-v3-test-machine",
+                    ])
+                    .env("HOME", &fixture.home)
+                    .env("CODEX_HOME", &fixture.codex_home)
+                    .env("AGENT_SESSION_RETITLE_CONFIG", config)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::from(stderr));
+            },
+        )
+        .spawn()
+        .expect("spawn agent-session serve");
         let mut server = Self { child, stderr_path };
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {

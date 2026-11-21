@@ -15,10 +15,21 @@ const NOTICE = "crates/agent-session/tests/guarded_send/claude_notice.rs";
 const SPEC = "crates/agent-session/docs/specs/session-notices-v1.md";
 const CREATION_UNAVAILABLE = "candidate creation unavailable; maintainer must check workflow PR creation permission and prepare the draft manually or rerun; do not add credentials or change repository settings automatically";
 const END = "<!-- claude-release-check:end -->";
+const CONTRACT_MODULE = "send::claude_notice::module_contract::";
+const CONTRACT_CASES = [
+  "dollar_check_rejects_every_form_the_loader_rejects",
+  "embedded_module_loads_in_the_installed_claude_code",
+  "embedded_module_uses_the_engine_handle_only_as_a_call_site",
+];
+const contractArgs = (archive, root) => [
+  "nextest", "run", "--archive-file", archive, "--workspace-remap", root,
+  "--no-tests", "fail", "--run-ignored", "all", "--color", "never", "--no-capture",
+  "--show-progress", "none", "--status-level", "pass", CONTRACT_MODULE,
+];
 const COMMANDS = [
   "npm install --prefix $SANDBOX/install --ignore-scripts --omit=optional --offline --no-audit --no-fund --no-package-lock $SANDBOX/0.tgz $SANDBOX/1.tgz",
   "$SANDBOX/bin/claude --version",
-  "$CONTRACT_TEST_BINARY send::claude_notice::module_contract:: --nocapture (call-shape scan and claude plugin validate)",
+  ["$NEXTEST", ...contractArgs("$CONTRACT_ARCHIVE", "$WORKSPACE")].join(" "),
 ];
 const candidateBranch = (version) => `ci/claude-range-${version}`;
 const failureMarker = (version) => `<!-- claude-release-failure:${version} -->`;
@@ -84,7 +95,7 @@ function isolatedEnvironment(sandbox) {
   fs.mkdirSync(path.join(sandbox, "bin"), { recursive: true, mode: 0o700 });
   return env;
 }
-async function checkCandidate({ release, contractBinary, root = process.cwd(), fetchJSON = getJSON,
+async function checkCandidate({ release, contractArchive, contractNextest, root = process.cwd(), fetchJSON = getJSON,
   fetchBytes = getBytes, execute = spawnSync, artifactDir = null }) {
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "claude-release-check-"));
   const result = { passed: false, packages: [], commands: [], failure: "isolated installation or contract failed" };
@@ -119,12 +130,18 @@ async function checkCandidate({ release, contractBinary, root = process.cwd(), f
     fs.symlinkSync(binary, path.join(sandbox, "bin/claude"));
     const banner = run(binary, ["--version"], COMMANDS[1]).trim();
     if (banner !== `${release.version} (Claude Code)`) throw new Error("candidate banner mismatch");
-    if (!contractBinary || !path.isAbsolute(contractBinary)) throw new Error("compiled contract test binary required");
-    const output = run(contractBinary, ["send::claude_notice::module_contract::", "--nocapture"],
-      COMMANDS[2]);
-    // The existing optional installed-CLI test must actually run for this candidate.
-    if (!output.includes(`checking the module against Claude Code ${release.version}\n`) || output.includes("skipped:") ||
-        !/test result: ok\. [3-9]\d* passed; 0 failed; 0 ignored;/.test(output)) throw new Error("contract skipped or incomplete");
+    if (!contractArchive || !path.isAbsolute(contractArchive) || !contractNextest || !path.isAbsolute(contractNextest))
+      throw new Error("absolute nextest executable and contract archive paths required");
+    const output = run(contractNextest, contractArgs(contractArchive, root), COMMANDS[2]);
+    const passed = new Set(Array.from(
+      output.matchAll(/^[ \t]*PASS[ \t]+\[[^\r\n]*\][ \t]+nils-agent-session[ \t]+(\S+)$/gm),
+      match => match[1],
+    ));
+    // The installed-CLI case can return normally without validating a module.
+    const lines = output.split(/\r?\n/);
+    if (!CONTRACT_CASES.every(name => passed.has(CONTRACT_MODULE + name)) ||
+        !lines.includes(`checking the module against Claude Code ${release.version}`) ||
+        lines.some(line => line.startsWith("skipped:"))) throw new Error("contract skipped or incomplete");
     result.passed = true; result.failure = null;
   } catch {
     // Bound diagnostics and keep provider/registry/child text out of public records.
@@ -164,7 +181,8 @@ function candidateChanges(root, candidate) {
 // Runs only in the read-only job. The provider-write job never calls this
 // collector or executes an executable from the candidate/evidence artifact.
 async function collectReleaseCheck({ sourceSha, root = process.cwd(), discoverRelease = discover,
-  checkRelease = checkCandidate, contractBinary = process.env.CLAUDE_CONTRACT_TEST_BINARY,
+  checkRelease = checkCandidate, contractArchive = process.env.CLAUDE_CONTRACT_ARCHIVE,
+  contractNextest = process.env.CLAUDE_CONTRACT_NEXTEST,
   artifactDir = "claude-release-check", writeEvidence = (checked, patch) => {
     fs.mkdirSync(artifactDir, { recursive: true });
     fs.writeFileSync(path.join(artifactDir, "checked.json"), JSON.stringify(checked, null, 2));
@@ -178,7 +196,7 @@ async function collectReleaseCheck({ sourceSha, root = process.cwd(), discoverRe
       optionalDependencies: { [PLATFORM]: release.optionalDependencies?.[PLATFORM] } };
     if (compare(release.version, range(root).max) > 0) {
       fs.mkdirSync(artifactDir, { recursive: true });
-      checked.check = await checkRelease({ release, contractBinary, artifactDir });
+      checked.check = await checkRelease({ release, contractArchive, contractNextest, root, artifactDir });
       if (checked.check.passed) patch = candidateChanges(root, release.version);
     }
   } catch { checked.error = "unprivileged release collection failed"; }

@@ -1,4 +1,5 @@
 use super::*;
+use std::os::unix::ffi::OsStrExt;
 
 /// Own every pane launched by this fixture, including across failed restarts.
 /// Cloning the executable path does not transfer teardown ownership.
@@ -6,6 +7,68 @@ pub(super) struct FakeTmux {
     bin: PathBuf,
     root: PathBuf,
     _clock: test_control::Fixture,
+}
+
+impl FakeTmux {
+    pub(super) fn synchronous_observations(
+        &self,
+    ) -> (crate::tmux_probe_fixture::StatusGuard, fs::File) {
+        let input = self.root.join(test_control::PANE_INPUT);
+        let name = std::ffi::CString::new(input.as_os_str().as_bytes()).unwrap();
+        // SAFETY: the name is a nul-terminated path in this fixture's temp dir.
+        assert!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) } == 0);
+        // Keep the writer open for the fixture's lifetime. Closing it also
+        // releases the pane if the test stops before exercising provider exit.
+        let input = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(input)
+            .unwrap();
+        let status = crate::tmux_probe_fixture::install_status(
+            &self.bin,
+            crate::tmux_probe_fixture::Status::RunningMarker(self.root.join("running")),
+        );
+        (status, input)
+    }
+
+    /// Wait for the pane to exit after the simulated provider receives Enter.
+    pub(super) fn observe_provider_exit(
+        &self,
+        context: &CliContext,
+        launch: &str,
+    ) -> test_control::Hook {
+        use std::os::fd::AsRawFd;
+
+        let pid = fs::read_to_string(self.root.join("pane"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let pane = crate::open_linux_process_pidfd(pid).unwrap();
+        let running = self.root.join("running");
+        test_control::on(
+            context,
+            test_control::Phase::ExitRequested,
+            launch,
+            move |_, _| {
+                assert!(
+                    !running.exists(),
+                    "the fixture provider did not handle the exit command"
+                );
+                let mut poll = libc::pollfd {
+                    fd: pane.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                // SAFETY: the descriptor belongs to this fixture's pinned pane.
+                let ready = unsafe { libc::poll(&mut poll, 1, -1) };
+                assert!(
+                    ready == 1 && poll.revents & libc::POLLIN != 0,
+                    "fixture pane exit was not observed"
+                );
+            },
+        )
+    }
 }
 
 impl std::ops::Deref for FakeTmux {
@@ -69,16 +132,29 @@ case "$1" in
       elif [ "$slot" = 0 ]; then case "$arg" in */coordination/heartbeat) heartbeat="$arg"; slot=1 ;; esac
       fi
     done
-    if [ -n "$heartbeat" ]; then
-      gate="$(dirname "$heartbeat")/broker-provisioned"
-      (i=0; while [ ! -f "$gate" ] && [ "$i" -lt 1000 ]; do i=$((i + 1)); sleep 0.01; done
-       printf '%s:%s\n' "$incarnation" "$(date +%s)" > "$heartbeat"; chmod 600 "$heartbeat") >/dev/null 2>&1 &
+    if [ -p "$root/{pane_input}" ]; then
+      # The pane reports its PID after setsid, then blocks without descendants.
+      setsid sh -c '
+        root=$1
+        printf "%s\n" "$$" > "$root/pane"
+        printf "%s\n" "$$" >> "$root/panes"
+        : > "$root/running"
+        printf "%s\t%s\t%s\n" "\$77" "%77" "$$"
+        exec >/dev/null 2>&1
+        IFS= read -r ignored < "$2"
+      ' pane "$root" "$root/{pane_input}" </dev/null &
+    else
+      if [ -n "$heartbeat" ]; then
+        gate="$(dirname "$heartbeat")/broker-provisioned"
+        (i=0; while [ ! -f "$gate" ] && [ "$i" -lt 1000 ]; do i=$((i + 1)); sleep 0.01; done
+         printf '%s:%s\n' "$incarnation" "$(date +%s)" > "$heartbeat"; chmod 600 "$heartbeat") >/dev/null 2>&1 &
+      fi
+      setsid sh -c 'while [ -d "$1" ] && kill -0 "$2" 2>/dev/null; do sleep 0.05; done' pane "$root" {owner_pid} >/dev/null 2>&1 </dev/null &
+      printf '%s\n' "$!" > "$root/pane"
+      printf '%s\n' "$!" >> "$root/panes"
+      : > "$root/running"
+      printf '%s\t%s\t%s\n' '$77' '%77' "$(cat "$root/pane")"
     fi
-    setsid sh -c 'while [ -d "$1" ] && kill -0 "$2" 2>/dev/null; do sleep 0.05; done' pane "$root" {owner_pid} >/dev/null 2>&1 </dev/null &
-    printf '%s\n' "$!" > "$root/pane"
-    printf '%s\n' "$!" >> "$root/panes"
-    : > "$root/running"
-    printf '%s\t%s\t%s\n' '$77' '%77' "$(cat "$root/pane")"
     ;;
   display-message) printf '%s\t%s\t%s\n' '$77' '%77' "$(cat "$root/pane")" ;;
   has-session) [ -f "$root/stall-status" ] && {{ : > "$root/status-stalled"; sleep 20; }} ;;
@@ -97,6 +173,7 @@ exit 0
 "#,
         root = shell_words::quote(&root.to_string_lossy()),
         owner_pid = std::process::id(),
+        pane_input = test_control::PANE_INPUT,
     );
     // An idle Claude Code composer with nothing typed.
     fs::write(

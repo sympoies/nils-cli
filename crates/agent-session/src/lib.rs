@@ -83,7 +83,7 @@ use session_views::{list_sessions_for_serve, visit_session_views};
 mod usage;
 
 #[cfg(test)]
-use std::cell::Cell;
+mod libtest_runner;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
@@ -142,10 +142,10 @@ const STARTUP_PROJECTION_VERSION: &str = "agent-session.startup.v1";
 
 #[cfg(test)]
 thread_local! {
-    static SESSION_RECORD_WRITE_DELAY_ONCE: Cell<Option<Duration>> = const { Cell::new(None) };
-    static SESSION_RECORD_WRITE_FAILURE_COUNTDOWN: Cell<Option<usize>> = const { Cell::new(None) };
-    static SESSION_DOCUMENT_WRITE_COUNT: Cell<usize> = const { Cell::new(0) };
-    static SESSION_RESUME_WRITE_COUNT: Cell<usize> = const { Cell::new(0) };
+    static SESSION_RECORD_WRITE_DELAY_ONCE: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+    static SESSION_RECORD_WRITE_FAILURE_COUNTDOWN: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static SESSION_DOCUMENT_WRITE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static SESSION_RESUME_WRITE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -168,8 +168,8 @@ pub(crate) fn reset_session_record_write_counts() {
 #[cfg(test)]
 pub(crate) fn session_record_write_counts() -> (usize, usize) {
     (
-        SESSION_DOCUMENT_WRITE_COUNT.with(Cell::get),
-        SESSION_RESUME_WRITE_COUNT.with(Cell::get),
+        SESSION_DOCUMENT_WRITE_COUNT.with(std::cell::Cell::get),
+        SESSION_RESUME_WRITE_COUNT.with(std::cell::Cell::get),
     )
 }
 const STARTUP_EXTRA_KEY: &str = "startup";
@@ -3772,51 +3772,6 @@ fn capture_pane_digest(tmux_bin: &Path, target: &str) -> Option<u64> {
     let mut hasher = DefaultHasher::new();
     pane.hash(&mut hasher);
     Some(hasher.finish())
-}
-
-/// Load `file` into a named tmux buffer and paste it into `target`, deleting the
-/// buffer after paste (`-d`) or on failure. The staged error distinguishes a
-/// proven pre-delivery load failure from a paste result that may have landed.
-enum PromptPasteFailure {
-    BeforeDelivery(CliError),
-    OutcomeUnknown(CliError),
-}
-
-fn prompt_delivery_failure(failure: PromptPasteFailure) -> CliError {
-    match failure {
-        PromptPasteFailure::BeforeDelivery(error) | PromptPasteFailure::OutcomeUnknown(error) => {
-            error
-        }
-    }
-}
-
-fn load_and_paste_buffer(
-    tmux_bin: &Path,
-    buffer_name: &str,
-    target: &str,
-    file: &Path,
-) -> Result<(), PromptPasteFailure> {
-    let mut load = ProcessCommand::new(tmux_bin);
-    load.arg("load-buffer").arg("-b").arg(buffer_name).arg(file);
-    run_status(load, "tmux load-buffer").map_err(PromptPasteFailure::BeforeDelivery)?;
-
-    let mut paste = ProcessCommand::new(tmux_bin);
-    // `-p` wraps the paste in bracketed-paste markers when the provider asked
-    // for them, so its line breaks stay inside one prompt instead of each
-    // reaching the TUI as Enter.
-    paste
-        .arg("paste-buffer")
-        .arg("-p")
-        .arg("-b")
-        .arg(buffer_name)
-        .arg("-d")
-        .arg("-t")
-        .arg(target);
-    if let Err(err) = run_status(paste, "tmux paste-buffer") {
-        delete_tmux_buffer(tmux_bin, buffer_name);
-        return Err(PromptPasteFailure::OutcomeUnknown(err));
-    }
-    Ok(())
 }
 
 fn delete_tmux_buffer(tmux_bin: &Path, buffer_name: &str) {
@@ -7898,59 +7853,22 @@ pub(crate) mod tmux_probe_fixture {
     }
 
     pub(super) fn read(path: &Path) -> Option<Result<TmuxRuntimeProbe, SessionTerminationFailure>> {
-        PROBES.lock().unwrap().get(path).map(|probe| match probe {
+        let probe = PROBES.lock().unwrap().get(path).map(|probe| match probe {
             Probe::Stopped => Ok(TmuxRuntimeProbe::Stopped),
             Probe::Running(identity) => Ok(TmuxRuntimeProbe::Running(identity.clone())),
             #[cfg(target_os = "linux")]
             Probe::IdentityUnavailable => {
                 Err(SessionTerminationFailure::RuntimeIdentityUnavailable)
             }
-        })
-    }
-
-    /// The outcome the `has-session` status probe reports for the pinned
-    /// path: the verification loops observe the modeled session state
-    /// instead of racing a script launch against the bounded probe budget
-    /// (sympoies/nils-cli#2131).
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub(crate) enum Status {
-        Running,
-        Stopped,
-    }
-
-    static STATUS_PROBES: LazyLock<Mutex<std::collections::HashMap<PathBuf, Status>>> =
-        LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
-
-    pub(crate) struct StatusGuard(PathBuf);
-
-    pub(crate) fn install_status(path: &Path, status: Status) -> StatusGuard {
-        assert!(
-            STATUS_PROBES
-                .lock()
-                .unwrap()
-                .insert(path.to_path_buf(), status)
-                .is_none()
-        );
-        StatusGuard(path.to_path_buf())
-    }
-
-    impl Drop for StatusGuard {
-        fn drop(&mut self) {
-            STATUS_PROBES.lock().unwrap().remove(&self.0);
+        });
+        #[cfg(target_os = "linux")]
+        if probe.is_none() && stopped_running_marker(path) {
+            return Some(Ok(TmuxRuntimeProbe::Stopped));
         }
+        probe
     }
 
-    pub(super) fn read_status(path: &Path) -> Option<String> {
-        STATUS_PROBES
-            .lock()
-            .unwrap()
-            .get(path)
-            .map(|status| match status {
-                Status::Running => "running".to_string(),
-                Status::Stopped => "stopped".to_string(),
-            })
-    }
-
+    include!("tests/tmux_probe_status.rs");
     include!("tests/tmux_probe_identity.rs");
 }
 
