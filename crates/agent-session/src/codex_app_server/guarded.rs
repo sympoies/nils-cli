@@ -145,10 +145,33 @@ impl Client {
     }
 
     pub(crate) fn idle(&mut self) -> Result<(), Error> {
+        self.idle_thread(false).map(drop)
+    }
+
+    /// Distinguish an unchanged idle thread from a turn that completed
+    /// between observations. Turn IDs stay private to the caller.
+    pub(crate) fn idle_watermark(&mut self) -> Result<Option<(u64, Option<String>)>, Error> {
+        let result = self.idle_thread(true)?;
+        Ok((|| {
+            let turns = result.pointer("/thread/turns")?.as_array()?;
+            let last = match turns.last() {
+                Some(turn) => Some(
+                    turn["id"]
+                        .as_str()
+                        .filter(|id| protocol_id_is_valid(id))?
+                        .to_owned(),
+                ),
+                None => None,
+            };
+            Some((turns.len() as u64, last))
+        })())
+    }
+
+    fn idle_thread(&mut self, include_turns: bool) -> Result<Value, Error> {
         let result = self
             .request(
                 "thread/read",
-                json!({"threadId":self.thread_id,"includeTurns":false}),
+                json!({"threadId":self.thread_id,"includeTurns":include_turns}),
             )
             .map_err(|_| Error::Unobservable(IdleReason::ThreadReadRpcFailed))?;
         if result.pointer("/thread/id").and_then(Value::as_str) != Some(&self.thread_id) {
@@ -161,7 +184,7 @@ impl Client {
             // After an error event, the provider reports a loaded thread that
             // is not running and has no pending request as `systemError`,
             // until its next turn starts. That is idle for a guarded send.
-            Some("idle" | "systemError") => Ok(()),
+            Some("idle" | "systemError") => Ok(result),
             Some("active") => Err(Error::NotIdle),
             Some("notLoaded") => Err(Error::Unobservable(IdleReason::ThreadNotLoaded)),
             None => Err(Error::Unobservable(IdleReason::ThreadStatusMissing)),
@@ -270,4 +293,12 @@ impl Client {
 
 pub(crate) fn idle(record: &SessionRecord, deadline: Instant) -> Result<(), Error> {
     Client::connect(record, deadline)?.idle()
+}
+
+/// A live proxy marker changes when control moves to a different proxy owner.
+pub(crate) fn reply_control_token(
+    context: &crate::CliContext,
+    record: &SessionRecord,
+) -> Option<String> {
+    super::live_proxy_marker(context, record).map(|marker| marker.token)
 }

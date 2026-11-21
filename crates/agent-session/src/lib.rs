@@ -1248,6 +1248,8 @@ pub struct SessionView {
     tmux_session: String,
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    boot_recovery: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     runtime_exit: Option<lifecycle::recovery::RuntimeExit>,
     resumable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -6060,6 +6062,7 @@ fn session_view_from_parts(
         tmux_session: record.tmux_session.clone(),
         provider_continuity: provider_continuity::projection(record, &status),
         runtime_exit: lifecycle::recovery::projection(context, record, &status),
+        boot_recovery: runtime_environment::boot_recovery::projection(record),
         status,
         resumable,
         resume_blocked_reason,
@@ -6772,6 +6775,7 @@ where
         .map_err(|error| contention::close_error(error, close_reason))?;
 
     let registry_fence = SessionRegistryFence::from_record(&record);
+    runtime_environment::boot_recovery::mark_stopped(context, &mut record)?;
     gracefully_shutdown_profiled_tmux_session(context, &mut record, tmux_bin, verify_timeout)
         .map_err(|reason| {
             session_termination_error(&record, reason, SessionTerminationOperation::Delete)
@@ -6988,7 +6992,7 @@ pub fn stop_session_runtime_locked_unjournaled(
     tmux_bin: &Path,
 ) -> Result<(), CliError> {
     ensure_session_lifecycle_mutation_allowed(context, record)?;
-
+    runtime_environment::boot_recovery::mark_stopped(context, record)?;
     terminate_tmux_session_with_timeouts(
         context,
         record,
@@ -7853,59 +7857,22 @@ pub(crate) mod tmux_probe_fixture {
     }
 
     pub(super) fn read(path: &Path) -> Option<Result<TmuxRuntimeProbe, SessionTerminationFailure>> {
-        PROBES.lock().unwrap().get(path).map(|probe| match probe {
+        let probe = PROBES.lock().unwrap().get(path).map(|probe| match probe {
             Probe::Stopped => Ok(TmuxRuntimeProbe::Stopped),
             Probe::Running(identity) => Ok(TmuxRuntimeProbe::Running(identity.clone())),
             #[cfg(target_os = "linux")]
             Probe::IdentityUnavailable => {
                 Err(SessionTerminationFailure::RuntimeIdentityUnavailable)
             }
-        })
-    }
-
-    /// The outcome the `has-session` status probe reports for the pinned
-    /// path: the verification loops observe the modeled session state
-    /// instead of racing a script launch against the bounded probe budget
-    /// (sympoies/nils-cli#2131).
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub(crate) enum Status {
-        Running,
-        Stopped,
-    }
-
-    static STATUS_PROBES: LazyLock<Mutex<std::collections::HashMap<PathBuf, Status>>> =
-        LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
-
-    pub(crate) struct StatusGuard(PathBuf);
-
-    pub(crate) fn install_status(path: &Path, status: Status) -> StatusGuard {
-        assert!(
-            STATUS_PROBES
-                .lock()
-                .unwrap()
-                .insert(path.to_path_buf(), status)
-                .is_none()
-        );
-        StatusGuard(path.to_path_buf())
-    }
-
-    impl Drop for StatusGuard {
-        fn drop(&mut self) {
-            STATUS_PROBES.lock().unwrap().remove(&self.0);
+        });
+        #[cfg(target_os = "linux")]
+        if probe.is_none() && stopped_running_marker(path) {
+            return Some(Ok(TmuxRuntimeProbe::Stopped));
         }
+        probe
     }
 
-    pub(super) fn read_status(path: &Path) -> Option<String> {
-        STATUS_PROBES
-            .lock()
-            .unwrap()
-            .get(path)
-            .map(|status| match status {
-                Status::Running => "running".to_string(),
-                Status::Stopped => "stopped".to_string(),
-            })
-    }
-
+    include!("tests/tmux_probe_status.rs");
     include!("tests/tmux_probe_identity.rs");
 }
 
@@ -8212,14 +8179,7 @@ fn persist_launched_tmux_identity(
     record: &mut SessionRecord,
     identity: &TmuxRuntimeIdentity,
 ) -> Result<(), CliError> {
-    persist_tmux_runtime_identity(record, identity).map_err(|_| {
-        CliError::runtime(
-            "tmux-runtime-identity-persist-failed",
-            "failed to retain the launched tmux runtime identity",
-            Some(json!({ "id": record.id })),
-        )
-    })?;
-    write_session_record(context, record)
+    runtime_environment::boot_recovery::persist_launch(context, record, identity)
 }
 
 fn persisted_tmux_runtime_identity(

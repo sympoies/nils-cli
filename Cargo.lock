@@ -994,9 +994,9 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "font-types"
-version = "0.12.3"
+version = "0.12.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75382bc7392ef10aad10935f92fc3db36d2d4dad0e5d96d8d65e04f89a07ec39"
+checksum = "835ae9d781464a79026cde387f9cbc650c9a4909d7cf7e658b127e3c35d2f35d"
 dependencies = [
  "bytemuck",
 ]
@@ -1207,9 +1207,9 @@ dependencies = [
 
 [[package]]
 name = "graphql-tools"
-version = "0.5.12"
+version = "0.5.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "823a561287777ba9986b964adb0a91aaea3e55fd1d64eac15d0fe6252521e528"
+checksum = "659695e6f9724f065ce44d531ae0093ef214ca4d46a35cf3ecddb4d17458c415"
 dependencies = [
  "combine",
  "itoa",
@@ -1224,14 +1224,15 @@ dependencies = [
 
 [[package]]
 name = "harfrust"
-version = "0.12.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c03d949a14aa089bbb282f7dd76a498a7f684428e4257202efc119ec010376f9"
+checksum = "865dcc4105d51c323d8fedbb2d75b5e9c8ecddf5613f74c82f851d0afbc97114"
 dependencies = [
  "bitflags",
  "bytemuck",
  "read-fonts",
  "smallvec",
+ "yoke",
 ]
 
 [[package]]
@@ -2087,7 +2088,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-hook"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2111,7 +2112,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-memory"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2126,7 +2127,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-out"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "chrono",
  "clap",
@@ -2143,7 +2144,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-runtime"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "anyhow",
  "clap",
@@ -2164,7 +2165,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-scope-lock"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2180,7 +2181,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-session"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -2212,7 +2213,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-workflow-primitives"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2237,7 +2238,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-gql"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2252,7 +2253,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-grpc"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -2268,7 +2269,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-rest"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -2284,7 +2285,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-test"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2300,7 +2301,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-testing-core"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2326,7 +2327,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-websocket"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2342,14 +2343,14 @@ dependencies = [
 
 [[package]]
 name = "nils-build-info"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "tempfile",
 ]
 
 [[package]]
 name = "nils-claude-cli"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2372,7 +2373,7 @@ dependencies = [
 
 [[package]]
 name = "nils-cli-template"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "clap",
  "nils-build-info",
@@ -2387,7 +2388,7 @@ dependencies = [
 
 [[package]]
 name = "nils-codex-cli"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2414,7 +2415,7 @@ dependencies = [
 
 [[package]]
 name = "nils-common"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2434,7 +2435,7 @@ dependencies = [
 
 [[package]]
 name = "nils-devlog"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2449,7 +2450,7 @@ dependencies = [
 
 [[package]]
 name = "nils-docker-tools"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2463,7 +2464,7 @@ dependencies = [
 
 [[package]]
 name = "nils-evidence"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2484,7 +2485,7 @@ dependencies = [
 
 [[package]]
 name = "nils-forge-cli"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -2513,7 +2514,7 @@ dependencies = [
 
 [[package]]
 name = "nils-fzf-cli"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "anyhow",
  "clap",
@@ -2531,7 +2532,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-cli"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "anyhow",
  "clap",
@@ -2553,7 +2554,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-lock"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2569,7 +2570,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-scope"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "anyhow",
  "clap",
@@ -2583,7 +2584,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-summary"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2600,7 +2601,7 @@ dependencies = [
 
 [[package]]
 name = "nils-github-app-cli"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2615,7 +2616,7 @@ dependencies = [
 
 [[package]]
 name = "nils-image-processing"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2637,7 +2638,7 @@ dependencies = [
 
 [[package]]
 name = "nils-macos-agent"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -2657,7 +2658,7 @@ dependencies = [
 
 [[package]]
 name = "nils-markdown"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "anyhow",
  "clap",
@@ -2675,7 +2676,7 @@ dependencies = [
 
 [[package]]
 name = "nils-provider-resume"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "jiff",
  "nils-common",
@@ -2686,7 +2687,7 @@ dependencies = [
 
 [[package]]
 name = "nils-research-cli"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "axum",
  "clap",
@@ -2704,7 +2705,7 @@ dependencies = [
 
 [[package]]
 name = "nils-screen-record"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "block2",
  "chrono",
@@ -2732,7 +2733,7 @@ dependencies = [
 
 [[package]]
 name = "nils-scrub"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "regex",
  "serde",
@@ -2741,7 +2742,7 @@ dependencies = [
 
 [[package]]
 name = "nils-secrets"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2758,7 +2759,7 @@ dependencies = [
 
 [[package]]
 name = "nils-semantic-commit"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "anyhow",
  "clap",
@@ -2775,7 +2776,7 @@ dependencies = [
 
 [[package]]
 name = "nils-speech-test-cli"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2795,7 +2796,7 @@ dependencies = [
 
 [[package]]
 name = "nils-term"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "indicatif",
  "pretty_assertions",
@@ -2803,7 +2804,7 @@ dependencies = [
 
 [[package]]
 name = "nils-test-support"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "pretty_assertions",
  "serde",
@@ -2813,7 +2814,7 @@ dependencies = [
 
 [[package]]
 name = "nils-web-evidence"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2829,7 +2830,7 @@ dependencies = [
 
 [[package]]
 name = "nils-zsh-kit"
-version = "1.41.9"
+version = "1.41.10"
 dependencies = [
  "chrono",
  "clap",
@@ -3601,13 +3602,16 @@ dependencies = [
 
 [[package]]
 name = "read-fonts"
-version = "0.41.0"
+version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "046a7d674daf459825b32f5062056d6882db0d2f5a479fbd76ccfc870ac18709"
+checksum = "bdaa4fffe9ff3ca2c353fa9729792805b9b3e324695ff5a081f860612e81b330"
 dependencies = [
  "bytemuck",
+ "foldhash 0.2.0",
  "font-types",
  "once_cell",
+ "smallvec",
+ "yoke",
 ]
 
 [[package]]
@@ -3734,9 +3738,9 @@ dependencies = [
 
 [[package]]
 name = "resvg"
-version = "0.49.0"
+version = "0.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1572844b6727a1bf842190e9947641a68ac44bed83f50afb4bd1407a2564bee8"
+checksum = "77bb4b284cf8a5c8ae721594af53387fb755d2196fddb32b2acfb4fa9251fa0c"
 dependencies = [
  "bytemuck",
  "gif",
@@ -4122,9 +4126,9 @@ dependencies = [
 
 [[package]]
 name = "sha1"
-version = "0.10.6"
+version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
@@ -4233,12 +4237,15 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "skrifa"
-version = "0.44.0"
+version = "0.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "819ab7d62b1d3e72d9d9dea5650bac30424f9111364bb94928dbf5ecad1baa68"
+checksum = "a7459fb60888ad9a5f367dd293fa2fb9df142cb451aa6bfd6cd66a7d6a9b739d"
 dependencies = [
  "bytemuck",
+ "once_cell",
  "read-fonts",
+ "smallvec",
+ "yoke",
 ]
 
 [[package]]
@@ -4322,9 +4329,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "svgtypes"
-version = "0.16.1"
+version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "695b5790b3131dafa99b3bbfd25a216edb3d216dad9ca208d4657bfb8f2abc3d"
+checksum = "9f12b12995e3638c70618c1facb1ce65302f6a6f706b675f07c58a5d7391120e"
 dependencies = [
  "kurbo",
  "siphasher",
@@ -4837,9 +4844,9 @@ checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "usvg"
-version = "0.49.0"
+version = "0.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d09b73ee83641d390ad7ffd9000f347b16eb128e437675b6ff277ea5c7fcf22c"
+checksum = "bdb896f04730b97805bbc3191fc57e4bf03face0f14577dd42e783c4d8c98802"
 dependencies = [
  "base64 0.23.1",
  "data-url",
@@ -5041,9 +5048,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.11"
+version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5f280bbb2b287bc8e7de7e3852945a0ff50d1bbcb5ed42b6c7a568c546df171"
+checksum = "7265c9301c16a8711c992c2d8da90ee77ef54b1ed51482d6dfeb00dc756b1297"
 dependencies = [
  "rustls-pki-types",
 ]

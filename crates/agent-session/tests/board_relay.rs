@@ -89,6 +89,7 @@ fn private_file(path: &Path, bytes: &[u8]) {
 /// One recorded aggregator request.
 #[derive(Clone, Debug)]
 struct Seen {
+    method: String,
     target: String,
     authorization: Option<String>,
     operation_id: Option<String>,
@@ -139,6 +140,11 @@ impl Aggregator {
                     }
                 }
                 let head = String::from_utf8_lossy(&head).to_string();
+                let method = head
+                    .split_ascii_whitespace()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
                 let target = head
                     .lines()
                     .next()
@@ -165,6 +171,7 @@ impl Aggregator {
                 let reply = {
                     let mut state = shared.lock().expect("aggregator state");
                     state.seen.push(Seen {
+                        method,
                         target,
                         authorization,
                         operation_id,
@@ -1708,6 +1715,9 @@ fn launch_env_console_forwards_supported_providers_and_requires_confirmation() {
         assert_eq!(request.body.unwrap()["session"]["launch_env"], values);
     }
 }
+
+#[path = "board_relay/companion.rs"]
+mod companion;
 
 #[path = "board_relay/console_operations.rs"]
 mod console_operations;

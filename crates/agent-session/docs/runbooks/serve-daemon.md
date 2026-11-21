@@ -40,6 +40,54 @@ predecessor, then exits `69` with `serve-state-root-owned` and the holder's pid
 and bind address. Give a development or test serve its own `--state-dir` or
 `AGENT_SESSION_STATE_DIR`; separate roots run side by side.
 
+## Recovery after a host reboot
+
+Before a planned reboot, run `agent-session prepare-shutdown`. It marks each
+verified running session with the current boot ID. A stop or close clears the
+mark. After acquiring the state root and binding its listener on a later boot,
+`serve` recovers marked sessions using the same exact provider resume checks as
+`agent-session resume`. Unmarked and expired sessions are skipped.
+
+Serve consumes the mark once, on the first observed boot with a different boot
+ID. The mark expires 24 hours after preparation. Boots during which serve
+never starts do not count as observations.
+
+Inspect the command's per-session results before rebooting. Recovery runs in
+the long-lived serve process. Configure `AGENT_SESSION_TMUX_SCOPE=1` when
+runtimes must survive a serve service restart. When a prior-boot heartbeat is
+still fresh, recovery waits up to 32 seconds for the existing resume guard.
+
+Quiesce session creation and run the command immediately before reboot; a
+session created afterward is not marked. Re-running the command clears a
+previous mark if that session can no longer be verified as running.
+
+`prepare-shutdown --format json` returns an envelope whose `data.records`
+contains `{ "id": "...", "state": "marked" }` for each marked session, or
+`{ "id": "...", "state": "skipped", "reason": "..." }`. Skip reasons are
+`stopped`, `prior-boot`, `boot-identity-unverified`, and
+`runtime-identity-unverified`. Review every skipped row before reboot. If any
+record cannot be processed, the command exits nonzero with
+`shutdown-mark-incomplete`; `error.details.records` contains the marked,
+skipped, and failed rows, with an error code on each failed row. Resolve every
+failure before reboot.
+
+Set `AGENT_SESSION_BOOT_RECOVERY=0` in the serve environment to disable recovery
+on that host. Set `AGENT_SESSION_BOOT_RECOVERY_EXCLUDE` to comma-separated exact
+session IDs to opt out individual sessions. Restart serve to apply either
+setting. Quota auto-resume is independent of boot recovery.
+
+`list --format json` and the board show the latest recovery receipt: `resumed`,
+`skipped` with its reason, or `failed` with a typed error code. The shapes are
+`{"state":"resumed"}`, `{"state":"skipped","reason":"..."}`, and
+`{"state":"failed","error":{"code":"..."}}`. Skip reasons are
+`no-shutdown-intent`, `shutdown-intent-unverified`,
+`shutdown-intent-expired`, `host-opt-out`, `session-opt-out`, and
+`resume-metadata-missing`.
+
+Failure codes come from the existing resume path. `recovery-interrupted` means
+the one-shot mark was consumed before recovery completed. Inspect the session
+and use manual `resume` where appropriate.
+
 ## Authentication boundaries
 
 | Endpoint class | Authentication and exposure |
@@ -54,6 +102,7 @@ and bind address. Give a development or test serve its own `--state-dir` or
 | Public coordination and broker reads | Bearer token. |
 | Session board reads (`GET /board/v1`, `GET /board/closed/v1`) | Bearer token, and only when started with `--board` or `AGENT_SESSION_BOARD=1`; otherwise `board-disabled` (HTTP 404). Returns home-relative working directories and the machine identity. |
 | Session board relay (`GET /sessions/{id}/board/v1`) | The current session capability as `Authorization: Bearer`, and only with the board enabled. Forwards the query to the federation aggregator with the relay token; `board-relay-disabled` (HTTP 409) without federation. |
+| Companion inbox submission (`POST /coordination/companion/messages/v1`) | The current session capability as `Authorization: Bearer`, from a direct loopback peer. |
 | Session-owner coordination and mailbox mutations | Bearer token plus `X-Agent-Session-Capability`. |
 | `POST /activity/hook/v1` provider hook ingress | `X-Agent-Session-Capability` only, from a direct loopback peer. |
 
@@ -303,6 +352,13 @@ For durable client outboxes, persist a client-generated `request_id` before
 POST and add `require_idle: true` when delivery must wait for an idle provider
 and empty composer. Reconcile the exact attempt through authenticated
 `GET /sessions/SESSION_ID/prompt/v2/receipts/REQUEST_ID?expected_session_incarnation=INCARNATION`.
+
+Queue consumers use the per-session reply-delivery capability and
+`idle_ready_boundary` from the daemon list, then forward the exact token as
+`expected_idle_ready_boundary` on the keyed guarded POST. Check the receipt
+outcome and recover an uncertain attempt with that same request ID.
+See the [idle-ready boundary contract](../specs/serve-prompt-v1.md#idle-ready-boundary).
+
 Successful POSTs include `data.receipt`; errors include
 `error.details.receipt` when a claim was created. Lookup returns
 `data.receipt` for submitted, refused and unknown outcomes. Verify the session,
@@ -616,6 +672,23 @@ its `source` (`file` or `environment`), never the file location or a value.
 The normative endpoint surface is in [Serve API v1](../specs/serve-api-v1.md).
 Wire-level activity, coordination, turn-state, and maintenance contracts are
 indexed in the crate [documentation map](../README.md).
+
+## Companion inbox producer
+
+`agent-session message send-companion --body-file PATH` uses the same
+daemon-private federation configuration as cross-host mailbox delivery.
+`POST /coordination/companion/messages/v1` takes the current session capability
+as `Authorization: Bearer` over direct loopback. The daemon validates the
+capability against the current session incarnation and sends
+`POST /api/coordination/prompter/v1/messages` with the outbound relay bearer.
+The relay derives the source machine from that bearer and resolves the owner
+and destination through the source grant.
+
+Check the companion inbox before submitting again after
+`companion-submit-ambiguous`. The daemon performs a single relay attempt and
+returns a receipt only when it receives a valid HTTP 201 response with
+`data.id`. See [Companion inbox submission](../specs/coordination-interface-v1.md#companion-inbox-submission)
+for input limits and exit codes.
 
 ## Cross-host mailbox configuration
 

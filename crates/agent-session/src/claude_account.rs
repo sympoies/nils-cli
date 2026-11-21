@@ -232,6 +232,17 @@ pub(crate) fn config_dir_for_runtime(record: &SessionRecord) -> Option<PathBuf> 
         .filter(|path| path.is_absolute())
 }
 
+/// Identity of the account already applied to this launch.
+pub(crate) fn applied_identity(record: &SessionRecord) -> Option<(String, u64)> {
+    let Decoded::Valid(binding) = decode_binding(record) else {
+        return None;
+    };
+    let runtime = record.runtime.as_ref()?;
+    (record.agent == PROVIDER
+        && binding.applied_runtime_id.as_deref() == Some(runtime.launch_id.as_str()))
+    .then_some((binding.selected_account, binding.revision))
+}
+
 pub(crate) fn has_binding_state(record: &SessionRecord) -> bool {
     record.extra.contains_key(BINDING_KEY) || record.extra.contains_key(NEXT_KEY)
 }

@@ -428,6 +428,37 @@ fn declarations_must_match_kind_and_minimum_reason_length() {
     }
 }
 
+#[test]
+fn standalone_none_is_an_empty_declaration_but_never_covers_findings() {
+    for body in [
+        "## Test changes\nNone.\n",
+        "## Test changes\n\n  None.  \n\n",
+        "## Test changes\n\n",
+    ] {
+        validate_declarations(body).unwrap();
+        let metadata = subject(HEAD, BASE, body);
+        admit(metadata.clone(), metadata.clone(), "", "").unwrap();
+        assert_eq!(
+            admit(metadata.clone(), metadata, &assertion_patch(), "")
+                .unwrap_err()
+                .kind(),
+            "test_changes_undeclared"
+        );
+    }
+    for declaration in [
+        "None",
+        "none.",
+        "None.\nNone.",
+        "None.\nprose",
+        "None.\n- tests/sample.rs | assertion-change | Replacement retains the supported contract.",
+    ] {
+        assert!(
+            validate_declarations(&format!("## Test changes\n{declaration}\n")).is_err(),
+            "{declaration}"
+        );
+    }
+}
+
 fn assert_limit(error: ForgeError, limit: &str) {
     assert_eq!(error.kind(), "test_changes_limit_exceeded");
     let ForgeError::Validation {

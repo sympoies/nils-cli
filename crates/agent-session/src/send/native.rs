@@ -46,16 +46,21 @@ pub(super) fn deliver(
         ));
     }
     let _account_gate = codex_app_server::acquire_account_mutation_gate(context, &record.id)?;
-    codex_account::ensure_proxy_input_allowed(&record)?;
+    let lock = manual_input
+        .record_lock
+        .as_ref()
+        .expect("input holds record lock");
+    let preflight = |result| reply_delivery::checked(context, &record, &args.guards, lock, result);
+    preflight(codex_account::ensure_proxy_input_allowed(&record))?;
     let mut client = codex_app_server::guarded::Client::connect(&record, admission.deadline)
         .map_err(|error| {
             error.annotate(refusal(&record, error.code(), "admission", false, false))
         })?;
     admission.check_key()?;
-    admission.check(None, "admission")?;
-    client.idle().map_err(|error| {
+    preflight(admission.check(None, "admission"))?;
+    preflight(client.idle().map_err(|error| {
         error.annotate(refusal(&record, error.code(), "admission", false, false))
-    })?;
+    }))?;
     let notice = if args.guards.notice_envelope {
         Some(codex_notice::Prepared::new(
             context,
@@ -70,10 +75,12 @@ pub(super) fn deliver(
         admission.claim_key()?;
         None
     };
-    admission.check(None, "claimed")?;
-    client
-        .idle()
-        .map_err(|error| error.annotate(refusal(&record, error.code(), "claimed", false, false)))?;
+    preflight(admission.check(None, "claimed"))?;
+    preflight(
+        client.idle().map_err(|error| {
+            error.annotate(refusal(&record, error.code(), "claimed", false, false))
+        }),
+    )?;
     let mut prepared = false;
     prepare_guarded_input(context, &mut record, true, &mut prepared)?;
     record.updated_at = Zoned::now().timestamp().to_string();
@@ -82,6 +89,13 @@ pub(super) fn deliver(
         .as_ref()
         .map(|notice| notice.client_id())
         .or(args.guards.client_message_id.as_deref());
+    let _ = reply_delivery::consume(
+        context,
+        &record,
+        &args.guards,
+        lock,
+        reply_delivery::AdmittedInput::Native(&mut client),
+    )?;
     let mut accepted_turn = None;
     let dispatched = client.dispatch(&text, client_message_id, |turn_id| {
         accepted_turn = Some(turn_id.to_owned());

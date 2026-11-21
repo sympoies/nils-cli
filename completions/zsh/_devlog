@@ -72,6 +72,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (fold)
 _arguments "${_arguments_options[@]}" : \
+'--before=[Exclusive cutoff for reproducible maintenance folds (defaults to today)]:YYYY-MM-DD:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--dir=[Devlog directory. Defaults to detecting docs/devlog or docs/source/devlog]:DIR:_files' \

@@ -459,7 +459,10 @@ An absent remote address in a valid discovery snapshot returns
 guidance, `retryable: false`, `next_action: inspect_submission_contract`, and
 operator recovery. Inspect discovery and correct the address before a new
 submission. Failed discovery and unavailable transport remain retryable with
-`retry_same_submission` and `same_idempotency_key` recovery.
+`retry_same_submission` and `same_idempotency_key` recovery. A service submission
+that times out waiting for a coordination store lock returns
+`coordination-unavailable` (HTTP 503 / CLI 69) with the same retry action and
+recovery.
 
 Service route setup refusals instead return HTTP 503 / CLI 69 with
 `retryable: false` and operator recovery. `mailbox-service-route-missing` names
@@ -472,6 +475,15 @@ the owning daemon's required `AGENT_SESSION_RELAY_URL`,
 `next_action: configure_relay_service_admission`. These fixed errors identify
 the configured relay and required service-origin protocol/admission without
 copying its response body or claiming which admission rule refused a 403.
+
+For each `mailbox-service-relay-forbidden` or fallback
+`mailbox-service-unavailable` submission, the owning daemon emits a warning on
+stderr by default. It records the returned code, next action, a SHA-256
+fingerprint of the service ID and generation, and a fixed cause code.
+An unrecognized cause is labeled `unclassified`. Warnings omit request bodies,
+credentials, raw identifiers, paths, and error messages and details. The
+fallback remains nonretryable with `inspect_submission_contract` and operator
+recovery.
 
 Other discovery failures keep the retry behavior above. See the
 [operator setup actions](../runbooks/serve-daemon.md#remote-service-activation-prerequisite).

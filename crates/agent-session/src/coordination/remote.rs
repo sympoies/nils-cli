@@ -1903,7 +1903,7 @@ pub(crate) fn cli_forward(
 #[path = "remote_cli.rs"]
 mod cli_requests;
 use cli_requests::local_request;
-pub(crate) use cli_requests::{cli_peers, cli_reply, cli_send, client};
+pub(crate) use cli_requests::{cli_peers, cli_reply, cli_send, client, client_builder};
 pub(super) use cli_requests::{daemon_client, local_service_reply};
 
 pub(crate) fn cli_delivery(

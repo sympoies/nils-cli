@@ -11,13 +11,13 @@ crates/agent-out/src/lib.rs	impl	2211
 crates/agent-session/src/activity.rs	impl	5141
 crates/agent-session/src/codex_app_server.rs	impl	4884
 crates/agent-session/src/codex_app_server/tests/mod.rs	test	8109
-crates/agent-session/src/lib.rs	impl	11448
-crates/agent-session/src/lib.rs	test	6152
+crates/agent-session/src/lib.rs	impl	11445
+crates/agent-session/src/lib.rs	test	6115
 crates/agent-session/src/provider_history.rs	impl	2222
 crates/agent-session/src/retitle.rs	impl	3326
 crates/agent-session/src/retitle_v3.rs	impl	3634
 crates/agent-session/src/retitle_v3.rs	test	3637
-crates/agent-session/src/serve.rs	impl	10157
+crates/agent-session/src/serve.rs	impl	10154
 crates/agent-session/src/serve/tests.rs	test	21614
 crates/agent-session/tests/integration/cli.rs	test	11455
 crates/agent-session/tests/integration/coordination.rs	test	4918

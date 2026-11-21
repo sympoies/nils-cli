@@ -3,7 +3,7 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `6c6ae2be8ef2269c424ac08c0572b5600a55877b5d2e6727e905be9d88152c68`
+- Cargo.lock SHA256: `48f78afdf874619e7d2bb85420e0afb905b283ab97ff3815599d38d4396f4067`
 - Third-party crates (`source != null`): 487
 
 ## Notice Extraction Policy
@@ -937,7 +937,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### font-types 0.12.3
+### font-types 0.12.7
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -1122,14 +1122,14 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### graphql-tools 0.5.12
+### graphql-tools 0.5.13
 
 - License: `MIT`
 - Source: `crates.io`
 - Notice files: No explicit NOTICE file discovered.
 - License file reference: none declared
 
-### harfrust 0.12.0
+### harfrust 0.15.0
 
 - License: `MIT`
 - Source: `crates.io`
@@ -2455,7 +2455,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### read-fonts 0.41.0
+### read-fonts 0.46.0
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -2543,7 +2543,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### resvg 0.49.0
+### resvg 0.50.0
 
 - License: `Apache-2.0 OR MIT`
 - Source: `crates.io`
@@ -2865,7 +2865,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### sha1 0.10.6
+### sha1 0.10.7
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -2978,7 +2978,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `COPYING`
 
-### skrifa 0.44.0
+### skrifa 0.49.0
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -3070,7 +3070,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### svgtypes 0.16.1
+### svgtypes 0.16.2
 
 - License: `Apache-2.0 OR MIT`
 - Source: `crates.io`
@@ -3525,7 +3525,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### usvg 0.49.0
+### usvg 0.50.0
 
 - License: `Apache-2.0 OR MIT`
 - Source: `crates.io`
@@ -3709,7 +3709,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### webpki-roots 1.0.11
+### webpki-roots 1.0.12
 
 - License: `CDLA-Permissive-2.0`
 - Source: `crates.io`

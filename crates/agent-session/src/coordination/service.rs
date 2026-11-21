@@ -1,4 +1,5 @@
 //! Narrow, explicitly admitted service submission; never session authority.
+use std::io::Write;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,9 @@ mod admission;
 pub(crate) use admission::{admitted_tokens, authenticate, authenticate_inbox};
 pub(super) use admission::{refusal, require_recipient};
 const SENDER_PREFIX: &str = "service:";
+const FALLBACK_CODE: &str = "mailbox-service-unavailable";
+const RELAY_FORBIDDEN_CODE: &str = "mailbox-service-relay-forbidden";
+const RELAY_FORBIDDEN_ACTION: &str = "configure_relay_service_admission";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -166,9 +170,9 @@ fn route_error(failure: RouteFailure) -> CliError {
             "configure_relay_service_route",
         ),
         RouteFailure::RelayForbidden => (
-            "mailbox-service-relay-forbidden",
+            RELAY_FORBIDDEN_CODE,
             "relay refused service discovery: verify the source machine/service_id/service_generation admission at the relay selected by AGENT_SESSION_RELAY_URL and authorize its recipients there; local mailbox-services admission does not configure the relay",
-            "configure_relay_service_admission",
+            RELAY_FORBIDDEN_ACTION,
         ),
     };
     CliError::unavailable(
@@ -190,14 +194,33 @@ pub(super) fn discovery_refusal(status: reqwest::StatusCode) -> Option<CliError>
 
 /// Add recovery fields without exposing transport, paths, credentials or bodies.
 pub(crate) fn recovery(error: CliError) -> CliError {
+    recover(error, None)
+}
+
+/// Recovery at the daemon's authenticated submission boundary, which owns the warning.
+pub(crate) fn submission_recovery(error: CliError, id: &str, generation: &str) -> CliError {
+    recover(error, Some((id, generation)))
+}
+
+fn recover(error: CliError, service: Option<(&str, &str)>) -> CliError {
     let data = error.into_inner();
     let route_failure = match data.code.as_str() {
         "mailbox-service-route-missing" => Some(RouteFailure::DaemonFederation),
         "mailbox-service-relay-unsupported" => Some(RouteFailure::RelayUnsupported),
-        "mailbox-service-relay-forbidden" => Some(RouteFailure::RelayForbidden),
+        RELAY_FORBIDDEN_CODE => Some(RouteFailure::RelayForbidden),
         _ => None,
     };
     if let Some(failure) = route_failure {
+        if matches!(failure, RouteFailure::RelayForbidden)
+            && let Some(service) = service
+        {
+            warn_submission(
+                service,
+                RELAY_FORBIDDEN_CODE,
+                RELAY_FORBIDDEN_ACTION,
+                "relay-discovery-forbidden",
+            );
+        }
         return route_error(failure);
     }
     // Preserve known contract codes and exits, never an IO/peer-supplied message or details.
@@ -257,7 +280,7 @@ pub(crate) fn recovery(error: CliError) -> CliError {
             "remote-messaging-unsupported",
             "remote recipient is unavailable",
         ),
-        "coordination-unavailable" => (
+        "coordination-lock-timeout" | "coordination-unavailable" => (
             "coordination-unavailable",
             "mailbox coordination is unavailable",
         ),
@@ -265,10 +288,7 @@ pub(crate) fn recovery(error: CliError) -> CliError {
             "remote-messaging-unavailable",
             "mailbox transport is unavailable",
         ),
-        _ => (
-            "mailbox-service-unavailable",
-            "service submission is unavailable",
-        ),
+        _ => (FALLBACK_CODE, "service submission is unavailable"),
     };
     let retryable = matches!(
         code,
@@ -284,11 +304,16 @@ pub(crate) fn recovery(error: CliError) -> CliError {
     } else {
         "inspect_submission_contract"
     };
+    if code == FALLBACK_CODE
+        && let Some(service) = service
+    {
+        warn_submission(service, code, next_action, diagnostic_cause(&data.code));
+    }
     let details = json!({"retryable":retryable, "next_action":next_action, "recovery":{"kind": if retryable { "same_idempotency_key" } else { "operator" }}});
     let exit_code = match code {
         "remote-messaging-unavailable"
         | "coordination-unavailable"
-        | "mailbox-service-unavailable"
+        | FALLBACK_CODE
         | "remote-messaging-unsupported" => nils_common::cli_contract::exit::UNAVAILABLE,
         "mailbox-service-request-invalid" | "mailbox-expiry-invalid" => {
             nils_common::cli_contract::exit::USAGE
@@ -297,6 +322,31 @@ pub(crate) fn recovery(error: CliError) -> CliError {
     };
     CliError::with_exit_code(code, message, Some(details), exit_code)
 }
+fn diagnostic_cause(code: &str) -> &str {
+    match code {
+        "ambiguous-session-id"
+        | "coordination-store-corrupt"
+        | "coordination-store-untrusted"
+        | "federation-journal-invalid"
+        | "session-json-invalid"
+        | "session-list-failed"
+        | "session-path-escaped"
+        | "session-read-failed"
+        | "session-record-mismatch"
+        | "session-root-unavailable"
+        | "unsupported-session-version" => code,
+        _ => remote::relay_reason_code(code).unwrap_or("unclassified"),
+    }
+}
+
+fn warn_submission(service: (&str, &str), code: &str, next_action: &str, cause: &str) {
+    let service_ref = digest_bytes(&serde_json::to_vec(&service).expect("string tuple"));
+    let _ = writeln!(
+        std::io::stderr(),
+        "warning: service-send code={code} next_action={next_action} service_ref=sha256:{service_ref} cause={cause}"
+    );
+}
+
 pub(crate) fn cli_send(
     context: &CliContext,
     args: cli::MessageServiceSendArgs,

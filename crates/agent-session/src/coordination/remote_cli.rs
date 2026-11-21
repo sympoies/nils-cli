@@ -13,7 +13,7 @@ pub(in crate::coordination) fn daemon_client() -> Result<reqwest::blocking::Clie
         .map_err(|_| unavailable())
 }
 
-fn client_builder() -> reqwest::blocking::ClientBuilder {
+pub(crate) fn client_builder() -> reqwest::blocking::ClientBuilder {
     reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none())

@@ -80,7 +80,11 @@ enum Command {
         fragments_only: bool,
     },
     /// Fold pending entries dated before today into deterministically sorted month files.
-    Fold,
+    Fold {
+        /// Exclusive cutoff for reproducible maintenance folds (defaults to today).
+        #[arg(long, value_name = "YYYY-MM-DD")]
+        before: Option<EntryDate>,
+    },
     /// Three-way Git merge driver: base, ours (overwritten), theirs.
     Merge {
         base: PathBuf,
@@ -252,8 +256,12 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<i32, DevlogError> {
                 Ok(exit::RUNTIME)
             }
         }
-        Command::Fold => {
-            let report = nils_devlog::fragments::fold(&devlog, EntryDate::today()?)?;
+        Command::Fold { before } => {
+            let cutoff = match before {
+                Some(date) => *date,
+                None => EntryDate::today()?,
+            };
+            let report = nils_devlog::fragments::fold(&devlog, cutoff)?;
             emit(format, "fold", 1, &report, |report| {
                 println!("folded {} fragment(s)", report.folded);
                 if report.index_updated {
