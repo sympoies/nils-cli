@@ -17,11 +17,9 @@ pub(crate) fn persist_launch(
             Some(json!({"id":record.id})),
         )
     })?;
-    let entry = record.extra.entry(KEY.into()).or_insert_with(|| json!({}));
-    if !entry.is_object() {
-        *entry = json!({});
+    if let Some(entry) = record.extra.get_mut(KEY) {
+        clear_mark(entry);
     }
-    clear_mark(entry);
     write_session_record(context, record)
 }
 
@@ -29,13 +27,23 @@ pub(crate) fn mark_stopped(
     context: &CliContext,
     record: &mut SessionRecord,
 ) -> Result<(), CliError> {
-    let entry = record.extra.entry(KEY.into()).or_insert_with(|| json!({}));
-    if !entry.is_object() {
-        *entry = json!({});
+    let Some(entry) = record
+        .extra
+        .get_mut(KEY)
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return Ok(());
+    };
+    let fields_before = entry.len();
+    entry.retain(|key, _| {
+        !matches!(
+            key.as_str(),
+            "shutdown_boot_id" | "marked_at_epoch" | "receipt" | "receipt_boot_id"
+        )
+    });
+    if entry.len() == fields_before {
+        return Ok(());
     }
-    clear_mark(entry);
-    entry.as_object_mut().unwrap().remove("receipt");
-    entry.as_object_mut().unwrap().remove("receipt_boot_id");
     write_session_record(context, record)
 }
 
