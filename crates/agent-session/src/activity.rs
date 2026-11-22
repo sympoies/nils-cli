@@ -17,10 +17,9 @@ use sha2::{Digest, Sha256};
 use toml_edit::{DocumentMut as TomlDocument, Item as TomlItem};
 
 use crate::cli::AgentKind;
-use crate::{
-    CliContext, CliError, ProviderResume, SessionRecord, canonical_provider_resume_args,
-    load_session_record, mutate_session_record, session_dir,
-};
+#[cfg(test)]
+use crate::mutate_session_record;
+use crate::{CliContext, CliError, SessionRecord, load_session_record, session_dir};
 
 #[path = "activity/claude_attention.rs"]
 pub(crate) mod claude_attention;
@@ -3172,17 +3171,6 @@ pub(crate) fn ingest_provider_hook_input(
     {
         return Ok(true);
     }
-    if agent == AgentKind::Codex && event_override == Some("CodexResumeIdentity") {
-        provider_resume_from_user_prompt_hook(
-            context,
-            id,
-            agent,
-            runtime_id,
-            raw_event_name,
-            &raw,
-        )?;
-        return Ok(true);
-    }
     let Some(event) = normalize_provider_hook(agent, event_override, runtime_id, &raw)? else {
         return Ok(false);
     };
@@ -3214,7 +3202,7 @@ pub(crate) fn ingest_provider_hook_fail_open(
     event_override: Option<&str>,
 ) {
     match ingest_provider_hook(context, agent, event_override) {
-        Ok(true) => codex_resume_identity::complete_file_hook(context, agent, event_override),
+        Ok(true) => clear_hook_diagnostic(context, agent),
         Ok(false) => {}
         Err(err) => record_hook_diagnostic(context, agent, err.code()),
     }

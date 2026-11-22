@@ -822,9 +822,6 @@ fn evaluate_capability(
         Capability::SessionActivity { reason_code } => {
             match run_session_activity(request, raw, execution_budget) {
                 Ok(()) => simple(DecisionAction::Allow, reason_code),
-                Err(error) if error.code == private_activity::CODEX_CAPTURE_FAILED => {
-                    simple(DecisionAction::Warn, &error.code)
-                }
                 Err(error) => {
                     match terminal_activity_failure_decision(capability, request.event.as_str()) {
                         Some((action, code)) => simple(action, code),
@@ -1635,7 +1632,8 @@ fn run_session_activity(
             ));
         }
     }
-    private_activity::deliver(request, raw, &runtime_id)
+    private_activity::deliver(request, raw, &runtime_id);
+    Ok(())
 }
 
 /// The helper's typed error code from its `--format json` envelope, restricted

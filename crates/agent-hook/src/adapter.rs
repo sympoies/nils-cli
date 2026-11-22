@@ -15,24 +15,12 @@ use crate::model::{
 use crate::path_binding::{TargetBinding, resolve_target_bindings};
 use crate::strict_json;
 
-/// Private metadata for the local session helper after activity admission.
-pub(crate) fn project_private_activity_hook(
+/// Only display settings and a projected primary identity leave this adapter.
+pub(crate) fn project_session_model_hook(
     request: &NormalizedRequest,
     raw: &[u8],
     runtime_id: &str,
 ) -> Option<Vec<u8>> {
-    if request.product == Product::Codex {
-        if request.event != "UserPromptSubmit" {
-            return None;
-        }
-        let value = parse_provider_json(raw).ok()?;
-        let fields = value.as_object()?;
-        if fields.contains_key("agent_id") {
-            return None;
-        }
-        let session = optional_provider_id(fields, "session_id").ok()??;
-        return serde_json::to_vec(&json!({ "session_id": session })).ok();
-    }
     if request.product != Product::Claude {
         return None;
     }

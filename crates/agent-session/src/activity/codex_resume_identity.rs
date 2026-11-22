@@ -1,16 +1,13 @@
-//! Exact Codex prompt-hook identity for the managed resume record.
-use super::*;
+use std::collections::BTreeMap;
 
-pub(super) fn complete_file_hook(
-    context: &CliContext,
-    agent: AgentKind,
-    event_override: Option<&str>,
-) {
-    clear_hook_diagnostic(context, agent);
-    if agent == AgentKind::Codex && event_override == Some("CodexResumeIdentity") {
-        let _ = writeln!(io::stdout().lock(), "codex-resume-identity-accepted");
-    }
-}
+use jiff::Zoned;
+use serde_json::Value;
+
+use crate::cli::AgentKind;
+use crate::{
+    CliContext, CliError, ProviderResume, canonical_provider_resume_args, load_session_record,
+    mutate_session_record,
+};
 
 pub(super) fn provider_resume_from_user_prompt_hook(
     context: &CliContext,
@@ -23,10 +20,7 @@ pub(super) fn provider_resume_from_user_prompt_hook(
     let event_name = event_override
         .or_else(|| raw.get("hook_event_name").and_then(Value::as_str))
         .or_else(|| raw.get("event").and_then(Value::as_str));
-    let dispatched = event_name == Some("CodexResumeIdentity");
-    if agent != AgentKind::Codex
-        || !matches!(event_name, Some("UserPromptSubmit" | "CodexResumeIdentity"))
-    {
+    if agent != AgentKind::Codex || event_name != Some("UserPromptSubmit") {
         return Ok(());
     }
     let Some(session_id) = raw
@@ -35,18 +29,8 @@ pub(super) fn provider_resume_from_user_prompt_hook(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
-        if dispatched {
-            return Err(CliError::data(
-                "provider-hook-session-invalid",
-                "Codex resume receipt is missing the exact session identity",
-                None,
-            ));
-        }
         return Ok(());
     };
-    let projected = dispatched
-        .then(|| projected_provider_identifier(runtime_id, agent, "session", session_id))
-        .transpose()?;
     let observed = load_session_record(context, id)?;
     let runtime_matches = observed
         .runtime
@@ -65,31 +49,16 @@ pub(super) fn provider_resume_from_user_prompt_hook(
         return Ok(());
     }
     mutate_session_record(context, id, |record| {
-        let Some(runtime) = record
+        let runtime_matches = record
             .runtime
             .as_ref()
-            .filter(|runtime| runtime.launch_id == runtime_id && record.agent == agent.as_str())
-        else {
+            .is_some_and(|runtime| runtime.launch_id == runtime_id);
+        if record.agent != agent.as_str() || !runtime_matches {
             return Err(CliError::data(
                 "provider-hook-runtime-mismatch",
                 "provider hook runtime does not match the active session runtime",
                 None,
             ));
-        };
-        if let Some(projected) = projected.as_deref() {
-            // The dispatcher sends this private identity after its projected
-            // event is admitted. Bind only to that runtime's observed thread.
-            let document = read_document(&session_dir(context, &record.id).join(ACTIVITY_FILE))?;
-            if document.runtime_id != runtime_id
-                || document.runtime_generation != runtime.generation
-                || document.provider_session_id.as_deref() != Some(projected)
-            {
-                return Err(CliError::data(
-                    "provider-hook-session-mismatch",
-                    "Codex resume identity does not match the admitted provider session",
-                    None,
-                ));
-            }
         }
         if let Some(existing) = record.provider_resume.as_ref() {
             if existing.provider == agent.as_str() && existing.session_id == session_id {
