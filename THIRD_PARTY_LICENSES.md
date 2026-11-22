@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `8cc162f2d24b6f5cbd572492bfef2552309b172e8a6da8c60acd17dbb79adcb1`
+- Cargo.lock SHA256: `f658af5209848a451daf20c7ef8614da503c691ec9e7bd9b67dfbe68a8a997b4`
 - Third-party crates (`source != null`): 487
 - Workspace crates (`source == null`, excluded below): 42
 
@@ -164,7 +164,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | font-types | 0.12.7 | MIT OR Apache-2.0 | crates.io |
 | fontconfig-parser | 0.5.8 | MIT | crates.io |
 | fontdb | 0.24.0 | MIT | crates.io |
-| form_urlencoded | 1.2.2 | MIT OR Apache-2.0 | crates.io |
+| form_urlencoded | 1.2.3 | MIT OR Apache-2.0 | crates.io |
 | fraction | 0.15.4 | MIT OR Apache-2.0 | crates.io |
 | fs_extra | 1.3.0 | MIT | crates.io |
 | futures-channel | 0.3.32 | MIT OR Apache-2.0 | crates.io |
@@ -461,7 +461,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | unsafe-libyaml | 0.2.11 | MIT | crates.io |
 | untrusted | 0.7.1 | ISC | crates.io |
 | untrusted | 0.9.0 | ISC | crates.io |
-| url | 2.5.8 | MIT OR Apache-2.0 | crates.io |
+| url | 2.5.9 | MIT OR Apache-2.0 | crates.io |
 | urlencoding | 2.1.3 | MIT | crates.io |
 | usvg | 0.50.0 | Apache-2.0 OR MIT | crates.io |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | crates.io |
