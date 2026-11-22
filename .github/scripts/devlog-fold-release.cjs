@@ -6,6 +6,57 @@ const { SUBJECT, checkoutGit, findFoldPR, getRef, openFoldPR,
   prepareFold, requireMain, signFold } = require("./devlog-fold-pr.cjs");
 
 const oid = value => typeof value === "string" && /^[a-f0-9]{40}$/.test(value);
+const utcTimestamp = value => typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value);
+const verified = verification => verification?.verified === true && verification.reason === "valid";
+
+function isAncestor(git, ancestor, descendant) {
+  try {
+    git("merge-base", "--is-ancestor", ancestor, descendant);
+    return true;
+  } catch (error) {
+    if (error.status !== 1) throw error;
+    return false;
+  }
+}
+
+async function governedMainAnchor({ github, repo, fullName, git, tag, ref, annotated, source, publishedAt }) {
+  if (annotated?.sha !== ref.sha || annotated?.tag !== tag || !verified(annotated?.verification))
+    throw new Error("Governed release source requires the exact verified annotated tag");
+  const version = tag.slice(1);
+  const subject = `chore(release): bump cli versions to ${version}`;
+  const { data: head } = await github.rest.repos.getCommit({ ...repo, ref: source, per_page: 1 });
+  const message = head?.commit?.message;
+  if (head?.sha !== source || head.parents?.length !== 1 || !oid(head.parents[0]?.sha) ||
+      typeof message !== "string" || message.split("\n", 1)[0] !== subject || !verified(head.commit.verification))
+    throw new Error("Governed release source is not the exact verified release bump commit");
+
+  // Query the immutable head even after GitHub has deleted its release branch.
+  const associations = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+    ...repo, commit_sha: source, per_page: 2,
+  });
+  const candidate = associations.data?.[0];
+  if (!Array.isArray(associations.data) || associations.data.length !== 1 ||
+      /rel="next"/.test(associations.headers?.link ?? "") || candidate?.head?.sha !== source ||
+      !Number.isSafeInteger(candidate.number) || candidate.number <= 0 ||
+      typeof candidate.node_id !== "string" || !candidate.node_id)
+    throw new Error("Governed release source requires an unambiguous associated release PR");
+  const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: candidate.number });
+  if (pr?.number !== candidate.number || pr.node_id !== candidate.node_id ||
+      pr.state !== "closed" || pr.merged !== true || !utcTimestamp(pr.merged_at) ||
+      pr.merged_at !== candidate.merged_at || pr.merged_at > publishedAt ||
+      pr.head?.sha !== source || pr.head.ref !== `chore/release-${version.replaceAll(".", "-")}` ||
+      pr.head.repo?.full_name !== fullName || pr.base?.repo?.full_name !== fullName ||
+      pr.base.ref !== "main" || !oid(pr.base.sha) || !oid(pr.merge_commit_sha) ||
+      pr.merge_commit_sha !== candidate.merge_commit_sha)
+    throw new Error("Governed release source does not match the exact merged release PR");
+
+  const merge = pr.merge_commit_sha;
+  if (!isAncestor(git, merge, "HEAD") ||
+      git("show", "-s", "--format=%P%n%s", merge) !== `${pr.base.sha}\n${subject} (#${pr.number})` ||
+      !isAncestor(git, head.parents[0].sha, pr.base.sha))
+    throw new Error("Governed release source does not match a reachable protected main squash");
+  return merge;
+}
 
 async function readPublication({ github, context, workflowRef, releaseId, git }) {
   const repo = context.repo;
@@ -17,19 +68,21 @@ async function readPublication({ github, context, workflowRef, releaseId, git })
       !/^[1-9][0-9]*$/.test(releaseId))
     throw new Error("Fold requires an authorized release workflow publication");
 
-  // The caller's tag must resolve to its run SHA and be part of protected main.
-  git("merge-base", "--is-ancestor", context.sha, "HEAD");
+  // Verify the publication before selecting its proof of protected main history.
   const ref = (await github.rest.git.getRef({ ...repo, ref: `tags/${tag}` })).data.object;
-  const target = ref.type === "tag" && oid(ref.sha)
-    ? (await github.rest.git.getTag({ ...repo, tag_sha: ref.sha })).data.object : ref;
+  const annotated = ref.type === "tag" && oid(ref.sha)
+    ? (await github.rest.git.getTag({ ...repo, tag_sha: ref.sha })).data : null;
+  const target = annotated ? annotated.object : ref;
   const release = (await github.rest.repos.getReleaseByTag({ ...repo, tag })).data;
-  if (target.type !== "commit" || target.sha !== context.sha || String(release.id) !== releaseId ||
+  if (target?.type !== "commit" || target.sha !== context.sha || String(release.id) !== releaseId ||
       release.tag_name !== tag || release.draft !== false || release.prerelease !== false ||
-      release.author?.login !== "github-actions[bot]" ||
-      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(release.published_at))
+      release.author?.login !== "github-actions[bot]" || !utcTimestamp(release.published_at))
     throw new Error("Provider release or tag does not match the successful publication");
+  const mainAnchor = isAncestor(git, context.sha, "HEAD") ? context.sha
+    : await governedMainAnchor({ github, repo, fullName, git, tag, ref, annotated,
+      source: context.sha, publishedAt: release.published_at });
   return { id: releaseId, tag, publishedAt: release.published_at, source: context.sha,
-    runId: context.runId, repository: fullName };
+    mainAnchor, runId: context.runId, repository: fullName };
 }
 
 const releaseBranch = release => `chore/devlog-fold-release-${release.id}`;
@@ -96,7 +149,7 @@ function reproduceFold({ root, env, receipt }) {
   const git = checkoutGit(root, env);
   // Only the recorded base, reachable from protected main, is ever checked out.
   git("merge-base", "--is-ancestor", receipt.base, "HEAD");
-  git("merge-base", "--is-ancestor", receipt.release.source, receipt.base);
+  git("merge-base", "--is-ancestor", receipt.release.mainAnchor, receipt.base);
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "devlog-fold-replay-"));
   try {
     git("clone", "-q", "--shared", "--no-checkout", "--single-branch", "--branch", "main",
@@ -114,8 +167,8 @@ async function verifyHead(github, repo, receipt, app) {
   const head = (await github.rest.repos.getCommit({ ...repo, ref: receipt.head })).data;
   if (head.sha !== receipt.head || head.parents.length !== 1 || head.parents[0].sha !== receipt.base ||
       head.author?.type !== "Bot" || head.author.login !== `${app}[bot]` ||
-      head.committer?.login !== "web-flow" || head.commit.verification?.verified !== true ||
-      head.commit.verification.reason !== "valid" || head.commit.message !== foldMessage(receipt.release) ||
+      head.committer?.login !== "web-flow" || !verified(head.commit.verification) ||
+      head.commit.message !== foldMessage(receipt.release) ||
       head.commit.tree.sha !== receipt.tree)
     throw new Error("Head is not the exact verified App commit for this release and base");
 }

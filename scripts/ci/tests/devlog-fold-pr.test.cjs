@@ -242,10 +242,10 @@ const { findReleasePreparation, readPublication, prepareReleaseFold, publishRele
   require("../../../.github/scripts/devlog-fold-release.cjs");
 const { admitReleaseFold } = require("../../../.github/scripts/devlog-fold-admission.cjs");
 
-function withRelease(f) {
+function withRelease(f, source = f.state.base) {
   const ref = `refs/tags/${f.tag}`;
   const args = { github: f.github, git: f.git, releaseId: f.releaseId,
-    context: { ...f.options.context, ref, sha: f.state.base,
+    context: { ...f.options.context, ref, sha: source,
       eventName: "push", runId: 12345 },
     workflowRef: `example/project/.github/workflows/release.yml@${ref}` };
   return args;
@@ -256,6 +256,7 @@ test("the publication proof binds the release workflow, tag, ID and protected so
   const args = withRelease(f);
   const release = await readPublication(args);
   assert.equal(release.runId, args.context.runId);
+  assert.equal(release.mainAnchor, args.context.sha);
   await assert.rejects(readPublication({ ...args, workflowRef: "example/project/other.yml@refs/heads/main" }),
     /authorized release workflow/);
   await assert.rejects(readPublication({ ...args, releaseId: "124" }), /does not match/);
@@ -285,14 +286,145 @@ test("recovery only accepts preparation artifacts from trusted runs for the same
   assert.deepEqual(seen, [release.runId, trusted.id]);
 });
 
-async function production(f) {
+async function production(f, publication = withRelease(f)) {
   const events = [];
-  const release = await readPublication(withRelease(f));
+  const release = await readPublication(publication);
   const options = { ...f.options, repo: f.repo, writer: f.github, release, app: "fold-app",
     note: async (stage, details) => events.push({ stage, ...details }) };
   const receipt = await prepareReleaseFold(options);
   return { options: { ...options, receipt }, events, receipt };
 }
+
+function governedRelease(f) {
+  const version = f.tag.slice(1);
+  const branch = `chore/release-${version.replaceAll(".", "-")}`;
+  const releaseSubject = `chore(release): bump cli versions to ${version}`;
+  const manifest = path.join(f.dir, "Cargo.toml");
+  fs.writeFileSync(manifest, '[workspace.package]\nversion = "1.2.2"\n');
+  f.git("add", "Cargo.toml");
+  f.git("commit", "-qm", "Record the previous workspace version");
+  const releaseParent = f.git("rev-parse", "HEAD");
+  f.git("switch", "-qc", branch);
+  fs.writeFileSync(manifest, `[workspace.package]\nversion = "${version}"\n`);
+  f.git("commit", "-qam", releaseSubject);
+  const source = f.git("rev-parse", "HEAD");
+  f.git("tag", "-a", f.tag, "-m", f.tag);
+  const tagOid = f.git("rev-parse", f.tag);
+
+  f.git("switch", "-q", "main");
+  fs.writeFileSync(path.join(f.dir, "README.md"), "Protected main update\n");
+  f.git("add", "README.md");
+  f.git("commit", "-qm", "Protected main advances before the squash");
+  const base = f.git("rev-parse", "HEAD");
+  f.git("merge", "--squash", source);
+  const number = 27;
+  f.git("commit", "-qm", `${releaseSubject} (#${number})`);
+  const merge = f.git("rev-parse", "HEAD");
+  f.git("branch", "-D", branch);
+  f.git("commit", "--allow-empty", "-qm", "Protected main advances after the squash");
+  f.state.base = f.git("rev-parse", "HEAD");
+
+  const repo = { full_name: f.fullName };
+  const pr = { number, node_id: "RELEASE-PR", state: "closed", merged: true,
+    merged_at: "2029-12-31T23:00:00Z", merge_commit_sha: merge,
+    head: { ref: branch, sha: source, repo }, base: { ref: "main", sha: base, repo } };
+  const annotated = { sha: tagOid, tag: f.tag, object: { type: "commit", sha: source },
+    verification: { verified: true, reason: "valid" } };
+  const signed = { sha: source, parents: [{ sha: releaseParent }],
+    commit: { message: releaseSubject, tree: { sha: f.git("rev-parse", `${source}^{tree}`) },
+      verification: { verified: true, reason: "valid" } } };
+  const provider = { associated: [structuredClone(pr)], headers: {}, pr, annotated, signed };
+  const getRef = f.github.rest.git.getRef;
+  f.github.rest.git.getRef = async args => args.ref === `tags/${f.tag}`
+    ? { data: { object: { type: "tag", sha: tagOid } } } : getRef(args);
+  f.github.rest.git.getTag = async ({ tag_sha }) => {
+    assert.equal(tag_sha, tagOid);
+    return { data: annotated };
+  };
+  const getCommit = f.github.rest.repos.getCommit;
+  f.github.rest.repos.getCommit = async args => args.ref === source ? { data: signed } : getCommit(args);
+  f.github.rest.repos.listPullRequestsAssociatedWithCommit = async ({ commit_sha, per_page }) => {
+    assert.equal(commit_sha, source);
+    assert.equal(per_page, 2);
+    return { data: provider.associated, headers: provider.headers };
+  };
+  f.github.rest.pulls.get = async ({ pull_number }) => {
+    assert.equal(pull_number, number);
+    return { data: pr };
+  };
+  return { publication: withRelease(f, source), provider, source, merge };
+}
+
+test("a governed signed release head folds after its protected squash and release branch deletion", async () => {
+  const f = fixture();
+  const { publication, source, merge } = governedRelease(f);
+  assert.throws(() => f.git("merge-base", "--is-ancestor", source, "HEAD"), { status: 1 });
+  f.git("merge-base", "--is-ancestor", merge, "HEAD");
+  const { options, receipt } = await production(f, publication);
+  assert.equal(receipt.release.source, source);
+  assert.equal(receipt.release.mainAnchor, merge);
+  assert.equal(receipt.base, f.state.base);
+  assert.deepEqual(receipt.removed, ["docs/devlog/pending/2020-01-02-accepted.md"]);
+  const candidate = await publishReleaseFold(options);
+  assert.equal(candidate.head.ref, "chore/devlog-fold-release-123");
+  assert.equal((await publishReleaseFold(options)).number, candidate.number);
+  await assert.rejects(publishReleaseFold({ ...options, receipt: { ...receipt,
+    release: { ...receipt.release, mainAnchor: receipt.base },
+  } }), /Invalid trusted fold receipt/);
+  assert.deepEqual(f.state.writes.map(([stage]) => stage), ["tree", "commit", "ref", "pr"]);
+});
+
+for (const defect of [
+  "wrong tag target", "unsigned tag", "unsigned head", "absent PR", "ambiguous PRs",
+  "partial PR history", "unmerged PR", "late merge", "foreign PR", "wrong PR head",
+  "unreachable squash", "unrelated main commit",
+]) test(`governed release publication refuses ${defect}`, async () => {
+  const f = fixture();
+  const { publication, provider, merge } = governedRelease(f);
+  const { pr, annotated, signed } = provider;
+  const expectations = {
+    "wrong tag target": /release or tag does not match/,
+    "unsigned tag": /verified annotated tag/,
+    "unsigned head": /verified release bump commit/,
+    "absent PR": /unambiguous associated release PR/,
+    "ambiguous PRs": /unambiguous associated release PR/,
+    "partial PR history": /unambiguous associated release PR/,
+    "unmerged PR": /exact merged release PR/,
+    "late merge": /exact merged release PR/,
+    "foreign PR": /exact merged release PR/,
+    "wrong PR head": /exact merged release PR/,
+    "unreachable squash": /reachable protected main squash/,
+    "unrelated main commit": /reachable protected main squash/,
+  };
+  switch (defect) {
+    case "wrong tag target": annotated.object.sha = f.state.base; break;
+    case "unsigned tag": annotated.verification.verified = false; break;
+    case "unsigned head": signed.commit.verification.verified = false; break;
+    case "absent PR": provider.associated = []; break;
+    case "ambiguous PRs": provider.associated.push({ ...pr, number: 28 }); break;
+    case "partial PR history": provider.headers.link = '<https://api.example.invalid/page/2>; rel="next"'; break;
+    case "unmerged PR": pr.state = "open"; pr.merged = false; break;
+    case "late merge":
+      pr.merged_at = "2030-01-01T00:00:01Z";
+      provider.associated[0].merged_at = pr.merged_at;
+      break;
+    case "foreign PR": pr.head.repo = { full_name: "fork/project" }; break;
+    case "wrong PR head": pr.head.sha = f.state.base; break;
+    case "unreachable squash": {
+      const subject = f.git("show", "-s", "--format=%s", merge);
+      pr.merge_commit_sha = f.git("commit-tree", f.git("rev-parse", `${merge}^{tree}`),
+        "-p", pr.base.sha, "-m", subject, "-m", "An unrelated commit object");
+      provider.associated[0].merge_commit_sha = pr.merge_commit_sha;
+      break;
+    }
+    case "unrelated main commit":
+      pr.merge_commit_sha = f.state.base;
+      provider.associated[0].merge_commit_sha = pr.merge_commit_sha;
+      break;
+  }
+  await assert.rejects(readPublication(publication), expectations[defect]);
+  assert.deepEqual(f.state.writes, []);
+});
 
 test("a release folds eligible fragments when the same-day manual PR is already merged", async () => {
   const f = fixture();

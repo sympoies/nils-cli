@@ -190,10 +190,20 @@ stable publication. The workflow uses code from protected `main`, the
 release record and tag from GitHub, and an immutable preparation artifact from
 the original trusted run for that publication. The verified release ID scopes
 the branch, PR history and preparation lookup. The publication's UTC date
-remains the exclusive fold cutoff. The artifact binds the release, branch,
-exact base, signed App head, full tree and captured paths. Admission verifies App authorship
-and GitHub's verified signature and independently reruns the fold from that
-base. The full tree must match, including the generated devlog index.
+remains the exclusive fold cutoff.
+
+For a tag target already in protected main history, that commit is the fold's
+main anchor. A governed release can tag the signed head of a release PR after
+its protected squash. The fold checks the verified annotated tag and signed
+release head, then reads the exact associated merged release PR and confirms
+its squash is in protected main history. That squash is the anchor even when
+main advances and the release branch is deleted.
+
+The artifact binds the release, main anchor, branch, exact base, signed App
+head, full tree and captured paths. Replay requires the anchor in the recorded
+base's history. Admission verifies App authorship and GitHub's verified
+signature and independently reruns the fold from that base. The full tree must
+match, including the generated devlog index.
 
 Before enqueue, the workflow reads the current effective required checks,
 their exact PR CI results, the PR base and head, repository freeze and PR
