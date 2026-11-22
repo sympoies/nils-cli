@@ -2,6 +2,38 @@
 
 Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply here.
 
+## Codex turn interruption
+
+`POST /sessions/{id}/interrupt` requires the daemon operator bearer token and
+the JSON body `{"expected_session_incarnation":"<launch-id>"}`. The session's
+serve owner alone issues the provider request through its existing,
+incarnation-bound control connection. Mailbox credentials and the TUI proxy
+cannot invoke the owner operation.
+
+The control connection selects the current exact turn on the verified bound
+thread. The session record and TUI turn-start gate fence the write against
+runtime replacement, conversation changes, and a competing turn start.
+The app-server owns the same thread for both the control connection and the
+live TUI. A human can still press Esc in the TUI. If the turn ends while the
+owner request is in flight, the request stays scoped to the original turn.
+
+The provider's `turn/interrupt` acknowledgment is empty. The daemon reports
+`data.outcome` as `interrupted`, `completed`, or `failed` from the matching
+`turn/completed` event or provider readback of that exact turn. An idle thread
+returns `no_active_turn` without an interrupt request. The result includes
+`session_id` and `session_incarnation`.
+
+The managed path requires Codex **0.151.0** or later, with
+`thread/turns/list` and `turn/interrupt`. Unsupported runtimes return
+`409 codex-interrupt-unsupported`. The route returns
+`409 codex-interrupt-busy` for a competing mutation,
+`409 codex-interrupt-target-changed` if the binding changes,
+`503 codex-interrupt-unavailable` if control or turn state is unavailable, and
+`502 codex-interrupt-outcome-unknown` when a dispatched interrupt lacks exact
+terminal evidence. A stale request incarnation returns
+`409 session-incarnation-conflict`. The owner route sends no keystrokes.
+Clients must resolve an unknown outcome before deciding to interrupt again.
+
 ## Terminal input and attach
 
 - `POST /sessions/{id}/send` accepts at most 64 entries in `keys`; a longer list is

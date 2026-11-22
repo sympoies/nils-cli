@@ -1,5 +1,14 @@
 use super::*;
 
+#[path = "interrupt.rs"]
+mod interrupt;
+
+pub(super) fn routes() -> Router<Arc<ServeState>> {
+    Router::new()
+        .route("/sessions/{id}/prompt", post(structured_prompt_handler))
+        .route("/sessions/{id}/interrupt", post(interrupt::handler))
+}
+
 #[derive(Default)]
 pub(super) struct StructuredPromptGuards<'a> {
     pub(super) expected_session_incarnation: Option<&'a str>,

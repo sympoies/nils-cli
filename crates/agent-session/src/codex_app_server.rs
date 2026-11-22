@@ -11,6 +11,7 @@ use account_login::drive_external_auth_login;
 mod exact_attention;
 pub(crate) mod guarded;
 mod idle_probe;
+pub(crate) mod interrupt;
 mod protocol_projection;
 use protocol_projection::{forwarded_server_value, server_observation};
 #[path = "codex_app_server/prompt_submit.rs"]
@@ -2082,81 +2083,6 @@ mod control;
 pub(crate) mod mailbox_notice;
 pub(crate) use control::ControlCommand;
 
-impl ControlHandle {
-    // Registration permits account recovery while startup is still in progress.
-    // Prompt callers must wait without holding the record lock needed by thread
-    // persistence and the initial usage wakeup.
-    pub(crate) async fn wait_ready(&self, timeout: Duration) -> Result<(), String> {
-        let mut ready = self.ready.clone();
-        tokio::time::timeout(timeout, async {
-            loop {
-                if *ready.borrow_and_update() {
-                    return Ok(());
-                }
-                ready
-                    .changed()
-                    .await
-                    .map_err(|_| "codex control startup ended".to_string())?;
-            }
-        })
-        .await
-        .map_err(|_| "codex control startup timed out".to_string())?
-    }
-
-    pub(crate) async fn usage(&self) -> Result<UsageSnapshot, String> {
-        let (response, receive) = oneshot::channel();
-        tokio::time::timeout(CONTROL_RESPONSE_TIMEOUT, async {
-            self.sender
-                .send(ControlCommand::Usage(response))
-                .await
-                .map_err(|_| "codex control connection unavailable".to_string())?;
-            receive
-                .await
-                .map_err(|_| "codex control connection closed".to_string())?
-        })
-        .await
-        .map_err(|_| "codex rate-limit request timed out".to_string())?
-    }
-
-    pub(crate) async fn bind_account(
-        &self,
-        account: &str,
-        revision: u64,
-    ) -> Result<crate::codex_account::CodexAccountView, String> {
-        let (response, receive) = oneshot::channel();
-        tokio::time::timeout(CONTROL_SUBMIT_TOTAL_TIMEOUT, async {
-            self.sender
-                .send(ControlCommand::BindAccount {
-                    account: account.to_string(),
-                    revision,
-                    response,
-                })
-                .await
-                .map_err(|_| "codex control connection unavailable".to_string())?;
-            receive
-                .await
-                .map_err(|_| "codex control connection closed".to_string())?
-        })
-        .await
-        .map_err(|_| "Codex account binding timed out".to_string())?
-    }
-
-    pub(crate) async fn apply_next(&self) -> Result<(), String> {
-        let (response, receive) = oneshot::channel();
-        tokio::time::timeout(CONTROL_SUBMIT_TOTAL_TIMEOUT, async {
-            self.sender
-                .send(ControlCommand::ApplyNext { response })
-                .await
-                .map_err(|_| "codex control connection unavailable".to_string())?;
-            receive
-                .await
-                .map_err(|_| "codex control connection closed".to_string())?
-        })
-        .await
-        .map_err(|_| "Codex next-account apply timed out".to_string())?
-    }
-}
-
 pub(crate) fn starting_control_channel() -> (
     ControlHandle,
     mpsc::Receiver<ControlCommand>,
@@ -2510,6 +2436,9 @@ pub(crate) async fn run_control(
                         "Codex account binding is not ready; retry the account switch".to_string(),
                     ));
                 }
+                ControlCommand::Interrupt { response, .. } => {
+                    let _ = response.send(Err(interrupt::Error::Unavailable));
+                }
                 ControlCommand::Prompt { response, .. } => {
                     let _ =
                         response.send(Err(prompt_submit::PromptSubmissionFailure::NotDispatched));
@@ -2650,6 +2579,18 @@ pub(crate) async fn run_control(
                     reducer = FailureReducer::new(thread_id.clone());
                 }
                 match command {
+                    ControlCommand::Interrupt { thread_id, response } => {
+                        let result = interrupt::Client {
+                            websocket: &mut websocket,
+                            request_id: &mut request_id,
+                            context: &context,
+                            record: &current,
+                            reducer: &mut reducer,
+                            external_auth: external_auth_account.as_deref()
+                                .map(|account| (&context, &record, account, external_auth_connection_id.as_str())),
+                        }.dispatch(&thread_id, &response).await;
+                        let _ = response.send(result);
+                    }
                     ControlCommand::Usage(response) => {
                         if let Err(error) = control_account_ready(
                             &context,
