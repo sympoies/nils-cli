@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Offline base/candidate coverage regressions through the merge-plan consumer."""
+"""Offline coverage ratchet and Cargo feature inventory regressions."""
 import importlib.util
 import json
 import os
+import shutil
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 import unittest
@@ -218,6 +221,113 @@ if '--fail-under-lines' in args and 100 * hit / found < float(args[args.index('-
             text = (ROOT / relative).read_text()
             self.assertIn('--fail-under-lines', text)
             self.assertIn(':-85', text)
+
+    def test_coverage_feature_inventory(self):
+        result, paired = self.coverage()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([row['stage'] for row in paired], ['BASE', 'HEAD'])
+
+        solo = self.capture_selection([sys.executable, 'scripts/ci/scoped-coverage-ratchet.py',
+                                       '--base', self.base, 'selected'])
+        self.assertEqual([row['stage'] for row in solo], ['BASE', 'HEAD'])
+
+        for path in ('nils-cli-verification.sh', 'lib/node-scope.sh'):
+            shutil.copyfile(ROOT / 'scripts/ci' / path, self.repo / 'scripts/ci' / path)
+        # This runs the production macOS coverage branch with the fixture's
+        # existing fake coverage executor. Cargo resolution happens below.
+        full = self.capture_selection(['bash', 'scripts/ci/nils-cli-verification.sh'],
+                                      NILS_CLI_GATE_ACTIVE='1', NILS_CLI_NEXTEST_PARTITION='count:1/2')
+        self.assertEqual(len(full), 1)
+
+        workspace = self.root / 'inventory'
+        self.write_inventory_workspace(workspace)
+        cargo = shutil.which('cargo')
+        env = dict(os.environ, CARGO_TARGET_DIR=str(self.root / 'inventory-target'))
+        subprocess.run([cargo, 'generate-lockfile', '--offline'], cwd=workspace, env=env, check=True)
+        selected = {('selected', 'selected')}
+        peer = {('consumer', 'consumer')}
+        gated = {('selected', name) for name in ('md-render', 'md_render_bin', 'golden_smoke')}
+        for name, call, expected, unified in (
+            ('full defaults', full[0], selected | peer, True),
+            ('selected alone', solo[-1], selected | gated, False),
+            ('selected with peer', paired[-1], selected | gated | peer, True),
+        ):
+            with self.subTest(selection=name):
+                # Keep the production Cargo selection. Drop only options
+                # specific to running, instrumenting, or reporting coverage.
+                options = iter(call['args'][2:])
+                selection = []
+                for option in options:
+                    if option in ('--profile', '--partition', '--output-path',
+                                  '--exclude-from-report', '--tool-config-file'):
+                        next(options)
+                    elif option not in ('--no-fail-fast', '--lcov'):
+                        selection.append(option)
+                listed = subprocess.check_output(
+                    [cargo, 'nextest', 'list', '--offline', '--locked', '--message-format', 'json', *selection],
+                    cwd=workspace, env=env, text=True)
+                suites = json.loads(listed)['rust-suites'].values()
+                self.assertEqual({(suite['package-name'], suite['binary-name'])
+                                  for suite in suites if suite['testcases']}, expected)
+                tree = subprocess.check_output(
+                    [cargo, 'tree', '--offline', '--locked', '--prefix', 'none', '--format', '{p}|{f}', *selection],
+                    cwd=workspace, env=env, text=True)
+                shared = {line.partition('|')[2].split(' ')[0]
+                          for line in tree.splitlines() if line.startswith('shared v')}
+                self.assertEqual(shared, {'peer'} if unified else {''})
+
+    def capture_selection(self, command, **overrides):
+        self.log.unlink()
+        result = subprocess.run(command, cwd=self.repo, env=dict(self.env, **overrides),
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        rows = [json.loads(line) for line in self.log.read_text().splitlines()]
+        return [row for row in rows if row['args'][:2] == ['llvm-cov', 'nextest']]
+
+    def write_inventory_workspace(self, workspace):
+        files = {
+            'Cargo.toml': '[workspace]\nresolver = "2"\nmembers = ["selected", "consumer"]\n'
+                          'default-members = ["selected"]\nexclude = ["shared"]\n',
+            'selected/Cargo.toml': '''
+[package]
+name = "selected"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+shared = { path = "../shared" }
+
+[features]
+bin-cli = []
+test-support = []
+
+[[bin]]
+name = "md-render"
+required-features = ["bin-cli"]
+
+[[test]]
+name = "md_render_bin"
+required-features = ["bin-cli"]
+
+[[test]]
+name = "golden_smoke"
+required-features = ["test-support"]
+''',
+            'selected/src/lib.rs': '#[test]\nfn library() {}\n',
+            'selected/src/bin/md-render.rs': 'fn main() {}\n#[test]\nfn cli() {}\n',
+            'selected/tests/md_render_bin.rs': '#[test]\nfn cli_path() { let _ = env!("CARGO_BIN_EXE_md-render"); }\n',
+            'selected/tests/golden_smoke.rs': '#[test]\nfn golden() {}\n',
+            'consumer/Cargo.toml': '[package]\nname = "consumer"\nversion = "0.1.0"\nedition = "2021"\n'
+                                   '[dependencies]\nshared = { path = "../shared", features = ["peer"] }\n',
+            'consumer/src/lib.rs': '#[test]\nfn peer() {}\n',
+            'shared/Cargo.toml': '[package]\nname = "shared"\nversion = "0.1.0"\nedition = "2021"\n'
+                                 '[features]\npeer = []\n',
+            'shared/src/lib.rs': '',
+        }
+        for name, contents in files.items():
+            target = workspace / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(contents, encoding='utf-8')
 
 
 if __name__ == '__main__':
