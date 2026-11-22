@@ -76,14 +76,27 @@ pub(crate) struct NotificationAttempt {
     pub generation: u64,
     pub recorded_at_epoch: i64,
     pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason_detail: Option<String>,
 }
 
 impl NotificationReceipt {
     fn record_attempt(&mut self, generation: u64, reason: &str, now: i64) {
+        self.record_attempt_with_detail(generation, reason, None, now);
+    }
+
+    fn record_attempt_with_detail(
+        &mut self,
+        generation: u64,
+        reason: &str,
+        reason_detail: Option<String>,
+        now: i64,
+    ) {
         self.attempt_history.push(NotificationAttempt {
             generation,
             recorded_at_epoch: now,
             reason: safe_reason(reason),
+            reason_detail,
         });
         if self.attempt_history.len() > MAX_ATTEMPT_HISTORY {
             let excess = self.attempt_history.len() - MAX_ATTEMPT_HISTORY;
@@ -770,8 +783,8 @@ pub(crate) fn defer_with_detail(
         receipt.updated_at_epoch = now;
         receipt.next_attempt_at_epoch = now.saturating_add(retry_after_seconds.max(0));
         receipt.last_reason = Some(safe_reason(reason));
-        receipt.last_reason_detail = detail;
-        receipt.record_attempt(candidate.generation, reason, now);
+        receipt.last_reason_detail = detail.clone();
+        receipt.record_attempt_with_detail(candidate.generation, reason, detail, now);
         true
     })
 }
@@ -950,6 +963,10 @@ fn normalize_current(receipt: &mut NotificationReceipt, now: i64) {
     }
     for attempt in &mut receipt.attempt_history {
         attempt.reason = safe_reason(&attempt.reason);
+        attempt.reason_detail = attempt
+            .reason_detail
+            .as_deref()
+            .and_then(|detail| safe_reason_detail(&attempt.reason, detail));
     }
 }
 
@@ -1046,6 +1063,8 @@ fn provider_not_ready_detail(detail: &str) -> Option<String> {
             | "notice-coordination-unobservable"
             | "send-identity-mismatch"
             | "send-identity-unobservable"
+            | "send-composer-not-empty"
+            | "send-composer-unobservable"
             | "send-session-not-idle"
             | "send-idle-unobservable"
             | "send-provider-event-pending"

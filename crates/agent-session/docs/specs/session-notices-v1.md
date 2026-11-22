@@ -773,8 +773,17 @@ remain unsupported proof forms; neither a fabricated turn nor another delivery
 may supply that association. Source fixtures do not establish native acceptance.
 
 Mailbox controller start/steer and operator app-server notices retain their
-admission guards and require a bound transcript baseline before consuming an
-attempt. Both controller routes carry the claim's client id; the controller
+admission guards. When a first idle mailbox wake would create the rollout,
+Codex 0.171 identifies the intended path in the exact loaded thread's idle
+snapshot. The controller requires an authoritative session with no observed
+turn, a verified empty composer, and an absent file at that bound path inside
+the provider's sessions directory. The original claim starts at byte zero and
+confirmation reads the provider-created file with the same exact row and
+client ID checks.
+
+An existing rollout must be pinned before claiming an attempt. If history lookup
+cannot find the rollout for an idle wake, the controller can pin the exact live
+thread's validated file. Both controller routes carry the claim's client id; the controller
 reacquires and revalidates the record lock through the actual native write,
 then releases it before provider ingress. A native attempt without exact proof
 stays unconfirmed and cannot be confirmed by a later text/timestamp match.

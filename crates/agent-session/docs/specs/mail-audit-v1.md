@@ -150,9 +150,9 @@ For `provider-not-ready` it names the branch that deferred:
   current managed launch and provider session binding. `rebind` repairs a
   conversation binding with a verified clear receipt. The notice module is
   mounted by managed launch or resume.
-- `notice-baseline-missing` or `notice-baseline-unprovable`: the bound Claude
-  transcript is missing or could not be pinned safely. The wake stays queued
-  while the provider establishes a readable transcript.
+- `notice-baseline-missing` or `notice-baseline-unprovable`: the bound provider
+  transcript is missing or could not be pinned safely. A never-used Codex
+  thread can admit a first mailbox wake with a verified empty baseline.
 - `notice-recipient-attached`: a tmux client is attached to the Claude
   recipient. Detach the client and leave Claude at an idle prompt for the next
   retry.
@@ -161,8 +161,11 @@ For `provider-not-ready` it names the branch that deferred:
   could not be read at the attempt fence. When a known broker or operation
   condition blocks admission, the reason is
   `recipient-coordination-not-quiescent` with that condition as the detail.
-- `send-identity-mismatch` or `send-identity-unobservable`: the Claude
-  runtime identity check failed.
+- `send-identity-mismatch` or `send-identity-unobservable`: the runtime or
+  conversation identity could not be verified, including a different live
+  Codex attachment.
+- `send-composer-not-empty` or `send-composer-unobservable`: the first Codex
+  wake could not verify an empty composer. The draft is preserved.
 - `notice-idle-unsettled`, `send-idle-unobservable`,
   `send-session-not-idle`, `send-provider-event-pending`,
   `send-completion-evidence-missing`, or `send-guard-observation-timeout`:

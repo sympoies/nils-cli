@@ -4,6 +4,9 @@ use crate::send::claude_notice::{sha256, store};
 use native_notice::{Baseline, Proof, Row};
 use std::io::{BufRead, BufReader};
 
+mod first;
+pub(crate) use first::LiveRollout;
+
 pub(crate) fn capture(record: &SessionRecord) -> Option<Baseline> {
     let source = ProviderPromptTail::resolve_source(record)?;
     (source.provider == ProviderKind::Codex).then_some(())?;
@@ -95,6 +98,7 @@ fn snapshot(
     turn: &str,
     provider: &str,
     deadline: Instant,
+    first: bool,
 ) -> Result<Option<Proof>, ()> {
     use std::os::unix::fs::MetadataExt;
     if Instant::now() >= deadline {
@@ -149,6 +153,9 @@ fn snapshot(
                 }),
             });
         } else if found.is_none() && user_response(&value) {
+            if first && candidate.is_none() && first::startup_context(&value, turn) {
+                continue;
+            }
             if candidate.is_some() {
                 return Err(());
             }
@@ -175,8 +182,20 @@ pub(crate) fn confirm(
     provider: &str,
     deadline: Instant,
 ) -> Option<Proof> {
+    confirm_from_origin(baseline, id, text, turn, provider, deadline, false)
+}
+
+fn confirm_from_origin(
+    baseline: &mut Baseline,
+    id: &str,
+    text: &str,
+    turn: &str,
+    provider: &str,
+    deadline: Instant,
+    first: bool,
+) -> Option<Proof> {
     loop {
-        match snapshot(baseline, id, text, turn, provider, deadline) {
+        match snapshot(baseline, id, text, turn, provider, deadline, first) {
             Ok(Some(proof)) => return Some(proof),
             Ok(None) if Instant::now() < deadline => std::thread::sleep(
                 Duration::from_millis(10).min(deadline.saturating_duration_since(Instant::now())),
@@ -313,6 +332,7 @@ mod tests {
                 "accepted-turn",
                 "thread-one",
                 Instant::now() + Duration::from_secs(1),
+                false,
             );
             let proved = proof.as_ref().is_ok_and(|proof| proof.is_some());
             assert_eq!(
