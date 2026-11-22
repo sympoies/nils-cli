@@ -1,0 +1,109 @@
+name: Devlog admission read probe
+
+"on":
+  push:
+    branches:
+      - ci/devlog-fold-read-probe
+
+permissions: {}
+
+jobs:
+  probe:
+    if: github.event.created && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const number = 3952;
+            const expectedHead = "30919a98f816cd227e2182b2125ddfffedae1751";
+            try {
+              const { data } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
+              if (data.head.sha !== expectedHead || data.base.ref !== "main") {
+                core.setFailed("candidate identity changed");
+                return;
+              }
+            } catch {
+              core.setFailed("candidate identity unavailable");
+              return;
+            }
+
+            async function probeFoldAdmission({ github, context, core, number }) {
+              if (!Number.isSafeInteger(number) || number <= 0) throw new Error("Supply the exact candidate PR number");
+              const vars = { ...context.repo, number };
+              const original = `
+            query FoldAdmission($owner: String!, $repo: String!, $number: Int!) {
+              repository(owner: $owner, name: $repo) {
+                main: ref(qualifiedName: "refs/heads/main") { target { oid } }
+                mergeQueue(branch: "main") { configuration { mergeMethod } }
+                freezes: issues(first: 1, states: OPEN, labels: ["merge-freeze"]) { totalCount }
+                pullRequest(number: $number) {
+                  id state url isDraft isCrossRepository isInMergeQueue reviewDecision
+                  author { __typename login } baseRefName baseRefOid headRefName headRefOid
+                  labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
+                  mergeCommit { oid }
+                  mergeQueueEntry { id state pullRequest { id headRefOid } }
+                  lastEnqueue: timelineItems(last: 1, itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT]) {
+                    nodes { ... on AddedToMergeQueueEvent { id actor { login } } }
+                  }
+                  queueHistory: timelineItems(last: 1, itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT]) {
+                    nodes {
+                      __typename
+                      ... on AddedToMergeQueueEvent { id createdAt actor { login } }
+                      ... on RemovedFromMergeQueueEvent { id reason }
+                    }
+                  }
+                }
+              }
+            }`;
+              const fixed = original.match(/^[\s\S]*?repository\(owner: \$owner, name: \$repo\) \{/)[0];
+              const query = (repoFields, prFields) => `${fixed}
+                ${repoFields}
+                pullRequest(number: $number) { id ${prFields} }
+              } }`;
+              const report = entry => core.info(JSON.stringify({ client: "actions-read", ...entry }));
+              const selections = [
+                ["original", original],
+                ["without-repository-queue-policy", original.replace(
+                  '    mergeQueue(branch: "main") { configuration { mergeMethod } }', "")],
+                ["identity-and-holds", query(
+                  'ref(qualifiedName: "refs/heads/main") { target { oid } } freezes: issues(first: 1, states: OPEN, labels: ["merge-freeze"]) { totalCount }',
+                  "state isDraft isCrossRepository reviewDecision author { __typename login } baseRefName baseRefOid headRefName headRefOid labels(first: 100) { pageInfo { hasNextPage } nodes { name } } mergeCommit { oid }")],
+                ["repository-queue-policy", query('mergeQueue(branch: "main") { configuration { mergeMethod } }', "")],
+                ["pr-queue-state", query("", "isInMergeQueue")],
+                ["pr-queue-entry", query("", "mergeQueueEntry { id state pullRequest { id headRefOid } }")],
+                ["pr-last-enqueue", query("", "lastEnqueue: timelineItems(last: 1, itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT]) { nodes { ... on AddedToMergeQueueEvent { id actor { login } } } }")],
+                ["pr-queue-history", query("", "queueHistory: timelineItems(last: 1, itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { __typename ... on AddedToMergeQueueEvent { id createdAt actor { login } } ... on RemovedFromMergeQueueEvent { id reason } } }")],
+              ];
+              for (const [operation, selection] of selections) {
+                try {
+                  const { repository } = await github.graphql(selection, vars);
+                  report({ operation, result: repository?.pullRequest?.id ? "ok" : "candidate-unavailable" });
+                } catch (error) {
+                  const denied = Array.isArray(error?.errors) && error.errors.find(row => row?.type === "FORBIDDEN");
+                  const allowed = new Set(selection.match(/[A-Za-z_]\w*/g));
+                  const path = denied?.path;
+                  const safe = Array.isArray(path) && path[0] === "repository" && path.length <= 8 &&
+                    path.every(part => allowed.has(part) || (Number.isSafeInteger(part) && part >= 0));
+                  report({ operation, result: denied ? "FORBIDDEN" : "error",
+                    path: safe ? path.map(part => typeof part === "number" ? "[]" : part) : null });
+                }
+              }
+              try {
+                const rules = await github.paginate("GET /repos/{owner}/{repo}/rules/branches/{branch}",
+                  { ...context.repo, branch: "main", per_page: 100 });
+                const queue = rules.filter(rule => rule.type === "merge_queue");
+                report({ operation: "effective-branch-rules", result: queue.length &&
+                  queue.every(rule => rule.parameters?.merge_method === "SQUASH") ? "squash" : "squash-unavailable" });
+              } catch (error) {
+                report({ operation: "effective-branch-rules", result: error?.status === 403 ? "FORBIDDEN" : "error" });
+              }
+            }
+
+            await probeFoldAdmission({ github, context, core, number });
