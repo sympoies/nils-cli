@@ -142,8 +142,8 @@ filtering or an incorrect address. A logging failure cannot change the refusal.
 
 - `binary_version`: producing release, long form.
 - `health`: `healthy`, `degraded`, or `critical`. Any `critical` event is
-  critical; any `warn`/`error` event or any crossed broker release boundary is
-  degraded; otherwise healthy.
+  critical. A `warn`/`error` event, a crossed broker release boundary, or an
+  untrusted observation spool degrades health.
 - `runtime.executable_state`: `live`, `replaced`, or `unknown` from
   `/proc/<pid>/exe`. Checking an installation symlink is insufficient: an upgrade
   can leave the symlink correct while a live process references a deleted inode.
@@ -156,6 +156,10 @@ filtering or an incorrect address. A logging failure cannot change the refusal.
   minor or major generation from this binary, each with a bounded
   `recovery_action`. A broker that published no release is compatibility state,
   not drift. A patch-level difference is not drift.
+- `observation.spool_status`: `untrusted` when the spool fails its root trust
+  checks, including when an ancestor is a symlink. The diagnostic skips the
+  spool and omits paths. This field is absent for a trusted path, even before
+  the first observation is written.
 - `observation.event_count`, `first_seen_epoch`, `last_seen_epoch`.
 - `observation.summary`: per `(component, code)` counters with severity, count,
   and first/last-seen window, ordered most severe then highest volume. Repeated
