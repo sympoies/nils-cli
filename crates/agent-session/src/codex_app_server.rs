@@ -12,7 +12,7 @@ mod exact_attention;
 pub(crate) mod guarded;
 mod idle_probe;
 mod protocol_projection;
-use protocol_projection::server_observation;
+use protocol_projection::{forwarded_server_value, server_observation};
 #[path = "codex_app_server/prompt_submit.rs"]
 pub(crate) mod prompt_submit;
 mod proxy_transport;
@@ -4597,9 +4597,8 @@ async fn run_proxy_session(
                     oversized.contain(&mut tui, &mut upstream).await?;
                     continue;
                 }
-                let observed = message.clone();
                 let closed = matches!(message, Message::Close(_));
-                if let Some(value) = message_value(&observed)? {
+                if let Some(value) = forwarded_server_value(&message)? {
                     if let Some(key) = json_rpc_response_id_key(&value) {
                         pending_turn_authorizations.remove(&key);
                         if pending_turn_authorizations.is_empty() {

@@ -191,6 +191,23 @@ fn padded_text(prefix: &str, bytes: usize) -> String {
     format!("{prefix}{}{suffix}", "x".repeat(padding))
 }
 
+fn catalog_response(id: i64, bytes: usize) -> String {
+    const ENTRY: &str = r#"{"id":"sample@catalog","name":"Sample plug-in","description":"A synthetic plug-in catalog entry","installed":false,"source":{"type":"remote","url":"https://example.com/plugin"}},"#;
+    let prefix = format!(r#"{{"id":{id},"result":{{"plugins":["#);
+    let suffix = "]}}";
+    let mut response = String::with_capacity(bytes);
+    response.push_str(&prefix);
+    while response.len() + ENTRY.len() + suffix.len() <= bytes {
+        response.push_str(ENTRY);
+    }
+    assert_eq!(response.pop(), Some(','));
+    while response.len() + suffix.len() < bytes {
+        response.push(' ');
+    }
+    response.push_str(suffix);
+    response
+}
+
 async fn finish(tui: &mut WebSocketStream<UnixStream>, proxy: JoinHandle<Result<(), String>>) {
     tui.close(None).await.unwrap();
     proxy.await.unwrap().unwrap();
@@ -201,15 +218,14 @@ async fn proxy_relays_a_server_response_above_the_previous_16_mib_cap() {
     let mut fixture = fixture("oversize-relay");
     let proxy = spawn_proxy(&fixture);
     let listener = fixture.take_listener();
+    let expected = Message::Text(catalog_response(1, ABOVE_OLD_CAP_BYTES).into());
+    let catalog = expected.clone();
     let server = tokio::spawn(async move {
         let mut socket = accept_server(&listener).await;
         let first = next_json(&mut socket).await;
         assert_eq!(first["method"], "plugin/list");
-        let text = padded_text(
-            &format!(r#"{{"id":{},"result":{{"catalog":""#, first["id"]),
-            ABOVE_OLD_CAP_BYTES,
-        );
-        socket.send(Message::Text(text.into())).await.unwrap();
+        assert_eq!(first["id"], json!(1));
+        socket.send(catalog).await.unwrap();
         let second = next_json(&mut socket).await;
         send_json_value(&mut socket, json!({ "id": second["id"], "result": {} })).await;
         while let Some(Ok(message)) = socket.next().await {
@@ -224,13 +240,14 @@ async fn proxy_relays_a_server_response_above_the_previous_16_mib_cap() {
         json!({ "id": 1, "method": "plugin/list", "params": {} }),
     )
     .await;
-    let large = tui.next().await.unwrap().unwrap().into_text().unwrap();
+    let large = tui.next().await.unwrap().unwrap();
     assert_eq!(large.len(), ABOVE_OLD_CAP_BYTES);
-    assert_eq!(
-        serde_json::from_str::<Value>(&large).unwrap()["id"],
-        json!(1)
+    assert!(
+        large == expected,
+        "proxy must relay the catalog byte for byte"
     );
     drop(large);
+    drop(expected);
 
     send_json_value(
         &mut tui,

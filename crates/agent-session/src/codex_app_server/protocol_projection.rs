@@ -1,6 +1,9 @@
 //! Metadata-only projection before proxy observations cross the worker queue.
 use super::*;
 
+mod forwarded;
+pub(super) use forwarded::forwarded_server_value;
+
 pub(super) fn server_observation(value: &Value) -> ServerProjection {
     if let Some(id) = value.get("id").filter(|id| json_id_key(id).is_some())
         && value.get("error").is_some()
