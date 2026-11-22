@@ -67,14 +67,16 @@ After a successful stable GitHub Release publication, the Release workflow
 calls **Fold release devlog** with the published release ID. The fold uses
 current `main` and the publication's UTC date as its exclusive cutoff. It
 uses `scripts/ci/fold-devlog.sh` to move earlier fragments and opens one
-maintenance PR on `chore/devlog-fold-<UTC date>` using the existing signed
-App. Entries from that UTC date or later remain pending.
+maintenance PR on `chore/devlog-fold-release-<release-id>` using the existing
+signed App. The verified GitHub release ID gives each publication its own
+branch, even when another fold runs on the same UTC day. Entries from the
+publication date or later remain pending.
 
 The release run stores its preparation as the
 `devlog-fold-preparation-<release-id>` artifact before creating a ref or PR.
 A rerun or governed recovery run for the same publication reuses that exact
-base and signed head or the recorded empty result. An
-empty fold creates no PR. A conflicting date branch or PR requires steward
+base and signed head or the recorded empty result. An empty fold creates no
+PR. A conflicting ref or PR on that release branch requires steward
 reconciliation. Publication uses one concurrency group. Dry runs use their
 own group. Generated PRs leave `Test changes` empty and describe the fold
 validation under `Test plan`.
@@ -83,7 +85,8 @@ See [Devlog fold review admission and recovery](../runbooks/delivery-and-release
 for queue checks, receipts and intervention. To prepare a backlog fold,
 select **Actions › Devlog fold › Run workflow** on `main`. The default
 `dry_run: true` reports the paths and diff statistics without remote writes.
-Set `dry_run: false` to open a maintenance PR for designated review.
+Set `dry_run: false` to open a maintenance PR for designated review on
+`chore/devlog-fold-<UTC date>`.
 
 A maintainer can also prepare the same dedicated PR locally from current
 `origin/main` in a managed worktree:
@@ -94,9 +97,9 @@ git-cli worktree add devlog-fold-YYYY-MM-DD --kind chore --from origin/main
 bash scripts/ci/fold-devlog.sh
 ```
 
-The script requires a clean `chore/devlog-fold-<date>` branch, sets the writer
-environment, runs `devlog fold` and ordinary `devlog check --base HEAD`, and
-leaves the diff for review. It does not commit, push, tag or publish. Commit
+Run the script on a clean `chore/devlog-fold-<date>` branch for manual
+preparation. It sets the writer environment, runs `devlog fold` and ordinary
+`devlog check --base HEAD`, and leaves the diff for review. Commit
 with `semantic-commit` using the exact subject
 `chore(devlog): fold accepted fragments`, then run the normal pre-PR gate and
 deliver with `forge-cli`. Skip the PR when there is no diff. Only this

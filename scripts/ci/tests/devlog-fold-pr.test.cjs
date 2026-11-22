@@ -32,7 +32,8 @@ const temporary = [];
 test.after(() => temporary.forEach(dir => fs.rmSync(dir, { recursive: true, force: true })));
 const subject = "chore(devlog): fold accepted fragments";
 // The default instant also checks conversion to the previous UTC date.
-function fixture({ pending = true, entryDate = "2020-01-02",
+function fixture({ pending = true, entryDate = "2020-01-02", pulls = [],
+  releaseId = "123", tag = "v1.2.3", head = "d".repeat(40),
   now = new Date("2030-01-02T00:30:00+02:00") } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "devlog-fold-pr-"));
   temporary.push(dir);
@@ -64,21 +65,24 @@ function fixture({ pending = true, entryDate = "2020-01-02",
   const base = git("rev-parse", "HEAD");
   const date = now.toISOString().slice(0, 10);
   const branch = `chore/devlog-fold-${date}`;
-  const state = { pulls: [], writes: [], verified: true, base, occupied: false, moved: false };
+  const state = { pulls, writes: [], verified: true, base, occupied: false, moved: false };
   const repo = { owner: "example", repo: "project" };
   const fullName = "example/project";
-  const head = "d".repeat(40);
   const rest = {
     pulls: {
       list: async args => {
         assert.equal(args.state, "all");
-        assert.equal(args.head, `example:${branch}`);
-        return { data: state.pulls };
+        assert.ok(args.head.startsWith("example:"));
+        return { data: state.pulls.filter(pr => args.head === `example:${pr.head?.ref ?? branch}`) };
       },
       create: async args => {
         state.writes.push(["pr", args]);
-        const pr = { ...args, number: 1, html_url: "https://github.com/example/project/pull/1",
-          head: { repo: { full_name: "example/project" } } };
+        const number = state.pulls.length + 1;
+        const pr = { ...args, number, node_id: `PR-${number}`,
+          html_url: `https://github.com/example/project/pull/${number}`,
+          state: "open", user: { login: "fold-app[bot]" },
+          base: { ref: args.base, sha: state.base, repo: { full_name: fullName } },
+          head: { ref: args.head, sha: head, repo: { full_name: fullName } } };
         state.pulls.push(pr);
         return { data: pr };
       },
@@ -86,9 +90,9 @@ function fixture({ pending = true, entryDate = "2020-01-02",
     git: {
       getTag: async () => ({ data: { object: { type: "commit", sha: state.base } } }),
       getRef: async ({ ref }) => {
-        if (ref === "tags/v1.2.3") return { data: { object: { type: "tag", sha: "e".repeat(40) } } };
+        if (ref === `tags/${tag}`) return { data: { object: { type: "tag", sha: "e".repeat(40) } } };
         if (ref === "heads/main") return { data: { object: { sha: state.moved ? "f".repeat(40) : state.base } } };
-        assert.equal(ref, `heads/${branch}`);
+        assert.ok(ref.startsWith("heads/chore/devlog-fold-"));
         if (!state.occupied) throw Object.assign(new Error("not found"), { status: 404 });
         return { data: { object: { sha: state.occupied === true ? "e".repeat(40) : state.occupied } } };
       },
@@ -105,7 +109,7 @@ function fixture({ pending = true, entryDate = "2020-01-02",
       },
     },
     repos: {
-      getReleaseByTag: async () => ({ data: { id: 123, tag_name: "v1.2.3", published_at: `${date}T00:00:00Z`,
+      getReleaseByTag: async () => ({ data: { id: Number(releaseId), tag_name: tag, published_at: `${date}T00:00:00Z`,
         draft: false, prerelease: false, author: { login: "github-actions[bot]" } } }),
       getCommit: async () => {
         const signed = state.writes.find(([stage]) => stage === "commit")[1];
@@ -117,7 +121,7 @@ function fixture({ pending = true, entryDate = "2020-01-02",
     },
   };
   const github = { rest, paginate: async (method, args) => (await method(args)).data };
-  return { state, git, dir, branch, options: { github,
+  return { state, git, dir, branch, releaseId, tag, options: { github,
     context: { repo }, root: dir, env, now }, github, repo, fullName, head };
 }
 function runFold(options) {
@@ -239,10 +243,11 @@ const { findReleasePreparation, readPublication, prepareReleaseFold, publishRele
 const { admitReleaseFold } = require("../../../.github/scripts/devlog-fold-admission.cjs");
 
 function withRelease(f) {
-  const args = { github: f.github, git: f.git, releaseId: "123",
-    context: { ...f.options.context, ref: "refs/tags/v1.2.3", sha: f.state.base,
+  const ref = `refs/tags/${f.tag}`;
+  const args = { github: f.github, git: f.git, releaseId: f.releaseId,
+    context: { ...f.options.context, ref, sha: f.state.base,
       eventName: "push", runId: 12345 },
-    workflowRef: "example/project/.github/workflows/release.yml@refs/tags/v1.2.3" };
+    workflowRef: `example/project/.github/workflows/release.yml@${ref}` };
   return args;
 }
 
@@ -288,6 +293,61 @@ async function production(f) {
   const receipt = await prepareReleaseFold(options);
   return { options: { ...options, receipt }, events, receipt };
 }
+
+test("a release folds eligible fragments when the same-day manual PR is already merged", async () => {
+  const f = fixture();
+  const manual = { number: 1, state: "closed", merged_at: "2030-01-01T00:00:01Z",
+    html_url: "https://github.com/example/project/pull/1",
+    head: { ref: f.branch, repo: { full_name: f.fullName } } };
+  f.state.pulls.push(manual);
+  const { options, receipt } = await production(f);
+  const candidate = await publishReleaseFold(options);
+  assert.equal(candidate.number, 2);
+  assert.equal(receipt.branch, "chore/devlog-fold-release-123");
+  assert.deepEqual(receipt.removed, ["docs/devlog/pending/2020-01-02-accepted.md"]);
+  assert.deepEqual(f.state.pulls, [manual, candidate]);
+  assert.deepEqual(f.state.writes.map(([stage]) => stage), ["tree", "commit", "ref", "pr"]);
+});
+
+test("distinct same-day releases have independent PR history and replay only their own PR", async () => {
+  const first = fixture();
+  const second = fixture({ pulls: first.state.pulls, releaseId: "456", tag: "v1.2.4",
+    head: "c".repeat(40), entryDate: "2020-01-03" });
+  const a = await production(first);
+  const aPR = await publishReleaseFold(a.options);
+  aPR.state = "closed";
+  aPR.merged_at = "2030-01-01T00:00:01Z";
+  const b = await production(second);
+  const bPR = await publishReleaseFold(b.options);
+  assert.equal(a.receipt.release.publishedAt, b.receipt.release.publishedAt);
+  assert.equal(a.receipt.branch, "chore/devlog-fold-release-123");
+  assert.equal(b.receipt.branch, "chore/devlog-fold-release-456");
+  assert.deepEqual(b.receipt.removed, ["docs/devlog/pending/2020-01-03-accepted.md"]);
+  assert.notEqual(aPR.number, bPR.number);
+  for (const [f, attempt, pr] of [[first, a, aPR], [second, b, bPR]]) {
+    assert.equal((await publishReleaseFold({ ...attempt.options,
+      release: { ...attempt.options.release, runId: 54321 },
+      preparationRunId: attempt.receipt.release.runId,
+    })).number, pr.number);
+    assert.deepEqual(f.state.writes.map(([stage]) => stage), ["tree", "commit", "ref", "pr"]);
+  }
+});
+
+test("replay refuses another release's receipt or a mismatched or ambiguous PR on its own branch", async () => {
+  const f = fixture();
+  const { options, receipt } = await production(f);
+  await assert.rejects(publishReleaseFold({ ...options,
+    receipt: { ...receipt, branch: "chore/devlog-fold-release-456" },
+  }), /Invalid trusted fold receipt/);
+  const pr = await publishReleaseFold(options);
+  const writes = f.state.writes.length;
+  pr.head.sha = "f".repeat(40);
+  await assert.rejects(publishReleaseFold(options), /PR identity, recorded base or exact head changed/);
+  pr.head.sha = receipt.head;
+  f.state.pulls.push({ ...pr, number: 2 });
+  await assert.rejects(publishReleaseFold(options), /Multiple pull requests/);
+  assert.equal(f.state.writes.length, writes);
+});
 
 test("release preparation and replay reuse the signed head and never open a duplicate PR", async () => {
   const f = fixture();
@@ -349,10 +409,10 @@ async function queueFixture({ mergeGroupHead = { oid: "e".repeat(40) } } = {}) {
   const checkNames = ["test", "test_containment", "cargo-deny (advisories + bans)"];
   const state = { reads: 0, runs: 0, queued: false, merged: false, mutations: [] };
   const entry = { id: "QUEUE", state: "QUEUED", headCommit: mergeGroupHead,
-    pullRequest: { id: "PR", headRefOid: receipt.head } };
+    pullRequest: { id: candidate.node_id, headRefOid: receipt.head } };
   const attempts = { number: 1, base: { sha: receipt.base, ref: "main" },
     head: { sha: receipt.head, ref: receipt.branch } };
-  const pr = { id: "PR", state: "OPEN", isDraft: false, isCrossRepository: false,
+  const pr = { id: candidate.node_id, state: "OPEN", isDraft: false, isCrossRepository: false,
     author: { __typename: "Bot", login: "fold-app" }, baseRefName: "main", baseRefOid: receipt.base,
     headRefName: receipt.branch, headRefOid: receipt.head,
     labels: { pageInfo: { hasNextPage: false }, nodes: [] },
@@ -364,7 +424,7 @@ async function queueFixture({ mergeGroupHead = { oid: "e".repeat(40) } } = {}) {
   f.github.graphql = async (query, vars) => {
     if (query.includes("mutation FoldEnqueue")) {
       state.mutations.push(vars);
-      assert.deepEqual(vars, { id: "PR", head: receipt.head });
+      assert.deepEqual(vars, { id: candidate.node_id, head: receipt.head });
       state.queued = true;
       return { enqueuePullRequest: { mergeQueueEntry: entry } };
     }
@@ -411,7 +471,7 @@ async function queueFixture({ mergeGroupHead = { oid: "e".repeat(40) } } = {}) {
       { type: "merge_queue", parameters: { merge_method: "SQUASH" } },
     ] : paginate(method, args);
   const run = () => admitReleaseFold({ ...options, candidate, pause: async () => { state.merged = !state.evicted; } });
-  return { state, run, receipt, events, mergedSha, entry };
+  return { state, run, receipt, events, mergedSha, entry, git: f.git };
 }
 
 const mergeGroupHeads = [{ oid: "e".repeat(40) }, null];
@@ -455,18 +515,20 @@ for (const [field, wrong] of [["id", "OTHER_PR"], ["headRefOid", "f".repeat(40)]
   });
 }
 
-for (const variation of ["base advanced", "head moved", "late hold", "freeze", "failed required check"]) {
+for (const variation of ["PR replaced", "base advanced", "head moved", "late hold", "freeze", "failed required check"]) {
   test(`${variation} prevents unattended enqueue`, async () => {
     const f = await queueFixture();
     const { state } = f;
     const onFinalRead = change => { state.onRead = pr => { if (state.reads === 2) change(pr); }; };
     const expected = {
+      "PR replaced": /PR identity, recorded base or exact head changed/,
       "base advanced": /recorded fold base is stale/,
       "head moved": /exact head changed/,
       "late hold": /PR hold/,
       freeze: /repository freeze/,
       "failed required check": /Current required check did not pass/,
     };
+    if (variation === "PR replaced") onFinalRead(pr => { pr.id = "OTHER_PR"; });
     if (variation === "base advanced") onFinalRead(() => { state.main = "f".repeat(40); });
     if (variation === "head moved") onFinalRead(pr => { pr.headRefOid = "f".repeat(40); });
     if (variation === "late hold") onFinalRead(pr => { pr.labels = { ...pr.labels, nodes: [{ name: "review::paused" }] }; });
@@ -484,4 +546,16 @@ test("queue eviction fails the run without reenqueuing the removed head", async 
   await assert.rejects(f.run(), /already left the merge queue/);
   assert.equal(f.state.mutations.length, 1);
   assert.equal(f.events.at(-1).stage, "admission");
+});
+
+test("merged provider state does not pass readback when the fragment still exists on current main", async () => {
+  const f = await queueFixture();
+  f.git("switch", "main");
+  f.git("checkout", f.receipt.base, "--", ...f.receipt.removed);
+  f.git("commit", "-qm", "Restore captured fragment on main");
+  f.state.queued = true;
+  f.state.merged = true;
+  await assert.rejects(f.run(), /captured fragment still exists/);
+  assert.deepEqual(f.state.mutations, []);
+  assert.equal(f.events.at(-1).stage, "merge-receipt");
 });

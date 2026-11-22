@@ -47,7 +47,9 @@ Open only the references relevant to the requested change:
   index. Merged fragments are immutable; corrections are new entries.
 - After each release, the maintainer prepares a dedicated fold PR with
   `scripts/ci/fold-devlog.sh`; it does not commit or push.
-- Only canonical `chore/devlog-fold-<date>` maintenance PRs may fold.
+- Only canonical maintenance PRs may fold. Manual folds use
+  `chore/devlog-fold-<date>` and post-release folds use
+  `chore/devlog-fold-release-<release-id>`.
 - See `docs/devlog/README.md` for authoring and release-fold validation.
 
 ## Required Local Check Entrypoints

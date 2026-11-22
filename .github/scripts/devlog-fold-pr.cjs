@@ -4,7 +4,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
 const SUBJECT = "chore(devlog): fold accepted fragments";
-const branchFor = date => `chore/devlog-fold-${date}`;
+const dateBranch = date => `chore/devlog-fold-${date}`;
 
 function checkoutGit(root, env) {
   return (...args) => execFileSync("git", args, { cwd: root, env, encoding: "utf8" }).trim();
@@ -51,11 +51,11 @@ async function requireMain(github, repo, base) {
     throw new Error("main moved; the recorded fold base is stale");
 }
 
-async function findDatePR(github, repo, branch) {
+async function findFoldPR(github, repo, branch) {
   const pulls = await github.paginate(github.rest.pulls.list, {
     ...repo, state: "all", head: `${repo.owner}:${branch}`, per_page: 100,
   });
-  // Include closed/merged PRs to preserve the date's review decision.
+  // Include closed and merged PRs so a completed fold keeps its history.
   const matching = pulls.filter(pr => pr.head?.repo?.full_name === `${repo.owner}/${repo.repo}`);
   if (matching.length > 1) throw new Error("Multiple pull requests for the canonical fold branch");
   return matching[0];
@@ -100,8 +100,8 @@ The generated maintenance PR moves devlog fragments and regenerates the index.
 async function runFoldPR({ github, context, root = process.cwd(), dryRun = false,
   now = new Date(), env = process.env }) {
   const repo = context.repo;
-  const branch = branchFor(now.toISOString().slice(0, 10));
-  const existing = await findDatePR(github, repo, branch);
+  const branch = dateBranch(now.toISOString().slice(0, 10));
+  const existing = await findFoldPR(github, repo, branch);
   if (existing) return { status: "existing", branch, url: existing.html_url };
   const base = checkoutGit(root, env)("rev-parse", "HEAD");
   await requireMain(github, repo, base);
@@ -121,5 +121,5 @@ async function runFoldPR({ github, context, root = process.cwd(), dryRun = false
   return { status: "created", branch, sha, url: pr.html_url, files };
 }
 
-module.exports = { SUBJECT, branchFor, checkoutGit, findDatePR, getRef, openFoldPR,
+module.exports = { SUBJECT, checkoutGit, findFoldPR, getRef, openFoldPR,
   prepareFold, requireMain, runFoldPR, signFold };

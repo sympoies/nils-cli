@@ -49,10 +49,11 @@ print(json.dumps(tomllib.loads(sys.stdin.read()).get("merge", {}).get("hold_labe
   return new Set(["state::do-not-merge", "do-not-merge", "control::hold", ...labels.map(label => label.trim())]);
 }
 
-async function readCandidate({ github, repo, number, receipt, app, holdLabels, beforeEnqueue }) {
+async function readCandidate({ github, repo, number, id, receipt, app, holdLabels, beforeEnqueue }) {
   const { repository } = await github.graphql(READ, { ...repo, number });
   const pr = repository?.pullRequest;
-  if (!pr?.id || pr.isCrossRepository !== false || pr.author?.__typename !== "Bot" || pr.author.login !== app ||
+  if (pr?.id !== id || pr.isCrossRepository !== false ||
+      pr.author?.__typename !== "Bot" || pr.author.login !== app ||
       pr.headRefName !== receipt.branch || pr.headRefOid !== receipt.head ||
       pr.baseRefName !== "main" || pr.baseRefOid !== receipt.base)
     throw new Error("PR identity, recorded base or exact head changed");
@@ -132,13 +133,14 @@ async function admitReleaseFold({ github, writer, repo, candidate, receipt, app,
     await note("empty", { status: "empty" });
     return;
   }
-  if (!Number.isSafeInteger(candidate?.number)) throw new Error("Missing provider PR number");
-  const number = candidate.number;
+  if (!Number.isSafeInteger(candidate?.number) || !candidate.node_id)
+    throw new Error("Missing provider PR identity");
+  const { number, node_id: id } = candidate;
   const prUrl = `https://github.com/${repo.owner}/${repo.repo}/pull/${number}`;
   await note("admission", { pr: prUrl });
   const holdLabels = readHoldLabels(git, receipt.base);
   const read = (beforeEnqueue = true) =>
-    readCandidate({ github, repo, number, receipt, app, holdLabels, beforeEnqueue });
+    readCandidate({ github, repo, number, id, receipt, app, holdLabels, beforeEnqueue });
   let pr = await read();
   let submitted = false;
 
