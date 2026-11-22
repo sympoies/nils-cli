@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 pub(crate) mod auth_recovery;
+mod claude_exit;
 mod fresh_startup;
 #[cfg(not(all(test, target_os = "linux")))]
 use crate::live_status_with_timeout;
@@ -408,14 +409,31 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
     #[cfg(all(test, target_os = "linux"))]
     test_control::fire(context, test_control::Phase::ExitRequested, &old_launch);
     let stop_deadline = Instant::now() + Duration::from_secs(args.stop_timeout);
+    let mut exit_dialogs = claude_exit::ExitDialogs::default();
     while exit_requested && Instant::now() < stop_deadline {
         let current = load_session_record(context, &expected.id).ok();
         if current.as_ref().and_then(launch_id).as_deref() != Some(old_launch.as_str())
-            || crate::session_status(context, &tmux, &expected) == "stopped"
+            || status_before(&tmux, &expected, stop_deadline) == "stopped"
         {
             break;
         }
-        sleep(POLL_INTERVAL);
+        if agent == AgentKind::Claude
+            && !args.force
+            && exit_dialogs.poll(context, &expected, &tmux, stop_deadline)
+        {
+            receipt.outcome = "not-restarted";
+            receipt.finished_at = now();
+            return Err(CliError::runtime(
+                "restart-exit-dialog",
+                "not restarted: Claude's background-work exit dialog was cancelled",
+                Some(json!({
+                    "id": receipt.id,
+                    "cause": claude_exit::Dialog::BackgroundWork.code(),
+                    "receipt": receipt,
+                })),
+            ));
+        }
+        sleep(POLL_INTERVAL.min(stop_deadline.saturating_duration_since(Instant::now())));
     }
 
     let record_lock = match crate::acquire_session_record_lock_timed(
@@ -460,6 +478,16 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
     };
     let exited = crate::session_status(context, &tmux, &record) == "stopped";
     if !exited && !args.force && !fresh {
+        if let Some(dialog) = exit_dialogs.last_dialog() {
+            return Err(failure(
+                "restart-exit-dialog-unresolved",
+                dialog.unresolved_message(),
+                receipt,
+                "exit-dialog-unresolved",
+                Some(dialog.code()),
+                glance,
+            ));
+        }
         // Only --force may terminate a provider that did not leave on its own;
         // input admitted since the exit command must not be killed.
         return Err(failure(
@@ -644,6 +672,7 @@ fn request_provider_exit(
         require_empty_composer: true,
         ..GuardArgs::default()
     };
+    let deadline = Instant::now() + crate::send_submit::HOLD_BUDGET;
     let admission = Admission {
         stopped_idle: &Default::default(),
         context,
@@ -651,7 +680,7 @@ fn request_provider_exit(
         args: &guards,
         tmux_bin: tmux,
         verify_composer: false,
-        deadline: admission_deadline(Instant::now() + crate::send_submit::HOLD_BUDGET),
+        deadline: admission_deadline(deadline),
     };
     let admitted = match admission.check(None, "admission") {
         Ok(()) => true,
@@ -673,6 +702,9 @@ fn request_provider_exit(
             .with_hint("retry once the session is idle, or pass --force to stop it now"));
         }
     };
+    if agent == AgentKind::Claude && !force {
+        claude_exit::require_no_background_work(tmux, &current, deadline)?;
+    }
     let fence = RestartFence::acquire(context, &current, launch)?;
     if fresh {
         if crate::activity::pending::event_pending(context, &current.id)? {

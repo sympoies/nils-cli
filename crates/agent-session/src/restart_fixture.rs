@@ -164,9 +164,16 @@ case "$1" in
   paste-buffer) [ -f "$root/echo-paste" ] && printf '%s\n' '────────────────────' "❯$(printf '\302\240')$(tail -n 1 "$root/pasted-input")" '────────────────────' '  status' > "$root/screen" ;;
   send-keys) case " $* " in *" Enter "*)
     if [ -f "$root/clear-requested" ]; then rm -f "$root/clear-requested"; exit 0; fi
+    if [ -f "$root/exit-dialog" ]; then cp "$root/exit-dialog" "$root/screen"; exit 0; fi
     if [ -f "$root/echo-paste" ]; then
       printf '%s\n' '────────────────────' "❯$(printf '\302\240')" '────────────────────' '  status' > "$root/screen"
-    else [ -f "$root/hold-exit" ] || stop_pane; fi ;; esac ;;
+    else [ -f "$root/hold-exit" ] || stop_pane; fi ;;
+    *" Escape "*)
+      if [ -f "$root/exit-dialog" ] && cmp -s "$root/screen" "$root/exit-dialog"; then
+        cp "$root/after-escape" "$root/screen"
+        if [ -f "$root/escape-exits" ]; then stop_pane; fi
+      fi ;;
+  esac ;;
   if-shell|kill-session) stop_pane ;;
 esac
 exit 0

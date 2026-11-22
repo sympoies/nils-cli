@@ -509,7 +509,8 @@ agent-session restart <id> --force --stop-timeout 30 --ready-timeout 60
   guarded idle send. A busy or unverified session returns
   `restart-session-not-idle` and is left running. An exact mailbox
   notification submission already in progress refuses the restart before
-  anything is typed.
+  anything is typed. For Claude Code, a footer showing running background
+  tasks or monitors also returns `restart-session-not-idle` before `/exit`.
 - Before the exit command, the restart fences the incarnation: new
   notification attempts and `send` input (`session-restarting`) are refused
   until the old runtime is stopped. A second restart of the session while
@@ -521,6 +522,14 @@ agent-session restart <id> --force --stop-timeout 30 --ready-timeout 60
   unverified session terminates without typing anything. `--force` never
   overrides identity: a pane that does not prove the session's runtime returns
   `restart-identity-unverified`, and an in-progress notification still refuses.
+- During the stop wait, a non-forced Claude restart uses Escape on the
+  recognized background-work exit dialog to stay in the same session. Once
+  the composer is visible again, it returns `restart-exit-dialog` with outcome
+  `not-restarted`. On the unsent feedback draft prompt, Escape discards the
+  draft and exits. The restart continues after verifying the exit. Feedback
+  is never sent. If the dialog's resolution cannot be verified within the
+  stop wait, restart returns `restart-exit-dialog-unresolved` with the dialog
+  type in `cause`.
 - A runtime another operation replaced during the exit wait is kept and
   reported as `restart-superseded`. A session record another writer holds for
   longer than `--stop-timeout` after the exit returns `restart-stop-failed`.
@@ -545,12 +554,15 @@ agent-session restart <id> --force --stop-timeout 30 --ready-timeout 60
   contains the newly observed identity on readiness. Existing resume receipts
   retain their original provider session id. Codex readiness also requires the
   selected account bound to the replacement incarnation with no pending intent.
-- Every failure after the exit command returns the receipt and a `recovery`
-  command in the error details: `agent-session resume <id>` when the session
-  is stopped (`restart-relaunch-failed`, `restart-prior-incarnation-live`, or a
-  relaunched provider that exited), otherwise `agent-session glance <id>`
-  (`restart-exit-timeout`, `restart-superseded`, `restart-stop-failed`,
-  `restart-post-launch-failed`, `restart-not-ready`).
+- Every failure after the exit command returns a receipt. A confirmed
+  `restart-exit-dialog` rollback leaves the composer available. Failures that
+  need recovery include a command in the error details. Use
+  `agent-session resume <id>` when the session is stopped
+  (`restart-relaunch-failed`, `restart-prior-incarnation-live`, or a
+  relaunched provider that exited). For `restart-exit-timeout`,
+  `restart-exit-dialog-unresolved`, `restart-superseded`, `restart-stop-failed`,
+  `restart-post-launch-failed`, and `restart-not-ready`, use
+  `agent-session glance <id>`.
 - A session cannot restart itself: the stop would end the command.
 
 For queued Codex account repair, native idle admission also supports a session

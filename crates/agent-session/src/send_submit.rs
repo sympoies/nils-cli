@@ -281,7 +281,7 @@ pub(crate) fn claude_queue_occurrences(pane: &str, text: &str) -> Option<usize> 
 /// Claude Code draws its input box between the last two horizontal rules and
 /// starts it with `❯`. A permission or trust dialog replaces the box, so no
 /// such region exists while one is open.
-fn claude_composer<'a>(lines: &'a [&'a str]) -> Option<(&'a [&'a str], &'a [&'a str])> {
+pub(crate) fn claude_composer<'a>(lines: &'a [&'a str]) -> Option<(&'a [&'a str], &'a [&'a str])> {
     let (start, bottom) = match claude_box(lines) {
         Some((top, bottom)) => (top + 1, bottom),
         // An input row on the first row of the capture has no rule above it in
