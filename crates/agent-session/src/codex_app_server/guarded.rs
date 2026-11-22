@@ -200,6 +200,7 @@ impl Client {
     pub(crate) fn dispatch(
         &mut self,
         text: &str,
+        image_input: Option<&[Value]>,
         client_message_id: Option<&str>,
         on_turn_ack: impl FnOnce(&str),
     ) -> Result<&'static str, DispatchError> {
@@ -220,8 +221,11 @@ impl Client {
                     acknowledged: false,
                 });
         }
-        let mut params = json!({"threadId":self.thread_id,
-            "input":[{"type":"text","text":text,"text_elements":[]}]});
+        let input = image_input.map_or_else(
+            || json!([{"type":"text","text":text,"text_elements":[]}]),
+            |items| json!(items),
+        );
+        let mut params = json!({"threadId":self.thread_id, "input":input});
         if let Some(id) = client_message_id {
             params["clientUserMessageId"] = json!(id);
         }
@@ -236,12 +240,17 @@ impl Client {
         })?;
         let turn_id = turn_id.to_owned();
         on_turn_ack(&turn_id);
-        self.confirm_input(&turn_id, text)
+        self.confirm_input(&turn_id, text, image_input)
             .map_err(|_| DispatchError { acknowledged: true })?;
         Ok("input_observed")
     }
 
-    fn confirm_input(&mut self, turn_id: &str, text: &str) -> Result<(), ()> {
+    fn confirm_input(
+        &mut self,
+        turn_id: &str,
+        text: &str,
+        image_input: Option<&[Value]>,
+    ) -> Result<(), ()> {
         // The WebSocket frame/message cap bounds history hydration. Unknown,
         // oversized or unavailable history is unconfirmed, never a resend.
         loop {
@@ -249,7 +258,11 @@ impl Client {
                 "thread/read",
                 json!({"threadId":self.thread_id,"includeTurns":true}),
             )?;
-            let observed = input_observed(&history, &self.thread_id, turn_id, text);
+            let observed = if let Some(expected) = image_input {
+                confirmation::image_input_observed(&history, &self.thread_id, turn_id, expected)
+            } else {
+                input_observed(&history, &self.thread_id, turn_id, text)
+            };
             trace::observation(&observed);
             if observed.result? {
                 return Ok(());

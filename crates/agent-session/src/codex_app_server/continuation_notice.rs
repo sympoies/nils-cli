@@ -147,7 +147,7 @@ where
     }
     // The reacquired lock is held through the one write, then released before ingress can
     // synchronously checkpoint activity. No manual cancellation is introduced.
-    let request = control::prompt_request(request_id, thread_id, message, Some(client));
+    let request = control::prompt_request(request_id, thread_id, message, Some(client), None);
     tokio::time::timeout_at(
         tokio::time::Instant::from_std(deadline),
         send_json(socket, request),

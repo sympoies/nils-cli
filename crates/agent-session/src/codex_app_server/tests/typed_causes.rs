@@ -175,7 +175,7 @@ async fn prompt_readiness_refusal_is_marked_as_not_dispatched() {
     .unwrap();
 
     let error = handle
-        .submit_prompt("must remain retryable", None)
+        .submit_prompt("must remain retryable", None, None)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -196,7 +196,7 @@ async fn websocket_provider_rejection_is_not_confirmed() {
     let (_tmp, _context, _record, handle, control, peer) =
         start_prompt_control("provider-rejection", PromptPeer::Reject).await;
     let error = handle
-        .submit_prompt("rejected prompt", None)
+        .submit_prompt("rejected prompt", None, None)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -214,7 +214,10 @@ async fn websocket_disconnect_before_submit_is_not_dispatched() {
     let (_tmp, _context, _record, handle, control, peer) =
         start_prompt_control("write-failure", PromptPeer::CloseBeforePrompt).await;
     peer.await.unwrap();
-    let error = handle.submit_prompt("not written", None).await.unwrap_err();
+    let error = handle
+        .submit_prompt("not written", None, None)
+        .await
+        .unwrap_err();
     assert!(matches!(
         error,
         prompt_submit::PromptSubmissionFailure::NotDispatched
@@ -229,7 +232,7 @@ async fn websocket_lost_acknowledgement_is_unknown() {
     let (_tmp, _context, _record, handle, control, peer) =
         start_prompt_control("lost-acknowledgement", PromptPeer::DropAcknowledgement).await;
     let error = handle
-        .submit_prompt("sent without an acknowledgement", None)
+        .submit_prompt("sent without an acknowledgement", None, None)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -590,7 +593,7 @@ async fn prompt_timeout_covers_queue_plus_turn_acknowledgement_budget() {
 
     assert_eq!(
         handle
-            .submit_prompt("fixed continuation", None)
+            .submit_prompt("fixed continuation", None, None)
             .await
             .unwrap(),
         "acknowledged-turn"

@@ -182,6 +182,7 @@ impl ControlHandle {
             deadline,
             self.sender.send(ControlCommand::Prompt {
                 message: message.to_owned(),
+                image_input: None,
                 client_message_id: Some(client.into()),
                 write: Some(Box::new(write)),
                 response,

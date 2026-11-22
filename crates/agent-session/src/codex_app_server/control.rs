@@ -5,6 +5,7 @@ pub(crate) enum ControlCommand {
     Usage(oneshot::Sender<Result<UsageSnapshot, String>>),
     Prompt {
         message: String,
+        image_input: Option<Vec<Value>>,
         client_message_id: Option<String>,
         write: Option<Box<mailbox_notice::Write>>,
         response: oneshot::Sender<Result<String, prompt_submit::PromptSubmissionFailure>>,
@@ -37,8 +38,17 @@ pub(crate) enum ControlCommand {
     },
 }
 
-pub(super) fn prompt_request(id: u64, thread: &str, message: &str, client: Option<&str>) -> Value {
+pub(super) fn prompt_request(
+    id: u64,
+    thread: &str,
+    message: &str,
+    client: Option<&str>,
+    image_input: Option<Vec<Value>>,
+) -> Value {
     let mut request = continuation_request(id, thread, message);
+    if let Some(input) = image_input {
+        request["params"]["input"] = Value::Array(input);
+    }
     if let Some(client) = client {
         request["params"]["clientUserMessageId"] = json!(client);
     }

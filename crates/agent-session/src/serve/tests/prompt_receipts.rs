@@ -829,11 +829,20 @@ async fn unkeyed_idle_claude_guard_returns_unknown_with_cleanup() {
 
 #[tokio::test]
 async fn structured_prompt_waits_for_control_startup_before_record_lock() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
     use tokio_tungstenite::tungstenite::Message;
     let tmp = tempfile::tempdir_in("/tmp").unwrap();
     let id = "startup-prompt";
     let launch_id = seed_codex_app_server_session(tmp.path(), id);
     let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
+    let attachment_dir = crate::session_dir(&st.context, id).join("attachments");
+    fs::create_dir(&attachment_dir).unwrap();
+    let image_path = attachment_dir.join("first.png");
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+WjmQAAAAASUVORK5CYII=";
+    fs::write(&image_path, STANDARD.decode(png).unwrap()).unwrap();
+    let prompt = format!("'{}'", image_path.display());
+    let captured_input = Arc::new(StdMutex::new(None));
+    let server_input = captured_input.clone();
     let record = load_session_record(&st.context, id).unwrap();
     codex_app_server::replace_thread_binding(&record, "startup-thread").unwrap();
     let listener = tokio::net::UnixListener::bind(tmp.path().join("startup-prompt.sock")).unwrap();
@@ -852,7 +861,10 @@ async fn structured_prompt_waits_for_control_startup_before_record_lock() {
                 "initialize" | "thread/resume" => json!({}),
                 "thread/loaded/list" => json!({"data": ["startup-thread"]}),
                 "account/rateLimits/read" => json!({"rateLimits": {}}),
-                "turn/start" => json!({"turn": {"id": "startup-turn"}}),
+                "turn/start" => {
+                    *server_input.lock().unwrap() = Some(request["params"]["input"].clone());
+                    json!({"turn": {"id": "startup-turn"}})
+                }
                 method => panic!("unexpected request: {method}"),
             };
             socket
@@ -876,7 +888,7 @@ async fn structured_prompt_waits_for_control_startup_before_record_lock() {
                 &launch_id,
                 StructuredPromptGuards::default(),
                 &handle,
-                "first prompt",
+                &prompt,
             ),
         )
         .await
@@ -905,6 +917,10 @@ async fn structured_prompt_waits_for_control_startup_before_record_lock() {
     assert!(
         matches!(result, Ok(Ok(_))),
         "first prompt must acknowledge without blocking startup record persistence: {result:?}"
+    );
+    assert_eq!(
+        captured_input.lock().unwrap().take().unwrap(),
+        json!([{"type":"image", "url":format!("data:image/png;base64,{png}")}])
     );
     assert_eq!(
         load_session_record(&st.context, id)

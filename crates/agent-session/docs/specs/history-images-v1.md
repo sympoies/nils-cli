@@ -25,12 +25,37 @@ Queued string and structured prompt images preserve caption/image order in
 These upload references become ordered image parts, leaving the surrounding
 caption text visible. Other quoted paths
 remain text: they must pass the attachment identity, path, size, extension and
-raster signature checks before a descriptor is emitted. Projection does not
-change the transcript or deliver native images to the model.
+raster signature checks before a descriptor is emitted. Projection reads the
+provider transcript.
 
 A structured or Markdown source that cannot be read safely still gets a descriptor, so clients can display an unavailable
 placeholder. Injected/meta context remains excluded. Other providers retain
 their existing text-only contract.
+
+## Native Codex prompt attachments
+
+Managed Codex prompt submission converts quoted absolute paths to image uploads
+owned by the sending session into ordered native input items. It sends the
+surrounding text and ordinary file references as text items. Codex CLI
+0.171.0, verified from the deployed binary's generated app-server schema, and
+the runtime spike's Codex CLI 0.162.1 both define `turn/start.params.input` as
+`UserInput[]`. Each native image uses
+`{"type":"image","url":"data:<mime>;base64,<bytes>"}`.
+[Codex 0.171.0 schema](https://github.com/openai/codex/blob/rust-v0.171.0/codex-rs/app-server-protocol/schema/json/v2/TurnStartParams.json),
+[Codex 0.162.1 schema](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/app-server-protocol/schema/json/v2/TurnStartParams.json).
+
+The daemon opens the owned file without following symlinks and accepts PNG,
+JPEG, GIF, and WebP with matching extensions and raster signatures. A prompt
+allows up to 16 images and 8 MiB of image bytes total before base64 encoding.
+These bounds fit the history image count and transcript row size limits. An
+oversize, unsupported, or unreadable image refuses the prompt before dispatch.
+Remove or replace the attachment and submit a fresh attempt.
+
+The [managed app-server owns the thread](session-runtime-v1.md#single-writer-rule).
+Both structured prompt paths use its existing admission and confirmation
+guards. Terminal takeover stays on that provider thread. History projects
+Codex's recorded native `input_image` blocks into the authenticated image
+parts below.
 
 ## Provenance and upload correlation
 

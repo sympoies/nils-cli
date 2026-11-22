@@ -160,6 +160,14 @@ impl ResultRecord {
                         "prompt attempt was refused before delivery"
                     } else { "structured prompt submission outcome is unknown" },
                     "details":{"receipt":self.receipt}}});
+            if let Some(message) = self
+                .receipt
+                .code
+                .as_deref()
+                .and_then(codex_app_server::prompt_submit::image_input::refusal_message)
+            {
+                body["error"]["message"] = json!(message);
+            }
             if let Some(reason) = self.receipt.native_idle_reason {
                 body["error"]["hint"] = json!(reason.hint());
             }

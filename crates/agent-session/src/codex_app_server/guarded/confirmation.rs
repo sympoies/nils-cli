@@ -16,6 +16,49 @@ pub(super) fn input_observed_by(
     turn_id: &str,
     matches_text: impl FnOnce(&str) -> bool,
 ) -> trace::Observation {
+    input_observed_by_content(history, thread_id, turn_id, |content| {
+        content.len() == 1
+            && content[0]["type"] == "text"
+            && content[0]["text"].as_str().is_some_and(matches_text)
+    })
+}
+
+pub(super) fn image_input_observed(
+    history: &Value,
+    thread_id: &str,
+    turn_id: &str,
+    expected: &[Value],
+) -> trace::Observation {
+    // Codex 0.171.0 thread history can coalesce text and append the ordered
+    // images. Compare the exact text and exact URL sequence in that projection.
+    let expected = image_content(expected);
+    input_observed_by_content(history, thread_id, turn_id, |content| {
+        expected.is_some() && image_content(content) == expected
+    })
+}
+
+fn image_content(content: &[Value]) -> Option<(String, Vec<&str>)> {
+    let mut text = String::new();
+    let mut images = Vec::new();
+    for part in content {
+        match part["type"].as_str()? {
+            "text" => text.push_str(part["text"].as_str()?),
+            "image" => images.push(part["url"].as_str()?),
+            _ => return None,
+        }
+    }
+    if text.trim().is_empty() {
+        text.clear();
+    }
+    Some((text, images))
+}
+
+fn input_observed_by_content(
+    history: &Value,
+    thread_id: &str,
+    turn_id: &str,
+    matches_content: impl FnOnce(&[Value]) -> bool,
+) -> trace::Observation {
     let mut observed = trace::Observation::invalid();
     observed.thread_matches =
         Some(history.pointer("/thread/id").and_then(Value::as_str) == Some(thread_id));
@@ -51,9 +94,7 @@ pub(super) fn input_observed_by(
     let Some(content) = input["content"].as_array() else {
         return observed;
     };
-    let exact = content.len() == 1
-        && content[0]["type"] == "text"
-        && content[0]["text"].as_str().is_some_and(matches_text);
+    let exact = matches_content(content);
     observed.text_matches = Some(exact);
     if exact {
         observed.result = Ok(true);

@@ -353,7 +353,7 @@ fn upload_content<'a>(provider: &str, value: &'a Value) -> Option<Cow<'a, [Value
     }
 }
 
-fn quoted_paths(text: &str) -> impl Iterator<Item = (usize, usize, &str)> {
+pub(crate) fn quoted_paths(text: &str) -> impl Iterator<Item = (usize, usize, &str)> {
     let mut offset = 0;
     std::iter::from_fn(move || {
         let start = text[offset..]

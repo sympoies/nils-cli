@@ -106,9 +106,18 @@ impl Server {
                                     let submitted = if mode == "history-lag" && calls.iter().filter(|r| r["method"] == "thread/read" && r["params"]["includeTurns"] == true).count() == 1 { None } else { submitted };
                                     let mut turns = submitted.map_or(json!([]), |r| json!([{
                                         "id":"turn-one", "status":"inProgress", "items":[{
-                                            "type":"userMessage", "id":"input-one", "content":[{
-                                                "type":"text", "text":if mode == "wrong-input" {json!("other input")} else {r["params"]["input"][0]["text"].clone()}
-                                            }]
+                                            "type":"userMessage", "id":"input-one", "content": if mode == "native-images" {
+                                                // Codex thread/read can reconstruct one text part followed by the images.
+                                                let input = r["params"]["input"].as_array().unwrap();
+                                                let text: String = input.iter().filter_map(|item| item["text"].as_str()).collect();
+                                                let mut content = vec![json!({"type":"text", "text":text})];
+                                                content.extend(input.iter().filter(|item| item["type"] == "image").cloned());
+                                                json!(content)
+                                            } else {
+                                                json!([{
+                                                    "type":"text", "text":if mode == "wrong-input" {json!("other input")} else {r["params"]["input"][0]["text"].clone()}
+                                                }])
+                                            }
                                         }]
                                     }]));
                                     if mode == "large-history" && request["params"]["includeTurns"] == true {
@@ -266,6 +275,74 @@ fn native_idle_uses_thread_state_and_submits_once_without_paste() {
     );
     fixture.refused(&fixture.send(GUARDS), "send-idempotency-key-used");
     assert_eq!(server.mutations().len(), 1);
+}
+
+#[test]
+fn native_turn_start_sends_managed_upload_as_image_input() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    let fixture = Fixture::new("codex");
+    let _lease = fixture.bind_codex();
+    let server = Server::start(&fixture, "native-images");
+    let attachments = fixture.root().join("state/sessions/guarded/attachments");
+    fs::create_dir(&attachments).unwrap();
+    let path = attachments.join("sample image.png");
+    let image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+WjmQAAAAASUVORK5CYII=";
+    fs::write(&path, STANDARD.decode(image).unwrap()).unwrap();
+    let document = attachments.join("notes.txt");
+    fs::write(&document, "fixture notes").unwrap();
+    let trailing = format!("\nUse these notes: '{}'", document.display());
+    let prompt = format!("Describe this:\n'{}'{trailing}", path.display());
+
+    let output = fixture.send_text(Some(&prompt), GUARDS);
+    assert_eq!(server.mutations().len(), 1);
+    assert_eq!(
+        server.mutations()[0]["params"]["input"],
+        json!([
+            {"type":"text", "text":"Describe this:\n", "text_elements":[]},
+            {"type":"image", "url":format!("data:image/png;base64,{image}")},
+            {"type":"text", "text":trailing, "text_elements":[]},
+        ])
+    );
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["data"]["native"]["confirmation"],
+        "input_observed"
+    );
+    fixture.no_delivery();
+}
+
+#[test]
+fn native_turn_start_refuses_invalid_managed_images_before_dispatch() {
+    let fixture = Fixture::new("codex");
+    let _lease = fixture.bind_codex();
+    let server = Server::start(&fixture, "idle");
+    let attachments = fixture.root().join("state/sessions/guarded/attachments");
+    fs::create_dir(&attachments).unwrap();
+    let oversized = attachments.join("oversized.png");
+    fs::File::create(&oversized)
+        .unwrap()
+        .set_len(8 * 1024 * 1024 + 1)
+        .unwrap();
+    let invalid = attachments.join("invalid.png");
+    fs::write(&invalid, b"not a PNG").unwrap();
+
+    for (path, code) in [
+        (oversized, "prompt-images-too-large"),
+        (invalid, "prompt-image-type-unsupported"),
+    ] {
+        let prompt = format!("'{}'", path.display());
+        let output = fixture.send_text(Some(&prompt), GUARDS);
+        assert_eq!(
+            output.code,
+            nils_common::cli_contract::exit::DATA,
+            "{}",
+            output.stdout_text()
+        );
+        assert_eq!(output.stdout_json()["error"]["code"], code);
+        assert!(server.mutations().is_empty());
+        fixture.no_delivery();
+    }
 }
 
 #[test]
