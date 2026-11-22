@@ -187,6 +187,8 @@ impl Drop for LockedRegistry {
         drop(self.holder.take());
         // SAFETY: the descriptor remains owned by `_lock` for this call.
         unsafe {
+            #[cfg(test)]
+            lock_holder_tests::observe_before_unlock();
             libc::flock(self._lock.as_raw_fd(), libc::LOCK_UN);
         }
     }
