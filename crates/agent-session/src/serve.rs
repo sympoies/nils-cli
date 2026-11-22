@@ -1381,7 +1381,7 @@ fn router(state: Arc<ServeState>) -> Router {
         )
         .route("/sessions/{id}/buffer", get(buffer_handler))
         .route("/sessions/{id}/send", post(send_handler))
-        .route("/sessions/{id}/prompt", post(structured_prompt_handler))
+        .merge(structured_prompt::routes())
         .route("/sessions/{id}/prompt/v2", post(prompt_receipts::submit))
         .route(
             "/sessions/{id}/prompt/v2/receipts/{request_id}",

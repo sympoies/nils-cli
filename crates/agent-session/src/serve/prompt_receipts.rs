@@ -180,7 +180,7 @@ impl ResultRecord {
     }
 }
 
-fn valid_incarnation(value: &str) -> bool {
+pub(super) fn valid_incarnation(value: &str) -> bool {
     !value.trim().is_empty() && value.len() <= 128
 }
 

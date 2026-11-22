@@ -60,6 +60,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `GET /sessions/{id}/drafts`, `GET /sessions/{id}/drafts/{draft_id}` and `POST /sessions/{id}/drafts/{draft_id}/discard` | Bearer | [Saved stale drafts](stale-drafts-v1.md) |
 | `GET and POST /sessions/{id}/permissions` | Operator bearer | [Claude permission answers](session-runtime-v1.md#claude-permission-answers-3687) |
 | `POST /sessions/{id}/{send,prompt,prompt/v2,resume}` | Bearer | [Prompt submission](serve-prompt-v1.md) and [idle-ready boundary](serve-prompt-v1.md#idle-ready-boundary) |
+| `POST /sessions/{id}/interrupt` | Operator bearer + incarnation body | [Codex turn interruption](serve-terminal-v1.md#codex-turn-interruption) |
 | `GET /sessions/{id}/prompt/v2/receipts/{request_id}` | Bearer | [Prompt submission](serve-prompt-v1.md) |
 | `POST /sessions/{id}/archive` | Bearer | [History and archive](serve-history-v1.md) |
 | `GET /sessions/{id}/maintenance` and `POST /sessions/{id}/maintenance/actions` | Bearer | [Session maintenance v1](session-maintenance-v1.md#authentication-and-endpoints), successor [v2](session-maintenance-v2.md#negotiation) |
