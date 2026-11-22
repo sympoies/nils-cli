@@ -165,3 +165,20 @@ pub(super) fn record_proxy_exit(context: &CliContext, id: &str, line: &str) {
 
 #[cfg(test)]
 mod tests;
+
+pub(super) async fn connect_socket(path: &Path) -> Result<UnixStream, String> {
+    let mut attempts = 0_u16;
+    loop {
+        match UnixStream::connect(path).await {
+            Ok(stream) => return Ok(stream),
+            Err(err) if attempts < 100 => {
+                attempts += 1;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if attempts == 100 {
+                    return Err(format!("Codex app-server socket unavailable: {err}"));
+                }
+            }
+            Err(err) => return Err(format!("Codex app-server socket unavailable: {err}")),
+        }
+    }
+}

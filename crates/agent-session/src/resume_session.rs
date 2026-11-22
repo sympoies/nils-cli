@@ -264,7 +264,11 @@ pub(super) fn resume_session_with_kind(
                         return Err(termination_err);
                     }
                 }
-            } else if let Err(err) = release_held_runtime(context, &record) {
+            } else if let Err(err) = release_held_runtime(
+                context,
+                &record,
+                LaunchKind::for_restore(plan.conversation.is_some()),
+            ) {
                 match recover_failed_tmux_launch(
                     context,
                     &mut record,

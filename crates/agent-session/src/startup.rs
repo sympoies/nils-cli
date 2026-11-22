@@ -1,4 +1,6 @@
 //! Startup observation and bounded failure diagnostics shared by CLI and HTTP create.
+pub(crate) mod resume_metrics;
+
 use super::*;
 use std::io::{Read, Seek, SeekFrom};
 
@@ -475,4 +477,41 @@ fn mark_ready(context: &CliContext, record: &mut SessionRecord) -> Result<(), Cl
         write_session_record(context, record)?;
     }
     Ok(())
+}
+
+pub(super) fn release_held_runtime(
+    context: &CliContext,
+    record: &SessionRecord,
+    kind: resume_metrics::LaunchKind,
+) -> Result<(), CliError> {
+    let incarnation = coordination::incarnation(record)?;
+    let capability = coordination::capability_path(context, &record.id, &incarnation);
+    let metadata = fs::metadata(&capability).map_err(|_| {
+        CliError::runtime(
+            "coordination-broker-start-timeout",
+            "coordination capability was not ready before agent launch",
+            None,
+        )
+    })?;
+    if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 {
+        return Err(CliError::runtime(
+            "coordination-broker-start-timeout",
+            "coordination capability was not private before agent launch",
+            None,
+        ));
+    }
+    coordination::ensure_ready(context, record)?;
+    resume_metrics::release_gate(
+        context,
+        record,
+        kind,
+        &launch_gate_path(&context.state_dir, record),
+    )
+    .map_err(|_| {
+        CliError::runtime(
+            "coordination-broker-start-timeout",
+            "held agent runtime could not be released",
+            None,
+        )
+    })
 }

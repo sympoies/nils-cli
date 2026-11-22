@@ -13,6 +13,7 @@ use serde::Serialize;
 use crate::{
     CliContext, SessionRecord,
     provider_prompt::{ProviderPromptSource, ProviderPromptTail},
+    startup::resume_metrics::{self, ResumeMetrics},
 };
 
 mod counts;
@@ -31,7 +32,6 @@ enum Reason {
     AmbiguousCompletionEvidence,
     ProviderCreationUnavailable,
     InvalidTimestamp,
-    NotRecorded,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -65,17 +65,6 @@ enum Provider {
 }
 
 #[derive(Serialize)]
-struct Resume {
-    kind: &'static str,
-    outcome: &'static str,
-    started_at: Option<String>,
-    completed_at: Option<String>,
-    deadline_at: Option<String>,
-    duration_ms: Option<u64>,
-    unknown_reason: Reason,
-}
-
-#[derive(Serialize)]
 pub(crate) struct SessionMetrics {
     schema_version: &'static str,
     observed_at: String,
@@ -89,7 +78,7 @@ pub(crate) struct SessionMetrics {
     conversation_age_seconds: Metric,
     managed_created_at: Option<String>,
     conversation_created_at: Option<String>,
-    resume: Resume,
+    resume: ResumeMetrics,
 }
 
 fn age(
@@ -154,15 +143,7 @@ fn collect_at(
         managed_age_seconds,
         conversation_created_at: None,
         conversation_age_seconds: Metric::unknown(Reason::ProviderCreationUnavailable),
-        resume: Resume {
-            kind: "unknown",
-            outcome: "unknown",
-            started_at: None,
-            completed_at: None,
-            deadline_at: None,
-            duration_ms: None,
-            unknown_reason: Reason::NotRecorded,
-        },
+        resume: resume_metrics::projection(context, record),
     };
     let facts =
         if !matches!(record.agent.as_str(), "claude" | "codex") {
@@ -196,6 +177,7 @@ fn collect_at(
                 && crate::conversation::binding_is_current(context, &current) => {}
         _ => {
             result.unavailable_file(Reason::IdentityChanged);
+            result.resume = ResumeMetrics::unknown("identity_changed");
             result.managed_created_at = None;
             result.managed_age_seconds = Metric::unknown(Reason::IdentityChanged);
         }
