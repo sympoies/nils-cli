@@ -4522,7 +4522,7 @@ async fn control_reconnect_applies_external_auth_before_thread_discovery() {
     assert!(usage.unwrap().authoritative);
     assert_eq!(
         handle
-            .submit_prompt("next selected-account prompt", None)
+            .submit_prompt("next selected-account prompt", None, None)
             .await
             .unwrap(),
         "selected-account-turn"
@@ -5452,7 +5452,7 @@ async fn submit_prompt_rejects_response_without_acknowledged_turn_id() {
     let control = tokio::spawn(run_control(context, record, commands, ready));
 
     let error = handle
-        .submit_prompt("must require an acknowledged turn id", None)
+        .submit_prompt("must require an acknowledged turn id", None, None)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -7925,7 +7925,7 @@ async fn unix_control_projects_live_failure_and_acknowledges_exact_turn_without_
     assert_eq!(usage.exhausted_reset_epochs, vec![1_900_000_000]);
     assert_eq!(
         handle
-            .submit_prompt("private continuation", None)
+            .submit_prompt("private continuation", None, None)
             .await
             .unwrap(),
         "acknowledged-turn"

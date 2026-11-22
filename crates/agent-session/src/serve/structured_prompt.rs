@@ -1,4 +1,5 @@
 use super::*;
+use crate::codex_app_server::prompt_submit::image_input;
 
 #[derive(Default)]
 pub(super) struct StructuredPromptGuards<'a> {
@@ -37,7 +38,8 @@ pub(super) async fn submit_structured_prompt_locked(
     let direct_reply = guards.expected_binding.is_none() && guards.notification.is_none();
     let notification_fence = guards.notification;
     let request_id = guards.request_id.map(str::to_owned);
-    let (record_lock, session_incarnation, record, client_message_id) =
+    let prompt = text.to_owned();
+    let (record_lock, session_incarnation, record, client_message_id, input) =
         match tokio::task::spawn_blocking(move || {
             let record_lock = crate::acquire_session_record_lock(&lock_context, &lock_id)?;
             let mut current = load_session_record(&lock_context, &lock_id)?;
@@ -78,6 +80,11 @@ pub(super) async fn submit_structured_prompt_locked(
                     Some(json!({ "id": current.id })),
                 ));
             }
+            let input = if notification_fence.is_none() {
+                image_input::prepare(&lock_context, &current.id, &prompt)?
+            } else {
+                None
+            };
             codex_quiet::precheck(&lock_context, &current, notification_fence.is_some())?;
             if direct_reply {
                 crate::send_guard::require_empty_composer(&lock_context, &current, &tmux_bin)?;
@@ -114,7 +121,13 @@ pub(super) async fn submit_structured_prompt_locked(
             let client_message_id = request_id
                 .as_deref()
                 .and_then(|id| prompt_receipts::client_message_id(&current, id));
-            Ok::<_, CliError>((record_lock, actual_launch_id, current, client_message_id))
+            Ok::<_, CliError>((
+                record_lock,
+                actual_launch_id,
+                current,
+                client_message_id,
+                input,
+            ))
         })
         .await
         {
@@ -135,7 +148,7 @@ pub(super) async fn submit_structured_prompt_locked(
         .filter(|resume| resume.provider == "codex")
         .map(|resume| resume.session_id.clone());
     let response = match handle
-        .submit_prompt(text, client_message_id.as_deref())
+        .submit_prompt(text, client_message_id.as_deref(), input)
         .await
     {
         Ok(history_turn_id) => Ok(StructuredPromptAcceptance {

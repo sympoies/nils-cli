@@ -15,7 +15,7 @@ the contract below describes implemented behavior.
   `PUT /sessions/{id}/auto-resume`, `DELETE /sessions/{id}/auto-resume`,
   `POST /sessions/{id}/attachments?filename=...`,
   `DELETE /sessions/{id}` — writes, require a bearer token.
-- `POST /sessions/{id}/prompt` submits exact prompt text through a supported provider control plane. The
+- `POST /sessions/{id}/prompt` submits prompt content through a supported provider control plane. The
   compatibility route accepts `{ "text": "...", "expected_session_incarnation": "launch-id" }`; the
   incarnation is optional for older clients, and a new daemon validates it against the authoritative
   runtime under the session-record lock before provider dispatch. Clients that require a cross-version
@@ -31,6 +31,9 @@ the contract below describes implemented behavior.
   route treats the prompt as submitted. It probes the runtime identity recorded for the locked session,
   not the reusable tmux session name. Missing identity, probe errors, and a runtime that remains live do
   not confirm submission and retain the unknown outcome.
+
+  Managed Codex prompts submit supported session-owned image uploads as native
+  app-server input. See [image input and limits](history-images-v1.md#native-codex-prompt-attachments).
 
   On a Claude (pane-delivered) runtime, success means Claude's `UserPromptSubmit` hook started a new turn within the
   acknowledgement wait, a newly appended provider queue record matches the complete prompt, or the complete

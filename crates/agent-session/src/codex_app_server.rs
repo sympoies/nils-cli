@@ -2676,7 +2676,7 @@ pub(crate) async fn run_control(
                         ).await;
                         let _ = response.send(result.map(|value| usage_snapshot(&value)));
                     }
-                    ControlCommand::Prompt { message, client_message_id, write, response } => {
+                    ControlCommand::Prompt { message, client_message_id, image_input, write, response } => {
                         if let Err(error) = control_account_ready(
                             &context,
                             &record,
@@ -2696,7 +2696,7 @@ pub(crate) async fn run_control(
                         let result = prompt_submit::submit_prompt_request(
                             &mut websocket,
                             request_id,
-                            control::prompt_request(request_id, &thread_id, &message, client_message_id.as_deref()),
+                            control::prompt_request(request_id, &thread_id, &message, client_message_id.as_deref(), image_input),
                             Some((&context, &record, &mut reducer)),
                             external_auth_account
                                 .as_deref()

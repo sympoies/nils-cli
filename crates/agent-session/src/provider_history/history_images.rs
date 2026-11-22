@@ -25,6 +25,7 @@ use upload_ownership::UploadOwnership;
 pub(super) mod native_notices;
 #[path = "upload_references.rs"]
 mod upload_references;
+pub(crate) use upload_references::quoted_paths;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct HistoryMessage {
@@ -751,8 +752,8 @@ pub(crate) struct HistoryImage {
     pub(crate) upload_path: Option<String>,
 }
 
-const MAX_IMAGES: usize = 16;
-const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
+pub(crate) const MAX_IMAGES: usize = 16;
+pub(crate) const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
 enum ImageSource<'a> {
@@ -1154,7 +1155,7 @@ fn image_io_error(error: std::io::Error) -> ImageReadError {
     }
 }
 
-fn open_beneath(root: &Path, relative: &Path) -> Result<fs::File, ImageReadError> {
+pub(crate) fn open_beneath(root: &Path, relative: &Path) -> Result<fs::File, ImageReadError> {
     use std::os::{fd::FromRawFd, unix::ffi::OsStrExt};
     let root = fs::canonicalize(root).map_err(image_io_error)?;
     let mut directory = fs::OpenOptions::new()
@@ -1252,7 +1253,7 @@ fn decode_image(mime: &str, encoded: &str) -> Result<ImageBytes, ImageReadError>
     })
 }
 
-fn sniff_mime(bytes: &[u8]) -> Option<&'static str> {
+pub(crate) fn sniff_mime(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         Some("image/png")
     } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {

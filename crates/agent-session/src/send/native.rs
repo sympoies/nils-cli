@@ -1,5 +1,6 @@
 //! Guarded app-server sends never write to the TUI composer.
 use super::*;
+use crate::codex_app_server::prompt_submit::image_input;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct Receipt {
@@ -45,6 +46,11 @@ pub(super) fn deliver(
             false,
         ));
     }
+    let input = if args.guards.notice_envelope || attempt.notification.is_some() {
+        None
+    } else {
+        image_input::prepare(context, &record.id, &text)?
+    };
     let _account_gate = codex_app_server::acquire_account_mutation_gate(context, &record.id)?;
     let lock = manual_input
         .record_lock
@@ -97,7 +103,7 @@ pub(super) fn deliver(
         reply_delivery::AdmittedInput::Native(&mut client),
     )?;
     let mut accepted_turn = None;
-    let dispatched = client.dispatch(&text, client_message_id, |turn_id| {
+    let dispatched = client.dispatch(&text, input.as_deref(), client_message_id, |turn_id| {
         accepted_turn = Some(turn_id.to_owned());
         (attempt.acknowledged)(&record, turn_id);
         // Acknowledged input may wait for synchronous provider ingress
