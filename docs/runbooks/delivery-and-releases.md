@@ -12,7 +12,7 @@ an identical tree. Ordinary PR or scoped queue checks do not authorize a release
 | Lane | Work | Failure blocks |
 | --- | --- | --- |
 | Pull request | Linux affected-package Clippy, binary builds, tests and doctests; workspace audits; dependency policy and containment checks | Merge |
-| Merge queue | The same Linux scope planner on the actual combined merge-group tree, including reverse dependencies; affected-package macOS compile/Clippy with all targets and features; workspace fallback when planning cannot safely select scope; release-candidate groups also run full validation on the combined candidate | Merge |
+| Merge queue | Linux validation and macOS compile/Clippy on the combined candidate. Both instrumented macOS partitions for code and test inputs. Full validation for release candidates. | Merge |
 | Nightly / manual full CI | Full Linux tests and doctests, Linux containment, dependency policy, full instrumented macOS tests and workspace line coverage of at least 85% | Full CI; opens or updates the nightly tracker |
 | Release | Authorize the invocation, then the same full Linux/macOS/coverage workflow on the exact tag SHA (skipped only when complete merge-group evidence is verified for reuse), then build and package four platform targets, publish assets, and dispatch the tap update | Release builds, assets and tap update |
 | Push to `main` | Lightweight status only | No additional merge or release guarantee |
@@ -23,9 +23,9 @@ on `main`, using [`full-validation.yml`](../../.github/workflows/full-validation
 Scheduled and manual full runs share one concurrency group; newer PR pushes
 cancel their superseded run, while merge-group runs remain independent.
 
-The daily full run is the automatic post-merge macOS regression check: both
-test partitions run on the scheduled `main` commit, and a failed partition
-fails full validation and opens or reopens the nightly tracker. The target is
+The daily full run checks macOS after merge. Both test partitions run on the
+scheduled `main` commit. A failed partition fails full validation and opens
+or reopens the nightly tracker. The target is
 the next daily run after a merge, subject to GitHub schedule and runner delays;
 the schedule is not a hard deadline. Check the tracker and scheduled run when
 the expected run is missing or delayed.
@@ -33,10 +33,8 @@ the expected run is missing or delayed.
 Budget 120 hosted macOS runner minutes per day for the scheduled partitions
 (two jobs, each limited to 60 minutes), excluding optional manual and release
 runs. The successful scheduled run 41835167531 used about 55 runner minutes
-across its two partitions. Running full partitions on every affected merge
-group would multiply that cost with queue traffic; manual PR dispatch alone
-would not provide automatic detection. The existing nightly path adds no
-runner jobs and covers every workspace crate.
+across its two partitions. Each non-prose merge group also uses two hosted
+macOS runners. Both partitions run in parallel.
 
 The planner loads accepted policy from the immutable base, binds the source
 head, combined candidate and tested tree, and records selected packages,
@@ -64,9 +62,25 @@ tests or coverage.
 Scope and results are retained in
 `merge-validation-macos-clippy`. PRs skip this job successfully; ordinary and
 release queue groups both require its success through the required `test`
-check. Full macOS tests and coverage remain nightly/release gates.
-The merge queue still invokes the planner for docs and release changes.
+check. The merge queue still invokes the planner for docs and release changes.
 See the [scope consumption contract](../specs/affected-scope-ci-consumption-v1.md).
+
+For the instrumented gate, every code or test-input change selects both
+workspace partitions. The classifier reads the exact merge-group diff,
+including deletions and both sides of renames, with policy from the base
+commit. Its exemption covers regular Markdown in designated prose paths.
+Crate docs, specs, test-consumed runbooks, workflows, and shared dependencies
+can all affect tests. An empty diff or unavailable classification selects the
+partitions. Docs-only PRs retain their documentation audits, and prose-only
+queue groups retain the Linux planner and macOS Clippy.
+
+The affected-package planner is suitable for compile and lint scope. Cargo's
+dependency graph cannot track every file a test reads at runtime or every
+shared fixture embedded in source. The prose exemption keeps a low-cost path
+without relying on a package allowlist. For ordinary code groups the shared
+validation workflow runs both instrumented partitions and checks their
+combined result. Release candidates, nightly runs, and tag validation also run
+the full Linux jobs and enforce the macOS coverage floor.
 
 ## Tests-only pull requests
 
@@ -93,18 +107,19 @@ After migration, both PRs and merge groups require these exact check names:
 - `cargo-deny (advisories + bans)`
 
 The previous required names are `test`, `test_macos`, and `coverage`.
-`test_macos` and `coverage` now exist only inside full nightly/release validation;
-there is no deferred-full labeler. `macos_clippy` is a separate compile/lint
-job: ordinary PRs are exempt, and every merge group executes it. The required
-`test` job fails closed unless its macOS queue result is `success`; failed,
-cancelled, skipped, or missing results block merge.
+`test_macos` and `coverage` run in the full validation profile. The separate
+`macos_clippy` job runs on every merge group. The required `test` job rejects
+failed, cancelled, skipped, or missing macOS Clippy results.
 
 Retain the three Linux required contexts above. Per the
 [maintainer decision in #2809](https://github.com/sympoies/nils-cli/issues/2809#issuecomment-6356110500),
 no separate `macos_clippy` ruleset context is needed while required `test`
-enforces that dependency. Add it only if that wiring is loosened. Verify an
-ordinary queue entry and a release entry both report macOS Clippy success.
-Full macOS tests and coverage remain nightly/release gates. The following
+enforces that dependency. Add it only if that wiring is loosened. Verify that
+code queue groups report successful macOS Clippy and both instrumented
+partitions. If either partition fails, the shared validation
+workflow fails and the required `test` job rejects the group. A cancelled,
+skipped, or missing required validation result also fails `test`. GitHub
+requires `test` to pass on the merge-group SHA before landing it. The following
 order documents the earlier full-validation migration:
 
 Apply this order at the migration merge:

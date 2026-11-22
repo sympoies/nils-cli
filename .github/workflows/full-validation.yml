@@ -10,6 +10,10 @@ on:
         description: Expected immutable caller event SHA, verified by the final gate
         required: true
         type: string
+      macos_partitions_only:
+        description: Run instrumented macOS tests for an ordinary merge group
+        default: false
+        type: boolean
       isolation_guard:
         description: Also run the poisoned-environment isolation guard (nightly and manual runs only)
         required: false
@@ -25,6 +29,7 @@ env:
 
 jobs:
   cargo_deny:
+    if: ${{ !inputs.macos_partitions_only }}
     name: cargo-deny (advisories + bans)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -47,6 +52,7 @@ jobs:
         run: bash scripts/ci/cargo-deny-audit.sh
 
   test:
+    if: ${{ !inputs.macos_partitions_only }}
     runs-on: ubuntu-24.04
     # Backstop for a hang outside a test, such as a stuck build, install, or
     # audit step. A hung test is ended first by the `ci` nextest profile's
@@ -212,6 +218,7 @@ jobs:
   # failure here blocks full validation and release builds.
 
   test_containment:
+    if: ${{ !inputs.macos_partitions_only }}
     runs-on: ubuntu-24.04
     # Keep a job-level deadline for the build and the containment test.
     timeout-minutes: 25
@@ -277,7 +284,7 @@ jobs:
   # does not expect it there.
   isolation_guard:
     name: Test isolation guard
-    if: inputs.isolation_guard
+    if: inputs.isolation_guard && !inputs.macos_partitions_only
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
@@ -336,10 +343,10 @@ jobs:
 
   # The instrumented macOS suite runs as two nextest partitions on separate
   # runners. Repository audits, script tests, fmt, clippy and doc tests are not
-  # repeated here: the Linux `test` job runs all of them on the same commit and
+  # repeated here: Linux validation runs them on the same commit and
   # `macos_clippy` lints the macOS build on every queue entry. Only the tests
   # and their coverage data run per partition; `test_macos` merges the data and
-  # enforces the floor.
+  # enforces the floor in the full profile.
   test_macos_partition:
     name: test_macos_partition (${{ matrix.partition }}/2)
     runs-on: macos-15
@@ -426,7 +433,7 @@ jobs:
         run: /opt/homebrew/bin/bash scripts/ci/nils-cli-checks-entrypoint.sh
 
       - name: Upload partition LCOV
-        if: always() && hashFiles('target/coverage/lcov.info') != ''
+        if: always() && !inputs.macos_partitions_only && hashFiles('target/coverage/lcov.info') != ''
         uses: actions/upload-artifact@v7
         with:
           name: coverage-lcov-partition-${{ matrix.partition }}
@@ -473,6 +480,7 @@ jobs:
   # runner. The HTML report is built only for nightly and manual runs
   # (`isolation_guard`), not for release validation.
   test_macos:
+    if: ${{ !inputs.macos_partitions_only }}
     needs: test_macos_partition
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -533,6 +541,7 @@ jobs:
   # its LCOV report and by publishing the summary. It needs no macOS runner.
 
   coverage:
+    if: ${{ !inputs.macos_partitions_only }}
     needs: test_macos
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -555,7 +564,7 @@ jobs:
         run: bash scripts/ci/coverage-summary.sh target/coverage/lcov.info
 
   gate:
-    needs: [test, test_macos, coverage, test_containment, cargo_deny, isolation_guard]
+    needs: [test, test_macos_partition, test_macos, coverage, test_containment, cargo_deny, isolation_guard]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -571,18 +580,19 @@ jobs:
           persist-credentials: false
       - name: Diagnose unacquired macOS runner
         id: macos_capacity
-        if: needs.test_macos.result != 'success'
+        if: needs.test_macos_partition.result != 'success' || (!inputs.macos_partitions_only && needs.test_macos.result != 'success')
         uses: actions/github-script@v9
         with:
           script: |
             await require('./.github/scripts/macos-runner-capacity.cjs').reportMacosCapacity({github, context, core});
-      - name: Require all full-validation lanes
+      - name: Require selected validation lanes
         env:
           EXPECTED_COMMIT: ${{ inputs.commit }}
           ISOLATION_GUARD: ${{ inputs.isolation_guard }}
+          MACOS_PARTITIONS_ONLY: ${{ inputs.macos_partitions_only }}
           VALIDATION_NEEDS: ${{ toJSON(needs) }}
           MACOS_JOBS: ${{ steps.macos_capacity.outputs.jobs || '[]' }}
         run: |
           ACTUAL_COMMIT="$(git rev-parse HEAD)"
           export ACTUAL_COMMIT
-          node -e 'require("./.github/scripts/full-validation-gate.cjs").requireFullValidation({expected: process.env.EXPECTED_COMMIT, actual: process.env.ACTUAL_COMMIT, isolationGuard: process.env.ISOLATION_GUARD === "true", needs: JSON.parse(process.env.VALIDATION_NEEDS), macosJobs: JSON.parse(process.env.MACOS_JOBS)})'
+          node -e 'require("./.github/scripts/full-validation-gate.cjs").requireFullValidation({expected: process.env.EXPECTED_COMMIT, actual: process.env.ACTUAL_COMMIT, isolationGuard: process.env.ISOLATION_GUARD === "true", macosPartitionsOnly: process.env.MACOS_PARTITIONS_ONLY === "true", needs: JSON.parse(process.env.VALIDATION_NEEDS), macosJobs: JSON.parse(process.env.MACOS_JOBS)})'

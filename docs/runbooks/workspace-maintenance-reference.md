@@ -180,11 +180,11 @@ is already complete.
 ## 3. Canonical validation flows
 
 Local development defaults to changed-scope validation. Normal PRs run
-affected-scope Linux checks, with a full Linux fallback when scope cannot be
-narrowed; coverage and full macOS tests run only in the nightly, manual and
-release full-validation workflow. Run them locally only when you need CI
-parity, release-quality verification, coverage maintenance, or explicit
-debugging evidence.
+affected-scope Linux checks, with a full fallback when the planner cannot
+narrow scope. Code merge groups require both instrumented macOS partitions.
+Nightly, manual and release full validation also enforce the coverage floor.
+Run full validation locally for CI parity, release preparation, coverage
+maintenance, or debugging.
 
 PR pushes keep the affected-package Linux checks. In merge groups, the
 required Linux `test` check uses a workspace-unified nextest pass for those
