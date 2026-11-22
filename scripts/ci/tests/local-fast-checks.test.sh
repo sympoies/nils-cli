@@ -23,6 +23,11 @@ fi
 # Also parse with the platform Bash: on macOS this is Bash 3.2 even when
 # the test runner selects a newer Bash from PATH. This must precede execution.
 /bin/bash -n "$script"
+platform_output="$(/bin/bash "$script" --changed-file "")"
+if [[ "$platform_output" != *"ok: local-fast found no changed files"* ]]; then
+  echo "FAIL: platform Bash empty selection" >&2
+  exit 1
+fi
 
 python3 "$repo_root/scripts/ci/tests/local-fast-graph.test.py"
 python3 "$repo_root/scripts/ci/tests/sibling-bins.test.py"
