@@ -18,6 +18,8 @@ or integrating a specific subsystem.
 - [Authentication quarantine fixture acceptance](runbooks/auth-quarantine-acceptance.md):
   headless Claude and Codex recovery checks using synthetic credentials, with
   repaired/admitted and unrepaired/refused outcomes.
+- [Native notice acceptance](runbooks/native-notice-acceptance.md): disposable
+  installed-producer and history checks for Claude Code and Codex CLI.
 - [Work coordination](runbooks/work-coordination.md): coordination modes,
   declared paths, authority boundaries, advisory flow, and enforce flow.
 - [State retirement inventory](runbooks/state-retirement-inventory.md): read-only
