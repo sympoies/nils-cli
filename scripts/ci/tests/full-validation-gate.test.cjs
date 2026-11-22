@@ -36,3 +36,23 @@ test('a different or missing commit fails closed', () => {
     assert.throws(() => requireFullValidation({ expected: sha, actual, needs: fixture() }), /commit/i);
   }
 });
+
+test('ordinary queue requires the instrumented matrix and only the instrumented matrix', () => {
+  const queue = { expected: sha, actual: sha, macosPartitionsOnly: true };
+  assert.equal(requireFullValidation({
+    ...queue, needs: { test_macos_partition: { result: 'success' } },
+  }), true);
+  for (const result of ['failure', 'cancelled', 'skipped', undefined]) {
+    const needs = { ...fixture(), test_macos_partition: { result } };
+    assert.throws(() => requireFullValidation({ ...queue, needs }), /test_macos_partition/);
+  }
+  assert.throws(() => requireFullValidation({
+    ...queue, actual: 'b'.repeat(40), needs: { test_macos_partition: { result: 'success' } },
+  }), /commit/i);
+});
+
+test('partitions alone cannot satisfy full validation', () => {
+  assert.throws(() => requireFullValidation({
+    expected: sha, actual: sha, needs: { test_macos_partition: { result: 'success' } },
+  }), /test_macos, coverage/);
+});

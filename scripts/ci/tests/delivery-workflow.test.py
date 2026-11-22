@@ -41,7 +41,7 @@ class DeliveryTests(unittest.TestCase):
         linux = job(ci, 'test')
         self.assertIn('needs: [changes, full_validation, macos_clippy]', linux)
         self.assertIn('FULL_VALIDATION_RESULT: ${{ needs.full_validation.result }}', linux)
-        self.assertIn('Require release queue validation', linux)
+        self.assertIn('Require instrumented queue validation', linux)
 
     def test_macos_clippy_runs_on_every_queue_group_and_blocks_required_test(self):
         ci = workflow('ci.yml')
@@ -75,7 +75,8 @@ class DeliveryTests(unittest.TestCase):
         gate = job(workflow('full-validation.yml'), 'gate')
         diagnostic = '      - name: Diagnose unacquired macOS runner\n'
         for body, condition in ((linux, "github.event_name == 'merge_group' && needs.macos_clippy.result != 'success'"),
-                                (gate, "needs.test_macos.result != 'success'")):
+                                (gate, "needs.test_macos_partition.result != 'success' || "
+                                 "(!inputs.macos_partitions_only && needs.test_macos.result != 'success')")):
             step = body.split(diagnostic, 1)[1].split('\n      - name:', 1)[0]
             self.assertIn(f'if: {condition}', step)
             self.assertIn("require('./.github/scripts/macos-runner-capacity.cjs').reportMacosCapacity({github, context, core})", step)
@@ -138,7 +139,8 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn('test -s target/coverage/lcov.info', job(full, 'coverage'))
         gate = job(full, 'gate')
         self.assertIn('if: always()', gate)
-        self.assertIn('needs: [test, test_macos, coverage, test_containment, cargo_deny, isolation_guard]', gate)
+        self.assertIn('needs: [test, test_macos_partition, test_macos, coverage, test_containment, '
+                      'cargo_deny, isolation_guard]', gate)
         self.assertIn('requireFullValidation', gate)
         self.assertIn('toJSON(needs)', gate)
         self.assertIn('git rev-parse HEAD', gate)
@@ -207,37 +209,69 @@ class DeliveryTests(unittest.TestCase):
                 env=dict(os.environ, CHANGES_RESULT=state), capture_output=True)
             self.assertEqual(result.returncode == 0, state == 'success')
 
-    def test_release_queue_failures_block_the_required_linux_check(self):
+    def test_instrumented_queue_failures_block_the_required_linux_check(self):
         body = job(workflow('ci.yml'), 'test')
-        step = body.split('      - name: Require release queue validation\n', 1)[1]
+        step = body.split('      - name: Require instrumented queue validation\n', 1)[1]
         script = step.split('        run: |\n', 1)[1].split('\n      - name:', 1)[0]
         script = '\n'.join(line[10:] for line in script.splitlines() if line.startswith('          '))
-        for event in ('pull_request', 'merge_group'):
-            for candidate in ('true', 'false'):
-                for state in ('success', 'failure', 'cancelled', 'skipped', ''):
-                    with self.subTest(event=event, candidate=candidate, state=state):
-                        result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script],
-                            env=dict(os.environ, EVENT_NAME=event, RELEASE_CANDIDATE=candidate,
-                                     FULL_VALIDATION_RESULT=state), capture_output=True)
-                        allowed = event != 'merge_group' or candidate != 'true' or state == 'success'
-                        self.assertEqual(result.returncode == 0, allowed)
+        cases = [
+            ('pull_request', 'false', 'false', False),
+            ('merge_group', 'true', 'false', True),
+            ('merge_group', 'true', 'true', True),
+            ('merge_group', 'false', 'false', True),
+            ('merge_group', 'false', '', True),
+            ('merge_group', 'false', 'true', False),
+        ]
+        for event, candidate, docs_only, required in cases:
+            for state in ('success', 'failure', 'cancelled', 'skipped', ''):
+                with self.subTest(event=event, candidate=candidate, docs_only=docs_only, state=state):
+                    result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script],
+                        env=dict(os.environ, EVENT_NAME=event, RELEASE_CANDIDATE=candidate,
+                                 QUEUE_DOCS_ONLY=docs_only, FULL_VALIDATION_RESULT=state), capture_output=True)
+                    self.assertEqual(result.returncode == 0, not required or state == 'success')
 
-    def test_full_workflow_runs_for_release_queues_and_nightly_even_when_detection_skips(self):
-        full = job(workflow('ci.yml'), 'full_validation')
-        condition = next(line.removeprefix('    if: ') for line in full.splitlines()
-                         if line.startswith('    if: '))
-        for event in ('pull_request', 'merge_group', 'push', 'schedule', 'workflow_dispatch'):
-            for candidate in ('true', 'false'):
-                for detection in ('success', 'failure', 'cancelled', 'skipped'):
-                    expression = condition.replace('github.event_name', repr(event))
-                    expression = expression.replace('github.ref', repr('refs/heads/main'))
-                    expression = expression.replace('needs.changes.result', repr(detection))
-                    expression = expression.replace('needs.changes.outputs.release_candidate', repr(candidate))
-                    observed = eval(expression.replace('always()', 'True').replace('&&', 'and').replace('||', 'or'),
-                                    {'__builtins__': {}}, {})
-                    expected = event in ('schedule', 'workflow_dispatch') or (
-                        event == 'merge_group' and candidate == 'true' and detection == 'success')
-                    self.assertEqual(observed, expected)
+    def test_instrumented_workflow_selects_the_expected_profiles(self):
+        caller = job(workflow('ci.yml'), 'full_validation')
+        select = next(line.removeprefix('    if: ') for line in caller.splitlines()
+                      if line.startswith('    if: '))
+        profile = re.search(r'macos_partitions_only: \$\{\{ (.+) \}\}', caller).group(1)
+        cases = [
+            ('merge_group', 'success', 'true', 'false', 'full'),
+            ('merge_group', 'success', 'false', 'false', 'macos'),
+            ('merge_group', 'success', 'false', '', 'macos'),
+            ('merge_group', 'success', 'false', 'true', None),
+            ('merge_group', 'failure', 'false', 'false', None),
+            ('merge_group', 'cancelled', 'true', 'false', None),
+            ('pull_request', 'success', 'false', 'false', None),
+            ('pull_request', 'success', 'true', 'false', None),
+            ('push', 'skipped', '', '', None),
+            ('schedule', 'skipped', '', '', 'full'),
+            ('workflow_dispatch', 'skipped', '', '', 'full'),
+        ]
+        for event, detection, candidate, docs_only, expected in cases:
+            with self.subTest(event=event, detection=detection, candidate=candidate, docs_only=docs_only):
+                context = {'github.event_name': event, 'github.ref': 'refs/heads/main',
+                           'needs.changes.result': detection,
+                           'needs.changes.outputs.release_candidate': candidate,
+                           'needs.changes.outputs.queue_docs_only': docs_only}
+
+                def evaluate(expression):
+                    for key, value in context.items():
+                        expression = expression.replace(key, repr(value))
+                    return eval(expression.replace('always()', 'True').replace('&&', 'and').replace('||', 'or'),
+                                {'__builtins__': {}}, {})
+
+                observed = ('macos' if evaluate(profile) else 'full') if evaluate(select) else None
+                self.assertEqual(observed, expected)
+
+        shared = workflow('full-validation.yml')
+        for name in ('test', 'test_containment', 'cargo_deny', 'test_macos', 'coverage'):
+            self.assertIn('if: ${{ !inputs.macos_partitions_only }}', job(shared, name))
+        partitions = job(shared, 'test_macos_partition')
+        self.assertNotIn('    if:', partitions.split('    steps:', 1)[0])
+        gate = job(shared, 'gate')
+        self.assertIn('MACOS_PARTITIONS_ONLY: ${{ inputs.macos_partitions_only }}', gate)
+        self.assertIn('macosPartitionsOnly: process.env.MACOS_PARTITIONS_ONLY === "true"', gate)
 
     def test_nightly_report_serializes_tracker_updates_with_least_permissions(self):
         ci = workflow('ci.yml')
