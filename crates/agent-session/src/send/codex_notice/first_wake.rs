@@ -3,6 +3,13 @@ use super::*;
 use crate::codex_app_server::guarded::Client;
 use serde_json::Value;
 
+#[derive(Clone, Copy)]
+pub(crate) enum Check {
+    Composer,
+    LiveIdle,
+    NeverUsed,
+}
+
 pub(super) fn observe(
     context: &CliContext,
     record: &SessionRecord,
@@ -10,7 +17,7 @@ pub(super) fn observe(
     deadline: Instant,
 ) -> Result<Origin, CliError> {
     let missing = || claude_notice::runtime::baseline_unavailable(record);
-    check(context, record, tmux, deadline, false)?;
+    check(context, record, tmux, deadline, Check::LiveIdle)?;
     let typed_error = |error: crate::codex_app_server::guarded::Error| {
         error.annotate(CliError::unavailable(
             error.code(),
@@ -36,7 +43,7 @@ pub(super) fn observe(
         // The history scan may miss a readable, exact live rollout.
         return Ok(Origin::Existing {
             baseline,
-            verify_at_write: true,
+            live_rollout: true,
         });
     }
     if rollout.is_absent() && never_used(context, record) {
@@ -50,13 +57,13 @@ pub(crate) fn check(
     record: &SessionRecord,
     tmux: &Path,
     deadline: Instant,
-    require_never_used: bool,
+    check: Check,
 ) -> Result<(), CliError> {
-    if require_never_used && !never_used(context, record) {
+    if matches!(check, Check::NeverUsed) && !never_used(context, record) {
         return Err(claude_notice::runtime::baseline_unavailable(record));
     }
     let args = send_guard::GuardArgs {
-        require_idle: true,
+        require_idle: !matches!(check, Check::Composer),
         require_empty_composer: true,
         expect_runtime: record
             .runtime

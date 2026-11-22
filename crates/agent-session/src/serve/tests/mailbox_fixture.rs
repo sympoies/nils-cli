@@ -2,6 +2,42 @@
 use super::*;
 use std::io::Write;
 
+pub(super) fn composer_tmux(root: &Path, launch: &str) -> PathBuf {
+    let minimal = minimal_tmux(root);
+    let bin = root.join("composer-tmux");
+    fs::write(
+        &bin,
+        r#"#!/usr/bin/env sh
+root=${0%/*}
+case "$1" in
+  show-environment)
+    case "$4" in
+      AGENT_SESSION_ID) printf '%s\n' 'AGENT_SESSION_ID=beta' ;;
+      AGENT_SESSION_STATE_DIR) printf 'AGENT_SESSION_STATE_DIR=%s\n' "$root" ;;
+      AGENT_SESSION_RUNTIME_ID) printf 'AGENT_SESSION_RUNTIME_ID='; cat "$root/pane-runtime" ;;
+      *) exit 1 ;;
+    esac ;;
+  capture-pane)
+    printf '› '
+    cat "$root/composer" || exit 1
+    printf '\n\n  status\n'
+    if [ -f "$root/draft-after-capture" ]; then
+      mv "$root/draft-after-capture" "$root/composer"
+    fi ;;
+  send-keys|load-buffer|paste-buffer|delete-buffer)
+    touch "$root/terminal-write"
+    exit 1 ;;
+  *) exec "$root/tmux" "$@" ;;
+esac
+"#,
+    )
+    .unwrap();
+    fs::write(root.join("composer"), "").unwrap();
+    fs::write(root.join("pane-runtime"), launch).unwrap();
+    fs::set_permissions(&bin, fs::metadata(minimal).unwrap().permissions()).unwrap();
+    bin
+}
+
 pub(super) fn path(root: &Path, id: &str) -> PathBuf {
     root.join("codex-home/sessions").join(format!("{id}.jsonl"))
 }

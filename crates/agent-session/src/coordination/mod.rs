@@ -715,7 +715,6 @@ pub(crate) fn mark_notification_submitted(
     notification::mark_submitted(context, candidate)
 }
 
-#[allow(dead_code)]
 pub(crate) fn mark_notification_known_failure(
     context: &CliContext,
     candidate: &NotificationCandidate,

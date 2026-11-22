@@ -2690,7 +2690,7 @@ pub(crate) async fn run_control(
                         }
                         let write_lock = match mailbox_notice::lock(&context, &thread_id, &message, write.as_deref()).await {
                             Ok(lock) => lock,
-                            Err(_) => { let _ = response.send(Err(prompt_submit::PromptSubmissionFailure::NotDispatched)); continue; }
+                            Err(error) => { let _ = response.send(Err(mailbox_notice::prompt_failure(&error))); continue; }
                         };
                         request_id = request_id.saturating_add(1);
                         let result = prompt_submit::submit_prompt_request(
@@ -2787,7 +2787,7 @@ pub(crate) async fn run_control(
                         request_id = request_id.saturating_add(1);
                         let write_lock = match mailbox_notice::lock(&context, &thread_id, &message, write.as_deref()).await {
                             Ok(lock) => lock,
-                            Err(error) => { let _ = response.send(Err(error)); continue; }
+                            Err(error) => { let _ = response.send(Err(error.message().to_owned())); continue; }
                         };
                         let mut request = steering_request(request_id, &thread_id, &raw_turn_id, &message);
                         if let Some(client) = client_message_id.as_deref() { request["params"]["clientUserMessageId"] = json!(client); }

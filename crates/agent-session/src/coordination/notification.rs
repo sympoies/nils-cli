@@ -691,7 +691,6 @@ pub(crate) fn mark_submitted(
     })
 }
 
-#[allow(dead_code)]
 pub(crate) fn mark_known_failure(
     context: &CliContext,
     candidate: &NotificationCandidate,

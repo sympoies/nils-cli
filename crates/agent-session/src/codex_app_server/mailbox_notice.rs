@@ -1,12 +1,42 @@
 //! Mailbox queue handoff revalidates its consumed generation at the native write.
 use super::*;
+use crate::send::codex_notice::first_wake;
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ComposerDeferral {
+    Draft,
+    Unobservable,
+}
+
+impl ComposerDeferral {
+    pub(crate) fn from_error(error: &CliError) -> Option<Self> {
+        match error.code() {
+            "send-composer-not-empty" => Some(Self::Draft),
+            "send-composer-unobservable" => Some(Self::Unobservable),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn reason(self) -> &'static str {
+        match self {
+            Self::Draft => "recipient-composer-not-empty",
+            Self::Unobservable => "recipient-composer-unobservable",
+        }
+    }
+}
+
+pub(super) fn prompt_failure(error: &CliError) -> prompt_submit::PromptSubmissionFailure {
+    match ComposerDeferral::from_error(error) {
+        Some(deferral) => prompt_submit::PromptSubmissionFailure::MailboxComposerBlocked(deferral),
+        None => prompt_submit::PromptSubmissionFailure::NotDispatched,
+    }
+}
 
 pub(crate) struct Write {
     pub(crate) expected: Box<SessionRecord>,
     pub(crate) candidate: crate::coordination::NotificationCandidate,
     pub(crate) expected_turn: Option<String>,
-    pub(crate) verify_composer_tmux: Option<PathBuf>,
-    pub(crate) require_never_used: bool,
+    pub(crate) idle_composer: Option<(PathBuf, first_wake::Check)>,
     pub(crate) deadline: Instant,
 }
 
@@ -21,7 +51,7 @@ pub(super) async fn lock(
     thread_id: &str,
     text: &str,
     write: Option<&Write>,
-) -> Result<Option<WriteGuard>, String> {
+) -> Result<Option<WriteGuard>, CliError> {
     let Some(write) = write else { return Ok(None) };
     let context = context.clone();
     let thread_id = thread_id.to_owned();
@@ -29,11 +59,16 @@ pub(super) async fn lock(
     let expected = write.expected.clone();
     let candidate = write.candidate.clone();
     let expected_turn = write.expected_turn.clone();
-    let verify_composer_tmux = write.verify_composer_tmux.clone();
-    let require_never_used = write.require_never_used;
+    let idle_composer = write.idle_composer.clone();
     let deadline = write.deadline;
     tokio::task::spawn_blocking(move || {
-        let refused = || "mailbox notice boundary changed".to_string();
+        let refused = || {
+            CliError::unavailable(
+                "coordination-notification-superseded",
+                "mailbox notice boundary changed",
+                None,
+            )
+        };
         let record_lock = crate::acquire_session_record_lock_timed(
             &context,
             &expected.id,
@@ -74,16 +109,9 @@ pub(super) async fn lock(
                 None => crate::activity::codex_notification_maybe_idle(&turn),
             }
         });
-        if let Some(tmux) = verify_composer_tmux {
-            crate::send::codex_notice::first_wake::check(
-                &context,
-                &current,
-                &tmux,
-                deadline,
-                require_never_used,
-            )
-            .map_err(|_| refused())?;
-        }
+        let composer = idle_composer.map_or(Ok(()), |(tmux, check)| {
+            first_wake::check(&context, &current, &tmux, deadline, check)
+        });
         let quiescence = crate::coordination::lock_session_quiescence(
             &context,
             &candidate.target_session_id,
@@ -98,6 +126,7 @@ pub(super) async fn lock(
         {
             return Err(refused());
         }
+        composer?;
         Ok(Some(WriteGuard {
             _record: record_lock,
             _quiescence: quiescence,
@@ -105,7 +134,13 @@ pub(super) async fn lock(
         }))
     })
     .await
-    .map_err(|_| "mailbox notice admission worker failed".to_string())?
+    .map_err(|_| {
+        CliError::runtime(
+            "serve-task-failed",
+            "mailbox notice admission worker failed",
+            None,
+        )
+    })?
 }
 
 pub(super) async fn send<S>(

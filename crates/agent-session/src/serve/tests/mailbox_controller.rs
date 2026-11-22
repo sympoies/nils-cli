@@ -12,7 +12,7 @@ async fn coordination_notification_startup_catchup_uses_one_acknowledged_codex_s
     let tmp = tempfile::TempDir::new().expect("tempdir");
     seed_session_with_runtime(tmp.path(), "alpha", "codex", "hs-codex-alpha");
     let launch_id = seed_codex_app_server_session(tmp.path(), "beta");
-    let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+    let state = state(tmp.path(), Some(TOKEN), fixture::composer_tmux(tmp.path(), &launch_id));
     let alpha = load_session_record(&state.context, "alpha").expect("alpha");
     let beta = fixture::bind(&state.context, "beta", tmp.path(), "mailbox-thread");
     let alpha_capability = provision_ready_coordination_fixture(&state.context, &alpha);
@@ -262,7 +262,7 @@ async fn coordination_notification_skips_a_mailbox_the_recipient_already_drained
     let tmp = tempfile::TempDir::new().expect("tempdir");
     seed_session_with_runtime(tmp.path(), "alpha", "codex", "hs-codex-alpha");
     let launch_id = seed_codex_app_server_session(tmp.path(), "beta");
-    let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+    let state = state(tmp.path(), Some(TOKEN), fixture::composer_tmux(tmp.path(), &launch_id));
     let alpha = load_session_record(&state.context, "alpha").expect("alpha");
     let beta = fixture::bind(&state.context, "beta", tmp.path(), "mailbox-thread");
     let alpha_capability = provision_ready_coordination_fixture(&state.context, &alpha);
@@ -417,7 +417,7 @@ async fn idle_claimed_codex_recipient(
     let tmp = tempfile::TempDir::new().expect("tempdir");
     seed_session_with_runtime(tmp.path(), "alpha", "codex", "hs-codex-alpha");
     let launch_id = seed_codex_app_server_session(tmp.path(), "beta");
-    let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+    let state = state(tmp.path(), Some(TOKEN), fixture::composer_tmux(tmp.path(), &launch_id));
     let alpha = load_session_record(&state.context, "alpha").expect("alpha");
     let beta = fixture::bind(&state.context, "beta", tmp.path(), "mailbox-thread");
     let alpha_capability = provision_ready_coordination_fixture(&state.context, &alpha);

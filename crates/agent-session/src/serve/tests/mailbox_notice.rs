@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 fn setup(root: &Path) -> (Arc<ServeState>, String, String, String) {
     seed_session_with_runtime(root, "alpha", "codex", "hs-alpha");
     let launch = seed_codex_app_server_session(root, "beta");
-    let state = state(root, Some(TOKEN), minimal_tmux(root));
+    let state = state(root, Some(TOKEN), fixture::composer_tmux(root, &launch));
     let alpha = load_session_record(&state.context, "alpha").unwrap();
     let beta = load_session_record(&state.context, "beta").unwrap();
     let sender = provision_ready_coordination_fixture(&state.context, &alpha);
