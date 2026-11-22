@@ -15,6 +15,9 @@ or integrating a specific subsystem.
 - [Codex account recovery acceptance](runbooks/codex-account-recovery-acceptance.md):
   disposable-session recipes for startup recovery and an idle fixture without
   a model turn.
+- [Claude account-switch refusal acceptance](runbooks/claude-switch-refusal-acceptance.md):
+  credential-free acceptance against an installed runtime, with typed refusal,
+  identity readback, and verified deletion.
 - [Authentication quarantine fixture acceptance](runbooks/auth-quarantine-acceptance.md):
   headless Claude and Codex recovery checks using synthetic credentials, with
   repaired/admitted and unrepaired/refused outcomes.
