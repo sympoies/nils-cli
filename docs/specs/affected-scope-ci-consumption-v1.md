@@ -13,16 +13,14 @@ After the maintainer's ruleset migration, required names are `test`,
 runs `macos_clippy` to compile/lint macOS all-target/all-feature code; PRs skip
 that job successfully, and required `test` fails closed unless the queue result
 is `success`, so no separate `macos_clippy` ruleset context is needed
-(`docs/runbooks/delivery-and-releases.md`, maintainer decision in #2809). Full macOS tests and coverage remain deferred. There is
-no deferred-full labeler. The required Linux test
-job runs a failure guard even when change detection fails, preventing skipped
-needs from admitting a candidate. It also requires macOS Clippy success on
-every merge group, including release-only and docs-only groups. No plan or
-receipt alone permits merge.
+(`docs/runbooks/delivery-and-releases.md`, maintainer decision in #2809).
+The required Linux test job rejects failed change detection and requires both
+instrumented macOS partitions on code groups. The
+[delivery flow](../runbooks/delivery-and-releases.md) describes the prose
+exemption and the full release profile.
 
 Full Linux/macOS validation and the 85% workspace coverage floor run nightly,
 on manual full CI on main, and before release builds on the exact tagged SHA.
-See the [delivery flow](../runbooks/delivery-and-releases.md) for migration and recovery.
 
 ## Inputs and execution
 
