@@ -259,7 +259,7 @@ fn tmux_targets_absent(
     })
 }
 
-fn process_absent(pid: libc::pid_t) -> bool {
+pub(super) fn process_absent(pid: libc::pid_t) -> bool {
     pid > 1
         && unsafe { libc::kill(pid, 0) } != 0
         && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)

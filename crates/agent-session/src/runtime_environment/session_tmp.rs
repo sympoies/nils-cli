@@ -291,6 +291,25 @@ mod tests {
             .unwrap()
         }
 
+        fn persist_stopped(&self, id: &str) -> SessionRecord {
+            let record = self.persist(id);
+            #[cfg(target_os = "macos")]
+            let record = {
+                let mut record = record;
+                record.extra.insert(
+                    crate::DELETE_TMUX_IDENTITY_KEY.to_owned(),
+                    json!({
+                        "launch_id": "fixture-runtime",
+                        "macos_boot_id": "22222222-2222-4222-8222-222222222222",
+                        "session_id": "$1", "pane_id": "%1", "pane_pid": 2,
+                    }),
+                );
+                crate::write_session_record(&self.context(), &record).unwrap();
+                record
+            };
+            record
+        }
+
         fn persist(&self, id: &str) -> SessionRecord {
             let record = self.record(id, json!({}));
             crate::write_session_record(&self.context(), &record).unwrap();
@@ -305,6 +324,7 @@ mod tests {
             .collect()
     }
 
+    mod macos_sweep;
     mod safety;
 
     #[test]
@@ -407,7 +427,7 @@ mod tests {
     #[test]
     fn sweep_reclaims_a_stopped_session_only_after_the_grace_period() {
         let fixture = Fixture::new();
-        let record = fixture.persist("sess-stopped");
+        let record = fixture.persist_stopped("sess-stopped");
         let dir = prepare_launch(&fixture.state_dir(), &record)
             .unwrap()
             .unwrap();

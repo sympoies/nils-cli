@@ -24,6 +24,11 @@ use super::{
 
 #[path = "notification_inspection.rs"]
 mod notification_inspection;
+#[cfg(any(target_os = "macos", test))]
+#[path = "broker_tmp_sweep.rs"]
+mod tmp_sweep;
+#[cfg(any(target_os = "macos", test))]
+pub(crate) use tmp_sweep::macos_tmp_runtime_status;
 
 pub(crate) const BROKER_VERSION: &str = "agent-session.coordination-broker.v1";
 pub(crate) const DSH_PROVIDER_LEASE_FAILURE_FILE: &str = ".dsh-provider-lease-failure";
@@ -256,43 +261,43 @@ fn stopped_macos_broker_matches_previous(
     let Ok(Some(record_identity)) = crate::persisted_tmux_runtime_identity(&prior.record) else {
         return false;
     };
-    let Some(broker_identity) = broker
-        .runtime_identity
-        .as_ref()
-        .and_then(|value| serde_json::from_value::<crate::TmuxRuntimeIdentity>(value.clone()).ok())
-    else {
-        return false;
-    };
+    record_identity == *identity
+        && stopped_macos_broker_matches_record(context, broker, &prior.record, identity)
+        && prior.status == crate::CoordinationRuntimeStatus::Stopped
+        && macos_process_group_is_empty(identity)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn stopped_macos_broker_matches_record(
+    context: &CliContext,
+    broker: &BrokerRecord,
+    record: &SessionRecord,
+    identity: &crate::TmuxRuntimeIdentity,
+) -> bool {
     broker.state == "stopped"
         && broker.capability_digest.is_empty()
+        && broker.session_id == record.id
+        && incarnation(record).is_ok_and(|value| value == broker.incarnation)
+        && record
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.generation == broker.generation)
+        && identity.launch_id.as_deref() == Some(broker.incarnation.as_str())
+        && broker.runtime_identity.as_ref() == record.extra.get(crate::DELETE_TMUX_IDENTITY_KEY)
         && fs::symlink_metadata(capability_path(
             context,
             &broker.session_id,
             &broker.incarnation,
         ))
         .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
-        && broker.session_id == prior.record.id
-        && incarnation(&prior.record).is_ok_and(|value| value == broker.incarnation)
-        && prior
-            .record
-            .runtime
-            .as_ref()
-            .is_some_and(|runtime| runtime.generation == broker.generation)
-        && identity.launch_id.as_deref() == Some(broker.incarnation.as_str())
-        && broker.runtime_identity.as_ref()
-            == prior.record.extra.get(crate::DELETE_TMUX_IDENTITY_KEY)
-        && broker_identity == *identity
-        && record_identity == *identity
-        && prior.status == crate::CoordinationRuntimeStatus::Stopped
-        && macos_process_group_is_empty(identity)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 pub(super) fn macos_process_group_is_empty(identity: &crate::TmuxRuntimeIdentity) -> bool {
     macos_process_group_absence_probe(identity).is_ok()
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 fn macos_process_group_absence_probe(identity: &crate::TmuxRuntimeIdentity) -> Result<(), String> {
     let Some(group) = identity.process_group_id.filter(|group| *group > 1) else {
         return Err("process-group-id: missing or invalid".to_string());
@@ -1315,6 +1320,13 @@ pub(super) fn spawn_heartbeat_sidecar(
     Ok(())
 }
 
+fn heartbeat_lock_path(context: &CliContext, session: &str, incarnation: &str) -> PathBuf {
+    super::coordination_dir(context, session).join(format!(
+        "broker-{}.lock",
+        digest_bytes(incarnation.as_bytes())
+    ))
+}
+
 pub(crate) fn run_heartbeat_sidecar(
     context: &CliContext,
     args: BrokerHeartbeatArgs,
@@ -1322,11 +1334,7 @@ pub(crate) fn run_heartbeat_sidecar(
     if heartbeat_owner_authorization(context, &args) == HeartbeatAuthorization::Revoked {
         return Err(super::unauthorized());
     }
-    let directory = super::coordination_dir(context, &args.session);
-    let lock_path = directory.join(format!(
-        "broker-{}.lock",
-        digest_bytes(args.incarnation.as_bytes())
-    ));
+    let lock_path = heartbeat_lock_path(context, &args.session, &args.incarnation);
     let lock = OpenOptions::new()
         .read(true)
         .write(true)

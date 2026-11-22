@@ -53,6 +53,7 @@ pub(super) fn read_owned_owner(dir: &Path, id: &str) -> Option<Owner> {
     (owner.schema_version == OWNER_SCHEMA && owner.session_id == id).then_some(owner)
 }
 
+#[cfg(not(target_os = "macos"))]
 fn stopped(context: &CliContext, tmux: &Path, record: &SessionRecord) -> &'static str {
     match session_status(context, tmux, record).as_str() {
         "running" => "live",
@@ -79,6 +80,54 @@ fn stopped(context: &CliContext, tmux: &Path, record: &SessionRecord) -> &'stati
     }
 }
 
+#[cfg(target_os = "macos")]
+fn stopped(context: &CliContext, tmux: &Path, record: &SessionRecord) -> &'static str {
+    stopped_macos(
+        context,
+        tmux,
+        record,
+        crate::capture_macos_boot_id().as_deref(),
+    )
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(super) fn stopped_macos(
+    context: &CliContext,
+    tmux: &Path,
+    record: &SessionRecord,
+    boot: Option<&str>,
+) -> &'static str {
+    let identity = persisted_tmux_runtime_identity(record).ok().flatten();
+    if identity.as_ref().is_some_and(|identity| {
+        crate::macos_prior_boot_proven(identity.macos_boot_id.as_deref(), boot)
+    }) {
+        return "stopped";
+    }
+    match crate::live_status(tmux, &record.tmux_session).as_str() {
+        "running" => return "live",
+        "stopped" => {}
+        _ => return "unknown",
+    }
+    let Some((identity, boot)) = identity.as_ref().zip(boot) else {
+        return "unknown";
+    };
+    if identity
+        .process_group_id
+        .map(crate::process_group_status)
+        .map(crate::conservative_coordination_process_group_status)
+        == Some(crate::ProcessGroupStatus::Running)
+    {
+        return "live";
+    }
+    match crate::coordination::broker::macos_tmp_runtime_status(
+        context, tmux, record, identity, boot,
+    ) {
+        CoordinationRuntimeStatus::Stopped => "stopped",
+        CoordinationRuntimeStatus::Running => "live",
+        CoordinationRuntimeStatus::Unknown => "unknown",
+    }
+}
+
 /// Explicit calls and daemon maintenance walk the entire root. Launch callers
 /// retain their short best-effort budget; daemon maintenance provides progress.
 pub(crate) fn sweep(
@@ -86,6 +135,16 @@ pub(crate) fn sweep(
     tmux_bin: &Path,
     grace: Duration,
     budget: Option<Duration>,
+) -> Result<SweepReport, CliError> {
+    sweep_with_runtime_check(context, tmux_bin, grace, budget, stopped)
+}
+
+pub(super) fn sweep_with_runtime_check(
+    context: &CliContext,
+    tmux_bin: &Path,
+    grace: Duration,
+    budget: Option<Duration>,
+    runtime_check: impl Fn(&CliContext, &Path, &SessionRecord) -> &'static str,
 ) -> Result<SweepReport, CliError> {
     let root = tmp_root(&context.state_dir)?;
     let mut report = SweepReport {
@@ -156,7 +215,7 @@ pub(crate) fn sweep(
                     report.keep("unreadable");
                     continue;
                 };
-                let status = stopped(context, tmux_bin, &record);
+                let status = runtime_check(context, tmux_bin, &record);
                 if status != "stopped" {
                     report.keep(status);
                     continue;

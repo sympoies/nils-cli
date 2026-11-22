@@ -22,7 +22,7 @@ fn owned_dir(fixture: &Fixture, id: &str) -> PathBuf {
 fn sweep_preserves_locked_unreadable_and_symlinked_directories() {
     let fixture = Fixture::new();
     for id in ["busy", "unreadable", "symlinked"] {
-        fixture.persist(id);
+        fixture.persist_stopped(id);
         owned_dir(&fixture, id);
     }
     let _held = acquire_session_record_lock(&fixture.context(), "busy").unwrap();
@@ -56,7 +56,7 @@ fn sweep_preserves_locked_unreadable_and_symlinked_directories() {
 #[test]
 fn sweep_preserves_symlinked_root_and_writable_directory() {
     let fixture = Fixture::new();
-    fixture.persist("foreign-owner");
+    fixture.persist_stopped("foreign-owner");
     let dir = owned_dir(&fixture, "foreign-owner");
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).unwrap();
@@ -88,7 +88,7 @@ fn sweep_preserves_symlinked_root_and_writable_directory() {
 #[test]
 fn sweep_keeps_future_stop_and_recent_orphan_until_retention() {
     let fixture = Fixture::new();
-    fixture.persist("future");
+    fixture.persist_stopped("future");
     let dir = owned_dir(&fixture, "future");
     let mut owner = read_owner(&dir, "future").unwrap();
     owner.stopped_at_epoch = Some(now_epoch() + 3600);

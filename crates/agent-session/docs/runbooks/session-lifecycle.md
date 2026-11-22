@@ -866,6 +866,15 @@ launchd services are unchanged.
   preflight and deletion walk verify mount identity; unavailable mount evidence
   prevents reclamation. Linux requires `STATX_MNT_ID` (Linux 5.8 or newer).
   The session lock remains held through reclamation.
+- On macOS in the current boot, the sweep requires a stopped, revoked broker
+  that matches the persisted runtime's boot UUID, launch ID, generation and tmux
+  identity. The managed name and captured tmux target must be absent. The pane
+  must be gone, and a bounded process-table scan bracketed by process-group
+  probes must confirm an empty group. Any retained prior runtime boundaries
+  also require proof of absence. A held heartbeat lock counts as live. A
+  remaining heartbeat must be readable and belong to the same incarnation
+  before revocation. Missing or conflicting terminal proof retains the paths
+  with `unknown`. The sweep keeps the session record in either case.
 - Every `serve` role runs a complete sweep after binding its listener and then
   hourly, using its configured tmux executable. This does not depend on the board,
   a relay connection or session launches. Passes do not overlap. A CLI-only host
