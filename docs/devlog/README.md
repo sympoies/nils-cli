@@ -168,4 +168,21 @@ are optional: omit the whole section rather than leaving a placeholder in it.
 
 <!-- devlog-pending-index -->
 
-- [2026-11-21-issue-3802-composer-underline](pending/2026-11-21-issue-3802-composer-underline.md)
+- [2026-11-22-bash32-empty-selection](pending/2026-11-22-bash32-empty-selection.md)
+- [2026-11-22-claude-restart-exit-dialog](pending/2026-11-22-claude-restart-exit-dialog.md)
+- [2026-11-22-codex-first-mailbox-wake](pending/2026-11-22-codex-first-mailbox-wake.md)
+- [2026-11-22-coverage-feature-inventory](pending/2026-11-22-coverage-feature-inventory.md)
+- [2026-11-22-identify-macos-registry-lock-holders-on-timeout-18ea4b8fa3ba3ee4-26d713](pending/2026-11-22-identify-macos-registry-lock-holders-on-timeout-18ea4b8fa3ba3ee4-26d713.md)
+- [2026-11-22-issue-2684-github-events](pending/2026-11-22-issue-2684-github-events.md)
+- [2026-11-22-issue-3845-diagnose-untrusted-spool](pending/2026-11-22-issue-3845-diagnose-untrusted-spool.md)
+- [2026-11-22-issue-3861-permission-relay-stream](pending/2026-11-22-issue-3861-permission-relay-stream.md)
+- [2026-11-22-issue-3874-node-mailbox-daemon-environment](pending/2026-11-22-issue-3874-node-mailbox-daemon-environment.md)
+- [2026-11-22-issue-3877-bound-continuity-epochs](pending/2026-11-22-issue-3877-bound-continuity-epochs.md)
+- [2026-11-22-issue-3879-governed-release-fold-source](pending/2026-11-22-issue-3879-governed-release-fold-source.md)
+- [2026-11-22-issue-3883-codex-resume-reland](pending/2026-11-22-issue-3883-codex-resume-reland.md)
+- [2026-11-22-issue-3906-default-release-inventory](pending/2026-11-22-issue-3906-default-release-inventory.md)
+- [2026-11-22-issue-3912-codex-rate-limit-notice](pending/2026-11-22-issue-3912-codex-rate-limit-notice.md)
+- [2026-11-22-issue-3932-macos-merge-queue](pending/2026-11-22-issue-3932-macos-merge-queue.md)
+- [2026-11-22-macos-stopped-session-temp-sweep](pending/2026-11-22-macos-stopped-session-temp-sweep.md)
+- [2026-11-22-revert-3896-codex-resume-identity](pending/2026-11-22-revert-3896-codex-resume-identity.md)
+- [2026-11-22-tests-only-pr-evidence](pending/2026-11-22-tests-only-pr-evidence.md)
