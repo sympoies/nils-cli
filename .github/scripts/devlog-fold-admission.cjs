@@ -6,7 +6,6 @@ const { oid } = require("./devlog-fold-release.cjs");
 const READ = `query FoldAdmission($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     main: ref(qualifiedName: "refs/heads/main") { target { oid } }
-    mergeQueue(branch: "main") { configuration { mergeMethod } }
     freezes: issues(first: 1, states: OPEN, labels: ["merge-freeze"]) { totalCount }
     pullRequest(number: $number) {
       id state url isDraft isCrossRepository isInMergeQueue reviewDecision
@@ -27,6 +26,21 @@ const READ = `query FoldAdmission($owner: String!, $repo: String!, $number: Int!
     }
   }
 }`;
+
+const candidateFields = new Set(READ.match(/[A-Za-z_]\w*/g));
+
+function candidateReadError(error) {
+  const denied = Array.isArray(error?.errors) && error.errors.find(row => row?.type === "FORBIDDEN");
+  if (!denied) return new Error("GitHub GraphQL FoldAdmission failed");
+  // Only render identifiers from the fixed query. The Octokit error can carry
+  // partial results and request headers, so do not attach it as a cause.
+  const { path } = denied;
+  const known = Array.isArray(path) && path[0] === "repository" && path.length <= 8 &&
+    path.every(part => candidateFields.has(part) || (Number.isSafeInteger(part) && part >= 0));
+  const suffix = known ? " at " + path.slice(1).reduce((field, part) =>
+    field + (typeof part === "number" ? "[]" : "." + part), "repository") : " (field path unavailable)";
+  return new Error("GitHub GraphQL FoldAdmission: FORBIDDEN" + suffix);
+}
 
 const ENQUEUE = `mutation FoldEnqueue($id: ID!, $head: GitObjectID!) {
   enqueuePullRequest(input: {pullRequestId: $id, expectedHeadOid: $head}) {
@@ -50,7 +64,8 @@ print(json.dumps(tomllib.loads(sys.stdin.read()).get("merge", {}).get("hold_labe
 }
 
 async function readCandidate({ github, repo, number, id, receipt, app, holdLabels, beforeEnqueue }) {
-  const { repository } = await github.graphql(READ, { ...repo, number });
+  const { repository } = await github.graphql(READ, { ...repo, number })
+    .catch(error => { throw candidateReadError(error); });
   const pr = repository?.pullRequest;
   if (pr?.id !== id || pr.isCrossRepository !== false ||
       pr.author?.__typename !== "Bot" || pr.author.login !== app ||
@@ -64,24 +79,30 @@ async function readCandidate({ github, repo, number, id, receipt, app, holdLabel
   if (repository.freezes.totalCount !== 0 || pr.labels.pageInfo.hasNextPage !== false ||
       pr.labels.nodes.some(({ name }) => holdLabels.has(name)))
     throw new Error("PR hold, repository freeze or incomplete hold evidence");
-  if (repository.mergeQueue?.configuration?.mergeMethod !== "SQUASH")
-    throw new Error("Protected squash merge queue is unavailable");
   if (beforeEnqueue && !pr.isInMergeQueue && repository.main?.target?.oid !== receipt.base)
     throw new Error("main moved; the recorded fold base is stale");
   return pr;
 }
 
-async function currentRequiredChecks({ github, repo, number, receipt }) {
+async function readProtectedSquashRules(github, repo) {
+  // The branch rules endpoint exposes effective queue policy with Metadata read.
   const rules = await github.paginate("GET /repos/{owner}/{repo}/rules/branches/{branch}",
     { ...repo, branch: "main", per_page: 100 });
+  const queues = rules.filter(rule => rule.type === "merge_queue");
+  if (!queues.length || queues.some(rule => rule.parameters?.merge_method !== "SQUASH"))
+    throw new Error("Protected squash merge queue is unavailable");
+  return rules;
+}
+
+async function currentRequiredChecks({ github, repo, number, receipt }) {
+  const rules = await readProtectedSquashRules(github, repo);
   const checks = rules.filter(rule => rule.type === "required_status_checks")
     .flatMap(rule => rule.parameters.required_status_checks);
   // GitHub Actions is the source of this repository's CI. Any other required
   // integration needs an explicit admission contract before automation.
   if (!requiredMinimum.every(name => checks.some(check => check.context === name)) ||
-      checks.some(check => check.integration_id != null && check.integration_id !== 15368) ||
-      !rules.some(rule => rule.type === "merge_queue" && rule.parameters.merge_method === "SQUASH"))
-    throw new Error("Current protected squash queue or required CI policy differs");
+      checks.some(check => check.integration_id != null && check.integration_id !== 15368))
+    throw new Error("Current required CI policy differs");
 
   const runs = await github.paginate(github.rest.actions.listWorkflowRuns,
     { ...repo, workflow_id: "ci.yml", event: "pull_request", head_sha: receipt.head, per_page: 100 });
@@ -141,7 +162,12 @@ async function admitReleaseFold({ github, writer, repo, candidate, receipt, app,
   const holdLabels = readHoldLabels(git, receipt.base);
   const read = (beforeEnqueue = true) =>
     readCandidate({ github, repo, number, id, receipt, app, holdLabels, beforeEnqueue });
-  let pr = await read();
+  const readWithQueuePolicy = async (beforeEnqueue = true) => {
+    const pr = await read(beforeEnqueue);
+    if (pr.state === "OPEN") await readProtectedSquashRules(github, repo);
+    return pr;
+  };
+  let pr = await readWithQueuePolicy();
   let submitted = false;
 
   if (pr.state === "OPEN" && !pr.isInMergeQueue) {
@@ -151,7 +177,7 @@ async function admitReleaseFold({ github, writer, repo, candidate, receipt, app,
     while (!await currentRequiredChecks({ github, repo, number, receipt })) {
       if (clock() >= deadline) throw new Error("Required PR CI did not finish within 30 minutes");
       await pause(15_000);
-      pr = await read();
+      pr = await readWithQueuePolicy();
       if (pr.state !== "OPEN" || pr.isInMergeQueue)
         throw new Error("PR queue state changed while waiting for required CI");
     }
@@ -160,6 +186,7 @@ async function admitReleaseFold({ github, writer, repo, candidate, receipt, app,
     const ci = await currentRequiredChecks({ github, repo, number, receipt });
     if (!ci) throw new Error("Required PR CI is no longer passing");
     await note("enqueue", { ci });
+    await readProtectedSquashRules(github, repo);
     pr = await read();
     if (pr.state !== "OPEN" || pr.isInMergeQueue || pr.queueHistory.nodes.length)
       throw new Error("PR queue state changed before exact-head enqueue");
@@ -180,7 +207,7 @@ async function admitReleaseFold({ github, writer, repo, candidate, receipt, app,
   await note("merge-receipt");
   const deadline = clock() + 95 * 60_000;
   for (;;) {
-    pr = await read(false);
+    pr = await readWithQueuePolicy(false);
     if (pr.state === "MERGED") {
       const event = pr.lastEnqueue.nodes[0];
       if ((!submitted || event) && event?.actor?.login !== app)
