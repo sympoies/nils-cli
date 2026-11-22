@@ -56,6 +56,9 @@ presentation; they do not acquire special behavior.
 
 ## Reader contract and fixtures
 
+Use the [disposable native notice acceptance profile](../runbooks/native-notice-acceptance.md)
+to verify installed producers and history on Claude Code and Codex CLI.
+
 Parse logical user-input messages and daemon-admitted `role: "notice"` messages
 after provider metadata admission and before rendering. The latter requires
 the daemon's private producer receipt, not merely the display marker or a
