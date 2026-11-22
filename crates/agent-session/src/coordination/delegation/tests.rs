@@ -716,6 +716,7 @@ fn notification_history_registry_fences_older_writers_and_preserves_its_version(
         target_incarnation: "current".into(),
         generation: 1,
         attempt_history: vec![super::super::notification::NotificationAttempt {
+            reason_detail: None,
             generation: 1,
             recorded_at_epoch: super::super::now_epoch(),
             reason: "recipient-attached".into(),

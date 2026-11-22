@@ -5,6 +5,8 @@ pub(crate) struct Write {
     pub(crate) expected: Box<SessionRecord>,
     pub(crate) candidate: crate::coordination::NotificationCandidate,
     pub(crate) expected_turn: Option<String>,
+    pub(crate) verify_composer_tmux: Option<PathBuf>,
+    pub(crate) require_never_used: bool,
     pub(crate) deadline: Instant,
 }
 
@@ -27,6 +29,8 @@ pub(super) async fn lock(
     let expected = write.expected.clone();
     let candidate = write.candidate.clone();
     let expected_turn = write.expected_turn.clone();
+    let verify_composer_tmux = write.verify_composer_tmux.clone();
+    let require_never_used = write.require_never_used;
     let deadline = write.deadline;
     tokio::task::spawn_blocking(move || {
         let refused = || "mailbox notice boundary changed".to_string();
@@ -70,6 +74,16 @@ pub(super) async fn lock(
                 None => crate::activity::codex_notification_maybe_idle(&turn),
             }
         });
+        if let Some(tmux) = verify_composer_tmux {
+            crate::send::codex_notice::first_wake::check(
+                &context,
+                &current,
+                &tmux,
+                deadline,
+                require_never_used,
+            )
+            .map_err(|_| refused())?;
+        }
         let quiescence = crate::coordination::lock_session_quiescence(
             &context,
             &candidate.target_session_id,

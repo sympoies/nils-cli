@@ -39,6 +39,15 @@ async fn submit(
     candidate: &crate::coordination::NotificationCandidate,
     expected_turn: Option<String>,
 ) -> Response {
+    if codex_app_server::thread_attached_path(record).is_some_and(Path::is_file)
+        && let Err(error) = codex_app_server::guarded::Client::attached_thread(record)
+    {
+        return envelope_err(CliError::unavailable(
+            error.code(),
+            "Codex control attachment does not match the bound conversation",
+            None,
+        ));
+    }
     let launch = candidate.target_incarnation.clone();
     let handle = match wait_for_structured_prompt_control(
         state,
@@ -58,6 +67,7 @@ async fn submit(
     let expected = record.clone();
     let fence = candidate.clone();
     let turn = expected_turn.clone();
+    let tmux = state.tmux_bin.clone();
     let text = crate::coordination::notification_prompt(candidate);
     let body = text.clone();
     let prepared = tokio::task::spawn_blocking(move || {
@@ -130,22 +140,30 @@ async fn submit(
                 Some(json!({"condition":condition})),
             ));
         }
-        let prepared = Prepared::new(&context, &current, &body, started, deadline, None, || {
-            let admitted = if turn.is_some() {
-                quiescence.begin_notification_attempt(&fence)?
-            } else {
-                quiescence.begin_idle_notification_attempt(&fence)?
-            };
-            if admitted {
-                Ok(())
-            } else {
-                Err(CliError::unavailable(
-                    "coordination-notification-superseded",
-                    "notification eligibility changed",
-                    None,
-                ))
-            }
-        })?;
+        let prepared = Prepared::for_mailbox(
+            &context,
+            &current,
+            &body,
+            started,
+            deadline,
+            turn.is_none().then_some(tmux.as_path()),
+            || {
+                let admitted = if turn.is_some() {
+                    quiescence.begin_notification_attempt(&fence)?
+                } else {
+                    quiescence.begin_idle_notification_attempt(&fence)?
+                };
+                if admitted {
+                    Ok(())
+                } else {
+                    Err(CliError::unavailable(
+                        "coordination-notification-superseded",
+                        "notification eligibility changed",
+                        None,
+                    ))
+                }
+            },
+        )?;
         drop(quiescence);
         Ok::<_, CliError>((record_lock, current, prepared))
     })
@@ -159,6 +177,8 @@ async fn submit(
         expected: Box::new(current),
         candidate: candidate.clone(),
         expected_turn: expected_turn.clone(),
+        verify_composer_tmux: prepared.verify_at_write().then(|| state.tmux_bin.clone()),
+        require_never_used: prepared.is_first_wake(),
         deadline,
     };
     // The receiver reacquires and revalidates the lock at the actual write.

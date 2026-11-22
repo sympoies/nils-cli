@@ -162,6 +162,17 @@ pub(super) fn refusal(response: &Response) -> Refusal {
     }
     Refusal::ProviderNotReady(match error.map(CliError::code) {
         Some("structured-prompt-unavailable") => "prompt-control-unavailable".to_owned(),
+        Some("notice-native-baseline-unavailable") => "notice-baseline-missing".to_owned(),
+        Some(
+            code @ ("send-identity-mismatch"
+            | "send-identity-unobservable"
+            | "send-composer-not-empty"
+            | "send-composer-unobservable"
+            | "send-session-not-idle"
+            | "send-provider-event-pending"
+            | "send-idle-unobservable"
+            | "send-guard-observation-timeout"),
+        ) => code.to_owned(),
         Some(code) => format!("prompt-submission-refused:{code}"),
         None => "prompt-submission-refused".to_owned(),
     })

@@ -22,7 +22,7 @@ pub(crate) struct Client {
 }
 
 impl Client {
-    pub(crate) fn connect(record: &SessionRecord, deadline: Instant) -> Result<Self, Error> {
+    pub(crate) fn attached_thread(record: &SessionRecord) -> Result<String, Error> {
         let thread_id = record
             .provider_resume
             .as_ref()
@@ -35,6 +35,11 @@ impl Client {
         {
             return Err(Error::IdentityMismatch);
         }
+        Ok(thread_id)
+    }
+
+    pub(crate) fn connect(record: &SessionRecord, deadline: Instant) -> Result<Self, Error> {
+        let thread_id = Self::attached_thread(record)?;
         let path = socket_path(record).ok_or(Error::Unsupported)?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -167,7 +172,7 @@ impl Client {
         })())
     }
 
-    fn idle_thread(&mut self, include_turns: bool) -> Result<Value, Error> {
+    pub(crate) fn idle_thread(&mut self, include_turns: bool) -> Result<Value, Error> {
         let result = self
             .request(
                 "thread/read",

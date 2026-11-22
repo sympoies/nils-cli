@@ -213,6 +213,32 @@ async fn mailbox_notice_working_controller_delivers_typed_counts() {
 }
 
 #[tokio::test]
+async fn mailbox_notice_records_mismatched_codex_attachment_before_attempt() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let tmp = tempfile::tempdir().unwrap();
+    let (state, launch, sender, _) = setup(tmp.path());
+    fixture::bind(&state.context, "beta", tmp.path(), "thread-capacity");
+    turn(&state, &launch, false);
+    fs::write(tmp.path().join("beta.attached"), "a".repeat(64)).unwrap();
+    mail(&state, &sender).await;
+    drain_coordination_notifications(state.clone()).await;
+
+    let receipt = notification_fixture(tmp.path());
+    assert_eq!(receipt["state"], "queued");
+    assert_eq!(receipt["attempted_generation"], 0);
+    assert_eq!(receipt["last_reason_detail"], "send-identity-mismatch");
+    assert_eq!(
+        receipt["attempt_history"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["reason_detail"],
+        "send-identity-mismatch"
+    );
+}
+
+#[tokio::test]
 async fn mailbox_notice_hook_claim_delivers_typed_counts_once() {
     let lock = GlobalStateLock::new();
     let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
