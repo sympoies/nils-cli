@@ -13,6 +13,7 @@ async fn mailbox_native_start_and_steer_confirm_exact_rows_after_provider_ingres
         let launch = seed_codex_app_server_session(tmp.path(), "beta");
         let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let record = fixture::bind(&state.context, "beta", tmp.path(), "mailbox-thread");
+        codex_app_server::replace_thread_binding(&record, "mailbox-thread").unwrap();
         activity::activate_runtime(&state.context, &record).unwrap();
         for kind in if working {
             vec!["turn_started"]

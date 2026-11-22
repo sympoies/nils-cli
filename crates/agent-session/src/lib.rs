@@ -3468,29 +3468,16 @@ fn tmux_launch_may_have_created_runtime(err: &CliError) -> bool {
     )
 }
 
-fn capture_provider_resume_after_launch(
-    agent: AgentKind,
-    record: &SessionRecord,
-    launch_started_at: SystemTime,
-) -> Option<ProviderResume> {
-    match agent {
-        AgentKind::Codex => capture_codex_resume(record, launch_started_at),
-        AgentKind::Claude | AgentKind::Dsh => None,
-    }
-}
-
 fn capture_and_persist_provider_resume_after_launch(
     context: &CliContext,
     agent: AgentKind,
     record: &mut SessionRecord,
     launch_started_at: SystemTime,
 ) -> Result<(), CliError> {
-    if record.provider_resume.is_some() {
+    if record.provider_resume.is_some() || agent != AgentKind::Codex {
         return Ok(());
     }
-    let Some(provider_resume) =
-        capture_provider_resume_after_launch(agent, record, launch_started_at)
-    else {
+    let Some(provider_resume) = capture_codex_resume(record, launch_started_at) else {
         return Ok(());
     };
     let persisted_before_capture = record.clone();
@@ -3622,6 +3609,11 @@ fn capture_codex_resume_from_history(record: &SessionRecord) -> Option<ProviderR
 }
 
 fn codex_resume_history_root(record: &SessionRecord) -> Option<PathBuf> {
+    // App-server records bind through the live runtime, including after an
+    // unbound startup. This also fences both stopped-session history readers.
+    if codex_app_server::app_server_owns_resume_binding(record) {
+        return None;
+    }
     if session_agent_profile(record).is_some() {
         return session_provider_config_dir(record).map(|root| root.join("sessions"));
     }

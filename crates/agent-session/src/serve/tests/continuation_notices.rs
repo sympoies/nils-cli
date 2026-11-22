@@ -249,6 +249,7 @@ fn bind_codex(context: &CliContext, id: &str, root: &Path) -> SessionRecord {
         .unwrap(),
     );
     crate::write_session_record(context, &record).unwrap();
+    codex_app_server::replace_thread_binding(&record, "thread-capacity").unwrap();
     let path = transcript(root);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, format!("{}\n", json!({"type":"session_meta","timestamp":"2026-01-01T00:00:00Z",

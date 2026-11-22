@@ -198,6 +198,12 @@ profile-free fresh Claude sessions—`claude_account`.
 `coordination_mode` accepts `advisory`, `enforce`, or `off` and defaults to
 `advisory`.
 
+A fresh Codex app-server session acquires its durable resume identity after
+the TUI attachment matches a loaded thread on that runtime. If the binding
+cannot be verified, guarded input remains unavailable with a typed refusal.
+The session's working directory and provider history do not establish this
+binding.
+
 Provider import uses `provider_resume_id` (compatibility alias: `resume_id`).
 When `agent_profile` is omitted, discovery uses the daemon's default provider
 history. When a profile is selected, it must advertise import support and

@@ -16,7 +16,10 @@ use protocol_projection::server_observation;
 #[path = "codex_app_server/prompt_submit.rs"]
 pub(crate) mod prompt_submit;
 mod proxy_transport;
+mod resume_binding;
 use proxy_transport::{contain_oversized, record_proxy_exit, send_proxy_upstream};
+use resume_binding::persist_bound_thread_resume;
+pub(crate) use resume_binding::{app_server_owns_resume_binding, thread_attachment_matches};
 mod turn_outcome;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -2550,18 +2553,14 @@ pub(crate) async fn run_control(
         if let Some(id) = attached_loaded_thread(&record, &ids)? {
             break id;
         }
-        match ids.as_slice() {
-            [id] => break id.clone(),
-            _ if discovery_attempts < 100 => {
-                discovery_attempts = discovery_attempts.saturating_add(1);
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-            [] => return Err("Codex TUI did not create a loaded thread".to_string()),
-            _ => return Err("Codex app-server exposed more than one loaded thread".to_string()),
+        if discovery_attempts == 100 {
+            return Err("Codex app-server could not verify an attached loaded thread (codex-app-server-thread-binding-failed)".to_string());
         }
+        discovery_attempts += 1;
+        tokio::time::sleep(Duration::from_millis(100)).await;
     };
     let reconnecting = thread_attached_path(&record).is_some_and(Path::is_file);
-    bind_thread_and_persist_resume(&context, &record, &thread_id).await?;
+    persist_thread_resume(&context, &record, &thread_id).await?;
     let subscribed = if reconnecting || record.provider_resume.is_some() {
         request_id = request_id.saturating_add(1);
         send_json(
@@ -2984,7 +2983,7 @@ pub(crate) use idle_probe::{
     latest_turn_request, probe_idle_conversation, resume_thread_request, verify_startup_quiescent,
 };
 
-async fn bind_thread_and_persist_resume(
+async fn persist_thread_resume(
     context: &CliContext,
     record: &SessionRecord,
     thread_id: &str,
@@ -2996,68 +2995,6 @@ async fn bind_thread_and_persist_resume(
         .await
         .map_err(|error| format!("Codex provider resume persistence worker failed: {error}"))?
         .map_err(|error| format!("Codex provider resume persistence failed: {}", error.code()))
-}
-
-fn persist_bound_thread_resume(
-    context: &CliContext,
-    expected: &SessionRecord,
-    thread_id: &str,
-) -> Result<(), CliError> {
-    if !protocol_id_is_valid(thread_id) {
-        return Err(CliError::data(
-            "codex-app-server-resume-identity-invalid",
-            "Codex app-server returned an invalid thread identity",
-            Some(json!({ "id": expected.id })),
-        ));
-    }
-    let resume_args = canonical_provider_resume_args(AgentKind::Codex, &expected.cwd, thread_id)
-        .expect("Codex resume arguments are supported");
-    let captured_at = Timestamp::now().to_string();
-    mutate_session_record(context, &expected.id, |current| {
-        crate::ensure_same_session_identity(expected, current)?;
-        if current.agent != AgentKind::Codex.as_str() || current.cwd != expected.cwd {
-            return Err(CliError::data(
-                "codex-app-server-resume-runtime-conflict",
-                "Codex app-server runtime no longer matches the session",
-                Some(json!({ "id": current.id })),
-            ));
-        }
-        let has_matching_resume = if let Some(existing) = current.provider_resume.as_ref() {
-            if existing.provider != AgentKind::Codex.as_str() || existing.session_id != thread_id {
-                return Err(CliError::data(
-                    "codex-app-server-resume-identity-conflict",
-                    "Codex app-server thread conflicts with durable resume metadata",
-                    Some(json!({
-                        "id": current.id,
-                        "provider": existing.provider,
-                    })),
-                ));
-            }
-            true
-        } else {
-            false
-        };
-        bind_thread(current, thread_id).map_err(|message| {
-            CliError::runtime(
-                "codex-app-server-thread-binding-failed",
-                message,
-                Some(json!({ "id": current.id })),
-            )
-        })?;
-        if has_matching_resume {
-            return Ok(());
-        }
-        current.provider_resume = Some(ProviderResume {
-            provider: AgentKind::Codex.as_str().to_string(),
-            session_id: thread_id.to_string(),
-            captured_at: captured_at.clone(),
-            capture_method: PROVIDER_RESUME_CAPTURE_METHOD.to_string(),
-            resume_args: resume_args.clone(),
-            extra: BTreeMap::new(),
-        });
-        current.updated_at = captured_at.clone();
-        Ok(())
-    })
 }
 
 fn attached_loaded_thread(

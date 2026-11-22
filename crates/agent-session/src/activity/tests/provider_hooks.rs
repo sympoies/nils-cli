@@ -179,6 +179,27 @@ fn confirmed_codex_system_ephemeral_hooks_are_noops_but_foreign_sessions_still_f
         "the system-ephemeral hook must not mutate primary activity"
     );
 
+    let error = provider_resume_from_user_prompt_hook(
+        &context,
+        &created.record.id,
+        AgentKind::Codex,
+        &runtime_id,
+        None,
+        &json!({
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-1"
+        }),
+    )
+    .expect_err("a prompt hook cannot establish a fresh app-server binding");
+    assert_eq!(error.code(), "provider-hook-session-mismatch");
+
+    // Model the exact binding established by the app-server controller.
+    crate::codex_app_server::replace_thread_binding(&created.record, "session-1").unwrap();
+    mutate_session_record(&context, &created.record.id, |record| {
+        record.provider_resume = Some(crate::codex_provider_resume(record, "session-1"));
+        Ok(())
+    })
+    .unwrap();
     provider_resume_from_user_prompt_hook(
         &context,
         &created.record.id,
@@ -190,7 +211,7 @@ fn confirmed_codex_system_ephemeral_hooks_are_noops_but_foreign_sessions_still_f
             "session_id": "session-1"
         }),
     )
-    .expect("the primary prompt hook must capture the fresh session");
+    .expect("promote the already bound primary identity");
     assert_eq!(
         load_session_record(&context, &created.record.id)
             .expect("record after primary prompt hook")
