@@ -561,6 +561,7 @@ async function queueFixture({ mergeGroupHead = { oid: "e".repeat(40) } } = {}) {
       return { enqueuePullRequest: { mergeQueueEntry: entry } };
     }
     state.reads++;
+    state.denyCandidateRead?.(query);
     const current = { ...pr };
     state.onRead?.(current);
     current.isInMergeQueue = state.queued && !state.merged;
@@ -574,7 +575,6 @@ async function queueFixture({ mergeGroupHead = { oid: "e".repeat(40) } } = {}) {
       current.mergeCommit = { oid: mergedSha };
     } else if (state.queued) current.mergeQueueEntry = entry;
     return { repository: { main: { target: { oid: state.main ?? receipt.base } },
-      mergeQueue: { configuration: { mergeMethod: "SQUASH" } },
       freezes: { totalCount: state.freeze ?? 0 }, pullRequest: current } };
   };
   f.github.rest.actions = {
@@ -600,11 +600,61 @@ async function queueFixture({ mergeGroupHead = { oid: "e".repeat(40) } } = {}) {
       { type: "required_status_checks", parameters: {
         required_status_checks: checkNames.map(context => ({ context })),
       } },
-      { type: "merge_queue", parameters: { merge_method: "SQUASH" } },
+      { type: "merge_queue", parameters: { merge_method: state.mergeMethod ?? "SQUASH" } },
     ] : paginate(method, args);
   const run = () => admitReleaseFold({ ...options, candidate, pause: async () => { state.merged = !state.evicted; } });
   return { state, run, receipt, events, mergedSha, entry, git: f.git };
 }
+
+function forbiddenCandidateRead(path) {
+  return Object.assign(new Error("untrusted provider message"), {
+    errors: [{ type: "FORBIDDEN", path, message: "untrusted provider detail" }],
+    data: { repository: { pullRequest: { state: "OPEN" } } },
+    request: { headers: { authorization: "fixture-only authorization" } },
+  });
+}
+
+test("the workflow admits a fold without GraphQL repository queue configuration access", async () => {
+  const f = await queueFixture();
+  f.state.denyCandidateRead = query => {
+    if (query.includes("mergeQueue(branch:")) {
+      throw forbiddenCandidateRead(["repository", "mergeQueue"]);
+    }
+  };
+  await f.run();
+  assert.equal(f.state.mutations.length, 1);
+  assert.equal(f.events.at(-1).mergeSha, f.mergedSha);
+});
+
+test("effective branch rules still require squash before adopting an existing queue entry", async () => {
+  const f = await queueFixture();
+  f.state.queued = true;
+  f.state.mergeMethod = "MERGE";
+  await assert.rejects(f.run(), /Protected squash merge queue is unavailable/);
+  assert.deepEqual(f.state.mutations, []);
+  assert.equal(f.events.at(-1).stage, "admission");
+});
+
+test("a denied candidate field fails closed and reports only a sanitized GraphQL path", async () => {
+  const f = await queueFixture();
+  for (const [path, suffix] of [
+    [["repository", "pullRequest", "queueHistory", "nodes", 0, "actor"],
+      " at repository.pullRequest.queueHistory.nodes[].actor"],
+    [["repository", "untrusted path segment"], " (field path unavailable)"],
+    [undefined, " (field path unavailable)"],
+  ]) {
+    f.state.denyCandidateRead = () => { throw forbiddenCandidateRead(path); };
+    await assert.rejects(f.run(), error => {
+      assert.equal(error.message, "GitHub GraphQL FoldAdmission: FORBIDDEN" + suffix);
+      assert.equal(error.cause, undefined);
+      assert.deepEqual(Object.keys(error), []);
+      return true;
+    });
+    assert.equal(f.state.runs, 0);
+    assert.deepEqual(f.state.mutations, []);
+    assert.equal(f.events.at(-1).stage, "admission");
+  }
+});
 
 const mergeGroupHeads = [{ oid: "e".repeat(40) }, null];
 

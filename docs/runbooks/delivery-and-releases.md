@@ -205,11 +205,13 @@ base's history. Admission verifies App authorship and GitHub's verified
 signature and independently reruns the fold from that base. The full tree must
 match, including the generated devlog index.
 
-Before enqueue, the workflow reads the current effective required checks,
-their exact PR CI results, the PR base and head, repository freeze and PR
-hold labels. It submits the verified head to GitHub's existing protected
-squash queue. GitHub runs the usual merge-group checks and decides whether to
-merge. The workflow reads back the merged SHA and confirms that every captured
+The Actions read client verifies the squash queue and required-check policy
+through GitHub's effective branch rules endpoint. That endpoint requires
+[Metadata read](https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch).
+The same client reads the exact PR CI results, base and head, repository
+freeze, PR hold labels, and PR queue state and history. The App submits
+the verified head to GitHub's existing protected squash queue. GitHub runs the
+usual merge-group checks and decides whether to merge. The workflow reads back the merged SHA and confirms that every captured
 fragment is absent from both that SHA and current `main`.
 
 Use the **Fold release devlog / Fold publication and admission** job in the
@@ -226,10 +228,28 @@ Rerun the original Release run's failed job after resolving a transient
 provider error, using its recorded preparation. If the base or head changed,
 the release branch conflicts, the queue removed the entry, or the receipt is
 unavailable, the steward reconciles the exact PR through designated review.
-A provider authorization failure requires the owner to inspect the existing
-App installation's permissions for the refused operation. Record the
-observed error, run and PR before requesting any permission change. Record
-the first authorized production release's automatic queue and merge receipts
+
+For an authorization failure, record the run, PR, client role, and denied
+operation. An Actions read failure in `FoldAdmission` reports `FORBIDDEN`
+with a sanitized GraphQL field path when GitHub supplies one. If the path
+is unavailable, have the owner authorize an isolated read-only Actions
+probe with the same permission profile.
+
+Use the exact PR for a baseline
+read of identity, base, head, and holds. Then select `isInMergeQueue`,
+`mergeQueueEntry`, and each queue timeline alias individually. For failures
+from a query that selects `repository.mergeQueue`, probe its configuration
+separately and compare it with the effective REST branch rules. GitHub
+documents a separate App permission for
+[merge queues](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app),
+but the field path is needed to identify the denied selection.
+
+Retain only the operation, result, and sanitized error type and field path.
+Keep credentials and raw responses out of logs. The probe uses no enqueue
+client, writes no provider state, and leaves the original preparation intact.
+For a denied App operation, the owner inspects the App installation grant
+for that operation. Record the first authorized production release's
+automatic queue and merge receipts
 on [#3879](https://github.com/sympoies/nils-cli/issues/3879).
 
 ## Claude Code release check
