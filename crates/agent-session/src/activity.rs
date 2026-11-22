@@ -39,6 +39,7 @@ use codex_attention_source_guard::{
 mod codex_completion;
 mod codex_quiet;
 mod codex_resume_identity;
+pub(crate) use codex_resume_identity::ingest_provider_hook_fail_open;
 use codex_resume_identity::provider_resume_from_user_prompt_hook;
 #[path = "activity/registration.rs"]
 mod registration;
@@ -3171,6 +3172,9 @@ pub(crate) fn ingest_provider_hook_input(
     {
         return Ok(true);
     }
+    if codex_resume_identity::ingest_dispatched(context, agent, event_override, &input, &raw)? {
+        return Ok(true);
+    }
     let Some(event) = normalize_provider_hook(agent, event_override, runtime_id, &raw)? else {
         return Ok(false);
     };
@@ -3194,18 +3198,6 @@ pub(crate) fn ingest_provider_hook_input(
         );
     }
     Ok(true)
-}
-
-pub(crate) fn ingest_provider_hook_fail_open(
-    context: &CliContext,
-    agent: AgentKind,
-    event_override: Option<&str>,
-) {
-    match ingest_provider_hook(context, agent, event_override) {
-        Ok(true) => clear_hook_diagnostic(context, agent),
-        Ok(false) => {}
-        Err(err) => record_hook_diagnostic(context, agent, err.code()),
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

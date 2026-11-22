@@ -820,15 +820,7 @@ fn evaluate_capability(
             simple(outcome.action, &outcome.reason_code)
         }
         Capability::SessionActivity { reason_code } => {
-            match run_session_activity(request, raw, execution_budget) {
-                Ok(()) => simple(DecisionAction::Allow, reason_code),
-                Err(error) => {
-                    match terminal_activity_failure_decision(capability, request.event.as_str()) {
-                        Some((action, code)) => simple(action, code),
-                        None => return Err(error),
-                    }
-                }
-            }
+            private_activity::evaluate(capability, reason_code, request, raw, execution_budget)?
         }
         Capability::SessionCoordination { .. } => {
             unreachable!("session coordination is evaluated after aggregate policy")
@@ -1632,8 +1624,7 @@ fn run_session_activity(
             ));
         }
     }
-    private_activity::deliver(request, raw, &runtime_id);
-    Ok(())
+    private_activity::deliver(request, raw, &runtime_id)
 }
 
 /// The helper's typed error code from its `--format json` envelope, restricted
