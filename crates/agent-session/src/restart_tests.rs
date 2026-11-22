@@ -9,6 +9,9 @@ use std::{fs, thread};
 #[path = "auth_recovery_tests.rs"]
 mod auth_recovery_tests;
 
+#[path = "restart_claude_exit_tests.rs"]
+mod claude_exit_tests;
+
 #[path = "restart_fixture_tests.rs"]
 mod fixture_tests;
 
