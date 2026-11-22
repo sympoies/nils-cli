@@ -126,7 +126,7 @@ fn projected_provider_identifier(
 
 #[path = "tmux_fixture.rs"]
 mod tmux_fixture;
-pub(super) use tmux_fixture::RealTmuxServer;
+use tmux_fixture::RealTmuxServer;
 pub(super) use tmux_fixture::fake_tmux;
 
 fn prewarm_fake_tmux(bin: &Path, log: &Path) -> std::process::Output {
