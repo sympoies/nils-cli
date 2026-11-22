@@ -19,6 +19,7 @@ pub(crate) fn release_start(
     context: &CliContext,
     notice: &StartNoticeArgs,
     record: &crate::SessionRecord,
+    kind: crate::LaunchKind,
 ) -> Result<(), CliError> {
     if notice.notice_kind.is_some()
         && record.provider_resume.as_ref().is_some_and(|p| {
@@ -35,7 +36,7 @@ pub(crate) fn release_start(
             })?;
         launch::save(context, record, &text)?;
     }
-    crate::release_held_runtime(context, record)
+    crate::release_held_runtime(context, record, kind)
 }
 
 /// Explicit rollout gate; unset, empty and all values except `1` keep writers off.

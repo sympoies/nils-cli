@@ -1,4 +1,5 @@
 use super::*;
+use crate::startup::resume_metrics::{self, FinishOutcome, Sample};
 
 /// Route a primary Claude session hook to the model observer and, for a
 /// SessionStart(startup|resume), to the provider-idle readiness projection.
@@ -32,7 +33,9 @@ pub(super) fn observe(
             raw.get("source").and_then(Value::as_str),
             Some("startup" | "resume")
         ) {
-        observe_session_ready(context, id, runtime_id, provider_session)
+        let observed =
+            (raw.get("source").and_then(Value::as_str) == Some("resume")).then(Sample::now);
+        observe_session_ready(context, id, runtime_id, provider_session, observed)
     } else {
         Ok(())
     };
@@ -56,6 +59,7 @@ fn observe_session_ready(
     id: &str,
     runtime_id: &str,
     provider_session: &str,
+    observed: Option<Sample>,
 ) -> Result<(), CliError> {
     let record = load_session_record(context, id)?;
     let Some(_) = record
@@ -70,6 +74,9 @@ fn observe_session_ready(
         || !crate::session_model::provider_session_matches(&record, provider_session)
     {
         return Ok(());
+    }
+    if let Some(observed) = observed {
+        resume_metrics::finish(context, &record, FinishOutcome::Succeeded, observed);
     }
     settle_starting(context, &record, None).map(|_| ())
 }

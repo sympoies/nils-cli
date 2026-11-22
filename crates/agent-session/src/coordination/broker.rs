@@ -920,6 +920,15 @@ pub(crate) fn stop(context: &CliContext, args: BrokerStopArgs) -> Result<Value, 
         // The held launcher waits synchronously for this exit hook. Retain its
         // short wait so two compatibility attempts fit graceful termination.
         revoke_after_runtime_exit(context, &record)?;
+        if exit_code.is_some_and(|code| (1..128).contains(&code)) {
+            use crate::startup::resume_metrics::{self, FinishOutcome, Sample};
+            resume_metrics::finish(
+                context,
+                &record,
+                FinishOutcome::ProviderFailed,
+                Sample::now(),
+            );
+        }
         crate::runtime_environment::session_tmp::mark_stopped(&context.state_dir, &record.id);
         Ok(json!({
             "schema_version": BROKER_VERSION,

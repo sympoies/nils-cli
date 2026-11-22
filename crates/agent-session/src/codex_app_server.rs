@@ -17,7 +17,8 @@ use protocol_projection::{forwarded_server_value, server_observation};
 pub(crate) mod prompt_submit;
 mod proxy_transport;
 mod resume_binding;
-use proxy_transport::{contain_oversized, record_proxy_exit, send_proxy_upstream};
+mod resume_metrics;
+use proxy_transport::{connect_socket, contain_oversized, record_proxy_exit, send_proxy_upstream};
 use resume_binding::persist_bound_thread_resume;
 pub(crate) use resume_binding::{app_server_owns_resume_binding, thread_attachment_matches};
 mod turn_outcome;
@@ -4511,6 +4512,7 @@ async fn run_proxy_session(
         crate::session_dir(&context, &record.id).join(crate::STARTUP_DIAGNOSTIC_FILE),
     );
     let mut projection = ProxyProjection::new(context.clone(), record.clone());
+    let mut resume = resume_metrics::Observation::for_runtime(&context, &record);
     let mut bootstrap = FreshBootstrap::for_runtime(&context, &record);
     let mut pending_turn_authorizations = BTreeMap::<String, MutationAuthorization>::new();
     let mut pending_turn_authorization_deadline = None;
@@ -4567,6 +4569,7 @@ async fn run_proxy_session(
                             continue;
                         }
                     };
+                    resume.client(&record, &value);
                     projection.observe_client(&value);
                     (authorization, turn_start_key)
                 } else {
@@ -4590,6 +4593,7 @@ async fn run_proxy_session(
                 }
             }
             message = upstream.next() => {
+                let ingress = resume.ingress();
                 let message = message
                     .ok_or_else(|| "upstream app-server closed the proxy".to_string())?
                     .map_err(|err| format!("upstream app-server read failed: {err}"))?;
@@ -4605,6 +4609,7 @@ async fn run_proxy_session(
                             pending_turn_authorization_deadline = None;
                         }
                     }
+                    resume.server(&context, &record, &value, ingress);
                     bootstrap.observe_server(&value);
                     projection.observe_server_before_forward(&value).await?;
                 }
@@ -4655,29 +4660,13 @@ async fn run_proxy_session(
     drop(_guard);
     drop(upstream);
     drop(tui);
+    resume.finish().await;
     if result.is_err() || pending_turn_uncertain {
         projection.finish_fail_close().await;
     } else {
         projection.finish().await;
     }
     result
-}
-
-async fn connect_socket(path: &Path) -> Result<UnixStream, String> {
-    let mut attempts = 0_u16;
-    loop {
-        match UnixStream::connect(path).await {
-            Ok(stream) => return Ok(stream),
-            Err(err) if attempts < 100 => {
-                attempts += 1;
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                if attempts == 100 {
-                    return Err(format!("Codex app-server socket unavailable: {err}"));
-                }
-            }
-            Err(err) => return Err(format!("Codex app-server socket unavailable: {err}")),
-        }
-    }
 }
 
 async fn send_json<S>(websocket: &mut S, value: Value) -> Result<(), String>

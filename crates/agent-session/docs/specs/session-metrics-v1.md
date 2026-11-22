@@ -24,7 +24,7 @@ There is no CLI selector, subscription, federation operation or new listener.
 | `conversation_age_seconds` | Metric: whole elapsed seconds since authoritative provider creation |
 | `managed_created_at` | Normalized RFC3339 UTC timestamp or null |
 | `conversation_created_at` | Normalized RFC3339 UTC timestamp or null |
-| `resume` | Fixed unrecorded object described below |
+| `resume` | Current runtime launch and restore observation described below |
 
 Every metric has exactly `{ "value": unsigned_integer|null,
 "unknown_reason": fixed_reason|null }`. A known value, including zero, has a
@@ -32,22 +32,62 @@ null reason. An unknown value is null with a non-null reason. A null creation
 timestamp shares its age metric's reason. Ages use the same `observed_at`;
 invalid or future timestamps yield `invalid_timestamp`, without clamping.
 
-This slice always returns this resume object:
+## Restore timing
 
-```json
-{
-  "kind": "unknown",
-  "outcome": "unknown",
-  "started_at": null,
-  "completed_at": null,
-  "deadline_at": null,
-  "duration_ms": null,
-  "unknown_reason": "not_recorded"
-}
-```
+The `resume` object always contains `kind`, `outcome`, `started_at`,
+`completed_at`, `deadline_at`, `duration_ms` and `unknown_reason`. Timestamps
+are RFC3339 UTC or null. Duration is an unsigned number of whole milliseconds
+or null. Only a successful restore has a known duration and a null reason.
 
-No existing runtime start, readiness, restart receipt or file timestamp supplies
-resume latency. Runtime timing instrumentation is a separate slice.
+| Kind | Outcome | Unknown reason |
+| --- | --- | --- |
+| `initial` | `not_applicable` | `not_applicable` |
+| `initial` or `resume` | `failed` | `launch_failed` if the gate write failed and the runtime record was retained |
+| `resume` | `pending` | `pending` |
+| `resume` | `succeeded` | null |
+| `resume` | `failed` | `provider_failed` |
+| `resume` | `timed_out` | `timeout` |
+| `resume` | `unknown` | `unsupported_runtime` or `clock_unavailable` |
+| `unknown` | `unknown` | `not_recorded` or `identity_changed` |
+
+The canonical launch paths distinguish an initial launch from restoring an
+existing provider conversation. A successful `start --resume` import is a
+resume even at generation one. Recovery of a failed fresh launch is initial.
+An already-running no-op and admission refusal leave timing unchanged.
+
+Timing starts at the admitted launch-gate release attempt after broker
+readiness. The interval includes persisting the bounded start receipt,
+releasing the gate, gate polling, and provider startup. It excludes admission,
+account preparation and shutdown of a previous runtime. The end depends on
+the provider.
+
+- Claude uses ingress of the first primary `SessionStart` with `source=resume`
+  for the exact current runtime and provider conversation. Subagents and
+  `startup`, `clear` and `compact` events cannot complete the observation.
+- Managed Codex uses upstream receipt of the matching response to the initial
+  TUI `thread/resume`. The request and returned thread must match the bound
+  conversation. The result represents provider restoration. UI rendering and
+  input readiness require separate observations. Control connections and raw
+  Codex runtimes do not supply this signal.
+
+A private receipt is bound to the managed creation, runtime generation, and
+durable provider configuration and profile. Reads cap receipts at 4 KiB with
+one overflow byte. Resume
+receipts also bind the current provider conversation. A runtime replacement or
+rebind invalidates the previous measurement. Each eligible runtime has a
+60-second observation window. Late and duplicate events cannot update a
+settled observation. A correlated Codex RPC error or an authenticated provider
+runtime failure before restoration yields `provider_failed`. The daemon
+projects timeouts on read. A successful duration uses the OS monotonic clock
+on one boot. Wall clock timestamps label the events and may move when the
+system clock is adjusted. Absent receipts, including pre-instrumentation
+runtimes, yield `not_recorded`.
+
+Timing adds no transcript reads, provider requests, background timer, or
+history reconstruction. The provider event and receipt writes are best effort.
+Startup projections, restart receipts and file timestamps never supply a
+resume duration. Released event availability and timing semantics for both
+providers are verified through separately scheduled native acceptance.
 
 ## Sources and identity
 
@@ -112,20 +152,19 @@ shapes; native marker and retention acceptance is separately tester-scheduled.
 
 ## Unknown reasons and privacy
 
-Slice A emits only `not_bound`, `source_unavailable`, `identity_changed`,
+File and age metrics use `not_bound`, `source_unavailable`, `identity_changed`,
 `read_budget_exceeded`, `incomplete_source`, `unsupported_format`,
-`ambiguous_completion_evidence`, `provider_creation_unavailable`,
-`invalid_timestamp` and `not_recorded`. Existing source owners collapse missing,
-unreadable, duplicate and truncated discovery into `source_unavailable`; the
-endpoint does not invent a distinction those owners cannot prove. The accepted
-schema also reserves `source_ambiguous` and the later timing reasons
-`not_applicable`, `unsupported_runtime`, `launch_failed`, `provider_failed`,
-`pending`, `timeout` and `clock_unavailable`.
+`ambiguous_completion_evidence`, `provider_creation_unavailable` and
+`invalid_timestamp`. Existing source owners collapse missing, unreadable,
+duplicate and truncated discovery into `source_unavailable`. The accepted
+schema reserves `source_ambiguous` for a source owner that can prove the
+distinction.
 
 Only the typed payload is serialized. No session object, provider record,
 transcript text, source path, account/configuration metadata, arbitrary error
-string or flattened extra reaches the metrics payload or diagnostics. Collection
-writes no transcript evidence or timing receipt and makes no provider calls.
+string or flattened extra reaches the metrics payload or diagnostics. The
+timing receipt holds timestamps, monotonic ticks, an outcome and a private
+binding digest. The endpoint makes no provider calls.
 
 Counts describe retained content, not guaranteed lifetime totals. Large files
 can remain unknown under these caps. There is no backfill or historical series;

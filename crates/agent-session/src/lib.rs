@@ -61,7 +61,9 @@ mod startup;
 use runtime_teardown::split_scope::TmuxTerminationOptions as TmuxOptions;
 use runtime_teardown::tmux_kill_identity_with_timeout;
 use stable_executable::resolve_agent_session_executable;
-use startup::{start_interactive_tmux, start_resume_tmux};
+use startup::{
+    release_held_runtime, resume_metrics::LaunchKind, start_interactive_tmux, start_resume_tmux,
+};
 pub(crate) mod send;
 use send::input::send_input_unlocked;
 mod send_guard;
@@ -1607,6 +1609,7 @@ fn start_session_inner_unjournaled(
     let cwd = resolve_cwd(args.cwd.as_deref())?;
     let _worktree_lifecycle = acquire_worktree_lifecycle(context, &cwd)?;
     let prompt = read_prompt(&args.prompt, args.prompt_file.as_deref(), args.prompt_stdin)?;
+    let launch_kind = LaunchKind::for_restore(provider_plan.is_some());
     let provider_plan = provider_plan
         .map(Ok)
         .unwrap_or_else(|| initial_provider_resume_plan(args.agent))?;
@@ -1800,7 +1803,7 @@ fn start_session_inner_unjournaled(
         }
         return Err(with_failed_launch_cleanup(err, cleanup));
     }
-    if let Err(err) = notice::release_start(context, &args.notice, &created.record) {
+    if let Err(err) = notice::release_start(context, &args.notice, &created.record, launch_kind) {
         let cleanup = recover_failed_tmux_launch_bounded(
             context,
             &mut created.record,
@@ -2016,7 +2019,7 @@ fn start_run_session_unjournaled(
         }
         return Err(with_failed_launch_cleanup(err, cleanup));
     }
-    if let Err(err) = release_held_runtime(context, &created.record) {
+    if let Err(err) = release_held_runtime(context, &created.record, LaunchKind::Initial) {
         let cleanup = recover_failed_tmux_launch_bounded(
             context,
             &mut created.record,
@@ -2291,7 +2294,7 @@ fn start_resolved_provider_resume_session(
         }
         return Err(with_failed_launch_cleanup(err, cleanup));
     }
-    if let Err(err) = release_held_runtime(context, &created.record) {
+    if let Err(err) = release_held_runtime(context, &created.record, LaunchKind::Resume) {
         let cleanup = recover_failed_tmux_launch_bounded(
             context,
             &mut created.record,
@@ -4478,33 +4481,6 @@ fn begin_held_runtime(
         )
         .arg(broker_bin);
     Ok(())
-}
-
-pub fn release_held_runtime(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {
-    let incarnation = coordination::incarnation(record)?;
-    let capability = coordination::capability_path(context, &record.id, &incarnation);
-    let metadata = fs::metadata(&capability).map_err(|_| {
-        CliError::runtime(
-            "coordination-broker-start-timeout",
-            "coordination capability was not ready before agent launch",
-            None,
-        )
-    })?;
-    if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 {
-        return Err(CliError::runtime(
-            "coordination-broker-start-timeout",
-            "coordination capability was not private before agent launch",
-            None,
-        ));
-    }
-    coordination::ensure_ready(context, record)?;
-    write_private_file(&launch_gate_path(&context.state_dir, record), b"ready\n").map_err(|_| {
-        CliError::runtime(
-            "coordination-broker-start-timeout",
-            "held agent runtime could not be released",
-            None,
-        )
-    })
 }
 
 fn establish_coordination_broker(
