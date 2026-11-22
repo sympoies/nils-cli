@@ -76,19 +76,27 @@ fn sweep_reports_and_removes_orphans_but_not_foreign_dirs() {
 fn record(state: &Path, id: &str) {
     let dir = state.join("sessions").join(id);
     fs::create_dir_all(&dir).unwrap();
-    fs::write(
-        dir.join("session.json"),
-        json!({
-            "schema_version": agent_session::SESSION_DOCUMENT_VERSION,
-            "id": id, "agent": "codex", "mode": "interactive", "title": null,
-            "cwd": state, "tmux_session": id, "prompt_file": null, "log_file": null,
-            "created_at": "2030-01-01T00:00:00Z", "updated_at": "2030-01-01T00:00:00Z",
-            "runtime": {"kind":"tmux", "tmux_session":id, "generation":1,
-                "started_at":"2030-01-01T00:00:00Z", "launch_id":"fixture-runtime"}
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let record = json!({
+        "schema_version": agent_session::SESSION_DOCUMENT_VERSION,
+        "id": id, "agent": "codex", "mode": "interactive", "title": null,
+        "cwd": state, "tmux_session": id, "prompt_file": null, "log_file": null,
+        "created_at": "2030-01-01T00:00:00Z", "updated_at": "2030-01-01T00:00:00Z",
+        "runtime": {"kind":"tmux", "tmux_session":id, "generation":1,
+            "started_at":"2030-01-01T00:00:00Z", "launch_id":"fixture-runtime"}
+    });
+    #[cfg(target_os = "macos")]
+    let record = {
+        let mut record = record;
+        if matches!(id, "dead-canary" | "fresh-canary") {
+            record["delete_tmux_identity"] = json!({
+                "launch_id": "fixture-runtime",
+                "macos_boot_id": "22222222-2222-4222-8222-222222222222",
+                "session_id": "$1", "pane_id": "%1", "pane_pid": 2,
+            });
+        }
+        record
+    };
+    fs::write(dir.join("session.json"), record.to_string()).unwrap();
 }
 
 fn mixed_root(home: &Path, state: &Path) -> std::path::PathBuf {
