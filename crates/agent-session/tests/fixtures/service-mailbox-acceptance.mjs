@@ -10,6 +10,7 @@ import { createServer } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 import { serviceReplyCases } from './service-mailbox-replies.mjs';
 import { writeHeartbeat } from './remote-mailbox-heartbeat.mjs';
+import { mailboxDaemon } from './mailbox-daemon.mjs';
 import { holdRegistryLock } from './remote-mailbox-registry-contention.mjs';
 
 const binary = process.argv[process.argv.indexOf('--agent-session-bin') + 1];
@@ -50,13 +51,13 @@ async function waitFor(fn, label, ms = 25000) {
   throw new Error(`timed out: ${label}`);
 }
 async function start(host, federation = true) {
-  const env = { ...process.env };
-  for (const key of Object.keys(env)) if (key.startsWith('AGENT_SESSION_') || key.startsWith('AGENT_CONSOLE_')) delete env[key];
-  env.AGENT_SESSION_MAILBOX_SERVICES_FILE = host === source ? service.admission : '';
-  if (federation) Object.assign(env, { AGENT_SESSION_RELAY_URL: edge.url, AGENT_SESSION_RELAY_TOKEN: host.relay, AGENT_SESSION_RELAY_INGRESS_TOKEN: host.ingress });
+  const { args, env } = mailboxDaemon(root, host, {
+    relayUrl: federation ? edge.url : undefined,
+    servicesFile: host === source ? service.admission : undefined,
+  });
   const endpoint = join(host.root, 'coordination', 'daemon-endpoint.json');
   rmSync(endpoint, { force: true });
-  host.child = spawn(binary, ['--state-dir', host.root, 'serve', '--bind', '127.0.0.1:0', '--machine', host.machine, '--token-stdin', '--tmux-bin', '/bin/false'], { env, stdio: ['pipe', 'ignore', 'pipe'] });
+  host.child = spawn(binary, args, { env, stdio: ['pipe', 'ignore', 'pipe'] });
   host.child.stdin.end(host.operator);
   host.stderr ??= ''; host.child.stderr.on('data', data => { if (host.stderr.length < 16384) host.stderr += data.toString(); });
   host.url = await waitFor(() => { if ((host.child.exitCode !== null || host.child.signalCode !== null)) throw new Error('fixture daemon stopped: ' + host.stderr); if (existsSync(endpoint)) return JSON.parse(readFileSync(endpoint, 'utf8')).url; }, 'endpoint');

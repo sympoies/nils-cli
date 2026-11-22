@@ -12,6 +12,7 @@ import { writeHeartbeat } from './remote-mailbox-heartbeat.mjs';
 import { assertHeartbeatWriterBoundary } from './remote-mailbox-heartbeat.test.mjs';
 import { replyDeadlineAcceptance } from './remote-mailbox-reply-deadline.mjs';
 import { registryContentionAcceptance } from './remote-mailbox-registry-contention.mjs';
+import { mailboxDaemon } from './mailbox-daemon.mjs';
 
 const index = process.argv.indexOf('--agent-session-bin');
 assert(index >= 0 && process.argv[index + 1], 'requires --agent-session-bin exact binary');
@@ -42,12 +43,10 @@ async function waitFor(fn, label, milliseconds=90000) {
   throw new Error(`timed out: ${label}`);
 }
 async function start(host,federation=true,agentBinary=binary) {
-  const env={...process.env};
-  for(const key of ['AGENT_SESSION_TOKEN','AGENT_SESSION_RELAY_URL','AGENT_SESSION_RELAY_TOKEN','AGENT_SESSION_RELAY_INGRESS_TOKEN','AGENT_CONSOLE_COORDINATION_RELAYS'])delete env[key];
-  if(federation)Object.assign(env,{AGENT_SESSION_RELAY_URL:edge.url,AGENT_SESSION_RELAY_TOKEN:host.relay,AGENT_SESSION_RELAY_INGRESS_TOKEN:host.ingress});
+  const { args, env } = mailboxDaemon(root, host, { relayUrl: federation ? edge.url : undefined });
   const endpoint=join(host.root,'coordination','daemon-endpoint.json');
   rmSync(endpoint,{force:true});
-  host.child=spawn(agentBinary,['--state-dir',host.root,'serve','--bind','127.0.0.1:0','--machine',host.machine,'--token-stdin','--tmux-bin','/bin/false'],{env,stdio:['pipe','ignore','pipe']});
+  host.child=spawn(agentBinary,args,{env,stdio:['pipe','ignore','pipe']});
   children.add(host.child);host.child.stdin.end(host.operator);
   let stderr='';host.child.stderr.on('data',data=>{if(stderr.length<4096)stderr+=data.toString();});
   host.url=await waitFor(()=>{if(host.child.exitCode!==null)throw new Error(`daemon failed: ${stderr}`);if(existsSync(endpoint))return JSON.parse(readFileSync(endpoint,'utf8')).url;},'daemon endpoint');
@@ -64,8 +63,9 @@ try {
   assertHeartbeatWriterBoundary();
   hosts.forEach(seed);
   for(const collision of ['relay','ingress']){
-    const h=hosts[0];const env={...process.env,AGENT_SESSION_RELAY_URL:'https://relay.example',AGENT_SESSION_RELAY_TOKEN:h.relay,AGENT_SESSION_RELAY_INGRESS_TOKEN:h.ingress};
-    const result=spawnSync(binary,['--state-dir',h.root,'serve','--bind','127.0.0.1:0','--machine',h.machine,'--token-stdin','--tmux-bin','/bin/false'],{env,input:h[collision],encoding:'utf8',timeout:10000});
+    const h=hosts[0];
+    const { args, env } = mailboxDaemon(root, h, { relayUrl: 'https://relay.example' });
+    const result=spawnSync(binary,args,{env,input:h[collision],encoding:'utf8',timeout:10000});
     assert.equal(result.status,64,'operator and federation service credentials must be distinct');
   }
   checks.push('operator-service-credential-collision-rejected');
