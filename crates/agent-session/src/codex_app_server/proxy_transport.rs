@@ -5,9 +5,11 @@
 //!
 //! - `HARD_MESSAGE_LIMIT_BYTES` is the WebSocket ceiling on both proxy
 //!   connections. The WebSocket layer cannot resynchronise after a frame above
-//!   it, so exceeding it still ends the proxy. It bounds memory per message:
-//!   128 MiB is roughly 7x the payload that motivated this module while a
-//!   proxy holds at most one such message at a time.
+//!   it, so exceeding it still ends the proxy. The 128 MiB ceiling limits
+//!   the size of each message. Peak proxy memory also includes buffers on
+//!   both WebSocket connections (including frame assembly and outgoing
+//!   framing), parser scratch and retained observation fields, and queued
+//!   observations. The client-to-server path may also parse a full message.
 //! - `MAX_FORWARDED_MESSAGE_BYTES` is the largest app-server message the proxy
 //!   relays. A larger one is contained: the request it answers fails with a
 //!   JSON-RPC error instead of the proxy exiting. 64 MiB is also the default
