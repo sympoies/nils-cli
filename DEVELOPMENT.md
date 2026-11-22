@@ -119,8 +119,9 @@ This selects `DEVLOG_LAYOUT=fragments` for devlog writers. Install released
    coverage maintenance, CI debugging, or an explicit request. GitHub required
    checks `test`, `test_containment`, and `cargo-deny (advisories + bans)`
    remain the Linux merge gate. Every merge group also requires affected-package
-   `macos_clippy` (all targets/features, no test execution). Full Linux/macOS
-   tests and coverage gate releases.
+   `macos_clippy`. Code merge groups require both instrumented macOS
+   partitions. Full Linux/macOS tests and coverage gate releases. See
+   [Delivery and releases](docs/runbooks/delivery-and-releases.md).
    See the [delivery and release flow](docs/runbooks/delivery-and-releases.md).
 
 For an approved batch of low-risk changes, follow the

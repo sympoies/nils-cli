@@ -8,7 +8,8 @@ on:
   # A required merge queue runs every required check on its temporary merge
   # branch before landing the pull request. Linux consumes the combined-tree
   # affected plan; every group also compiles/lints macOS test targets.
-  # Release-only groups additionally run full Linux/macOS validation.
+  # Non-prose groups run both instrumented macOS partitions. Release
+  # candidates additionally run the full Linux and coverage lanes.
   merge_group:
   schedule:
     - cron: "23 5 * * *"
@@ -38,6 +39,7 @@ jobs:
     outputs:
       base_sha: ${{ steps.detect.outputs.base_sha }}
       docs_only: ${{ steps.detect.outputs.docs_only }}
+      queue_docs_only: ${{ steps.detect.outputs.queue_docs_only }}
       head_sha: ${{ steps.detect.outputs.head_sha }}
       release_branch: ${{ steps.detect.outputs.release_branch }}
       release_mode: ${{ steps.detect.outputs.release_mode }}
@@ -122,18 +124,28 @@ jobs:
             true|false) ;;
             *) release_candidate=false ;;
           esac
+          queue_docs_only=false
           if [ "${EVENT_NAME}" = "merge_group" ]; then
+            # Keep the existing Linux queue planner. Only the trusted exact-base
+            # prose classification can exempt a group from instrumented macOS.
             docs_only=false
+            queue_docs_detector="${policy_dir}/merge-queue-docs-only.py"
+            if [ "${head}" = "${EVENT_SHA}" ] && [ "$(git --no-replace-objects rev-parse HEAD)" = "${head}" ] && \
+               git show "${base}:scripts/ci/merge-queue-docs-only.py" >"${queue_docs_detector}" 2>/dev/null && \
+               verdict="$(python3 "${queue_docs_detector}" "${base}" "${head}")" && [ "${verdict}" = "true" ]; then
+              queue_docs_only=true
+            fi
           fi
           {
             echo "base_sha=${base}"
             echo "docs_only=${docs_only}"
+            echo "queue_docs_only=${queue_docs_only}"
             echo "head_sha=${head}"
             echo "release_branch=${HEAD_REF}"
             echo "release_mode=${release_mode}"
             echo "release_candidate=${release_candidate}"
           } >> "$GITHUB_OUTPUT"
-          echo "docs_only=${docs_only} release_candidate=${release_candidate} release_mode=${release_mode} (base=${base}, head=${head})"
+          echo "docs_only=${docs_only} queue_docs_only=${queue_docs_only} release_candidate=${release_candidate} release_mode=${release_mode} (base=${base}, head=${head})"
 
       - name: Set up Rust for devlog policy
         uses: dtolnay/rust-toolchain@1.100.0
@@ -291,15 +303,17 @@ jobs:
             exit 1
           fi
 
-      - name: Require release queue validation
+      - name: Require instrumented queue validation
         env:
           EVENT_NAME: ${{ github.event_name }}
           RELEASE_CANDIDATE: ${{ needs.changes.outputs.release_candidate }}
+          QUEUE_DOCS_ONLY: ${{ needs.changes.outputs.queue_docs_only }}
           FULL_VALIDATION_RESULT: ${{ needs.full_validation.result }}
         run: |
-          if [ "${EVENT_NAME}" = "merge_group" ] && [ "${RELEASE_CANDIDATE}" = "true" ] && \
+          if [ "${EVENT_NAME}" = "merge_group" ] && \
+             { [ "${RELEASE_CANDIDATE}" = "true" ] || [ "${QUEUE_DOCS_ONLY}" != "true" ]; } && \
              [ "${FULL_VALIDATION_RESULT}" != "success" ]; then
-            echo 'error: release queue full validation did not succeed' >&2
+            echo 'error: instrumented queue validation did not succeed' >&2
             exit 1
           fi
 
@@ -587,7 +601,7 @@ jobs:
 
   full_validation:
     needs: changes
-    if: always() && ((github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.changes.outputs.release_candidate == 'true') || ((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'))
+    if: always() && ((github.event_name == 'merge_group' && needs.changes.result == 'success' && (needs.changes.outputs.release_candidate == 'true' || needs.changes.outputs.queue_docs_only != 'true')) || ((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'))
     uses: ./.github/workflows/full-validation.yml
     permissions:
       actions: read
@@ -595,6 +609,7 @@ jobs:
       checks: write
     with:
       commit: ${{ github.sha }}
+      macos_partitions_only: ${{ github.event_name == 'merge_group' && needs.changes.outputs.release_candidate != 'true' }}
       # Nightly and manual runs also run the poisoned-environment isolation guard.
       isolation_guard: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
