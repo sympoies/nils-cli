@@ -3,9 +3,8 @@
 
 ### Result
 
-- The retention of the managed Codex resume identity (#3896) is reverted on main;
-  the earlier devlog fragment stays as history because merged fragments cannot
-  change in a pull request.
+- The revert restores the Codex resume behavior from before #3896 and preserves
+  the earlier devlog fragment.
 
 ### Why / context
 
@@ -15,10 +14,13 @@
 
 ### Evidence
 
-- The revert is the exact inverse of the original commit for the agent-hook crate
-  and the agent-session activity sources.
+- In macOS merge group 44967857004, the capture-timeout and write-failure tests
+  each failed twice because the diagnose summary lacked the expected warning.
+- The restored helper behavior is extracted into existing module paths to meet
+  the file-size ratchet.
 
 ### Links
 
 - <https://github.com/sympoies/nils-cli/issues/3883>
 - <https://github.com/sympoies/nils-cli/pull/3896>
+- <https://github.com/sympoies/nils-cli/actions/runs/44967857004>

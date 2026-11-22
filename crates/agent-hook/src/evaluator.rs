@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::adapter::hook_deadline;
 use crate::contract::{
     effective_mode_for_product, matcher_expression_matches, runtime_handler_filename,
 };
@@ -23,6 +22,8 @@ use crate::model::{
     LoadedPolicy, NormalizedDecision, NormalizedRequest, OperationEffectClass, Product, RuleMode,
     ShadowObservation, TimeoutPosture,
 };
+
+mod private_activity;
 
 pub(crate) const MAX_AGGREGATE_CONTEXT: usize = 16 * 1024;
 pub(crate) const MAX_REASONS: usize = 64;
@@ -1631,18 +1632,7 @@ fn run_session_activity(
             ));
         }
     }
-    if let Some(metadata) = crate::adapter::project_session_model_hook(request, raw, &runtime_id)
-        && let Ok(helper) = resolve_activity_helper()
-    {
-        let mut command = Command::new(helper);
-        command
-            .args(["activity", "hook", "--agent", request.product.as_str()])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        // Runs after mandatory activity, outside enforcement's child/output budget.
-        let _ = run_bounded(command, &metadata, hook_deadline(&metadata), 0, false);
-    }
+    private_activity::deliver(request, raw, &runtime_id);
     Ok(())
 }
 
