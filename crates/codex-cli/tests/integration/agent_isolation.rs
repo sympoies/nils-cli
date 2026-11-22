@@ -5,6 +5,7 @@ use nils_test_support::cmd::{self, CmdOptions};
 use nils_test_support::fs as test_fs;
 use nils_test_support::git as test_git;
 use nils_test_support::{GlobalStateLock, bin};
+use pretty_assertions::assert_eq;
 
 fn codex_cli_bin() -> PathBuf {
     bin::resolve("codex-cli")
@@ -34,6 +35,9 @@ fi
   printf 'CODEX_HOME=%s\n' "${CODEX_HOME:-}"
   printf 'AGENT_DOCS_HOME=%s\n' "${AGENT_DOCS_HOME:-missing}"
   printf 'AUTH_KIND=%s\n' "$(test -L "$CODEX_HOME/auth.json" && printf symlink || printf other)"
+  if [ -f "$CODEX_HOME/config.toml" ]; then
+    /bin/cat "$CODEX_HOME/config.toml" > "$CODEX_ISOLATION_LOG.toml"
+  fi
   for entry in "$CODEX_HOME"/*; do
     test -e "$entry" || test -L "$entry" || continue
     printf 'HOME_ENTRY=%s\n' "${entry##*/}"
@@ -88,12 +92,18 @@ fi
     assert!(log.contains("AUTH_KIND=symlink"));
     assert!(log.contains("HOME_ENTRY=auth.json"));
     assert!(!log.contains("HOME_ENTRY=AGENTS.md"));
-    // The shared child-home refactor must not give the isolated prompt runtime
-    // the capsule supervisor's governance projection.
-    assert!(!log.contains("HOME_ENTRY=config.toml"));
+    let config = fs::read_to_string(format!("{log_path}.toml"))
+        .expect("config captured from the child home")
+        .parse::<toml::Table>()
+        .expect("valid TOML");
+    let expected = "[notice]\nhide_rate_limit_model_nudge = true\n"
+        .parse::<toml::Table>()
+        .expect("expected config");
+    assert_eq!(config, expected);
     assert!(!log.contains("HOME_ENTRY=hooks.json"));
     assert!(log.contains("ARG_0=--ask-for-approval"));
     assert!(log.contains("--ignore-user-config"));
+    assert!(log.contains("=notice.hide_rate_limit_model_nudge=true\n"));
     assert!(log.contains("--ignore-rules"));
     assert!(log.contains("--ephemeral"));
     assert!(log.contains("project_doc_max_bytes=0"));
@@ -175,7 +185,7 @@ case " $* " in
   *" debug prompt-input "*)
     test -f "$HOME/.codex/AGENTS.md"
     test -f "$PWD/AGENTS.md"
-    test ! -e "$CODEX_HOME/config.toml"
+    test -f "$CODEX_HOME/config.toml"
     test ! -e "$CODEX_HOME/hooks.json"
     case " $* " in *" skills.include_instructions=false "*) ;; *) exit 92 ;; esac
     case " $* " in *" skills.bundled.enabled=false "*) ;; *) exit 93 ;; esac

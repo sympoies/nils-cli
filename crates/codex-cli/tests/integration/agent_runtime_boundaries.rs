@@ -56,7 +56,8 @@ test "$GIT_CONFIG_KEY_0" = user.name
 test "$GIT_CONFIG_VALUE_0" = 'Fixture Identity'
 test "$SSH_AUTH_SOCK" = signing-agent-sentinel
 test -L "$CODEX_HOME/auth.json"
-test "$(find "$CODEX_HOME" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = 1
+test -f "$CODEX_HOME/config.toml"
+test "$(find "$CODEX_HOME" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = 2
 printf '%s\n' "$CODEX_HOME" > "$CAPTURE_HOME"
 for arg in "$@"; do printf '%s\n' "$arg"; done
 # Exercise the replacement warning without changing the source credential.

@@ -191,11 +191,11 @@ that:
 4. copies bounded active-home `AGENTS.md` bytes into an owner-only child file
    rather than symlinking a mutable governance source into a host-access
    supervisor;
-5. projects only the `features.hooks` setting and the top-level `hooks` table
-   into a generated owner-only `config.toml`, rekeying `hooks.state` entries
-   from the source config path onto the projected config path so projected
-   hooks keep their trust state, and copies a bounded, validated `hooks.json`
-   when present;
+5. projects the `features.hooks` setting and the top-level `hooks` table into
+   a generated owner-only `config.toml` with
+   `notice.hide_rate_limit_model_nudge = true`. It rekeys `hooks.state` entries
+   onto the projected config path so hooks keep their trust state, and copies
+   a bounded, validated `hooks.json` when present;
 6. keeps the real shell `HOME`, `PATH`, Git, SSH, GPG, and signing environment;
 7. preserves project `AGENTS.md`, Git hooks, repository rules, and the
    capsule's existing sandbox and helper-attestation boundary;

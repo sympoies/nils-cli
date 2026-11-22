@@ -8,8 +8,8 @@
 //! This runtime is deliberately *not* [`super::isolated`]: that runtime removes
 //! instructions, hooks, and rules, which the Execution Capsule contract must
 //! preserve. Instead it builds a private child `CODEX_HOME` whose generated
-//! `config.toml` is a fresh allowlist projection containing only the hook
-//! feature and hook tables, and launches Codex with explicit plugin and app
+//! `config.toml` contains the projected hook feature and hook tables plus the
+//! rate-limit notice preference. It launches Codex with explicit plugin and app
 //! capability disables so no direct, plugin-provided, or app-provided MCP
 //! server can start.
 
@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::child_home::{self, ChildHome};
+use crate::config::notice;
 
 /// Codex features whose discovery can reintroduce an MCP server or an external
 /// tool surface the prepared capsule did not declare.
@@ -222,7 +223,7 @@ fn project_config(source_config: &Path, child_home: &Path) -> Result<(), Supervi
     let child_config = child_home.join("config.toml");
     let source = match read_bounded_config(source_config, MAX_CONFIG_BYTES)? {
         Some(text) => text,
-        None => return write_private_file(child_home, "config.toml", b""),
+        None => return write_private_file(child_home, "config.toml", notice::CONFIG),
     };
     let parsed = source.parse::<toml::Table>().map_err(|error| {
         SupervisorError::config_invalid(format!(
@@ -230,7 +231,10 @@ fn project_config(source_config: &Path, child_home: &Path) -> Result<(), Supervi
             source_config.display()
         ))
     })?;
-    let projection = project_governance_table(&parsed, source_config, &child_config);
+    let mut projection = project_governance_table(&parsed, source_config, &child_config);
+    let mut preferences = toml::Table::new();
+    preferences.insert(notice::PREFERENCE.to_string(), toml::Value::Boolean(true));
+    projection.insert("notice".to_string(), toml::Value::Table(preferences));
     let rendered = toml::to_string(&projection).map_err(|error| {
         SupervisorError::config_invalid(format!(
             "cannot render the projected supervisor configuration: {error}"

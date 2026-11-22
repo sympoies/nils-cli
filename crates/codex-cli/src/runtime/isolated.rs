@@ -10,6 +10,7 @@ use serde_json::json;
 use super::AgentCommandProfile;
 use super::child_home::{self, ChildHome};
 use super::commit_message::validate_generated_message;
+use crate::config::{self, notice};
 
 const REQUIRED_FLAGS: [&str; 5] = [
     "--ignore-user-config",
@@ -33,14 +34,9 @@ const HOME_INSTRUCTION_SENTINEL: &str = "CODEX_CLI_AGENT_DOCTOR_HOME_INSTRUCTION
 const PROJECT_INSTRUCTION_SENTINEL: &str =
     "CODEX_CLI_AGENT_DOCTOR_PROJECT_INSTRUCTION_SENTINEL_B28F1E67";
 const SKILL_SENTINEL: &str = "CODEX_CLI_AGENT_DOCTOR_SKILL_SENTINEL_D71F05F8";
-/// Entry names inside a Codex home that can define hooks or carry hook trust
-/// state. The isolated runtime writes none of them, so their absence is a
-/// checkable property of the private child home. Hook *execution* is not
-/// observable from `agent doctor`: no non-model `codex` subcommand runs
-/// config-defined lifecycle hooks, and doctor must not spend a model turn. The
-/// execution-side guarantee is `--disable hooks`, reported separately as
-/// `features.hooks` in the same payload.
-const HOOK_SURFACE_ENTRIES: [&str; 3] = ["config.toml", "hooks.json", "hooks"];
+/// Hook files and directories absent from the isolated child home. Its
+/// generated config is checked separately for the built-in notice content.
+const HOOK_SURFACE_ENTRIES: [&str; 2] = ["hooks.json", "hooks"];
 /// Fixed descriptor of what `hook_isolation` actually asserts, so a JSON
 /// consumer cannot read the boolean as proof that a hook was observed to not
 /// run.
@@ -81,6 +77,8 @@ impl IsolatedHome {
             .map_err(|error| format!("isolated-home-create-failed: {error}"))?;
         home.bridge_auth(auth_source.as_deref())
             .map_err(|error| format!("isolated-auth-bridge-unavailable: {error}"))?;
+        config::write_config(&home.path().join("config.toml"), notice::CONFIG)
+            .map_err(|error| format!("isolated-home-create-failed: {error}"))?;
         Ok(Self { home })
     }
 
@@ -441,13 +439,19 @@ fn doctor_sentinel_probe(home: &IsolatedHome) -> (bool, bool, bool) {
     (instruction_isolation, hook_isolation, skill_isolation)
 }
 
-/// Report whether the child home carries no hook definition or hook trust
-/// surface. Uses `symlink_metadata` so a dangling symlink planted at one of
-/// those names counts as present instead of silently passing.
+/// Allow only the generated notice config and no separate hook surfaces.
 fn hook_surface_absent(home: &Path) -> bool {
-    HOOK_SURFACE_ENTRIES
-        .iter()
-        .all(|entry| fs::symlink_metadata(home.join(entry)).is_err())
+    let config = home.join("config.toml");
+    fs::symlink_metadata(&config).is_ok_and(|meta| {
+        meta.is_file()
+            && meta.len() == notice::CONFIG.len() as u64
+            && fs::read(&config).is_ok_and(|bytes| bytes == notice::CONFIG)
+    }) && HOOK_SURFACE_ENTRIES.iter().all(|entry| {
+        matches!(
+            fs::symlink_metadata(home.join(entry)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        )
+    })
 }
 
 fn isolated_command(
@@ -458,7 +462,9 @@ fn isolated_command(
     let mut command = Command::new("codex");
     command
         .args(["--ask-for-approval", "never", "exec"])
-        .args(REQUIRED_FLAGS[..4].iter().copied());
+        .args(REQUIRED_FLAGS[..4].iter().copied())
+        // --ignore-user-config skips the generated child config as well.
+        .args(["-c", notice::OVERRIDE]);
     for feature in REQUIRED_FEATURES {
         command.args(["--disable", feature]);
     }

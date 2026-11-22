@@ -15,6 +15,8 @@ mod isolated;
 mod skill_policy;
 mod supervisor;
 
+pub(crate) use child_home::original_codex_home;
+
 pub use agent_mode::{AgentCommandProfile, AgentRuntimeMode, AgentRuntimeOptions};
 pub use isolated::{
     GeneratedCommitMessage, doctor_isolated, exec_isolated, generate_commit_message,
