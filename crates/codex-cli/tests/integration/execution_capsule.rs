@@ -2354,14 +2354,12 @@ fn default_mcp_mode_projects_a_private_governance_home() {
         "the default must not print the inherited notice"
     );
 
-    // The child home is a unique private projection, not the active home.
     let child_home = PathBuf::from(read_report(&report, "codex-home").trim().to_string());
     assert_ne!(child_home, codex_home);
     assert_eq!(read_report(&report, "home-mode").trim(), "700");
     assert_eq!(read_report(&report, "config.toml.mode").trim(), "600");
     assert_eq!(read_report(&report, "AGENTS.md.mode").trim(), "600");
 
-    // Authentication is bridged, never copied.
     assert_eq!(
         read_report(&report, "auth-kind").trim(),
         format!(
@@ -2372,12 +2370,11 @@ fn default_mcp_mode_projects_a_private_governance_home() {
         )
     );
 
-    // Governance survives: home instructions plus the hook table and its trust
-    // state, rekeyed onto the projected config path.
     assert_eq!(
         read_report(&report, "AGENTS.md").trim(),
         HOME_INSTRUCTION_SENTINEL
     );
+    // Hook trust must follow the declaring configuration into the child home.
     let child_config = read_report(&report, "config.toml");
     assert!(child_config.contains("hooks = true"), "{child_config}");
     assert!(child_config.contains(HOOK_SENTINEL), "{child_config}");
@@ -2397,7 +2394,10 @@ fn default_mcp_mode_projects_a_private_governance_home() {
         "provider hook file must be projected"
     );
 
-    // No MCP, plugin, app, secret, or unrelated user config reaches the child.
+    assert!(
+        child_config.contains("[notice]\nhide_rate_limit_model_nudge = true"),
+        "{child_config}"
+    );
     for excluded in [
         "mcp_servers",
         "plugins",

@@ -235,3 +235,119 @@ fn config_set_ephemeral_rejects_invalid_values() {
     assert_exit(&output, 64);
     assert!(stderr(&output).contains("ephemeral must be true|false"));
 }
+
+fn persist_rate_limit_notice(home: &std::path::Path) -> CmdOutput {
+    run(
+        &[
+            "config",
+            "set",
+            "notice.hide_rate_limit_model_nudge",
+            "true",
+            "--persist",
+        ],
+        &[("CODEX_HOME", home.to_str().expect("fixture home"))],
+    )
+}
+
+#[test]
+fn config_persist_rate_limit_notice_creates_only_the_selected_home() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let selected = root.path().join("selected");
+    let other = root.path().join("other");
+    std::fs::create_dir(&other).expect("other home");
+    let untouched = "[notice]\nhide_rate_limit_model_nudge = false\n";
+    std::fs::write(other.join("config.toml"), untouched).expect("other config");
+
+    let output = persist_rate_limit_notice(&selected);
+    assert_exit(&output, 0);
+    let config = std::fs::read_to_string(selected.join("config.toml")).expect("selected config");
+    let config = config.parse::<toml::Table>().expect("valid TOML");
+    assert_eq!(
+        config["notice"]["hide_rate_limit_model_nudge"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        std::fs::read_to_string(other.join("config.toml")).expect("other config"),
+        untouched
+    );
+}
+
+#[test]
+fn config_persist_rate_limit_notice_preserves_unrelated_toml_and_is_idempotent() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let path = home.path().join("config.toml");
+    let prefix = "# User settings\nmodel   = 'example-model' # main\n\n[notice] # keep header\nother  = true\n";
+    let suffix = "\n[features]\nexample = false # keep\n";
+    for (before, after) in [
+        ("", "hide_rate_limit_model_nudge = true\n"),
+        (
+            "hide_rate_limit_model_nudge  =   false # keep\n",
+            "hide_rate_limit_model_nudge  =   true # keep\n",
+        ),
+        (
+            "hide_rate_limit_model_nudge  =   true # keep\n",
+            "hide_rate_limit_model_nudge  =   true # keep\n",
+        ),
+    ] {
+        std::fs::write(&path, format!("{prefix}{before}{suffix}")).expect("fixture config");
+        for _ in 0..2 {
+            let output = persist_rate_limit_notice(home.path());
+            assert_exit(&output, 0);
+            assert_eq!(
+                std::fs::read_to_string(&path).expect("saved config"),
+                format!("{prefix}{after}{suffix}")
+            );
+        }
+    }
+}
+
+#[test]
+fn config_persist_rate_limit_notice_preserves_crlf_and_inline_table() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let path = home.path().join("config.toml");
+    let before = "# Preferences\r\nnotice = { other = true, hide_rate_limit_model_nudge = false }";
+    std::fs::write(&path, before).expect("fixture config");
+
+    assert_exit(&persist_rate_limit_notice(home.path()), 0);
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("saved config"),
+        before.replace("false", "true")
+    );
+}
+
+#[test]
+fn config_persist_rate_limit_notice_preserves_interleaved_dotted_keys() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let path = home.path().join("config.toml");
+    let before =
+        "notice.first = true # first\nmodel = 'example' # model\nnotice.second = true # second\n";
+    let setting = "notice.hide_rate_limit_model_nudge = true\n";
+    for initial in [
+        before.to_string(),
+        format!("{before}notice.hide_rate_limit_model_nudge = false\n"),
+    ] {
+        std::fs::write(&path, initial).expect("fixture config");
+
+        assert_exit(&persist_rate_limit_notice(home.path()), 0);
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("saved config"),
+            format!("{before}{setting}")
+        );
+    }
+}
+
+#[test]
+fn config_persist_rate_limit_notice_reports_malformed_config_without_overwriting() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let path = home.path().join("config.toml");
+    let malformed = "[notice\nhide_rate_limit_model_nudge = false\n";
+    std::fs::write(&path, malformed).expect("fixture config");
+
+    let output = persist_rate_limit_notice(home.path());
+    assert_exit(&output, 1);
+    assert!(stderr(&output).contains("invalid") && stderr(&output).contains("config.toml"));
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("original config"),
+        malformed
+    );
+}

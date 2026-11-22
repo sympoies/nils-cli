@@ -53,8 +53,8 @@ Help:
 - `doctor [--format text|json]`: Probe isolated-runtime flags, features,
   temporary-home/auth bridging, instruction and skill isolation, and the private child
   home's hook surface without an API request. `hook_isolation` asserts that the
-  child home carries no hook definition or hook trust surface (`config.toml`,
-  `hooks.json`, `hooks/`), checked before and after the probe turn and reported
+  child home carries only its generated notice in `config.toml` and has no
+  `hooks.json` or `hooks/` entry. It is checked before and after the probe and reported
   as `hook_isolation_method: child-home-hook-surface`. Hook *execution* is not
   observable here, because no non-model `codex` subcommand runs config-defined
   lifecycle hooks and doctor must not spend a model turn; the execution-side
@@ -222,6 +222,20 @@ Auth examples:
 
 - `show`: Print effective configuration values.
 - `set <key> <value>`: Emit a shell snippet for the current shell.
+- Use `set notice.hide_rate_limit_model_nudge true --persist` to suppress the
+  Codex rate-limit model picker. Set `CODEX_HOME` to select the home.
+
+  ```bash
+  CODEX_HOME="$selected_codex_home" codex-cli config set notice.hide_rate_limit_model_nudge true --persist
+  ```
+
+  The command follows the Codex home selection used for launches (a nonempty
+  `CODEX_HOME`, then `$HOME/.codex`, then `.codex` when `HOME` is unavailable).
+  It creates `config.toml` if needed, preserves other settings and comments,
+  and succeeds without a rewrite when the preference is already `true`.
+  It exits with status `1` if the file contains malformed TOML, leaving it
+  untouched. Isolated one-shot and default capsule supervisor launches include
+  the preference in their private child homes.
 
 ### prompt-segment
 

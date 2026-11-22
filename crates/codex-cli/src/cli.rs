@@ -446,11 +446,11 @@ pub struct ConfigArgs {
 pub enum ConfigCommand {
     /// Show current configuration
     Show,
-    /// Print a shell export, or persist the model under XDG_CONFIG_HOME/codex-cli
+    /// Print a shell export or persist a supported setting
     Set {
         key: String,
         value: String,
-        /// Save model to config.toml instead of printing a shell export
+        /// Save model or notice.hide_rate_limit_model_nudge to its config file
         #[arg(long)]
         persist: bool,
     },

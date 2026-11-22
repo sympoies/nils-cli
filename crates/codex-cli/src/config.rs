@@ -2,7 +2,9 @@ use crate::auth::remote;
 use nils_common::shell::{SingleQuoteEscapeStyle, quote_posix_single_with_style};
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+pub(crate) mod notice;
 
 fn config_path() -> Result<PathBuf, String> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
@@ -61,11 +63,6 @@ fn save_model(value: &str) -> Result<PathBuf, String> {
         return Err("model must be a nonempty model identifier (letters, digits, ._-/)".into());
     }
     let path = config_path()?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| "invalid config path".to_string())?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
     let mut table = match fs::read_to_string(&path) {
         Ok(content) => toml::from_str::<toml::Table>(&content)
             .map_err(|error| format!("invalid {}: {error}", path.display()))?,
@@ -74,15 +71,25 @@ fn save_model(value: &str) -> Result<PathBuf, String> {
     };
     table.insert("model".to_string(), toml::Value::String(value.to_string()));
     let rendered = toml::to_string(&table).map_err(|error| error.to_string())?;
+    write_config(&path, rendered.as_bytes())?;
+    Ok(path)
+}
+
+pub(crate) fn write_config(path: &Path, contents: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "invalid config path".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
     let mut temporary = tempfile::NamedTempFile::new_in(parent)
         .map_err(|error| format!("failed to create config temp file: {error}"))?;
     temporary
-        .write_all(rendered.as_bytes())
+        .write_all(contents)
         .map_err(|error| format!("failed to write config temp file: {error}"))?;
     temporary
-        .persist(&path)
+        .persist(path)
         .map_err(|error| format!("failed to save {}: {error}", path.display()))?;
-    Ok(path)
+    Ok(())
 }
 
 pub fn show() -> i32 {
@@ -154,8 +161,14 @@ pub fn show() -> i32 {
 
 pub fn set(key: &str, value: &str, persist: bool) -> i32 {
     if persist {
+        if key == notice::KEY {
+            return notice::set(value);
+        }
         if key != "model" && key != "CODEX_CLI_MODEL" {
-            eprintln!("codex-cli config: --persist currently supports model only");
+            eprintln!(
+                "codex-cli config: --persist supports model and {}",
+                notice::KEY
+            );
             return 64;
         }
         return match save_model(value) {
