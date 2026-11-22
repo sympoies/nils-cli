@@ -287,9 +287,11 @@ A `coordination-lock-timeout` raised for the registry lock gains an additive
 - `{"state": "active", "operation": <class>, "pid": <pid>, "held_ms": <ms>}`
   when the process at `pid` is still running with the recorded start time;
 - `{"state": "stale"}` when the holder is gone, its pid was reused, or ownership
-  cannot be confirmed (the start time is read from Linux `/proc`, so other
-  platforms always report stale). A stale descriptor is never trusted: its
-  class, pid, and age are not reported.
+  cannot be confirmed. A stale descriptor omits the class, pid, and age.
+
+Linux reads the process start time from `/proc`. macOS reads it through
+`proc_pidinfo` at microsecond precision. Other platforms always report a
+readable descriptor as stale.
 
 The object is absent when no valid descriptor exists, for example when the
 holder has not published yet or holds the lock through another entry point.

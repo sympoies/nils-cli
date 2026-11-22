@@ -133,9 +133,38 @@ pub(super) fn process_start(pid: u32) -> Option<u64> {
     }
 }
 
-// No portable process start time exists here, so ownership is never
-// confirmed and a descriptor is always reported stale.
-#[cfg(not(target_os = "linux"))]
+/// The kernel's start time in microseconds for a live macOS process.
+#[cfg(target_os = "macos")]
+pub(super) fn process_start(pid: u32) -> Option<u64> {
+    let os_pid = libc::pid_t::try_from(pid).ok()?;
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: PROC_PIDTBSDINFO expects a writable proc_bsdinfo buffer of this size.
+    let read = unsafe {
+        libc::proc_pidinfo(
+            os_pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if read != size {
+        return None;
+    }
+    // SAFETY: proc_pidinfo reported a complete proc_bsdinfo.
+    let info = unsafe { info.assume_init() };
+    if info.pbi_pid != pid || info.pbi_status == libc::SZOMB {
+        return None;
+    }
+    info.pbi_start_tvsec
+        .checked_mul(1_000_000)?
+        .checked_add(info.pbi_start_tvusec)
+        .filter(|start| *start > 0)
+}
+
+// Platforms without a start-time reader always report the descriptor as stale.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub(super) fn process_start(_pid: u32) -> Option<u64> {
     None
 }

@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use super::lock_holder::HOLDER_FILE;
 use super::*;
 use pretty_assertions::assert_eq;
@@ -25,7 +27,7 @@ fn timeout_details(context: &CliContext) -> Value {
     error.details().cloned().unwrap_or_else(|| json!({}))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn timeout_reports_holder_class_and_age() {
     let (_temp, context) = context();
@@ -82,6 +84,47 @@ fn descriptor_of_a_gone_holder_is_reported_stale_without_trusting_it() {
 }
 
 #[test]
+fn descriptor_without_start_time_for_a_dead_pid_is_stale() {
+    let (_temp, context) = context();
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let dead_pid = child.id();
+    child.wait().unwrap();
+    let _held = lock_private_store(&context, REGISTRY_LOCK).unwrap();
+    let sidecar = coordination_root(&context).unwrap().join(HOLDER_FILE);
+    let descriptor = json!({
+        "operation": "lifecycle",
+        "pid": dead_pid,
+        "process_start": null,
+        "acquired_at_epoch_ms": 1_000_u64,
+    });
+    write_atomic(
+        &sidecar,
+        &serde_json::to_vec(&descriptor).unwrap(),
+        SECRET_FILE_MODE,
+    )
+    .unwrap();
+
+    assert_eq!(
+        timeout_details(&context)["holder"],
+        json!({ "state": "stale" })
+    );
+}
+
+#[test]
+fn publish_replaces_the_entire_previous_descriptor() {
+    let (_temp, context) = context();
+    let root = coordination_root(&context).unwrap();
+    let sidecar = root.join(HOLDER_FILE);
+    // Model a longer sidecar left behind by a holder that exited abruptly.
+    write_atomic(&sidecar, &[b'x'; 512], SECRET_FILE_MODE).unwrap();
+
+    let _held = lock_registry_observational(&context).unwrap();
+
+    let published: Value = serde_json::from_slice(&fs::read(&sidecar).unwrap()).unwrap();
+    assert_eq!(published["operation"], "observational");
+}
+
+#[test]
 fn descriptor_carries_only_class_pid_and_acquisition_time() {
     let (_temp, context) = context();
     let held = lock_registry(&context).unwrap();
@@ -111,7 +154,7 @@ fn timeout_without_a_descriptor_keeps_its_existing_shape() {
     drop(held);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn live_pid_with_a_different_start_time_is_reported_stale() {
     let (_temp, context) = context();
@@ -119,10 +162,12 @@ fn live_pid_with_a_different_start_time_is_reported_stale() {
     let sidecar = coordination_root(&context).unwrap().join(HOLDER_FILE);
     // This process is alive, but the recorded start time belongs to a previous
     // process that held the same pid.
+    let pid = std::process::id();
+    let actual_start = lock_holder::process_start(pid).expect("live process start time");
     let reused = json!({
         "operation": "full-maintenance",
-        "pid": std::process::id(),
-        "process_start": 1_u64,
+        "pid": pid,
+        "process_start": actual_start ^ 1,
         "acquired_at_epoch_ms": 1_000_u64,
     });
     write_atomic(
@@ -236,25 +281,39 @@ fn observational_reminder_and_lifecycle_classes_are_reported_by_name() {
     drop(held);
 }
 
-#[cfg(target_os = "linux")]
-#[test]
-fn a_successors_descriptor_survives_the_predecessors_release() {
-    let (_temp, context) = context();
-    for _ in 0..50 {
-        let predecessor = lock_registry(&context).unwrap();
-        let waiter = {
-            let context = context.clone();
-            thread::spawn(move || lock_registry_observational(&context).unwrap())
-        };
-        thread::sleep(Duration::from_millis(15));
-        drop(predecessor);
-        let successor = waiter.join().unwrap();
+struct UnlockObservation {
+    sidecar: PathBuf,
+    length: Option<u64>,
+}
 
-        let sidecar = coordination_root(&context).unwrap().join(HOLDER_FILE);
-        let text = fs::read_to_string(sidecar).unwrap();
-        assert!(text.contains("observational"), "descriptor lost: {text:?}");
-        drop(successor);
-    }
+thread_local! {
+    static UNLOCK_OBSERVATION: RefCell<Option<UnlockObservation>> = const { RefCell::new(None) };
+}
+
+pub(super) fn observe_before_unlock() {
+    UNLOCK_OBSERVATION.with_borrow_mut(|observation| {
+        if let Some(observation) = observation {
+            observation.length = fs::metadata(&observation.sidecar)
+                .ok()
+                .map(|metadata| metadata.len());
+        }
+    });
+}
+
+#[test]
+fn descriptor_is_emptied_before_unlock() {
+    let (_temp, context) = context();
+    let held = lock_registry(&context).unwrap();
+    let sidecar = coordination_root(&context).unwrap().join(HOLDER_FILE);
+    assert!(fs::metadata(&sidecar).unwrap().len() > 0);
+    UNLOCK_OBSERVATION.set(Some(UnlockObservation {
+        sidecar,
+        length: None,
+    }));
+
+    drop(held);
+
+    assert_eq!(UNLOCK_OBSERVATION.take().unwrap().length, Some(0));
 }
 
 #[test]
