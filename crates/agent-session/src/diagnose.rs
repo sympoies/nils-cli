@@ -11,7 +11,7 @@
 //! one of the states an operator most needs to diagnose, so the diagnostic must
 //! not depend on it.
 
-use nils_common::observation::{self, CodeSummary, Component, Event, Severity};
+use nils_common::observation::{self, CodeSummary, Component, Event, Severity, SpoolError};
 use nils_common::runtime_compat;
 use serde::Serialize;
 use serde_json::json;
@@ -81,8 +81,17 @@ struct ReleaseSkew {
     recovery_action: String,
 }
 
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum SpoolStatus {
+    Untrusted,
+}
+
 #[derive(Serialize)]
 struct Observation {
+    /// Why the spool was skipped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    spool_status: Option<SpoolStatus>,
     /// Total events retained in the spool.
     event_count: usize,
     /// Unix second of the oldest retained event.
@@ -109,13 +118,17 @@ pub(crate) fn run_diagnose(context: &CliContext, args: DiagnoseArgs) -> i32 {
 pub(crate) const DIAGNOSE_COMMAND: &str = "diagnose";
 
 pub(crate) fn build(context: &CliContext, args: &DiagnoseArgs) -> Result<Bundle, CliError> {
-    let events = observation::read_recent(&context.state_dir, 0).map_err(|_| {
-        CliError::data(
-            "observation-spool-unreadable",
-            "the observation spool could not be read",
-            Some(json!({ "recovery_action": "agent-hook doctor" })),
-        )
-    })?;
+    let (events, spool_status) = match observation::read_recent(&context.state_dir, 0) {
+        Ok(events) => (events, None),
+        Err(SpoolError::Untrusted) => (Vec::new(), Some(SpoolStatus::Untrusted)),
+        Err(_) => {
+            return Err(CliError::data(
+                "observation-spool-unreadable",
+                "the observation spool could not be read",
+                Some(json!({ "recovery_action": "agent-hook doctor" })),
+            ));
+        }
+    };
     let summary = observation::summarize(&events);
     let retained = args.limit.unwrap_or(DEFAULT_RECENT).min(MAX_RECENT);
     let recent = events
@@ -126,7 +139,9 @@ pub(crate) fn build(context: &CliContext, args: &DiagnoseArgs) -> Result<Bundle,
     let release_skew = release_skew(context);
     let launch_executable = launch_executable_basis();
     let health = match health(&summary, &release_skew) {
-        Health::Healthy if !launch_path_is_stable(launch_executable) => Health::Degraded,
+        Health::Healthy if spool_status.is_some() || !launch_path_is_stable(launch_executable) => {
+            Health::Degraded
+        }
         other => other,
     };
     Ok(Bundle {
@@ -140,6 +155,7 @@ pub(crate) fn build(context: &CliContext, args: &DiagnoseArgs) -> Result<Bundle,
             release_skew,
         },
         observation: Observation {
+            spool_status,
             event_count: events.len(),
             first_seen_epoch: events.first().map(|event| event.recorded_at_epoch),
             last_seen_epoch: events.last().map(|event| event.recorded_at_epoch),
@@ -237,6 +253,10 @@ fn text(bundle: &Bundle) -> String {
             skew.session_id, skew.broker_release, skew.skew, skew.recovery_action
         ));
     }
+    if let Some(SpoolStatus::Untrusted) = bundle.observation.spool_status {
+        out.push_str("observation spool root is untrusted\n");
+        return out;
+    }
     if bundle.observation.summary.is_empty() {
         out.push_str("no observation events retained\n");
         return out;
@@ -331,6 +351,7 @@ mod tests {
                 release_skew: Vec::new(),
             },
             observation: Observation {
+                spool_status: None,
                 event_count: 1,
                 first_seen_epoch: Some(1),
                 last_seen_epoch: Some(2),
@@ -377,6 +398,7 @@ mod tests {
                 release_skew: Vec::new(),
             },
             observation: Observation {
+                spool_status: None,
                 event_count: 0,
                 first_seen_epoch: None,
                 last_seen_epoch: None,

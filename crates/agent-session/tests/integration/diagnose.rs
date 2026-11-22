@@ -9,11 +9,17 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
+
+fn state_fixture() -> (tempfile::TempDir, PathBuf) {
+    let temporary = tempfile::TempDir::new().expect("temporary state");
+    let root = temporary.path().canonicalize().expect("physical temp dir");
+    (temporary, root)
+}
 
 fn diagnose(state_dir: &Path, args: &[&str]) -> CmdOutput {
     let mut full = vec!["--state-dir", state_dir.to_str().expect("state dir UTF-8")];
@@ -60,8 +66,8 @@ fn event(code: &str, severity: &str, epoch: i64, recovery: Option<&str>) -> Valu
 /// cold host must get an answer, not an error they then have to diagnose.
 #[test]
 fn diagnose_reports_a_healthy_empty_plane_without_any_control_plane_state() {
-    let temporary = tempfile::TempDir::new().expect("temporary state");
-    let state_dir = temporary.path();
+    let (_temporary, root) = state_fixture();
+    let state_dir = root.as_path();
 
     let json_output = diagnose(state_dir, &["--format", "json"]);
     assert_eq!(json_output.code, 0, "stderr={}", json_output.stderr_text());
@@ -85,12 +91,48 @@ fn diagnose_reports_a_healthy_empty_plane_without_any_control_plane_state() {
     );
 }
 
+#[test]
+fn diagnose_reports_an_untrusted_spool_under_a_symlinked_ancestor() {
+    let (_temporary, root) = state_fixture();
+    let real_state = root.join("real/state");
+    fs::create_dir_all(&real_state).expect("real state directory");
+    let linked = root.join("linked");
+    std::os::unix::fs::symlink(root.join("real"), &linked).expect("symlink ancestor");
+    let state_dir = linked.join("state");
+
+    let text_output = diagnose(&state_dir, &[]);
+    assert_eq!(text_output.code, 0, "stderr={}", text_output.stderr_text());
+    let rendered = text_output.stdout_text();
+    assert!(
+        rendered.contains("observation spool root is untrusted"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("no observation events retained"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains(linked.to_str().expect("UTF-8 fixture path")));
+
+    let json_output = diagnose(&state_dir, &["--format", "json"]);
+    assert_eq!(json_output.code, 0, "stderr={}", json_output.stderr_text());
+    let bundle = json_output.stdout_json()["data"].clone();
+    assert_eq!(bundle["observation"]["spool_status"], "untrusted");
+    assert_eq!(bundle["observation"]["event_count"], 0);
+    assert_eq!(bundle["health"], "degraded");
+    assert!(
+        !json_output
+            .stdout_text()
+            .contains(linked.to_str().expect("UTF-8 fixture path"))
+    );
+    assert!(!real_state.join("observation").exists());
+}
+
 /// The bundle aggregates the plane into per-code counters with a seen window, and
 /// it carries the recovery action forward so the operator gets one next step.
 #[test]
 fn diagnose_aggregates_codes_and_projects_degraded_health() {
-    let temporary = tempfile::TempDir::new().expect("temporary state");
-    let state_dir = temporary.path();
+    let (_temporary, root) = state_fixture();
+    let state_dir = root.as_path();
     append_event(state_dir, &event("dispatch-completed", "info", 100, None));
     append_event(state_dir, &event("dispatch-completed", "info", 110, None));
     append_event(
@@ -139,8 +181,8 @@ fn diagnose_aggregates_codes_and_projects_degraded_health() {
 /// every occurrence.
 #[test]
 fn diagnose_bounds_the_recent_slice_without_losing_the_counters() {
-    let temporary = tempfile::TempDir::new().expect("temporary state");
-    let state_dir = temporary.path();
+    let (_temporary, root) = state_fixture();
+    let state_dir = root.as_path();
     for epoch in 1..=10 {
         append_event(state_dir, &event("dispatch-completed", "info", epoch, None));
     }
@@ -162,8 +204,8 @@ fn diagnose_bounds_the_recent_slice_without_losing_the_counters() {
 /// a hook failure count.
 #[test]
 fn diagnose_reports_broker_release_skew_with_its_bounded_recovery() {
-    let temporary = tempfile::TempDir::new().expect("temporary state");
-    let state_dir = temporary.path();
+    let (_temporary, root) = state_fixture();
+    let state_dir = root.as_path();
     let coordination = state_dir.join("coordination");
     fs::create_dir_all(&coordination).expect("coordination directory");
     let registry = coordination.join("registry.json");
@@ -221,8 +263,8 @@ fn diagnose_reports_broker_release_skew_with_its_bounded_recovery() {
 /// it must not become a reason the diagnosis itself fails.
 #[test]
 fn diagnose_survives_an_unreadable_coordination_registry() {
-    let temporary = tempfile::TempDir::new().expect("temporary state");
-    let state_dir = temporary.path();
+    let (_temporary, root) = state_fixture();
+    let state_dir = root.as_path();
     let coordination = state_dir.join("coordination");
     fs::create_dir_all(&coordination).expect("coordination directory");
     let registry = coordination.join("registry.json");

@@ -292,9 +292,10 @@ pub fn append(state_root: &Path, event: &Event) -> Result<(), SpoolError> {
 }
 
 /// Read the most recent events across every retained segment, oldest first.
+/// An absent spool is empty. An untrusted spool is refused without creating it.
 pub fn read_recent(state_root: &Path, limit: usize) -> Result<Vec<Event>, SpoolError> {
     let directory = spool_root(state_root);
-    if !directory.is_dir() {
+    if !check_spool_root(&directory, false)? {
         return Ok(Vec::new());
     }
     let mut events = Vec::new();
@@ -419,10 +420,16 @@ fn lock_spool(directory: &Path) -> Result<SpoolLock, SpoolError> {
 }
 
 fn ensure_spool_root(state_root: &Path) -> Result<PathBuf, SpoolError> {
-    if !state_root.is_absolute() {
+    let directory = spool_root(state_root);
+    check_spool_root(&directory, true)?;
+    Ok(directory)
+}
+
+/// Check the writer's trust rules and report whether the spool is present.
+fn check_spool_root(directory: &Path, create_missing: bool) -> Result<bool, SpoolError> {
+    if !directory.is_absolute() {
         return Err(SpoolError::Untrusted);
     }
-    let directory = spool_root(state_root);
     for ancestor in directory
         .ancestors()
         .collect::<Vec<_>>()
@@ -436,6 +443,9 @@ fn ensure_spool_root(state_root: &Path) -> Result<PathBuf, SpoolError> {
             }
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if !create_missing {
+                    return Ok(false);
+                }
                 fs::create_dir(ancestor).map_err(|error| classify(&error))?;
                 fs::set_permissions(ancestor, fs::Permissions::from_mode(0o700))
                     .map_err(|_| SpoolError::Untrusted)?;
@@ -443,14 +453,14 @@ fn ensure_spool_root(state_root: &Path) -> Result<PathBuf, SpoolError> {
             Err(_) => return Err(SpoolError::Unavailable),
         }
     }
-    let metadata = fs::symlink_metadata(&directory).map_err(|_| SpoolError::Unavailable)?;
+    let metadata = fs::symlink_metadata(directory).map_err(|_| SpoolError::Unavailable)?;
     if !metadata.is_dir()
         || metadata.uid() != unsafe { libc::geteuid() }
         || metadata.permissions().mode() & 0o077 != 0
     {
         return Err(SpoolError::Untrusted);
     }
-    Ok(directory)
+    Ok(true)
 }
 
 fn segment_paths(directory: &Path) -> Vec<PathBuf> {
