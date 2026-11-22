@@ -22,6 +22,7 @@ impl PromptResponseFailure {
 #[derive(Debug)]
 pub(crate) enum PromptSubmissionFailure {
     NotDispatched,
+    MailboxComposerBlocked(mailbox_notice::ComposerDeferral),
     NotConfirmed,
     AcknowledgementUnknown,
 }

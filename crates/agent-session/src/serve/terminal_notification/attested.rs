@@ -1,5 +1,7 @@
 //! Controller notice admission and confirmation share the bounded Codex owner.
 use super::*;
+use crate::codex_app_server::mailbox_notice::ComposerDeferral;
+use crate::codex_app_server::prompt_submit::PromptSubmissionFailure;
 use crate::send::codex_notice::Prepared;
 use std::time::Instant;
 
@@ -9,8 +11,37 @@ pub(super) async fn dispatch(
     candidate: crate::coordination::NotificationCandidate,
     expected_turn: Option<String>,
 ) {
-    let response = submit(&state, &record, &candidate, expected_turn).await;
     let context = state.context.clone();
+    let response = match submit(&state, &record, &candidate, expected_turn).await {
+        Ok(response) => response,
+        Err(deferral) => {
+            // The receiver verified the exact claim and refused before writing the prompt.
+            let _ = tokio::task::spawn_blocking(move || {
+                crate::coordination::mark_notification_known_failure(
+                    &context,
+                    &candidate,
+                    deferral.reason(),
+                    COORDINATION_NOTIFICATION_RETRY,
+                )
+            })
+            .await;
+            return;
+        }
+    };
+    if let Some(deferral) = response
+        .extensions()
+        .get::<CliError>()
+        .and_then(ComposerDeferral::from_error)
+    {
+        update_notification_deferred(
+            &state,
+            &candidate,
+            deferral.reason(),
+            COORDINATION_NOTIFICATION_RETRY,
+        )
+        .await;
+        return;
+    }
     if response.status().is_success() {
         let _ = tokio::task::spawn_blocking(move || {
             crate::coordination::mark_notification_submitted(&context, &candidate)
@@ -38,15 +69,15 @@ async fn submit(
     record: &SessionRecord,
     candidate: &crate::coordination::NotificationCandidate,
     expected_turn: Option<String>,
-) -> Response {
+) -> Result<Response, ComposerDeferral> {
     if codex_app_server::thread_attached_path(record).is_some_and(Path::is_file)
         && let Err(error) = codex_app_server::guarded::Client::attached_thread(record)
     {
-        return envelope_err(CliError::unavailable(
+        return Ok(envelope_err(CliError::unavailable(
             error.code(),
             "Codex control attachment does not match the bound conversation",
             None,
-        ));
+        )));
     }
     let launch = candidate.target_incarnation.clone();
     let handle = match wait_for_structured_prompt_control(
@@ -59,7 +90,7 @@ async fn submit(
     .await
     {
         Ok(handle) => handle,
-        Err(response) => return response,
+        Err(response) => return Ok(response),
     };
     let started = Instant::now();
     let deadline = started + Duration::from_secs(15);
@@ -170,15 +201,16 @@ async fn submit(
     .await;
     let (record_lock, current, prepared) = match prepared {
         Ok(Ok(value)) => value,
-        Ok(Err(error)) => return envelope_err(error),
-        Err(_) => return join_err(),
+        Ok(Err(error)) => return Ok(envelope_err(error)),
+        Err(_) => return Ok(join_err()),
     };
     let write = codex_app_server::mailbox_notice::Write {
         expected: Box::new(current),
         candidate: candidate.clone(),
         expected_turn: expected_turn.clone(),
-        verify_composer_tmux: prepared.verify_at_write().then(|| state.tmux_bin.clone()),
-        require_never_used: prepared.is_first_wake(),
+        idle_composer: expected_turn
+            .is_none()
+            .then(|| (state.tmux_bin.clone(), prepared.idle_write_check())),
         deadline,
     };
     // The receiver reacquires and revalidates the lock at the actual write.
@@ -187,21 +219,27 @@ async fn submit(
         handle
             .steer_prompt(&text, turn, Some(prepared.client_id()), Some(write))
             .await
+            .map_err(|_| PromptSubmissionFailure::NotConfirmed)
     } else {
         handle
             .mailbox_prompt(&text, prepared.client_id(), write)
             .await
-            .map_err(|_| "mailbox notice unconfirmed".to_string())
     };
     let context = state.context.clone();
-    match tokio::task::spawn_blocking(move || match submitted {
-        Ok(turn) => prepared.confirm(&context, &text, &turn),
-        Err(_) => Err(prepared.unknown(&context)),
-    })
-    .await
-    {
-        Ok(Ok(())) => envelope_ok(json!({"submitted":true})),
-        Ok(Err(error)) => envelope_err(error),
-        Err(_) => join_err(),
+    if let Err(PromptSubmissionFailure::MailboxComposerBlocked(deferral)) = submitted {
+        let _ = tokio::task::spawn_blocking(move || prepared.drop_without_write(&context)).await;
+        return Err(deferral);
     }
+    Ok(
+        match tokio::task::spawn_blocking(move || match submitted {
+            Ok(turn) => prepared.confirm(&context, &text, &turn),
+            Err(_) => Err(prepared.unknown(&context)),
+        })
+        .await
+        {
+            Ok(Ok(())) => envelope_ok(json!({"submitted":true})),
+            Ok(Err(error)) => envelope_err(error),
+            Err(_) => join_err(),
+        },
+    )
 }

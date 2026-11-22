@@ -5,13 +5,42 @@ use pretty_assertions::assert_eq;
 
 #[tokio::test]
 async fn mailbox_native_start_and_steer_confirm_exact_rows_after_provider_ingress() {
-    for working in [false, true] {
+    native_wakes(&[(false, None), (true, None)]).await;
+}
+
+#[tokio::test]
+async fn mailbox_native_draft_defers_until_composer_clears() {
+    native_wakes(&[(false, Some(Draft::BeforeClaim))]).await;
+}
+
+#[tokio::test]
+async fn mailbox_native_draft_at_write_retries_without_starting_a_turn() {
+    native_wakes(&[(false, Some(Draft::AfterObservation))]).await;
+}
+
+#[derive(Clone, Copy)]
+enum Draft {
+    BeforeClaim,
+    AfterObservation,
+}
+
+async fn native_wakes(cases: &[(bool, Option<Draft>)]) {
+    for &(working, draft_boundary) in cases {
         let lock = GlobalStateLock::new();
         let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
         let tmp = tempfile::tempdir_in("/tmp").unwrap();
         seed_session_with_runtime(tmp.path(), "alpha", "codex", "modeled-alpha");
         let launch = seed_codex_app_server_session(tmp.path(), "beta");
-        let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let state = state(tmp.path(), Some(TOKEN), fixture::composer_tmux(tmp.path(), &launch));
+        let composer = tmp.path().join("composer");
+        let draft = "  Unsent operator text.  ".as_bytes();
+        match draft_boundary {
+            Some(Draft::BeforeClaim) => fs::write(&composer, draft).unwrap(),
+            Some(Draft::AfterObservation) => {
+                fs::write(tmp.path().join("draft-after-capture"), draft).unwrap()
+            }
+            None => {}
+        }
         let record = fixture::bind(&state.context, "beta", tmp.path(), "mailbox-thread");
         codex_app_server::replace_thread_binding(&record, "mailbox-thread").unwrap();
         activity::activate_runtime(&state.context, &record).unwrap();
@@ -66,9 +95,16 @@ async fn mailbox_native_start_and_steer_confirm_exact_rows_after_provider_ingres
                         fixture::append(&transcript, body, client, turn);
                         // Ingress arrives before the acknowledgment. It must be able
                         // to acquire the record lock after the native write.
-                        socket.send(ClientMessage::Text(json!({"method":"turn/started","params":{
-                            "threadId":"mailbox-thread","turn":{"id":turn,"status":"inProgress"}
-                        }}).to_string().into())).await.unwrap();
+                        socket
+                        .send(ClientMessage::Text(
+                            json!({"method":"turn/started","params":{
+                                "threadId":"mailbox-thread","turn":{"id":turn,"status":"inProgress"}
+                            }})
+                            .to_string()
+                            .into(),
+                        ))
+                        .await
+                        .unwrap();
                         sent.send(request.clone()).unwrap();
                         if working {
                             json!({"turnId":turn})
@@ -111,6 +147,43 @@ async fn mailbox_native_start_and_steer_confirm_exact_rows_after_provider_ingres
         )
         .await
         .unwrap();
+        if let Some(boundary) = draft_boundary {
+            assert!(
+                observed.try_recv().is_err(),
+                "native turn started under an operator draft"
+            );
+            assert_eq!(fs::read(&composer).unwrap(), draft);
+            let queued = notification_fixture(tmp.path());
+            assert_eq!(queued["state"], "queued");
+            assert_eq!(
+                queued["attempted_generation"],
+                match boundary {
+                    Draft::BeforeClaim => json!(0),
+                    Draft::AfterObservation => queued["generation"].clone(),
+                },
+            );
+            assert_eq!(queued["last_reason"], "recipient-composer-not-empty");
+            let attempt = queued["attempt_history"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap();
+            assert_eq!(attempt["generation"], queued["generation"]);
+            assert_eq!(attempt["reason"], "recipient-composer-not-empty");
+            fs::write(&composer, "").unwrap();
+            let due = std::time::UNIX_EPOCH
+                + Duration::from_secs(queued["next_attempt_at_epoch"].as_u64().unwrap());
+            tokio::time::sleep(
+                due.duration_since(std::time::SystemTime::now())
+                    .unwrap_or_default(),
+            )
+            .await;
+            drain_coordination_notifications(state.clone()).await;
+            assert_eq!(
+                notification_fixture(tmp.path())["notified_generation"],
+                queued["generation"]
+            );
+        }
         let request = observed.try_recv().expect("one native mutation");
         assert_eq!(
             notification_fixture(tmp.path())["state"],
@@ -142,6 +215,7 @@ async fn mailbox_native_start_and_steer_confirm_exact_rows_after_provider_ingres
             observed.try_recv().is_err(),
             "the consumed generation cannot write twice"
         );
+        assert!(!tmp.path().join("terminal-write").exists());
         control.abort();
         let _ = control.await;
         peer.abort();

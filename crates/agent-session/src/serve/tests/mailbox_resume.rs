@@ -17,7 +17,7 @@ impl ResumedFixture {
         let temp = tempfile::TempDir::new().unwrap();
         seed_session_with_runtime(temp.path(), "alpha", "codex", "modeled-alpha");
         seed_codex_app_server_session(temp.path(), "beta");
-        let state = state(temp.path(), Some(TOKEN), minimal_tmux(temp.path()));
+        let state = state(temp.path(), Some(TOKEN), fixture::composer_tmux(temp.path(), "resumed-runtime"));
         let mut record = load_session_record(&state.context, "beta").unwrap();
         crate::activity::activate_runtime(&state.context, &record).unwrap();
         for kind in ["turn_started", "turn_completed"] {

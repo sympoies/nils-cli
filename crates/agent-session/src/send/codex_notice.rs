@@ -9,7 +9,7 @@ pub(crate) mod first_wake;
 enum Origin {
     Existing {
         baseline: Baseline,
-        verify_at_write: bool,
+        live_rollout: bool,
     },
     First(LiveRollout),
 }
@@ -49,7 +49,7 @@ impl Prepared {
             deadline,
             Origin::Existing {
                 baseline,
-                verify_at_write: false,
+                live_rollout: false,
             },
             recovery,
             claim_key,
@@ -62,14 +62,25 @@ impl Prepared {
         text: &str,
         started: Instant,
         deadline: Instant,
-        first_wake_tmux: Option<&Path>,
+        idle_tmux: Option<&Path>,
         claim_key: impl FnOnce() -> Result<(), CliError>,
     ) -> Result<Self, CliError> {
-        let origin = match (codex_notice::capture(record), first_wake_tmux) {
-            (Some(baseline), _) => Origin::Existing {
-                baseline,
-                verify_at_write: false,
-            },
+        let origin = match (codex_notice::capture(record), idle_tmux) {
+            (Some(baseline), tmux) => {
+                if let Some(tmux) = tmux {
+                    first_wake::check(
+                        context,
+                        record,
+                        tmux,
+                        deadline,
+                        first_wake::Check::Composer,
+                    )?;
+                }
+                Origin::Existing {
+                    baseline,
+                    live_rollout: false,
+                }
+            }
             (None, Some(tmux)) => first_wake::observe(context, record, tmux, deadline)?,
             (None, None) => return Err(claude_notice::runtime::baseline_unavailable(record)),
         };
@@ -116,19 +127,17 @@ impl Prepared {
         })
     }
 
-    pub(crate) fn is_first_wake(&self) -> bool {
-        matches!(self.origin, Origin::First(_))
-    }
-
-    pub(crate) fn verify_at_write(&self) -> bool {
-        matches!(
-            self.origin,
-            Origin::First(_)
-                | Origin::Existing {
-                    verify_at_write: true,
-                    ..
-                }
-        )
+    pub(crate) fn idle_write_check(&self) -> first_wake::Check {
+        match self.origin {
+            Origin::First(_) => first_wake::Check::NeverUsed,
+            Origin::Existing {
+                live_rollout: true, ..
+            } => first_wake::Check::LiveIdle,
+            Origin::Existing {
+                live_rollout: false,
+                ..
+            } => first_wake::Check::Composer,
+        }
     }
 
     pub(crate) fn client_id(&self) -> &str {
@@ -142,15 +151,23 @@ impl Prepared {
     }
 
     pub(crate) fn unknown(self, context: &CliContext) -> CliError {
+        self.finish_without_proof(context, store::Reason::HistoryUnavailable);
+        unconfirmed()
+    }
+
+    pub(crate) fn drop_without_write(self, context: &CliContext) {
+        self.finish_without_proof(context, store::Reason::Drop);
+    }
+
+    fn finish_without_proof(self, context: &CliContext, reason: store::Reason) {
         let _ = store::finish(
             context,
             &self.token,
             None,
-            store::Reason::HistoryUnavailable,
+            reason,
             self.started.elapsed(),
             self.deadline,
         );
-        unconfirmed()
     }
 
     /// The caller transfers/releases its record lock before provider ingress.

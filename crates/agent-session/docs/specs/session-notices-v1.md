@@ -786,7 +786,17 @@ client ID checks.
 
 An existing rollout must be pinned before claiming an attempt. If history lookup
 cannot find the rollout for an idle wake, the controller can pin the exact live
-thread's validated file. Both controller routes carry the claim's client id; the controller
+thread's validated file. Every idle Codex mailbox wake checks the bound composer
+before claim and observes it again at the native write boundary. An occupied
+composer leaves the generation queued and records `recipient-composer-not-empty`
+in the attempt history. An unobservable composer records
+`recipient-composer-unobservable` and also defers delivery. These read-only checks
+preserve the draft, and the controller retries once the composer clears or an
+eligible in-turn checkpoint can handle the wake. A composer refusal at the native
+write boundary is retryable because the receiver has made no native write.
+Typing after the final pane snapshot remains non-atomic with the native write.
+
+Both controller routes carry the claim's client id; the controller
 reacquires and revalidates the record lock through the actual native write,
 then releases it before provider ingress. A native attempt without exact proof
 stays unconfirmed and cannot be confirmed by a later text/timestamp match.
