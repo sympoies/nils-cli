@@ -82,6 +82,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/agent-session/docs/runbooks/claude-switch-refusal-acceptance.md`
 - `crates/agent-session/docs/runbooks/codex-account-recovery-acceptance.md`
 - `crates/agent-session/docs/runbooks/lifecycle-journal.md`
+- `crates/agent-session/docs/runbooks/native-notice-acceptance.md`
 - `crates/agent-session/docs/runbooks/operator-rules.md`
 - `crates/agent-session/docs/runbooks/serve-daemon.md`
 - `crates/agent-session/docs/runbooks/session-lifecycle.md`

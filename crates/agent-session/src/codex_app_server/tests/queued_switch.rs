@@ -702,6 +702,7 @@ async fn resumed_control_subscribes_before_snapshot_and_projects_later_start() {
     });
     fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
     crate::write_session_record(&context, &record).unwrap();
+    bind_thread(&record, "resumed-thread").unwrap();
     crate::activity::activate_runtime(&context, &record).unwrap();
     let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
     let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();

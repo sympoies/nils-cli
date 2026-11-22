@@ -1,6 +1,8 @@
 //! Exact Codex prompt-hook identity for the managed resume record.
 use super::*;
-use crate::{ProviderResume, canonical_provider_resume_args, mutate_session_record};
+use crate::{
+    ProviderResume, canonical_provider_resume_args, codex_app_server, mutate_session_record,
+};
 
 pub(crate) fn ingest_provider_hook_fail_open(
     context: &CliContext,
@@ -120,6 +122,16 @@ pub(super) fn provider_resume_from_user_prompt_hook(
                     None,
                 ));
             }
+        }
+        if codex_app_server::app_server_owns_resume_binding(record)
+            && (record.provider_resume.is_none()
+                || !codex_app_server::thread_attachment_matches(record, session_id))
+        {
+            return Err(CliError::data(
+                "provider-hook-session-mismatch",
+                "Codex prompt hook identity requires an established app-server attachment",
+                None,
+            ));
         }
         if let Some(existing) = record.provider_resume.as_ref() {
             if existing.provider == agent.as_str() && existing.session_id == session_id {
