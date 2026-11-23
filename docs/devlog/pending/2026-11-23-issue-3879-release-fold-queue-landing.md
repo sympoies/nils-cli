@@ -3,19 +3,19 @@
 
 ### Result
 
-- The post-publication fold verifies the exact signed release squash against
-  its real parent and matches the full delta of the signed release bump.
+- The post-publication fold replays the signed release bump onto the exact
+  signed squash's parent and verifies the complete landed tree.
 
 ### Why / context
 
-- An earlier protected queue entry can land between the recorded release PR
-  base and the release squash.
+- An earlier protected queue entry can advance the release PR base or make
+  an independent edit to a file the release bump also changes.
 
 ### Evidence
 
-- The focused queue fixture reproduced the regression before the fix. The
-  full `devlog-fold-pr.test.cjs` suite passed afterward and rejected altered
-  landing proofs.
+- Focused fixtures reproduced the queue parent mismatch and the
+  clean same-file edit that changes both blob IDs. The full
+  `devlog-fold-pr.test.cjs` suite rejected altered landing proofs.
 
 ### Links
 

@@ -198,11 +198,12 @@ its protected squash. The fold checks the verified annotated tag and signed
 release head, then finds the exact associated merged release PR and verifies
 the signature of its squash in protected main history. The signed bump's
 parent must be an ancestor of or equal to the recorded PR base, which must be
-an ancestor of or equal to the squash's sole parent. The fold compares the
-complete changes in paths, object IDs and modes from each commit's own
-parent. The deltas must match exactly. This lets an earlier queue entry
-advance main and keeps the verified squash as the anchor after the release
-branch is deleted.
+an ancestor of or equal to the squash's sole parent. The fold uses Git's
+three-way merge to replay the signed bump onto that parent. The replay must
+apply cleanly, change the parent and produce the same complete tree as the
+squash, including every path, object ID and mode. This preserves independent
+edits from earlier queue entries, even in a release-bumped file. The verified
+squash stays the anchor after the release branch is deleted.
 
 The artifact binds the release, main anchor, branch, exact base, signed App
 head, full tree and captured paths. Replay requires the anchor in the recorded

@@ -19,9 +19,13 @@ function isAncestor(git, ancestor, descendant) {
   }
 }
 
-function releaseDelta(git, parent, commit) {
-  return git("diff-tree", "--no-commit-id", "--raw", "-r", "--no-renames", "--no-abbrev",
-    "--ignore-submodules=none", "-z", parent, commit, "--");
+function replayReleaseTree(git, parent, source) {
+  try {
+    return git("merge-tree", "--write-tree", parent, source);
+  } catch (error) {
+    if (error.status !== 1) throw error;
+    throw new Error("Governed release bump conflicts with the squash parent");
+  }
 }
 
 async function governedMainAnchor({ github, repo, fullName, git, tag, ref, annotated, source, publishedAt }) {
@@ -59,7 +63,7 @@ async function governedMainAnchor({ github, repo, fullName, git, tag, ref, annot
   const sourceParent = head.parents[0].sha;
   if (!isAncestor(git, merge, "HEAD"))
     throw new Error("Governed release source does not match a reachable protected main squash");
-  const [parent, squashSubject] = git("show", "-s", "--format=%P%n%s", merge).split("\n");
+  const [parent, squashSubject, squashTree] = git("show", "-s", "--format=%P%n%s%n%T", merge).split("\n");
   // An earlier queue entry can advance main beyond the base recorded on the PR.
   if (!oid(parent) || squashSubject !== `${subject} (#${pr.number})` ||
       !isAncestor(git, sourceParent, pr.base.sha) || !isAncestor(git, pr.base.sha, parent))
@@ -68,10 +72,10 @@ async function governedMainAnchor({ github, repo, fullName, git, tag, ref, annot
   if (landing?.sha !== merge || !verified(landing.commit?.verification))
     throw new Error("Governed release squash is not the exact verified landing commit");
 
-  // Raw NUL-delimited entries bind every path, old and new object ID, and mode.
-  // Reject lossy UTF-8 decoding by the checkout Git reader.
-  const delta = releaseDelta(git, sourceParent, source);
-  if (!delta || delta.includes("\uFFFD") || delta !== releaseDelta(git, parent, merge))
+  // The signed bump's sole parent is the merge base. Replaying its change
+  // preserves earlier queue edits, including independent edits to the same file.
+  const replayedTree = replayReleaseTree(git, parent, source);
+  if (replayedTree !== squashTree || replayedTree === git("rev-parse", `${parent}^{tree}`))
     throw new Error("Governed release squash does not preserve the signed release delta");
   return merge;
 }
