@@ -60,16 +60,24 @@ class QueueDetectionTests(unittest.TestCase):
         self.assertEqual(outputs['release_candidate'], release_candidate)
 
         workflow = (fixtures.ROOT / '.github/workflows/ci.yml').read_text()
-        condition = workflow.split('\n  full_validation:\n', 1)[1].split('    if: ', 1)[1].splitlines()[0]
+        caller = workflow.split('\n  full_validation:\n', 1)[1].split('\n  nightly_report:', 1)[0]
+        condition = caller.split('    if: ', 1)[1].splitlines()[0]
+        clippy_only = re.search(r'macos_clippy_only: \$\{\{ (.+) \}\}', caller).group(1)
+        macos_only = re.search(r'macos_partitions_only: \$\{\{ (.+) \}\}', caller).group(1)
         context = {'github.event_name': 'merge_group', 'github.ref': 'refs/heads/queue',
                    'needs.changes.result': 'success'}
-        expression = re.sub(r'needs\.changes\.outputs\.(\w+)',
-                            lambda m: repr(outputs.get(m[1], '')), condition)
-        for key, value in context.items():
-            expression = expression.replace(key, repr(value))
-        selected = eval(expression.replace('always()', 'True').replace('&&', 'and').replace('||', 'or'),
+
+        def evaluate(expression):
+            expression = re.sub(r'needs\.changes\.outputs\.(\w+)',
+                                lambda m: repr(outputs.get(m[1], '')), expression)
+            for key, value in context.items():
+                expression = expression.replace(key, repr(value))
+            return eval(expression.replace('always()', 'True').replace('&&', 'and').replace('||', 'or'),
                         {'__builtins__': {}}, {})
-        self.assertEqual(selected, instrumented_macos, 'instrumented macOS queue selection')
+
+        self.assertTrue(evaluate(condition), 'shared macOS workflow must run for Clippy on every merge group')
+        self.assertEqual(not evaluate(clippy_only), instrumented_macos, 'instrumented macOS queue selection')
+        self.assertEqual(not evaluate(macos_only), release_candidate == 'true', 'full release validation selection')
         self.assertEqual(outputs['queue_docs_only'], str(not instrumented_macos).lower())
 
     def test_prose_only_queue_preserves_the_fast_lane(self):
