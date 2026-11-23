@@ -173,6 +173,7 @@ pub(super) fn deliver(
     })?;
     let consumed = Cell::new(false);
     let mut token = None;
+    let mut delivery = send_guard::key::Attempt::default();
     let mut stage = "admission";
     let mut failure_reason = store::Reason::Guard;
     let result = (|| {
@@ -206,7 +207,8 @@ pub(super) fn deliver(
         token = Some(
             store::consume(context, claim, deadline, || {
                 consumed.set(true);
-                admission.claim_key()
+                delivery = admission.claim_key()?;
+                Ok(())
             })
             .map_err(|error| {
                 if error.code() == "notice-native-unavailable"
@@ -238,6 +240,7 @@ pub(super) fn deliver(
         // record lock BEFORE the module enters prompt.submit.
         drop(manual.record_lock.take());
         stage = "submit";
+        delivery.dispatch();
         connection
             .respond(
                 &json!({"schema_version":"agent-session.claude-notice-authorized.v1",
@@ -273,6 +276,9 @@ pub(super) fn deliver(
             } else {
                 store::Reason::ApiResultMismatch
             };
+            if matches!(failure_reason, store::Reason::Drop) && report.after_empty {
+                delivery.composer(send_guard::key::Composer::Absent);
+            }
             connection
                 .respond(&json!({"received":true}), deadline)
                 .map_err(|_| runtime::unavailable())?;
@@ -314,6 +320,7 @@ pub(super) fn deliver(
             attempt.started.elapsed(),
             deadline,
         )?;
+        delivery.submitted();
         bridge::remaining(deadline).map_err(|_| runtime::unavailable())?;
         Ok(super::SendResult {
             id: record.id.clone(),

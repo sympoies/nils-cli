@@ -177,7 +177,10 @@ elif command == 'paste-buffer':
         d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
         p.write_text(json.dumps(d))
 elif command == 'display-message':
-    print_cursor()
+    if '#{session_last_attached}' in args[-1]:
+        print('0|0|$42|%42|42|0|0')
+    else:
+        print_cursor()
 elif command == 'send-keys' and args[-2:] == ['Right', 'Left']:
     cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len((root / 'composer').read_text())
     count = int(args[args.index('-N') + 1])
@@ -239,6 +242,10 @@ elif command == 'send-keys' and args[-1] in ('BSpace', 'DC'):
         else: text = text[:max(0, cursor - count)] + text[cursor:]
         (root / 'composer').write_text(text)
         if (root / 'redraw-after-delete').exists(): (root / 'redraw-pending').touch()
+elif command == 'if-shell' and args[-2] == 'send-keys -t %42 Enter':
+    with (root / 'calls').open('a') as out: out.write(json.dumps(['send-keys', '-t', '%42', 'Enter']) + '\n')
+    (root / 'submissions').write_text(json.dumps((root / 'composer').read_text()) + '\n')
+    (root / 'composer').write_text('')
 elif command == 'send-keys' and args[-1] == 'Enter':
     if (root / 'start-turn-on-enter').exists():
         p = root / 'state/sessions/guarded/activity.json'

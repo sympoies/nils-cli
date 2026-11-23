@@ -67,6 +67,7 @@ pub(super) fn deliver(
     preflight(client.idle().map_err(|error| {
         error.annotate(refusal(&record, error.code(), "admission", false, false))
     }))?;
+    let mut delivery = send_guard::key::Attempt::default();
     let notice = if args.guards.notice_envelope {
         Some(codex_notice::Prepared::new(
             context,
@@ -75,10 +76,13 @@ pub(super) fn deliver(
             attempt.started,
             admission.deadline,
             None,
-            || admission.claim_key(),
+            || {
+                delivery = admission.claim_key()?;
+                Ok(())
+            },
         )?)
     } else {
-        admission.claim_key()?;
+        delivery = admission.claim_key()?;
         None
     };
     preflight(admission.check(None, "claimed"))?;
@@ -91,10 +95,14 @@ pub(super) fn deliver(
     prepare_guarded_input(context, &mut record, true, &mut prepared)?;
     record.updated_at = Zoned::now().timestamp().to_string();
     write_session_record(context, &record)?;
+    let generated_id = (delivery.is_keyed() && input.is_none() && text.trim() != "/compact")
+        .then(|| format!("agent-session-{}", uuid::Uuid::new_v4().simple()));
     let client_message_id = notice
         .as_ref()
         .map(|notice| notice.client_id())
-        .or(args.guards.client_message_id.as_deref());
+        .or(args.guards.client_message_id.as_deref())
+        .or(generated_id.as_deref());
+    delivery.prepare_native(&record, client_message_id, &text)?;
     let _ = reply_delivery::consume(
         context,
         &record,
@@ -102,8 +110,10 @@ pub(super) fn deliver(
         lock,
         reply_delivery::AdmittedInput::Native(&mut client),
     )?;
+    delivery.dispatch();
     let mut accepted_turn = None;
     let dispatched = client.dispatch(&text, input.as_deref(), client_message_id, |turn_id| {
+        delivery.submitted();
         accepted_turn = Some(turn_id.to_owned());
         (attempt.acknowledged)(&record, turn_id);
         // Acknowledged input may wait for synchronous provider ingress
@@ -113,7 +123,12 @@ pub(super) fn deliver(
         drop(manual_input.record_lock.take());
     });
     let confirmation = match dispatched {
-        Ok(confirmation) => confirmation,
+        Ok(confirmation) => {
+            if accepted_turn.is_none() {
+                delivery.submitted();
+            }
+            confirmation
+        }
         Err(error) => {
             if let Some(notice) = notice {
                 return Err(notice.unknown(context));

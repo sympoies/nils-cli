@@ -31,7 +31,7 @@ mod composer;
 pub(crate) mod drafts;
 pub(crate) mod response;
 pub(crate) use composer::require_empty_composer;
-mod key;
+pub(crate) mod key;
 mod observation;
 mod ownership;
 mod pasted;
@@ -103,7 +103,7 @@ impl Admission<'_> {
         )
     }
 
-    pub(crate) fn claim_key(&self) -> Result<(), CliError> {
+    pub(crate) fn claim_key(&self) -> Result<key::Attempt, CliError> {
         key::claim(
             self.context,
             self.record,

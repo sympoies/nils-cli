@@ -103,10 +103,11 @@ impl Server {
                                     let busy = mode == "busy" || (mode == "late-busy" && read_count >= 3)
                                         || (mode == "busy-after-claim" && claimed);
                                     let submitted = if mode.starts_with("hook-lock") && !confirmation_lock::ingest_after_lock(&claim_dir, mode) { None } else { submitted };
+                                    let submitted = if mode == "attempt-late-input" && !notice_root.join("publish-attempt").exists() { None } else { submitted };
                                     let submitted = if mode == "history-lag" && calls.iter().filter(|r| r["method"] == "thread/read" && r["params"]["includeTurns"] == true).count() == 1 { None } else { submitted };
                                     let mut turns = submitted.map_or(json!([]), |r| json!([{
                                         "id":"turn-one", "status":"inProgress", "items":[{
-                                            "type":"userMessage", "id":"input-one", "content": if mode == "native-images" {
+                                            "type":"userMessage", "id":"input-one", "clientId":r["params"]["clientUserMessageId"], "content": if mode == "native-images" {
                                                 // Codex thread/read can reconstruct one text part followed by the images.
                                                 let input = r["params"]["input"].as_array().unwrap();
                                                 let text: String = input.iter().filter_map(|item| item["text"].as_str()).collect();
@@ -131,7 +132,7 @@ impl Server {
                                     if mode.starts_with("hook-lock") {
                                         assert!(!confirmation_lock::record_available(&claim_dir), "admission lock must cover dispatch");
                                     }
-                                    if mode == "disconnect" { break; }
+                                    if matches!(mode, "disconnect" | "attempt-late-input") { break; }
                                     if notice_root.join("notice-mode").exists() {
                                         use std::io::Write;
                                         let path = notice_root.join("codex-home/sessions/rollout.jsonl");

@@ -108,6 +108,8 @@ pub enum Command {
     Diagnose(DiagnoseArgs),
     /// Send input (literal text and/or special keys) to a live session.
     Send(SendArgs),
+    /// Read or recover a keyed guarded-send or notice attempt.
+    Attempt(crate::send::attempt::AttemptArgs),
     /// Inspect and explicitly answer Claude permission hooks.
     Permission(permission::Args),
     /// Submit a display-only notice through guarded native delivery.

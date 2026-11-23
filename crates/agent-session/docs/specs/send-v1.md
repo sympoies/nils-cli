@@ -311,6 +311,72 @@ uncertain outcomes before choosing a new key. Deleting the session state also
 ends its deduplication history. Persistent storage must honor file and
 directory synchronization for restart durability.
 
+### Read back a guarded attempt
+
+```bash
+agent-session attempt status "$SESSION_ID" --expect-runtime "$RUNTIME_ID" \
+  --idempotency-key "$OPERATION_KEY" --format json
+```
+
+This read-only command returns `cli.agent-session.attempt.status.v1` with the
+resolved session `id`, requested `runtime_id`, and one of the following
+outcomes.
+
+| Outcome | Required evidence | Caller action |
+| --- | --- | --- |
+| `submitted` | A bound native acceptance, or a unique matching Codex client message and its matching input on the same provider thread and runtime. | Do not send again. Compaction acknowledgement proves start only. |
+| `not_submitted` | The claimed attempt ended before it could submit, or the bound native notice module attested a drop. | Check `composer` before any new attempt. |
+| `unknown` | The evidence is missing, unfinished, ambiguous, or belongs to another runtime. | Do not retry. |
+
+`not_submitted` includes `composer: "exact" | "absent" | "unknown"`. `exact`
+requires the original empty-composer admission, an unchanged detached terminal
+binding and record, and a read of the exact retained input. `absent` means the
+attempt did not paste, or the composer is observably empty. A different draft
+or a layout whose contents cannot be read exactly yields `unknown` and gives no
+recovery permission. The projection is limited to identity and outcome
+metadata.
+
+A tmux acknowledgement, a disappeared paste or pane, a transport timeout, idle
+state, and unchanged context usage give no per-attempt submission proof. A
+terminal Enter that might have reached tmux remains unknown in the absence of
+such proof. Unkeyed calls and preclaim refusals leave no read-back record.
+Existing preclaim rejection receipts report their own admission result.
+
+The claim stays in the stable session's state with no time-based expiry.
+Read-back is scoped to the requested runtime launch, generation, and provider
+session. Runtime replacement never releases the key. Missing, unreadable, or
+pre-read-back claims give `unknown`; retained correlated provider evidence is
+available only as long as the owning runtime can still read it. The native
+notice ledger keeps its existing retention. Deleting session state removes
+the claim. Run the command on the owning host with its state directory and
+local provider socket. Use the established remote transport to invoke the
+command on a remote owner. The `--host` option sets the host label. Treat an
+unreachable owner as unknown.
+
+#### Recover exact retained terminal input
+
+```bash
+agent-session attempt recover "$SESSION_ID" --expect-runtime "$RUNTIME_ID" \
+  --idempotency-key "$OPERATION_KEY" --format json
+```
+
+Recovery is an explicit one-shot operation. It requires the original keyed
+terminal text-and-Enter attempt to have stopped before its first possible Enter.
+It rechecks claim, identity, terminal attachment, exact input, provider idle
+and ingress, permission, restart, and account guards under the session lock.
+A replaced pane or a changed draft refuses. It sends one Enter to the retained
+composer without pasting or clearing input. Direct tmux input outside the
+managed session API is outside this guard. Claude and Codex native notices
+do not paste into the terminal.
+
+The original key remains claimed. The command durably consumes the recovery
+before sending Enter. A successful transport write returns
+`recovery_enter_sent: true` and `outcome: "unknown"`. Delivery may still be
+uncertain, so neither a second recovery nor a new send is authorized by that
+result. If an attempt reports both proven non-submission and absent input,
+submit again only with a fresh key and the normal idle and empty-composer
+admission guards.
+
 ### Native Claude notices
 
 Only the internal notice-envelope route can use the managed Claude module.
@@ -468,7 +534,7 @@ generation, revision, turn and Stop, with current structured idle and no pending
 ingress. A newer idle sample may replace the sample at that same binding; a
 backwards/future sample, busy, attention, newer work or changed binding refuses.
 The ephemeral proof never transfers to another attempt or releases a consumed
-key. Post-claim refusals remain unsafe to retry, even when they report no submit.
+key. Post-claim refusals require the per-attempt read-back above before any recovery.
 
 This recovery authorizes only the guarded send. It leaves the uncertain turn
 outcome, stored activity and completion history unchanged. Identity, pending
@@ -483,8 +549,7 @@ this indicates admission refused before a claim or pane input. Guard refusals
 at `claimed` or `submit` report `false`; missing retry metadata never authorizes
 replay. The notice queue retries safe busy or missing-completion refusals.
 Later idle evidence never releases a consumed key or retries an uncertain
-submission. A caller must inspect those outcomes rather than choose a new key
-automatically.
+submission. Use per-attempt read-back for an outcome after claim creation.
 
 Observation refusals include the failed `guard` and `stage` (`admission`,
 `claimed` for the recheck right after the idempotency claim, or `submit`),

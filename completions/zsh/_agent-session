@@ -278,6 +278,54 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ':id -- Session id:_default' \
 && ret=0
 ;;
+(attempt)
+_arguments "${_arguments_options[@]}" : \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_agent-session__subcmd__attempt_commands" \
+"*::: :->attempt" \
+&& ret=0
+
+    case $state in
+    (attempt)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agent-session-attempt-command-$line[1]:"
+        case $line[1] in
+            (status)
+_arguments "${_arguments_options[@]}" : \
+'--expect-runtime=[Runtime launch ID from the original attempt]:EXPECT_RUNTIME:_default' \
+'--idempotency-key=[Idempotency key from the original send or notice]:IDEMPOTENCY_KEY:_default' \
+'--tmux-bin=[]:TMUX_BIN:_files' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':session -- Managed session ID or an unambiguous prefix:_default' \
+&& ret=0
+;;
+(recover)
+_arguments "${_arguments_options[@]}" : \
+'--expect-runtime=[Runtime launch ID from the original attempt]:EXPECT_RUNTIME:_default' \
+'--idempotency-key=[Idempotency key from the original send or notice]:IDEMPOTENCY_KEY:_default' \
+'--tmux-bin=[]:TMUX_BIN:_files' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':session -- Managed session ID or an unambiguous prefix:_default' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (permission)
 _arguments "${_arguments_options[@]}" : \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
@@ -1642,6 +1690,7 @@ _agent-session_commands() {
 'logs:Print captured tmux pane output or a one-shot run log' \
 'diagnose:Print the redacted control-plane diagnostic bundle' \
 'send:Send input (literal text and/or special keys) to a live session' \
+'attempt:Read or recover a keyed guarded-send or notice attempt' \
 'permission:Inspect and explicitly answer Claude permission hooks' \
 'notice:Submit a display-only notice through guarded native delivery' \
 'notice-store:Verify retained native notice archives and the authenticated checkpoint' \
@@ -1737,6 +1786,24 @@ _agent-session__subcmd__activity__subcmd__status_commands() {
 _agent-session__subcmd__attach_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session attach commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__attempt_commands] )) ||
+_agent-session__subcmd__attempt_commands() {
+    local commands; commands=(
+'status:Read the result of a guarded send or notice' \
+'recover:Submit the exact retained input of a proven non-submission once' \
+    )
+    _describe -t commands 'agent-session attempt commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__attempt__subcmd__recover_commands] )) ||
+_agent-session__subcmd__attempt__subcmd__recover_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session attempt recover commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__attempt__subcmd__status_commands] )) ||
+_agent-session__subcmd__attempt__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session attempt status commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__auth-alert_commands] )) ||
 _agent-session__subcmd__auth-alert_commands() {
