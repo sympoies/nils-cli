@@ -1652,7 +1652,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__clear)
-            opts="-h --expect-idle --timeout --tmux-bin --format --state-dir --host --help"
+            opts="-h --expect-idle --timeout --tmux-bin --format --allow-unread-mail --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

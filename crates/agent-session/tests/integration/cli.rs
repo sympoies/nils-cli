@@ -8574,7 +8574,7 @@ fn claude_clear_command_preserves_next_turn_and_stop_resume_identity() {
                 "--format",
                 "json",
             ],
-            &[("AGENT_SESSION_FAKE_TMUX_LOG", &clear_log)],
+            &tmux_fixture::clear_environment(&clear_log, &clear_state),
         )
     });
     let deadline = Instant::now() + Duration::from_secs(5);

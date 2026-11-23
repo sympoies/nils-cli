@@ -4829,4 +4829,4 @@ async fn wake_from_open_usage(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

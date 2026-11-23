@@ -1,6 +1,6 @@
 use super::*;
 
-mod resume_binding;
+pub(crate) mod resume_binding;
 mod typed_causes;
 use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::{assert_eq, assert_ne};
@@ -4235,7 +4235,7 @@ async fn rejected_live_thread_and_failed_codex_commit_recover_through_rebind() {
                 tmux_bin: Some(tmux),
                 format: crate::OutputFormat::Json,
             },
-            false,
+            crate::conversation::Operation::Rebind,
         )
     })
     .await

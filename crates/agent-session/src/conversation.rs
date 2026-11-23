@@ -17,8 +17,8 @@ use crate::{
     CliContext, CliError, ProviderResume, SessionRecord, acquire_session_record_lock, activity,
     canonical_provider_resume_args,
     cli::{AgentKind, ConversationArgs, SpecialKey},
-    codex_app_server, ensure_same_session_identity, load_session_record, session_dir,
-    write_private_file, write_session_record,
+    codex_app_server, coordination, ensure_same_session_identity, load_session_record, send_guard,
+    session_dir, write_private_file, write_session_record,
 };
 
 const LIVE_FILE: &str = "provider-conversation.json";
@@ -323,10 +323,19 @@ fn require_claude_recovery_idle(
     require_idle(context, &projected)
 }
 
-pub(crate) fn run(context: &CliContext, args: ConversationArgs, clear: bool) -> i32 {
-    let command = if clear { "clear" } else { "rebind" };
+#[derive(Clone, Copy)]
+pub(crate) enum Operation {
+    Clear { allow_unread_mail: bool },
+    Rebind,
+}
+
+pub(crate) fn run(context: &CliContext, args: ConversationArgs, request: Operation) -> i32 {
+    let command = match request {
+        Operation::Clear { .. } => "clear",
+        Operation::Rebind => "rebind",
+    };
     let format = args.format;
-    match operation(context, args, clear) {
+    match operation(context, args, request) {
         Ok(view) => crate::render_single_success(command, format, &view, |view| {
             format!(
                 "{}: {} -> {}\n",
@@ -371,8 +380,9 @@ fn operation_guard(context: &CliContext, record: &SessionRecord) -> Result<fs::F
 fn operation(
     context: &CliContext,
     args: ConversationArgs,
-    clear: bool,
+    request: Operation,
 ) -> Result<ResultView, CliError> {
+    let clear = matches!(request, Operation::Clear { .. });
     let expected = load_session_record(context, &args.id)?;
     let agent = provider(&expected)?;
     let _operation_guard = operation_guard(context, &expected)?;
@@ -422,7 +432,7 @@ fn operation(
         } else {
             None
         };
-        if clear {
+        if let Operation::Clear { allow_unread_mail } = request {
             if let Some(observation) = live(context, &current)?
                 && Some(&observation.session_id) != old.as_ref()
             {
@@ -434,6 +444,11 @@ fn operation(
             }
             let _activity_lock =
                 activity::acquire_coordination_activity_lock(context, &current.id)?;
+            activity::refuse_if_blocked(
+                context,
+                &current,
+                "resolve the provider prompt before retrying clear",
+            )?;
             require_idle(context, &current)?;
             if agent == AgentKind::Codex {
                 let candidate = current
@@ -442,6 +457,34 @@ fn operation(
                     .map(|resume| resume.session_id.as_str());
                 codex_app_server::probe_idle_conversation(context, &current, candidate)?;
             }
+            let ingress =
+                activity::pending::probe_lock(context, &current.id)?.ok_or_else(|| {
+                    error(
+                        "send-provider-event-pending",
+                        "provider event ingestion is pending",
+                        &current,
+                    )
+                })?;
+            let _ingress = activity::pending::hold(context, &current.id, ingress);
+            coordination::unread::check(
+                context,
+                &current.id,
+                allow_unread_mail,
+                "retry_conversation_clear",
+            )?;
+            send_guard::Admission {
+                stopped_idle: &Default::default(),
+                context,
+                record: &current,
+                args: &send_guard::GuardArgs {
+                    require_empty_composer: true,
+                    ..Default::default()
+                },
+                tmux_bin: &tmux,
+                verify_composer: false,
+                deadline: Instant::now() + crate::send::guarded_hold_budget(&current, false),
+            }
+            .check_preserving_draft("admission")?;
             crate::codex_account::authorize_terminal_input_locked(context, &mut current.clone())?;
             crate::auto_resume::cancel_for_manual_input_locked(
                 context,
@@ -575,12 +618,19 @@ fn operation(
 }
 
 #[cfg(test)]
+#[path = "conversation/clear_admission_tests.rs"]
+mod clear_admission_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use std::os::unix::fs::PermissionsExt;
 
-    fn fixture(
+    const CLEAR: Operation = Operation::Clear {
+        allow_unread_mail: false,
+    };
+    pub(super) fn fixture(
         tmp: &tempfile::TempDir,
         agent: AgentKind,
     ) -> (CliContext, SessionRecord, std::path::PathBuf) {
@@ -622,11 +672,27 @@ mod tests {
         activity::activate_runtime(&context, &created.record).unwrap();
         activity::with_conversation_rebind(&context, &created.record, true, || Ok(())).unwrap();
         let tmux = tmp.path().join("tmux");
+        let state_dir = crate::display_path(&context.state_dir);
+        let runtime_id = &created.record.runtime.as_ref().unwrap().launch_id;
         fs::write(
             &tmux,
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$@\" >> {}\nexit 0\n",
-                shell_words::quote(&tmp.path().join("tmux.calls").to_string_lossy())
+                r#"#!/bin/sh
+printf '%s\n' "$@" >> {calls}
+case "$1" in
+  capture-pane) printf '%s\n' '────────────────────' '❯ ' '────────────────────' ;;
+  show-environment)
+    case "$4" in
+      AGENT_SESSION_ID) printf '%s\n' AGENT_SESSION_ID={id} ;;
+      AGENT_SESSION_STATE_DIR) printf '%s\n' AGENT_SESSION_STATE_DIR={state_dir} ;;
+      AGENT_SESSION_RUNTIME_ID) printf '%s\n' AGENT_SESSION_RUNTIME_ID={runtime_id} ;;
+    esac ;;
+esac
+"#,
+                calls = shell_words::quote(&tmp.path().join("tmux.calls").to_string_lossy()),
+                id = shell_words::quote(&created.record.id),
+                state_dir = shell_words::quote(&state_dir),
+                runtime_id = shell_words::quote(runtime_id),
             ),
         )
         .unwrap();
@@ -671,7 +737,7 @@ mod tests {
     fn clear_refuses_unknown_and_working_snapshots_without_terminal_input() {
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record, tmux) = fixture(&tmp, AgentKind::Claude);
-        for phase in ["starting", "working", "needs_input", "unknown"] {
+        for phase in ["starting", "working", "unknown"] {
             let _ = fs::remove_file(tmp.path().join("tmux.calls"));
             let path = session_dir(&context, &record.id).join("activity.json");
             let mut document: serde_json::Value =
@@ -686,7 +752,7 @@ mod tests {
                 format: crate::OutputFormat::Json,
             };
             assert_eq!(
-                operation(&context, args, true).unwrap_err().code(),
+                operation(&context, args, CLEAR).unwrap_err().code(),
                 "conversation-session-not-idle"
             );
             assert_eq!(
@@ -731,7 +797,7 @@ mod tests {
             tmux_bin: Some(tmp.path().join("tmux")),
             format: crate::OutputFormat::Json,
         };
-        let recovered = operation(&context, args, false).unwrap();
+        let recovered = operation(&context, args, Operation::Rebind).unwrap();
         assert_eq!(recovered.new_provider_session_id, "new-conversation");
         assert_eq!(
             load_session_record(&context, &record.id)
@@ -756,7 +822,7 @@ mod tests {
             format: crate::OutputFormat::Json,
         };
         assert_eq!(
-            operation(&context, args, true).unwrap_err().code(),
+            operation(&context, args, CLEAR).unwrap_err().code(),
             "conversation-clear-unconfirmed"
         );
         assert_eq!(
@@ -807,7 +873,7 @@ mod tests {
                 tmux_bin: Some(tmux),
                 format: crate::OutputFormat::Json,
             },
-            true,
+            CLEAR,
         )
         .unwrap();
         observer.join().unwrap();
@@ -845,7 +911,7 @@ mod tests {
                 tmux_bin: Some(tmux),
                 format: crate::OutputFormat::Json,
             },
-            false,
+            Operation::Rebind,
         )
         .unwrap();
         assert_eq!(view.new_provider_session_id, "new-conversation");
@@ -869,7 +935,7 @@ mod tests {
             format: crate::OutputFormat::Json,
         };
         assert_eq!(
-            operation(&context, args, true).unwrap_err().code(),
+            operation(&context, args, CLEAR).unwrap_err().code(),
             "conversation-operation-busy"
         );
         drop(guard);
@@ -889,12 +955,14 @@ mod tests {
         };
         retain_observation(&context, &record, "old-conversation").unwrap();
         assert_eq!(
-            operation(&context, args(), false).unwrap_err().code(),
+            operation(&context, args(), Operation::Rebind)
+                .unwrap_err()
+                .code(),
             "conversation-observation-stale"
         );
         retain_observation(&context, &record, "new-conversation").unwrap();
         assert_eq!(
-            operation(&context, args(), true).unwrap_err().code(),
+            operation(&context, args(), CLEAR).unwrap_err().code(),
             "conversation-rebind-required"
         );
         let calls = fs::read_to_string(tmp.path().join("tmux.calls")).unwrap();
@@ -935,7 +1003,7 @@ mod tests {
             format: crate::OutputFormat::Json,
         };
         assert_eq!(
-            operation(&context, args, true).unwrap_err().code(),
+            operation(&context, args, CLEAR).unwrap_err().code(),
             "conversation-provider-unsupported"
         );
         assert!(live(&context, &record).unwrap().is_none());

@@ -787,3 +787,22 @@ impl Drop for RealTmuxServer {
             .status();
     }
 }
+
+pub(super) fn clear_environment<'a>(log: &'a str, state: &'a str) -> [(&'static str, &'a str); 5] {
+    [
+        ("AGENT_SESSION_FAKE_TMUX_LOG", log),
+        (
+            "AGENT_SESSION_FAKE_TMUX_AGENT_SESSION_ID",
+            "clear-lifecycle",
+        ),
+        ("AGENT_SESSION_FAKE_TMUX_STATE_DIR", state),
+        (
+            "AGENT_SESSION_FAKE_TMUX_RUNTIME_ID",
+            "never-launched-fixture",
+        ),
+        (
+            "AGENT_SESSION_FAKE_TMUX_CAPTURE",
+            "────────────────────\n❯ \n────────────────────\n",
+        ),
+    ]
+}

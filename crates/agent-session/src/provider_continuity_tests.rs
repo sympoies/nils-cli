@@ -104,7 +104,9 @@ fn two_root_clear_restart_snapshot_carries_owned_provider_continuity() {
             tmux_bin: Some((*tmux).clone()),
             format: nils_common::cli_contract::OutputFormat::Json,
         },
-        true,
+        crate::conversation::Operation::Clear {
+            allow_unread_mail: false,
+        },
     );
     observer.join().unwrap();
     assert_eq!(clear_status, 0);

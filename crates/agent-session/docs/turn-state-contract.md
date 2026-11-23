@@ -181,9 +181,24 @@ runtime is omitted from the current projection.
 
 ## Conversation transitions
 
-`agent-session clear <id> [--expect-idle] --format json` admits only a verified
-idle interactive Codex or Claude Code session. A native clear changes the
-provider conversation while retaining the managed session and runtime generation.
+`agent-session clear <id> [--expect-idle] [--allow-unread-mail] --format json`
+requires a verified idle interactive Codex or Claude Code session. Before sending
+any terminal input or changing session state, clear checks provider attention,
+the mailbox, and the exact composer.
+
+- A reported approval or question returns `agent-blocked`. Pending provider
+  event ingestion returns `send-provider-event-pending`.
+- Unread messages return `session-mailbox-not-empty`. The clear-only
+  `--allow-unread-mail` flag permits clear with unread messages and preserves
+  them. An unreadable registry returns `session-mailbox-unknown` even with the
+  flag.
+- The same composer check as `notice --require-empty-composer` returns
+  `send-composer-not-empty` for a draft. It returns `send-composer-unobservable`
+  when it cannot verify an empty composer, including a dialog visible before
+  provider activity reports it.
+
+A native clear changes the provider conversation while retaining the managed
+session and runtime generation.
 The owning adapter records the exact new resume identity and replaces the old
 turn snapshot with an authoritative `waiting` state without a current or last
 turn. The record and activity mutation share the lifecycle/activity fences;

@@ -189,7 +189,8 @@ pub(crate) fn command_format(command: &Command) -> OutputFormat {
         Command::Glance(args) => args.format,
         Command::Resume(args) => args.format,
         Command::Restart(args) => args.format,
-        Command::Clear(args) | Command::Rebind(args) => args.format,
+        Command::Clear(args) => args.conversation.format,
+        Command::Rebind(args) => args.format,
         Command::Account(args) => match &args.command {
             cli::AccountCommand::Show(args) => args.format,
             cli::AccountCommand::Switch(args) => args.format,
