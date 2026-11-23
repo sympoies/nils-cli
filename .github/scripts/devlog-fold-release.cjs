@@ -19,6 +19,11 @@ function isAncestor(git, ancestor, descendant) {
   }
 }
 
+function releaseDelta(git, parent, commit) {
+  return git("diff-tree", "--no-commit-id", "--raw", "-r", "--no-renames", "--no-abbrev",
+    "--ignore-submodules=none", "-z", parent, commit, "--");
+}
+
 async function governedMainAnchor({ github, repo, fullName, git, tag, ref, annotated, source, publishedAt }) {
   if (annotated?.sha !== ref.sha || annotated?.tag !== tag || !verified(annotated?.verification))
     throw new Error("Governed release source requires the exact verified annotated tag");
@@ -51,10 +56,23 @@ async function governedMainAnchor({ github, repo, fullName, git, tag, ref, annot
     throw new Error("Governed release source does not match the exact merged release PR");
 
   const merge = pr.merge_commit_sha;
-  if (!isAncestor(git, merge, "HEAD") ||
-      git("show", "-s", "--format=%P%n%s", merge) !== `${pr.base.sha}\n${subject} (#${pr.number})` ||
-      !isAncestor(git, head.parents[0].sha, pr.base.sha))
+  const sourceParent = head.parents[0].sha;
+  if (!isAncestor(git, merge, "HEAD"))
     throw new Error("Governed release source does not match a reachable protected main squash");
+  const [parent, squashSubject] = git("show", "-s", "--format=%P%n%s", merge).split("\n");
+  // An earlier queue entry can advance main beyond the base recorded on the PR.
+  if (!oid(parent) || squashSubject !== `${subject} (#${pr.number})` ||
+      !isAncestor(git, sourceParent, pr.base.sha) || !isAncestor(git, pr.base.sha, parent))
+    throw new Error("Governed release source does not match a reachable protected main squash");
+  const { data: landing } = await github.rest.repos.getCommit({ ...repo, ref: merge, per_page: 1 });
+  if (landing?.sha !== merge || !verified(landing.commit?.verification))
+    throw new Error("Governed release squash is not the exact verified landing commit");
+
+  // Raw NUL-delimited entries bind every path, old and new object ID, and mode.
+  // Reject lossy UTF-8 decoding by the checkout Git reader.
+  const delta = releaseDelta(git, sourceParent, source);
+  if (!delta || delta.includes("\uFFFD") || delta !== releaseDelta(git, parent, merge))
+    throw new Error("Governed release squash does not preserve the signed release delta");
   return merge;
 }
 
