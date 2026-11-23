@@ -36,57 +36,51 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn('needs: changes', full)
         self.assertIn('always()', full)
         self.assertIn("github.event_name == 'merge_group'", full)
-        self.assertIn("needs.changes.outputs.release_candidate == 'true'", full)
         self.assertIn("needs.changes.result == 'success'", full)
         linux = job(ci, 'test')
-        self.assertIn('needs: [changes, full_validation, macos_clippy]', linux)
-        self.assertIn('FULL_VALIDATION_RESULT: ${{ needs.full_validation.result }}', linux)
-        self.assertIn('Require instrumented queue validation', linux)
+        self.assertIn('needs: [changes, full_validation]', linux)
+        self.assertIn('VALIDATED_COMMIT: ${{ needs.full_validation.outputs.validated_commit }}', linux)
+        self.assertIn('Require exact-commit queue validation', linux)
 
-    def test_macos_clippy_runs_on_every_queue_group_and_blocks_required_test(self):
-        ci = workflow('ci.yml')
-        macos = job(ci, 'macos_clippy')
-        self.assertIn("if: always() && github.event_name == 'merge_group'", macos)
+    def test_macos_clippy_runs_on_every_queue_group(self):
+        macos = job(workflow('full-validation.yml'), 'macos_clippy')
+        self.assertIn("if: github.event_name == 'merge_group'", macos)
         self.assertIn('runs-on: macos-latest', macos)
-        self.assertIn('needs: changes', macos)
         self.assertIn('ref: ${{ github.sha }}', macos)
         self.assertIn('fetch-depth: 0', macos)
         self.assertIn('components: clippy', macos)
         self.assertIn('python3 scripts/ci/nils-cli-macos-clippy.py', macos)
-        self.assertNotIn('release_only', macos)
         self.assertNotIn('docs_only', macos)
-        linux = job(ci, 'test')
-        step = linux.split('      - name: Require macOS queue compile and Clippy\n', 1)[1]
-        script = step.split('        run: |\n', 1)[1].split('\n      - name:', 1)[0]
-        script = '\n'.join(line[10:] for line in script.splitlines() if line.startswith('          '))
-        for event in ('pull_request', 'merge_group'):
-            for state in ('success', 'failure', 'cancelled', 'skipped', ''):
-                result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script],
-                    env=dict(os.environ, EVENT_NAME=event, MACOS_CLIPPY_RESULT=state), capture_output=True)
-                self.assertEqual(result.returncode == 0, event != 'merge_group' or state == 'success')
 
     def test_pr_and_queue_consume_affected_plan(self):
         fixture = fixtures.WorkflowDispatchTests()
         for event in ('pull_request', 'merge_group'):
             self.assertIn('--ci-merge-plan', fixture.dispatch('test', event))
 
-    def test_capacity_diagnostics_reach_both_strict_gates(self):
-        linux = job(workflow('ci.yml'), 'test')
-        gate = job(workflow('full-validation.yml'), 'gate')
-        diagnostic = '      - name: Diagnose unacquired macOS runner\n'
-        for body, condition in ((linux, "github.event_name == 'merge_group' && needs.macos_clippy.result != 'success'"),
-                                (gate, "needs.test_macos_partition.result != 'success' || "
-                                 "(!inputs.macos_partitions_only && needs.test_macos.result != 'success')")):
-            step = body.split(diagnostic, 1)[1].split('\n      - name:', 1)[0]
-            self.assertIn(f'if: {condition}', step)
-            self.assertIn("require('./.github/scripts/macos-runner-capacity.cjs').reportMacosCapacity({github, context, core})", step)
-            self.assertIn('actions: read', body)
-            self.assertRegex(body, r'checks: (read|write)')
-        self.assertLess(linux.index('name: Checkout'), linux.index(diagnostic))
-        self.assertLess(linux.index(diagnostic), linux.index('name: Require macOS queue compile and Clippy'))
-        self.assertIn('id: macos_capacity', gate)
-        self.assertIn("MACOS_JOBS: ${{ steps.macos_capacity.outputs.jobs || '[]' }}", gate)
-        self.assertIn('macosJobs: JSON.parse(process.env.MACOS_JOBS)', gate)
+    def test_retry_uses_the_original_steps_and_the_gate_waits_for_both_waves(self):
+        full = workflow('full-validation.yml')
+        plan = job(full, 'macos_retry_plan')
+        self.assertIn('needs: [macos_clippy, test_macos_partition, test, test_containment, cargo_deny, isolation_guard]', plan)
+        self.assertIn('actions: read', plan)
+        self.assertIn('checks: read', plan)
+        self.assertIn('ref: ${{ github.sha }}', plan)
+        self.assertIn('reportMacosCapacity', plan)
+        self.assertIn("allowRetry: process.env.NON_MACOS_PASSED === 'true'", plan)
+        for primary, retry, anchor, runner, output_condition in (
+            ('macos_clippy', 'macos_clippy_retry', 'macos_clippy_steps', 'macos-latest', "retry_clippy == 'true'"),
+            ('test_macos_partition', 'test_macos_partition_retry', 'macos_partition_steps', 'macos-15', "retry_partitions != '[]'"),
+        ):
+            self.assertIn(f'steps: &{anchor}', job(full, primary))
+            retried = job(full, retry)
+            self.assertIn('needs: macos_retry_plan', retried)
+            self.assertIn(f'needs.macos_retry_plan.outputs.{output_condition}', retried)
+            self.assertIn(f'steps: *{anchor}', retried)
+            self.assertIn(f'runs-on: {runner}', retried)
+        check = job(full, 'macos_check')
+        self.assertIn('needs: [macos_clippy, test_macos_partition, macos_retry_plan, '
+                      'macos_clippy_retry, test_macos_partition_retry]', check)
+        self.assertIn('requireMacosValidation', check)
+        self.assertIn('value: ${{ jobs.gate.outputs.validated_commit }}', full)
         for filename in ('ci.yml', 'release.yml'):
             self.assertIn('actions: read', job(workflow(filename), 'full_validation'))
 
@@ -132,14 +126,14 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn('NILS_CLI_TEST_RUNNER: llvm-cov', partition)
         self.assertNotIn('fail-under', partition)
         merge = job(full, 'test_macos')
-        self.assertIn('needs: test_macos_partition', merge)
+        self.assertIn('needs: macos_check', merge)
         self.assertIn('NILS_CLI_COVERAGE_FAIL_UNDER_LINES: "85"', merge)
         self.assertIn('scripts/ci/merge-lcov.py', merge)
         self.assertIn('Full validation marker', merge)
         self.assertIn('test -s target/coverage/lcov.info', job(full, 'coverage'))
         gate = job(full, 'gate')
         self.assertIn('if: always()', gate)
-        self.assertIn('needs: [test, test_macos_partition, test_macos, coverage, test_containment, '
+        self.assertIn('needs: [test, macos_check, test_macos, coverage, test_containment, '
                       'cargo_deny, isolation_guard]', gate)
         self.assertIn('requireFullValidation', gate)
         self.assertIn('toJSON(needs)', gate)
@@ -209,37 +203,31 @@ class DeliveryTests(unittest.TestCase):
                 env=dict(os.environ, CHANGES_RESULT=state), capture_output=True)
             self.assertEqual(result.returncode == 0, state == 'success')
 
-    def test_instrumented_queue_failures_block_the_required_linux_check(self):
+    def test_required_queue_check_requires_the_exact_validated_commit(self):
         body = job(workflow('ci.yml'), 'test')
-        step = body.split('      - name: Require instrumented queue validation\n', 1)[1]
+        step = body.split('      - name: Require exact-commit queue validation\n', 1)[1]
         script = step.split('        run: |\n', 1)[1].split('\n      - name:', 1)[0]
         script = '\n'.join(line[10:] for line in script.splitlines() if line.startswith('          '))
-        cases = [
-            ('pull_request', 'false', 'false', False),
-            ('merge_group', 'true', 'false', True),
-            ('merge_group', 'true', 'true', True),
-            ('merge_group', 'false', 'false', True),
-            ('merge_group', 'false', '', True),
-            ('merge_group', 'false', 'true', False),
-        ]
-        for event, candidate, docs_only, required in cases:
-            for state in ('success', 'failure', 'cancelled', 'skipped', ''):
-                with self.subTest(event=event, candidate=candidate, docs_only=docs_only, state=state):
+        sha = 'a' * 40
+        for event in ('pull_request', 'merge_group'):
+            for validated in (sha, 'b' * 40, ''):
+                with self.subTest(event=event, validated=validated):
                     result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script],
-                        env=dict(os.environ, EVENT_NAME=event, RELEASE_CANDIDATE=candidate,
-                                 QUEUE_DOCS_ONLY=docs_only, FULL_VALIDATION_RESULT=state), capture_output=True)
-                    self.assertEqual(result.returncode == 0, not required or state == 'success')
+                        env=dict(os.environ, EVENT_NAME=event, GITHUB_SHA=sha,
+                                 VALIDATED_COMMIT=validated), capture_output=True)
+                    self.assertEqual(result.returncode == 0, event != 'merge_group' or validated == sha)
 
     def test_instrumented_workflow_selects_the_expected_profiles(self):
         caller = job(workflow('ci.yml'), 'full_validation')
         select = next(line.removeprefix('    if: ') for line in caller.splitlines()
                       if line.startswith('    if: '))
         profile = re.search(r'macos_partitions_only: \$\{\{ (.+) \}\}', caller).group(1)
+        clippy_only = re.search(r'macos_clippy_only: \$\{\{ (.+) \}\}', caller).group(1)
         cases = [
             ('merge_group', 'success', 'true', 'false', 'full'),
             ('merge_group', 'success', 'false', 'false', 'macos'),
             ('merge_group', 'success', 'false', '', 'macos'),
-            ('merge_group', 'success', 'false', 'true', None),
+            ('merge_group', 'success', 'false', 'true', 'clippy'),
             ('merge_group', 'failure', 'false', 'false', None),
             ('merge_group', 'cancelled', 'true', 'false', None),
             ('pull_request', 'success', 'false', 'false', None),
@@ -261,14 +249,16 @@ class DeliveryTests(unittest.TestCase):
                     return eval(expression.replace('always()', 'True').replace('&&', 'and').replace('||', 'or'),
                                 {'__builtins__': {}}, {})
 
-                observed = ('macos' if evaluate(profile) else 'full') if evaluate(select) else None
+                observed = None
+                if evaluate(select):
+                    observed = ('clippy' if evaluate(clippy_only) else 'macos') if evaluate(profile) else 'full'
                 self.assertEqual(observed, expected)
 
         shared = workflow('full-validation.yml')
         for name in ('test', 'test_containment', 'cargo_deny', 'test_macos', 'coverage'):
-            self.assertIn('if: ${{ !inputs.macos_partitions_only }}', job(shared, name))
+            self.assertIn('!inputs.macos_partitions_only', job(shared, name))
         partitions = job(shared, 'test_macos_partition')
-        self.assertNotIn('    if:', partitions.split('    steps:', 1)[0])
+        self.assertIn('if: ${{ !inputs.macos_clippy_only }}', partitions)
         gate = job(shared, 'gate')
         self.assertIn('MACOS_PARTITIONS_ONLY: ${{ inputs.macos_partitions_only }}', gate)
         self.assertIn('macosPartitionsOnly: process.env.MACOS_PARTITIONS_ONLY === "true"', gate)
@@ -283,6 +273,7 @@ class DeliveryTests(unittest.TestCase):
                          {'contents': 'read', 'actions': 'read', 'issues': 'write'})
         self.assertIn('persist-credentials: false', report)
         self.assertIn('trackNightly', report)
+        self.assertIn('needs.full_validation.outputs.validated_commit == github.sha', report)
         self.assertIn("'nightly-main'", ci)
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", ci)
         self.assertIn('node scripts/ci/tests/nightly-tracker.test.cjs', (ROOT / 'scripts/ci/nils-cli-verification.sh').read_text())

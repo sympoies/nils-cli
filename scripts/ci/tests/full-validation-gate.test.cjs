@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { requireFullValidation } = require('../../../.github/scripts/full-validation-gate.cjs');
 const sha = 'a'.repeat(40);
-const names = ['test', 'test_macos', 'coverage', 'test_containment', 'cargo_deny'];
+const names = ['test', 'test_macos', 'coverage', 'test_containment', 'cargo_deny', 'macos_check'];
 function fixture() {
   return Object.fromEntries(names.map(name => [name, { result: 'success' }]));
 }
@@ -37,17 +37,17 @@ test('a different or missing commit fails closed', () => {
   }
 });
 
-test('ordinary queue requires the instrumented matrix and only the instrumented matrix', () => {
+test('ordinary queue requires the strict macOS result without full Linux or coverage lanes', () => {
   const queue = { expected: sha, actual: sha, macosPartitionsOnly: true };
   assert.equal(requireFullValidation({
-    ...queue, needs: { test_macos_partition: { result: 'success' } },
+    ...queue, needs: { macos_check: { result: 'success' } },
   }), true);
   for (const result of ['failure', 'cancelled', 'skipped', undefined]) {
-    const needs = { ...fixture(), test_macos_partition: { result } };
-    assert.throws(() => requireFullValidation({ ...queue, needs }), /test_macos_partition/);
+    const needs = { ...fixture(), macos_check: { result } };
+    assert.throws(() => requireFullValidation({ ...queue, needs }), /macos_check/);
   }
   assert.throws(() => requireFullValidation({
-    ...queue, actual: 'b'.repeat(40), needs: { test_macos_partition: { result: 'success' } },
+    ...queue, actual: 'b'.repeat(40), needs: { macos_check: { result: 'success' } },
   }), /commit/i);
 });
 
