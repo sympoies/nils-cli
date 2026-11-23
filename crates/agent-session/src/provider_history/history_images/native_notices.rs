@@ -22,6 +22,7 @@ impl Bindings {
         state: Option<&Path>,
         session: &HistorySession,
         deadline: Instant,
+        cache: &store::LiveCache,
     ) -> Result<Self, HistoryError> {
         let Some(state) = state else {
             return Ok(Self::default());
@@ -29,8 +30,8 @@ impl Bindings {
         if !matches!(session.provider.as_str(), "claude" | "codex") {
             return Ok(Self::default());
         }
-        let reader =
-            store::Reader::open(state, &session.id, deadline).map_err(|_| HistoryError::Io)?;
+        let reader = store::Reader::open(state, &session.id, deadline, cache)
+            .map_err(|_| HistoryError::Io)?;
         let launch = crate::notice::launch::binding(state, session, deadline);
         let live = reader.as_ref().and_then(|reader| {
             reader.earliest_live_offset(
@@ -52,6 +53,10 @@ impl Bindings {
 
     pub(crate) fn launch_binding(&self) -> Option<&(u64, String, String)> {
         self.launch.as_ref()
+    }
+
+    pub(crate) fn store_stamp(&self) -> Option<&store::StoreStamp> {
+        self.reader.as_ref().map(store::Reader::stamp)
     }
 
     pub(crate) fn has_cutoff(&self) -> bool {

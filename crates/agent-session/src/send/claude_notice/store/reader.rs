@@ -1,43 +1,38 @@
 //! Page-scoped History attestations. Holding the store lock fences publication.
 use super::*;
+use std::sync::Arc;
 
 pub(crate) struct Reader {
     ledger: Ledger,
     history: String,
-    live: HashMap<u64, Option<Confirmed>>,
+    live: Arc<live_cache::LiveProofs>,
+    stamp: StoreStamp,
     deadline: Instant,
 }
 
 impl Reader {
-    pub(crate) fn open(state: &Path, history: &str, deadline: Instant) -> io::Result<Option<Self>> {
+    pub(crate) fn open(
+        state: &Path,
+        history: &str,
+        deadline: Instant,
+        cache: &LiveCache,
+    ) -> io::Result<Option<Self>> {
         let Some(mut ledger) = Ledger::open(state, false, deadline)? else {
             return Ok(None);
         };
-        let scan = ledger.scan(deadline)?;
-        let mut live = HashMap::new();
-        for terminal in scan.terminals.values() {
-            let claim = &scan.claims.get(&terminal.op).ok_or_else(invalid)?.0;
-            if claim.history_id != history {
-                continue;
-            }
-            if let Some(proof) = terminal.confirmed(claim) {
-                use std::collections::hash_map::Entry;
-                match live.entry(proof.row_offset) {
-                    Entry::Vacant(e) => {
-                        e.insert(Some(proof));
-                    }
-                    Entry::Occupied(mut e) => {
-                        e.insert(None);
-                    }
-                }
-            }
-        }
+        let stamp = StoreStamp::read(&ledger)?;
+        let live = cache.get(&mut ledger, &stamp, deadline)?;
         Ok(Some(Self {
             ledger,
             history: history.into(),
             live,
+            stamp,
             deadline,
         }))
+    }
+
+    pub(crate) fn stamp(&self) -> &StoreStamp {
+        &self.stamp
     }
 
     pub(crate) fn earliest_live_offset(
@@ -46,6 +41,7 @@ impl Reader {
         profile: Option<&str>,
     ) -> Option<u64> {
         self.live
+            .get(&self.history)?
             .iter()
             .filter_map(|(offset, proof)| {
                 let proof = proof.as_ref()?;
@@ -84,7 +80,11 @@ impl Reader {
                 }
             })
             .transpose()?;
-        match (self.live.get(&offset), archived) {
+        let live = self
+            .live
+            .get(&self.history)
+            .and_then(|rows| rows.get(&offset));
+        match (live, archived) {
             (None, archived) => Ok(archived),
             (Some(live), None) => Ok(Some(live.clone())),
             (Some(Some(live)), Some(Some(archived)))

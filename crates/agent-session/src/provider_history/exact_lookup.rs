@@ -1,5 +1,15 @@
 use super::*;
 
+#[path = "read_cache.rs"]
+mod read_cache;
+pub(super) use read_cache::HistoryReadCache;
+
+#[derive(Debug, Default)]
+pub(super) struct PromptBindingsCache {
+    pub(super) refreshed_at: Option<Instant>,
+    pub(super) bindings: HashMap<String, HashMap<String, PromptRequestBinding>>,
+}
+
 impl HistoryCatalog {
     pub(super) fn incremental_messages_from_snapshot(
         &self,
@@ -39,6 +49,7 @@ impl HistoryCatalog {
             self.session_state_dir.as_deref(),
             session,
             deadline,
+            &self.history_reads.live_notices,
         )?;
         let page = history_images::read_messages_incremental_with_notices(
             session,
@@ -91,7 +102,12 @@ impl HistoryCatalog {
         sessions: &mut [HistorySession],
         cache: &mut HashMap<PathBuf, LatestPromptCacheEntry>,
     ) {
-        enrich_launch_previews(sessions, cache, self.session_state_dir.as_deref());
+        enrich_launch_previews(
+            sessions,
+            cache,
+            self.session_state_dir.as_deref(),
+            &self.history_reads,
+        );
     }
 
     pub(super) fn exact_claude_page(
@@ -219,6 +235,7 @@ impl HistoryCatalog {
             &mut page.sessions,
             &mut HashMap::new(),
             self.session_state_dir.as_deref(),
+            &self.history_reads,
         );
         Ok(Some(page))
     }
