@@ -173,58 +173,6 @@ jobs:
           echo "release_only=${release_only}" >> "$GITHUB_OUTPUT"
           echo "release_only=${release_only}"
 
-  # PRs report this required context as skipped/success. Every queue group,
-  # including docs and release bumps, must compile/lint before test can pass.
-  macos_clippy:
-    if: always() && github.event_name == 'merge_group'
-    needs: changes
-    runs-on: macos-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - name: Require change detection
-        env:
-          CHANGES_RESULT: ${{ needs.changes.result }}
-        run: |
-          if [ "${CHANGES_RESULT}" != "success" ]; then
-            echo 'error: change detection did not succeed; macOS validation is blocked' >&2
-            exit 1
-          fi
-
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.100.0
-        with:
-          components: clippy
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          # Restore dependencies saved by the nightly full macOS lane on main.
-          # Queue refs are temporary, so saving their copies adds no reuse.
-          shared-key: macos-test
-          key: llvm-cov
-          save-if: false
-
-      - name: Compile and lint affected packages including integration tests
-        env:
-          NILS_CLI_MERGE_PLAN_PREPARE_METADATA: "1"
-        run: python3 scripts/ci/nils-cli-macos-clippy.py
-
-      - name: Upload macOS scope and validation receipt
-        if: always() && hashFiles('target/ci-macos-clippy/validation.json') != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: merge-validation-macos-clippy
-          path: target/ci-macos-clippy
-
   cargo_deny:
     if: github.event_name != 'push' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     name: cargo-deny (advisories + bans)
@@ -246,7 +194,7 @@ jobs:
 
   test:
     if: always() && github.event_name != 'push' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
-    needs: [changes, full_validation, macos_clippy]
+    needs: [changes, full_validation]
     outputs:
       validation_scope: ${{ steps.validation.outputs.validation_scope }}
     runs-on: ubuntu-24.04
@@ -277,13 +225,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Diagnose unacquired macOS runner
-        if: github.event_name == 'merge_group' && needs.macos_clippy.result != 'success'
-        uses: actions/github-script@v9
-        with:
-          script: |
-            await require('./.github/scripts/macos-runner-capacity.cjs').reportMacosCapacity({github, context, core});
-
       - name: Require change detection
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
@@ -293,27 +234,13 @@ jobs:
             exit 1
           fi
 
-      - name: Require macOS queue compile and Clippy
+      - name: Require exact-commit queue validation
         env:
           EVENT_NAME: ${{ github.event_name }}
-          MACOS_CLIPPY_RESULT: ${{ needs.macos_clippy.result }}
+          VALIDATED_COMMIT: ${{ needs.full_validation.outputs.validated_commit }}
         run: |
-          if [ "${EVENT_NAME}" = "merge_group" ] && [ "${MACOS_CLIPPY_RESULT}" != "success" ]; then
-            echo 'error: macOS queue compile/Clippy did not succeed' >&2
-            exit 1
-          fi
-
-      - name: Require instrumented queue validation
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          RELEASE_CANDIDATE: ${{ needs.changes.outputs.release_candidate }}
-          QUEUE_DOCS_ONLY: ${{ needs.changes.outputs.queue_docs_only }}
-          FULL_VALIDATION_RESULT: ${{ needs.full_validation.result }}
-        run: |
-          if [ "${EVENT_NAME}" = "merge_group" ] && \
-             { [ "${RELEASE_CANDIDATE}" = "true" ] || [ "${QUEUE_DOCS_ONLY}" != "true" ]; } && \
-             [ "${FULL_VALIDATION_RESULT}" != "success" ]; then
-            echo 'error: instrumented queue validation did not succeed' >&2
+          if [ "${EVENT_NAME}" = "merge_group" ] && [ "${VALIDATED_COMMIT}" != "${GITHUB_SHA}" ]; then
+            echo 'error: required queue validation did not succeed' >&2
             exit 1
           fi
 
@@ -537,7 +464,7 @@ jobs:
 
 
   coverage_badge:
-    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.full_validation.outputs.validated_commit == github.sha }}
     runs-on: ubuntu-latest
     needs: full_validation
     permissions:
@@ -601,7 +528,7 @@ jobs:
 
   full_validation:
     needs: changes
-    if: always() && ((github.event_name == 'merge_group' && needs.changes.result == 'success' && (needs.changes.outputs.release_candidate == 'true' || needs.changes.outputs.queue_docs_only != 'true')) || ((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'))
+    if: always() && ((github.event_name == 'merge_group' && needs.changes.result == 'success') || ((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'))
     uses: ./.github/workflows/full-validation.yml
     permissions:
       actions: read
@@ -610,6 +537,7 @@ jobs:
     with:
       commit: ${{ github.sha }}
       macos_partitions_only: ${{ github.event_name == 'merge_group' && needs.changes.outputs.release_candidate != 'true' }}
+      macos_clippy_only: ${{ github.event_name == 'merge_group' && needs.changes.outputs.release_candidate != 'true' && needs.changes.outputs.queue_docs_only == 'true' }}
       # Nightly and manual runs also run the poisoned-environment isolation guard.
       isolation_guard: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
@@ -636,7 +564,7 @@ jobs:
       - name: Update nightly tracking issue
         uses: actions/github-script@v9
         env:
-          VALIDATION_RESULT: ${{ needs.full_validation.result }}
+          VALIDATION_RESULT: ${{ needs.full_validation.outputs.validated_commit == github.sha && 'success' || 'failure' }}
           JUNIT_DIR: ${{ runner.temp }}/nightly-junit
         with:
           script: |

@@ -5,6 +5,10 @@ name: Full validation
 
 on:
   workflow_call:
+    outputs:
+      validated_commit:
+        description: Immutable event SHA accepted by the final gate
+        value: ${{ jobs.gate.outputs.validated_commit }}
     inputs:
       commit:
         description: Expected immutable caller event SHA, verified by the final gate
@@ -12,6 +16,10 @@ on:
         type: string
       macos_partitions_only:
         description: Run instrumented macOS tests for an ordinary merge group
+        default: false
+        type: boolean
+      macos_clippy_only:
+        description: Skip instrumented partitions for an exact-base prose-only merge group
         default: false
         type: boolean
       isolation_guard:
@@ -341,6 +349,47 @@ jobs:
       - name: Test isolation guard
         run: bash scripts/ci/test-env-isolation-guard.sh
 
+  # Every merge group compiles and lints the candidate, including prose-only groups.
+  macos_clippy:
+    if: github.event_name == 'merge_group'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps: &macos_clippy_steps
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Restore dependencies saved by the nightly full macOS lane on main.
+          # Queue refs are temporary, so saving their copies adds no reuse.
+          shared-key: macos-test
+          key: llvm-cov
+          save-if: false
+
+      - name: Compile and lint affected packages including integration tests
+        env:
+          NILS_CLI_MERGE_PLAN_PREPARE_METADATA: "1"
+        run: python3 scripts/ci/nils-cli-macos-clippy.py
+
+      - name: Upload macOS scope and validation receipt
+        if: always() && hashFiles('target/ci-macos-clippy/validation.json') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: merge-validation-macos-clippy
+          path: target/ci-macos-clippy
+
   # The instrumented macOS suite runs as two nextest partitions on separate
   # runners. Repository audits, script tests, fmt, clippy and doc tests are not
   # repeated here: Linux validation runs them on the same commit and
@@ -348,6 +397,7 @@ jobs:
   # and their coverage data run per partition; `test_macos` merges the data and
   # enforces the floor in the full profile.
   test_macos_partition:
+    if: ${{ !inputs.macos_clippy_only }}
     name: test_macos_partition (${{ matrix.partition }}/2)
     runs-on: macos-15
     timeout-minutes: 60
@@ -358,7 +408,7 @@ jobs:
     permissions:
       contents: read
       checks: write
-    steps:
+    steps: &macos_partition_steps
       - name: Configure gate reports
         shell: bash
         run: echo "NILS_CLI_REPORT_DIR=$RUNNER_TEMP/nils-cli-reports" >> "$GITHUB_ENV"
@@ -474,14 +524,101 @@ jobs:
           name: junit-nextest-macos-${{ matrix.partition }}
           path: ${{ env.NILS_CLI_REPORT_DIR }}/nextest/ci/junit.xml
 
+  macos_retry_plan:
+    needs: [macos_clippy, test_macos_partition, test, test_containment, cargo_deny, isolation_guard]
+    if: ${{ !cancelled() && ((github.event_name == 'merge_group' && needs.macos_clippy.result != 'success') || (!inputs.macos_clippy_only && needs.test_macos_partition.result != 'success')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    outputs:
+      retry_clippy: ${{ steps.plan.outputs.retry_clippy }}
+      retry_partitions: ${{ steps.plan.outputs.retry_partitions }}
+    steps:
+      - name: Checkout exact validated commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Classify required macOS jobs and plan at most one retry
+        id: plan
+        uses: actions/github-script@v9
+        env:
+          NON_MACOS_PASSED: ${{ (inputs.macos_partitions_only || (needs.test.result == 'success' && needs.test_containment.result == 'success' && needs.cargo_deny.result == 'success')) && (!inputs.isolation_guard || needs.isolation_guard.result == 'success') }}
+          PARTITIONS_REQUIRED: ${{ !inputs.macos_clippy_only }}
+        with:
+          script: |
+            const { reportMacosCapacity } = require('./.github/scripts/macos-runner-capacity.cjs');
+            await reportMacosCapacity({
+              github, context, core,
+              clippy: context.eventName === 'merge_group',
+              partitions: process.env.PARTITIONS_REQUIRED === 'true' ? [1, 2] : [],
+              allowRetry: process.env.NON_MACOS_PASSED === 'true' &&
+                (context.eventName === 'merge_group' || context.ref === 'refs/heads/main'),
+            });
+
+  macos_clippy_retry:
+    needs: macos_retry_plan
+    if: ${{ !cancelled() && needs.macos_retry_plan.result == 'success' && needs.macos_retry_plan.outputs.retry_clippy == 'true' }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps: *macos_clippy_steps
+
+  test_macos_partition_retry:
+    needs: macos_retry_plan
+    if: ${{ !cancelled() && needs.macos_retry_plan.result == 'success' && needs.macos_retry_plan.outputs.retry_partitions != '' && needs.macos_retry_plan.outputs.retry_partitions != '[]' }}
+    name: test_macos_partition_retry (${{ matrix.partition }}/2)
+    runs-on: macos-15
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: ${{ fromJSON(needs.macos_retry_plan.outputs.retry_partitions) }}
+    permissions:
+      contents: read
+      checks: write
+    steps: *macos_partition_steps
+
+  macos_check:
+    needs: [macos_clippy, test_macos_partition, macos_retry_plan, macos_clippy_retry, test_macos_partition_retry]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    steps:
+      - name: Checkout exact validated commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require all selected macOS jobs
+        uses: actions/github-script@v9
+        env:
+          MACOS_NEEDS: ${{ toJSON(needs) }}
+          PARTITIONS_REQUIRED: ${{ !inputs.macos_clippy_only }}
+        with:
+          script: |
+            const { requireMacosValidation } = require('./.github/scripts/macos-runner-capacity.cjs');
+            await requireMacosValidation({
+              github, context, core, needs: JSON.parse(process.env.MACOS_NEEDS),
+              partitionsRequired: process.env.PARTITIONS_REQUIRED === 'true',
+            });
+
   # Both macOS partitions must pass before this job runs, so its success is the
   # required macOS result. It merges their LCOV reports and enforces the same
   # workspace line floor the single instrumented run enforced. It needs no macOS
   # runner. The HTML report is built only for nightly and manual runs
   # (`isolation_guard`), not for release validation.
   test_macos:
-    if: ${{ !inputs.macos_partitions_only }}
-    needs: test_macos_partition
+    if: ${{ !cancelled() && !inputs.macos_partitions_only && needs.macos_check.result == 'success' }}
+    needs: macos_check
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -541,7 +678,7 @@ jobs:
   # its LCOV report and by publishing the summary. It needs no macOS runner.
 
   coverage:
-    if: ${{ !inputs.macos_partitions_only }}
+    if: ${{ !cancelled() && !inputs.macos_partitions_only && needs.test_macos.result == 'success' }}
     needs: test_macos
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -564,13 +701,13 @@ jobs:
         run: bash scripts/ci/coverage-summary.sh target/coverage/lcov.info
 
   gate:
-    needs: [test, test_macos_partition, test_macos, coverage, test_containment, cargo_deny, isolation_guard]
+    needs: [test, macos_check, test_macos, coverage, test_containment, cargo_deny, isolation_guard]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      validated_commit: ${{ steps.require.outputs.validated_commit }}
     permissions:
-      actions: read
-      checks: read
       contents: read
     steps:
       - name: Checkout exact validated commit
@@ -578,21 +715,15 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Diagnose unacquired macOS runner
-        id: macos_capacity
-        if: needs.test_macos_partition.result != 'success' || (!inputs.macos_partitions_only && needs.test_macos.result != 'success')
-        uses: actions/github-script@v9
-        with:
-          script: |
-            await require('./.github/scripts/macos-runner-capacity.cjs').reportMacosCapacity({github, context, core});
       - name: Require selected validation lanes
+        id: require
         env:
           EXPECTED_COMMIT: ${{ inputs.commit }}
           ISOLATION_GUARD: ${{ inputs.isolation_guard }}
           MACOS_PARTITIONS_ONLY: ${{ inputs.macos_partitions_only }}
           VALIDATION_NEEDS: ${{ toJSON(needs) }}
-          MACOS_JOBS: ${{ steps.macos_capacity.outputs.jobs || '[]' }}
         run: |
           ACTUAL_COMMIT="$(git rev-parse HEAD)"
           export ACTUAL_COMMIT
-          node -e 'require("./.github/scripts/full-validation-gate.cjs").requireFullValidation({expected: process.env.EXPECTED_COMMIT, actual: process.env.ACTUAL_COMMIT, isolationGuard: process.env.ISOLATION_GUARD === "true", macosPartitionsOnly: process.env.MACOS_PARTITIONS_ONLY === "true", needs: JSON.parse(process.env.VALIDATION_NEEDS), macosJobs: JSON.parse(process.env.MACOS_JOBS)})'
+          node -e 'require("./.github/scripts/full-validation-gate.cjs").requireFullValidation({expected: process.env.EXPECTED_COMMIT, actual: process.env.ACTUAL_COMMIT, isolationGuard: process.env.ISOLATION_GUARD === "true", macosPartitionsOnly: process.env.MACOS_PARTITIONS_ONLY === "true", needs: JSON.parse(process.env.VALIDATION_NEEDS)})'
+          echo "validated_commit=${ACTUAL_COMMIT}" >> "$GITHUB_OUTPUT"
