@@ -145,11 +145,14 @@ pub(crate) fn refusal(context: &CliContext, session: &SessionRecord) -> CliError
     let (code, message) = match &recorded {
         Some(recorded) if recorded.reason.version_related() => (
             "notice-native-version-unsupported",
-            "native notice module is not attached: the Claude Code version is outside the tested range",
+            format!(
+                "native notice module is not attached. The launch supports Claude Code {} through {}.",
+                recorded.supported_min, recorded.supported_max
+            ),
         ),
         _ => (
             "notice-transport-unsupported",
-            "Claude terminal notices cannot be verified exactly; delivery is unsupported",
+            "Claude terminal notices cannot be verified exactly; delivery is unsupported".into(),
         ),
     };
     let reason = recorded
