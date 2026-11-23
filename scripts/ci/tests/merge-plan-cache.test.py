@@ -117,7 +117,12 @@ if args[0] == 'metadata':''')
         self.assertIn('NILS_CLI_MERGE_PLAN_PREPARE_METADATA: "1"', validation)
         self.assertLess(body.index('name: Cache cargo'), body.index('name: Nils CLI checks'))
         full = (fixtures.ROOT / '.github/workflows/full-validation.yml').read_text()
-        self.assertNotIn('NILS_CLI_MERGE_PLAN_PREPARE_METADATA', full)
+        full_linux = full.split('\n  test:\n', 1)[1].split('\n  test_containment:\n', 1)[0]
+        partitions = full.split('\n  test_macos_partition:\n', 1)[1].split('\n  macos_retry_plan:\n', 1)[0]
+        for lane in (full_linux, partitions):
+            self.assertNotIn('NILS_CLI_MERGE_PLAN_PREPARE_METADATA', lane)
+        clippy = full.split('\n  macos_clippy:\n', 1)[1].split('\n  test_macos_partition:\n', 1)[0]
+        self.assertIn('NILS_CLI_MERGE_PLAN_PREPARE_METADATA: "1"', clippy)
 
     def test_successful_preparation_cannot_replace_failed_offline_metadata(self):
         self.candidate()
