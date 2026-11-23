@@ -127,7 +127,7 @@ pub enum Command {
     /// Relaunch a running session in place on the installed provider binary.
     Restart(RestartArgs),
     /// Clear an idle conversation in place and verify its new provider identity.
-    Clear(ConversationArgs),
+    Clear(ClearArgs),
     /// Recover an idle session by rebinding its live provider conversation.
     Rebind(ConversationArgs),
     /// Show or switch the provider account of one session.
@@ -1490,6 +1490,15 @@ pub struct GlanceArgs {
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct ClearArgs {
+    #[command(flatten)]
+    pub conversation: ConversationArgs,
+    /// Allow clear when the session has unread mailbox messages.
+    #[arg(long)]
+    pub allow_unread_mail: bool,
 }
 
 #[derive(Debug, Args)]

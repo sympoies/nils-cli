@@ -1,11 +1,16 @@
-//! Conditional deletion's mailbox predicate. The caller must hold the recipient
-//! session record lock until removal: both local and remote delivery acquire
-//! that lock before the registry lock and revalidate the recipient afterwards.
+//! Read-only unread mailbox admission. The caller holds the recipient record
+//! lock through the admitted operation. Local and remote delivery acquire that
+//! lock before the registry lock and revalidate the recipient afterwards.
 
 use crate::{CliContext, CliError};
 use serde_json::json;
 
-pub(crate) fn ensure_unread_empty(context: &CliContext, id: &str) -> Result<(), CliError> {
+pub(crate) fn check(
+    context: &CliContext,
+    id: &str,
+    allow_unread: bool,
+    retry_kind: &'static str,
+) -> Result<(), CliError> {
     // Never use the public list snapshot: it deliberately defaults to zero
     // when the registry cannot be read. This read must prove the predicate.
     let locked = super::lock_registry_observational(context).map_err(|_| {
@@ -16,7 +21,7 @@ pub(crate) fn ensure_unread_empty(context: &CliContext, id: &str) -> Result<(), 
                 "predicate": "unread-empty",
                 "retryable": true,
                 "next_action": "inspect_mailbox_store_then_retry",
-                "recovery": {"kind": "retry_conditional_delete"},
+                "recovery": {"kind": retry_kind},
             })),
         )
     })?;
@@ -26,7 +31,7 @@ pub(crate) fn ensure_unread_empty(context: &CliContext, id: &str) -> Result<(), 
         .iter()
         .filter(|message| message.recipient_session_id == id && message.state == "unread")
         .count();
-    if unread != 0 {
+    if unread != 0 && !allow_unread {
         return Err(CliError::data(
             "session-mailbox-not-empty",
             "session has unread messages; session state was retained",
@@ -39,7 +44,5 @@ pub(crate) fn ensure_unread_empty(context: &CliContext, id: &str) -> Result<(), 
             })),
         ));
     }
-    // Releasing the registry lock is safe: the caller still holds the lifecycle
-    // fence through revocation and removal, so no new delivery can be admitted.
     Ok(())
 }

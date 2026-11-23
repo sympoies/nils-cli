@@ -10,7 +10,6 @@ pub mod claims;
 pub(crate) mod console_start;
 pub mod context;
 pub(crate) mod delegation;
-pub(crate) mod delete;
 mod forwarding;
 mod heartbeat_state;
 mod lock_holder;
@@ -38,6 +37,7 @@ mod service_mailbox_commands;
 pub(crate) mod service_reply;
 #[cfg(test)]
 mod test_clock;
+pub(crate) mod unread;
 
 pub(crate) use broker::run_broker;
 pub(crate) use notification::NotificationCandidate;

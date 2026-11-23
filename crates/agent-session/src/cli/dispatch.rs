@@ -28,8 +28,14 @@ pub(crate) fn run(context: &CliContext, command: Command) -> i32 {
         }
         Command::Resume(args) => run_resume(context, args),
         Command::Restart(args) => restart::run(context, args),
-        Command::Clear(args) => conversation::run(context, args, true),
-        Command::Rebind(args) => conversation::run(context, args, false),
+        Command::Clear(args) => conversation::run(
+            context,
+            args.conversation,
+            conversation::Operation::Clear {
+                allow_unread_mail: args.allow_unread_mail,
+            },
+        ),
+        Command::Rebind(args) => conversation::run(context, args, conversation::Operation::Rebind),
         Command::Account(args) => session_account::run_account(context, args),
         Command::Activity(args) => run_activity(context, args),
         Command::WorkContext(args) => coordination::run_work_context(context, args),

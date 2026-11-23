@@ -313,3 +313,42 @@ fn cli_launch_can_capture_its_own_matching_history() {
     assert_eq!(resume.session_id, PRIMARY);
     assert_eq!(resume.capture_method, "codex-session-meta");
 }
+
+pub(crate) struct ClearProxyFixture {
+    _capability: ProxyCapabilityGuard,
+}
+
+pub(crate) fn prepare_clear_runtime(
+    context: &CliContext,
+    record: &mut SessionRecord,
+    socket: &Path,
+) -> ClearProxyFixture {
+    let runtime = record.runtime.as_mut().unwrap();
+    let fixture = record_with_runtime(&record.id, socket).runtime.unwrap();
+    runtime.kind = fixture.kind;
+    runtime.extra.extend(fixture.extra);
+    crate::write_session_record(context, record).unwrap();
+    bind_thread(record, &record.provider_resume.as_ref().unwrap().session_id).unwrap();
+    ClearProxyFixture {
+        _capability: begin_proxy_capability(context, record).unwrap(),
+    }
+}
+
+pub(crate) async fn answer_clear_idle_probe(listener: tokio::net::UnixListener, thread: String) {
+    let (stream, _) = listener.accept().await.unwrap();
+    let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+    let initialize = receive_json(&mut socket).await;
+    respond(&mut socket, &initialize, json!({})).await;
+    assert_eq!(receive_json(&mut socket).await["method"], "initialized");
+    let loaded = receive_json(&mut socket).await;
+    assert_eq!(loaded["method"], "thread/loaded/list");
+    respond(&mut socket, &loaded, json!({"data":[thread]})).await;
+    let read = receive_json(&mut socket).await;
+    assert_eq!(read["params"]["threadId"], thread);
+    respond(
+        &mut socket,
+        &read,
+        json!({"thread":{"id":thread,"status":{"type":"idle"}}}),
+    )
+    .await;
+}
