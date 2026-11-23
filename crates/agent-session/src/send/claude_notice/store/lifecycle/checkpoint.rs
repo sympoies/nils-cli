@@ -410,6 +410,24 @@ pub(super) fn advance(
     Ok(layout)
 }
 
+pub(in crate::send::claude_notice::store) fn index_stamp(
+    ledger: &Ledger,
+) -> io::Result<Option<live_cache::IndexStamp>> {
+    ledger
+        .storage
+        .layout
+        .index
+        .as_ref()
+        .map(|index| {
+            Ok(live_cache::IndexStamp {
+                file: FileStamp::from_metadata(&index.file().metadata()?).ok_or_else(invalid)?,
+                committed: index.committed,
+                root: index.root.clone(),
+            })
+        })
+        .transpose()
+}
+
 pub(in crate::send::claude_notice::store) fn get(
     ledger: &Ledger,
     key: &str,

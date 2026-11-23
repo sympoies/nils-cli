@@ -135,6 +135,113 @@ fn read_bytes() -> u64 {
 }
 
 #[cfg(target_os = "linux")]
+fn live_history_fixture(
+    root: &Path,
+    claims: usize,
+) -> (crate::provider_history::HistoryCatalog, String, PathBuf) {
+    let context = context(root);
+    let mut live = Vec::new();
+    for index in 0..claims {
+        live.extend(pair(&archived_claim(index)).0);
+    }
+    private_file(&root.join("history/claude-notices/ledger.jsonl"), &live);
+    consume(
+        &context,
+        claim(20_000, None),
+        Instant::now() + Duration::from_secs(15),
+        || Ok(()),
+    )
+    .unwrap();
+    let (catalog, history) = catalog(root);
+    let transcript = root.join("provider/project/11111111-1111-4111-8111-111111111111.jsonl");
+    (catalog, history, transcript)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn unchanged_history_polls_do_not_reread_live_notice_segment() {
+    let root = tempfile::tempdir().unwrap();
+    let (catalog, history, _) = live_history_fixture(root.path(), 600);
+    history_page(&catalog, &history);
+    let before = read_bytes();
+    for _ in 0..4 {
+        history_page(&catalog, &history);
+    }
+    let read = read_bytes() - before;
+    assert!(
+        read < 128 * 1024,
+        "unchanged notice ledger: four History pages read {read} bytes"
+    );
+
+    use crate::provider_history::{HistoryError, HistoryMessageDirection};
+    use std::os::unix::fs::FileExt;
+    let ledger = root.path().join("history/claude-notices/ledger.jsonl");
+    OpenOptions::new()
+        .write(true)
+        .open(ledger)
+        .unwrap()
+        .write_all_at(b"?", 0)
+        .unwrap();
+    assert!(matches!(
+        catalog.messages(&history, None, 10, HistoryMessageDirection::Latest),
+        Err(HistoryError::Io)
+    ));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn unchanged_history_polls_do_not_reread_notice_filtered_transcript() {
+    let root = tempfile::tempdir().unwrap();
+    let (catalog, history, transcript) = live_history_fixture(root.path(), 1);
+    let mut file = OpenOptions::new().append(true).open(&transcript).unwrap();
+    let padding =
+        serde_json::to_string(&json!({"type":"fixture-padding", "text":"x".repeat(8192)})).unwrap();
+    for _ in 0..256 {
+        writeln!(file, "{padding}").unwrap();
+    }
+    let list = || catalog.list("test", None, None, None, 25).unwrap();
+    let latest = || {
+        catalog
+            .messages(
+                &history,
+                None,
+                10,
+                crate::provider_history::HistoryMessageDirection::Latest,
+            )
+            .unwrap()
+    };
+    list();
+    assert_eq!(latest().messages[0].role, "notice");
+    let before = read_bytes();
+    for _ in 0..4 {
+        list();
+    }
+    let list_bytes = read_bytes() - before;
+    let before = read_bytes();
+    for _ in 0..4 {
+        latest();
+    }
+    let latest_bytes = read_bytes() - before;
+    assert!(
+        list_bytes < 128 * 1024 && latest_bytes < 128 * 1024,
+        "unchanged transcript: four History lists read {list_bytes} bytes and four latest pages read {latest_bytes} bytes"
+    );
+
+    let appended = json!({"type":"user", "sessionId":"11111111-1111-4111-8111-111111111111",
+        "cwd":"/workspace/project", "isSidechain":false, "promptSource":"typed",
+        "message":{"role":"user", "content":"new synthetic prompt"}});
+    writeln!(file, "{appended}").unwrap();
+    assert_eq!(
+        list().sessions[0].last_user_prompt_preview.as_deref(),
+        Some("new synthetic prompt"),
+    );
+    assert_eq!(
+        latest().messages.last().unwrap().text,
+        "new synthetic prompt"
+    );
+}
+
+#[cfg(target_os = "linux")]
 #[test]
 fn admission_does_not_read_all_checkpointed_archive_bytes() {
     let root = tempfile::tempdir().unwrap();
@@ -311,7 +418,8 @@ fn checkpoint_damage_refuses_before_the_key_callback() {
             Reader::open(
                 root.path(),
                 &archived_claim(0).history_id,
-                Instant::now() + Duration::from_secs(15)
+                Instant::now() + Duration::from_secs(15),
+                &LiveCache::default(),
             )
             .and_then(|r| r.unwrap().proof(4))
             .is_err(),
@@ -397,7 +505,8 @@ fn interrupted_checkpoint_publication_recovers_one_verified_generation() {
         Reader::open(
             root.path(),
             &archived_claim(0).history_id,
-            Instant::now() + Duration::from_secs(15)
+            Instant::now() + Duration::from_secs(15),
+            &LiveCache::default(),
         )
         .is_err()
     );

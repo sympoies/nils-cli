@@ -74,6 +74,7 @@ impl HistoryCatalog {
             self.session_state_dir.as_deref(),
             session,
             deadline,
+            &self.history_reads.live_notices,
         )?;
         let mut page = match direction {
             HistoryMessageDirection::Forward => read_messages(
@@ -88,12 +89,11 @@ impl HistoryCatalog {
                 if cursor.is_some() {
                     return Err(HistoryError::InvalidCursor);
                 }
-                history_images::read_messages_reverse(
+                self.history_reads.latest(
                     session,
-                    None,
+                    &notices,
                     limit.clamp(1, 100),
                     include_parts,
-                    &notices,
                     deadline,
                 )
             }

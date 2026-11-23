@@ -5,6 +5,7 @@ use catalog_scan::scan_catalog;
 mod exact_lookup;
 pub(crate) mod history_images;
 use exact_lookup::inspect_history_file;
+use exact_lookup::{HistoryReadCache, PromptBindingsCache};
 pub(crate) use history_images::HistoryMessage;
 #[cfg(test)]
 use history_images::read_messages_incremental_from_reader;
@@ -163,7 +164,7 @@ pub(crate) struct HistoryPage {
     pub(crate) truncated: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct HistoryMessagesPage {
     pub(crate) messages: Vec<HistoryMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -310,12 +311,6 @@ struct CatalogCache {
     direct_sessions: HashMap<String, HistorySession>,
 }
 
-#[derive(Debug, Default)]
-struct PromptBindingsCache {
-    refreshed_at: Option<Instant>,
-    bindings: HashMap<String, HashMap<String, PromptRequestBinding>>,
-}
-
 #[derive(Clone, Debug)]
 struct LatestPromptCacheEntry {
     len: u64,
@@ -333,6 +328,10 @@ pub(crate) struct HistoryCatalog {
     stars_root: PathBuf,
     cache: Mutex<CatalogCache>,
     prompt_bindings: Mutex<PromptBindingsCache>,
+    // Poll reads have their own locks so filesystem work does not hold the catalog lock.
+    // They follow the opened transcript and notice inputs across catalog refreshes.
+    history_reads: HistoryReadCache,
+
     #[cfg(test)]
     snapshot_accesses: AtomicUsize,
 }
@@ -351,6 +350,7 @@ impl HistoryCatalog {
             stars_root,
             cache: Mutex::new(CatalogCache::default()),
             prompt_bindings: Mutex::new(PromptBindingsCache::default()),
+            history_reads: HistoryReadCache::default(),
             #[cfg(test)]
             snapshot_accesses: AtomicUsize::new(0),
         }

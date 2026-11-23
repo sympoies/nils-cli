@@ -9,7 +9,7 @@ const FANOUT: usize = 48;
 const MAX_DEPTH: usize = 32;
 type Merge = fn(&str, &str, &str) -> io::Result<String>;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Page {
     offset: u64,

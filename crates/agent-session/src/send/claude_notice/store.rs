@@ -21,9 +21,11 @@ const MAX_CLAIMS: usize = MAX_BYTES / (2 * MAX_RECORD);
 pub(crate) mod audit;
 pub(crate) mod codex;
 mod lifecycle;
+mod live_cache;
 mod pages;
 mod reader;
 mod records;
+pub(crate) use live_cache::{FileStamp, LiveCache, StoreStamp};
 pub(crate) use reader::Reader;
 
 #[cfg(test)]
@@ -95,7 +97,7 @@ pub(crate) enum Reason {
     HistoryUnavailable,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Confirmed {
     pub(crate) claim: Claim,
     pub(crate) native_uuid: String,
