@@ -523,6 +523,16 @@ fn send_notice_with_flags(
     key: &str,
     flags: &[&str],
 ) -> CmdOutput {
+    run_notice(fixture, body, key, flags, "json")
+}
+
+fn run_notice(
+    fixture: &super::Fixture,
+    body: &str,
+    key: &str,
+    flags: &[&str],
+    format: &str,
+) -> CmdOutput {
     let root = fixture.root();
     let notice_body = root.join("lf-body");
     let state = root.join("state");
@@ -544,7 +554,7 @@ fn send_notice_with_flags(
         "--idempotency-key",
         key,
         "--format",
-        "json",
+        format,
     ];
     args.extend_from_slice(flags);
     run_resolved(
@@ -938,6 +948,31 @@ fn claude_notice_unattached_session_refuses_with_a_typed_reason() {
                     .starts_with("send-key-"))
         );
         fixture.no_delivery();
+    }
+}
+
+#[test]
+fn claude_notice_version_refusal_text_names_the_recorded_range() {
+    let body = "synthetic-body-canary\n";
+    for (reason, version) in [
+        ("provider-version-unsupported", Some("2.1.330")),
+        ("provider-version-unreadable", None),
+    ] {
+        let fixture = super::Fixture::new("claude");
+        let mut recorded = status(reason, version);
+        recorded["supported_max"] = json!("2.1.325");
+        seed_attach_status(&fixture, Some(recorded));
+
+        let output = run_notice(&fixture, body, "claude-native-once", &[], "text");
+        assert_eq!(output.code, 1);
+        let stderr = output.stderr_text();
+        assert!(
+            stderr.contains("2.1.296 through 2.1.325"),
+            "expected the launch-supported range for {reason}, got {stderr}"
+        );
+        assert!(!stderr.contains(body.trim_end()));
+        assert!(!stderr.contains(fixture.root().to_str().unwrap()));
+        refusals::no_claim(&fixture);
     }
 }
 
