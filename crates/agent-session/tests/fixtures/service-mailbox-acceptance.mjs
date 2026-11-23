@@ -145,6 +145,11 @@ try {
     message: 'service submission is not authorized',
     details: { retryable: false, next_action: 'request_service_admission', recovery: { kind: 'operator' } },
   });
+  const wrongCredential = randomUUID() + randomUUID();
+  for (const attempt of [1, 2, 3]) {
+    const refusal = await submit(payload(`obsolete-admission-wrong-credential-${attempt}`), 401, wrongCredential);
+    assert.deepEqual(refusal.error, obsolete.error);
+  }
   assert.equal(registry(source).messages.length, 0);
   const schemaWarning = await waitFor(
     () => source.stderr.split('\n').find(line => line.startsWith('warning: mailbox-service-admission-schema-unsupported:')),
@@ -347,6 +352,7 @@ try {
   await replyCases.exerciseHyphenatedQuotaRecovery();
   checks.push('quota-recovery-with-hyphenated-service-selectors');
   for (const host of hosts) { assert(!host.stderr.includes(service.token)); assert(!host.stderr.includes('PRIVATE-SERVICE-BODY-CANARY')); }
+  assert.equal(source.stderr.split('\n').filter(line => line === schemaWarning).length, 1, 'unsupported admission schema warning count');
   const warnings = source.stderr.split('\n').filter(line => line.startsWith('warning: service-send '));
   assert(!JSON.stringify(fallback).includes(schemaCanary), 'response must exclude recipient schema value');
   for (const canary of [schemaCanary, 'PRIVATE-RELAY-DIAGNOSTIC-CANARY', service.id, service.generation,

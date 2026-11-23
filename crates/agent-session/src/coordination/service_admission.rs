@@ -2,6 +2,8 @@
 use std::collections::HashSet;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
@@ -12,6 +14,8 @@ use crate::CliError;
 const VERSION: &str = "agent-session.mailbox-services.v2";
 const MAX_BYTES: u64 = 32 * 1024;
 const MAX_ACTIVE: usize = 32;
+const SCHEMA_WARNING_INTERVAL: Duration = Duration::from_secs(60);
+static LAST_SCHEMA_WARNING: Mutex<Option<Instant>> = Mutex::new(None);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -42,12 +46,22 @@ fn require_current_schema<'de, D: Deserializer<'de>>(deserializer: D) -> Result<
         return Ok(());
     }
     // Report the declared version mismatch before any missing v2 fields can mask it.
-    let _ = writeln!(
-        io::stderr().lock(),
-        "warning: mailbox-service-admission-schema-unsupported: \
-         unsupported mailbox service admission schema; v2 required. \
-         See \"Admit a local mailbox service\" in the daemon runbook."
-    );
+    let warn = LAST_SCHEMA_WARNING.lock().is_ok_and(|mut last_warning| {
+        let now = Instant::now();
+        if last_warning.is_some_and(|last| now.duration_since(last) < SCHEMA_WARNING_INTERVAL) {
+            return false;
+        }
+        *last_warning = Some(now);
+        true
+    });
+    if warn {
+        let _ = writeln!(
+            io::stderr().lock(),
+            "warning: mailbox-service-admission-schema-unsupported: \
+             unsupported mailbox service admission schema; v2 required. \
+             See \"Admit a local mailbox service\" in the daemon runbook."
+        );
+    }
     Err(serde::de::Error::custom(
         "unsupported mailbox service admission schema",
     ))

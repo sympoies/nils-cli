@@ -4,7 +4,8 @@
 ### Result
 
 - The daemon logs a fixed warning for an unsupported mailbox admission schema
-  and points operators to the v2 migration steps.
+  and points operators to the v2 migration steps. It emits at most one schema
+  warning per minute, even if requests keep arriving with invalid credentials.
 
 ### Why / context
 
