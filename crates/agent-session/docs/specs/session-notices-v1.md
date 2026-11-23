@@ -193,6 +193,10 @@ Ordinary Claude prompts and Codex composer policy retain their existing proof.
 
 ### Tested Claude Code range
 
+Native acceptance: PENDING for candidate `2.1.330`. Contract checks do not
+prove native delivery. Before this draft range change may merge, attach the
+exact-version native notice acceptance and complete reviewed merge gates.
+
 Native acceptance: PENDING for candidate `2.1.329`. Contract checks do not
 prove native delivery. Before this draft range change may merge, attach the
 exact-version native notice acceptance and complete reviewed merge gates.
@@ -203,7 +207,7 @@ reviewed merge gates.
 
 The module depends on the provider's static module-loader rules and on native
 API semantics, so the supported releases are a reviewed range, not a runtime
-probe: `2.1.296` through `2.1.329` inclusive. The launch strictly parses
+probe: `2.1.296` through `2.1.330` inclusive. The launch strictly parses
 `<major>.<minor>.<patch> (Claude Code)` from `--version` and compares
 numerically. An unreadable or unparseable version is unsupported. The probed
 version is recorded in the module bootstrap; the module and readiness compare
