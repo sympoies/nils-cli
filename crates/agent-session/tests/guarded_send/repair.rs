@@ -1,6 +1,8 @@
 //! Review regressions: native capture fidelity and zero-input refusal state.
 #[path = "appserver.rs"]
 mod appserver;
+#[path = "attempt_transport.rs"]
+mod attempt_transport;
 #[path = "native.rs"]
 mod native;
 #[path = "notice.rs"]

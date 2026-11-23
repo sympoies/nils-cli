@@ -1,4 +1,5 @@
 //! Terminal input delivery and guarded provider submission.
+pub(crate) mod attempt;
 pub(crate) mod claude_notice;
 pub(crate) mod codex_notice;
 pub(crate) mod daemon_notice;
@@ -657,7 +658,20 @@ fn guarded(
         Some(text) => Some(admission.observable_text(text)?),
         None => None,
     };
+    let mut delivery = send_guard::key::Attempt::default();
     if let Some(text) = literal {
+        let recovery_fence = if args.guards.idempotency_key.is_some()
+            && args.guards.require_empty_composer
+            && args.keys == [SpecialKey::Enter]
+            && record
+                .runtime
+                .as_ref()
+                .is_some_and(|runtime| runtime.kind == "tmux")
+        {
+            attempt::terminal_fence(tmux_bin, &record)
+        } else {
+            None
+        };
         let nonce = uuid::Uuid::new_v4();
         let buffer = format!("{}-send-{nonce}", record.id);
         let temp = session_dir(context, &record.id).join(format!("send-input-{nonce}"));
@@ -675,7 +689,7 @@ fn guarded(
                     .as_ref()
                     .expect("input holds record lock");
                 reply_delivery::checked(context, &record, &args.guards, lock, check_empty())?;
-                admission.claim_key()?;
+                delivery = admission.claim_key()?;
                 reply_delivery::checked(
                     context,
                     &record,
@@ -687,7 +701,7 @@ fn guarded(
                     crate::serve::begin_mailbox_notice(context, &record, tmux_bin, candidate)?;
                 }
                 prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
-                reply_delivery::consume(
+                let permission = reply_delivery::consume(
                     context,
                     &record,
                     &args.guards,
@@ -697,16 +711,28 @@ fn guarded(
                         text,
                         stopped: admission.stopped_idle.borrow().is_some(),
                     },
-                )
+                )?;
+                delivery.composer(send_guard::key::Composer::Unknown);
+                Ok(permission)
             },
         );
         let _ = fs::remove_file(temp);
         delivered?;
+        if delivery.is_keyed()
+            && !text.trim().is_empty()
+            && !(record.agent == "claude" && text.ends_with(' '))
+        {
+            delivery.composer(send_guard::key::Composer::Pasted {
+                input_sha256: send_guard::key::input_digest(text),
+                fence: recovery_fence,
+                record_updated_at: record.updated_at.clone(),
+            });
+        }
         if args.guards.notice_envelope {
             send_guard::drafts::residue::remember(context, &record, text)?;
         }
     } else {
-        admission.claim_key()?;
+        delivery = admission.claim_key()?;
         admission.check(None, "claimed")?;
     }
     // Mixed-prefix recovery needs an exact-paste observation before a conflict.
@@ -734,6 +760,7 @@ fn guarded(
                     admission.bind_placeholder(&mut owned_placeholder)?;
                 }
                 admission.check(Some(text), "submit")?;
+                delivery.dispatch();
                 admission.send_key(SpecialKey::Enter)
             };
             if let Some(probe) = probe {
@@ -779,6 +806,7 @@ fn guarded(
                 manual_input.arm(context, &record)?;
                 admission.check(None, "submit")?;
                 prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
+                delivery.dispatch();
                 admission.send_key(SpecialKey::Enter)?;
             }
             for key in &args.keys {
@@ -787,6 +815,7 @@ fn guarded(
                 }
                 admission.check(literal, "submit")?;
                 prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
+                delivery.dispatch();
                 admission.send_key(*key)?;
             }
             Ok(None)
@@ -806,6 +835,7 @@ fn guarded(
     };
     record.updated_at = Zoned::now().timestamp().to_string();
     write_session_record(context, &record)?;
+    delivery.record_updated_at(&record);
     if let Some(report) = submission
         && !command_ui.get()
         && matches!(

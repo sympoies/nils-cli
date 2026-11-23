@@ -114,6 +114,11 @@ agent-session notice <session> --kind context.continue --source scheduler \
 
 Exactly one body source is required. `--id` is optional display metadata;
 `--idempotency-key` remains the independent at-most-once transport claim.
+Use [attempt status](send-v1.md#read-back-a-guarded-attempt) with the same
+key and runtime launch ID to read back a keyed notice on the owning host.
+`unknown` gives no retry permission. A confirmed native submission may
+precede the notice history row. Native notice recovery never sends terminal
+input.
 Every notice forces idle and empty-composer checks, submits exactly once via
 the existing guarded `send` path, and preserves its runtime/provider binding,
 authentication, blocked-state, durable key, receipt and unknown-outcome rules.
