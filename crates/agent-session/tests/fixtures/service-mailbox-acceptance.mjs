@@ -108,7 +108,12 @@ const replyCases = serviceReplyCases({
   root, source, service, origin, serviceEntry, admission, privateWrite, registry, runCli, payload, submit,
 });
 try {
-  hosts.forEach(seed); privateWrite(service.credential, service.token); admission();
+  hosts.forEach(seed);
+  privateWrite(service.credential, service.token);
+  privateWrite(service.admission, {
+    schema_version: 'agent-session.mailbox-services.v1',
+    services: [serviceEntry(service)],
+  });
   const server = createServer(async (req, res) => {
     const host = hosts.find(h => req.headers.authorization === `Bearer ${h.relay}`);
     if (!host) { res.writeHead(401); res.end(JSON.stringify({ error: { code: 'unauthorized' } })); return; }
@@ -134,6 +139,21 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); edge = { server, url: `http://127.0.0.1:${server.address().port}` };
   await Promise.all(hosts.map(host => start(host)));
   heartbeat = setInterval(() => hosts.forEach(host => writeHeartbeat(join(host.root, 'sessions', host.session, 'coordination', 'heartbeat'), `${host.incarnation}:${now()}\n`)), 1000); heartbeat.unref();
+  const obsolete = await serviceCli('obsolete-admission-schema', [], 65);
+  assert.deepEqual(obsolete.error, {
+    code: 'mailbox-service-unauthorized',
+    message: 'service submission is not authorized',
+    details: { retryable: false, next_action: 'request_service_admission', recovery: { kind: 'operator' } },
+  });
+  assert.equal(registry(source).messages.length, 0);
+  const schemaWarning = await waitFor(
+    () => source.stderr.split('\n').find(line => line.startsWith('warning: mailbox-service-admission-schema-unsupported:')),
+    'unsupported mailbox admission schema warning on daemon stderr',
+    3000,
+  );
+  assert.equal(schemaWarning, 'warning: mailbox-service-admission-schema-unsupported: unsupported mailbox service admission schema; v2 required. See "Admit a local mailbox service" in the daemon runbook.');
+  admission();
+  checks.push('obsolete-admission-schema-denied-with-daemon-warning');
   await submit(payload('unknown', { service_id: 'unknown' }), 401);
   await submit(payload('wrong-token'), 401, 'wrong-token');
   await submit(payload('operator-token'), 401, source.operator);

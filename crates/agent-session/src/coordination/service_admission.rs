@@ -1,8 +1,9 @@
 //! The current admission document and exact-generation recipient resolution.
 use std::collections::HashSet;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::json;
 
 use super::{Origin, credential, unauthorized, valid_selector};
@@ -15,7 +16,8 @@ const MAX_ACTIVE: usize = 32;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Admission {
-    schema_version: String,
+    #[serde(rename = "schema_version", deserialize_with = "require_current_schema")]
+    _schema_version: (),
     services: Vec<Entry>,
     retired: Vec<Retirement>,
 }
@@ -35,6 +37,22 @@ struct Retirement {
     service_generation: String,
 }
 
+fn require_current_schema<'de, D: Deserializer<'de>>(deserializer: D) -> Result<(), D::Error> {
+    if String::deserialize(deserializer)? == VERSION {
+        return Ok(());
+    }
+    // Report the declared version mismatch before any missing v2 fields can mask it.
+    let _ = writeln!(
+        io::stderr().lock(),
+        "warning: mailbox-service-admission-schema-unsupported: \
+         unsupported mailbox service admission schema; v2 required. \
+         See \"Admit a local mailbox service\" in the daemon runbook."
+    );
+    Err(serde::de::Error::custom(
+        "unsupported mailbox service admission schema",
+    ))
+}
+
 impl Admission {
     fn read(file: Option<&Path>) -> Result<Option<Self>, CliError> {
         let Some(file) = file else { return Ok(None) };
@@ -42,8 +60,7 @@ impl Admission {
         let admission: Self = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
         let mut active = HashSet::new();
         let mut retired = HashSet::new();
-        if admission.schema_version != VERSION
-            || admission.services.len() > MAX_ACTIVE
+        if admission.services.len() > MAX_ACTIVE
             || admission.services.iter().any(|entry| {
                 !valid_selector(&entry.service_id)
                     || !valid_selector(&entry.service_generation)
