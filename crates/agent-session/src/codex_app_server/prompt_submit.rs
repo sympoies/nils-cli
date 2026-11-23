@@ -5,7 +5,7 @@ pub(crate) mod image_input;
 
 #[derive(Debug)]
 pub(super) enum PromptResponseFailure {
-    Rejected(String),
+    Rejected { code: i64, category: &'static str },
     NotConfirmed(String),
     AuthRefresh(String),
     Other(String),
@@ -14,10 +14,10 @@ pub(super) enum PromptResponseFailure {
 impl PromptResponseFailure {
     pub(super) fn into_string(self) -> String {
         match self {
-            Self::Rejected(error)
-            | Self::NotConfirmed(error)
-            | Self::AuthRefresh(error)
-            | Self::Other(error) => error,
+            Self::Rejected { code, category } => {
+                format!("Codex app-server rejected request: {code} ({category})")
+            }
+            Self::NotConfirmed(error) | Self::AuthRefresh(error) | Self::Other(error) => error,
         }
     }
 }
@@ -127,7 +127,7 @@ where
     receive_prompt_response_with_timeout(websocket, id, live, external_auth, timeout)
         .await
         .map_err(|error| match error {
-            PromptResponseFailure::Rejected(_) | PromptResponseFailure::NotConfirmed(_) => {
+            PromptResponseFailure::Rejected { .. } | PromptResponseFailure::NotConfirmed(_) => {
                 PromptRequestFailure::Response(PromptSubmissionFailure::NotConfirmed)
             }
             PromptResponseFailure::AuthRefresh(_) | PromptResponseFailure::Other(_) => {
@@ -168,18 +168,19 @@ where
         }
         if value.get("id").and_then(Value::as_u64) == Some(id) {
             if let Some(error) = value.get("error") {
-                let category = error
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .map(super::protocol_error_category)
-                    .unwrap_or("unknown");
-                return Err(PromptResponseFailure::Rejected(format!(
-                    "Codex app-server rejected request: {} ({category})",
-                    error
-                        .get("code")
-                        .and_then(Value::as_i64)
-                        .unwrap_or_default()
-                )));
+                let code = error
+                    .get("code")
+                    .and_then(Value::as_i64)
+                    .unwrap_or_default();
+                let message = error.get("message").and_then(Value::as_str);
+                let category = match (code, message) {
+                    (-32600, Some("chatgpt authentication required to read rate limits")) => {
+                        "rate_limits_require_chatgpt"
+                    }
+                    (_, Some(message)) => super::protocol_error_category(message),
+                    (_, None) => "unknown",
+                };
+                return Err(PromptResponseFailure::Rejected { code, category });
             }
             return value.get("result").cloned().ok_or_else(|| {
                 PromptResponseFailure::NotConfirmed(
