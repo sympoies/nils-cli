@@ -541,7 +541,7 @@ mod tests {
         }
         let script = r#"mount -t tmpfs -o mode=1777 tmpfs /tmp
 setpriv --reuid=65534 --regid=65534 --clear-groups mkdir "/tmp/ark-$1"
-exec setpriv --reuid="$1" --regid="$2" --clear-groups env TMPDIR=/tmp NILS_TEST_FOREIGN_SHORT_ROOT_INNER=1 "$3" runtime_environment::session_tmp::tests::foreign_precreated_predictable_root_does_not_block_launch --exact --nocapture"#;
+exec setpriv --reuid="$1" --regid="$2" --clear-groups env TMPDIR=/tmp NEXTEST_EXECUTION_MODE="$4" NILS_TEST_FOREIGN_SHORT_ROOT_INNER=1 "$3" runtime_environment::session_tmp::tests::foreign_precreated_predictable_root_does_not_block_launch --exact --nocapture"#;
         let output = ProcessCommand::new("sudo")
             .args([
                 "-n",
@@ -558,6 +558,7 @@ exec setpriv --reuid="$1" --regid="$2" --clear-groups env TMPDIR=/tmp NILS_TEST_
             .arg(uid.to_string())
             .arg(gid.to_string())
             .arg(std::env::current_exe().unwrap())
+            .arg(std::env::var_os("NEXTEST_EXECUTION_MODE").expect("Nextest execution mode"))
             .output()
             .unwrap();
         assert!(output.status.success(), "isolated cross-UID test failed");

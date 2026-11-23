@@ -245,7 +245,7 @@ fn mounted_backing_retains_short_path_until_unmounted() {
         eprintln!("skipped: private privileged mount namespace unavailable");
         return;
     }
-    let script = "mount -t tmpfs -o mode=1777 tmpfs /tmp; exec env TMPDIR=/tmp NILS_TEST_SHORT_MOUNT_INNER=1 \"$1\" runtime_environment::session_tmp::tests::safety::mounted_backing_retains_short_path_until_unmounted --exact --nocapture";
+    let script = "mount -t tmpfs -o mode=1777 tmpfs /tmp; exec env TMPDIR=/tmp NEXTEST_EXECUTION_MODE=\"$2\" NILS_TEST_SHORT_MOUNT_INNER=1 \"$1\" runtime_environment::session_tmp::tests::safety::mounted_backing_retains_short_path_until_unmounted --exact --nocapture";
     let output = ProcessCommand::new("sudo")
         .args([
             "-n",
@@ -260,6 +260,7 @@ fn mounted_backing_retains_short_path_until_unmounted() {
             "fixture",
         ])
         .arg(std::env::current_exe().unwrap())
+        .arg(std::env::var_os("NEXTEST_EXECUTION_MODE").expect("Nextest execution mode"))
         .output()
         .unwrap();
     assert!(
