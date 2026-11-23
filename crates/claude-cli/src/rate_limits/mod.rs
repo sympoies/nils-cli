@@ -903,23 +903,18 @@ fn target_name(target: &Path) -> String {
     let Ok(active) = read_active_login() else {
         return ACTIVE_NAME.to_string();
     };
-    let secret_dir = store::secret_dir().unwrap_or_default();
-    let profiles =
-        driver::collect_json_targets_from_dir(&CLAUDE_SPEC, &secret_dir, false).unwrap_or_default();
-    if let Some(profile) = profiles.iter().find(|profile| {
-        read_profile_login(profile).is_ok_and(|login| login.access_token == active.access_token)
+    // The profile store can share the active config directory. Enumerating saved
+    // profile names excludes the active .credentials.json from consideration.
+    let profile_names = store::list_profiles().unwrap_or_default();
+    if let Some(name) = profile_names.iter().find(|name| {
+        store::profile_file(name)
+            .ok()
+            .and_then(|path| read_profile_login(&path).ok())
+            .is_some_and(|login| login.access_token == active.access_token)
     }) {
-        return target_name(profile);
+        return name.clone();
     }
 
-    let profile_names = profiles
-        .iter()
-        .map(|profile| {
-            target_file_name(profile)
-                .trim_end_matches(".json")
-                .to_string()
-        })
-        .collect::<Vec<_>>();
     if !profile_names.iter().any(|name| name == ACTIVE_NAME) {
         return ACTIVE_NAME.to_string();
     }

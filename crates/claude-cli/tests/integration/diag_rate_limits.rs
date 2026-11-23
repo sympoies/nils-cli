@@ -428,6 +428,25 @@ fn diag_rate_limits_without_a_target_reads_the_active_login() {
 }
 
 #[test]
+fn diag_rate_limits_shared_config_and_profile_directory_reads_active_login() {
+    let fx = Fixture::new();
+    fx.write_active_login("access-alpha", FUTURE_MS);
+    let options = fx
+        .options()
+        .with_env("CLAUDE_SECRET_DIR", &path_str(&fx.config_dir()));
+
+    let output = fx.run_with_options(&["diag", "rate-limits", "--format", "json"], &options);
+
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    let mut expected = alpha_result("network");
+    expected["name"] = json!("active");
+    expected["target_file"] = json!(".credentials.json");
+    assert_eq!(without_checked_at(payload["result"].clone()), expected);
+    assert_eq!(fx.requests().len(), 1);
+}
+
+#[test]
 fn diag_rate_limits_active_account_switch_does_not_fall_back_to_previous_windows() {
     let fx = Fixture::new();
     fx.write_active_login("access-alpha", FUTURE_MS);
