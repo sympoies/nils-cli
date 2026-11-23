@@ -50,7 +50,7 @@ resolver = "2"
 edition = "2024"
 license = "MIT"
 # Release and compatibility scripts read this version directly.
-version = "1.42.3"
+version = "1.42.4"
 
 [workspace.dependencies]
 anyhow = "1"
