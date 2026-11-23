@@ -19,6 +19,15 @@ function isAncestor(git, ancestor, descendant) {
   }
 }
 
+function replayReleaseTree(git, parent, source) {
+  try {
+    return git("merge-tree", "--write-tree", parent, source);
+  } catch (error) {
+    if (error.status !== 1) throw error;
+    throw new Error("Governed release bump conflicts with the squash parent");
+  }
+}
+
 async function governedMainAnchor({ github, repo, fullName, git, tag, ref, annotated, source, publishedAt }) {
   if (annotated?.sha !== ref.sha || annotated?.tag !== tag || !verified(annotated?.verification))
     throw new Error("Governed release source requires the exact verified annotated tag");
@@ -51,10 +60,23 @@ async function governedMainAnchor({ github, repo, fullName, git, tag, ref, annot
     throw new Error("Governed release source does not match the exact merged release PR");
 
   const merge = pr.merge_commit_sha;
-  if (!isAncestor(git, merge, "HEAD") ||
-      git("show", "-s", "--format=%P%n%s", merge) !== `${pr.base.sha}\n${subject} (#${pr.number})` ||
-      !isAncestor(git, head.parents[0].sha, pr.base.sha))
+  const sourceParent = head.parents[0].sha;
+  if (!isAncestor(git, merge, "HEAD"))
     throw new Error("Governed release source does not match a reachable protected main squash");
+  const [parent, squashSubject, squashTree] = git("show", "-s", "--format=%P%n%s%n%T", merge).split("\n");
+  // An earlier queue entry can advance main beyond the base recorded on the PR.
+  if (!oid(parent) || squashSubject !== `${subject} (#${pr.number})` ||
+      !isAncestor(git, sourceParent, pr.base.sha) || !isAncestor(git, pr.base.sha, parent))
+    throw new Error("Governed release source does not match a reachable protected main squash");
+  const { data: landing } = await github.rest.repos.getCommit({ ...repo, ref: merge, per_page: 1 });
+  if (landing?.sha !== merge || !verified(landing.commit?.verification))
+    throw new Error("Governed release squash is not the exact verified landing commit");
+
+  // The signed bump's sole parent is the merge base. Replaying its change
+  // preserves earlier queue edits, including independent edits to the same file.
+  const replayedTree = replayReleaseTree(git, parent, source);
+  if (replayedTree !== squashTree || replayedTree === git("rev-parse", `${parent}^{tree}`))
+    throw new Error("Governed release squash does not preserve the signed release delta");
   return merge;
 }
 

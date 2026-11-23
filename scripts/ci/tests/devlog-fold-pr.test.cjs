@@ -295,17 +295,27 @@ async function production(f, publication = withRelease(f)) {
   return { options: { ...options, receipt }, events, receipt };
 }
 
-function governedRelease(f) {
+function governedRelease(f, { queued = false, divergent = false, queueDependencyUpdate = false, changeSquash } = {}) {
   const version = f.tag.slice(1);
   const branch = `chore/release-${version.replaceAll(".", "-")}`;
   const releaseSubject = `chore(release): bump cli versions to ${version}`;
   const manifest = path.join(f.dir, "Cargo.toml");
-  fs.writeFileSync(manifest, '[workspace.package]\nversion = "1.2.2"\n');
+  const manifestText = (version, dependency = "1.0.0") => `[workspace.package]
+version = "${version}"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+example = "${dependency}"
+`;
+  fs.writeFileSync(manifest, manifestText("1.2.2"));
   f.git("add", "Cargo.toml");
   f.git("commit", "-qm", "Record the previous workspace version");
-  const releaseParent = f.git("rev-parse", "HEAD");
+  const approvedBase = f.git("rev-parse", "HEAD");
   f.git("switch", "-qc", branch);
-  fs.writeFileSync(manifest, `[workspace.package]\nversion = "${version}"\n`);
+  if (divergent) f.git("commit", "--allow-empty", "-qm", "Unlanded release source parent");
+  const releaseParent = f.git("rev-parse", "HEAD");
+  fs.writeFileSync(manifest, manifestText(version));
   f.git("commit", "-qam", releaseSubject);
   const source = f.git("rev-parse", "HEAD");
   f.git("tag", "-a", f.tag, "-m", f.tag);
@@ -314,26 +324,34 @@ function governedRelease(f) {
   f.git("switch", "-q", "main");
   fs.writeFileSync(path.join(f.dir, "README.md"), "Protected main update\n");
   f.git("add", "README.md");
+  if (queueDependencyUpdate) {
+    fs.writeFileSync(manifest, manifestText("1.2.2", "1.1.0"));
+    f.git("add", "Cargo.toml");
+  }
   f.git("commit", "-qm", "Protected main advances before the squash");
   const base = f.git("rev-parse", "HEAD");
   f.git("merge", "--squash", source);
+  changeSquash?.(manifest);
   const number = 27;
   f.git("commit", "-qm", `${releaseSubject} (#${number})`);
   const merge = f.git("rev-parse", "HEAD");
   f.git("branch", "-D", branch);
-  f.git("commit", "--allow-empty", "-qm", "Protected main advances after the squash");
+  if (!queued)
+    f.git("commit", "--allow-empty", "-qm", "Protected main advances after the squash");
   f.state.base = f.git("rev-parse", "HEAD");
 
   const repo = { full_name: f.fullName };
   const pr = { number, node_id: "RELEASE-PR", state: "closed", merged: true,
     merged_at: "2029-12-31T23:00:00Z", merge_commit_sha: merge,
-    head: { ref: branch, sha: source, repo }, base: { ref: "main", sha: base, repo } };
+    head: { ref: branch, sha: source, repo },
+    base: { ref: "main", sha: queued ? approvedBase : base, repo } };
   const annotated = { sha: tagOid, tag: f.tag, object: { type: "commit", sha: source },
     verification: { verified: true, reason: "valid" } };
   const signed = { sha: source, parents: [{ sha: releaseParent }],
     commit: { message: releaseSubject, tree: { sha: f.git("rev-parse", `${source}^{tree}`) },
       verification: { verified: true, reason: "valid" } } };
-  const provider = { associated: [structuredClone(pr)], headers: {}, pr, annotated, signed };
+  const landing = { sha: merge, commit: { verification: { verified: true, reason: "valid" } } };
+  const provider = { associated: [structuredClone(pr)], headers: {}, pr, annotated, signed, landing };
   const getRef = f.github.rest.git.getRef;
   f.github.rest.git.getRef = async args => args.ref === `tags/${f.tag}`
     ? { data: { object: { type: "tag", sha: tagOid } } } : getRef(args);
@@ -342,7 +360,11 @@ function governedRelease(f) {
     return { data: annotated };
   };
   const getCommit = f.github.rest.repos.getCommit;
-  f.github.rest.repos.getCommit = async args => args.ref === source ? { data: signed } : getCommit(args);
+  f.github.rest.repos.getCommit = async args => {
+    if (args.ref === source) return { data: signed };
+    if (args.ref === pr.merge_commit_sha) return { data: landing };
+    return getCommit(args);
+  };
   f.github.rest.repos.listPullRequestsAssociatedWithCommit = async ({ commit_sha, per_page }) => {
     assert.equal(commit_sha, source);
     assert.equal(per_page, 2);
@@ -354,6 +376,90 @@ function governedRelease(f) {
   };
   return { publication: withRelease(f, source), provider, source, merge };
 }
+
+test("a governed release landing can follow another protected queue entry", async () => {
+  const f = fixture();
+  const { publication, provider, source, merge } = governedRelease(f, { queued: true });
+  const parent = f.git("rev-parse", `${merge}^`);
+  assert.equal(provider.pr.base.sha, f.git("rev-parse", `${source}^`));
+  assert.equal(provider.pr.base.sha, f.git("rev-parse", `${parent}^`));
+  assert.equal(f.git("rev-parse", "HEAD"), merge);
+  assert.throws(() => f.git("merge-base", "--is-ancestor", source, "HEAD"), { status: 1 });
+  assert.equal((await readPublication(publication)).mainAnchor, merge);
+  assert.deepEqual(f.state.writes, []);
+});
+
+test("a governed release landing preserves an earlier queue edit to a bumped file", async () => {
+  const f = fixture();
+  const { publication, source, merge } = governedRelease(f, { queued: true, queueDependencyUpdate: true });
+  assert.match(f.git("show", `${source}:Cargo.toml`), /example = "1\.0\.0"/);
+  assert.match(f.git("show", `${merge}^:Cargo.toml`), /version = "1\.2\.2"/);
+  const landed = f.git("show", `${merge}:Cargo.toml`);
+  assert.match(landed, /version = "1\.2\.3"/);
+  assert.match(landed, /example = "1\.1\.0"/);
+  assert.equal((await readPublication(publication)).mainAnchor, merge);
+  assert.deepEqual(f.state.writes, []);
+});
+
+test("a governed release refuses a squash that resolves a conflicting release bump", async () => {
+  const f = fixture();
+  const { publication, provider, merge } = governedRelease(f, { queued: true });
+  const manifest = path.join(f.dir, "Cargo.toml");
+  f.git("switch", "--detach", `${merge}^`);
+  fs.writeFileSync(manifest, fs.readFileSync(manifest, "utf8").replace('version = "1.2.2"', 'version = "9.9.9"'));
+  f.git("commit", "-qam", "Earlier queue entry edits the workspace version");
+  const conflicting = f.git("commit-tree", `${merge}^{tree}`, "-p", "HEAD",
+    "-m", f.git("show", "-s", "--format=%s", merge));
+  f.git("switch", "--detach", conflicting);
+  provider.pr.merge_commit_sha = conflicting;
+  provider.associated[0].merge_commit_sha = conflicting;
+  provider.landing.sha = conflicting;
+  await assert.rejects(readPublication(publication), /release bump conflicts with the squash parent/);
+  assert.deepEqual(f.state.writes, []);
+});
+
+for (const defect of ["unsigned landing", "wrong verified SHA"])
+  test(`governed release publication refuses ${defect}`, async () => {
+    const f = fixture();
+    const { publication, provider, source } = governedRelease(f, { queued: true });
+    if (defect === "unsigned landing") provider.landing.commit.verification.verified = false;
+    else provider.landing.sha = source;
+    await assert.rejects(readPublication(publication), /exact verified landing commit/);
+    assert.deepEqual(f.state.writes, []);
+  });
+
+for (const defect of ["a changed blob", "a changed mode", "an extra path", "a dropped queue edit"])
+  test(`a governed release refuses a queued squash with ${defect}`, async () => {
+    const f = fixture();
+    const { publication } = governedRelease(f, { queued: true, queueDependencyUpdate: true, changeSquash: manifest => {
+      switch (defect) {
+        case "a changed blob":
+          fs.appendFileSync(manifest, "# Unexpected content\n");
+          f.git("add", "Cargo.toml");
+          break;
+        case "a changed mode":
+          f.git("update-index", "--chmod=+x", "Cargo.toml");
+          break;
+        case "an extra path":
+          fs.writeFileSync(path.join(f.dir, "extra.txt"), "Unexpected file\n");
+          f.git("add", "extra.txt");
+          break;
+        case "a dropped queue edit":
+          fs.writeFileSync(manifest, fs.readFileSync(manifest, "utf8").replace('example = "1.1.0"', 'example = "1.0.0"'));
+          f.git("add", "Cargo.toml");
+          break;
+      }
+    } });
+    await assert.rejects(readPublication(publication), /does not preserve the signed release delta/);
+    assert.deepEqual(f.state.writes, []);
+  });
+
+test("a governed release refuses a queued squash if the source parent was never landed", async () => {
+  const f = fixture();
+  const { publication } = governedRelease(f, { queued: true, divergent: true });
+  await assert.rejects(readPublication(publication), /reachable protected main squash/);
+  assert.deepEqual(f.state.writes, []);
+});
 
 test("a governed signed release head folds after its protected squash and release branch deletion", async () => {
   const f = fixture();
@@ -377,7 +483,7 @@ test("a governed signed release head folds after its protected squash and releas
 for (const defect of [
   "wrong tag target", "unsigned tag", "unsigned head", "absent PR", "ambiguous PRs",
   "partial PR history", "unmerged PR", "late merge", "foreign PR", "wrong PR head",
-  "unreachable squash", "unrelated main commit",
+  "mismatched merge SHA", "unreachable squash", "unrelated main commit", "unrelated base", "multiple parents",
 ]) test(`governed release publication refuses ${defect}`, async () => {
   const f = fixture();
   const { publication, provider, merge } = governedRelease(f);
@@ -393,8 +499,11 @@ for (const defect of [
     "late merge": /exact merged release PR/,
     "foreign PR": /exact merged release PR/,
     "wrong PR head": /exact merged release PR/,
+    "mismatched merge SHA": /exact merged release PR/,
     "unreachable squash": /reachable protected main squash/,
     "unrelated main commit": /reachable protected main squash/,
+    "unrelated base": /reachable protected main squash/,
+    "multiple parents": /reachable protected main squash/,
   };
   switch (defect) {
     case "wrong tag target": annotated.object.sha = f.state.base; break;
@@ -410,6 +519,7 @@ for (const defect of [
       break;
     case "foreign PR": pr.head.repo = { full_name: "fork/project" }; break;
     case "wrong PR head": pr.head.sha = f.state.base; break;
+    case "mismatched merge SHA": provider.associated[0].merge_commit_sha = f.state.base; break;
     case "unreachable squash": {
       const subject = f.git("show", "-s", "--format=%s", merge);
       pr.merge_commit_sha = f.git("commit-tree", f.git("rev-parse", `${merge}^{tree}`),
@@ -420,6 +530,17 @@ for (const defect of [
     case "unrelated main commit":
       pr.merge_commit_sha = f.state.base;
       provider.associated[0].merge_commit_sha = pr.merge_commit_sha;
+      break;
+    case "unrelated base":
+      pr.base.sha = f.git("commit-tree", `${pr.base.sha}^{tree}`,
+        "-p", signed.parents[0].sha, "-m", "A base outside the landing history");
+      break;
+    case "multiple parents":
+      pr.merge_commit_sha = f.git("commit-tree", `${merge}^{tree}`, "-p", pr.base.sha,
+        "-p", signed.parents[0].sha, "-m", f.git("show", "-s", "--format=%s", merge));
+      provider.associated[0].merge_commit_sha = pr.merge_commit_sha;
+      provider.landing.sha = pr.merge_commit_sha;
+      f.git("switch", "--detach", pr.merge_commit_sha);
       break;
   }
   await assert.rejects(readPublication(publication), expectations[defect]);
