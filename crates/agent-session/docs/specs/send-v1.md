@@ -99,8 +99,9 @@ admission, an empty composer or a visible strict prefix of the first paste can
 mean the paste is still arriving. The guard waits within the terminal
 observation budget and requires complete proof before Enter. A readable
 conflicting draft still refuses immediately. A transient capture retry and the
-cursor proof for a complete wrapped layout have separate bounds. If the exact paste remains,
-one swallowed Enter may be retried within a fifteen-second terminal observation
+cursor proof for a complete wrapped layout have separate bounds.
+
+If the exact paste remains, one swallowed Enter may be retried within a fifteen-second terminal observation
 budget, with all guards rechecked before the retry. Native continuation keeps
 its existing four-second budget. After an accepted Enter, verified absence of
 that exact terminal runtime also confirms `submission.outcome: "submitted"`
