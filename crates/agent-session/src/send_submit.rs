@@ -16,9 +16,10 @@ use serde::Serialize;
 
 mod composer;
 pub(crate) use composer::cleanup::{
-    cursor_at_start as cleanup_cursor_at_start, cursor_cells as cleanup_cursor_cells,
-    input as cleanup_composer_input, matched_layout as wrapped_composer_layout,
-    prefix_end as cleanup_prefix_end,
+    WrappedLayout, cursor_at_start as cleanup_cursor_at_start,
+    cursor_cells as cleanup_cursor_cells, input as cleanup_composer_input,
+    matched_layout as wrapped_composer_layout, prefix_end as cleanup_prefix_end, wrapped_layout,
+    wrapped_paste_is_prefix,
 };
 pub(crate) use composer::placeholder::{claude_paste_placeholder, has_claude_paste_placeholder};
 pub(crate) use composer::{
@@ -358,7 +359,8 @@ fn starts_with_numbered_choice(after_glyph: &str) -> bool {
 /// before every retry so a session recorded as waiting on a dialog is never answered, and `press_enter` sends one Enter. Provider
 /// events cannot land while the caller holds the session lock, so the pane
 /// classifier, which never sees a composer behind a dialog, is the primary
-/// guard and `may_press` covers state recorded before the send.
+/// guard and `may_press` covers state recorded before the send. A guarded
+/// `press_enter` also reports whether it verified its paste before pressing.
 pub(crate) fn submit_and_confirm(
     agent: &str,
     probe: &Probe,
@@ -366,7 +368,7 @@ pub(crate) fn submit_and_confirm(
     mut observe: impl FnMut(Duration) -> Option<String>,
     mut has_exited: impl FnMut(Duration) -> bool,
     mut may_press: impl FnMut() -> bool,
-    mut press_enter: impl FnMut() -> Result<(), crate::CliError>,
+    mut press_enter: impl FnMut() -> Result<bool, crate::CliError>,
 ) -> Result<SubmitReport, crate::CliError> {
     let view = |pane: Option<String>| {
         pane.map_or(Composer::Unrecognized, |pane| classify(agent, &pane, probe))
@@ -374,9 +376,11 @@ pub(crate) fn submit_and_confirm(
     let remaining = || deadline.saturating_duration_since(Instant::now());
     // A blank capture is a pane tmux could not show us, not an empty composer.
     let before = observe(remaining().min(CAPTURE_TIMEOUT)).filter(|pane| !pane.trim().is_empty());
-    let observable = before.is_some();
-    let mut seen_pending = view(before) == Composer::Pending;
-    press_enter()?;
+    let captured = before.is_some();
+    let pending = view(before) == Composer::Pending;
+    let verified_paste = press_enter()?;
+    let observable = captured || verified_paste;
+    let mut seen_pending = pending || verified_paste;
     let mut presses = 1;
     let started = Instant::now();
     let mut last_press = started;
@@ -739,7 +743,7 @@ mod tests {
             || may_press,
             || {
                 *pressed.borrow_mut() += 1;
-                Ok(())
+                Ok(false)
             },
         );
         (result, *pressed.borrow(), *observed.borrow())
@@ -829,7 +833,7 @@ mod tests {
             || true,
             || {
                 *presses.borrow_mut() += 1;
-                Ok(())
+                Ok(false)
             },
         );
         assert_eq!(result.unwrap().outcome, SubmitOutcome::Stuck);
@@ -855,7 +859,7 @@ mod tests {
             },
             |_| false,
             || true,
-            || Ok(()),
+            || Ok(false),
         );
         assert_eq!(result.unwrap().outcome, SubmitOutcome::Stuck);
     }

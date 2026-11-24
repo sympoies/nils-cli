@@ -118,37 +118,28 @@ fn wrapped_paste_with_unproven_logical_start_never_submits() {
 }
 
 #[test]
-fn slow_wrapped_composer_proof_stops_at_retry_deadline() {
+fn transient_capture_retry_leaves_time_for_wrapped_composer_proof() {
     let (fixture, text) = wrapped_fixture(44, "");
     std::fs::write(fixture.root().join("fail-post-paste-capture-once"), "3").unwrap();
     std::fs::write(fixture.root().join("slow-right-observation-ms"), "300").unwrap();
 
     let output = guarded_text(&fixture, &text);
-    assert_eq!(output.code, 1, "{}", output.stdout_text());
-    let receipt = output.stdout_json();
-    assert!(
-        matches!(
-            receipt["error"]["code"].as_str(),
-            Some("send-composer-unobservable" | "send-guard-observation-timeout")
-        ),
-        "{receipt}"
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["data"]["submission"]["enter_presses"],
+        1
     );
-    assert_eq!(receipt["error"]["details"]["stage"], "submit");
-    assert_eq!(receipt["error"]["details"]["pasted"], true);
-    assert_eq!(receipt["error"]["details"]["submitted"], false);
-    assert_eq!(receipt["error"]["details"]["cleared"], true, "{receipt}");
-    assert_eq!(receipt["error"]["details"]["remaining_input"], "empty");
+    assert_eq!(
+        submissions(&fixture),
+        [serde_json::to_string(&text).unwrap()]
+    );
     assert_eq!(composer(&fixture), "");
-    assert!(submissions(&fixture).is_empty());
-    assert!(
-        fixture
-            .calls()
-            .iter()
-            .all(|call| call.last().is_none_or(|key| key != "Enter"))
-    );
     let retry = fixture.send(&["--idempotency-key", "live-text"]);
     details(&retry, "send-idempotency-key-used");
-    assert!(submissions(&fixture).is_empty());
+    assert_eq!(
+        submissions(&fixture),
+        [serde_json::to_string(&text).unwrap()]
+    );
 }
 
 #[test]

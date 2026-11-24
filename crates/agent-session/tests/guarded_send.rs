@@ -13,6 +13,8 @@ mod exit;
 mod history_command_bytes;
 #[path = "guarded_send/live_composer.rs"]
 mod live_composer;
+#[path = "guarded_send/long_paste.rs"]
+mod long_paste;
 #[path = "guarded_send/observation_deadline.rs"]
 mod observation_deadline;
 #[path = "guarded_send/permission.rs"]

@@ -94,7 +94,12 @@ short, nonblocking guard probes detect it without dropping that event.
 
 For a guarded text-and-Enter submission, send waits for paste settlement and
 then requires the composer to contain **exactly** its own text, rechecks
-identity and requested idle state, and presses Enter. If the exact paste remains,
+identity and requested idle state, and presses Enter. After an empty-composer
+admission, an empty composer or a visible strict prefix of the first paste can
+mean the paste is still arriving. The guard waits within the terminal
+observation budget and requires complete proof before Enter. A readable
+conflicting draft still refuses immediately. A transient capture retry and the
+cursor proof for a complete wrapped layout have separate bounds. If the exact paste remains,
 one swallowed Enter may be retried within a fifteen-second terminal observation
 budget, with all guards rechecked before the retry. Native continuation keeps
 its existing four-second budget. After an accepted Enter, verified absence of
@@ -328,13 +333,16 @@ outcomes.
 | `not_submitted` | The claimed attempt ended before it could submit, or the bound native notice module attested a drop. | Check `composer` before any new attempt. |
 | `unknown` | The evidence is missing, unfinished, ambiguous, or belongs to another runtime. | Do not retry. |
 
-`not_submitted` includes `composer: "exact" | "absent" | "unknown"`. `exact`
-requires the original empty-composer admission, an unchanged detached terminal
-binding and record, and a read of the exact retained input. `absent` means the
-attempt did not paste, or the composer is observably empty. A different draft
-or a layout whose contents cannot be read exactly yields `unknown` and gives no
-recovery permission. The projection is limited to identity and outcome
-metadata.
+`not_submitted` includes `composer: "exact" | "wrapped_match" | "absent" | "unknown"`.
+The JSON field `unsubmitted_attempt` is true for `exact` or `wrapped_match`.
+Both require the original empty-composer admission and an unchanged detached
+terminal binding and record. `exact` is a byte-for-byte single-row read.
+`wrapped_match` means the visible layout agrees with the input supplied using
+`--text-stdin` and that input matches the stored digest. It helps a caller
+detect a stranded paste. Exact recovery still requires the logical cursor proof.
+`absent` means the attempt did not paste or the composer is observably empty.
+Different input or an unobservable layout yields `unknown` composer evidence.
+Output contains only identity and outcome metadata.
 
 A tmux acknowledgement, a disappeared paste or pane, a transport timeout, idle
 state, and unchanged context usage give no per-attempt submission proof. A
@@ -364,8 +372,13 @@ Recovery is an explicit one-shot operation. It requires the original keyed
 terminal text-and-Enter attempt to have stopped before its first possible Enter.
 It rechecks claim, identity, terminal attachment, exact input, provider idle
 and ingress, permission, restart, and account guards under the session lock.
-A replaced pane or a changed draft refuses. It sends one Enter to the retained
-composer without pasting or clearing input. Direct tmux input outside the
+For a wrapped paste, pipe the original input into `attempt status` or
+`attempt recover` and add `--text-stdin`. Recovery repeats the complete
+wrapped cursor proof before Enter. The attempt record retains the digest of
+the original input.
+
+A replaced pane or a changed draft refuses. Recovery sends one Enter to the
+retained composer without pasting or clearing input. Direct tmux input outside the
 managed session API is outside this guard. Claude and Codex native notices
 do not paste into the terminal.
 
