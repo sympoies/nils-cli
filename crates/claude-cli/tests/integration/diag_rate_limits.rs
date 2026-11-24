@@ -725,8 +725,8 @@ const RESETS_USAGE: &str = r#"{
         "label": "Welcome reset",
         "resets_total": 2,
         "resets_left": 2,
-        "starts_at": "2026-09-01T00:00:00Z",
-        "ends_at": "2026-10-12T00:00:00Z",
+        "starts_at": "2020-01-01T00:00:00Z",
+        "ends_at": "2100-01-01T00:00:00Z",
         "clears": ["five_hour", "seven_day"],
         "paused": false,
         "usable_now": true,
@@ -803,8 +803,8 @@ fn diag_rate_limits_reports_normalized_limit_resets() {
                         "label": "Welcome reset",
                         "resets_left": 2,
                         "resets_total": 2,
-                        "starts_at": 1_788_220_800,
-                        "ends_at": 1_791_763_200,
+                        "starts_at": 1_577_836_800,
+                        "ends_at": 4_102_444_800i64,
                         "clears": ["five_hour", "seven_day"],
                         "paused": false,
                         "usable_now": true,
@@ -830,6 +830,7 @@ fn diag_rate_limits_reports_normalized_limit_resets() {
     );
     // The windows are unaffected by the reset blocks.
     let mut expected = alpha_result("network");
+    expected["reset_credits"] = json!({"available_count": 2});
     expected["limit_resets"] = payload["result"]["limit_resets"].clone();
     assert_eq!(without_checked_at(payload["result"].clone()), expected);
 
