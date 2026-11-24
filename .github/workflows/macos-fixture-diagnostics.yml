@@ -1,0 +1,129 @@
+name: macOS fixture diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: Exact agent-session unit test to diagnose
+        type: choice
+        required: true
+        options:
+          - cli::permission::transport::tests::accepted_nonblocking_stream_delivers_delayed_answer
+          - runtime_environment::session_tmp::tests::safety::short_root_removal_failure_retains_backing_and_is_retryable
+      instrumented:
+        description: Build the fixture with LLVM coverage instrumentation
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: "4"
+      DEVLOG_LAYOUT: fragments
+    steps:
+      - name: Checkout diagnostic definitions
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Select pinned fixture
+        id: fixture
+        shell: bash
+        env:
+          TEST_FILTER: ${{ inputs.test_filter }}
+        run: |
+          case "$TEST_FILTER" in
+            cli::permission::transport::tests::accepted_nonblocking_stream_delivers_delayed_answer)
+              echo "sha=9ce891302abf9d2b67a585c1f3afb4fdf254be01" >> "$GITHUB_OUTPUT"
+              echo "patch=permission-trace.patch" >> "$GITHUB_OUTPUT"
+              echo "iterations=50" >> "$GITHUB_OUTPUT"
+              ;;
+            runtime_environment::session_tmp::tests::safety::short_root_removal_failure_retains_backing_and_is_retryable)
+              echo "sha=77ce220243cd9cb84196b75d138c823ef9a0ebff" >> "$GITHUB_OUTPUT"
+              echo "patch=session-tmp-trace.patch" >> "$GITHUB_OUTPUT"
+              echo "iterations=1" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unknown diagnostic test filter" >&2
+              exit 64
+              ;;
+          esac
+
+      - name: Checkout fixture source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.fixture.outputs.sha }}
+          persist-credentials: false
+          path: diagnostic-source
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          components: llvm-tools-preview
+
+      - name: Install diagnostic test tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: |
+            cargo-nextest
+            cargo-llvm-cov
+
+      - name: Run selected fixture and retain traces
+        shell: bash
+        env:
+          TEST_FILTER: ${{ inputs.test_filter }}
+          INSTRUMENTED: ${{ inputs.instrumented }}
+          FIXTURE_SHA: ${{ steps.fixture.outputs.sha }}
+          TRACE_PATCH: ${{ steps.fixture.outputs.patch }}
+          ITERATIONS: ${{ steps.fixture.outputs.iterations }}
+        run: |
+          set -euo pipefail
+          report_dir="$RUNNER_TEMP/macos-fixture-diagnostics"
+          fixtures="$GITHUB_WORKSPACE/scripts/ci/fixtures/macos-diagnostics"
+          mkdir -p "$report_dir"
+          printf 'fixture_sha=%s\ntest_filter=%s\ninstrumented=%s\niterations=%s\nretries=0\n' \
+            "$FIXTURE_SHA" "$TEST_FILTER" "$INSTRUMENTED" "$ITERATIONS" > "$report_dir/run.txt"
+
+          probe_status=0
+          if [[ "$TRACE_PATCH" == "permission-trace.patch" ]]; then
+            socket_dir="$(mktemp -d /tmp/nils-permission-diagnostic.XXXXXX)"
+            trap 'rm -r -- "$socket_dir"' EXIT
+            if ! (rustc --edition 2024 -D warnings "$fixtures/permission-socket.rs" -o "$socket_dir/probe" &&
+                  "$socket_dir/probe" "$socket_dir" "$ITERATIONS") 2>&1 | tee "$report_dir/socket-probe.log"; then
+              probe_status=1
+            fi
+          fi
+
+          (
+            cd diagnostic-source
+            test "$(git rev-parse HEAD)" = "$FIXTURE_SHA"
+            git apply "$fixtures/$TRACE_PATCH"
+
+            runner=(cargo nextest run)
+            if [[ "$INSTRUMENTED" == "true" ]]; then
+              runner=(cargo llvm-cov nextest --no-report)
+            fi
+            "${runner[@]}" --locked -p nils-agent-session --lib \
+              --retries 0 --run-ignored all --stress-count "$ITERATIONS" \
+              --no-tests fail --success-output immediate --failure-output immediate \
+              -E "test(=$TEST_FILTER)"
+          ) 2>&1 | tee "$report_dir/nextest.log"
+
+          exit "$probe_status"
+
+      - name: Upload diagnostic traces
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-fixture-diagnostics
+          path: ${{ runner.temp }}/macos-fixture-diagnostics/
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,18 @@
+--- a/crates/agent-session/src/runtime_environment/session_tmp/tests/safety.rs
++++ b/crates/agent-session/src/runtime_environment/session_tmp/tests/safety.rs
+@@ -159,6 +159,7 @@
+         None,
+     )
+     .unwrap();
++    eprintln!("initial report.retained: {:?}", report.retained);
+     assert_eq!(report.removed, 0);
+     assert_eq!(report.retained.get("remove-failed"), Some(&1));
+     assert!(fixture.tmp_dir("partial").is_dir());
+@@ -170,6 +171,7 @@
+         None,
+     )
+     .unwrap();
++    eprintln!("retry report.retained: {:?}", report.retained);
+     assert_eq!(report.removed, 1);
+     assert!(!fixture.tmp_dir("partial").exists());
+     assert!(!root.exists());

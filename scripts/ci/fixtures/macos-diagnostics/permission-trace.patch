@@ -1,0 +1,69 @@
+--- a/crates/agent-session/src/cli/permission/transport.rs
++++ b/crates/agent-session/src/cli/permission/transport.rs
+@@ -294,6 +294,7 @@
+ fn read_answer(stream: &mut UnixStream) -> Result<Option<AnswerRequest>, CliError> {
+     // macOS inherits O_NONBLOCK from the listener. Restore blocking I/O so
+     // the stream timeouts apply even when the full request has yet to arrive.
++    let started = Instant::now();
+     stream
+         .set_nonblocking(false)
+         .map_err(|_| refusal("permission-hook-unavailable"))?;
+@@ -303,11 +304,28 @@
+     stream
+         .set_write_timeout(Some(IO_BOUND))
+         .map_err(|_| refusal("permission-hook-unavailable"))?;
++    // SAFETY: The stream owns a valid descriptor, and F_GETFL takes no third argument.
++    let flags = unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_GETFL) };
++    eprintln!(
++        "receiver configured at {:?}, flags {flags:#x}, read timeout {:?}",
++        started.elapsed(),
++        stream.read_timeout()
++    );
+     let mut bytes = Vec::new();
+-    if stream.take(4097).read_to_end(&mut bytes).is_err() || bytes.len() > 4096 {
++    let status = stream.take(4097).read_to_end(&mut bytes);
++    eprintln!(
++        "receiver read returned at {:?}: {status:?}, bytes {}",
++        started.elapsed(),
++        bytes.len()
++    );
++    if status.is_err() || bytes.len() > 4096 {
+         return Ok(None);
+     }
+-    Ok(serde_json::from_slice(&bytes).ok())
++    let request = serde_json::from_slice(&bytes);
++    if let Err(error) = &request {
++        eprintln!("receiver parse error at {:?}: {:?}", started.elapsed(), error.classify());
++    }
++    Ok(request.ok())
+ }
+
+ // The received answer crosses the final identity/expiry fence before any output
+--- a/crates/agent-session/src/cli/permission/transport/tests.rs
++++ b/crates/agent-session/src/cli/permission/transport/tests.rs
+@@ -130,13 +130,24 @@
+         "call_id": pending.call_id,
+         "decision": "allow",
+     });
++    let started = Instant::now();
+     let client = thread::spawn(move || {
+         thread::sleep(Duration::from_millis(50));
++        eprintln!("caller write started at {:?}", started.elapsed());
+         serde_json::to_writer(&mut caller, &body).unwrap();
++        eprintln!("caller write finished at {:?}", started.elapsed());
+         caller.shutdown(std::net::Shutdown::Write).unwrap();
+-        serde_json::from_reader::<_, Value>(caller).unwrap()
++        eprintln!("caller half-close finished at {:?}", started.elapsed());
++        let acknowledgement = serde_json::from_reader::<_, Value>(caller);
++        eprintln!(
++            "caller acknowledgement ended at {:?}: {:?}",
++            started.elapsed(),
++            acknowledgement.as_ref().map(|_| ())
++        );
++        acknowledgement.unwrap()
+     });
+
++    eprintln!("receiver read started at {:?}", started.elapsed());
+     let request = read_answer(&mut receiver)
+         .unwrap()
+         .expect("accepted stream dropped the delayed answer");
