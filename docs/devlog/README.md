@@ -168,13 +168,8 @@ are optional: omit the whole section rather than leaving a placeholder in it.
 
 <!-- devlog-pending-index -->
 
-- [2026-11-23-codex-mailbox-draft-deferral](pending/2026-11-23-codex-mailbox-draft-deferral.md)
-- [2026-11-23-codex-native-prompt-images](pending/2026-11-23-codex-native-prompt-images.md)
-- [2026-11-23-devlog-fold-candidate-access](pending/2026-11-23-devlog-fold-candidate-access.md)
-- [2026-11-23-issue-2774-proxy-forwarding](pending/2026-11-23-issue-2774-proxy-forwarding.md)
-- [2026-11-23-issue-3175-session-resume-metrics](pending/2026-11-23-issue-3175-session-resume-metrics.md)
-- [2026-11-23-issue-3582-codex-turn-interrupt](pending/2026-11-23-issue-3582-codex-turn-interrupt.md)
-- [2026-11-23-issue-3791-native-notice-acceptance](pending/2026-11-23-issue-3791-native-notice-acceptance.md)
-- [2026-11-23-issue-3879-release-fold-queue-landing](pending/2026-11-23-issue-3879-release-fold-queue-landing.md)
-- [2026-11-23-issue-3962-mailbox-admission-schema-diagnostic](pending/2026-11-23-issue-3962-mailbox-admission-schema-diagnostic.md)
-- [2026-11-23-read-back-guarded-send-and-notice-attempts-18ea8dae0d0a89ad-204215](pending/2026-11-23-read-back-guarded-send-and-notice-attempts-18ea8dae0d0a89ad-204215.md)
+- [2026-11-24-ci-retry-hosted-macos-3982](pending/2026-11-24-ci-retry-hosted-macos-3982.md)
+- [2026-11-24-claude-diag-active-target](pending/2026-11-24-claude-diag-active-target.md)
+- [2026-11-24-issue-3979-history-poll-reads](pending/2026-11-24-issue-3979-history-poll-reads.md)
+- [2026-11-24-issue-3979-remaining-serve-poll-reads](pending/2026-11-24-issue-3979-remaining-serve-poll-reads.md)
+- [2026-11-24-issue-3985-codex-api-key-control](pending/2026-11-24-issue-3985-codex-api-key-control.md)
