@@ -524,9 +524,9 @@ _arguments "${_arguments_options[@]}" : \
         case $line[1] in
             (plan)
 _arguments "${_arguments_options[@]}" : \
-'--session=[]:SESSION:_default' \
-'--incarnation=[]:INCARNATION:_default' \
-'--destination=[]:DESTINATION:_default' \
+'--session=[Managed source session ID]:SESSION:_default' \
+'--incarnation=[Exact source runtime incarnation UUID]:INCARNATION:_default' \
+'--destination=[Configured destination signer identity]:DESTINATION:_default' \
 '--format=[]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
@@ -537,10 +537,10 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (export)
 _arguments "${_arguments_options[@]}" : \
-'--session=[]:SESSION:_default' \
-'--incarnation=[]:INCARNATION:_default' \
-'--destination=[]:DESTINATION:_default' \
-'--ticket-file=[]:TICKET_FILE:_files' \
+'--session=[Managed source session ID]:SESSION:_default' \
+'--incarnation=[Exact source runtime incarnation UUID]:INCARNATION:_default' \
+'--destination=[Configured destination signer identity]:DESTINATION:_default' \
+'--ticket-file=[File containing the signed destination ticket]:TICKET_FILE:_files' \
 '--format=[]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
@@ -551,8 +551,8 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (recover)
 _arguments "${_arguments_options[@]}" : \
-'--move-id=[]:MOVE_ID:_default' \
-'--receipt-file=[]:RECEIPT_FILE:_files' \
+'--move-id=[Move UUID used to fence the source]:MOVE_ID:_default' \
+'--receipt-file=[File containing the signed destination no-writer receipt]:RECEIPT_FILE:_files' \
 '--format=[]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \

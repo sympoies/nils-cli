@@ -23,10 +23,13 @@ pub struct MoveArgs {
 enum Command {
     /// Inspect the exact portable source history without stopping the source.
     Plan {
+        /// Managed source session ID.
         #[arg(long)]
         session: String,
+        /// Exact source runtime incarnation UUID.
         #[arg(long)]
         incarnation: String,
+        /// Configured destination signer identity.
         #[arg(long)]
         destination: String,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
@@ -34,12 +37,16 @@ enum Command {
     },
     /// Export a stopped source only when the complete move protocol is available.
     Export {
+        /// Managed source session ID.
         #[arg(long)]
         session: String,
+        /// Exact source runtime incarnation UUID.
         #[arg(long)]
         incarnation: String,
+        /// Configured destination signer identity.
         #[arg(long)]
         destination: String,
+        /// File containing the signed destination ticket.
         #[arg(long, value_hint = ValueHint::FilePath)]
         ticket_file: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
@@ -47,8 +54,10 @@ enum Command {
     },
     /// Release a source move fence using a verified destination receipt.
     Recover {
+        /// Move UUID used to fence the source.
         #[arg(long)]
         move_id: String,
+        /// File containing the signed destination no-writer receipt.
         #[arg(long, value_hint = ValueHint::FilePath)]
         receipt_file: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
