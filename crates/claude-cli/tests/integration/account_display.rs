@@ -61,7 +61,7 @@ fn account_display_labels_only_max_20x_as_ultra() {
         ("max", "default_claude_max_5x", false),
         ("team", MAX_20X, false),
     ] {
-        let (_tmp, options) = fixture(subscription, tier, json!({"grants": []}));
+        let (_tmp, options) = fixture(subscription, tier, json!({"eligible": true, "grants": []}));
         let prompt = run(&["prompt-segment", "--refresh"], &options);
         assert_exit(&prompt, 0);
         assert_eq!(
@@ -105,9 +105,9 @@ fn account_display_distinguishes_pending_absent_consumed_and_unknown_grants() {
             true,
             false,
         ),
-        (json!({"grants": []}), false, false),
+        (json!({"eligible": true, "grants": []}), false, false),
         (
-            json!({"grants": [{"id": "fixture_grant", "resets_left": 0}]}),
+            json!({"eligible": true, "grants": [{"id": "fixture_grant", "resets_left": 0}]}),
             false,
             false,
         ),
