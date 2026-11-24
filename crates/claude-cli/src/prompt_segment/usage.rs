@@ -345,7 +345,7 @@ fn try_oauth(
             && let Some(body) = client::cached_usage(&token.value)
             && let Some(cache_file) = cache_file
         {
-            let _ = cache::write_oauth_cache_file(cache_file, &body, &token.value);
+            let _ = cache::write_oauth_cache_file(cache_file, &body, &token.value, token.plan);
         }
         (error.reason(), key.clone())
     })?;
@@ -353,7 +353,7 @@ fn try_oauth(
         .map_err(|_| (ProviderUsageReason::Unknown, key.clone()))?;
     let usage = render::parse_usage_value(&value).ok_or((ProviderUsageReason::Unknown, key))?;
     if let Some(cache_file) = cache_file {
-        let _ = cache::write_oauth_cache_file(cache_file, &body, &token.value);
+        let _ = cache::write_oauth_cache_file(cache_file, &body, &token.value, token.plan);
     }
     let mut result = result_from_usage(
         "oauth",

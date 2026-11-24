@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use nils_common::env as shared_env;
 use nils_common::usage_time::reset_epoch_seconds_from_str;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::agent::oneshot::claude_binary;
@@ -112,7 +112,7 @@ pub(crate) struct SessionReset {
 }
 
 /// `cedar_ember`: granted resets, each with an id and an expiry.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct GrantedResets {
     pub(crate) available: bool,
     pub(crate) eligible: bool,
@@ -125,7 +125,7 @@ pub(crate) struct GrantedResets {
     pub(crate) weekly_resets_at: Option<i64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Grant {
     pub(crate) id: String,
     pub(crate) label: Option<String>,

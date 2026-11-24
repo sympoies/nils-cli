@@ -81,11 +81,12 @@ pub fn run(options: &PromptSegmentOptions) -> i32 {
     let Some(raw_cache) = cache::read_cache_file(&cache_file) else {
         return exit::SUCCESS;
     };
-    if cooldown_active
-        && prompt_key
-            .as_deref()
-            .is_none_or(|key| !cache::matches_token_key(&cache_file, &raw_cache, key))
-    {
+    let owner = cache::owner_for_body(&cache_file, &raw_cache);
+    let key_matches = prompt_key
+        .as_deref()
+        .zip(owner.as_ref())
+        .is_some_and(|(key, owner)| key == owner.token_key);
+    if cooldown_active && !key_matches {
         return exit::SUCCESS;
     }
     let time_format = match options.time_format.as_deref() {
@@ -97,12 +98,19 @@ pub fn run(options: &PromptSegmentOptions) -> i32 {
     let stale = (!force_refresh && needs_refresh)
         || (force_refresh && !refresh_succeeded)
         || cooldown_active;
+    let account_matches = prompt_key.is_none() || key_matches;
+    let plan = owner
+        .filter(|_| account_matches)
+        .and_then(|owner| owner.plan)
+        .filter(|plan| plan == crate::rate_limits::display::ULTRA);
     if let Some(line) = render::render_usage_json_with_options(
         &raw_cache,
         time_format,
         stale,
         &stale_suffix,
         !options.no_5h,
+        plan.as_deref(),
+        account_matches && !stale,
     ) && !line.trim().is_empty()
     {
         println!("{}", apply_prompt_escape(line));

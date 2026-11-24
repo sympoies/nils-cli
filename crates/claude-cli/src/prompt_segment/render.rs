@@ -3,6 +3,8 @@ use nils_common::env as shared_env;
 use nils_common::rate_limits_ansi as ansi;
 use serde_json::Value;
 
+use crate::rate_limits::{display, status};
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Usage {
     pub five_hour: Option<Window>,
@@ -22,7 +24,7 @@ pub fn render_usage_json(
     stale: bool,
     stale_suffix: &str,
 ) -> Option<String> {
-    render_usage_json_with_options(raw, time_format, stale, stale_suffix, true)
+    render_usage_json_with_options(raw, time_format, stale, stale_suffix, true, None, true)
 }
 
 pub fn render_usage_json_with_options(
@@ -31,10 +33,29 @@ pub fn render_usage_json_with_options(
     stale: bool,
     stale_suffix: &str,
     show_five_hour: bool,
+    plan: Option<&str>,
+    show_grants: bool,
 ) -> Option<String> {
     let value: Value = serde_json::from_str(raw).ok()?;
     let usage = parse_usage_value(&value)?;
-    render_usage(&usage, time_format, stale, stale_suffix, show_five_hour)
+    let status_body = value.get("usage").unwrap_or(&value);
+    let cedar_status = status_body.get(status::CEDAR_EMBER);
+    let resets = show_grants
+        .then(|| status::parse_limit_resets(status_body).cedar_ember)
+        .flatten();
+    let note = display::note(
+        plan,
+        resets.as_ref().and_then(display::remaining),
+        plan.is_some() || (show_grants && cedar_status.is_some()),
+    );
+    render_usage(
+        &usage,
+        time_format,
+        stale,
+        stale_suffix,
+        show_five_hour,
+        note,
+    )
 }
 
 pub fn parse_usage_value(value: &Value) -> Option<Usage> {
@@ -71,6 +92,7 @@ fn render_usage(
     stale: bool,
     stale_suffix: &str,
     show_five_hour: bool,
+    note: Option<String>,
 ) -> Option<String> {
     let color_enabled = color_enabled();
     let mut parts = Vec::new();
@@ -101,6 +123,7 @@ fn render_usage(
         time_format,
     ));
 
+    parts.extend(note);
     let mut line = parts.join(" ");
     if stale && !stale_suffix.is_empty() {
         if color_enabled {
