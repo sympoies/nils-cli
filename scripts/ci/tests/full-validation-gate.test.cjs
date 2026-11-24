@@ -1,7 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { requireFullValidation } = require('../../../.github/scripts/full-validation-gate.cjs');
+const { requireFullValidation, requireQueueValidation } = require('../../../.github/scripts/full-validation-gate.cjs');
+const retryRun = require('./fixtures/queue-validation-retry-run.json');
 const sha = 'a'.repeat(40);
 const names = ['test', 'test_macos', 'coverage', 'test_containment', 'cargo_deny', 'macos_check'];
 function fixture() {
@@ -56,3 +57,45 @@ test('partitions alone cannot satisfy full validation', () => {
     expected: sha, actual: sha, needs: { test_macos_partition: { result: 'success' } },
   }), /test_macos, coverage/);
 });
+
+// Replay Actions run 45411646819, whose caller received an empty reusable output.
+const retryJobs = retryRun.jobs.map(job => ({
+  ...job, run_id: retryRun.runId, run_attempt: retryRun.attempt, head_sha: retryRun.sha,
+}));
+const retryGate = retryJobs.find(job => job.name === 'full_validation / gate');
+const otherJobs = retryJobs.filter(job => job !== retryGate);
+
+function replayQueueGate(jobs) {
+  const context = { repo: { owner: 'owner', repo: 'repo' }, runId: retryRun.runId, sha: retryRun.sha };
+  const listJobsForWorkflowRunAttempt = Symbol('listJobsForWorkflowRunAttempt');
+  const github = {
+    rest: { actions: { listJobsForWorkflowRunAttempt } },
+    async paginate(method, query) {
+      assert.equal(method, listJobsForWorkflowRunAttempt);
+      assert.deepEqual(query, {
+        ...context.repo, run_id: retryRun.runId, attempt_number: retryRun.attempt, per_page: 100,
+      });
+      return jobs;
+    },
+  };
+  return requireQueueValidation({ github, context, attempt: retryRun.attempt });
+}
+
+test('the recorded successful retry validates the exact merge-group commit', async () => {
+  assert.equal(await replayQueueGate(retryJobs), retryRun.sha);
+});
+
+for (const [description, gates] of [
+  ['missing final gate', []],
+  ['ambiguous final gates', [retryGate, retryGate]],
+  ['failed final gate', [{ ...retryGate, conclusion: 'failure' }]],
+  ['cancelled final gate', [{ ...retryGate, conclusion: 'cancelled' }]],
+  ['unfinished final gate', [{ ...retryGate, status: 'in_progress', conclusion: null }]],
+  ['wrong run', [{ ...retryGate, run_id: retryRun.runId + 1 }]],
+  ['wrong attempt', [{ ...retryGate, run_attempt: retryRun.attempt + 1 }]],
+  ['wrong commit', [{ ...retryGate, head_sha: 'b'.repeat(40) }]],
+]) {
+  test(`queue validation rejects ${description}`, async () => {
+    await assert.rejects(replayQueueGate([...otherJobs, ...gates]), /required queue validation/i);
+  });
+}

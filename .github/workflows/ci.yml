@@ -235,14 +235,15 @@ jobs:
           fi
 
       - name: Require exact-commit queue validation
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          VALIDATED_COMMIT: ${{ needs.full_validation.outputs.validated_commit }}
-        run: |
-          if [ "${EVENT_NAME}" = "merge_group" ] && [ "${VALIDATED_COMMIT}" != "${GITHUB_SHA}" ]; then
-            echo 'error: required queue validation did not succeed' >&2
-            exit 1
-          fi
+        if: github.event_name == 'merge_group'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { requireQueueValidation } = require('./.github/scripts/full-validation-gate.cjs');
+            const commit = await requireQueueValidation({
+              github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+            });
+            core.info('Validated merge-group commit ' + commit);
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.100.0
