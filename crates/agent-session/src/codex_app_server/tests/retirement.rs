@@ -3,15 +3,25 @@ use pretty_assertions::{assert_eq, assert_ne};
 
 #[tokio::test]
 async fn compact_forwards_normally_during_an_in_flight_turn() {
-    exercise_compaction(false).await;
+    exercise_request("thread/compact/start", false).await;
 }
 
 #[tokio::test]
 async fn compact_waits_for_retirement_and_fences_its_pending_response() {
-    exercise_compaction(true).await;
+    exercise_request("thread/compact/start", true).await;
 }
 
-async fn exercise_compaction(hold_retirement: bool) {
+#[tokio::test]
+async fn review_waits_for_retirement_and_fences_its_pending_response() {
+    exercise_request("review/start", true).await;
+}
+
+#[tokio::test]
+async fn shell_command_waits_for_retirement_and_fences_its_pending_response() {
+    exercise_request("thread/shellCommand", true).await;
+}
+
+async fn exercise_request(method: &str, hold_retirement: bool) {
     let tmp = tempfile::tempdir().unwrap();
     let (_socket_dir, upstream) = nils_test_support::short_socket_path("compact.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
@@ -35,7 +45,7 @@ async fn exercise_compaction(hold_retirement: bool) {
     crate::write_session_record(&context, &record).unwrap();
     crate::activity::activate_runtime(&context, &record).unwrap();
 
-    let lock_path = dir.join(".codex-app-server-compaction.lock");
+    let lock_path = dir.join(".codex-app-server-retirement-requests.lock");
     let lock = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -70,32 +80,55 @@ async fn exercise_compaction(hold_retirement: bool) {
         send_json(&mut tui, turn.clone()).await.unwrap();
         assert_eq!(receive_json(&mut server).await["method"], "turn/start");
     }
-    let compact = json!({
-        "id": 5,
-        "method": "thread/compact/start",
-        "params": {"threadId": resume_id}
-    });
-    send_json(&mut tui, compact.clone()).await.unwrap();
+    if hold_retirement {
+        let read = json!({"id": 6, "method": "thread/read", "params": {"threadId": resume_id}});
+        send_json(&mut tui, read.clone()).await.unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), receive_json(&mut server))
+                .await
+                .expect("the read-only request should pass during retirement"),
+            read
+        );
+        respond(&mut server, &read, json!({})).await;
+        assert_eq!(receive_json(&mut tui).await["id"], 6);
+    }
+    let (params, result) = match method {
+        "review/start" => (
+            json!({"threadId": resume_id, "target": {"type": "uncommittedChanges"}}),
+            json!({
+                "reviewThreadId": resume_id,
+                "turn": {"id": "fixture-review", "items": [], "status": "inProgress", "error": null}
+            }),
+        ),
+        "thread/shellCommand" => (
+            json!({"threadId": resume_id, "command": "printf fixture"}),
+            json!({}),
+        ),
+        "thread/compact/start" => (json!({"threadId": resume_id}), json!({})),
+        _ => panic!("unexpected fixture method: {method}"),
+    };
+    let request = json!({"id": 5, "method": method, "params": params});
+    send_json(&mut tui, request.clone()).await.unwrap();
 
     if hold_retirement {
         assert!(
             tokio::time::timeout(Duration::from_millis(100), server.next())
                 .await
                 .is_err(),
-            "the proxy forwarded compaction across the retirement fence"
+            "the proxy forwarded {method} across the retirement fence"
         );
         assert_eq!(unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_UN) }, 0);
     }
-    assert_eq!(receive_json(&mut server).await, compact);
+    assert_eq!(receive_json(&mut server).await, request);
     if hold_retirement {
         assert_ne!(
             unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
             0,
-            "the proxy released the compaction fence before the response"
+            "the proxy released the fence before the {method} response"
         );
     }
-    respond(&mut server, &compact, json!({})).await;
-    assert_eq!(receive_json(&mut tui).await["result"], json!({}));
+    respond(&mut server, &request, result.clone()).await;
+    assert_eq!(receive_json(&mut tui).await["result"], result);
     assert_eq!(
         unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
         0

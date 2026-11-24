@@ -1,10 +1,10 @@
-//! Fence native compaction independently of turn/start authorization.
+//! Fence native provider requests independently of turn/start authorization.
 use super::*;
 use std::io;
 
 const CAPABILITY_FILE: &str = ".codex-app-server-idle-retirement";
-const CAPABILITY_VERSION: &str = "agent-session.codex-idle-retirement.v1";
-const COMPACTION_LOCK: &str = ".codex-app-server-compaction.lock";
+const CAPABILITY_VERSION: &str = "agent-session.codex-idle-retirement.v2";
+const REQUEST_LOCK: &str = ".codex-app-server-retirement-requests.lock";
 
 fn capability_path(context: &CliContext, record: &SessionRecord) -> PathBuf {
     crate::session_dir(context, &record.id).join(CAPABILITY_FILE)
@@ -50,15 +50,15 @@ pub(super) fn live_marker(
     })
 }
 
-pub(crate) fn probe_compaction(
+pub(crate) fn probe_requests(
     context: &CliContext,
     record: &SessionRecord,
 ) -> io::Result<Option<fs::File>> {
-    let fence = open_compaction_lock(context, record)?;
+    let fence = open_request_lock(context, record)?;
     Ok(try_lock(&fence, libc::LOCK_EX)?.then_some(fence))
 }
 
-fn open_compaction_lock(context: &CliContext, record: &SessionRecord) -> io::Result<fs::File> {
+fn open_request_lock(context: &CliContext, record: &SessionRecord) -> io::Result<fs::File> {
     OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -66,7 +66,7 @@ fn open_compaction_lock(context: &CliContext, record: &SessionRecord) -> io::Res
         .write(true)
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(crate::session_dir(context, &record.id).join(COMPACTION_LOCK))
+        .open(crate::session_dir(context, &record.id).join(REQUEST_LOCK))
 }
 
 fn try_lock(file: &fs::File, mode: libc::c_int) -> io::Result<bool> {
@@ -82,10 +82,29 @@ fn try_lock(file: &fs::File, mode: libc::c_int) -> io::Result<bool> {
     }
 }
 
-#[derive(Default)]
-pub(super) struct Compactions(BTreeMap<String, fs::File>);
+// Codex app-server v2 (0.171.0). Initialization and these read-only probes
+// can pass during retirement. Turn/start has its own gate. Other RPC requests
+// can change provider state, so they hold a lease through the matching reply.
+fn requires_lease(method: &str) -> bool {
+    !matches!(
+        method,
+        "initialize"
+            | "turn/start"
+            | "thread/list"
+            | "thread/loaded/list"
+            | "thread/read"
+            | "thread/turns/list"
+            | "thread/items/list"
+            | "thread/goal/get"
+            | "model/list"
+            | "account/read"
+    )
+}
 
-impl Compactions {
+#[derive(Default)]
+pub(super) struct Requests(BTreeMap<String, fs::File>);
+
+impl Requests {
     pub(super) async fn authorize(
         &mut self,
         context: &CliContext,
@@ -95,7 +114,10 @@ impl Compactions {
     ) -> Result<MutationAuthorization, TuiMutationRejection> {
         let authorization =
             cancel_before_tui_mutation_detailed(context, record, bootstrap, value).await?;
-        if value.get("method").and_then(Value::as_str) != Some("thread/compact/start")
+        if !value
+            .get("method")
+            .and_then(Value::as_str)
+            .is_some_and(requires_lease)
             || !runtime_is_supported(record)
         {
             return Ok(authorization);
@@ -103,7 +125,7 @@ impl Compactions {
         let Some(key) = value.get("id").and_then(json_id_key) else {
             return Ok(authorization);
         };
-        let fence = open_compaction_lock(context, record)
+        let fence = open_request_lock(context, record)
             .map_err(|_| TuiMutationRejection::TurnGateOpenFailed)?;
         let deadline = tokio::time::Instant::now() + CONTROL_SUBMIT_TOTAL_TIMEOUT;
         let mut waited = false;
@@ -119,7 +141,7 @@ impl Compactions {
             waited = true;
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        // A concurrent delete can complete while compaction waits. It must
+        // A concurrent delete can complete while a request waits. It must
         // never forward a buffered request on a retired proxy connection.
         if waited
             && !crate::load_session_record(context, &record.id)

@@ -769,10 +769,11 @@ agent-session delete <id> --if-idle --expected-incarnation <incarnation> --if-un
 The owner rechecks the incarnation, running state, runtime-bound provider
 activity, and the live primary thread. It requires an observably empty
 composer and no pending provider ingress. The lifecycle lock serializes resume,
-managed input, and mailbox delivery. The Codex proxy also fences native turn
-starts and compaction. The locks stay held through ownership-checked teardown
-and removal. Success returns the ordinary delete receipt with `deleted: true`
-and `killed: true`.
+managed input, and mailbox delivery. The Codex proxy fences native provider
+requests such as turn starts, reviews, shell commands, and compaction.
+Read-only inspection requests can pass through. The locks stay held through
+ownership-checked teardown and removal. Success returns the ordinary delete
+receipt with `deleted: true` and `killed: true`.
 
 Predicate refusals return nonzero with a JSON error and retain the runtime and
 session record.

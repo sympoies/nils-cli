@@ -70,7 +70,7 @@ pub(super) fn delete_if_idle(
                 unknown(&record)
             }
         })?;
-    let _compaction = codex_app_server::retirement::probe_compaction(context, &record)
+    let _requests = codex_app_server::retirement::probe_requests(context, &record)
         .map_err(|_| unknown(&record))?
         .ok_or_else(|| active(&record, "working"))?;
     let _activity = activity::acquire_coordination_activity_lock(context, &record.id)

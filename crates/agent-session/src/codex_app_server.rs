@@ -4401,7 +4401,7 @@ async fn run_proxy_session(
     let _capability = begin_proxy_capability(&context, &record)
         .map_err(|err| format!("failed to advertise proxy capability: {}", err.code()))?;
     let _retirement_capability = retirement::advertise(&context, &record);
-    let mut compactions = retirement::Compactions::default();
+    let mut requests = retirement::Requests::default();
     // A resumed TUI uses thread/resume, so it has no initial thread/start
     // response to publish the manual-input binding. Seed only the exact
     // durable resume identity before accepting its first turn request.
@@ -4458,7 +4458,7 @@ async fn run_proxy_session(
                         }
                         continue;
                     }
-                    let authorization = match compactions.authorize(
+                    let authorization = match requests.authorize(
                         &context, &record, &mut bootstrap, &value,
                     ).await {
                         Ok(authorization) => authorization,
@@ -4508,7 +4508,7 @@ async fn run_proxy_session(
                 }
                 let closed = matches!(message, Message::Close(_));
                 if let Some(value) = forwarded_server_value(&message)? {
-                    compactions.observe_response(&value);
+                    requests.observe_response(&value);
                     if let Some(key) = json_rpc_response_id_key(&value) {
                         pending_turn_authorizations.remove(&key);
                         if pending_turn_authorizations.is_empty() {

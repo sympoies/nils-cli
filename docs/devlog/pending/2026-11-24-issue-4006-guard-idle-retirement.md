@@ -14,8 +14,9 @@
 
 ### Evidence
 
-- Twenty-eight focused synthetic CLI, stopped-delete, provider compaction, and
-  clear admission tests passed.
+- Thirty focused synthetic tests passed, including stopped deletion, clear
+  admission, and the Codex proxy fences for compaction, review, and shell
+  commands.
 
 ### Links
 

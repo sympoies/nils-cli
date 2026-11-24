@@ -38,7 +38,7 @@ impl Provider {
         fs::write(
             &marker,
             json!({
-                "schema_version": "agent-session.codex-idle-retirement.v1",
+                "schema_version": "agent-session.codex-idle-retirement.v2",
                 "launch_id": runtime,
                 "owner_pid": std::process::id(),
                 "expires_at_epoch_ms": SystemTime::now()
@@ -401,8 +401,12 @@ fn idle_delete_refuses_a_compaction_in_flight() {
     let mut fixture = Fixture::new();
     let _provider = Provider::start(&mut fixture);
     let runtime = incarnation(&fixture).to_owned();
-    let compaction =
-        fs::File::create(fixture.session.join(".codex-app-server-compaction.lock")).unwrap();
+    let compaction = fs::File::create(
+        fixture
+            .session
+            .join(".codex-app-server-retirement-requests.lock"),
+    )
+    .unwrap();
     assert_eq!(
         unsafe { libc::flock(compaction.as_raw_fd(), libc::LOCK_SH) },
         0
