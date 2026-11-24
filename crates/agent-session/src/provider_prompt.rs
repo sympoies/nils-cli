@@ -18,6 +18,8 @@ use crate::{
 mod claude_source;
 mod query_sources;
 pub(crate) use query_sources::QuerySources;
+mod notice_observation;
+pub(crate) use notice_observation::notice_observed_after;
 mod preview;
 pub(crate) mod row_classes;
 use preview::PreviewMessages;

@@ -1,6 +1,6 @@
 //! Reconcile exact attempt bytes without turning an unknown format into absence.
 use super::{NotificationCandidate, receipt_key};
-use crate::provider_prompt::{ProviderPromptTail, prompt_observed_after};
+use crate::provider_prompt::{ProviderPromptTail, notice_observed_after};
 use crate::{CliContext, load_session_record};
 
 pub(crate) fn observe_attempt(
@@ -51,5 +51,5 @@ pub(crate) fn observe_attempt(
     }
     // A native call can complete late. Only exact positive observation resolves
     // it; absence never authorizes replay or a plain-prompt fallback.
-    prompt_observed_after(&source, current, &attempted_at).filter(|observed| *observed)
+    notice_observed_after(&source, current, &attempted_at).then_some(true)
 }
