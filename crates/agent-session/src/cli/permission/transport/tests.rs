@@ -113,7 +113,7 @@ fn assert_no_ack(mut caller: UnixStream) {
 }
 
 #[test]
-fn accepted_nonblocking_stream_delivers_delayed_answer() {
+fn accepted_nonblocking_stream_restores_blocking_and_delivers_answer() {
     let (_temp, context, pending) = session();
     let socket_dir = tempfile::tempdir_in("/tmp").unwrap();
     let socket = socket_dir.path().join("s");
@@ -124,22 +124,22 @@ fn accepted_nonblocking_stream_delivers_delayed_answer() {
     // Model a macOS accept on every platform, even when the kernel clears
     // the listener's nonblocking flag on the accepted socket.
     receiver.set_nonblocking(true).unwrap();
-    caller.set_read_timeout(Some(IO_BOUND)).unwrap();
     let body = json!({
         "request_id": pending.request_id,
         "call_id": pending.call_id,
         "decision": "allow",
     });
-    let client = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(50));
-        serde_json::to_writer(&mut caller, &body).unwrap();
-        caller.shutdown(std::net::Shutdown::Write).unwrap();
-        serde_json::from_reader::<_, Value>(caller).unwrap()
-    });
-
+    // Buffer the complete request before reading. Verify the mode change
+    // directly so this fixture does not need a thread or a scheduling deadline.
+    serde_json::to_writer(&mut caller, &body).unwrap();
+    caller.shutdown(std::net::Shutdown::Write).unwrap();
     let request = read_answer(&mut receiver)
         .unwrap()
-        .expect("accepted stream dropped the delayed answer");
+        .expect("accepted stream dropped the answer");
+    // SAFETY: The receiver owns a valid socket and F_GETFL takes no third argument.
+    let flags = unsafe { libc::fcntl(receiver.as_raw_fd(), libc::F_GETFL) };
+    assert!(flags >= 0, "could not read accepted socket flags");
+    assert_eq!(flags & libc::O_NONBLOCK, 0);
     assert_eq!(request.request_id, pending.request_id);
     assert_eq!(request.call_id, pending.call_id);
     let mut output = Vec::new();
@@ -155,10 +155,8 @@ fn accepted_nonblocking_stream_delivers_delayed_answer() {
     .unwrap();
     drop(receiver);
 
-    assert_eq!(
-        client.join().unwrap(),
-        json!({"outcome": "delivered_to_hook"})
-    );
+    let acknowledgement: Value = serde_json::from_reader(caller).unwrap();
+    assert_eq!(acknowledgement, json!({"outcome": "delivered_to_hook"}));
     assert_eq!(
         serde_json::from_slice::<Value>(&output).unwrap(),
         json!({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}})
