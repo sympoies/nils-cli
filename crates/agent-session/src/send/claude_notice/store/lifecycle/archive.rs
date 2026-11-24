@@ -66,6 +66,9 @@ pub(super) fn compact(ledger: &mut Ledger, scan: &Scan, deadline: Instant) -> io
     let mut eligible = HashSet::new();
     for terminal in scan.terminals.values() {
         if terminal.state == State::Unknown {
+            // A recorded terminal cannot change. The sealed segment retains
+            // its uncertainty while the index keeps its operation and key used.
+            eligible.insert(terminal.op.clone());
             continue;
         }
         let recorded = terminal

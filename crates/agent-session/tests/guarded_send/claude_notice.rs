@@ -4,6 +4,8 @@ use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+#[path = "claude_notice/capacity.rs"]
+mod capacity;
 #[path = "claude_notice/composer.rs"]
 mod composer;
 #[path = "claude_notice/refusals.rs"]
