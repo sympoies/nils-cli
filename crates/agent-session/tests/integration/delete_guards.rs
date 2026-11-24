@@ -63,7 +63,10 @@ impl Fixture {
         .unwrap();
         let mut pane = Pane(
             Command::new("python3")
-                .args(["-c", "import os,time; os.setsid(); time.sleep(60)"])
+                .args([
+                    "-c",
+                    "import os,signal,time; signal.signal(signal.SIGINT, signal.SIG_DFL); os.setsid(); time.sleep(60)",
+                ])
                 .spawn()
                 .unwrap(),
         );

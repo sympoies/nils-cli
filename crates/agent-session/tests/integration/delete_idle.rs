@@ -6,9 +6,10 @@ use std::{fs, thread};
 
 use crate::cli::run;
 use sha2::{Digest, Sha256};
-use std::os::fd::AsRawFd;
+use std::os::{fd::AsRawFd, unix::process::ExitStatusExt};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio_tungstenite::tungstenite::Message;
 
 const ID: &str = "guarded-delete";
@@ -188,18 +189,27 @@ fn snapshot(fixture: &Fixture) -> Value {
 }
 
 fn delete(fixture: &Fixture, guard: &[&str]) -> nils_test_support::cmd::CmdOutput {
+    delete_at(fixture._tmp.path(), &fixture.state, &fixture.tmux, guard)
+}
+
+fn delete_at(
+    cwd: &Path,
+    state: &Path,
+    tmux: &Path,
+    guard: &[&str],
+) -> nils_test_support::cmd::CmdOutput {
     let mut args = vec![
         "--state-dir",
-        fixture.state.to_str().unwrap(),
+        state.to_str().unwrap(),
         "delete",
         ID,
         "--tmux-bin",
-        fixture.tmux.to_str().unwrap(),
+        tmux.to_str().unwrap(),
         "--format",
         "json",
     ];
     args.extend_from_slice(guard);
-    run(fixture._tmp.path(), &args, &[])
+    run(cwd, &args, &[])
 }
 
 fn assert_refused(fixture: &mut Fixture, guard: &[&str], code: &str) -> Value {
@@ -254,15 +264,24 @@ fn idle_delete_retires_the_verified_runtime_and_record() {
     fixture.record["runtime"]["agent_profile"] = json!("synthetic-codex");
     fixture.record["runtime"]["agent_profile_graceful_shutdown"] = json!("double-ctrl-c");
     write_record(&fixture);
-    let output = delete(
-        &fixture,
-        &[
-            "--if-idle",
-            "--expected-incarnation",
-            incarnation(&fixture),
-            "--if-unread-empty",
-        ],
-    );
+    let runtime = incarnation(&fixture).to_owned();
+    let guard = [
+        "--if-idle",
+        "--expected-incarnation",
+        &runtime,
+        "--if-unread-empty",
+    ];
+    let cwd = fixture._tmp.path();
+    let (state, tmux) = (&fixture.state, &fixture.tmux);
+    let output = thread::scope(|scope| {
+        let delete = scope.spawn(|| delete_at(cwd, state, tmux, &guard));
+        // The fixture owns the pane child. Reap it while the CLI verifies
+        // that its process group exited, as a real tmux parent would.
+        while !delete.is_finished() && fixture.pane.0.try_wait().unwrap().is_none() {
+            thread::sleep(Duration::from_millis(10));
+        }
+        delete.join().unwrap()
+    });
     assert_eq!(
         output.code,
         0,
@@ -276,7 +295,7 @@ fn idle_delete_retires_the_verified_runtime_and_record() {
     assert_eq!(receipt["deleted"], true);
     assert!(fixture.killed.exists());
     assert!(!fixture.session.exists());
-    assert!(!fixture.pane.0.wait().unwrap().success());
+    assert_eq!(fixture.pane.0.wait().unwrap().signal(), Some(libc::SIGINT));
 }
 
 #[test]
