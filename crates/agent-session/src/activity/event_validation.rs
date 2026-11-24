@@ -135,7 +135,10 @@ pub(super) fn validate_event(event: &TurnEvent, admission: EventAdmission) -> Re
                 | "unknown"
         ) || (reason == "provider_capacity"
             && admission == EventAdmission::CodexProtocol
-            && event.schema_version == CODEX_PROTOCOL_TURN_EVENT_VERSION);
+            && event.schema_version == CODEX_PROTOCOL_TURN_EVENT_VERSION)
+            || (reason == crate::auth_incident::revocation::FAILURE_REASON
+                && event.provider == "claude"
+                && event.source_kind == SourceKind::ProviderHook);
         if event.kind != TurnEventKind::TurnFailed
             || event.confidence != Confidence::Authoritative
             || !reason_allowed

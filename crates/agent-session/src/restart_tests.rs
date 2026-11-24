@@ -43,6 +43,10 @@ fn executable(path: &Path, body: &str) -> PathBuf {
 /// gone and its launch wrapper's `broker stop` already revoked the broker, but
 /// the last heartbeat is still inside the freshness window.
 fn seed_exited_session(context: &CliContext, root: &Path) -> SessionRecord {
+    seed_exited_session_for(context, root, ID)
+}
+
+fn seed_exited_session_for(context: &CliContext, root: &Path, id: &str) -> SessionRecord {
     let cwd = root.join("repo");
     fs::create_dir_all(&cwd).unwrap();
     let agent_bin = executable(
@@ -54,13 +58,13 @@ fn seed_exited_session(context: &CliContext, root: &Path) -> SessionRecord {
     identity["launch_id"] = json!(OLD);
     let record: SessionRecord = serde_json::from_value(json!({
         "schema_version": crate::SESSION_DOCUMENT_VERSION,
-        "id": ID,
+        "id": id,
         "agent": "claude",
         "agent_bin": agent_bin,
         "mode": "interactive",
         "title": null,
         "cwd": cwd,
-        "tmux_session": "as-restart-fixture",
+        "tmux_session": format!("as-{id}"),
         "prompt_file": null,
         "log_file": null,
         "created_at": "2030-01-01T00:00:00Z",
@@ -74,7 +78,7 @@ fn seed_exited_session(context: &CliContext, root: &Path) -> SessionRecord {
         },
         "runtime": {
             "kind": "tmux",
-            "tmux_session": "as-restart-fixture",
+            "tmux_session": format!("as-{id}"),
             "generation": 1,
             "started_at": "2030-01-01T00:00:00Z",
             "launch_id": OLD
@@ -86,18 +90,22 @@ fn seed_exited_session(context: &CliContext, root: &Path) -> SessionRecord {
     }))
     .unwrap();
     crate::write_session_record(context, &record).unwrap();
-    test_support::seed_live_broker(context, ID, OLD, identity);
+    test_support::seed_live_broker(context, id, OLD, identity);
     crate::coordination::revoke(context, &record).unwrap();
     record
 }
 
 fn claude_hook(context: &CliContext, launch: &str, payload: Value) {
+    claude_hook_for(context, ID, launch, payload);
+}
+
+fn claude_hook_for(context: &CliContext, id: &str, launch: &str, payload: Value) {
     crate::activity::ingest_provider_hook_input(
         context,
         AgentKind::Claude,
         None,
         crate::activity::ProviderHookInput {
-            id: ID,
+            id,
             runtime_id: launch,
             payload: &serde_json::to_vec(&payload).unwrap(),
             attention_authority: None,
@@ -107,8 +115,13 @@ fn claude_hook(context: &CliContext, launch: &str, payload: Value) {
 }
 
 fn session_ready(context: &CliContext, launch: &str) {
-    claude_hook(
+    session_ready_for(context, ID, launch);
+}
+
+fn session_ready_for(context: &CliContext, id: &str, launch: &str) {
+    claude_hook_for(
         context,
+        id,
         launch,
         json!({"hook_event_name": "SessionStart", "source": "resume", "session_id": CONVERSATION}),
     );

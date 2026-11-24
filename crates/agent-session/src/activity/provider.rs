@@ -121,9 +121,18 @@ pub(super) fn normalize_provider_hook(
     };
     let failure_reason = (agent == AgentKind::Claude && event_name == "StopFailure")
         .then(|| {
-            raw.get("error")
-                .and_then(Value::as_str)
-                .map(normalize_claude_failure_reason)
+            raw.get("error").and_then(Value::as_str).map(|error| {
+                use crate::auth_incident::revocation;
+                if error == "authentication_failed"
+                    && raw["last_assistant_message"]
+                        .as_str()
+                        .is_some_and(revocation::matches_message)
+                {
+                    revocation::FAILURE_REASON.into()
+                } else {
+                    normalize_claude_failure_reason(error)
+                }
+            })
         })
         .flatten();
     let mut provider_session = optional_hook_string(raw, "session_id")?;

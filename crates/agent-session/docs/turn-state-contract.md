@@ -29,6 +29,9 @@ Claude prompt quarantine and same-account recovery are defined in the
 Claude `StopFailure.error=authentication_failed` and bound Codex app-server
 `codexErrorInfo="unauthorized"` or a model HTTP error variant with
 `httpStatusCode=401` produce `last_turn.provider_failure_kind="authentication"`.
+A Claude failure with a recognized OAuth revocation message also records
+`last_turn.claude_oauth_revoked: true` for recovery.
+
 Codex error notifications are observed even when `willRetry` is true or absent:
 a structured Unauthorized/401 already proves an authenticated request failed,
 independently of the retry policy. Reporting does not disable provider retries;
@@ -152,6 +155,7 @@ with JSON `null`. Consumers must ignore additive unknown members.
 | `observed_at` | timestamp string | Host observation time. |
 | `source` | string | `claude_stop_failure`, `codex_app_server`, `codex_external_refresh`, or `terminal_pattern`. |
 | `confidence` | string | `authoritative`, `observed`, or `inferred`. Terminal fallback is `inferred`. |
+| `oauth_revoked` | boolean, optional | Present as `true` when the Claude failure carried recognized revocation evidence. |
 | `status` | string | `auth_failed`, `recovered`, `recovery_failed`, or `runtime_replaced`. |
 | `recovery_result` | string or null | `healthy`, `credentials_refreshed`, `refresh_failed`, `recheck_exhausted`, or `runtime_replaced`; null before a final result. |
 | `recovery_observed_at` | timestamp string or null | Final-result observation time. |
@@ -301,11 +305,13 @@ regardless of subsequent idle or completion evidence.
 
 `failure_reason` is valid only on an authoritative `turn_failed` event and is
 limited to `usage_exhausted`, `authentication`, `organization`, `billing`,
-`invalid_request`, `service`, `max_output_tokens`, or `unknown`. Claude Code's
-documented structured `StopFailure.error` is reduced into that allowlist. Raw
-error details, rendered provider errors, transcript paths, prompts, and
-assistant content are discarded. A raw Codex interactive notification does not
-carry an equivalent structured failure field. An agent-session-managed Codex
+`invalid_request`, `service`, `max_output_tokens`, or `unknown`. An
+authoritative Claude provider hook may also report `authentication_revoked`
+when a structured authentication failure carries a recognized revocation
+message. The adapter retains this fixed classification and discards raw error
+details, rendered provider errors, transcript paths, prompts, and assistant
+content. A raw Codex interactive notification carries no equivalent structured
+failure field. An agent-session-managed Codex
 app-server v2 runtime reuses the stable v1 `source_kind: "provider_hook"` wire
 value only after its live bound thread/turn reports terminal `failed` plus exact
 `usageLimitExceeded`. The protocol-owned v2 admission also accepts an exact

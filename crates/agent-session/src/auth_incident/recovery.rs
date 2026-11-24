@@ -200,7 +200,13 @@ pub(crate) fn tick(
             operation_id: uuid::Uuid::new_v4().to_string(),
             state: "waiting_generation".into(),
             started_at_epoch: now,
-            deadline_epoch: now.saturating_add(WAIT_SECONDS),
+            deadline_epoch: now.saturating_add(
+                if revocation::can_wait_for_publication(&incident, &record) {
+                    revocation::WAIT_SECONDS
+                } else {
+                    WAIT_SECONDS
+                },
+            ),
             polls: 0,
             last_reason: None,
             provider_session_id: conversation(&record).unwrap_or_default().into(),
