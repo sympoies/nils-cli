@@ -549,13 +549,18 @@ minute; the completion replaces the Stop as the latest event, so refusing it wou
 idle worker queued indefinitely. Terminal acceptance requires the byte-exact prompt as the content of a
 newer transcript-observed turn.
 
-A later provider observation reconciles plain `attempting` or `attempt_unknown`: an exact prompt proves
-`prompt_submitted`, a current transcript without it safely requeues, and unavailable observation leaves
-the attempted generation parked. A later send creates a new generation and supersedes an older
-`attempt_unknown` outcome; that older receipt cannot acknowledge the new generation. An active
-`attempting` submission retains its side-effect fence until its owner records an outcome. Pending
-reminder queue timestamps never precede the newest live unread notification-eligible canonical message
-admitted to the exact recipient incarnation, including remote deliveries and carried guidance.
+An exact positive provider observation can reconcile an `attempting` or
+`attempt_unknown` notice to `prompt_submitted`. The serve reconciliation loop
+allows 120 seconds from the recorded attempt for submission and observation.
+On the first pass at or after that deadline, an unobserved attempt becomes
+`attempt_unknown`. A stopped, replaced, or auth-quarantined target releases the
+fence as soon as serve or a lifecycle operation observes that state.
+`attempt_unknown` preserves the attempted generation and releases the lifecycle
+fence. The attempted generation remains consumed and its delivery stays
+unacknowledged. A later send creates a new generation that the older attempt
+cannot acknowledge. Pending reminder queue timestamps never precede the newest
+live unread notification-eligible canonical message admitted to the exact
+recipient incarnation, including remote deliveries and carried guidance.
 
 Migrated timestamps are recovered from those records; existing upper bounds and original attempted
 timestamps are retained.

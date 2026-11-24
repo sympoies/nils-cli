@@ -1,6 +1,51 @@
 //! Recover pending generations from canonical live mailbox metadata.
 use super::{NotificationReceipt, REASON_PENDING};
 use crate::coordination::Registry;
+use crate::{CliContext, CoordinationRuntimeStatus, load_session_record};
+
+/// A retired or quarantined incarnation can no longer own a submission fence.
+pub(in crate::coordination) fn resolve_unavailable_attempts(
+    context: &CliContext,
+    registry: &mut Registry,
+    now: i64,
+) -> bool {
+    let Registry {
+        brokers,
+        notifications,
+        ..
+    } = registry;
+    let mut changed = false;
+    for receipt in notifications.values_mut().filter(|receipt| {
+        receipt.state == "attempting" && receipt.attempted_generation > receipt.notified_generation
+    }) {
+        let stopped = brokers
+            .get(&receipt.target_session_id)
+            .is_some_and(|broker| {
+                broker.incarnation == receipt.target_incarnation && broker.state == "stopped"
+            });
+        if stopped || recipient_unavailable(context, receipt) {
+            super::record_unknown(receipt, "recipient-runtime-unavailable", now);
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn recipient_unavailable(context: &CliContext, receipt: &NotificationReceipt) -> bool {
+    let record = match load_session_record(context, &receipt.target_session_id) {
+        Ok(record) => record,
+        Err(error) => return error.code() == "session-not-found",
+    };
+    record.id != receipt.target_session_id
+        || record
+            .runtime
+            .as_ref()
+            .is_none_or(|runtime| runtime.launch_id != receipt.target_incarnation)
+        || crate::coordination_runtime_evidence(context, &record)
+            .is_ok_and(|evidence| evidence.status == CoordinationRuntimeStatus::Stopped)
+        || crate::auth_incident::recovery::ensure_input_allowed(context, &record)
+            .is_err_and(|error| error.code() == "auth-quarantined")
+}
 
 /// An unknown older submission cannot acknowledge a newer generation. Keep
 /// same-generation uncertainty parked, and keep active attempts fenced until

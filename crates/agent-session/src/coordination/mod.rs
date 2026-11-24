@@ -42,8 +42,11 @@ pub(crate) mod unread;
 
 pub(crate) use broker::run_broker;
 pub(crate) use notification::NotificationCandidate;
+pub(crate) use notification::expire_attempt as expire_notification_attempt;
 pub(crate) use notification::is_mailbox_reminder_prompt;
-pub(crate) use notification::observe_attempt as notification_prompt_observed_after;
+pub(crate) use notification::reconcile_submitted as reconcile_notification_submitted;
+pub(crate) use notification::unresolved_attempts as unresolved_notification_attempts;
+pub(crate) use notification::{NotificationOutcome, notification_outcome};
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -603,6 +606,7 @@ pub(crate) fn pending_notifications(
     notification::pending(context)
 }
 
+#[cfg(test)]
 pub(crate) fn unresolved_notifications(
     context: &CliContext,
 ) -> Result<Vec<NotificationCandidate>, CliError> {
@@ -767,20 +771,6 @@ pub(crate) fn defer_notification_unbound_unobservable_composer(
     retry_after_seconds: i64,
 ) -> Result<bool, CliError> {
     notification::defer_unbound_unobservable_composer(context, candidate, retry_after_seconds)
-}
-
-pub(crate) fn reconcile_notification_submitted(
-    context: &CliContext,
-    candidate: &NotificationCandidate,
-) -> Result<bool, CliError> {
-    notification::reconcile_submitted(context, candidate)
-}
-
-pub(crate) fn reconcile_notification_absent(
-    context: &CliContext,
-    candidate: &NotificationCandidate,
-) -> Result<bool, CliError> {
-    notification::reconcile_absent(context, candidate)
 }
 
 pub(crate) const NOTIFICATION_REASON_HOOK_DELIVERED: &str = notification::REASON_HOOK_DELIVERED;
@@ -1210,6 +1200,9 @@ fn lock_registry_within(
     } else {
         false
     };
+    if class == lock_holder::HolderClass::Lifecycle {
+        renewed |= notification::resolve_unavailable_attempts(context, &mut registry, now);
+    }
     if maintenance == RegistryMaintenance::Full {
         let Registry {
             claims, brokers, ..

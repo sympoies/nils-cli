@@ -14,7 +14,10 @@ pub(crate) use recovery::resolve_drained_generation;
 
 #[path = "notification_observation.rs"]
 mod observation;
-pub(crate) use observation::observe_attempt;
+#[cfg(test)]
+pub(super) use observation::observe_attempt;
+pub(crate) use observation::{NotificationOutcome, notification_outcome};
+pub(super) use recovery::resolve_unavailable_attempts;
 
 use super::{Registry, now_epoch};
 use crate::{CliContext, CliError};
@@ -453,28 +456,31 @@ pub(crate) fn deliverable_candidates(
     candidates
 }
 
-pub(crate) fn unresolved_candidates(
-    registry: &mut Registry,
-    now: i64,
-) -> Vec<NotificationCandidate> {
+fn unresolved_receipts(registry: &Registry) -> impl Iterator<Item = &NotificationReceipt> {
+    registry.notifications.values().filter(|receipt| {
+        matches!(receipt.state.as_str(), "attempting" | "attempt_unknown")
+            && receipt.last_reason.as_deref() != Some("mailbox-drained")
+            && receipt.attempted_generation > receipt.notified_generation
+    })
+}
+
+fn attempted_candidate(receipt: &NotificationReceipt) -> NotificationCandidate {
+    NotificationCandidate {
+        prompt: receipt.attempted_prompt.clone(),
+        target_session_id: receipt.target_session_id.clone(),
+        target_incarnation: receipt.target_incarnation.clone(),
+        generation: receipt.attempted_generation,
+        queued_at_epoch: receipt.attempted_queued_at_epoch,
+        attempted_at_epoch: receipt.attempted_at_epoch,
+        attempted_at: receipt.attempted_at.clone(),
+    }
+}
+
+#[cfg(test)]
+fn unresolved_candidates(registry: &mut Registry, now: i64) -> Vec<NotificationCandidate> {
     normalize_registry(registry, now);
-    registry
-        .notifications
-        .values()
-        .filter(|receipt| {
-            matches!(receipt.state.as_str(), "attempting" | "attempt_unknown")
-                && receipt.last_reason.as_deref() != Some("mailbox-drained")
-                && receipt.attempted_generation > receipt.notified_generation
-        })
-        .map(|receipt| NotificationCandidate {
-            prompt: receipt.attempted_prompt.clone(),
-            target_session_id: receipt.target_session_id.clone(),
-            target_incarnation: receipt.target_incarnation.clone(),
-            generation: receipt.attempted_generation,
-            queued_at_epoch: receipt.attempted_queued_at_epoch,
-            attempted_at_epoch: receipt.attempted_at_epoch,
-            attempted_at: receipt.attempted_at.clone(),
-        })
+    unresolved_receipts(registry)
+        .map(attempted_candidate)
         .collect()
 }
 
@@ -492,18 +498,30 @@ pub(crate) fn pending(context: &CliContext) -> Result<Vec<NotificationCandidate>
     Ok(candidates)
 }
 
-pub(crate) fn unresolved(context: &CliContext) -> Result<Vec<NotificationCandidate>, CliError> {
+pub(crate) fn unresolved_attempts(
+    context: &CliContext,
+) -> Result<Vec<(NotificationCandidate, bool)>, CliError> {
     let now = now_epoch();
     // Discovery polls every second from serve; it needs only notification
     // normalization, not claim and lease maintenance (sympoies/nils-cli#1860).
     let mut locked = super::lock_registry_observational(context)?;
     let changed = normalize_registry(&mut locked.registry, now)
+        | resolve_unavailable_attempts(context, &mut locked.registry, now)
         | recovery::resolve_drained_generations(&mut locked.registry, now);
-    let candidates = unresolved_candidates(&mut locked.registry, now);
     if changed {
         locked.save()?;
     }
-    Ok(candidates)
+    Ok(unresolved_receipts(&locked.registry)
+        .map(|receipt| (attempted_candidate(receipt), receipt.state == "attempting"))
+        .collect())
+}
+
+#[cfg(test)]
+pub(crate) fn unresolved(context: &CliContext) -> Result<Vec<NotificationCandidate>, CliError> {
+    Ok(unresolved_attempts(context)?
+        .into_iter()
+        .map(|(candidate, _)| candidate)
+        .collect())
 }
 
 #[cfg(test)]
@@ -622,6 +640,9 @@ fn transition_known_failure(
     let Some(receipt) = matching_attempt_mut(registry, candidate) else {
         return false;
     };
+    if receipt.state != "attempting" {
+        return false;
+    }
     receipt.state = "queued".to_string();
     receipt.next_attempt_at_epoch = retry_at_epoch.max(now);
     receipt.updated_at_epoch = now;
@@ -640,11 +661,15 @@ fn transition_unknown(
     let Some(receipt) = matching_attempt_mut(registry, candidate) else {
         return false;
     };
+    record_unknown(receipt, reason, now);
+    true
+}
+
+fn record_unknown(receipt: &mut NotificationReceipt, reason: &str, now: i64) {
     receipt.state = "attempt_unknown".to_string();
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some(safe_reason(reason));
-    receipt.record_attempt(candidate.generation, reason, now);
-    true
+    receipt.record_attempt(receipt.attempted_generation, reason, now);
 }
 
 fn transition_undeliverable(
@@ -843,38 +868,43 @@ fn transition_unbound_unobservable_composer(
     true
 }
 
+fn matches_observed_attempt(
+    receipt: &NotificationReceipt,
+    candidate: &NotificationCandidate,
+) -> bool {
+    receipt.attempted_generation == candidate.generation
+        && receipt.attempted_at == candidate.attempted_at
+        && receipt.attempted_at_epoch == candidate.attempted_at_epoch
+        && receipt.attempted_queued_at_epoch == candidate.queued_at_epoch
+}
+
 pub(crate) fn reconcile_submitted(
     context: &CliContext,
     candidate: &NotificationCandidate,
 ) -> Result<bool, CliError> {
     update_attempt(context, |registry, now| {
-        transition_submitted(registry, candidate, now)
+        matching_attempt_mut(registry, candidate)
+            .is_some_and(|receipt| matches_observed_attempt(receipt, candidate))
+            && transition_submitted(registry, candidate, now)
     })
 }
 
-pub(crate) fn reconcile_absent(
+pub(crate) fn expire_attempt(
     context: &CliContext,
     candidate: &NotificationCandidate,
 ) -> Result<bool, CliError> {
     update_attempt(context, |registry, now| {
-        transition_reconciled_absent(registry, candidate, now)
+        let Some(receipt) = matching_attempt_mut(registry, candidate) else {
+            return false;
+        };
+        if receipt.state != "attempting" || !matches_observed_attempt(receipt, candidate) {
+            return false;
+        }
+        record_unknown(receipt, "notification-attempt-deadline-exceeded", now);
+        true
     })
 }
 
-fn transition_reconciled_absent(
-    registry: &mut Registry,
-    candidate: &NotificationCandidate,
-    now: i64,
-) -> bool {
-    let Some(receipt) = matching_attempt_mut(registry, candidate) else {
-        return false;
-    };
-    receipt.state = "queued".to_string();
-    receipt.updated_at_epoch = now;
-    receipt.next_attempt_at_epoch = now;
-    receipt.last_reason = Some(REASON_PENDING.to_string());
-    true
-}
 fn update_attempt(
     context: &CliContext,
     update: impl FnOnce(&mut Registry, i64) -> bool,
@@ -990,6 +1020,8 @@ pub(super) fn safe_reason(reason: &str) -> String {
         | "coordination-disabled"
         | "recipient-unmanaged"
         | "submission-outcome-unknown"
+        | "notification-attempt-deadline-exceeded"
+        | "recipient-runtime-unavailable"
         | "provider-observation-unavailable"
         | "migrated-attempt-outcome-unknown"
         | "notification-state-invalid"
@@ -1544,8 +1576,14 @@ mod tests {
                 ..candidate.clone()
             }]
         );
-        assert!(transition_reconciled_absent(&mut registry, &candidate, 122));
-        assert_eq!(pending_candidates(&mut registry, 122).len(), 1);
+        assert!(!transition_known_failure(
+            &mut registry,
+            &candidate,
+            "recipient-working",
+            122,
+            122
+        ));
+        assert!(pending_candidates(&mut registry, 122).is_empty());
     }
 
     #[test]

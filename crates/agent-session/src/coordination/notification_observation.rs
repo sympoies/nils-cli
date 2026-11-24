@@ -1,12 +1,39 @@
-//! Reconcile exact attempt bytes without turning an unknown format into absence.
-use super::{NotificationCandidate, receipt_key};
+//! Reconcile exact notification attempts against positive provider evidence.
+use super::{NotificationCandidate, matches_observed_attempt, receipt_key};
+use crate::coordination::now_epoch;
 use crate::provider_prompt::{ProviderPromptTail, notice_observed_after};
 use crate::{CliContext, load_session_record};
 
-pub(crate) fn observe_attempt(
+/// Give submission and transcript observation time to settle before releasing
+/// a lifecycle fence. An expired attempt remains consumed.
+const ATTEMPT_DEADLINE_SECONDS: i64 = 120;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NotificationOutcome {
+    Observed,
+    Expired,
+}
+
+pub(crate) fn notification_outcome(
     context: &CliContext,
     candidate: &NotificationCandidate,
-) -> Option<bool> {
+    attempting: bool,
+) -> Option<NotificationOutcome> {
+    if observe_attempt(context, candidate).is_some() {
+        Some(NotificationOutcome::Observed)
+    } else if attempting
+        && now_epoch().saturating_sub(candidate.attempted_at_epoch) >= ATTEMPT_DEADLINE_SECONDS
+    {
+        Some(NotificationOutcome::Expired)
+    } else {
+        None
+    }
+}
+
+pub(in crate::coordination) fn observe_attempt(
+    context: &CliContext,
+    candidate: &NotificationCandidate,
+) -> Option<()> {
     let record = load_session_record(context, &candidate.target_session_id).ok()?;
     if record
         .runtime
@@ -33,11 +60,7 @@ pub(crate) fn observe_attempt(
             &candidate.target_session_id,
             &candidate.target_incarnation,
         ))?;
-        if receipt.attempted_generation != candidate.generation
-            || receipt.attempted_at != candidate.attempted_at
-            || receipt.attempted_at_epoch != candidate.attempted_at_epoch
-            || receipt.attempted_queued_at_epoch != candidate.queued_at_epoch
-        {
+        if !matches_observed_attempt(receipt, candidate) {
             return None;
         }
         receipt.attempted_prompt_format.clone()
@@ -51,5 +74,5 @@ pub(crate) fn observe_attempt(
     }
     // A native call can complete late. Only exact positive observation resolves
     // it; absence never authorizes replay or a plain-prompt fallback.
-    notice_observed_after(&source, current, &attempted_at).then_some(true)
+    notice_observed_after(&source, current, &attempted_at).then_some(())
 }
