@@ -911,6 +911,13 @@ pub fn normalize_activity_event(
             "provider hook input root must be an object",
         )
     })?;
+    // A subagent API failure does not end the main turn.
+    if request.product == Product::Claude
+        && request.event == "StopFailure"
+        && object.contains_key("agent_id")
+    {
+        return Ok(None);
+    }
     let notification = object.get("notification_type").and_then(Value::as_str);
     let tool_name = object.get("tool_name").and_then(Value::as_str);
     if request.product == Product::Claude
@@ -1047,7 +1054,10 @@ pub fn normalize_activity_event(
     };
     let failure_reason = (kind == "turn_failed").then(|| {
         if request.product == Product::Claude {
-            normalized_failure_reason(object.get("error").and_then(Value::as_str))
+            crate::claude_failure::normalize(
+                object.get("error").and_then(Value::as_str),
+                object.get("last_assistant_message").and_then(Value::as_str),
+            )
         } else {
             "unknown"
         }
@@ -1507,19 +1517,6 @@ pub(crate) fn projected_provider_id(
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>()
     )
-}
-
-fn normalized_failure_reason(raw: Option<&str>) -> &'static str {
-    match raw {
-        Some("rate_limit") => "usage_exhausted",
-        Some("authentication_failed") => "authentication",
-        Some("oauth_org_not_allowed") => "organization",
-        Some("billing_error") => "billing",
-        Some("invalid_request") => "invalid_request",
-        Some("server_error") => "service",
-        Some("max_output_tokens") => "max_output_tokens",
-        _ => "unknown",
-    }
 }
 
 fn parse_provider_json(input: &[u8]) -> Result<Value, HookError> {

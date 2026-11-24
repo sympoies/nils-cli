@@ -13,11 +13,11 @@ pub(crate) mod failover;
 mod failover_tests;
 pub(crate) mod recheck;
 pub(crate) mod recovery;
-pub(crate) mod revocation;
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
+use agent_hook::claude_failure::{OAUTH_REVOKED_REASON, is_oauth_revocation};
 use nils_common::fs::{SECRET_FILE_MODE, write_atomic};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -377,7 +377,7 @@ pub(crate) fn observe_activity(
     if event.kind == TurnEventKind::TurnFailed
         && matches!(
             event.failure_reason.as_deref(),
-            Some("authentication" | revocation::FAILURE_REASON)
+            Some("authentication" | OAUTH_REVOKED_REASON)
         )
         && last.provider_failure_kind() == Some("authentication")
         && last.outcome == "failed"
@@ -471,7 +471,7 @@ fn terminal_auth_line(text: &str) -> Option<&str> {
 fn terminal_auth_pattern(provider: &str, line: &str) -> bool {
     match provider {
         "claude" => claude_terminal_error(line).is_some_and(|message| {
-            revocation::matches_message(message)
+            is_oauth_revocation(message)
                 || message == "Invalid authentication credentials · Please run /login"
         }),
         "codex" => {
@@ -585,7 +585,7 @@ fn sample(context: &CliContext, record: &SessionRecord, tmux: &Path) -> Result<(
                         Confidence::Inferred,
                         &jiff::Timestamp::now().to_string(),
                         current.agent == "claude"
-                            && claude_terminal_error(line).is_some_and(revocation::matches_message),
+                            && claude_terminal_error(line).is_some_and(is_oauth_revocation),
                     ) {
                         store.terminal_auth_runtime = Some(runtime.launch_id.clone());
                     }

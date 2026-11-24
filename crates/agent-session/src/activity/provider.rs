@@ -122,16 +122,11 @@ pub(super) fn normalize_provider_hook(
     let failure_reason = (agent == AgentKind::Claude && event_name == "StopFailure")
         .then(|| {
             raw.get("error").and_then(Value::as_str).map(|error| {
-                use crate::auth_incident::revocation;
-                if error == "authentication_failed"
-                    && raw["last_assistant_message"]
-                        .as_str()
-                        .is_some_and(revocation::matches_message)
-                {
-                    revocation::FAILURE_REASON.into()
-                } else {
-                    normalize_claude_failure_reason(error)
-                }
+                agent_hook::claude_failure::normalize(
+                    Some(error),
+                    raw.get("last_assistant_message").and_then(Value::as_str),
+                )
+                .into()
             })
         })
         .flatten();
@@ -211,20 +206,6 @@ pub(super) fn normalize_provider_hook(
         source_kind: SourceKind::ProviderHook,
         provider_time: None,
     }))
-}
-
-fn normalize_claude_failure_reason(reason: &str) -> String {
-    match reason {
-        "rate_limit" => "usage_exhausted",
-        "authentication_failed" => "authentication",
-        "oauth_org_not_allowed" => "organization",
-        "billing_error" => "billing",
-        "invalid_request" => "invalid_request",
-        "server_error" => "service",
-        "max_output_tokens" => "max_output_tokens",
-        _ => "unknown",
-    }
-    .to_string()
 }
 
 pub(super) fn normalize_provider_notification(

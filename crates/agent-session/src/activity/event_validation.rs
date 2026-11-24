@@ -136,7 +136,7 @@ pub(super) fn validate_event(event: &TurnEvent, admission: EventAdmission) -> Re
         ) || (reason == "provider_capacity"
             && admission == EventAdmission::CodexProtocol
             && event.schema_version == CODEX_PROTOCOL_TURN_EVENT_VERSION)
-            || (reason == crate::auth_incident::revocation::FAILURE_REASON
+            || (reason == agent_hook::claude_failure::OAUTH_REVOKED_REASON
                 && event.provider == "claude"
                 && event.source_kind == SourceKind::ProviderHook);
         if event.kind != TurnEventKind::TurnFailed

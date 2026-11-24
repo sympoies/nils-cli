@@ -16,8 +16,8 @@
 
 - The synthetic regression reproduced quarantine after late publication on the
   baseline. The shared-account cases exercise two revoked siblings,
-  wrong-account publication, deadline expiry, and the older Claude version
-  boundary.
+  wrong-account publication, and deadline expiry through production hook
+  dispatch.
 
 ### Links
 

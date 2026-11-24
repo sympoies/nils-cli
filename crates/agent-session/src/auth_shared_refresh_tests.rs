@@ -1,6 +1,23 @@
 //! Synthetic shared-account rotation through the broker and Claude hook ingress.
 use super::*;
+use nils_test_support::cmd::{CmdOptions, run_with};
 use pretty_assertions::{assert_eq, assert_ne};
+use sha2::{Digest, Sha256};
+
+const HOOK_POLICY: &str = r#"schema_version = "agent-hook.policy.v1"
+bundle_id = "fixture-policy"
+version = "2026.11.24.1"
+
+[[rules]]
+id = "fixture.claude-activity"
+products = ["claude"]
+events = ["StopFailure"]
+priority = 10
+mode = "enforce"
+failure_posture = "closed"
+override_class = "locked"
+capability = { id = "agent-session.activity.v1", reason_code = "activity-recorded" }
+"#;
 
 struct Resident {
     root: PathBuf,
@@ -39,14 +56,74 @@ impl Resident {
     }
 
     fn observe_revocation(&self) {
-        claude_hook_for(
-            &self.context,
-            &self.initial.id,
-            &launch_id(&self.initial).unwrap(),
-            json!({"hook_event_name":"StopFailure", "error":"authentication_failed",
-                "last_assistant_message":"OAuth token revoked · Please run /login",
-                "session_id":CONVERSATION}),
-        );
+        let config_home = self.root.join("hook-config");
+        fs::create_dir_all(config_home.join("agent-hook")).unwrap();
+        let policy = self.root.canonicalize().unwrap().join("hook-policy.toml");
+        fs::write(&policy, HOOK_POLICY).unwrap();
+        let config = config_home.join("agent-hook/config.toml");
+        let digest = Sha256::digest(HOOK_POLICY.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        fs::write(
+            &config,
+            format!(
+                "schema_version = \"agent-hook.config.v1\"\n[policy]\npath = {}\ndigest = \"sha256:{digest}\"\n",
+                serde_json::to_string(&policy).unwrap(),
+            ),
+        )
+        .unwrap();
+        for path in [&policy, &config] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let dispatcher = nils_test_support::bin::required_sibling("agent-hook", "nils-agent-hook");
+        let helper = nils_test_support::bin::resolve("agent-session");
+        let payload = json!({
+            "hook_event_name": "StopFailure",
+            "error": "authentication_failed",
+            "last_assistant_message": "OAuth token revoked · Please run /login",
+            "session_id": CONVERSATION,
+        });
+        let dispatch = |event: &Value| {
+            let result = run_with(
+                &dispatcher,
+                &["dispatch", "--product", "claude", "--format", "json"],
+                &CmdOptions::new()
+                    .without_ambient_managed_session_env()
+                    .with_env_remove_prefix("AGENT_HOOK_")
+                    .with_env_remove_prefix("CLAUDE_")
+                    .with_env_remove_prefix("ANTHROPIC_")
+                    .with_cwd(&self.root)
+                    .with_env("HOME", self.root.to_str().unwrap())
+                    .with_env("XDG_CONFIG_HOME", config_home.to_str().unwrap())
+                    .with_env(
+                        "XDG_STATE_HOME",
+                        self.root.join("hook-state").to_str().unwrap(),
+                    )
+                    .with_env(
+                        "XDG_DATA_HOME",
+                        self.root.join("hook-data").to_str().unwrap(),
+                    )
+                    .with_env("AGENT_SESSION_BIN", helper.to_str().unwrap())
+                    .with_env("AGENT_SESSION_ID", &self.initial.id)
+                    .with_env(
+                        "AGENT_SESSION_RUNTIME_ID",
+                        &launch_id(&self.initial).unwrap(),
+                    )
+                    .with_env(
+                        "AGENT_SESSION_STATE_DIR",
+                        self.context.state_dir.to_str().unwrap(),
+                    )
+                    .with_stdin_str(&event.to_string()),
+            );
+            assert_eq!(result.code, 0, "{}", result.stderr_text());
+        };
+        let mut subagent = payload.clone();
+        subagent["agent_id"] = json!("fixture-subagent");
+        dispatch(&subagent);
+        crate::auth_incident::recovery::ensure_input_allowed(&self.context, &self.initial)
+            .expect("subagent failure must leave the main turn unfenced");
+        dispatch(&payload);
         self.assert_quarantined();
     }
 
@@ -188,29 +265,6 @@ fn shared_refresh_rejects_wrong_account_and_expires_before_late_adoption() {
     assert_eq!(log(&sibling.root).matches("new-session").count(), 1);
     fs::write(&receipt_path, correct).unwrap();
     sibling.poll(220);
-    sibling.assert_quarantined();
-    assert_eq!(log(&sibling.root).matches("new-session").count(), 1);
-}
-
-#[test]
-fn shared_refresh_does_not_extend_recovery_for_a_known_older_claude_version() {
-    let lock = GlobalStateLock::new();
-    let tmp = tempfile::tempdir().unwrap();
-    let _broker = synthetic_broker(tmp.path(), &lock);
-    let mut sibling = Resident::start(tmp.path(), "revoked-sibling");
-    let launch = launch_id(&sibling.initial).unwrap();
-    sibling.initial.extra.insert(
-        "restart_provider_version".into(),
-        json!({"launch_id": launch, "version":"2.1.247 (Claude Code)"}),
-    );
-    crate::write_session_record(&sibling.context, &sibling.initial).unwrap();
-    sibling.observe_revocation();
-    sibling.poll(100);
-    sibling.poll(130);
-    publisher(tmp.path(), "stage", 2);
-    publisher(tmp.path(), "publish", 2);
-    sibling.poll(131);
-
     sibling.assert_quarantined();
     assert_eq!(log(&sibling.root).matches("new-session").count(), 1);
 }

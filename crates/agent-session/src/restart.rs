@@ -189,6 +189,15 @@ fn launch_id(record: &SessionRecord) -> Option<String> {
 
 fn incarnation(record: &SessionRecord) -> Incarnation {
     let session_incarnation = launch_id(record);
+    let provider_version = record
+        .extra
+        .get(PROVIDER_VERSION_KEY)
+        .filter(|recorded| {
+            session_incarnation.is_some()
+                && recorded["launch_id"].as_str() == session_incarnation.as_deref()
+        })
+        .and_then(|recorded| recorded["version"].as_str())
+        .map(str::to_string);
     Incarnation {
         session_incarnation,
         generation: record.runtime.as_ref().map(|runtime| runtime.generation),
@@ -196,17 +205,8 @@ fn incarnation(record: &SessionRecord) -> Incarnation {
             .ok()
             .flatten()
             .map(|identity| i64::from(identity.pane_pid)),
-        provider_version: recorded_provider_version(record).map(str::to_string),
+        provider_version,
     }
-}
-
-pub(crate) fn recorded_provider_version(record: &SessionRecord) -> Option<&str> {
-    let launch = record.runtime.as_ref()?.launch_id.as_str();
-    record
-        .extra
-        .get(PROVIDER_VERSION_KEY)
-        .filter(|recorded| recorded["launch_id"].as_str() == Some(launch))
-        .and_then(|recorded| recorded["version"].as_str())
 }
 
 fn provider_version(agent_bin: &Path) -> Option<String> {

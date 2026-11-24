@@ -171,11 +171,12 @@ restores the same conversation in the fresh process.
 A main-thread authentication failure with an exact OAuth revocation message, or
 the corresponding terminal status when structured evidence is unavailable,
 allows a verified newer publication to trigger one automatic stop/resume within
-120 seconds of the first recovery tick. Other authentication failures and
-runtimes with a recorded Claude Code version below 2.1.248 use the 30-second
-window. For runtimes with unknown version, use Claude Code 2.1.248 or newer so
-Claude handles contention between its own refreshers. File replacements that
-the broker does not publish rely on Claude's native refresh handling.
+120 seconds of the first recovery tick. Other authentication failures use the
+30-second window.
+
+Shared Claude account profiles require Claude Code 2.1.248 or newer. File
+replacements that the broker does not publish rely on Claude's native refresh
+handling. The broker-backed recovery window is independent of the launch path.
 
 Publication leaves the failed process fenced. The replacement uses the same
 bound account and conversation. Readiness admits the next request without

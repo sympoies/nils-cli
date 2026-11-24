@@ -157,7 +157,7 @@ fn completion_failure_extra(
 ) -> Map<String, Value> {
     extra.remove(OAUTH_REVOKED);
     match reason {
-        Some(crate::auth_incident::revocation::FAILURE_REASON) => {
+        Some(agent_hook::claude_failure::OAUTH_REVOKED_REASON) => {
             extra.insert("provider_failure_kind".into(), json!("authentication"));
             extra.insert(OAUTH_REVOKED.into(), Value::Bool(true));
         }
