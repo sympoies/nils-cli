@@ -26,6 +26,7 @@ pub(crate) mod resume_preflight;
 pub use notification::NotificationProjection;
 pub mod readiness;
 mod receipt_retention;
+mod registry_read;
 pub use readiness::checkpoint_path_for_state;
 pub(crate) mod remote;
 mod remote_peer_exclusions;
@@ -50,6 +51,7 @@ use std::io::{self, Read};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(test)]
 use std::{thread, time::Instant};
@@ -1195,20 +1197,13 @@ fn lock_registry_within(
     })?;
     let holder = lock_holder::PublishedHolder::publish(&root, class);
     let path = root.join(REGISTRY_FILE);
-    let mut registry = match read_private_file(&path, MAX_REGISTRY_BYTES) {
-        Ok(bytes) => {
-            let registry: Registry = serde_json::from_slice(&bytes).map_err(|_| store_corrupt())?;
-            if !delegation::registry_version_supported(&registry.schema_version) {
-                return Err(store_corrupt());
-            }
-            registry
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Registry {
+    let mut registry = registry_read::load(&path)?.map_or_else(
+        || Registry {
             schema_version: REGISTRY_VERSION.to_string(),
             ..Registry::default()
         },
-        Err(_) => return Err(store_unavailable()),
-    };
+        |snapshot| (*snapshot).clone(),
+    );
     let now = now_epoch();
     let mut renewed = if maintenance == RegistryMaintenance::Full {
         notification::normalize_registry(&mut registry, now)
@@ -1367,7 +1362,12 @@ fn coordination_root(context: &CliContext) -> Result<PathBuf, CliError> {
 }
 
 fn read_private_file(path: &Path, max_bytes: u64) -> io::Result<Vec<u8>> {
-    let mut file = OpenOptions::new()
+    let (mut file, metadata) = open_private_file(path, max_bytes)?;
+    read_opened_private_file(&mut file, metadata.len(), max_bytes)
+}
+
+fn open_private_file(path: &Path, max_bytes: u64) -> io::Result<(File, fs::Metadata)> {
+    let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(path)?;
@@ -1383,9 +1383,12 @@ fn read_private_file(path: &Path, max_bytes: u64) -> io::Result<Vec<u8>> {
             "private coordination file is untrusted",
         ));
     }
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.by_ref()
-        .take(max_bytes.saturating_add(1))
+    Ok((file, metadata))
+}
+
+fn read_opened_private_file(file: &mut File, len: u64, max_bytes: u64) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(len as usize);
+    file.take(max_bytes.saturating_add(1))
         .read_to_end(&mut bytes)?;
     if bytes.len() as u64 > max_bytes {
         return Err(io::Error::new(
@@ -1906,20 +1909,12 @@ pub(crate) fn public_summary(context: &CliContext, session_id: &str) -> Coordina
         .unwrap_or_default()
 }
 
-/// `write_atomic` publishes complete immutable inodes. Observational readers
-/// open one validated inode without joining the exclusive writer queue.
 fn read_registry_snapshot(context: &CliContext) -> Result<Registry, CliError> {
-    let path = heartbeat_state::observational_root(context)?.join(REGISTRY_FILE);
-    let bytes = read_private_file(&path, MAX_REGISTRY_BYTES).map_err(|_| store_unavailable())?;
-    let registry: Registry = serde_json::from_slice(&bytes).map_err(|_| store_corrupt())?;
-    if !delegation::registry_version_supported(&registry.schema_version) {
-        return Err(store_corrupt());
-    }
-    Ok(registry)
+    Ok((*registry_read::snapshot(context)?).clone())
 }
 
-pub(crate) fn public_summary_registry_snapshot(context: &CliContext) -> Option<Registry> {
-    read_registry_snapshot(context).ok()
+pub(crate) fn public_summary_registry_snapshot(context: &CliContext) -> Option<Arc<Registry>> {
+    registry_read::snapshot(context).ok()
 }
 
 pub(crate) fn public_summary_from_registry(
@@ -3007,3 +3002,6 @@ mod lock_holder_tests;
 
 #[cfg(test)]
 mod mailbox_wait_contention_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+mod poll_read_tests;
