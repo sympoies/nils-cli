@@ -468,6 +468,9 @@ fn assert_quarantined_operator_restart(force: bool) {
     let tmux = fake_tmux(tmp.path());
     let _observations = tmux.synchronous_observations();
     let record = failed_runtime(&context, tmp.path(), &tmux, false);
+    let candidate = queued_notification(&context, tmp.path());
+    // Restore the durable state left by a submission interrupted before quarantine.
+    assert!(coordination::begin_notification_attempt(&context, &candidate).unwrap());
     let old_launch = launch_id(&record).unwrap();
     let before = log(tmp.path());
     // The same text from external input must remain quarantined. The
@@ -497,6 +500,18 @@ fn assert_quarantined_operator_restart(force: bool) {
     let receipt = serde_json::to_value(result.expect("restart quarantined runtime")).unwrap();
     exited.join().unwrap();
     watcher.join().unwrap();
+    let registry: Value = serde_json::from_slice(
+        &fs::read(context.state_dir.join("coordination/registry.json")).unwrap(),
+    )
+    .unwrap();
+    let notification = registry["notifications"]
+        .as_object()
+        .unwrap()
+        .values()
+        .find(|receipt| receipt["target_incarnation"] == old_launch)
+        .expect("original notification retained");
+    assert_eq!(notification["state"], "attempt_unknown");
+    assert_eq!(notification["notified_generation"], 0);
 
     let current = load_session_record(&context, ID).unwrap();
     assert_eq!(receipt["outcome"], "ready");

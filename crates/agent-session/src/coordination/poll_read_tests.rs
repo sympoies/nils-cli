@@ -143,7 +143,7 @@ fn codex_notification_poll_reads_are_bounded_and_observe_appends() {
         attempted_at: Some(attempted_at.to_string()),
         prompt: Some(prompt.into()),
     };
-    let observe = || notification_prompt_observed_after(&context, &candidate);
+    let observe = || notification::observe_attempt(&context, &candidate);
     assert_eq!(observe(), None);
 
     let before = read_bytes();
@@ -167,7 +167,7 @@ fn codex_notification_poll_reads_are_bounded_and_observe_appends() {
     write!(writer, "{first}").unwrap();
     assert_eq!(observe(), None);
     writeln!(writer, "{rest}").unwrap();
-    assert_eq!(observe(), Some(true));
+    assert_eq!(observe(), Some(()));
     let appended = read_bytes() - before;
     assert!(
         appended < READ_BUDGET,

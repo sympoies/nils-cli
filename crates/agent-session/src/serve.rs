@@ -7053,31 +7053,31 @@ async fn drain_coordination_notifications(state: Arc<ServeState>) {
 async fn reconcile_coordination_notifications(state: Arc<ServeState>) {
     let context = state.context.clone();
     let candidates = match tokio::task::spawn_blocking(move || {
-        crate::coordination::unresolved_notifications(&context)
+        crate::coordination::unresolved_notification_attempts(&context)
     })
     .await
     {
         Ok(Ok(candidates)) => candidates,
         _ => return,
     };
-    for candidate in candidates {
+    for (candidate, attempting) in candidates {
         let context = state.context.clone();
         let observed_candidate = candidate.clone();
-        let observation = tokio::task::spawn_blocking(move || {
-            crate::coordination::notification_prompt_observed_after(&context, &observed_candidate)
+        let outcome = tokio::task::spawn_blocking(move || {
+            crate::coordination::notification_outcome(&context, &observed_candidate, attempting)
         })
         .await
         .ok()
         .flatten();
-        let Some(observed) = observation else {
+        let Some(outcome) = outcome else {
             continue;
         };
         let context = state.context.clone();
         let _ = tokio::task::spawn_blocking(move || {
-            if observed {
+            if outcome == crate::coordination::NotificationOutcome::Observed {
                 crate::coordination::reconcile_notification_submitted(&context, &candidate)
             } else {
-                crate::coordination::reconcile_notification_absent(&context, &candidate)
+                crate::coordination::expire_notification_attempt(&context, &candidate)
             }
         })
         .await;

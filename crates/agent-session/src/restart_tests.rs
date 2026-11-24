@@ -404,6 +404,14 @@ fn in_progress_notification_refuses_before_the_exit_command() {
         error.code(),
         "coordination-notification-submission-in-progress"
     );
+    assert_eq!(
+        details(&error)["recovery"],
+        json!({
+            "kind": "notification-submission-wait",
+            "owner": "agent-session-serve",
+            "automatic": true
+        })
+    );
     assert!(
         !log(tmp.path()).contains("paste-buffer"),
         "{}",
