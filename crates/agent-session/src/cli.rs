@@ -1,5 +1,6 @@
 pub(crate) mod auth_alert;
 pub mod broker_proof;
+mod delete;
 pub(crate) mod dispatch;
 pub(crate) mod drafts;
 mod message_send;
@@ -9,6 +10,7 @@ pub mod resume_move;
 pub(crate) mod send_key;
 mod service_mailbox;
 
+pub use delete::DeleteArgs;
 pub use message_send::MessageSendArgs;
 pub use service_mailbox::{
     MessageServiceAckArgs, MessageServiceInboxArgs, MessageServiceShowArgs,
@@ -1822,53 +1824,6 @@ pub struct ServeArgs {
     pub check: bool,
 
     /// Output format for --check results and --config errors.
-    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
-    pub format: OutputFormat,
-}
-
-#[derive(Debug, Args)]
-pub struct DeleteArgs {
-    /// Delete only a positively verified stopped session; refuses running, working, or
-    /// unknown state and never stops the runtime. Requires --expected-incarnation.
-    #[arg(
-        long,
-        requires = "expected_incarnation",
-        conflicts_with_all = ["leave_processes", "recover_split_cgroup"]
-    )]
-    pub if_stopped: bool,
-
-    /// Refuse deletion if the session runtime incarnation has changed.
-    #[arg(long, requires = "if_stopped")]
-    pub expected_incarnation: Option<String>,
-
-    /// Also require zero unread messages, checked atomically with deletion.
-    /// Refuses unread or unknown mailbox state. Requires --if-stopped.
-    #[arg(long, requires = "if_stopped")]
-    pub if_unread_empty: bool,
-
-    /// Stop only the verified tmux target and delete state, leaving processes running.
-    #[arg(long, conflicts_with_all = ["if_stopped", "recover_split_cgroup"])]
-    pub leave_processes: bool,
-
-    /// Explicitly recover a split Linux process-session/cgroup boundary using
-    /// captured PID/start-time identities and per-process identity checks.
-    #[arg(long, conflicts_with_all = ["if_stopped", "leave_processes"])]
-    pub recover_split_cgroup: bool,
-
-    /// Session id.
-    #[arg(value_name = "ID")]
-    pub id: String,
-
-    /// Delete even though sessions on this machine still name this one as
-    /// their parent; they are left as orphans.
-    #[arg(long)]
-    pub orphan_children: bool,
-
-    /// tmux binary override.
-    #[arg(long = "tmux-bin", value_name = "PATH", value_hint = ValueHint::FilePath)]
-    pub tmux_bin: Option<PathBuf>,
-
-    /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 }

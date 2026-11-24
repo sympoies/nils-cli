@@ -19,6 +19,7 @@ pub(crate) mod prompt_submit;
 mod proxy_transport;
 mod resume_binding;
 mod resume_metrics;
+pub(crate) mod retirement;
 use proxy_transport::{connect_socket, contain_oversized, record_proxy_exit, send_proxy_upstream};
 use resume_binding::persist_bound_thread_resume;
 pub(crate) use resume_binding::{app_server_owns_resume_binding, thread_attachment_matches};
@@ -1078,34 +1079,11 @@ pub(crate) fn ensure_manual_input_capability(
 }
 
 fn live_proxy_marker(context: &CliContext, record: &SessionRecord) -> Option<RuntimeProcessMarker> {
-    let path = proxy_capability_path(context, record);
-    let Ok(mut file) = fs::File::open(&path) else {
-        return None;
-    };
-    let (Ok(own), Ok(current)) = (file.metadata(), fs::metadata(&path)) else {
-        return None;
-    };
-    if own.dev() != current.dev() || own.ino() != current.ino() {
-        return None;
-    }
-    // A live proxy holds a shared lock for its complete advertised lifetime.
-    // Acquiring an exclusive lock therefore identifies an unlocked stale file.
-    // SAFETY: `flock` observes the valid descriptor borrowed for this call.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-        unlock_bootstrap_file(&file);
-        return None;
-    }
-    if std::io::Error::last_os_error().kind() != std::io::ErrorKind::WouldBlock {
-        return None;
-    }
-    read_runtime_process_marker_file(&mut file).filter(|marker| {
-        valid_runtime_process_marker(
-            marker,
-            record,
-            PROXY_CAPABILITY_VERSION,
-            PROXY_CAPABILITY_TTL,
-        )
-    })
+    retirement::live_marker(
+        &proxy_capability_path(context, record),
+        record,
+        PROXY_CAPABILITY_VERSION,
+    )
 }
 
 fn live_proxy_capability(context: &CliContext, record: &SessionRecord) -> bool {
@@ -4422,6 +4400,8 @@ async fn run_proxy_session(
     .map_err(|err| format!("upstream app-server handshake failed: {err}"))?;
     let _capability = begin_proxy_capability(&context, &record)
         .map_err(|err| format!("failed to advertise proxy capability: {}", err.code()))?;
+    let _retirement_capability = retirement::advertise(&context, &record);
+    let mut requests = retirement::Requests::default();
     // A resumed TUI uses thread/resume, so it has no initial thread/start
     // response to publish the manual-input binding. Seed only the exact
     // durable resume identity before accepting its first turn request.
@@ -4478,11 +4458,8 @@ async fn run_proxy_session(
                         }
                         continue;
                     }
-                    let authorization = match cancel_before_tui_mutation_detailed(
-                        &context,
-                        &record,
-                        &mut bootstrap,
-                        &value,
+                    let authorization = match requests.authorize(
+                        &context, &record, &mut bootstrap, &value,
                     ).await {
                         Ok(authorization) => authorization,
                         Err(rejection) => {
@@ -4531,6 +4508,7 @@ async fn run_proxy_session(
                 }
                 let closed = matches!(message, Message::Close(_));
                 if let Some(value) = forwarded_server_value(&message)? {
+                    requests.observe_response(&value);
                     if let Some(key) = json_rpc_response_id_key(&value) {
                         pending_turn_authorizations.remove(&key);
                         if pending_turn_authorizations.is_empty() {

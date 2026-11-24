@@ -1,6 +1,6 @@
 use super::*;
-
 pub(crate) mod resume_binding;
+mod retirement;
 mod typed_causes;
 use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::{assert_eq, assert_ne};

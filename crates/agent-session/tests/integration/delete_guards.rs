@@ -1,4 +1,6 @@
 use crate::cli::{fake_agent, run, write_resumable_session_record_with_agent_bin};
+#[path = "delete_idle.rs"]
+mod idle;
 #[path = "delete_unread.rs"]
 mod unread;
 use pretty_assertions::assert_eq;
@@ -35,7 +37,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir_in("/tmp").unwrap();
         let state = tmp.path().join("state");
         let agent = fake_agent(tmp.path(), "claude");
         let session = write_resumable_session_record_with_agent_bin(
@@ -61,7 +63,10 @@ impl Fixture {
         .unwrap();
         let mut pane = Pane(
             Command::new("python3")
-                .args(["-c", "import os,time; os.setsid(); time.sleep(60)"])
+                .args([
+                    "-c",
+                    "import os,signal,time; signal.signal(signal.SIGINT, signal.SIG_DFL); os.setsid(); time.sleep(60)",
+                ])
                 .spawn()
                 .unwrap(),
         );
@@ -83,13 +88,19 @@ impl Fixture {
             r#"#!/bin/sh
 absent() {{ echo "can't find session: fixture" >&2; exit 1; }}
 case "$1" in
- display-message) printf '$91 %%91 {pid}\n' ;;
+ capture-pane) cat {composer} ;;
+ display-message) [ ! -f {composer} ] || [ ! -f {killed} ] || absent; printf '$91 %%91 {pid}\n' ;;
  show-environment) case "$4" in
  AGENT_SESSION_ID) echo 'AGENT_SESSION_ID=guarded-delete' ;;
  AGENT_SESSION_STATE_DIR) printf 'AGENT_SESSION_STATE_DIR=%s\n' {state} ;;
  AGENT_SESSION_RUNTIME_ID) printf 'AGENT_SESSION_RUNTIME_ID=%s\n' {runtime} ;;
  esac ;;
- if-shell) : > {killed} ;;
+ if-shell)
+   : > {killed}
+   if [ -f {composer} ]; then
+     printf stopped > {name_status}
+     kill -INT {pid} 2>/dev/null || true
+   fi ;;
  has-session)
    [ "$3" != '$91' ] || {{ [ -f {killed} ] && absent; exit 0; }}
    [ "$3" = '=hs-claude-guarded-delete' ] || exit 42
@@ -106,6 +117,7 @@ esac
             runtime = shell_words::quote(record["runtime"]["launch_id"].as_str().unwrap()),
             killed = shell_words::quote(killed.to_str().unwrap()),
             name_status = shell_words::quote(name_status.to_str().unwrap()),
+            composer = shell_words::quote(tmp.path().join("composer").to_str().unwrap()),
             status_entered = shell_words::quote(status_entered.to_str().unwrap()),
             status_release = shell_words::quote(status_release.to_str().unwrap()),
         );

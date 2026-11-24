@@ -2,7 +2,7 @@ use super::*;
 use crate::coordination::{capability, load_coordination_registry, seed_brokers};
 use pretty_assertions::{assert_eq, assert_ne};
 
-fn seed_mailbox(fixture: &Fixture, incarnation: &str) {
+pub(super) fn seed_mailbox(fixture: &Fixture, incarnation: &str) {
     let record = fs::read(fixture.session.join("session.json")).unwrap();
     seed_brokers(
         &fixture.state,
@@ -22,7 +22,7 @@ fn seed_mailbox(fixture: &Fixture, incarnation: &str) {
     fs::write(fixture.session.join("session.json"), record).unwrap();
 }
 
-fn deliver(fixture: &Fixture) -> nils_test_support::cmd::CmdOutput {
+pub(super) fn deliver(fixture: &Fixture) -> nils_test_support::cmd::CmdOutput {
     let body = fixture._tmp.path().join("body.txt");
     fs::write(&body, "a pending coordination request").unwrap();
     run(
