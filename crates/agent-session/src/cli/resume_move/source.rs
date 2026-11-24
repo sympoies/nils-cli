@@ -104,7 +104,7 @@ pub(super) fn inspect(
     let cwd_text = cwd
         .to_str()
         .ok_or_else(|| super::cli_refusal(Refusal::PathMismatch))?;
-    let history = describe_history(provider, &root, &found.path)?;
+    let (history, history_path) = describe_history(provider, &root, &found.path)?;
     let plan = Plan {
         source_host: source_host.to_owned(),
         destination_host: destination.to_owned(),
@@ -121,7 +121,7 @@ pub(super) fn inspect(
     };
     Ok(Source {
         plan,
-        history_path: found.path,
+        history_path,
         provider_root: root,
     })
 }
@@ -213,10 +213,19 @@ fn describe_history(
     provider: Provider,
     root: &Path,
     path: &Path,
-) -> Result<HistoryPlacement, CliError> {
+) -> Result<(HistoryPlacement, PathBuf), CliError> {
     let unsupported = || super::cli_refusal(Refusal::HistoryUnsupported);
     let path_on_disk = fs::canonicalize(path).map_err(|_| history_missing())?;
-    if path_on_disk != path {
+    let expected = match provider {
+        Provider::Codex => path.to_path_buf(),
+        Provider::Claude => {
+            let projects = root.join("projects");
+            let relative = path.strip_prefix(&projects).map_err(|_| unsupported())?;
+            let projects_on_disk = fs::canonicalize(&projects).map_err(|_| history_missing())?;
+            projects_on_disk.join(relative)
+        }
+    };
+    if path_on_disk != expected {
         return Err(unsupported());
     }
     let source_relative_path = path
@@ -233,16 +242,19 @@ fn describe_history(
                 .ok_or_else(unsupported)?,
         ),
     };
-    let metadata = fs::symlink_metadata(path).map_err(|_| history_missing())?;
+    let metadata = fs::symlink_metadata(&path_on_disk).map_err(|_| history_missing())?;
     if !metadata.is_file() || metadata.len() == 0 {
         return Err(unsupported());
     }
-    Ok(HistoryPlacement {
-        role,
-        relative_path: relative_path.to_owned(),
-        source_relative_path: source_relative_path.to_owned(),
-        bytes: metadata.len(),
-    })
+    Ok((
+        HistoryPlacement {
+            role,
+            relative_path: relative_path.to_owned(),
+            source_relative_path: source_relative_path.to_owned(),
+            bytes: metadata.len(),
+        },
+        path_on_disk,
+    ))
 }
 
 pub(super) fn git_checkout(cwd: &Path) -> Option<GitCheckout> {
@@ -266,4 +278,41 @@ pub(super) fn git_checkout(cwd: &Path) -> Option<GitCheckout> {
 
 fn history_missing() -> CliError {
     crate::start_resume::refusal("resume-history-missing")
+}
+
+#[cfg(test)]
+mod claude_layout_tests {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    use pretty_assertions::assert_eq;
+
+    use super::{Provider, describe_history};
+
+    #[test]
+    fn claude_source_manifest_keeps_the_account_project_route() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(fixture.path()).unwrap();
+        let account = root.join("account");
+        let shared = root.join("shared");
+        fs::create_dir(&account).unwrap();
+        fs::create_dir_all(shared.join("project")).unwrap();
+        symlink(&shared, account.join("projects")).unwrap();
+        let transcript = shared.join("project/session.jsonl");
+        fs::write(&transcript, b"synthetic history").unwrap();
+
+        let route = account.join("projects/project/session.jsonl");
+        let (placement, bound_path) = describe_history(Provider::Claude, &account, &route).unwrap();
+        assert_eq!(
+            placement.source_relative_path,
+            "projects/project/session.jsonl"
+        );
+        assert_eq!(placement.relative_path, "session.jsonl");
+        assert_eq!(bound_path, transcript);
+
+        let redirected = shared.join("project/redirected.jsonl");
+        symlink(&transcript, &redirected).unwrap();
+        let route = account.join("projects/project/redirected.jsonl");
+        assert!(describe_history(Provider::Claude, &account, &route).is_err());
+    }
 }

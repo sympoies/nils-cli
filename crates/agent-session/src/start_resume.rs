@@ -12,7 +12,7 @@ pub struct StartView {
 
 pub(super) fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
     let format = args.format;
-    if args.move_id.is_some() && (!cli::resume_move::MOVE_AVAILABLE || args.via_console) {
+    if args.move_id.is_some() && args.via_console {
         let command = if args.check_resume {
             CHECK_COMMAND
         } else {
@@ -150,7 +150,7 @@ const CHECK_COMMAND: &str = "resume-preflight";
 
 pub(super) fn refusal(code: &'static str) -> CliError {
     let message = match code {
-        "resume-move-unavailable" => "the complete cross-host move protocol is unavailable",
+        "resume-move-unavailable" => "cross-host moves require direct local start",
         "resume-move-aborted" => "the destination has recorded a terminal abort for this move",
         "resume-move-proof-missing" => "the exact destination move proof is unavailable",
         "resume-move-destination-reserved" => "the conversation is reserved for a destination move",

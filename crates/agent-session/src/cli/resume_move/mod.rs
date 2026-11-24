@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod args;
+mod claude;
 pub(crate) mod destination;
 mod source;
 pub(crate) mod source_fence;
@@ -17,7 +18,7 @@ mod ssh;
 mod tests;
 
 pub use args::MoveArgs;
-pub(crate) use args::{MOVE_AVAILABLE, move_preflight, run, start};
+pub(crate) use args::{move_preflight, run, start};
 pub use ssh::Verifier;
 
 pub const TICKET_SCHEMA: &str = "agent-session.resume-move-ticket.v1";
@@ -40,6 +41,15 @@ pub struct SignedRecord {
 pub enum Provider {
     Codex,
     Claude,
+}
+
+impl Provider {
+    fn agent(self) -> crate::AgentKind {
+        match self {
+            Self::Codex => crate::AgentKind::Codex,
+            Self::Claude => crate::AgentKind::Claude,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

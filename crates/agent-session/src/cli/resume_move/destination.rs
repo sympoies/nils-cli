@@ -15,7 +15,7 @@ use crate::{AgentKind, CliContext, CliError, coordination, start_resume};
 use super::{
     AbortVerdict, Binding, History, NO_WRITER_SCHEMA, NoWriterReceipt, Observation, Provider,
     Refusal, SignedRecord, StopProof, TICKET_SCHEMA, Ticket, Verified, Verifier, canonical_uuid,
-    cli_refusal, host_identity, sha256, source, valid_digest,
+    claude, cli_refusal, host_identity, sha256, source, valid_digest,
 };
 
 const STORE: &str = "resume-move-destination.v1.json";
@@ -74,6 +74,7 @@ pub(super) struct Preparation {
 
 #[derive(Clone, Copy)]
 pub(super) struct AdmissionRequest<'a> {
+    pub(super) provider: Provider,
     pub(super) move_id: &'a str,
     pub(super) account: &'a str,
     pub(super) provider_session_id: &'a str,
@@ -84,6 +85,8 @@ pub(super) struct AdmissionRequest<'a> {
 pub(super) enum Admission {
     New {
         provider_home: PathBuf,
+        history: History,
+        claude_target: Option<claude::Destination>,
         _writer: File,
     },
     Existing {
@@ -116,16 +119,27 @@ pub(super) fn check_plan(
     }) {
         return Err(cli_refusal(Refusal::DestinationWriterPresent));
     }
-    let roster = crate::codex_account::list_accounts()
-        .map_err(|_| start_resume::refusal("resume-unsupported"))?;
-    if !roster.iter().any(|account| account.account == plan.account) {
-        return Err(cli_refusal(Refusal::AccountMismatch));
-    }
-    if !crate::codex_app_server::resume_transport_supported(&crate::resolve_agent_bin(
-        AgentKind::Codex,
-        None,
-    )) {
-        return Err(start_resume::refusal("resume-unsupported"));
+    match plan.provider {
+        Provider::Codex => {
+            let roster = crate::codex_account::list_accounts()
+                .map_err(|_| start_resume::refusal("resume-unsupported"))?;
+            if !roster.iter().any(|account| account.account == plan.account) {
+                return Err(cli_refusal(Refusal::AccountMismatch));
+            }
+            if !crate::codex_app_server::resume_transport_supported(&crate::resolve_agent_bin(
+                AgentKind::Codex,
+                None,
+            )) {
+                return Err(start_resume::refusal("resume-unsupported"));
+            }
+        }
+        Provider::Claude => {
+            claude::Destination::for_account(
+                &plan.account,
+                &candidate.checkout.cwd,
+                &plan.provider_session_id,
+            )?;
+        }
     }
     Ok(candidate)
 }
@@ -274,7 +288,7 @@ pub(super) fn check(
     now: i64,
 ) -> Result<bool, CliError> {
     verify_admission(context, &read_moves(context)?, verifier, request, now)
-        .map(|entry| entry.created.is_some())
+        .map(|verified| verified.entry.created.is_some())
 }
 
 pub(super) fn admit(
@@ -286,22 +300,26 @@ pub(super) fn admit(
     let _control = lock(context)?;
     let mut moves = read_moves(context)?;
     let verified = verify_admission(context, &moves, verifier, request, now)?;
-    if let Some(created) = &verified.created {
+    if let Some(created) = &verified.entry.created {
         return Ok(Admission::Existing {
             session_id: created.session_id.clone(),
             incarnation: created.incarnation.clone(),
         });
     }
+    let history = verified.history.ok_or_else(proof_missing)?;
+    let claude_target = verified.claude_target;
     let entry = entry_mut(&mut moves, request.move_id)?;
     entry.outcome = Outcome::WriterAdmitted;
     write_moves(context, &moves)?;
     let writer = start_resume::committed_move_conversation_lock(
         context,
-        AgentKind::Codex,
+        request.provider.agent(),
         request.provider_session_id,
     )?;
     Ok(Admission::New {
         provider_home: provider_home(context, request.move_id),
+        history,
+        claude_target,
         _writer: writer,
     })
 }
@@ -412,19 +430,25 @@ fn deny_reserved(moves: &Moves, provider: Provider, thread: &str) -> Result<(), 
     Ok(())
 }
 
+struct VerifiedAdmission<'a> {
+    entry: &'a Entry,
+    history: Option<History>,
+    claude_target: Option<claude::Destination>,
+}
+
 fn verify_admission<'a>(
     context: &CliContext,
     moves: &'a Moves,
     verifier: &Verifier,
     request: AdmissionRequest<'_>,
     now: i64,
-) -> Result<&'a Entry, CliError> {
+) -> Result<VerifiedAdmission<'a>, CliError> {
     let entry = entry(moves, request.move_id)?;
     entry.check_host(request.destination_host)?;
     let ticket = entry.ticket(verifier)?;
     let binding = &ticket.record().binding;
     if binding.provider_session_id != request.provider_session_id
-        || binding.provider != Provider::Codex
+        || binding.provider != request.provider
     {
         return Err(cli_refusal(Refusal::SessionMismatch));
     }
@@ -437,7 +461,13 @@ fn verify_admission<'a>(
     match entry.outcome {
         Outcome::AbortedNoWriter => return Err(aborted()),
         Outcome::WriterAdmitted => return Err(outcome_unknown()),
-        Outcome::Created if entry.created.is_some() => return Ok(entry),
+        Outcome::Created if entry.created.is_some() => {
+            return Ok(VerifiedAdmission {
+                entry,
+                history: None,
+                claude_target: None,
+            });
+        }
         Outcome::Created => return Err(outcome_unknown()),
         Outcome::Prepared => return Err(proof_missing()),
         Outcome::Staged => {}
@@ -451,7 +481,20 @@ fn verify_admission<'a>(
         &provider_home(context, request.move_id),
         now,
     )?;
-    Ok(entry)
+    let claude_target = if binding.provider == Provider::Claude {
+        Some(claude::Destination::for_account(
+            request.account,
+            &entry.checkout.cwd,
+            request.provider_session_id,
+        )?)
+    } else {
+        None
+    };
+    Ok(VerifiedAdmission {
+        entry,
+        history: Some(proof.record().history.clone()),
+        claude_target,
+    })
 }
 
 impl Entry {
@@ -561,9 +604,6 @@ fn candidate(
     move_id: &str,
     host: &str,
 ) -> Result<Candidate, CliError> {
-    if plan.provider != Provider::Codex {
-        return Err(start_resume::refusal("resume-unsupported"));
-    }
     if !host_identity(host) || plan.destination_host != host {
         return Err(cli_refusal(Refusal::TargetMismatch));
     }
@@ -633,24 +673,10 @@ fn read_history(
     if before.len() != expected.bytes {
         return Err(stale());
     }
-    let mut metadata = Vec::new();
-    BufReader::new((&mut file).take(64 * 1024 + 1))
-        .read_until(b'\n', &mut metadata)
-        .map_err(|_| unsupported())?;
-    if metadata.len() > 64 * 1024 {
-        return Err(unsupported());
-    }
-    let value: Value = serde_json::from_slice(&metadata).map_err(|_| unsupported())?;
-    let row = &value["payload"];
-    if value["type"] != "session_meta"
-        || row.get("history_mode").is_some_and(|mode| mode != "legacy")
-    {
-        return Err(unsupported());
-    }
-    if row["id"] != binding.provider_session_id {
-        return Err(cli_refusal(Refusal::SessionMismatch));
-    }
-    let recorded_cwd = sha256(row["cwd"].as_str().ok_or_else(unsupported)?.as_bytes());
+    let recorded_cwd = match binding.provider {
+        Provider::Claude => claude::transcript_cwd_digest(&mut file, &binding.provider_session_id)?,
+        Provider::Codex => codex_cwd_digest(&mut file, binding)?,
+    };
     file.rewind().map_err(|_| stale())?;
     let mut body = file.take(expected.bytes.saturating_add(1));
     let mut hasher = Sha256::new();
@@ -688,6 +714,30 @@ fn read_history(
     ))
 }
 
+fn codex_cwd_digest(file: &mut File, binding: &Binding) -> Result<String, CliError> {
+    let unsupported = || cli_refusal(Refusal::HistoryUnsupported);
+    let mut metadata = Vec::new();
+    BufReader::new((&mut *file).take(64 * 1024 + 1))
+        .read_until(b'\n', &mut metadata)
+        .map_err(|_| unsupported())?;
+    if metadata.len() > 64 * 1024 {
+        return Err(unsupported());
+    }
+    let value: Value = serde_json::from_slice(&metadata).map_err(|_| unsupported())?;
+    let row = &value["payload"];
+    if value["type"] != "session_meta"
+        || row.get("history_mode").is_some_and(|mode| mode != "legacy")
+    {
+        return Err(unsupported());
+    }
+    if row["id"] != binding.provider_session_id {
+        return Err(cli_refusal(Refusal::SessionMismatch));
+    }
+    Ok(sha256(
+        row["cwd"].as_str().ok_or_else(unsupported)?.as_bytes(),
+    ))
+}
+
 fn validate_history_directories(home: &Path, file: &Path) -> Result<(), CliError> {
     // SAFETY: geteuid takes no arguments and cannot fail.
     let uid = unsafe { libc::geteuid() };
@@ -715,10 +765,7 @@ fn validate_history_directories(home: &Path, file: &Path) -> Result<(), CliError
 }
 
 fn ensure_empty_destination(context: &CliContext, binding: &Binding) -> Result<(), CliError> {
-    let agent = match binding.provider {
-        Provider::Codex => AgentKind::Codex,
-        Provider::Claude => AgentKind::Claude,
-    };
+    let agent = binding.provider.agent();
     let path = coordination_dir(context).join(start_resume::conversation_lock_name(
         agent,
         &binding.provider_session_id,

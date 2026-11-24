@@ -1,11 +1,10 @@
 # Cross-host resume proof v1
 
 A move transfers one stopped managed Codex or Claude conversation from host A
-to host B. This contract defines the evidence used by the move protocol. In
-this increment, `start --resume THREAD --move-id UUID` returns
-`resume-move-unavailable` before creating a session, lock, runtime, or Console
-operation. Cross-host admission requires source fencing, destination admission,
-and a working abort and recovery path.
+to host B. Direct local start uses `agent-session start --agent PROVIDER
+--resume THREAD --move-id UUID --account ACCOUNT --cwd CHECKOUT`.
+The Console transport refuses move requests. Resume checks do not acquire a
+session writer or create a runtime.
 
 ## Signed records
 
@@ -119,9 +118,8 @@ table above. When the cwd belongs to a Git checkout with a configured remote,
 the plan includes a digest of the canonical repository identity, the HEAD
 commit, and the cwd relative to the checkout root.
 
-Export and recovery remain gated while destination abort and admission are
-unavailable. The source fence uses the existing conversation guard and the
-all-source stopped checks. Recovery requires the exact signed abort receipt
+The source fence uses the existing conversation guard and checks that all
+source writers have stopped. Recovery requires the exact signed abort receipt
 and rechecks the source snapshot before releasing the fence.
 
 For source mutation, configure `AGENT_SESSION_RESUME_MOVE_SSH_KEYGEN`,
@@ -148,7 +146,12 @@ checks the ticket and stopped source proof against the local snapshot.
 Immediately before native start, the destination rechecks the exact proof,
 checkout and bytes under the same control lock used to abort. Provider
 argument overrides are refused for a move. Codex recreates local indexes in
-the destination provider home.
+the destination provider home. Claude uses B's verified broker account and
+installs the exact transcript in the local project directory after writer
+admission. The move supports the short ASCII project encoding and refuses
+existing transcripts with the same conversation ID. Claude sidecars such as
+subagent transcripts, spilled tool results, MCP task files, and uploads are
+outside the single-file contract.
 
 Before admission the destination checks provider capability and runtime
 readiness, such as the private socket directory. A deterministic failure
@@ -160,3 +163,25 @@ records a terminal tombstone before signing the no-writer receipt. The same
 move cannot be admitted after that tombstone. A lost proof transfer can supply
 the original proof file to `resume-move abort` for exact receipt binding. A
 missing proof cannot authorize source recovery.
+
+## Direct move sequence
+
+1. On A, create a read-only source plan with `resume-move plan`.
+2. On B, run `resume-move prepare --plan-file FILE --move-id UUID --cwd CHECKOUT`.
+   The output includes a signed destination ticket and B's staging directory.
+3. Stop the source on A. Run `resume-move export --session ID --incarnation UUID
+   --destination HOST --ticket-file FILE` and retain the signed stop proof.
+4. Transfer the one history file to B at its manifest path in the staging
+   directory. Run `resume-move stage --move-id UUID --proof-file FILE`.
+5. On B, run the direct start command above. Add `--check-resume` for a
+   read-only check. The checks bind the exact account, conversation, checkout,
+   and signed snapshot. A successful start records the managed session ID and
+   runtime incarnation with the move.
+6. Before writer admission, `resume-move abort --move-id UUID` can record a
+   terminal abort and return the signed no-writer receipt. If B never staged
+   the proof, supply it with `--proof-file`. On A, run
+   `resume-move recover --move-id UUID --receipt-file FILE` to release its fence.
+
+Use `resume-move status --move-id UUID` on B after an interrupted start. An
+admitted writer without a recorded result stays unresolved. An unresolved
+move cannot authorize source recovery.

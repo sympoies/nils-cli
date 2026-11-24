@@ -2,7 +2,7 @@ use nils_test_support::cmd::{CmdOptions, run_resolved};
 use pretty_assertions::assert_eq;
 
 #[test]
-fn move_requests_fail_closed_until_rollback_is_available() {
+fn move_requests_require_local_trust_and_direct_transport() {
     let fixture = tempfile::tempdir().unwrap();
     let state = fixture.path().join("state");
     for mode in [None, Some("--check-resume"), Some("--via-console")] {
@@ -29,14 +29,19 @@ fn move_requests_fail_closed_until_rollback_is_available() {
         );
         let response = output.stdout_json();
         assert_ne!(output.code, 0);
-        assert_eq!(response["error"]["code"], "resume-move-unavailable");
+        let expected = if mode == Some("--via-console") {
+            "resume-move-unavailable"
+        } else {
+            "resume-move-trust-unavailable"
+        };
+        assert_eq!(response["error"]["code"], expected);
         assert_eq!(response["error"]["details"]["session_created"], false);
         assert!(!state.exists());
     }
 }
 
 #[test]
-fn unavailable_source_mutations_refuse_before_reading_proof_or_writing_state() {
+fn source_mutations_require_verifier_before_reading_proof_or_writing_state() {
     let fixture = tempfile::tempdir().unwrap();
     let state = fixture.path().join("state");
     let unavailable_file = fixture.path().join("unavailable");
@@ -72,7 +77,7 @@ fn unavailable_source_mutations_refuse_before_reading_proof_or_writing_state() {
         assert_ne!(output.code, 0);
         assert_eq!(
             output.stdout_json()["error"]["code"],
-            "resume-move-unavailable"
+            "resume-move-ssh-keygen-unavailable"
         );
         assert!(!state.exists());
     }
@@ -199,3 +204,6 @@ esac
     assert_eq!(fs::read_dir(&locks).unwrap().count(), 1);
     assert!(!state.join("sessions").exists());
 }
+
+#[path = "start_resume_move/claude.rs"]
+mod claude;
