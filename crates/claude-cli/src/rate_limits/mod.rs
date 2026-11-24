@@ -13,6 +13,7 @@
 
 mod cache;
 mod cached;
+pub(crate) mod display;
 mod observation;
 pub(crate) mod scoped;
 pub(crate) mod status;
@@ -27,8 +28,8 @@ use nils_common::rate_limits::schema::{self, LOCAL_DATETIME, LOCAL_DATETIME_WITH
 use nils_common::rate_limits::values::{self as shared_values, normalize_one_line};
 use nils_common::rate_limits::{
     OneLineFetch, ProgressSink, ProviderSpec, RC_NO_RATE_LIMIT_WINDOW, RateLimitResult,
-    RateLimitWindow, RateLimitsProvider, ResetEpochs, RunOptions, TargetIdentity, WeeklyValues,
-    WindowValues,
+    RateLimitWindow, RateLimitsProvider, ResetCredits, ResetEpochs, RunOptions, TargetIdentity,
+    WeeklyValues, WindowValues,
 };
 use nils_common::usage_time::reset_epoch_seconds_from_str;
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
@@ -91,6 +92,7 @@ impl ProgressSink for ClaudeProgress {
 struct Login {
     access_token: String,
     expires_at_ms: Option<i64>,
+    plan: Option<&'static str>,
 }
 
 /// One live usage read.
@@ -208,7 +210,8 @@ impl RateLimitsProvider for ClaudeRateLimits {
             return observation::cached_one_line(target, &name);
         }
         let mut errors = Vec::new();
-        match fetch(target) {
+        let (plan, fetched) = fetch(target);
+        match fetched {
             Fetch::Windows {
                 values,
                 windows,
@@ -225,16 +228,20 @@ impl RateLimitsProvider for ClaudeRateLimits {
                     fetched_at,
                 );
                 OneLineFetch {
+                    note: display_note(plan, Some(&limit_resets)),
                     line: shared_values::one_line_from_values(&values, format_local_datetime)
                         .map(normalize_one_line),
                     ..Default::default()
                 }
             }
-            Fetch::NoWindow { .. } => {
-                if let Some(fetch) = stale_one_line_for_target(target, &name, &mut errors) {
+            Fetch::NoWindow { limit_resets, .. } => {
+                let note = display_note(plan, Some(&limit_resets));
+                if let Some(mut fetch) = stale_one_line_for_target(target, &name, &mut errors) {
+                    fetch.note = note;
                     return fetch;
                 }
                 OneLineFetch {
+                    note,
                     rc: RC_NO_RATE_LIMIT_WINDOW,
                     no_window: true,
                     err: errors.join("\n"),
@@ -246,14 +253,14 @@ impl RateLimitsProvider for ClaudeRateLimits {
             } => {
                 errors.push(message);
                 if let Some(mut result) = stale_one_line_for_target(target, &name, &mut errors) {
-                    result.note = observation::failure_note(target, reason);
+                    result.note = display_failure_note(target, plan, reason);
                     result.stale = true;
                     return result;
                 }
                 OneLineFetch {
                     rc: 1,
                     err: errors.join("\n"),
-                    note: observation::failure_note(target, reason),
+                    note: display_failure_note(target, plan, reason),
                     ..Default::default()
                 }
             }
@@ -269,7 +276,8 @@ impl RateLimitsProvider for ClaudeRateLimits {
             }
             return fetch;
         }
-        match fetch(target) {
+        let (plan, fetched) = fetch(target);
+        match fetched {
             Fetch::Windows {
                 values,
                 windows,
@@ -286,13 +294,15 @@ impl RateLimitsProvider for ClaudeRateLimits {
                     fetched_at,
                 );
                 OneLineFetch {
+                    note: display_note(plan, Some(&limit_resets)),
                     line: shared_values::one_line_from_values(&values, format_local_datetime),
                     ..Default::default()
                 }
             }
-            Fetch::NoWindow { .. } => {
+            Fetch::NoWindow { limit_resets, .. } => {
                 let owner_key = active_owner_key(target);
                 OneLineFetch {
+                    note: display_note(plan, Some(&limit_resets)),
                     line: cache::read_allow_stale_owned(&name, &owner_key, now_epoch())
                         .ok()
                         .and_then(|read| {
@@ -310,7 +320,7 @@ impl RateLimitsProvider for ClaudeRateLimits {
                     if let Some(mut result) = stale_one_line_for_target(target, &name, &mut errors)
                     {
                         result.stale = true;
-                        result.note = observation::failure_note(target, reason);
+                        result.note = display_failure_note(target, plan, reason);
                         return result;
                     }
                 }
@@ -318,7 +328,7 @@ impl RateLimitsProvider for ClaudeRateLimits {
                     eprintln!("{message}");
                 }
                 OneLineFetch {
-                    note: observation::failure_note(target, reason),
+                    note: display_failure_note(target, plan, reason),
                     ..Default::default()
                 }
             }
@@ -435,6 +445,9 @@ fn run_single(
     }
     if let Some(error) = &result.error {
         eprintln!("{}", error.message);
+        if !one_line && let Some(note) = display_note(result.plan.as_deref(), None) {
+            eprintln!("{note}");
+        }
         return Ok(rc);
     }
 
@@ -457,15 +470,20 @@ fn run_single(
     let windows = result.windows.as_deref().unwrap_or_default();
     if windows.is_empty() {
         println!("No active rate-limit window");
-        return Ok(rc);
+    } else {
+        println!("Rate limits remaining");
+        for window in windows {
+            let reset = window
+                .reset_at_epoch
+                .and_then(format_local_datetime)
+                .unwrap_or_else(|| "?".to_string());
+            println!("{} {}% • {}", window.label, window.remaining_percent, reset);
+        }
     }
-    println!("Rate limits remaining");
-    for window in windows {
-        let reset = window
-            .reset_at_epoch
-            .and_then(format_local_datetime)
-            .unwrap_or_else(|| "?".to_string());
-        println!("{} {}% • {}", window.label, window.remaining_percent, reset);
+    let plan = result.plan.as_deref();
+    let remaining = result.reset_credits.map(|credits| credits.available_count);
+    if let Some(note) = display::note(plan, remaining, plan.is_some()) {
+        println!("{note}");
     }
     Ok(rc)
 }
@@ -497,15 +515,17 @@ fn json_result(
     if cached {
         observation::import_shared_cache(target, &name);
         let mut result = from_cache(identity, "cache", &name, true);
-        if read_target_login(target)
-            .is_ok_and(|login| crate::prompt_segment::client::backoff_active(&login.access_token))
-        {
-            result.reason_code = Some(ProviderUsageReason::RateLimited);
+        if let Ok(login) = read_target_login(target) {
+            result.plan = login.plan.map(str::to_string);
+            if crate::prompt_segment::client::backoff_active(&login.access_token) {
+                result.reason_code = Some(ProviderUsageReason::RateLimited);
+            }
         }
         return result;
     }
 
-    match fetch(target) {
+    let (plan, fetched) = fetch(target);
+    let mut result = match fetched {
         Fetch::Windows {
             values,
             windows,
@@ -523,6 +543,7 @@ fn json_result(
             );
             let summary = schema::summary_from_weekly_values(&values, format_local_with_offset);
             let mut result = sanitize(RateLimitResult::ok(identity, "network", summary, windows));
+            result.reset_credits = reset_credits(&limit_resets);
             result.limit_resets = Some(limit_resets);
             result.limit_resets_checked_at = Some(fetched_at);
             result
@@ -531,14 +552,17 @@ fn json_result(
             limit_resets,
             fetched_at,
         } => {
-            let fallback_result = from_owned_cache(target, identity.clone(), &name);
+            let credits = reset_credits(&limit_resets);
+            let mut fallback_result = from_owned_cache(target, identity.clone(), &name);
             if fallback_result.ok {
-                return fallback_result;
+                fallback_result.reset_credits = credits;
+                fallback_result
+            } else {
+                let mut result = RateLimitResult::no_window(identity, credits);
+                result.limit_resets = Some(limit_resets);
+                result.limit_resets_checked_at = Some(fetched_at);
+                result
             }
-            let mut result = RateLimitResult::no_window(identity, None);
-            result.limit_resets = Some(limit_resets);
-            result.limit_resets_checked_at = Some(fetched_at);
-            result
         }
         Fetch::Failed {
             code,
@@ -554,11 +578,37 @@ fn json_result(
                     if reason == Some(ProviderUsageReason::RateLimited) {
                         fallback_result.reason_code = reason;
                     }
+                    fallback_result.plan = plan.map(str::to_string);
                     return fallback_result;
                 }
             }
             RateLimitResult::error(identity, "network", code, message, None, reason)
         }
+    };
+    result.plan = plan.map(str::to_string);
+    result
+}
+
+fn reset_credits(status: &Value) -> Option<ResetCredits> {
+    display::diagnostic_remaining(Some(status))
+        .map(|available_count| ResetCredits { available_count })
+}
+
+fn display_note(plan: Option<&str>, status: Option<&Value>) -> Option<String> {
+    display::note(plan, display::diagnostic_remaining(status), plan.is_some())
+}
+
+fn display_failure_note(
+    target: &Path,
+    plan: Option<&str>,
+    reason: Option<ProviderUsageReason>,
+) -> Option<String> {
+    match (
+        observation::failure_note(target, reason),
+        display_note(plan, None),
+    ) {
+        (Some(failure), Some(display)) => Some(format!("{failure}; {display}")),
+        (failure, display) => failure.or(display),
     }
 }
 
@@ -707,17 +757,21 @@ fn write_cache(
     let _ = cache::write(name, fetched_at, values, windows, limit_resets, owner_key);
 }
 
-fn fetch(target: &Path) -> Fetch {
-    let login = match read_target_login(target) {
-        Ok(login) => login,
-        Err(message) => {
-            return Fetch::Failed {
+fn fetch(target: &Path) -> (Option<&'static str>, Fetch) {
+    match read_target_login(target) {
+        Ok(login) => (login.plan, fetch_login(&login)),
+        Err(message) => (
+            None,
+            Fetch::Failed {
                 code: "missing-access-token",
                 message,
                 reason: Some(ProviderUsageReason::AuthRequired),
-            };
-        }
-    };
+            },
+        ),
+    }
+}
+
+fn fetch_login(login: &Login) -> Fetch {
     if login
         .expires_at_ms
         .is_some_and(|expires_at| expires_at <= Utc::now().timestamp_millis())
@@ -889,6 +943,7 @@ fn login_from_credentials(object: &Map<String, Value>) -> Option<Login> {
     Some(Login {
         access_token: access_token.to_string(),
         expires_at_ms: oauth.get("expiresAt").and_then(Value::as_i64),
+        plan: display::plan(oauth),
     })
 }
 

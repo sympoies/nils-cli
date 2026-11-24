@@ -15,43 +15,54 @@ pub enum TokenSource {
 pub struct AccessToken {
     pub value: String,
     pub source: TokenSource,
+    pub plan: Option<&'static str>,
 }
 
 pub fn resolve_access_token() -> Option<AccessToken> {
     if let Some(value) = shared_env::env_non_empty("CLAUDE_PROMPT_SEGMENT_ACCESS_TOKEN") {
         return Some(AccessToken {
+            plan: active_plan(&value),
             value,
             source: TokenSource::AccessTokenEnv,
         });
     }
 
     if let Some(raw) = shared_env::env_non_empty("CLAUDE_PROMPT_SEGMENT_CREDENTIALS_JSON")
-        && let Some(value) = access_token_from_credentials_json(&raw)
+        && let Some(token) = credentials_login(&raw, TokenSource::CredentialsJsonEnv)
     {
-        return Some(AccessToken {
-            value,
-            source: TokenSource::CredentialsJsonEnv,
-        });
+        return Some(token);
     }
 
     if shared_env::env_truthy("CLAUDE_PROMPT_SEGMENT_KEYCHAIN_DISABLED") {
         return None;
     }
 
-    keychain_credentials().and_then(|raw| {
-        access_token_from_credentials_json(&raw).map(|value| AccessToken {
-            value,
-            source: TokenSource::Keychain,
-        })
-    })
+    keychain_credentials().and_then(|raw| credentials_login(&raw, TokenSource::Keychain))
 }
 
-pub fn access_token_from_credentials_json(raw: &str) -> Option<String> {
+fn active_plan(token: &str) -> Option<&'static str> {
+    use crate::auth::store;
+
+    let path = store::credentials_file()?;
+    let credentials = store::read_json_object(&path, "active-credentials-invalid").ok()??;
+    let oauth = credentials.get("claudeAiOauth")?.as_object()?;
+    (oauth.get("accessToken")?.as_str()?.trim() == token)
+        .then(|| crate::rate_limits::display::plan(oauth))
+        .flatten()
+}
+
+fn credentials_login(raw: &str, source: TokenSource) -> Option<AccessToken> {
     let value: Value = serde_json::from_str(raw).ok()?;
-    string_at(&value, &["claudeAiOauth", "accessToken"])
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && *value != "null")
-        .map(ToOwned::to_owned)
+    let oauth = value.get("claudeAiOauth")?.as_object()?;
+    let token = oauth.get("accessToken")?.as_str()?.trim();
+    if token.is_empty() || token == "null" {
+        return None;
+    }
+    Some(AccessToken {
+        value: token.to_string(),
+        source,
+        plan: crate::rate_limits::display::plan(oauth),
+    })
 }
 
 fn keychain_credentials() -> Option<String> {
@@ -71,14 +82,6 @@ fn keychain_credentials() -> Option<String> {
     String::from_utf8(output.stdout).ok()
 }
 
-fn string_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
-    let mut current = value;
-    for key in path {
-        current = current.get(*key)?;
-    }
-    current.as_str()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,7 +90,7 @@ mod tests {
     fn access_token_from_credentials_json_reads_claude_oauth_token() {
         let raw = r#"{"claudeAiOauth":{"accessToken":" token-123 "}}"#;
         assert_eq!(
-            access_token_from_credentials_json(raw),
+            credentials_login(raw, TokenSource::CredentialsJsonEnv).map(|login| login.value),
             Some("token-123".to_string())
         );
     }
@@ -100,7 +103,11 @@ mod tests {
             r#"{"claudeAiOauth":{"accessToken":""}}"#,
             "not-json",
         ] {
-            assert_eq!(access_token_from_credentials_json(raw), None, "raw={raw}");
+            assert_eq!(
+                credentials_login(raw, TokenSource::CredentialsJsonEnv).map(|login| login.value),
+                None,
+                "raw={raw}"
+            );
         }
     }
 }

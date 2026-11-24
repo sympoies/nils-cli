@@ -327,8 +327,12 @@ credential files.
 Output:
 
 ```text
-5h:<remaining>% W:<remaining>% <weekly_reset_time>[<stale_suffix>]
+5h:<remaining>% W:<remaining>% <weekly_reset_time>[ <account_details>][<stale_suffix>]
 ```
+
+The segment displays `Ultra` for a Max 20x login. When the usage response
+reports a pending granted reset, the segment displays `1 reset available`.
+An unavailable status can display `reset availability unknown`.
 
 Without `--refresh`, stale or missing cache starts a coalesced detached refresh
 after any eligible cached line is printed. The prompt path does not wait for

@@ -149,9 +149,11 @@ pub fn write_cache_file(path: &Path, body: &str) -> Result<()> {
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
-struct CacheOwner {
-    token_key: String,
+pub(crate) struct CacheOwner {
+    pub(crate) token_key: String,
     body_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) plan: Option<String>,
 }
 
 fn body_digest(body: &str) -> String {
@@ -165,6 +167,7 @@ pub(crate) fn write_oauth_cache_file(
     path: &Path,
     observation: &super::client::UsageObservation,
     token: &str,
+    plan: Option<&str>,
 ) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
@@ -193,6 +196,7 @@ pub(crate) fn write_oauth_cache_file(
     let owner = CacheOwner {
         token_key: backoff::token_key(token),
         body_digest: body_digest(body),
+        plan: plan.map(str::to_string),
     };
     shared_fs::write_atomic(
         &path.with_extension("owner.json"),
@@ -205,10 +209,14 @@ pub(crate) fn write_oauth_cache_file(
 /// The body digest binds ownership to the exact payload even if another
 /// account concurrently replaces the global cache or a metadata write fails.
 pub(crate) fn matches_token_key(path: &Path, body: &str, key: &str) -> bool {
+    owner_for_body(path, body).is_some_and(|owner| owner.token_key == key)
+}
+
+pub(crate) fn owner_for_body(path: &Path, body: &str) -> Option<CacheOwner> {
     std::fs::read(path.with_extension("owner.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<CacheOwner>(&bytes).ok())
-        .is_some_and(|owner| owner.token_key == key && owner.body_digest == body_digest(body))
+        .filter(|owner| owner.body_digest == body_digest(body))
 }
 
 pub fn snapshot(path: &Path) -> CacheSnapshot {
@@ -321,7 +329,7 @@ mod tests {
             })
             .join()
             .unwrap();
-            super::write_oauth_cache_file(&path, &returned, "fixture-alpha").unwrap();
+            super::write_oauth_cache_file(&path, &returned, "fixture-alpha", None).unwrap();
             assert_eq!(std::fs::read_to_string(&path).unwrap(), "original body");
             let projected_time = std::fs::metadata(&path)
                 .unwrap()
@@ -350,6 +358,7 @@ mod tests {
                 body: "first payload".to_string(),
             },
             "fixture-alpha",
+            None,
         )
         .unwrap();
         let alpha = super::backoff::token_key("fixture-alpha");
