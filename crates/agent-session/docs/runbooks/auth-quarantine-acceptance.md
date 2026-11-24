@@ -96,7 +96,7 @@ Run from the repository root with Rust **1.100.0**, `cargo-nextest`, Python 3,
 source scripts/dev-env.sh
 export CARGO_BUILD_JOBS=4
 systemd-run --user --scope -p MemoryMax=6G -p MemorySwapMax=0 \
-  cargo +1.100.0 build --locked -p nils-agent-session --bin agent-session
+  cargo +1.100.0 build --locked -p nils-agent-session -p nils-agent-hook --bins
 systemd-run --user --scope -p MemoryMax=6G -p MemorySwapMax=0 \
   cargo +1.100.0 nextest run --locked -p nils-agent-session --lib \
   auth_recovery_tests --no-capture
@@ -108,7 +108,10 @@ bash scripts/ci/nils-cli-checks-entrypoint.sh --local-fast
 
 The workspace-selected run must select both new tests, including their JSON
 comparisons. The first focused run also covers existing authentication guards,
-draft/readiness protection and unknown-effect non-replay. The local-fast gate
+draft/readiness protection and unknown-effect non-replay. Its shared-account
+fixture uses the built `agent-hook` dispatcher and `agent-session activity event`
+to verify one late recovery per revoked sibling, the publication deadline,
+wrong-account rejection, and the subagent exclusion. The local-fast gate
 owns its resource admission and memory budget; do not nest it in the 6 GiB
 scope. If sccache reports a socket path that is too long, repeat only the failed
 command with `TMPDIR=/tmp`. Temporary stores and fake pane process groups are

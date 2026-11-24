@@ -17,7 +17,7 @@ pub(super) fn assert_submitted(
     let before = log(root);
     let text = "synthetic fresh guarded prompt";
     let mut args = crate::send::unguarded_args(
-        ID.into(),
+        record.id.clone(),
         Some(text.into()),
         vec![SpecialKey::Enter],
         false,
@@ -48,7 +48,7 @@ pub(super) fn assert_submitted(
         "submission did not simulate provider exit"
     );
     assert_eq!(
-        launch_id(&load_session_record(context, ID).unwrap()),
+        launch_id(&load_session_record(context, &record.id).unwrap()),
         Some(launch)
     );
 }

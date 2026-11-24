@@ -17,6 +17,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
+use agent_hook::claude_failure::{OAUTH_REVOKED_REASON, is_oauth_revocation};
 use nils_common::fs::{SECRET_FILE_MODE, write_atomic};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -65,6 +66,8 @@ pub(crate) struct AuthIncident {
     pub observed_at: String,
     pub source: AuthSource,
     pub confidence: Confidence,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub oauth_revoked: bool,
     pub status: String,
     pub recovery_result: Option<String>,
     pub recovery_observed_at: Option<String>,
@@ -219,6 +222,7 @@ fn observe_locked(
     source: AuthSource,
     confidence: Confidence,
     observed_at: &str,
+    oauth_revoked: bool,
 ) -> bool {
     let Some(runtime) = record.runtime.as_ref() else {
         return false;
@@ -278,6 +282,7 @@ fn observe_locked(
         observed_at: observed_at.into(),
         source,
         confidence,
+        oauth_revoked,
         status: "auth_failed".into(),
         recovery_result: None,
         recovery_observed_at: None,
@@ -299,6 +304,26 @@ pub(crate) fn observe(
     confidence: Confidence,
     observed_at: &str,
 ) -> Result<(), CliError> {
+    observe_failure(
+        context,
+        record,
+        event,
+        source,
+        confidence,
+        observed_at,
+        false,
+    )
+}
+
+fn observe_failure(
+    context: &CliContext,
+    record: &SessionRecord,
+    event: &str,
+    source: AuthSource,
+    confidence: Confidence,
+    observed_at: &str,
+    oauth_revoked: bool,
+) -> Result<(), CliError> {
     let _lock =
         crate::acquire_session_record_lock_timed(context, &record.id, Duration::from_millis(250))?;
     let current = crate::load_session_record(context, &record.id)?;
@@ -312,7 +337,15 @@ pub(crate) fn observe(
     }
     let mut store = read(context, &current)?;
     let before = serde_json::to_vec(&store).map_err(|_| error())?;
-    observe_locked(&mut store, &current, event, source, confidence, observed_at);
+    observe_locked(
+        &mut store,
+        &current,
+        event,
+        source,
+        confidence,
+        observed_at,
+        oauth_revoked,
+    );
     if store.detection_health.as_deref() != Some("degraded_queue_capacity") {
         store.detection_health = Some(
             if source == AuthSource::TerminalPattern {
@@ -342,7 +375,10 @@ pub(crate) fn observe_activity(
         return Ok(());
     }
     if event.kind == TurnEventKind::TurnFailed
-        && event.failure_reason.as_deref() == Some("authentication")
+        && matches!(
+            event.failure_reason.as_deref(),
+            Some("authentication" | OAUTH_REVOKED_REASON)
+        )
         && last.provider_failure_kind() == Some("authentication")
         && last.outcome == "failed"
     {
@@ -351,13 +387,14 @@ pub(crate) fn observe_activity(
             "codex" => AuthSource::CodexAppServer,
             _ => return Ok(()),
         };
-        observe(
+        observe_failure(
             context,
             record,
             &format!("activity-auth:{}", last.completed_at),
             source,
             event.confidence.clone(),
             &last.completed_at,
+            last.claude_oauth_revoked(),
         )
     } else if event.kind == TurnEventKind::TurnCompleted
         && event.source_kind == SourceKind::ProviderHook
@@ -417,26 +454,26 @@ pub(crate) fn recover(
 
 /// Inspect only the bottom status line (or the line immediately above an empty
 /// provider prompt). A quoted error in normal output or scrollback is not a hit.
-fn terminal_auth_pattern(provider: &str, text: &str) -> bool {
+fn terminal_auth_line(text: &str) -> Option<&str> {
     let mut lines = text
         .lines()
         .rev()
         .map(str::trim)
         .filter(|line| !line.is_empty());
-    let Some(mut line) = lines.next() else {
-        return false;
-    };
+    let line = lines.next()?;
     if matches!(line, "❯" | "›" | ">") {
-        line = lines.next().unwrap_or_default();
+        lines.next()
+    } else {
+        Some(line)
     }
+}
+
+fn terminal_auth_pattern(provider: &str, line: &str) -> bool {
     match provider {
-        "claude" => matches!(
-            line.strip_prefix("⎿  ")
-                .or_else(|| line.strip_prefix("API Error: "))
-                .unwrap_or_default(),
-            "OAuth token revoked · Please run /login"
-                | "Invalid authentication credentials · Please run /login"
-        ),
+        "claude" => claude_terminal_error(line).is_some_and(|message| {
+            is_oauth_revocation(message)
+                || message == "Invalid authentication credentials · Please run /login"
+        }),
         "codex" => {
             let error = line.strip_prefix("■ ").unwrap_or_default();
             error == "unexpected status 401 Unauthorized"
@@ -444,6 +481,11 @@ fn terminal_auth_pattern(provider: &str, text: &str) -> bool {
         }
         _ => false,
     }
+}
+
+fn claude_terminal_error(line: &str) -> Option<&str> {
+    line.strip_prefix("⎿  ")
+        .or_else(|| line.strip_prefix("API Error: "))
 }
 
 fn sample(context: &CliContext, record: &SessionRecord, tmux: &Path) -> Result<(), CliError> {
@@ -459,13 +501,14 @@ fn sample(context: &CliContext, record: &SessionRecord, tmux: &Path) -> Result<(
         } else {
             AuthSource::CodexAppServer
         };
-        observe(
+        observe_failure(
             context,
             record,
             &format!("activity-auth:{}", last.completed_at),
             source,
             Confidence::Authoritative,
             &last.completed_at,
+            last.claude_oauth_revoked(),
         )?;
         return Ok(());
     }
@@ -529,7 +572,9 @@ fn sample(context: &CliContext, record: &SessionRecord, tmux: &Path) -> Result<(
         Ok(output) if output.status.success() => {
             let text = String::from_utf8_lossy(&output.stdout);
             let runtime = current.runtime.as_ref().expect("runtime fence");
-            if terminal_auth_pattern(&current.agent, &text) {
+            if let Some(line) = terminal_auth_line(&text)
+                && terminal_auth_pattern(&current.agent, line)
+            {
                 if store.terminal_auth_runtime.as_deref() != Some(runtime.launch_id.as_str()) {
                     let event = format!("terminal-auth-status:{}", jiff::Timestamp::now());
                     if observe_locked(
@@ -539,6 +584,8 @@ fn sample(context: &CliContext, record: &SessionRecord, tmux: &Path) -> Result<(
                         AuthSource::TerminalPattern,
                         Confidence::Inferred,
                         &jiff::Timestamp::now().to_string(),
+                        current.agent == "claude"
+                            && claude_terminal_error(line).is_some_and(is_oauth_revocation),
                     ) {
                         store.terminal_auth_runtime = Some(runtime.launch_id.clone());
                     }
@@ -923,6 +970,7 @@ mod tests {
             AuthSource::ClaudeStopFailure,
             Confidence::Authoritative,
             "2030-01-01T00:00:00Z",
+            false,
         );
         store.incidents.remove(0)
     }
@@ -1001,6 +1049,7 @@ mod tests {
                 AuthSource::ClaudeStopFailure,
                 Confidence::Authoritative,
                 "2030-01-01T00:00:00Z",
+                false,
             );
             let incident = store.incidents.last_mut().unwrap();
             incident.status = "recovered".into();
@@ -1018,6 +1067,7 @@ mod tests {
             AuthSource::ClaudeStopFailure,
             Confidence::Authoritative,
             "2030-01-01T00:00:01Z",
+            false,
         );
         assert_eq!(
             store
@@ -1047,6 +1097,7 @@ mod tests {
             AuthSource::ClaudeStopFailure,
             Confidence::Authoritative,
             "2030-01-01T00:00:01Z",
+            false,
         );
         assert_eq!(store.incidents.len(), MAX_INCIDENTS);
         assert_eq!(store.incidents.last().unwrap().status, "auth_failed");
@@ -1141,6 +1192,7 @@ mod tests {
                 AuthSource::ClaudeStopFailure,
                 Confidence::Authoritative,
                 "2030-01-01T00:00:00Z",
+                false,
             );
             assert_eq!(
                 store.incidents.last().unwrap().runtime_generation,
@@ -1164,6 +1216,7 @@ mod tests {
             AuthSource::ClaudeStopFailure,
             Confidence::Authoritative,
             "2030-01-01T00:00:00Z",
+            false,
         );
         store.incidents[0].notification.submission_started_at = Some("2030-01-01T00:00:00Z".into());
         deliver_with(&mut store, |_, _, _| {
@@ -1202,6 +1255,7 @@ mod tests {
             AuthSource::ClaudeStopFailure,
             Confidence::Authoritative,
             "2030-01-01T00:00:00Z",
+            false,
         );
         store.incidents[0].notification.submission_started_at = Some("2030-01-01T00:00:00Z".into());
         deliver_with(&mut store, |_, _, _| {
@@ -1252,6 +1306,7 @@ mod tests {
                 AuthSource::ClaudeStopFailure,
                 Confidence::Authoritative,
                 "2030-01-01T00:00:00Z",
+                false,
             );
         }
         let mut sends = 0;
@@ -1274,6 +1329,7 @@ mod tests {
             AuthSource::ClaudeStopFailure,
             Confidence::Authoritative,
             "2030-01-01T00:00:00Z",
+            false,
         );
         assert_eq!(
             restored.incidents.len(),
@@ -1308,6 +1364,7 @@ mod tests {
                 AuthSource::ClaudeStopFailure,
                 Confidence::Authoritative,
                 "2030-01-01T00:00:00Z",
+                false,
             );
             let incident = store.incidents.last_mut().unwrap();
             incident.status = "recovered".into();
@@ -1405,6 +1462,7 @@ mod tests {
                 AuthSource::ClaudeStopFailure,
                 Confidence::Authoritative,
                 "2030-01-01T00:00:00Z",
+                false,
             );
         }
         assert_eq!(store.incidents.len(), 1);
@@ -1496,7 +1554,11 @@ mod tests {
                 false,
             ),
         ] {
-            assert_eq!(terminal_auth_pattern(provider, text), expected, "{text}");
+            assert_eq!(
+                terminal_auth_line(text).is_some_and(|line| terminal_auth_pattern(provider, line)),
+                expected,
+                "{text}"
+            );
         }
     }
 
@@ -1519,6 +1581,7 @@ mod tests {
         let incident = view(&context, &record).unwrap();
         assert_eq!(incident.confidence, Confidence::Inferred);
         assert_eq!(incident.source, AuthSource::TerminalPattern);
+        assert!(incident.oauth_revoked);
         assert_eq!(read(&context, &record).unwrap().incidents.len(), 1);
         let text = fs::read_to_string(session_dir(&context, &record.id).join(FILE)).unwrap();
         assert!(!text.contains("private-terminal-canary"));

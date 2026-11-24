@@ -1,4 +1,5 @@
 mod adapter;
+pub mod claude_failure;
 mod cli;
 mod completion;
 mod contract;

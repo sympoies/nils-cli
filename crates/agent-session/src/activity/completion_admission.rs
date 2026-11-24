@@ -131,23 +131,42 @@ pub(super) fn close_turn(document: &mut ActivityDocument, event: &TurnEvent, at:
         } else {
             "completed".to_string()
         },
-        extra: if matches!(
-            event.failure_reason.as_deref(),
-            Some("provider_capacity" | "authentication" | "usage_exhausted")
-        ) {
-            let mut extra = extra;
-            extra.insert(
-                "provider_failure_kind".to_string(),
-                json!(event.failure_reason),
-            );
-            extra
-        } else {
-            let mut extra = extra;
-            extra.remove("provider_failure_kind");
-            extra
-        },
+        extra: completion_failure_extra(extra, event.failure_reason.as_deref()),
     });
     document.pending_attention.clear();
     document.overflow_attention = None;
     document.state.phase = TurnPhase::Waiting;
+}
+
+const OAUTH_REVOKED: &str = "claude_oauth_revoked";
+
+impl LastTurn {
+    pub(crate) fn claude_oauth_revoked(&self) -> bool {
+        self.extra.get(OAUTH_REVOKED) == Some(&Value::Bool(true))
+    }
+
+    pub(super) fn clear_authentication_failure(&mut self) {
+        self.extra.remove("provider_failure_kind");
+        self.extra.remove(OAUTH_REVOKED);
+    }
+}
+
+fn completion_failure_extra(
+    mut extra: Map<String, Value>,
+    reason: Option<&str>,
+) -> Map<String, Value> {
+    extra.remove(OAUTH_REVOKED);
+    match reason {
+        Some(agent_hook::claude_failure::OAUTH_REVOKED_REASON) => {
+            extra.insert("provider_failure_kind".into(), json!("authentication"));
+            extra.insert(OAUTH_REVOKED.into(), Value::Bool(true));
+        }
+        Some("provider_capacity" | "authentication" | "usage_exhausted") => {
+            extra.insert("provider_failure_kind".into(), json!(reason));
+        }
+        _ => {
+            extra.remove("provider_failure_kind");
+        }
+    }
+    extra
 }

@@ -229,7 +229,7 @@ fields:
 | Codex/Claude `SubagentStart`, `SubagentStop` | `agent_type` |
 | Claude `Notification` | `notification_type` |
 | Claude `Elicitation`, `ElicitationResult` | `mcp_server_name` |
-| Claude `StopFailure` | `error` |
+| Claude `StopFailure` | `error`, optional `last_assistant_message` for fixed OAuth revocation classification, and `agent_id` to exclude subagent failures |
 
 Correlation identities are read from the provider's own fields and projected
 into opaque local ids; raw provider values never leave the adapter. The session

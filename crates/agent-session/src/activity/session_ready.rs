@@ -68,7 +68,7 @@ fn settle_starting_inner(
         && let Some(last) = document.state.last_turn.as_mut()
         && last.provider_failure_kind() == Some("authentication")
     {
-        last.extra.remove("provider_failure_kind");
+        last.clear_authentication_failure();
     }
     document.state.phase = TurnPhase::Waiting;
     document.state.phase_changed_at = now();

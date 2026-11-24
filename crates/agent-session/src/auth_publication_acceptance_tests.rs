@@ -1,6 +1,8 @@
 //! Disposable publisher -> broker -> structured hook -> recovery acceptance.
 //! Fake runtime readiness/submission is not live provider authentication.
 use super::*;
+#[path = "auth_shared_refresh_tests.rs"]
+mod shared_refresh;
 use pretty_assertions::{assert_eq, assert_ne};
 
 fn publisher_path() -> PathBuf {

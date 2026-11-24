@@ -269,9 +269,10 @@ presence, and one-way comparison digests. Across five runs it observed:
   `UserPromptSubmit` event was never recorded.
 
 `StopFailure` exposes a documented finite `error` enum. The adapter treats that
-enum as authoritative failure classification, maps it to the metadata-only
-`failure_reason` allowlist, and discards `error_details` and
-`last_assistant_message`. A `StopFailure` carrying `agent_id` fired inside a
+enum as authoritative failure classification and maps it to the metadata-only
+`failure_reason` allowlist. On `authentication_failed`, a recognized revocation
+message maps to `authentication_revoked`. The adapter discards the raw
+`error_details` and `last_assistant_message`. A `StopFailure` carrying `agent_id` fired inside a
 subagent and is ignored; the main thread never carries that field. Only `error == "rate_limit"` maps to
 `usage_exhausted`; authentication, organization, billing, invalid request,
 server, max-output-token, and unknown controls remain non-resumable. The

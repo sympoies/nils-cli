@@ -160,34 +160,35 @@ replacement that is no longer quarantined gets no schedule.
 
 ## Ordinary replacement and evidence limits
 
-For the audited **Claude Code 2.1.317** adapter, there is no supported resident
-credential reread acknowledgement. Exchange precedes replacement storage and
-publication; an access-only consumer cannot publish the replacement before the
-authority receives it. A newer publication does not prove that a resident
-runtime adopted it or made a successful safe request. Scheduled recheck must
-therefore leave the failed resident quarantined, including on a delayed first
-daemon tick or when publication completes after the lifecycle deadline.
-Automatic recovery still consumes a timely newer same-account publication
-through the existing fenced stop/resume and readiness path, without an
-operator step. Unknown effects are never replayed.
+The managed Claude adapter uses a fresh process to adopt a verified newer
+shared credential. Anthropic documents a native refresh lock and retryable
+lock contention in [Claude Code 2.1.248](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21248).
+The [StopFailure hook](https://code.claude.com/docs/en/hooks#stopfailure) runs
+after the turn ends and cannot request a retry. The supported
+[`--resume` entry point](https://code.claude.com/docs/en/cli-reference#cli-flags)
+restores the same conversation in the fresh process.
 
-This removes false reopening after publication; **it does not prevent the
-initial revoked error**. Strict prevention would require provider overlap or a
-request barrier spanning exchange and publication. A supported in-process
-repair would require a version-bound reread acknowledgement and rejection-only
-retry contract; neither is established by this adapter or its acceptance
-evidence. Startup readiness is not a successful provider request.
+A main-thread authentication failure with an exact OAuth revocation message, or
+the corresponding terminal status when structured evidence is unavailable,
+allows a verified newer publication to trigger one automatic stop/resume within
+120 seconds of the first recovery tick. Other authentication failures use the
+30-second window.
 
-The credential-free lifecycle fixture models rejection at t=0, publication at
-t=15 seconds and a consumer observation at t=29 seconds. Its safe-request model
-requires admission and the replacement launch generation. The modeled
-interruption is 29 seconds plus measured lifecycle elapsed time; the residual
-publication-to-safe-request window is 14 seconds plus that elapsed time. These
-are synthetic measurements, not a live provider bound. Missing/failed
-publication stops at the 30-second elapsed-time lifecycle budget and
-three scheduled attempts, retaining quarantine and escalation. All live
-publication, resident-adoption and safe-request timing rows remain **UNRUN**
-pending the disposable provider/publication prerequisite in
+Shared Claude account profiles require Claude Code 2.1.248 or newer. File
+replacements that the broker does not publish rely on Claude's native refresh
+handling. The broker-backed recovery window is independent of the launch path.
+
+Publication leaves the failed process fenced. The replacement uses the same
+bound account and conversation. Readiness admits the next request without
+manual restart or replay of the previous turn or unknown effects. An observed
+successful provider turn is the evidence of model health. A recovery tick at or after the
+publication deadline leaves quarantine and failover available.
+
+The shared-account fixture covers two revoked siblings, late recovery inside
+the window, rejection of a different-account publication and expiry at the
+boundary. It uses a synthetic publisher and records fresh guarded submission
+through the replacement runtime. Live publication, credential adoption and
+model request timing require the disposable fixture in
 [#2954](https://github.com/sympoies/nils-cli/issues/2954).
 
 ## Publication prerequisite
@@ -231,8 +232,8 @@ unknown-effect metadata. It is retained with the original incident; it is not
 an independent public history endpoint. Current-runtime incident projections
 retain their existing visibility rules.
 
-The controller commits identity and a 30-second publication deadline before
-broker or lifecycle work. Controller ticks poll local publication metadata;
+The controller commits identity and its publication deadline before broker or
+lifecycle work. Controller ticks poll local publication metadata;
 frequent ticks do not shorten the elapsed-time window. Waiting ticks return
 and release their per-session operation and record locks; no sleep or global
 lock spans the window. Temporary broker failures wait within that budget;
