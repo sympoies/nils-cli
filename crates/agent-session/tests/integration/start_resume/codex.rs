@@ -423,7 +423,7 @@ fn move_source_plan_checks_incarnation_and_returns_portable_metadata_read_only()
         f.root
             .join(format!("sessions/2026/01/01/rollout-{CONVERSATION}.jsonl")),
         json!({"type":"session_meta","payload":{"id":CONVERSATION,"cwd":cwd,"source":"cli",
-            "timestamp":"2026-01-01T00:00:00Z","history_mode":"legacy"}})
+            "timestamp":"2026-01-01T00:00:00Z"}})
         .to_string(),
     )
     .unwrap();
