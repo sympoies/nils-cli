@@ -719,7 +719,7 @@ runtime incarnation:
 agent-session delete <id> --if-stopped --expected-incarnation <incarnation> --format json
 ```
 
-This option is mutually exclusive with `--leave-processes`. It removes the
+This option is mutually exclusive with `--if-idle` and `--leave-processes`. It removes the
 record only after rechecking the incarnation under the lifecycle lock and
 positively verifying that tmux and the recorded process boundaries are stopped,
 with no associated processes remaining. It never signals the runtime. Success
@@ -756,6 +756,41 @@ the session and unread mail.
 
 Existing runtime, incarnation, and child guards still apply. Omitting this flag preserves
 ordinary delete and stopped-only behavior.
+
+### Retire a running idle session
+
+Use `--if-idle` for a running managed Codex session. Supply the exact runtime
+incarnation. Add `--if-unread-empty` when unread mail should preserve the session.
+
+```bash
+agent-session delete <id> --if-idle --expected-incarnation <incarnation> --if-unread-empty --format json
+```
+
+The owner rechecks the incarnation, running state, runtime-bound provider
+activity, and the live primary thread. It requires an observably empty
+composer and no pending provider ingress. The lifecycle lock serializes resume,
+managed input, and mailbox delivery. The Codex proxy also fences native turn
+starts and compaction. The locks stay held through ownership-checked teardown
+and removal. Success returns the ordinary delete receipt with `deleted: true`
+and `killed: true`.
+
+Predicate refusals return nonzero with a JSON error and retain the runtime and
+session record.
+
+| Error code | Reason |
+| --- | --- |
+| `session-incarnation-conflict` | The exact runtime incarnation changed. |
+| `session-state-mismatch` | The session is stopped or has active or pending provider work. |
+| `session-status-unknown` | Running status, the provider fence, or idle state could not be verified. |
+| `send-composer-not-empty` | The composer contains a draft. |
+| `send-composer-unobservable` | An empty composer could not be verified. |
+| `session-mailbox-not-empty` | The optional unread predicate found unread mail. |
+| `session-mailbox-unknown` | The optional unread predicate could not verify the mailbox. |
+| `session-idle-delete-unsupported` | The runtime lacks a live Codex proxy with retirement support. |
+
+Claude, raw tmux and older proxies return `session-idle-delete-unsupported`
+when running. The child, process-ownership and interrupted-termination checks
+also apply. `--if-idle` and `--if-stopped` are mutually exclusive.
 
 ### Leave processes running explicitly
 

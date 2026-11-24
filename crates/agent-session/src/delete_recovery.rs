@@ -2,6 +2,7 @@ use super::*;
 
 #[cfg(target_os = "linux")]
 pub(crate) mod codex_daemons;
+mod idle;
 mod shared_daemons;
 
 #[derive(Clone, Copy, Debug)]
@@ -305,9 +306,13 @@ fn inventory_warning(inventory: &ProcessInventory) -> String {
 }
 
 pub(super) fn run_delete(context: &CliContext, args: cli::DeleteArgs) -> i32 {
-    if args.if_stopped {
+    if args.if_stopped || args.if_idle {
         return match crate::lifecycle::attempt(context, &args.id, "delete", || {
-            delete_if_stopped(context, &args)
+            if args.if_idle {
+                idle::delete_if_idle(context, &args)
+            } else {
+                delete_if_stopped(context, &args)
+            }
         }) {
             Ok(result) => {
                 render_single_success(DELETE_COMMAND, args.format, &result, render_delete_text)

@@ -122,6 +122,18 @@ pub(crate) fn event_pending(context: &CliContext, id: &str) -> Result<bool, CliE
     Ok(probe_lock(context, id)?.is_none())
 }
 
+/// Detect a provider event that still owns a durable activity transaction.
+pub(crate) fn unsettled(context: &CliContext, record: &crate::SessionRecord) -> Option<bool> {
+    let path = session_dir(context, &record.id).join(super::ACTIVITY_FILE);
+    let document = super::read_document(&path).ok()?;
+    super::activity_matches_runtime(&document, record).then_some(
+        document.pending_journal.is_some()
+            || document.pending_completion.is_some()
+            || !document.pending_attention.is_empty()
+            || document.overflow_attention.is_some(),
+    )
+}
+
 fn lock_error(err: io::Error) -> CliError {
     CliError::runtime(
         "activity-ingress-lock-failed",
