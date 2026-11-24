@@ -408,10 +408,12 @@ content-only header classification.
 Private attestations live outside managed session directories so history survives
 session deletion/archive. The live ledger permits 1,024 claims, reserving two
 4-KiB record slots per claim in an 8-MiB data budget. Successor segments add one
-bounded header slot. Unfinished and `unknown` claims remain live. At capacity,
-a writer seals age-eligible submitted/dropped claims before admitting another
-claim. If none can leave the live set, `claim-ledger-full` refuses before key
-consumption; neither that reason nor storage failure permits plain input.
+bounded header slot. Unfinished claims remain live. At capacity, a writer
+seals terminal `unknown` claims and age-eligible submitted/dropped claims before
+admitting another claim. Archived unknown outcomes retain their uncertainty and
+their keys remain consumed. If none can leave the live set, `claim-ledger-full`
+refuses before key consumption. The refusal and storage failures provide no
+permission to send plain input.
 
 Finished claims become eligible after one hour. A valid terminal timestamp is
 used when available. For an undated/invalid/future timestamp, a sweep persists

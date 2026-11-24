@@ -175,7 +175,7 @@ fn full_finished_ledger_archives_before_new_claim_admission() {
     let parent = root.path().join("history/claude-notices");
     let mut bytes = Vec::new();
     for index in 0..MAX_CLAIMS {
-        let claim = claim(index, None);
+        let claim = claim(index, (index == 1).then_some("unknown-key"));
         if index == 0 {
             bytes.extend(claim_line(&claim));
             bytes.push(b'\n');
@@ -237,12 +237,22 @@ fn full_finished_ledger_archives_before_new_claim_admission() {
         let scan = live.scan(Instant::now() + Duration::from_secs(15)).unwrap();
         assert_eq!(
             scan.claims.len(),
-            3,
-            "unfinished, unknown and the new claim stay live"
+            2,
+            "only the unfinished claim and the new claim stay live"
         );
         assert!(scan.claims.contains_key(&claim(0, None).op));
-        assert_eq!(scan.terminals[&claim(1, None).op].state, State::Unknown);
+        assert!(!scan.claims.contains_key(&claim(1, None).op));
     }
+    let repeated = consume(
+        &context,
+        claim(MAX_CLAIMS + 2, Some("unknown-key")),
+        Instant::now() + Duration::from_secs(15),
+        || panic!("an archived unknown outcome must keep its key consumed"),
+    );
+    assert_eq!(
+        repeated.err().expect("archived unknown key refused").code(),
+        "send-idempotency-key-used",
+    );
     // Losing committed metadata cannot silently return to the genesis ledger.
     fs::remove_file(parent.join("current.json")).unwrap();
     let consumed = Cell::new(false);
