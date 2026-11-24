@@ -465,7 +465,7 @@ fn move_source_plan_checks_incarnation_and_returns_portable_metadata_read_only()
     };
 
     let result = plan(LAUNCH);
-    assert_eq!(result.code, 0, "{}", result.stderr);
+    assert_eq!(result.code, 0, "{}", result.stderr_text());
     let response = result.stdout_json();
     assert_eq!(
         response["schema_version"],
@@ -483,7 +483,11 @@ fn move_source_plan_checks_incarnation_and_returns_portable_metadata_read_only()
         response["data"]["history"]["relative_path"],
         format!("sessions/2026/01/01/rollout-{CONVERSATION}.jsonl")
     );
-    assert!(!result.stdout.contains(f.tmp.path().to_str().unwrap()));
+    assert!(
+        !result
+            .stdout_text()
+            .contains(f.tmp.path().to_str().unwrap())
+    );
 
     let refused = plan(OTHER_LAUNCH);
     assert_ne!(refused.code, 0);

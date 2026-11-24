@@ -506,6 +506,65 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ':id -- Session id:_default' \
 && ret=0
 ;;
+(resume-move)
+_arguments "${_arguments_options[@]}" : \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_agent-session__subcmd__resume-move_commands" \
+"*::: :->resume-move" \
+&& ret=0
+
+    case $state in
+    (resume-move)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agent-session-resume-move-command-$line[1]:"
+        case $line[1] in
+            (plan)
+_arguments "${_arguments_options[@]}" : \
+'--session=[]:SESSION:_default' \
+'--incarnation=[]:INCARNATION:_default' \
+'--destination=[]:DESTINATION:_default' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(export)
+_arguments "${_arguments_options[@]}" : \
+'--session=[]:SESSION:_default' \
+'--incarnation=[]:INCARNATION:_default' \
+'--destination=[]:DESTINATION:_default' \
+'--ticket-file=[]:TICKET_FILE:_files' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(recover)
+_arguments "${_arguments_options[@]}" : \
+'--move-id=[]:MOVE_ID:_default' \
+'--receipt-file=[]:RECEIPT_FILE:_files' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (restart)
 _arguments "${_arguments_options[@]}" : \
 '--stop-timeout=[Bound the wait for the provider to exit, in seconds]:STOP_TIMEOUT:_default' \
@@ -1700,6 +1759,7 @@ _agent-session_commands() {
 'glance:Capture the recent pane tail plus live status as a dashboard glance' \
 'prepare-shutdown:Mark currently running sessions for recovery after a planned reboot' \
 'resume:Recreate a missing tmux runtime from exact provider resume metadata' \
+'resume-move:Inspect and manage the retained source of a cross-host provider resume' \
 'restart:Relaunch a running session in place on the installed provider binary' \
 'clear:Clear an idle conversation in place and verify its new provider identity' \
 'rebind:Recover an idle session by rebinding its live provider conversation' \
@@ -2177,6 +2237,30 @@ _agent-session__subcmd__restart_commands() {
 _agent-session__subcmd__resume_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session resume commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__resume-move_commands] )) ||
+_agent-session__subcmd__resume-move_commands() {
+    local commands; commands=(
+'plan:Inspect the exact portable source history without stopping the source' \
+'export:Export a stopped source only when the complete move protocol is available' \
+'recover:Release a source move fence using a verified destination receipt' \
+    )
+    _describe -t commands 'agent-session resume-move commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__resume-move__subcmd__export_commands] )) ||
+_agent-session__subcmd__resume-move__subcmd__export_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session resume-move export commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__resume-move__subcmd__plan_commands] )) ||
+_agent-session__subcmd__resume-move__subcmd__plan_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session resume-move plan commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__resume-move__subcmd__recover_commands] )) ||
+_agent-session__subcmd__resume-move__subcmd__recover_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session resume-move recover commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__rules_commands] )) ||
 _agent-session__subcmd__rules_commands() {
