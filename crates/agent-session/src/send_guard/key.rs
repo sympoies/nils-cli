@@ -104,28 +104,58 @@ pub(crate) fn load(
     record: &SessionRecord,
     key: &str,
 ) -> Result<Option<Claim>, CliError> {
-    let key_sha256 = key_digest(key)?;
-    let claim = (|| {
-        let file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-            .open(path(context, record, &key_sha256))
-            .ok()?;
-        if !file.metadata().ok()?.is_file() {
-            return None;
+    Ok(load_digest(context, record, &key_digest(key)?))
+}
+
+/// Find the last updated retained claim without a separate index. An exact
+/// timestamp tie does not give the patrol enough evidence to pick a claim.
+pub(crate) fn latest(context: &CliContext, record: &SessionRecord) -> Option<Claim> {
+    let mut latest = None;
+    for entry in std::fs::read_dir(session_dir(context, &record.id)).ok()? {
+        let entry = entry.ok()?;
+        let name = entry.file_name();
+        let Some(hash) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix("send-key-"))
+            .and_then(|name| name.strip_suffix(".json"))
+            .filter(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        else {
+            continue;
+        };
+        let metadata = entry.metadata().ok()?;
+        if !metadata.is_file() {
+            continue;
         }
-        let mut bytes = Vec::new();
-        file.take(4097).read_to_end(&mut bytes).ok()?;
-        if bytes.len() > 4096 {
-            return None;
+        let modified = metadata.modified().ok()?;
+        match &mut latest {
+            Some((time, hash)) if *time == modified => *hash = None,
+            Some((time, _)) if *time > modified => {}
+            _ => latest = Some((modified, Some(hash.to_owned()))),
         }
-        let claim: Claim = serde_json::from_slice(&bytes).ok()?;
-        (claim.schema_version == SCHEMA
-            && claim.key_sha256 == key_sha256
-            && claim.identity_sha256 == identity(record)?)
-        .then_some(claim)
-    })();
-    Ok(claim)
+    }
+    let (_, hash) = latest?;
+    load_digest(context, record, &hash?)
+}
+
+fn load_digest(context: &CliContext, record: &SessionRecord, hash: &str) -> Option<Claim> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path(context, record, hash))
+        .ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(4097).read_to_end(&mut bytes).ok()?;
+    if bytes.len() > 4096 {
+        return None;
+    }
+    let claim: Claim = serde_json::from_slice(&bytes).ok()?;
+    (claim.schema_version == SCHEMA
+        && claim.key_sha256 == hash
+        && claim.identity_sha256 == identity(record)?)
+    .then_some(claim)
 }
 
 impl Claim {

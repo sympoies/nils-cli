@@ -47,9 +47,9 @@ fn delay_paste(fixture: &Fixture, first_chunk: usize) {
     assert!(script.contains(reveal));
     let script = script
         .replace(paste, &format!(
-            "if (root / 'late-render').exists(): (root / 'composer').write_text((root / 'buffer').read_text()[:{first_chunk}]); (root / 'late').write_text((root / 'buffer').read_text()[{first_chunk}:]); (root / 'render-start').write_text(str(time.monotonic()))"
+            "if (root / 'late-render').exists(): (root / 'composer').write_text((root / 'buffer').read_text()[:{first_chunk}]); (root / 'late').write_text((root / 'divergent-tail').read_text() if (root / 'divergent-tail').exists() else (root / 'buffer').read_text()[{first_chunk}:]); (root / 'render-start').write_text(str(time.monotonic()))"
         ))
-        .replace(reveal, "if time.monotonic() - float((root / 'render-start').read_text()) >= 0.85:");
+        .replace(reveal, "if not (root / 'stall-paste').exists() and time.monotonic() - float((root / 'render-start').read_text()) >= 0.85:");
     fs::write(&path, script).unwrap();
     fs::write(fixture.root().join("late-render"), "").unwrap();
 }
@@ -110,6 +110,42 @@ fn long_paste_settles_before_one_submit_on_both_providers() {
             );
         },
     );
+}
+
+#[test]
+fn long_paste_stalled_prefix_refuses_without_enter() {
+    let fixture = wrapped_fixture("codex");
+    fs::write(fixture.root().join("stall-paste"), "").unwrap();
+    delay_paste(&fixture, 69);
+    let text = long_text(60);
+    let output = fixture.send_text(Some(&text), GUARDS);
+    assert_eq!(output.code, 1, "{}", output.stdout_text());
+    let error = &output.stdout_json()["error"];
+    assert!(matches!(
+        error["code"].as_str(),
+        Some("send-guard-observation-timeout" | "send-composer-unobservable")
+    ));
+    assert_eq!(error["details"]["stage"], "submit");
+    assert_eq!(error["details"]["pasted"], true);
+    assert_eq!(enter_count(&fixture), 0);
+    assert!(!fixture.root().join("submissions").exists());
+}
+
+#[test]
+fn long_paste_divergent_tail_refuses_without_enter() {
+    let fixture = wrapped_fixture("claude");
+    fs::write(fixture.root().join("divergent-tail"), " x").unwrap();
+    delay_paste(&fixture, 69);
+    let text = long_text(60);
+    let output = fixture.send_text(Some(&text), GUARDS);
+    let receipt = fixture.refused(&output, "send-composer-mismatch");
+    assert_eq!(receipt["error"]["details"]["stage"], "submit");
+    assert_eq!(
+        fs::read_to_string(fixture.root().join("composer")).unwrap(),
+        format!("{} x", &text[..69])
+    );
+    assert_eq!(enter_count(&fixture), 0);
+    assert!(!fixture.root().join("submissions").exists());
 }
 
 #[test]
@@ -280,4 +316,129 @@ fn long_paste_recovery_refuses_shifted_invisible_wrap_spaces() {
     assert_eq!(output.code, 1, "{}", output.stdout_text());
     assert_eq!(fs::read_to_string(&composer).unwrap(), actual);
     assert_eq!(enter_count(&fixture), 0);
+}
+
+fn list_row(fixture: &Fixture, text: &str) -> serde_json::Value {
+    let output = run_resolved(
+        "agent-session",
+        &[
+            "--state-dir",
+            fixture.root().join("state").to_str().unwrap(),
+            "list",
+            "--format",
+            "json",
+        ],
+        &CmdOptions::new()
+            .with_cwd(fixture.root())
+            .with_env_remove_prefix("AGENT_SESSION_")
+            .with_env(
+                "AGENT_SESSION_TMUX_BIN",
+                fixture.root().join("tmux").to_str().unwrap(),
+            ),
+    );
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    assert!(!output.stdout_text().contains(KEY));
+    assert!(!output.stdout_text().contains(text));
+    output.stdout_json()["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == "guarded")
+        .unwrap()
+        .clone()
+}
+
+#[test]
+fn long_paste_patrol_detects_a_seven_row_attempt_without_text() {
+    let text = long_text(60);
+    assert_eq!(text.len(), 599);
+    let fixture = retain_attempt("codex", &text);
+    let rows: Vec<_> = text
+        .as_bytes()
+        .chunks(90)
+        .map(|row| std::str::from_utf8(row).unwrap().trim_end_matches(' '))
+        .collect();
+    assert_eq!(rows.len(), 7);
+    let pane = format!(
+        "header\n› {}\n  {}\n\n  status",
+        rows[0],
+        rows[1..].join("\n  ")
+    );
+    let captured = serde_json::json!({
+        "input": text, "pane": pane, "start": [2, 1],
+        "prefix_end": [2 + rows.last().unwrap().len(), rows.len()],
+    });
+    fs::write(fixture.root().join("captured-layout"), captured.to_string()).unwrap();
+    let tmux_model = fixture.root().join("tmux-model");
+    let script = fs::read_to_string(&tmux_model).unwrap();
+    let capture = "if command == 'has-session':";
+    assert!(script.contains(capture));
+    fs::write(
+        &tmux_model,
+        script.replace(capture, "if command == 'list-windows': print('modeled-guarded\\t0'); sys.exit(0)\nif command == 'has-session':"),
+    ).unwrap();
+    let before = fixture.calls().len();
+    let status = super::attempt::status(&fixture, KEY);
+    let row = list_row(&fixture, &text);
+    assert_eq!(row["status"], "running");
+    assert_eq!(
+        [
+            status["unsubmitted_attempt"].clone(),
+            row["unsubmitted_attempt"].clone()
+        ],
+        [serde_json::json!(true), serde_json::json!(true)]
+    );
+    assert_eq!(status["composer"], "occupied");
+    assert!(
+        fixture.calls()[before..]
+            .iter()
+            .all(|call| call[0] != "send-keys")
+    );
+    fixture.refused(
+        &super::attempt::query(&fixture, "recover", KEY),
+        "attempt-recovery-unproven",
+    );
+    assert_eq!(enter_count(&fixture), 0);
+
+    // Occupancy remains observable when attached. Exact recovery still
+    // requires the original detached pane stamp.
+    let script = fs::read_to_string(&tmux_model).unwrap();
+    let detached = "print('0|0|$42|%42|42|0|0')";
+    assert!(script.contains(detached));
+    fs::write(
+        tmux_model,
+        script.replace(detached, "print('1|0|$42|%42|42|0|0')"),
+    )
+    .unwrap();
+    assert_eq!(list_row(&fixture, &text)["unsubmitted_attempt"], true);
+    fixture.refused(
+        &attempt(&fixture, "recover", &text),
+        "attempt-recovery-unproven",
+    );
+    assert_eq!(enter_count(&fixture), 0);
+
+    fs::write(fixture.root().join("composer"), "").unwrap();
+    assert_eq!(
+        super::attempt::status(&fixture, KEY)["unsubmitted_attempt"],
+        false
+    );
+    assert_ne!(list_row(&fixture, &text)["unsubmitted_attempt"], true);
+
+    fs::remove_file(fixture.root().join("start-after-paste")).unwrap();
+    let later = fixture.send_text(
+        Some("later attempt"),
+        &[
+            "--require-idle",
+            "--require-empty-composer",
+            "--idempotency-key",
+            "later-key",
+        ],
+    );
+    assert_eq!(later.code, 0, "{}", later.stdout_text());
+    fs::write(fixture.root().join("composer"), &text).unwrap();
+    assert_ne!(list_row(&fixture, &text)["unsubmitted_attempt"], true);
+    assert_eq!(
+        super::attempt::status(&fixture, KEY)["unsubmitted_attempt"],
+        false
+    );
 }

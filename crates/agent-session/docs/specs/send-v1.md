@@ -334,16 +334,22 @@ outcomes.
 | `not_submitted` | The claimed attempt ended before it could submit, or the bound native notice module attested a drop. | Check `composer` before any new attempt. |
 | `unknown` | The evidence is missing, unfinished, ambiguous, or belongs to another runtime. | Do not retry. |
 
-`not_submitted` includes `composer: "exact" | "wrapped_match" | "absent" | "unknown"`.
-The JSON field `unsubmitted_attempt` is true for `exact` or `wrapped_match`.
-Both require the original empty-composer admission and an unchanged detached
-terminal binding and record. `exact` is a byte-for-byte single-row read.
-`wrapped_match` means the visible layout agrees with the input supplied using
-`--text-stdin` and that input matches the stored digest. It helps a caller
-detect a stranded paste. Exact recovery still requires the logical cursor proof.
+`not_submitted` includes `composer: "exact" | "wrapped_match" | "occupied" | "absent" | "unknown"`.
+The JSON field `unsubmitted_attempt` is true for `exact`, `wrapped_match` or
+`occupied`. `exact` is a byte-for-byte single-row read. `wrapped_match` means
+the wrapped layout agrees with the input supplied using `--text-stdin` and
+that input matches the stored digest. Both require the original detached
+terminal binding and record.
+
+`occupied` is a text-free signal for the latest retained pre-Enter attempt
+when the same runtime's composer is observably nonempty. Callers can also
+read `unsubmitted_attempt: true` from live board and JSON list rows without
+the key. The signal reports occupancy. Recovery requires the exact input
+proof and detached pane fence.
+
 `absent` means the attempt did not paste or the composer is observably empty.
-Different input or an unobservable layout yields `unknown` composer evidence.
-Output contains only identity and outcome metadata.
+Different supplied input or an unobservable layout yields `unknown` composer
+evidence. Output contains only identity and outcome metadata.
 
 A tmux acknowledgement, a disappeared paste or pane, a transport timeout, idle
 state, and unchanged context usage give no per-attempt submission proof. A
