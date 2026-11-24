@@ -370,7 +370,7 @@ fn diag_rate_limits_named_profile_reports_a_single_result() {
     assert_exit(&output, 0);
     assert_eq!(
         stdout(&output),
-        "Rate limits remaining\n5h 75% • 11-14 22:13\nWeekly 60% • 11-20 17:06\n"
+        "Rate limits remaining\n5h 75% • 11-14 22:13\nWeekly 60% • 11-20 17:06\nreset availability unknown\n"
     );
 
     let output = fx.run(&["diag", "rate-limits", "--one-line", "alpha"]);
@@ -485,8 +485,8 @@ fn diag_rate_limits_all_text_renders_the_shared_accounts_table() {
             "\n🚦 Claude rate limits for all accounts\n\n\
 Name                   5h     Left    Weekly     Left  Reset                 Resets\n\
 -----------------------------------------------------------------------------------\n\
-alpha                 75%   0h  0m       60%   0h  0m  11-20 17:06 +00:00         -\n\
-beta                    -        -         -        -  -                          -  permission_denied\n"
+alpha                 75%   0h  0m       60%   0h  0m  11-20 17:06 +00:00         -  reset availability unknown\n\
+beta                    -        -         -        -  -                          -  permission_denied · reset availability unknown\n"
         );
     }
 }
@@ -508,8 +508,8 @@ fn diag_rate_limits_default_all_env_reads_every_profile_when_no_target_is_given(
         "\n🚦 Claude rate limits for all accounts\n\n\
 Name                   5h     Left    Weekly     Left  Reset                 Resets\n\
 -----------------------------------------------------------------------------------\n\
-alpha                 75%   0h  0m       60%   0h  0m  11-20 17:06 +00:00         -\n\
-beta                    -        -         -        -  -                          -  permission_denied\n"
+alpha                 75%   0h  0m       60%   0h  0m  11-20 17:06 +00:00         -  reset availability unknown\n\
+beta                    -        -         -        -  -                          -  permission_denied · reset availability unknown\n"
     );
 
     // JSON and named targets keep their single-target meaning.

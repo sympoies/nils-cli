@@ -482,7 +482,7 @@ fn run_single(
     }
     let plan = result.plan.as_deref();
     let remaining = result.reset_credits.map(|credits| credits.available_count);
-    if let Some(note) = display::note(plan, remaining, plan.is_some()) {
+    if let Some(note) = display::note(plan, remaining, true) {
         println!("{note}");
     }
     Ok(rc)
@@ -595,7 +595,7 @@ fn reset_credits(status: &Value) -> Option<ResetCredits> {
 }
 
 fn display_note(plan: Option<&str>, status: Option<&Value>) -> Option<String> {
-    display::note(plan, display::diagnostic_remaining(status), plan.is_some())
+    display::note(plan, display::diagnostic_remaining(status), true)
 }
 
 fn display_failure_note(
@@ -607,7 +607,7 @@ fn display_failure_note(
         observation::failure_note(target, reason),
         display_note(plan, None),
     ) {
-        (Some(failure), Some(display)) => Some(format!("{failure}; {display}")),
+        (Some(failure), Some(display)) => Some(format!("{failure} · {display}")),
         (failure, display) => failure.or(display),
     }
 }

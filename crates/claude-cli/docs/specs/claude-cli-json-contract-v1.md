@@ -331,7 +331,8 @@ A current usage result with readable `cedar_ember` status can carry
 `reset_credits.available_count`. It sums the remaining resets on active,
 unpaused grants for an eligible account. A reset can count before the user
 reaches the limit required to spend it. A known empty balance is zero.
-An unavailable status read omits `reset_credits`. The normalized status and
+An unavailable status read omits `reset_credits`. Diagnostic text shows
+`reset availability unknown` across account plans. The normalized status and
 its read timestamp remain available on cached results as described below.
 
 The last network `limit_resets` is stored with the rate-limit cache entry of

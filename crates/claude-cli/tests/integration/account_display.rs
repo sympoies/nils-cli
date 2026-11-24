@@ -146,3 +146,24 @@ fn account_display_distinguishes_pending_absent_consumed_and_unknown_grants() {
         );
     }
 }
+
+#[test]
+fn account_display_reports_unknown_for_other_plans() {
+    for (subscription, tier) in [("team", MAX_20X), ("max", "default_claude_max_5x")] {
+        let (_tmp, options) = fixture(subscription, tier, Value::Null);
+        for args in [
+            &["diag", "rate-limits", "sample"][..],
+            &["diag", "rate-limits", "--all"][..],
+            &["diag", "rate-limits", "--async"][..],
+        ] {
+            let output = run(args, &options);
+            assert_exit(&output, 0);
+            let text = stdout(&output);
+            assert!(
+                text.contains("reset availability unknown"),
+                "{subscription} {tier} {args:?}: {text}"
+            );
+            assert!(!text.contains("Ultra"), "{text}");
+        }
+    }
+}
