@@ -324,3 +324,5 @@ fn abort_receipt_is_bound_to_the_exact_authenticated_stop_proof() {
         .unwrap();
     assert_eq!(verified.check(&proof), Err(Refusal::MoveMismatch));
 }
+
+mod source_work;

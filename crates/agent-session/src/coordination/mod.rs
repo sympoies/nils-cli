@@ -1361,7 +1361,7 @@ fn coordination_root(context: &CliContext) -> Result<PathBuf, CliError> {
     Ok(root)
 }
 
-fn read_private_file(path: &Path, max_bytes: u64) -> io::Result<Vec<u8>> {
+pub(crate) fn read_private_file(path: &Path, max_bytes: u64) -> io::Result<Vec<u8>> {
     let (mut file, metadata) = open_private_file(path, max_bytes)?;
     read_opened_private_file(&mut file, metadata.len(), max_bytes)
 }

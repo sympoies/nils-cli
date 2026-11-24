@@ -101,3 +101,34 @@ confirm destination writer absence, and retain a terminal receipt before
 recovering A. A no-writer receipt matches the exact signed stop proof even
 after the proof's admission window expires. Unknown or admitted outcomes
 keep A fenced.
+
+## Read-only source plan
+
+`agent-session resume-move plan --session ID --incarnation UUID
+--destination HOST --format json` inspects the retained source and responds
+with `cli.agent-session.resume-move-plan.v1`. Configure
+`AGENT_SESSION_RESUME_MOVE_HOST` with the source host's signing principal.
+Planning can run before the source stops and does not acquire a writer or
+resolve credentials.
+
+The plan returns the exact managed ID, incarnation and generation, provider
+conversation and settled account binding, source checkout digest, and file
+placement and size. The source-relative path is below the selected source
+provider home. The destination-relative path follows the provider placement
+table above. When the cwd belongs to a Git checkout with a configured remote,
+the plan includes a digest of the canonical repository identity, the HEAD
+commit, and the cwd relative to the checkout root.
+
+Export and recovery remain gated while destination abort and admission are
+unavailable. The source fence uses the existing conversation guard and the
+all-source stopped checks. Recovery requires the exact signed abort receipt
+and rechecks the source snapshot before releasing the fence.
+
+For source mutation, configure `AGENT_SESSION_RESUME_MOVE_SSH_KEYGEN`,
+`AGENT_SESSION_RESUME_MOVE_SIGNING_KEY_FILE`, and
+`AGENT_SESSION_RESUME_MOVE_ALLOWED_SIGNERS_FILE` with absolute local
+paths. The signing key stays in an owner-private file and the allowlist
+pins the local signer and the participating peers. A stopped source export
+consumes a private destination ticket and names the expected host and
+incarnation explicitly. Source recovery consumes a private no-writer
+receipt for the retained move ID.

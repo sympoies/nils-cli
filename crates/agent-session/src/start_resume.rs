@@ -279,7 +279,7 @@ fn source_account(
     ))
 }
 
-fn prove_stopped(
+pub(crate) fn prove_stopped(
     context: &CliContext,
     record: &SessionRecord,
     tmux: &Path,
@@ -313,7 +313,7 @@ fn prove_stopped(
     Ok(())
 }
 
-fn matching_sources(
+pub(crate) fn matching_sources(
     context: &CliContext,
     agent: AgentKind,
     id: &str,
@@ -405,6 +405,7 @@ fn admit(
     agent_bin: Option<&Path>,
 ) -> Result<Admission, CliError> {
     let agent = args.validate()?;
+    cli::resume_move::source_fence::ensure_unfenced(context, agent, &args.resume)?;
     if agent == AgentKind::Codex {
         return codex::admit(context, args, tmux, agent_bin);
     }
@@ -682,6 +683,16 @@ pub(super) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
 }
 
 pub(super) fn conversation_lock(
+    context: &CliContext,
+    agent: AgentKind,
+    id: &str,
+) -> Result<fs::File, CliError> {
+    let guard = raw_conversation_lock(context, agent, id)?;
+    cli::resume_move::source_fence::ensure_unfenced(context, agent, id)?;
+    Ok(guard)
+}
+
+pub(crate) fn raw_conversation_lock(
     context: &CliContext,
     agent: AgentKind,
     id: &str,
