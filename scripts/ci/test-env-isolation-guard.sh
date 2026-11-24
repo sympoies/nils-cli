@@ -17,6 +17,7 @@
 #   ENV_GUARD_CARGO_ARGS  extra arguments for `cargo nextest run` (for example --offline)
 #   ENV_GUARD_SELECTION   newline-separated package|target|filter entries replacing the default
 #   ENV_GUARD_KEEP=1      keep the sentinel root after the run for inspection
+#   NEXTEST_TEST_THREADS  test thread limit, defaulting to NILS_CLI_RUNNER_MAX when set
 set -euo pipefail
 
 # package (or `workspace`)|test target|test name filter. The target is a test binary name, `lib`
@@ -99,6 +100,7 @@ PY
 # Empty RUSTC_WRAPPER overrides Cargo's build.rustc-wrapper config, preventing
 # a user sccache cache from writing under the poisoned XDG_CACHE_HOME sentinel.
 poisoned_env() {
+  local nextest_threads="${NEXTEST_TEST_THREADS:-${NILS_CLI_RUNNER_MAX:-}}"
   env -i \
     PATH="$PATH" \
     LANG=C.UTF-8 \
@@ -109,6 +111,7 @@ poisoned_env() {
     RUSTUP_HOME="$real_rustup_home" \
     CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$repo_root/target}" \
     CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}" \
+    ${nextest_threads:+"NEXTEST_TEST_THREADS=$nextest_threads"} \
     RUSTC_WRAPPER="" \
     HOME="$sentinels/home" \
     AGENT_HOME="$sentinels/agent-home" \

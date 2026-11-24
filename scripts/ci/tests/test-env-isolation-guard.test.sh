@@ -76,6 +76,15 @@ write_fake_cargo 'test -z "${ENV_GUARD_OUTER_VARIABLE-}" && exit 0
 exit 3'
 expect_pass "hermetic run sees a cleared environment"
 
+export NILS_CLI_RUNNER_MAX=3 NEXTEST_TEST_THREADS=2
+write_fake_cargo 'test "${NEXTEST_TEST_THREADS-}" = 2'
+expect_pass "poisoned nextest run keeps the admitted thread limit"
+
+unset NEXTEST_TEST_THREADS
+write_fake_cargo 'test "${NEXTEST_TEST_THREADS-}" = 3'
+expect_pass "standalone guard uses the configured runner maximum"
+unset NILS_CLI_RUNNER_MAX
+
 write_fake_cargo 'printf x > "$AGENT_HOME/leak"; exit 0'
 expect_fail "write under AGENT_HOME is a leak" "changed the poisoned sentinel"
 
