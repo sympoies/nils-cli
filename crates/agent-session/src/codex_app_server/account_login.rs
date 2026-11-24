@@ -45,7 +45,7 @@ pub(super) async fn drive_external_auth_login(
     .await
     .map_err(|_| "login_timeout")?
     .map_err(|error| match error {
-        prompt_submit::PromptResponseFailure::Rejected(_) => "login_rejected",
+        prompt_submit::PromptResponseFailure::Rejected { .. } => "login_rejected",
         prompt_submit::PromptResponseFailure::NotConfirmed(_) => "login_invalid_response",
         prompt_submit::PromptResponseFailure::AuthRefresh(_) => "login_refresh_failed",
         prompt_submit::PromptResponseFailure::Other(_) => "login_response_failed",

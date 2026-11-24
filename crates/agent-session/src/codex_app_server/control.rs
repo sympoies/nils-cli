@@ -59,6 +59,31 @@ pub(super) fn prompt_request(
     request
 }
 
+pub(super) async fn receive_initial_usage(
+    websocket: &mut tokio_tungstenite::WebSocketStream<UnixStream>,
+    request_id: u64,
+    (context, record, reducer): (&CliContext, &SessionRecord, &mut FailureReducer),
+    external_auth: Option<(&CliContext, &SessionRecord, &str, &str)>,
+) -> Result<Option<UsageSnapshot>, String> {
+    match prompt_submit::receive_prompt_response_with_timeout(
+        websocket,
+        request_id,
+        Some((context, record, reducer)),
+        external_auth,
+        CONTROL_RESPONSE_TIMEOUT,
+    )
+    .await
+    {
+        Ok(result) => Ok(Some(usage_snapshot(&result))),
+        // Codex 0.162.1 refuses this read for API-key accounts.
+        Err(prompt_submit::PromptResponseFailure::Rejected {
+            code: -32600,
+            category: "rate_limits_require_chatgpt",
+        }) => Ok(None),
+        Err(error) => Err(error.into_string()),
+    }
+}
+
 impl ControlHandle {
     // Registration permits account recovery while startup is still in progress.
     // Prompt callers must wait without holding the record lock needed by thread

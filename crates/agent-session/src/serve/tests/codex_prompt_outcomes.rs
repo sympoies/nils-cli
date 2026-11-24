@@ -7,6 +7,7 @@ enum PeerOutcome {
     RejectPrompt,
     DropAcknowledgement,
     CloseBeforePrompt,
+    AcceptPrompt { api_key: bool },
 }
 
 async fn receive_json<S>(socket: &mut S) -> Value
@@ -34,6 +35,39 @@ where
         .unwrap();
 }
 
+async fn respond_usage<S>(socket: &mut S, api_key: bool)
+where
+    S: futures_util::Stream<Item = Result<ClientMessage, tokio_tungstenite::tungstenite::Error>>
+        + futures_util::Sink<ClientMessage, Error = tokio_tungstenite::tungstenite::Error>
+        + Unpin,
+{
+    let request = receive_json(socket).await;
+    assert_eq!(request["method"], "account/rateLimits/read");
+    if api_key {
+        socket
+            .send(ClientMessage::Text(
+                json!({
+                    "id": request["id"],
+                    "error": {
+                        "code": -32600,
+                        "message": "chatgpt authentication required to read rate limits"
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+    } else {
+        respond(
+            socket,
+            &request,
+            json!({ "rateLimits": { "primary": { "usedPercent": 1 } } }),
+        )
+        .await;
+    }
+}
+
 async fn serve_codex_peer(
     listener: tokio::net::UnixListener,
     outcome: PeerOutcome,
@@ -55,15 +89,26 @@ async fn serve_codex_peer(
     let resume = receive_json(&mut socket).await;
     assert_eq!(resume["method"], "thread/resume");
     respond(&mut socket, &resume, json!({})).await;
-    let usage = receive_json(&mut socket).await;
-    assert_eq!(usage["method"], "account/rateLimits/read");
-    respond(
+    respond_usage(
         &mut socket,
-        &usage,
-        json!({ "rateLimits": { "primary": { "usedPercent": 1 } } }),
+        matches!(outcome, PeerOutcome::AcceptPrompt { api_key: true }),
     )
     .await;
     match outcome {
+        PeerOutcome::AcceptPrompt { api_key } => {
+            respond_usage(&mut socket, api_key).await;
+            let prompt = receive_json(&mut socket).await;
+            assert_eq!(prompt["method"], "turn/start");
+            assert_eq!(prompt["params"]["threadId"], "thread-codex-outcomes");
+            respond(
+                &mut socket,
+                &prompt,
+                json!({ "turn": { "id": "turn-fixture", "status": "inProgress" } }),
+            )
+            .await;
+            // Keep the peer connected until the control handle is dropped.
+            assert!(!matches!(socket.next().await, Some(Ok(frame)) if !frame.is_close()));
+        }
         PeerOutcome::CloseBeforePrompt => {
             fs::write(stopped_marker, "").unwrap();
             let _ = socket.send(ClientMessage::Close(None)).await;
@@ -174,6 +219,45 @@ async fn submit(st: Arc<ServeState>, id: &str, launch: &str) -> (StatusCode, Val
         ),
     )
     .await
+}
+
+async fn assert_prompt_admitted_with_usage(id: &str, api_key: bool) {
+    let (_tmp, _socket_dir, st, launch, control, peer) =
+        fixture(id, PeerOutcome::AcceptPrompt { api_key }).await;
+    let handle = st.codex_controls.lock().unwrap()[id].handle.clone();
+    let usage = handle.usage().await;
+    if api_key {
+        assert!(usage.is_err(), "API-key usage must be unavailable");
+    } else {
+        assert!(usage.unwrap().authoritative);
+    }
+
+    let (status, body) = submit(st.clone(), id, &launch).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["receipt"]["outcome"], "submitted");
+    assert_eq!(body["data"]["receipt"]["request_id"], "protocol-attempt");
+    assert!(!control.is_finished(), "control must stay connected");
+
+    st.codex_controls.lock().unwrap().remove(id).unwrap();
+    drop(handle);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), control)
+            .await
+            .unwrap()
+            .unwrap(),
+        Ok(())
+    );
+    peer.await.unwrap();
+}
+
+#[tokio::test]
+async fn api_key_control_is_ready_and_admits_keyed_prompt_without_usage() {
+    assert_prompt_admitted_with_usage("api-key-control", true).await;
+}
+
+#[tokio::test]
+async fn chatgpt_control_reads_usage_and_admits_keyed_prompt() {
+    assert_prompt_admitted_with_usage("chatgpt-control", false).await;
 }
 
 #[tokio::test]

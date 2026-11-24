@@ -2547,10 +2547,10 @@ pub(crate) async fn run_control(
     {
         request_id = request_id.saturating_add(1);
         send_json(&mut websocket, rate_limits_request(request_id)).await?;
-        let initial_usage = receive_response_with_timeout(
+        let initial_usage = control::receive_initial_usage(
             &mut websocket,
             request_id,
-            Some((&context, &record, &mut reducer)),
+            (&context, &record, &mut reducer),
             external_auth_account.as_deref().map(|account| {
                 (
                     &context,
@@ -2559,11 +2559,11 @@ pub(crate) async fn run_control(
                     external_auth_connection_id.as_str(),
                 )
             }),
-            CONTROL_RESPONSE_TIMEOUT,
         )
-        .await
-        .map(|value| usage_snapshot(&value))?;
-        wake_from_open_usage(&context, &record, &initial_usage).await?;
+        .await?;
+        if let Some(initial_usage) = initial_usage {
+            wake_from_open_usage(&context, &record, &initial_usage).await?;
+        }
     }
 
     ready.send_replace(true);
