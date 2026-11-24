@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 
-use super::{MAX_PAYLOAD_BYTES, MAX_SIGNATURE_BYTES, Refusal, SignedRecord};
+use super::{
+    MAX_PAYLOAD_BYTES, MAX_SIGNATURE_BYTES, Refusal, STOP_PROOF_SCHEMA, SignedRecord, StopProof,
+};
 
 pub struct Verifier {
     executable: PathBuf,
@@ -70,6 +72,58 @@ impl Verifier {
             return Err(diagnostic());
         }
         Ok(())
+    }
+
+    pub(super) fn sign_stop_proof(
+        &self,
+        proof: &StopProof,
+        signing_key: &Path,
+    ) -> Result<SignedRecord, Refusal> {
+        let unavailable = |_| Refusal::SigningUnavailable;
+        if !signing_key.is_absolute() {
+            return Err(Refusal::SigningUnavailable);
+        }
+        let metadata = fs::symlink_metadata(signing_key).map_err(unavailable)?;
+        // SAFETY: geteuid takes no arguments and cannot fail.
+        let uid = unsafe { libc::geteuid() };
+        if !metadata.is_file()
+            || metadata.uid() != uid
+            || metadata.mode() & 0o077 != 0
+            || metadata.nlink() != 1
+        {
+            return Err(Refusal::SigningUnavailable);
+        }
+        let payload = serde_json::to_string(proof).map_err(|_| Refusal::SigningUnavailable)?;
+        if payload.len() > MAX_PAYLOAD_BYTES {
+            return Err(Refusal::SigningUnavailable);
+        }
+        let mut input = tempfile::tempfile().map_err(unavailable)?;
+        input.write_all(payload.as_bytes()).map_err(unavailable)?;
+        input.rewind().map_err(unavailable)?;
+        let mut output = tempfile::tempfile().map_err(unavailable)?;
+        let stdout = output.try_clone().map_err(unavailable)?;
+        let child = self
+            .command()
+            .args(["-Y", "sign", "-n", STOP_PROOF_SCHEMA, "-f"])
+            .arg(signing_key)
+            .arg("-")
+            .stdin(input)
+            .stdout(stdout)
+            .spawn()
+            .map_err(unavailable)?;
+        if !wait(child).map_err(unavailable)?.success() {
+            return Err(Refusal::SigningUnavailable);
+        }
+        output.rewind().map_err(unavailable)?;
+        let mut signature = String::new();
+        output
+            .take(MAX_SIGNATURE_BYTES as u64 + 1)
+            .read_to_string(&mut signature)
+            .map_err(unavailable)?;
+        if signature.len() > MAX_SIGNATURE_BYTES || !is_ed25519_sshsig(&signature) {
+            return Err(Refusal::SigningUnavailable);
+        }
+        Ok(SignedRecord { payload, signature })
     }
 
     pub(super) fn verify_signature(

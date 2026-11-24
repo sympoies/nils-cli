@@ -125,6 +125,8 @@ pub enum Command {
     PrepareShutdown(crate::runtime_environment::boot_recovery::PrepareShutdownArgs),
     /// Recreate a missing tmux runtime from exact provider resume metadata.
     Resume(ResumeArgs),
+    /// Inspect and manage the retained source of a cross-host provider resume.
+    ResumeMove(resume_move::MoveArgs),
     /// Relaunch a running session in place on the installed provider binary.
     Restart(RestartArgs),
     /// Clear an idle conversation in place and verify its new provider identity.

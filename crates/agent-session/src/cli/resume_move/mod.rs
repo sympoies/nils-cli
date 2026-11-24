@@ -8,10 +8,15 @@ use std::{error::Error, fmt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod args;
+mod source;
+pub(crate) mod source_fence;
 mod ssh;
 #[cfg(test)]
 mod tests;
 
+pub use args::MoveArgs;
+pub(crate) use args::run;
 pub use ssh::Verifier;
 
 pub const TICKET_SCHEMA: &str = "agent-session.resume-move-ticket.v1";
@@ -22,7 +27,7 @@ pub const MAX_SIGNATURE_BYTES: usize = 1024;
 const MAX_AGE_SECONDS: i64 = 3600;
 const CLOCK_SKEW_SECONDS: i64 = 60;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SignedRecord {
     pub payload: String,
@@ -402,6 +407,9 @@ pub enum Refusal {
     DestinationWriterPresent,
     SshKeygenUnavailable,
     TrustUnavailable,
+    SigningUnavailable,
+    SourceFenced,
+    StateUnavailable,
 }
 
 impl Refusal {
@@ -420,6 +428,9 @@ impl Refusal {
             Self::DestinationWriterPresent => "resume-move-destination-writer-present",
             Self::SshKeygenUnavailable => "resume-move-ssh-keygen-unavailable",
             Self::TrustUnavailable => "resume-move-trust-unavailable",
+            Self::SigningUnavailable => "resume-move-signing-unavailable",
+            Self::SourceFenced => "resume-move-source-fenced",
+            Self::StateUnavailable => "resume-move-state-unavailable",
         }
     }
 }
@@ -431,3 +442,11 @@ impl fmt::Display for Refusal {
 }
 
 impl Error for Refusal {}
+
+fn cli_refusal(refusal: Refusal) -> crate::CliError {
+    crate::CliError::data(
+        refusal.code(),
+        "move evidence does not match the required identity or local state",
+        Some(serde_json::json!({"session_created": false, "safe_to_retry": false})),
+    )
+}

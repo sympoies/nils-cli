@@ -27,6 +27,7 @@ pub(crate) fn run(context: &CliContext, command: Command) -> i32 {
             runtime_environment::boot_recovery::run_prepare(context, args)
         }
         Command::Resume(args) => run_resume(context, args),
+        Command::ResumeMove(args) => cli::resume_move::run(context, args),
         Command::Restart(args) => restart::run(context, args),
         Command::Clear(args) => conversation::run(
             context,

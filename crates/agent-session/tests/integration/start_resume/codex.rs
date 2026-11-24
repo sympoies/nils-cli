@@ -409,3 +409,91 @@ fn codex_preflight_uses_retained_provider_root_without_default_history_fallback(
     let out = run(&f, &["--check-resume"]);
     assert_eq!(out.stdout_json()["error"]["code"], "resume-history-missing");
 }
+
+#[test]
+fn move_source_plan_checks_incarnation_and_returns_portable_metadata_read_only() {
+    const LAUNCH: &str = "00000000-0000-4000-8000-000000000010";
+    const OTHER_LAUNCH: &str = "00000000-0000-4000-8000-000000000011";
+    let f = fixture();
+    let mut source: Value =
+        serde_json::from_slice(&fs::read(f.record_path("source")).unwrap()).unwrap();
+    let cwd = fs::canonicalize(f.tmp.path()).unwrap();
+    source["cwd"] = json!(cwd);
+    fs::write(
+        f.root
+            .join(format!("sessions/2026/01/01/rollout-{CONVERSATION}.jsonl")),
+        json!({"type":"session_meta","payload":{"id":CONVERSATION,"cwd":cwd,"source":"cli",
+            "timestamp":"2026-01-01T00:00:00Z"}})
+        .to_string(),
+    )
+    .unwrap();
+    source["runtime"]["launch_id"] = json!(LAUNCH);
+    source["runtime"]["agent_profile_provider_config_dir"] = json!(f.root);
+    source["codex_account_binding"]["applied_runtime_id"] = json!(LAUNCH);
+    source["tmux_runtime_never_launched"] = json!(LAUNCH);
+    fs::write(f.record_path("source"), source.to_string()).unwrap();
+    let before = deleted_source::snapshot(&f.state);
+    let options = CmdOptions::new()
+        .with_env_remove_prefix("AGENT_SESSION_")
+        .with_env("HOME", f.tmp.path().to_str().unwrap())
+        .with_env(
+            "AGENT_HOME",
+            f.tmp.path().join("agent-home").to_str().unwrap(),
+        )
+        .with_env("CODEX_HOME", f.root.to_str().unwrap())
+        .with_env("AGENT_SESSION_TMUX_BIN", f.tmux.to_str().unwrap())
+        .with_env("AGENT_SESSION_RESUME_MOVE_HOST", "host-a");
+    let plan = |incarnation| {
+        run_resolved(
+            "agent-session",
+            &[
+                "--state-dir",
+                f.state.to_str().unwrap(),
+                "resume-move",
+                "plan",
+                "--session",
+                "source",
+                "--incarnation",
+                incarnation,
+                "--destination",
+                "host-b",
+                "--format",
+                "json",
+            ],
+            &options,
+        )
+    };
+
+    let result = plan(LAUNCH);
+    assert_eq!(result.code, 0, "{}", result.stderr_text());
+    let response = result.stdout_json();
+    assert_eq!(
+        response["schema_version"],
+        "cli.agent-session.resume-move-plan.v1"
+    );
+    assert_eq!(response["data"]["source_session_id"], "source");
+    assert_eq!(response["data"]["source_incarnation"], LAUNCH);
+    assert_eq!(response["data"]["source_host"], "host-a");
+    assert_eq!(response["data"]["destination_host"], "host-b");
+    assert_eq!(response["data"]["provider"], "codex");
+    assert_eq!(response["data"]["provider_session_id"], CONVERSATION);
+    assert_eq!(response["data"]["account"], "original");
+    assert_eq!(response["data"]["history"]["role"], "codex_rollout");
+    assert_eq!(
+        response["data"]["history"]["relative_path"],
+        format!("sessions/2026/01/01/rollout-{CONVERSATION}.jsonl")
+    );
+    assert!(
+        !result
+            .stdout_text()
+            .contains(f.tmp.path().to_str().unwrap())
+    );
+
+    let refused = plan(OTHER_LAUNCH);
+    assert_ne!(refused.code, 0);
+    assert_eq!(
+        refused.stdout_json()["error"]["code"],
+        "resume-move-session-mismatch"
+    );
+    assert_eq!(deleted_source::snapshot(&f.state), before);
+}
