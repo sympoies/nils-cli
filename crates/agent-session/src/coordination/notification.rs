@@ -14,7 +14,7 @@ pub(crate) use recovery::resolve_drained_generation;
 
 #[path = "notification_observation.rs"]
 mod observation;
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub(super) use observation::observe_attempt;
 pub(crate) use observation::{NotificationOutcome, notification_outcome};
 pub(super) use recovery::resolve_unavailable_attempts;
