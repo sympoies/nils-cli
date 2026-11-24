@@ -1,4 +1,5 @@
 use super::*;
+pub(crate) mod control_fixture;
 pub(crate) mod resume_binding;
 mod retirement;
 mod typed_causes;
@@ -4354,82 +4355,9 @@ async fn conversation_recovery_refuses_paginated_thread_list() {
     server.await.unwrap();
 }
 
-#[tokio::test]
-async fn control_reconnect_resumes_the_bound_loaded_thread() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let (_socket_dir, socket) = nils_test_support::short_socket_path("reconnect.sock");
-    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-    let context = CliContext {
-        state_dir: tmp.path().join("state"),
-        host: None,
-    };
-    let record = record_with_runtime("reconnect", &socket);
-    fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
-    crate::write_session_record(&context, &record).unwrap();
-    bind_thread(&record, "raw-thread-a").unwrap();
-    let server = tokio::spawn(async move {
-        let (stream, _) = listener.accept().await.unwrap();
-        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
-        let initialize = receive_json(&mut socket).await;
-        respond(&mut socket, &initialize, json!({})).await;
-        assert_eq!(receive_json(&mut socket).await["method"], "initialized");
-        let loaded = receive_json(&mut socket).await;
-        respond(
-            &mut socket,
-            &loaded,
-            json!({
-                "data": ["raw-thread-decoy", "raw-thread-a"],
-                "nextCursor": null
-            }),
-        )
-        .await;
-        let resume = receive_json(&mut socket).await;
-        assert_eq!(resume["method"], "thread/resume");
-        assert_eq!(resume["params"]["threadId"], "raw-thread-a");
-        assert_eq!(resume["params"]["excludeTurns"], true);
-        respond(&mut socket, &resume, json!({})).await;
-        for _ in 0..2 {
-            let usage = receive_json(&mut socket).await;
-            assert_eq!(usage["method"], "account/rateLimits/read");
-            respond(
-                &mut socket,
-                &usage,
-                json!({
-                    "rateLimits": {
-                        "primary": { "usedPercent": 100, "resetsAt": 1_900_000_000 }
-                    }
-                }),
-            )
-            .await;
-        }
-    });
-    let (handle, commands, ready) = starting_control_channel();
-    let control = tokio::spawn(run_control(
-        context.clone(),
-        record.clone(),
-        commands,
-        ready,
-    ));
-
-    let usage = handle.usage().await.unwrap();
-    assert!(usage.authoritative);
-    assert!(usage.has_exhausted_windows);
-    server.await.unwrap();
-    let persisted = crate::load_session_record(&context, &record.id).unwrap();
-    let resume = persisted
-        .provider_resume
-        .as_ref()
-        .expect("control reconnect must persist the loaded thread identity");
-    assert_eq!(resume.session_id, "raw-thread-a");
-    assert_eq!(resume.capture_method, PROVIDER_RESUME_CAPTURE_METHOD);
-    assert!(
-        crate::session_dir(&context, &record.id)
-            .join(crate::SESSION_RESUME_FILE)
-            .is_file()
-    );
-    drop(handle);
-    control.abort();
-    let _ = control.await;
+#[test]
+fn control_reconnect_resumes_the_bound_loaded_thread() {
+    control_fixture::run(control_fixture::assert_reconnect_resumes_bound_thread);
 }
 
 #[tokio::test]

@@ -32,6 +32,14 @@ pub(super) fn isolated_serve_command(
     )
 }
 
+pub(super) fn usage_serve_command(root: &Path, addr: SocketAddr) -> Command {
+    let command = isolated_serve_command(root, root, &root.join("state"), addr);
+    // Usage uses provider helpers and needs no terminal sessions. A daemon
+    // probe can still be running when the fixture stops the daemon.
+    super::write_executable(&root.join("tmux"), "#!/bin/sh\nexit 0\n");
+    command
+}
+
 pub(super) fn assert_direct_serve_roots(fixture: &Path, command: &Command) {
     let fixture = fixture.canonicalize().expect("resolve exact TempDir");
     let assert_inside = |key: &str, value: &Path| {

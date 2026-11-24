@@ -110,19 +110,22 @@ async fn start_prompt_control(
     (tmp, context, record, handle, control, peer_task)
 }
 
-#[tokio::test]
-async fn prompt_readiness_refusal_is_marked_as_not_dispatched() {
+#[test]
+fn prompt_readiness_refusal_is_marked_as_not_dispatched() {
     let env_lock = GlobalStateLock::new();
     let _broker = EnvGuard::set(
         &env_lock,
         "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
         r#"["/configured/broker"]"#,
     );
-    let tmp = tempfile::TempDir::new().unwrap();
+    control_fixture::run(assert_prompt_readiness_refusal);
+}
+
+async fn assert_prompt_readiness_refusal(root: &Path) {
     let (_socket_dir, socket_path) = nils_test_support::short_socket_path("prompt-readiness.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
-        state_dir: tmp.path().join("state"),
+        state_dir: root.join("state"),
         host: None,
     };
     let record = record_with_runtime("prompt-readiness", &socket_path);
