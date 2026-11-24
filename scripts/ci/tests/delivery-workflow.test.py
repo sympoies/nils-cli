@@ -39,7 +39,6 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn("needs.changes.result == 'success'", full)
         linux = job(ci, 'test')
         self.assertIn('needs: [changes, full_validation]', linux)
-        self.assertIn('VALIDATED_COMMIT: ${{ needs.full_validation.outputs.validated_commit }}', linux)
         self.assertIn('Require exact-commit queue validation', linux)
 
     def test_macos_clippy_runs_on_every_queue_group(self):
@@ -80,7 +79,7 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn('needs: [macos_clippy, test_macos_partition, macos_retry_plan, '
                       'macos_clippy_retry, test_macos_partition_retry]', check)
         self.assertIn('requireMacosValidation', check)
-        self.assertIn('value: ${{ jobs.gate.outputs.validated_commit }}', full)
+        self.assertNotIn('validated_commit:', full)
         for filename in ('ci.yml', 'release.yml'):
             self.assertIn('actions: read', job(workflow(filename), 'full_validation'))
 
@@ -203,19 +202,16 @@ class DeliveryTests(unittest.TestCase):
                 env=dict(os.environ, CHANGES_RESULT=state), capture_output=True)
             self.assertEqual(result.returncode == 0, state == 'success')
 
-    def test_required_queue_check_requires_the_exact_validated_commit(self):
+    def test_required_queue_check_reads_the_exact_gate_job_from_the_current_attempt(self):
         body = job(workflow('ci.yml'), 'test')
         step = body.split('      - name: Require exact-commit queue validation\n', 1)[1]
-        script = step.split('        run: |\n', 1)[1].split('\n      - name:', 1)[0]
-        script = '\n'.join(line[10:] for line in script.splitlines() if line.startswith('          '))
-        sha = 'a' * 40
-        for event in ('pull_request', 'merge_group'):
-            for validated in (sha, 'b' * 40, ''):
-                with self.subTest(event=event, validated=validated):
-                    result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script],
-                        env=dict(os.environ, EVENT_NAME=event, GITHUB_SHA=sha,
-                                 VALIDATED_COMMIT=validated), capture_output=True)
-                    self.assertEqual(result.returncode == 0, event != 'merge_group' or validated == sha)
+        step = step.split('\n      - name:', 1)[0]
+        self.assertIn("if: github.event_name == 'merge_group'", step)
+        self.assertIn('uses: actions/github-script@v9', step)
+        self.assertIn('await requireValidatedCommit({', step)
+        self.assertIn('github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT)', step)
+        self.assertIn('actions: read', body)
+        self.assertNotIn('needs.full_validation.outputs', step)
 
     def test_instrumented_workflow_selects_the_expected_profiles(self):
         caller = job(workflow('ci.yml'), 'full_validation')
@@ -273,10 +269,24 @@ class DeliveryTests(unittest.TestCase):
                          {'contents': 'read', 'actions': 'read', 'issues': 'write'})
         self.assertIn('persist-credentials: false', report)
         self.assertIn('trackNightly', report)
-        self.assertIn('needs.full_validation.outputs.validated_commit == github.sha', report)
+        self.assertIn('await requireValidatedCommit({', report)
         self.assertIn("'nightly-main'", ci)
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", ci)
         self.assertIn('node scripts/ci/tests/nightly-tracker.test.cjs', (ROOT / 'scripts/ci/nils-cli-verification.sh').read_text())
+
+    def test_nightly_consumers_wait_for_full_validation_and_gate_badge_writes(self):
+        ci = workflow('ci.yml')
+        self.assertNotIn('needs.full_validation.outputs', ci)
+        badge = job(ci, 'coverage_badge')
+        for consumer in (badge, job(ci, 'nightly_report')):
+            self.assertIn('needs: full_validation', consumer)
+            self.assertIn('actions: read', consumer)
+            self.assertIn("github.event_name == 'schedule'", consumer)
+            self.assertIn("github.event_name == 'workflow_dispatch'", consumer)
+            self.assertIn("github.ref == 'refs/heads/main'", consumer)
+        self.assertIn('result-encoding: string', badge)
+        for action in ('Download coverage LCOV', 'Generate coverage badge', 'Publish coverage badge branch'):
+            self.assertIn(f'- name: {action}\n        if: steps.validation.outputs.result == github.sha', badge)
 
 
 if __name__ == '__main__':

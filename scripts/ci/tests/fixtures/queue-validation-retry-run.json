@@ -1,0 +1,127 @@
+{
+  "runId": 45411646819,
+  "attempt": 1,
+  "sha": "9edc5377c33b111d7137896bc91460cb931874b8",
+  "jobs": [
+    {
+      "name": "cargo-deny (advisories + bans)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "changes",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Main push status",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "test_containment",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "full_validation / macos_clippy",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "full_validation / test_macos_partition (2/2)",
+      "status": "completed",
+      "conclusion": "cancelled"
+    },
+    {
+      "name": "full_validation / test_macos_partition (1/2)",
+      "status": "completed",
+      "conclusion": "cancelled"
+    },
+    {
+      "name": "full_validation / test",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "full_validation / cargo-deny (advisories + bans)",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "full_validation / Test isolation guard",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "full_validation / test_containment",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "full_validation / macos_retry_plan",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "full_validation / test_macos_partition_retry (1/2)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "full_validation / test_macos_partition_retry (2/2)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "full_validation / macos_clippy_retry",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "JUnit Test Report (macOS 2/2)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "JUnit Test Report (macOS 1/2)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "full_validation / macos_check",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "full_validation / gate",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "full_validation / test_macos",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "full_validation / coverage",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "test",
+      "status": "completed",
+      "conclusion": "failure"
+    },
+    {
+      "name": "nightly_report",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "coverage_badge",
+      "status": "completed",
+      "conclusion": "skipped"
+    }
+  ]
+}
