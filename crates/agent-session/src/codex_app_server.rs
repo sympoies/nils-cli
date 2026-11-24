@@ -2458,36 +2458,23 @@ pub(crate) async fn run_control(
         }
     }
 
-    let mut discovery_attempts = 0_u8;
-    let mut thread_id = loop {
-        request_id = request_id.saturating_add(1);
-        send_json(&mut websocket, loaded_threads_request(request_id)).await?;
-        let result = receive_response_with_timeout(
-            &mut websocket,
-            request_id,
-            None,
-            external_auth_account.as_deref().map(|account| {
-                (
-                    &context,
-                    &record,
-                    account,
-                    external_auth_connection_id.as_str(),
-                )
-            }),
-            CONTROL_RESPONSE_TIMEOUT,
-        )
-        .await
-        .map_err(|err| format!("thread/loaded/list failed: {err}"))?;
-        let ids = loaded_thread_ids(&result)
-            .ok_or_else(|| "Codex loaded-thread response was malformed".to_string())?;
-        if let Some(id) = attached_loaded_thread(&record, &ids)? {
-            break id;
-        }
-        if discovery_attempts == 100 {
-            return Err("Codex app-server could not verify an attached loaded thread (codex-app-server-thread-binding-failed)".to_string());
-        }
-        discovery_attempts += 1;
-        tokio::time::sleep(Duration::from_millis(100)).await;
+    let Some(mut thread_id) = control::discover_attached_thread(
+        &mut websocket,
+        &mut request_id,
+        &record,
+        &commands,
+        external_auth_account.as_deref().map(|account| {
+            (
+                &context,
+                &record,
+                account,
+                external_auth_connection_id.as_str(),
+            )
+        }),
+    )
+    .await?
+    else {
+        return Ok(());
     };
     let reconnecting = thread_attached_path(&record).is_some_and(Path::is_file);
     persist_thread_resume(&context, &record, &thread_id).await?;

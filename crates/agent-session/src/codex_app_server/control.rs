@@ -59,6 +59,61 @@ pub(super) fn prompt_request(
     request
 }
 
+pub(super) async fn discover_attached_thread(
+    websocket: &mut tokio_tungstenite::WebSocketStream<UnixStream>,
+    request_id: &mut u64,
+    record: &SessionRecord,
+    commands: &mpsc::Receiver<ControlCommand>,
+    external_auth: Option<(&CliContext, &SessionRecord, &str, &str)>,
+) -> Result<Option<String>, String> {
+    let attachment = thread_attached_path(record)
+        .ok_or_else(|| "Codex attached marker metadata is missing".to_string())?;
+    let poll = Duration::from_millis(100);
+    // Codex 0.162.1 starts the TUI thread asynchronously. Wait for the proxy
+    // to attest that response before spending the loaded-thread retry budget.
+    if record.provider_resume.is_none() {
+        while !attachment
+            .try_exists()
+            .map_err(|_| "Codex attached thread binding was unreadable".to_string())?
+        {
+            if commands.is_closed() {
+                return Ok(None);
+            }
+            tokio::select! {
+                () = tokio::time::sleep(poll) => {}
+                message = websocket.next() => {
+                    let value = decode_message(message).await?;
+                    respond_to_external_auth_refresh(websocket, &value, external_auth).await?;
+                }
+            }
+        }
+    }
+
+    for attempt in 0..=100 {
+        *request_id = request_id.saturating_add(1);
+        send_json(websocket, loaded_threads_request(*request_id)).await?;
+        let result = receive_response_with_timeout(
+            websocket,
+            *request_id,
+            None,
+            external_auth,
+            CONTROL_RESPONSE_TIMEOUT,
+        )
+        .await
+        .map_err(|err| format!("thread/loaded/list failed: {err}"))?;
+        let ids = loaded_thread_ids(&result)
+            .ok_or_else(|| "Codex loaded-thread response was malformed".to_string())?;
+        if let Some(id) = attached_loaded_thread(record, &ids)? {
+            return Ok(Some(id));
+        }
+        if attempt < 100 {
+            tokio::time::sleep(poll).await;
+        }
+    }
+
+    Err("Codex app-server could not verify an attached loaded thread (codex-app-server-thread-binding-failed)".to_string())
+}
+
 pub(super) async fn receive_initial_usage(
     websocket: &mut tokio_tungstenite::WebSocketStream<UnixStream>,
     request_id: u64,
