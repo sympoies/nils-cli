@@ -5,10 +5,6 @@ name: Full validation
 
 on:
   workflow_call:
-    outputs:
-      validated_commit:
-        description: Immutable event SHA accepted by the final gate
-        value: ${{ jobs.gate.outputs.validated_commit }}
     inputs:
       commit:
         description: Expected immutable caller event SHA, verified by the final gate
@@ -705,8 +701,6 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    outputs:
-      validated_commit: ${{ steps.require.outputs.validated_commit }}
     permissions:
       contents: read
     steps:
@@ -716,7 +710,6 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Require selected validation lanes
-        id: require
         env:
           EXPECTED_COMMIT: ${{ inputs.commit }}
           ISOLATION_GUARD: ${{ inputs.isolation_guard }}
@@ -726,4 +719,4 @@ jobs:
           ACTUAL_COMMIT="$(git rev-parse HEAD)"
           export ACTUAL_COMMIT
           node -e 'require("./.github/scripts/full-validation-gate.cjs").requireFullValidation({expected: process.env.EXPECTED_COMMIT, actual: process.env.ACTUAL_COMMIT, isolationGuard: process.env.ISOLATION_GUARD === "true", macosPartitionsOnly: process.env.MACOS_PARTITIONS_ONLY === "true", needs: JSON.parse(process.env.VALIDATION_NEEDS)})'
-          echo "validated_commit=${ACTUAL_COMMIT}" >> "$GITHUB_OUTPUT"
+          echo "Validated commit ${ACTUAL_COMMIT}"

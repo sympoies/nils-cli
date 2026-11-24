@@ -79,7 +79,7 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn('needs: [macos_clippy, test_macos_partition, macos_retry_plan, '
                       'macos_clippy_retry, test_macos_partition_retry]', check)
         self.assertIn('requireMacosValidation', check)
-        self.assertIn('value: ${{ jobs.gate.outputs.validated_commit }}', full)
+        self.assertNotIn('validated_commit:', full)
         for filename in ('ci.yml', 'release.yml'):
             self.assertIn('actions: read', job(workflow(filename), 'full_validation'))
 
@@ -208,7 +208,7 @@ class DeliveryTests(unittest.TestCase):
         step = step.split('\n      - name:', 1)[0]
         self.assertIn("if: github.event_name == 'merge_group'", step)
         self.assertIn('uses: actions/github-script@v9', step)
-        self.assertIn('await requireQueueValidation({', step)
+        self.assertIn('await requireValidatedCommit({', step)
         self.assertIn('github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT)', step)
         self.assertIn('actions: read', body)
         self.assertNotIn('needs.full_validation.outputs', step)
@@ -269,10 +269,24 @@ class DeliveryTests(unittest.TestCase):
                          {'contents': 'read', 'actions': 'read', 'issues': 'write'})
         self.assertIn('persist-credentials: false', report)
         self.assertIn('trackNightly', report)
-        self.assertIn('needs.full_validation.outputs.validated_commit == github.sha', report)
+        self.assertIn('await requireValidatedCommit({', report)
         self.assertIn("'nightly-main'", ci)
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", ci)
         self.assertIn('node scripts/ci/tests/nightly-tracker.test.cjs', (ROOT / 'scripts/ci/nils-cli-verification.sh').read_text())
+
+    def test_nightly_consumers_wait_for_full_validation_and_gate_badge_writes(self):
+        ci = workflow('ci.yml')
+        self.assertNotIn('needs.full_validation.outputs', ci)
+        badge = job(ci, 'coverage_badge')
+        for consumer in (badge, job(ci, 'nightly_report')):
+            self.assertIn('needs: full_validation', consumer)
+            self.assertIn('actions: read', consumer)
+            self.assertIn("github.event_name == 'schedule'", consumer)
+            self.assertIn("github.event_name == 'workflow_dispatch'", consumer)
+            self.assertIn("github.ref == 'refs/heads/main'", consumer)
+        self.assertIn('result-encoding: string', badge)
+        for action in ('Download coverage LCOV', 'Generate coverage badge', 'Publish coverage badge branch'):
+            self.assertIn(f'- name: {action}\n        if: steps.validation.outputs.result == github.sha', badge)
 
 
 if __name__ == '__main__':

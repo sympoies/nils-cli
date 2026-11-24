@@ -1,0 +1,19 @@
+{
+  "runId": 100,
+  "attempt": 2,
+  "sha": "cccccccccccccccccccccccccccccccccccccccc",
+  "jobs": [
+    { "name": "full_validation / test", "status": "completed", "conclusion": "success" },
+    { "name": "full_validation / test_macos", "status": "completed", "conclusion": "success" },
+    { "name": "full_validation / coverage", "status": "completed", "conclusion": "success" },
+    { "name": "full_validation / test_containment", "status": "completed", "conclusion": "success" },
+    { "name": "full_validation / cargo_deny", "status": "completed", "conclusion": "success" },
+    { "name": "full_validation / isolation_guard", "status": "completed", "conclusion": "success" },
+    { "name": "full_validation / test_macos_partition (1/2)", "status": "completed", "conclusion": "cancelled" },
+    { "name": "full_validation / test_macos_partition (2/2)", "status": "completed", "conclusion": "success" },
+    { "name": "full_validation / macos_retry_plan", "status": "completed", "conclusion": "success" },
+    { "name": "full_validation / test_macos_partition_retry (1/2)", "status": "completed", "conclusion": "success" },
+    { "name": "full_validation / macos_check", "status": "completed", "conclusion": "success" },
+    { "name": "full_validation / gate", "status": "completed", "conclusion": "success" }
+  ]
+}

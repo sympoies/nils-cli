@@ -16,11 +16,11 @@ function requireFullValidation({ expected, actual, needs, isolationGuard = false
   return true;
 }
 
-async function requireQueueValidation({ github, context, attempt }) {
+async function requireValidatedCommit({ github, context, attempt }) {
   const { runId, sha } = context;
   if (!SHA.test(sha || '') || !Number.isSafeInteger(runId) || runId < 1 ||
       !Number.isSafeInteger(attempt) || attempt < 1) {
-    throw new Error('Required queue validation needs an exact run attempt and commit');
+    throw new Error('Full validation needs an exact run attempt and commit');
   }
   // A capacity cancellation can leave the final gate successful while its output
   // is empty in the calling workflow. Read the final job from this attempt.
@@ -31,9 +31,9 @@ async function requireQueueValidation({ github, context, attempt }) {
   const [gate] = gates;
   if (gates.length !== 1 || gate.run_id !== runId || gate.run_attempt !== attempt ||
       gate.head_sha !== sha || gate.status !== 'completed' || gate.conclusion !== 'success') {
-    throw new Error('Required queue validation did not succeed for the exact run attempt and commit');
+    throw new Error('Full validation did not succeed for the exact run attempt and commit');
   }
   return gate.head_sha;
 }
 
-module.exports = { requireFullValidation, requireQueueValidation };
+module.exports = { requireFullValidation, requireValidatedCommit };

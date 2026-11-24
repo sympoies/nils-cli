@@ -239,8 +239,8 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            const { requireQueueValidation } = require('./.github/scripts/full-validation-gate.cjs');
-            const commit = await requireQueueValidation({
+            const { requireValidatedCommit } = require('./.github/scripts/full-validation-gate.cjs');
+            const commit = await requireValidatedCommit({
               github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT),
             });
             core.info('Validated merge-group commit ' + commit);
@@ -465,7 +465,7 @@ jobs:
 
 
   coverage_badge:
-    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.full_validation.outputs.validated_commit == github.sha }}
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     needs: full_validation
     permissions:
@@ -477,18 +477,33 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Require exact-commit validation
+        id: validation
+        continue-on-error: true
+        uses: actions/github-script@v9
+        with:
+          result-encoding: string
+          script: |
+            const { requireValidatedCommit } = require('./.github/scripts/full-validation-gate.cjs');
+            return await requireValidatedCommit({
+              github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+            });
+
       - name: Download coverage LCOV
+        if: steps.validation.outputs.result == github.sha
         uses: actions/download-artifact@v8
         with:
           name: coverage-lcov
           path: target/coverage
 
       - name: Generate coverage badge
+        if: steps.validation.outputs.result == github.sha
         run: |
           mkdir -p /tmp/coverage-badge
           bash scripts/ci/coverage-badge.sh target/coverage/lcov.info /tmp/coverage-badge/coverage.svg
 
       - name: Publish coverage badge branch
+        if: steps.validation.outputs.result == github.sha
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -565,10 +580,19 @@ jobs:
       - name: Update nightly tracking issue
         uses: actions/github-script@v9
         env:
-          VALIDATION_RESULT: ${{ needs.full_validation.outputs.validated_commit == github.sha && 'success' || 'failure' }}
           JUNIT_DIR: ${{ runner.temp }}/nightly-junit
         with:
           script: |
+            const { requireValidatedCommit } = require('./.github/scripts/full-validation-gate.cjs');
             const { trackNightly } = require('./.github/scripts/nightly-tracker.cjs');
+            let result = 'failure';
+            try {
+              await requireValidatedCommit({
+                github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+              });
+              result = 'success';
+            } catch (error) {
+              core.warning(error.message);
+            }
             const junitDir = require('node:fs').existsSync(process.env.JUNIT_DIR) ? process.env.JUNIT_DIR : undefined;
-            await trackNightly({ github, context, core, result: process.env.VALIDATION_RESULT, junitDir });
+            await trackNightly({ github, context, core, result, junitDir });
