@@ -113,6 +113,7 @@ fn assert_no_ack(mut caller: UnixStream) {
 }
 
 #[test]
+#[cfg_attr(target_os = "macos", ignore = "nils-cli#4014")]
 fn accepted_nonblocking_stream_delivers_delayed_answer() {
     let (_temp, context, pending) = session();
     let socket_dir = tempfile::tempdir_in("/tmp").unwrap();
